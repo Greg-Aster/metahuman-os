@@ -9,6 +9,7 @@
   import AudioUpload from './AudioUpload.svelte';
   import AudioRecorder from './AudioRecorder.svelte';
   import VoiceTrainingWidget from './VoiceTrainingWidget.svelte';
+  import VoiceSettings from './VoiceSettings.svelte';
   import AdapterDashboard from './AdapterDashboard.svelte';
   import TrainingMonitor from './TrainingMonitor.svelte';
   import Lifeline from './Lifeline.svelte';
@@ -37,7 +38,7 @@ let reflectionMemories: EventItem[] = [];
 let loadingEvents = false
 let eventsError: string | null = null
 let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' = 'episodic'
-let voiceTab: 'upload' | 'training' = 'upload'
+let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'datasets' | 'monitor' | 'adapters' = 'datasets'
 let systemTab: 'persona' | 'lifeline' | 'terminal' = 'persona'
 let expanded: Record<string, boolean> = {}
@@ -384,14 +385,14 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
         <div class="memory-section">
           <MemoryControls on:captured={loadEvents} />
         </div>
-        <div class="memory-tabs">
-          <button class="mem-tab" class:active={memoryTab==='episodic'} on:click={() => memoryTab='episodic'}>Episodic</button>
-          <button class="mem-tab" class:active={memoryTab==='reflections'} on:click={() => memoryTab='reflections'}>Reflections</button>
-          <button class="mem-tab" class:active={memoryTab==='tasks'} on:click={() => memoryTab='tasks'}>Tasks</button>
-          <button class="mem-tab" class:active={memoryTab==='curated'} on:click={() => memoryTab='curated'}>Curated</button>
-          <button class="mem-tab" class:active={memoryTab==='ai-ingestor'} on:click={() => memoryTab='ai-ingestor'}>AI Ingestor</button>
-          <button class="mem-tab" class:active={memoryTab==='audio'} on:click={() => memoryTab='audio'}>Audio</button>
-          <button class="mem-tab" class:active={memoryTab==='dreams'} on:click={() => memoryTab='dreams'}>Dreams 💭</button>
+        <div class="tab-group">
+          <button class="tab-button" class:active={memoryTab==='episodic'} on:click={() => memoryTab='episodic'}>Episodic</button>
+          <button class="tab-button" class:active={memoryTab==='reflections'} on:click={() => memoryTab='reflections'}>Reflections</button>
+          <button class="tab-button" class:active={memoryTab==='tasks'} on:click={() => memoryTab='tasks'}>Tasks</button>
+          <button class="tab-button" class:active={memoryTab==='curated'} on:click={() => memoryTab='curated'}>Curated</button>
+          <button class="tab-button" class:active={memoryTab==='ai-ingestor'} on:click={() => memoryTab='ai-ingestor'}>AI Ingestor</button>
+          <button class="tab-button" class:active={memoryTab==='audio'} on:click={() => memoryTab='audio'}>Audio</button>
+          <button class="tab-button" class:active={memoryTab==='dreams'} on:click={() => memoryTab='dreams'}>Dreams 💭</button>
         </div>
         {#if loadingEvents}
           <div class="loading-state">Loading memories...</div>
@@ -413,14 +414,14 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
           <div class="events-list">
             {#each events as event}
               <div class="event-card">
-                <div class="event-header">
+                <div class="event-card-header">
                   <button
                     class="event-title-button"
                     type="button"
                     on:click={() => toggleExpanded(event)}
                     aria-expanded={isExpanded(event)}
                   >
-                    <span class="event-title">{getPreview(event.content)}</span>
+                    <span class="event-card-title">{getPreview(event.content)}</span>
                     <span class="event-toggle-icon" aria-hidden="true">{isExpanded(event) ? '▲' : '▼'}</span>
                     <span class="sr-only">{isExpanded(event) ? 'Collapse memory' : 'Expand memory'}</span>
                   </button>
@@ -443,8 +444,8 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                     </div>
                   {/if}
                 {/if}
-                <div class="event-meta">
-                  <div class="event-when">{new Date(event.timestamp).toLocaleString()}</div>
+                <div class="event-card-meta">
+                  <div class="event-card-time">{new Date(event.timestamp).toLocaleString()}</div>
                   {#if event.validation?.status}
                     <div class="event-valid {event.validation.status}">{event.validation.status}</div>
                   {/if}
@@ -465,14 +466,14 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
             {:else}
               {#each reflectionMemories as event}
                 <div class="event-card">
-                  <div class="event-header">
+                  <div class="event-card-header">
                     <button
                       class="event-title-button"
                       type="button"
                       on:click={() => toggleExpanded(event)}
                       aria-expanded={isExpanded(event)}
                     >
-                      <span class="event-title">{getPreview(event.content)}</span>
+                      <span class="event-card-title">{getPreview(event.content)}</span>
                       <span class="event-toggle-icon" aria-hidden="true">{isExpanded(event) ? '▲' : '▼'}</span>
                       <span class="sr-only">{isExpanded(event) ? 'Collapse memory' : 'Expand memory'}</span>
                     </button>
@@ -495,8 +496,8 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                       </div>
                     {/if}
                   {/if}
-                  <div class="event-meta">
-                    <div class="event-when">{new Date(event.timestamp).toLocaleString()}</div>
+                  <div class="event-card-meta">
+                    <div class="event-card-time">{new Date(event.timestamp).toLocaleString()}</div>
                     {#if event.validation?.status}
                       <div class="event-valid {event.validation.status}">{event.validation.status}</div>
                     {/if}
@@ -509,14 +510,14 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
           <div class="events-list">
             {#each tasksTab as t}
               <div class="event-card">
-                <div class="event-header">
+                <div class="event-card-header">
                   <button
                     class="event-title-button"
                     type="button"
                     on:click={() => toggleExpanded(t)}
                     aria-expanded={isExpanded(t)}
                   >
-                    <span class="event-title">{getPreview(t.title, 200)}</span>
+                    <span class="event-card-title">{getPreview(t.title, 200)}</span>
                     <span class="event-toggle-icon" aria-hidden="true">{isExpanded(t) ? '▲' : '▼'}</span>
                     <span class="sr-only">{isExpanded(t) ? 'Collapse memory' : 'Expand memory'}</span>
                   </button>
@@ -533,8 +534,8 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                     </div>
                   {/if}
                 {/if}
-                <div class="event-meta">
-                  <div class="event-when">{t.updated ? new Date(t.updated).toLocaleString() : ''}</div>
+                <div class="event-card-meta">
+                  <div class="event-card-time">{t.updated ? new Date(t.updated).toLocaleString() : ''}</div>
                   <div class="event-valid">{t.status}{t.priority ? ` • ${t.priority}` : ''}</div>
                 </div>
               </div>
@@ -547,14 +548,14 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
           <div class="events-list">
             {#each curatedTab as c}
               <div class="event-card">
-                <div class="event-header">
+                <div class="event-card-header">
                   <button
                     class="event-title-button"
                     type="button"
                     on:click={() => toggleExpanded(c)}
                     aria-expanded={isExpanded(c)}
                   >
-                    <span class="event-title">{c.name}</span>
+                    <span class="event-card-title">{c.name}</span>
                     <span class="event-toggle-icon" aria-hidden="true">{isExpanded(c) ? '▲' : '▼'}</span>
                     <span class="sr-only">{isExpanded(c) ? 'Collapse memory' : 'Expand memory'}</span>
                   </button>
@@ -571,8 +572,8 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                     </div>
                   {/if}
                 {/if}
-                <div class="event-meta">
-                  <div class="event-when">{c.relPath}</div>
+                <div class="event-card-meta">
+                  <div class="event-card-time">{c.relPath}</div>
                 </div>
               </div>
             {/each}
@@ -594,14 +595,14 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
             {:else}
               {#each aiIngestorMemories as event}
                 <div class="event-card ai-ingestor-card">
-                  <div class="event-header">
+                  <div class="event-card-header">
                     <button
                       class="event-title-button"
                       type="button"
                       on:click={() => toggleExpanded(event)}
                       aria-expanded={isExpanded(event)}
                     >
-                      <span class="event-title">{getPreview(event.content)}</span>
+                      <span class="event-card-title">{getPreview(event.content)}</span>
                       <span class="event-toggle-icon" aria-hidden="true">{isExpanded(event) ? '▲' : '▼'}</span>
                       <span class="sr-only">{isExpanded(event) ? 'Collapse memory' : 'Expand memory'}</span>
                     </button>
@@ -624,8 +625,8 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                       </div>
                     {/if}
                   {/if}
-                  <div class="event-meta">
-                    <div class="event-when">{new Date(event.timestamp).toLocaleString()}</div>
+                  <div class="event-card-meta">
+                    <div class="event-card-time">{new Date(event.timestamp).toLocaleString()}</div>
                     {#if event.validation?.status}
                       <div class="event-valid {event.validation.status}">{event.validation.status}</div>
                     {/if}
@@ -662,14 +663,14 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
             {:else}
               {#each audioTranscriptMemories as event}
                 <div class="event-card audio-transcript-card">
-                  <div class="event-header">
+                  <div class="event-card-header">
                     <button
                       class="event-title-button"
                       type="button"
                       on:click={() => toggleExpanded(event)}
                       aria-expanded={isExpanded(event)}
                     >
-                      <span class="event-title">{getPreview(event.content)}</span>
+                      <span class="event-card-title">{getPreview(event.content)}</span>
                       <span class="event-toggle-icon" aria-hidden="true">{isExpanded(event) ? '▲' : '▼'}</span>
                       <span class="sr-only">{isExpanded(event) ? 'Collapse memory' : 'Expand memory'}</span>
                     </button>
@@ -692,8 +693,8 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                       </div>
                     {/if}
                   {/if}
-                  <div class="event-meta">
-                    <div class="event-when">{new Date(event.timestamp).toLocaleString()}</div>
+                  <div class="event-card-meta">
+                    <div class="event-card-time">{new Date(event.timestamp).toLocaleString()}</div>
                     {#if event.validation?.status}
                       <div class="event-valid {event.validation.status}">{event.validation.status}</div>
                     {/if}
@@ -722,14 +723,14 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
           {#if dreamMemories.length > 0}
             {#each dreamMemories as event (event.id)}
               <div class="event-card dream-card">
-                <div class="event-header">
+                <div class="event-card-header">
                   <button
                     class="event-title-button"
                     type="button"
                     on:click={() => toggleExpanded(event)}
                     aria-expanded={isExpanded(event)}
                   >
-                    <span class="event-title">{getPreview(event.content)}</span>
+                    <span class="event-card-title">{getPreview(event.content)}</span>
                     <span class="event-toggle-icon" aria-hidden="true">{isExpanded(event) ? '▲' : '▼'}</span>
                     <span class="sr-only">{isExpanded(event) ? 'Collapse memory' : 'Expand memory'}</span>
                   </button>
@@ -746,8 +747,8 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                     </div>
                   {/if}
                 {/if}
-                <div class="event-meta">
-                  <div class="event-when">{new Date(event.timestamp).toLocaleString()}</div>
+                <div class="event-card-meta">
+                  <div class="event-card-time">{new Date(event.timestamp).toLocaleString()}</div>
                   {#if event.metadata?.sources && event.metadata.sources.length > 0}
                      <div class="event-links">
                        Sources:
@@ -773,9 +774,10 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
         <p class="view-subtitle">Audio upload, transcription & voice training</p>
       </div>
       <div class="view-content">
-        <div class="memory-tabs">
-          <button class="mem-tab" class:active={voiceTab==='upload'} on:click={() => voiceTab='upload'}>Upload & Transcribe</button>
-          <button class="mem-tab" class:active={voiceTab==='training'} on:click={() => voiceTab='training'}>Voice Clone Training</button>
+        <div class="tab-group">
+          <button class="tab-button" class:active={voiceTab==='upload'} on:click={() => voiceTab='upload'}>Upload & Transcribe</button>
+          <button class="tab-button" class:active={voiceTab==='training'} on:click={() => voiceTab='training'}>Voice Clone Training</button>
+          <button class="tab-button" class:active={voiceTab==='settings'} on:click={() => voiceTab='settings'}>Voice Settings</button>
         </div>
         {#if voiceTab === 'upload'}
           <div class="audio-grid">
@@ -784,6 +786,8 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
           </div>
         {:else if voiceTab === 'training'}
           <VoiceTrainingWidget />
+        {:else if voiceTab === 'settings'}
+          <VoiceSettings />
         {/if}
       </div>
     </div>
@@ -794,10 +798,10 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
         <p class="view-subtitle">LoRA datasets, training & adapters</p>
       </div>
       <div class="view-content">
-        <div class="memory-tabs">
-          <button class="mem-tab" class:active={trainingTab==='datasets'} on:click={() => trainingTab='datasets'}>Datasets</button>
-          <button class="mem-tab" class:active={trainingTab==='monitor'} on:click={() => trainingTab='monitor'}>Training Monitor</button>
-          <button class="mem-tab" class:active={trainingTab==='adapters'} on:click={() => trainingTab='adapters'}>Adapters</button>
+        <div class="tab-group">
+          <button class="tab-button" class:active={trainingTab==='datasets'} on:click={() => trainingTab='datasets'}>Datasets</button>
+          <button class="tab-button" class:active={trainingTab==='monitor'} on:click={() => trainingTab='monitor'}>Training Monitor</button>
+          <button class="tab-button" class:active={trainingTab==='adapters'} on:click={() => trainingTab='adapters'}>Adapters</button>
         </div>
         {#if trainingTab === 'datasets'}
           <AdapterDashboard />
@@ -821,10 +825,10 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
         <p class="view-subtitle">Persona, tools & settings</p>
       </div>
       <div class="view-content">
-        <div class="memory-tabs">
-          <button class="mem-tab" class:active={systemTab==='persona'} on:click={() => systemTab='persona'}>Persona</button>
-          <button class="mem-tab" class:active={systemTab==='lifeline'} on:click={() => systemTab='lifeline'}>Lifeline</button>
-          <button class="mem-tab" class:active={systemTab==='terminal'} on:click={() => systemTab='terminal'}>Terminal</button>
+        <div class="tab-group">
+          <button class="tab-button" class:active={systemTab==='persona'} on:click={() => systemTab='persona'}>Persona</button>
+          <button class="tab-button" class:active={systemTab==='lifeline'} on:click={() => systemTab='lifeline'}>Lifeline</button>
+          <button class="tab-button" class:active={systemTab==='terminal'} on:click={() => systemTab='terminal'}>Terminal</button>
         </div>
         {#if systemTab === 'persona'}
           <div class="persona-panel">
@@ -937,344 +941,147 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
 </div>
 
 <style>
+  /* Minimal custom styles - most styling now uses Tailwind classes from global CSS */
+
   .center-content {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    width: 100%;
-    overflow: hidden;
+    @apply flex flex-col h-full w-full overflow-hidden;
   }
 
-  .view-container {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    overflow: hidden;
-  }
-
-  .view-container.terminal-view {
+  .terminal-view {
     padding: 0;
-  }
-
-  .view-header {
-    padding: 1.5rem 2rem 1rem;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-    flex-shrink: 0;
-  }
-
-  :global(.dark) .view-header {
-    border-bottom-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .view-title {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: rgb(17 24 39);
-    margin: 0 0 0.25rem 0;
-  }
-
-  :global(.dark) .view-title {
-    color: rgb(243 244 246);
-  }
-
-  .view-subtitle {
-    font-size: 0.875rem;
-    color: rgb(107 114 128);
-    margin: 0;
-  }
-
-  :global(.dark) .view-subtitle {
-    color: rgb(156 163 175);
-  }
-
-  .view-content {
-    flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding: 2rem;
   }
 
   .audio-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1rem;
+    @apply grid grid-cols-2 gap-4;
   }
 
-  .memory-tabs { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
-  .mem-tab { padding: 0.35rem 0.75rem; border-radius: 9999px; border: 1px solid rgba(0,0,0,0.15); background: white; cursor: pointer; font-weight: 600; font-size: 0.85rem; }
-  .mem-tab.active { background: rgb(124 58 237); color: white; border-color: transparent; }
-  :global(.dark) .mem-tab { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.2); color: rgb(209 213 219) }
-  :global(.dark) .mem-tab.active { background: rgb(167 139 250); color: rgb(17 24 39); }
-
-  /* Loading/Empty States */
-  .loading-state,
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .loading-state,
-  :global(.dark) .empty-state {
-    color: rgb(156 163 175);
-  }
-
-  .empty-icon {
-    font-size: 4rem;
-    margin-bottom: 1rem;
-    opacity: 0.5;
-  }
-
-  .empty-title {
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .empty-title {
-    color: rgb(243 244 246);
-  }
-
-  .empty-description {
-    font-size: 0.875rem;
-    text-align: center;
-    max-width: 400px;
-  }
-
-  .empty-description code {
-    padding: 0.125rem 0.375rem;
-    border-radius: 0.25rem;
-    background: rgba(0, 0, 0, 0.1);
-    font-family: monospace;
-    font-size: 0.875em;
-  }
-
-  :global(.dark) .empty-description code {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  /* Events List */
+  /* Events list - using flex gap */
   .events-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
+    @apply flex flex-col gap-4;
   }
 
-  .event-card {
-    padding: 1rem;
-    border-radius: 0.5rem;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    background: white;
-  }
-
-  :global(.dark) .event-card {
-    border-color: rgba(255, 255, 255, 0.1);
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .event-title {
-    font-weight: 600;
-    color: rgb(17 24 39);
-    margin: 0;
-  }
-
-  :global(.dark) .event-title {
-    color: rgb(243 244 246);
-  }
-
+  /* Event title button - custom behavior */
   .event-title-button {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    background: none;
-    border: none;
+    @apply flex-1 flex items-center gap-2 bg-transparent cursor-pointer text-left;
+    border: 0;
     padding: 0;
     margin: 0;
-    cursor: pointer;
-    text-align: left;
-    color: inherit;
     font: inherit;
   }
 
   .event-title-button:focus-visible {
-    outline: 2px solid rgba(59, 130, 246, 0.6);
-    outline-offset: 2px;
+    @apply outline-2 outline-blue-500/60 outline-offset-2;
   }
 
   .event-toggle-icon {
-    font-size: 0.75rem;
-    color: rgb(107 114 128);
+    @apply text-xs text-gray-500 dark:text-gray-400;
   }
 
-  :global(.dark) .event-toggle-icon {
-    color: rgb(156 163 175);
+  /* Validation controls */
+  .validation-controls {
+    @apply flex gap-1;
   }
 
-  .event-when {
-    font-size: 0.875rem;
-    color: rgb(107 114 128);
+  .val-btn {
+    @apply w-7 h-7 rounded-md border border-black/15 dark:border-white/20
+           bg-white dark:bg-white/5 font-bold cursor-pointer
+           transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
-  :global(.dark) .event-when {
-    color: rgb(156 163 175);
+  .val-btn.good {
+    @apply text-green-600 border-green-600/30
+           hover:bg-green-50 dark:hover:bg-green-900/20;
   }
 
-  .event-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
-  .validation-controls { display: flex; gap: 0.25rem; }
-  .val-btn { width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.15); background: white; font-weight: 700; cursor: pointer; }
-  .val-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .val-btn.good { color: rgb(22 163 74); border-color: rgba(22,163,74,0.3); }
-  .val-btn.bad { color: rgb(220 38 38); border-color: rgba(220,38,38,0.3); }
-  :global(.dark) .val-btn { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.2); }
-
-  .event-meta {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: 0.5rem;
-    gap: 0.5rem;
-    flex-wrap: wrap;
+  .val-btn.bad {
+    @apply text-red-600 border-red-600/30
+           hover:bg-red-50 dark:hover:bg-red-900/20;
   }
-  .event-valid { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.15rem 0.4rem; border-radius: 0.25rem; }
-  .event-valid.correct { color: rgb(22 163 74); background: rgba(22,163,74,0.1); }
-  .event-valid.incorrect { color: rgb(220 38 38); background: rgba(220,38,38,0.1); }
 
+  /* Event status badges */
+  .event-valid {
+    @apply text-xs uppercase tracking-wide px-1.5 py-0.5 rounded;
+  }
+
+  .event-valid.correct {
+    @apply text-green-600 bg-green-600/10;
+  }
+
+  .event-valid.incorrect {
+    @apply text-red-600 bg-red-600/10;
+  }
+
+  /* Event body content */
   .event-body {
-    margin-top: 0.75rem;
-    font-size: 0.95rem;
-    line-height: 1.55;
-    color: rgb(55 65 81);
-    border-top: 1px solid rgba(0, 0, 0, 0.08);
-    padding-top: 0.75rem;
-  }
-
-  :global(.dark) .event-body {
-    color: rgb(209 213 219);
-    border-top-color: rgba(255, 255, 255, 0.1);
+    @apply mt-3 text-base leading-relaxed text-gray-700 dark:text-gray-300
+           border-t border-black/10 dark:border-white/10 pt-3;
   }
 
   .event-body pre {
-    margin: 0;
+    @apply m-0 whitespace-pre-wrap break-words;
     font: inherit;
-    white-space: pre-wrap;
-    word-break: break-word;
   }
 
   .event-body.loading,
   .event-body.error {
-    font-weight: 500;
+    @apply font-medium;
   }
 
   .event-body.error {
-    color: rgb(220 38 38);
+    @apply text-red-600;
   }
 
+  /* Screen reader only */
   .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
+    @apply absolute w-px h-px p-0 -m-px overflow-hidden whitespace-nowrap border-0;
     clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
   }
 
-  /* Persona Info */
+  /* Persona panel */
   .persona-panel {
-    max-width: 760px;
-    margin: 0 auto;
-    padding: 2rem 2.5rem;
+    @apply max-w-3xl mx-auto p-8;
   }
 
   .persona-form {
-    display: flex;
-    flex-direction: column;
-    gap: 1.75rem;
+    @apply flex flex-col gap-7;
   }
 
   .persona-section h4 {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 0.75rem;
+    @apply text-base font-semibold mb-3;
   }
 
   .form-grid {
-    display: grid;
+    @apply grid gap-4 mb-4;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 1rem;
-    margin-bottom: 1rem;
   }
 
   .field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
+    @apply flex flex-col gap-1.5;
   }
 
   .field > span {
-    font-size: 0.8rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .field > span {
-    color: rgb(156 163 175);
+    @apply block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1;
   }
 
   .field input,
   .field textarea {
-    border: 1px solid rgba(0,0,0,0.12);
-    border-radius: 0.5rem;
-    padding: 0.55rem 0.75rem;
-    font-size: 0.9rem;
-    background: white;
-    color: rgb(17 24 39);
-    transition: border-color 0.2s, box-shadow 0.2s;
+    @apply w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600
+           bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100
+           focus:outline-none focus:ring-2 focus:ring-violet-500 dark:focus:ring-violet-400;
   }
 
   .field textarea {
-    min-height: 120px;
-    resize: vertical;
-  }
-
-  :global(.dark) .field input,
-  :global(.dark) .field textarea {
-    background: rgb(17 24 39);
-    color: rgb(243 244 246);
-    border-color: rgba(255,255,255,0.15);
-  }
-
-  .field input:focus,
-  .field textarea:focus {
-    border-color: rgb(124 58 237);
-    box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
-    outline: none;
+    @apply min-h-[120px] resize-y;
   }
 
   .persona-actions {
-    display: flex;
-    justify-content: flex-end;
+    @apply flex justify-end;
   }
 
   .save-button {
-    appearance: none;
-    border: none;
+    @apply px-4 py-2 rounded-lg font-semibold transition-all text-white
+           disabled:opacity-50 disabled:cursor-not-allowed;
     background: linear-gradient(135deg, rgb(124 58 237), rgb(109 40 217));
-    color: white;
-    font-weight: 600;
-    font-size: 0.95rem;
-    padding: 0.65rem 1.5rem;
-    border-radius: 0.5rem;
-    cursor: pointer;
     transition: transform 0.1s ease, box-shadow 0.2s ease;
   }
 
@@ -1287,72 +1094,37 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
   }
 
   .save-button:disabled {
-    opacity: 0.7;
-    cursor: wait;
+    @apply opacity-70 cursor-wait;
   }
 
   .persona-alert {
-    border-radius: 0.5rem;
-    padding: 0.75rem 1rem;
-    margin-bottom: 1rem;
-    font-size: 0.85rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
+    @apply rounded-lg px-4 py-3 mb-4 text-sm flex items-center justify-between gap-4;
   }
 
   .persona-alert.success {
-    background: rgba(16, 185, 129, 0.15);
-    color: rgb(5 150 105);
-  }
-
-  :global(.dark) .persona-alert.success {
-    background: rgba(16, 185, 129, 0.2);
-    color: rgb(52 211 153);
+    @apply bg-green-50 dark:bg-green-900/20
+           border border-green-200 dark:border-green-700
+           text-green-800 dark:text-green-300;
   }
 
   .persona-alert.error {
-    background: rgba(239, 68, 68, 0.15);
-    color: rgb(220 38 38);
-  }
-
-  :global(.dark) .persona-alert.error {
-    background: rgba(239, 68, 68, 0.2);
-    color: rgb(248 113 113);
+    @apply bg-red-50 dark:bg-red-900/20
+           border border-red-200 dark:border-red-700
+           text-red-800 dark:text-red-300;
   }
 
   .persona-alert.inline {
-    justify-content: flex-start;
+    @apply justify-start;
   }
 
   .retry-button {
+    @apply bg-red-600 text-white font-semibold px-3.5 py-1.5 rounded-lg
+           cursor-pointer transition-colors flex-shrink-0 hover:bg-red-700;
     appearance: none;
     border: none;
-    background: rgb(220 38 38);
-    color: white;
-    font-weight: 600;
-    padding: 0.4rem 0.9rem;
-    border-radius: 0.5rem;
-    cursor: pointer;
-    transition: background 0.2s ease;
-    flex-shrink: 0;
   }
 
-  .retry-button:hover {
-    background: rgb(185 28 28);
-  }
-
-  .muted {
-    color: rgb(107 114 128);
-    line-height: 1.6;
-  }
-
-  :global(.dark) .muted {
-    color: rgb(156 163 175);
-  }
-
-  /* Scrollbar */
+  /* Scrollbar styling */
   .view-content::-webkit-scrollbar {
     width: 8px;
   }
@@ -1362,86 +1134,39 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
   }
 
   .view-content::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 4px;
-  }
-
-  :global(.dark) .view-content::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
+    @apply bg-black/20 dark:bg-white/20 rounded;
   }
 
   .view-content::-webkit-scrollbar-thumb:hover {
-    background: rgba(0, 0, 0, 0.3);
+    @apply bg-black/30 dark:bg-white/30;
   }
 
-  :global(.dark) .view-content::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.3);
-  }
-
-  /* AI Ingestor Styles */
+  /* Card type indicators - using border accent utilities */
   .ai-ingestor-card {
-    border-left: 3px solid rgb(124 58 237);
+    @apply border-l-4 border-l-violet-600 dark:border-l-violet-400;
   }
 
-  :global(.dark) .ai-ingestor-card {
-    border-left-color: rgb(167 139 250);
+  .audio-transcript-card {
+    @apply border-l-4 border-l-blue-500 dark:border-l-blue-400;
   }
 
-  .event-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem;
-    margin-top: 0.25rem;
+  .dream-card {
+    @apply border-l-4 border-l-yellow-500 dark:border-l-yellow-400;
+  }
+
+  /* Tag wrapper */
+  .event-tags,
+  .event-links {
+    @apply flex flex-wrap gap-1 mt-1;
   }
 
   .event-tag {
-    font-size: 0.7rem;
-    padding: 0.125rem 0.375rem;
-    border-radius: 0.25rem;
-    background: rgba(124, 58, 237, 0.1);
-    color: rgb(124 58 237);
-    font-weight: 500;
-  }
-
-  :global(.dark) .event-tag {
-    background: rgba(167, 139, 250, 0.2);
-    color: rgb(167 139 250);
-  }
-
-  .event-links {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem;
-    margin-top: 0.25rem;
+    @apply text-xs px-1.5 py-0.5 rounded bg-violet-600/10 dark:bg-violet-400/20
+           text-violet-700 dark:text-violet-300 font-medium;
   }
 
   .event-link {
-    font-size: 0.7rem;
-    padding: 0.125rem 0.375rem;
-    border-radius: 0.25rem;
-    background: rgba(59, 130, 246, 0.1);
-    color: rgb(59 130 246);
-    font-weight: 500;
+    @apply text-xs px-1.5 py-0.5 rounded bg-blue-500/10 dark:bg-blue-400/20
+           text-blue-600 dark:text-blue-400 font-medium;
   }
-
-  :global(.dark) .event-link {
-    background: rgba(96, 165, 250, 0.2);
-    color: rgb(96 165 250);
-  }
-
-  /* Audio Transcript Styles */
-  .audio-transcript-card {
-    border-left: 3px solid rgb(59 130 246);
-  }
-
-  :global(.dark) .audio-transcript-card {
-    border-left-color: rgb(96 165 250);
-  }
-
-.dream-card {
-  border-left: 3px solid rgb(250 204 21); /* Example: Yellow border */
-}
-:global(.dark) .dream-card {
-  border-left-color: rgb(253 224 71); /* Example: Lighter yellow for dark mode */
-}
 </style>

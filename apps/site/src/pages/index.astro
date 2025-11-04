@@ -4,6 +4,8 @@ import LeftSidebar from '../components/LeftSidebar.svelte';
 import RightSidebar from '../components/RightSidebar.svelte';
 import CenterContent from '../components/CenterContent.svelte';
 import ThemeToggle from '../components/ThemeToggle.astro';
+import SplashScreen from '../components/SplashScreen.svelte';
+import '../styles/tailwind.css';
 ---
 
 <!DOCTYPE html>
@@ -33,12 +35,31 @@ import ThemeToggle from '../components/ThemeToggle.astro';
     </script>
   </head>
   <body>
-    <ChatLayout client:load>
-      <ThemeToggle slot="header-actions" />
-      <LeftSidebar slot="left-sidebar" client:load />
-      <CenterContent slot="center" client:load />
-      <RightSidebar slot="right-sidebar" client:load />
-    </ChatLayout>
+    <!-- Splash Screen -->
+    <SplashScreen client:only="svelte" />
+
+    <!-- Main Application -->
+    <div id="main-app" style="opacity: 0; transition: opacity 0.3s ease-in;">
+      <ChatLayout client:load>
+        <ThemeToggle slot="header-actions" />
+        <LeftSidebar slot="left-sidebar" client:load />
+        <CenterContent slot="center" client:load />
+        <RightSidebar slot="right-sidebar" client:load />
+      </ChatLayout>
+    </div>
+
+    <script>
+      // Show main app after splash screen completes
+      window.addEventListener('DOMContentLoaded', () => {
+        // Wait for splash to complete (handled by SplashScreen component)
+        setTimeout(() => {
+          const mainApp = document.getElementById('main-app');
+          if (mainApp) {
+            mainApp.style.opacity = '1';
+          }
+        }, 2500); // Should match splash screen total duration
+      });
+    </script>
   </body>
 </html>
 

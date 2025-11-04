@@ -223,9 +223,9 @@
 
         {#if hasModelRegistry}
           <!-- Multi-model registry view -->
-          <div class="status-row">
+<!--           <div class="status-row">
             <span class="status-label">LLM Roles:</span>
-          </div>
+          </div> -->
           {#each Object.entries(modelRoles) as [role, info]}
             <div class="model-role-row" class:active={activeRoles.has(role)}>
               <span class="activity-indicator">
@@ -272,12 +272,13 @@
   <div class="sidebar-footer">
     <div class="footer-text">
       MetaHuman OS
-      <span class="footer-version">Phase 0</span>
+      <span class="footer-version">Version 1.13</span>
     </div>
   </div>
 </div>
 
 <style>
+  /* Container - unique to LeftSidebar */
   .left-sidebar-container {
     display: flex;
     flex-direction: column;
@@ -286,122 +287,7 @@
     gap: 1rem;
   }
 
-  /* Menu */
-  .menu {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .menu-item {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    border: none;
-    background: transparent;
-    border-radius: 0.5rem;
-    cursor: pointer;
-    transition: all 0.2s;
-    text-align: left;
-    width: 100%;
-  }
-
-  .menu-item:hover {
-    background: rgba(0, 0, 0, 0.05);
-  }
-
-  :global(.dark) .menu-item:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .menu-item.active {
-    background: rgb(124 58 237);
-    color: white;
-  }
-
-  :global(.dark) .menu-item.active {
-    background: rgb(167 139 250);
-    color: rgb(17 24 39);
-  }
-
-  .menu-icon {
-    font-size: 1.25rem;
-    flex-shrink: 0;
-  }
-
-  .menu-text {
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-    min-width: 0;
-  }
-
-  .menu-label {
-    font-weight: 500;
-    font-size: 0.875rem;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .menu-label {
-    color: rgb(243 244 246);
-  }
-
-  .menu-item.active .menu-label {
-    color: white;
-  }
-
-  :global(.dark) .menu-item.active .menu-label {
-    color: rgb(17 24 39);
-  }
-
-  .menu-description {
-    font-size: 0.75rem;
-    color: rgb(107 114 128);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  :global(.dark) .menu-description {
-    color: rgb(156 163 175);
-  }
-
-  .menu-item.active .menu-description {
-    color: rgba(255, 255, 255, 0.8);
-  }
-
-  :global(.dark) .menu-item.active .menu-description {
-    color: rgba(17, 24, 39, 0.7);
-  }
-
-  /* Status Widget */
-  .status-widget {
-    margin-top: auto;
-    padding: 1rem;
-    border-radius: 0.5rem;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    background: rgba(255, 255, 255, 0.5);
-  }
-
-  :global(.dark) .status-widget {
-    border-color: rgba(255, 255, 255, 0.1);
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .widget-header {
-    font-weight: 600;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: rgb(107 114 128);
-    margin-bottom: 0.75rem;
-  }
-
-  :global(.dark) .widget-header {
-    color: rgb(156 163 175);
-  }
-
+  /* Widget loading state - component-specific */
   .widget-loading {
     font-size: 0.875rem;
     color: rgb(107 114 128);
@@ -419,111 +305,96 @@
     gap: 0.5rem;
   }
 
-  .status-sep { height: 1px; background: rgba(0,0,0,0.06); margin: 0.25rem 0; }
-  :global(.dark) .status-sep { background: rgba(255,255,255,0.12); }
-
-  .status-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: 0.875rem;
-    gap: 0.5rem;
+  .status-sep {
+    height: 1px;
+    background: rgba(0,0,0,0.06);
+    margin: 0.25rem 0;
   }
 
-  .status-label {
-    color: rgb(107 114 128);
+  :global(.dark) .status-sep {
+    background: rgba(255,255,255,0.12);
+  }
+
+  .mono {
+    font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+    font-size: 0.78rem;
     font-weight: 500;
   }
 
-  :global(.dark) .status-label {
-    color: rgb(156 163 175);
-  }
-
-  .status-value {
-    color: rgb(17 24 39);
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    text-align: right;
-  }
-
-  :global(.dark) .status-value {
-    color: rgb(243 244 246);
-  }
-
-  .status-badge {
-    display: inline-block;
-    padding: 0.125rem 0.5rem;
+  /* Adapter mode badges - LeftSidebar-specific variants */
+  .adapter-mode-badge {
+    padding: 0.125rem 0.4rem;
     border-radius: 9999px;
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: 0.7rem;
     text-transform: lowercase;
-    border: 1px solid transparent;
+    margin-right: 0.5rem;
+    background: rgba(107,114,128,0.16);
+    color: rgb(75 85 99);
   }
 
-  .adapter-badge { padding: 0.125rem 0.375rem; border-radius: 9999px; font-size: 0.7rem; text-transform: lowercase; }
-  .adapter-badge.ok { background: rgb(220 252 231); color: rgb(22 101 52); }
-  .adapter-badge.warn { background: rgb(254 249 195); color: rgb(161 98 7); }
-  .adapter-badge.info { background: rgb(219 234 254); color: rgb(30 64 175); }
-  :global(.dark) .adapter-badge.ok { background: rgba(22,101,52,0.2); color: rgb(134 239 172); }
-  :global(.dark) .adapter-badge.warn { background: rgba(161,98,7,0.2); color: rgb(253 224 71); }
-  :global(.dark) .adapter-badge.info { background: rgba(30,64,175,0.2); color: rgb(191 219 254); }
-
-  .adapter-mode-badge { padding: 0.125rem 0.4rem; border-radius: 9999px; font-size: 0.7rem; text-transform: lowercase; margin-right: 0.5rem; background: rgba(107,114,128,0.16); color: rgb(75 85 99); }
-  .adapter-mode-badge.mode-none { background: rgba(107,114,128,0.16); color: rgb(107 114 128); }
-  .adapter-mode-badge.mode-adapter { background: rgba(14,165,233,0.18); color: rgb(3 105 161); }
-  .adapter-mode-badge.mode-merged { background: rgba(129,140,248,0.18); color: rgb(79 70 229); }
-  .adapter-mode-badge.mode-dual { background: rgba(236,72,153,0.18); color: rgb(190 24 93); }
-  :global(.dark) .adapter-mode-badge { background: rgba(148,163,184,0.16); color: rgb(226 232 240); }
-  :global(.dark) .adapter-mode-badge.mode-adapter { background: rgba(56,189,248,0.18); color: rgb(125 211 252); }
-  :global(.dark) .adapter-mode-badge.mode-merged { background: rgba(99,102,241,0.18); color: rgb(165 180 252); }
-  :global(.dark) .adapter-mode-badge.mode-dual { background: rgba(244,114,182,0.18); color: rgb(251 207 232); }
-
-  .adapter-flag { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; color: rgb(107 114 128); border: 1px solid rgba(107,114,128,0.3); border-radius: 4px; padding: 0.05rem 0.3rem; }
-  :global(.dark) .adapter-flag { color: rgb(209 213 219); border-color: rgba(209,213,219,0.25); }
-  .adapter-source { font-size: 0.65rem; color: rgb(107 114 128); margin-left: 0.4rem; }
-  :global(.dark) .adapter-source { color: rgb(156 163 175); }
-  .mono { font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; font-size: 0.78rem; font-weight: 500; }
-
-  .trust-observe {
-    background: rgb(239 246 255);
-    color: rgb(29 78 216);
+  .adapter-mode-badge.mode-none {
+    background: rgba(107,114,128,0.16);
+    color: rgb(107 114 128);
   }
 
-  :global(.dark) .trust-observe {
-    background: rgba(29, 78, 216, 0.2);
-    color: rgb(147 197 253);
+  .adapter-mode-badge.mode-adapter {
+    background: rgba(14,165,233,0.18);
+    color: rgb(3 105 161);
   }
 
-  .trust-suggest {
-    background: rgb(254 249 195);
-    color: rgb(161 98 7);
+  .adapter-mode-badge.mode-merged {
+    background: rgba(129,140,248,0.18);
+    color: rgb(79 70 229);
   }
 
-  :global(.dark) .trust-suggest {
-    background: rgba(161, 98, 7, 0.2);
-    color: rgb(253 224 71);
+  .adapter-mode-badge.mode-dual {
+    background: rgba(236,72,153,0.18);
+    color: rgb(190 24 93);
   }
 
-  .trust-supervised_auto {
-    background: rgb(254 226 226);
-    color: rgb(185 28 28);
+  :global(.dark) .adapter-mode-badge {
+    background: rgba(148,163,184,0.16);
+    color: rgb(226 232 240);
   }
 
-  :global(.dark) .trust-supervised_auto {
-    background: rgba(185, 28, 28, 0.2);
-    color: rgb(252 165 165);
+  :global(.dark) .adapter-mode-badge.mode-adapter {
+    background: rgba(56,189,248,0.18);
+    color: rgb(125 211 252);
   }
 
-  .trust-bounded_auto {
-    background: rgb(220 252 231);
-    color: rgb(22 101 52);
+  :global(.dark) .adapter-mode-badge.mode-merged {
+    background: rgba(99,102,241,0.18);
+    color: rgb(165 180 252);
   }
 
-  :global(.dark) .trust-bounded_auto {
-    background: rgba(22, 101, 52, 0.2);
-    color: rgb(134 239 172);
+  :global(.dark) .adapter-mode-badge.mode-dual {
+    background: rgba(244,114,182,0.18);
+    color: rgb(251 207 232);
+  }
+
+  .adapter-flag {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgb(107 114 128);
+    border: 1px solid rgba(107,114,128,0.3);
+    border-radius: 4px;
+    padding: 0.05rem 0.3rem;
+  }
+
+  :global(.dark) .adapter-flag {
+    color: rgb(209 213 219);
+    border-color: rgba(209,213,219,0.25);
+  }
+
+  .adapter-source {
+    font-size: 0.65rem;
+    color: rgb(107 114 128);
+    margin-left: 0.4rem;
+  }
+
+  :global(.dark) .adapter-source {
+    color: rgb(156 163 175);
   }
 
   .in-progress-badge {
@@ -539,6 +410,7 @@
     color: rgb(17 24 39);
   }
 
+  /* Approval count badge - unique to LeftSidebar */
   .approval-badge {
     display: inline-block;
     margin-left: 0.5rem;
@@ -555,7 +427,7 @@
     color: rgb(17 24 39);
   }
 
-  /* Footer */
+  /* Footer - unique to LeftSidebar */
   .sidebar-footer {
     padding: 0.75rem 0;
     border-top: 1px solid rgba(0, 0, 0, 0.1);
@@ -584,8 +456,17 @@
     opacity: 0.7;
   }
 
-  .trust-control { position: relative; display: inline-block; }
-  .status-badge .chev { margin-left: 6px; opacity: 0.7; }
+  /* Trust level dropdown - component-specific */
+  .trust-control {
+    position: relative;
+    display: inline-block;
+  }
+
+  .status-badge .chev {
+    margin-left: 6px;
+    opacity: 0.7;
+  }
+
   .trust-menu {
     position: absolute;
     right: 0;
@@ -598,7 +479,12 @@
     padding: 0.25rem;
     min-width: 160px;
   }
-  :global(.dark) .trust-menu { background: rgb(3 7 18); border-color: rgba(255,255,255,0.15); }
+
+  :global(.dark) .trust-menu {
+    background: rgb(3 7 18);
+    border-color: rgba(255,255,255,0.15);
+  }
+
   .trust-opt {
     display: block;
     width: 100%;
@@ -610,9 +496,18 @@
     font-size: 0.85rem;
     cursor: pointer;
   }
-  .trust-opt:hover { background: rgba(0,0,0,0.06); }
-  :global(.dark) .trust-opt:hover { background: rgba(255,255,255,0.08); }
-  .trust-opt.active { font-weight: 700; }
+
+  .trust-opt:hover {
+    background: rgba(0,0,0,0.06);
+  }
+
+  :global(.dark) .trust-opt:hover {
+    background: rgba(255,255,255,0.08);
+  }
+
+  .trust-opt.active {
+    font-weight: 700;
+  }
 
   /* Model Roles Display */
   .model-role-row {

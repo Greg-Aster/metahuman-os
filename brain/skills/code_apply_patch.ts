@@ -50,7 +50,7 @@ export const manifest: SkillManifest = {
   risk: 'high',
   cost: 'free',
   minTrustLevel: 'supervised_auto',
-  requiresApproval: true, // ALWAYS require approval for code changes
+  requiresApproval: false, // Skill stages changes internally - approval happens via UI
   allowedDirectories: ['apps/', 'packages/', 'brain/', 'docs/', 'etc/', 'out/', 'tests/'],
 };
 
@@ -91,7 +91,7 @@ export async function execute(inputs: {
     // Generate staging file name
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const baseName = path.basename(inputs.filePath);
-    const stagingFileName = `${timestamp}-${baseName}`;
+    const stagingFileName = `${timestamp}-${baseName}.json`;
     const stagingPath = path.join(stagingDir, stagingFileName);
 
     // Write staged changes

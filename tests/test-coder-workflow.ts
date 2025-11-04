@@ -8,10 +8,10 @@
  * 4. Changes appear in approval queue
  */
 
-import { runTask } from '../brain/agents/operator.ts';
+import { runTask } from '../brain/agents/operator';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '../packages/core/src/index.js';
+import { paths } from '../packages/core/src/index';
 
 console.log('='.repeat(70));
 console.log('TEST: Self-Healing Coder Agent - End-to-End Workflow');
@@ -49,6 +49,7 @@ const task = {
 console.log(`\nTask: ${task.goal}`);
 console.log('');
 
+async function runTest() {
 try {
   const result = await runTask(task, 1, { autoApprove: false, mode: 'strict' });
 
@@ -130,3 +131,7 @@ try {
   console.error('Test failed with error:', error);
   process.exit(1);
 }
+}
+
+// Run the test
+runTest().catch(console.error);

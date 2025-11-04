@@ -3,6 +3,7 @@
 The following features are currently in the planning and proposal stage. For more details, please refer to the linked design documents.
 
 -   **[Cognitive Modes](04-core-concepts.md#8-cognitive-modes-upcoming-feature)**: A planned feature to allow switching between different operational paradigms, such as a deep cognitive mirror (`Dual Consciousness`), a simple command-driven assistant (`Agent Mode`), or a stable, non-learning conversational partner (`Emulation Mode`).
+-   **Direct `llama.cpp` Integration**: Future versions will explore direct `llama.cpp` integration, offering an alternative to Ollama for users who prefer a more direct local LLM setup.
 
 ## What's Next
 

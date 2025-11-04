@@ -37,8 +37,8 @@ let config: VoiceConfig | null = null;
 /**
  * Load voice configuration from etc/voice.json
  */
-function loadConfig(): VoiceConfig {
-  if (config) return config;
+function loadConfig(forceReload = false): VoiceConfig {
+  if (config && !forceReload) return config;
 
   const configPath = path.join(paths.root, 'etc', 'voice.json');
   if (!fs.existsSync(configPath)) {
@@ -68,20 +68,21 @@ function loadConfig(): VoiceConfig {
 }
 
 /**
- * Generate a cache key for text
+ * Generate a cache key for text, model, and speaking rate
  */
-function getCacheKey(text: string): string {
-  return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
+function getCacheKey(text: string, modelPath: string, speakingRate: number): string {
+  const key = `${text}|${modelPath}|${speakingRate}`;
+  return crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
 }
 
 /**
- * Check if cached audio exists for text
+ * Check if cached audio exists for text, model, and speaking rate
  */
-function getCachedAudio(text: string): Buffer | null {
+function getCachedAudio(text: string, modelPath: string, speakingRate: number): Buffer | null {
   const cfg = loadConfig();
   if (!cfg.cache.enabled) return null;
 
-  const cacheKey = getCacheKey(text);
+  const cacheKey = getCacheKey(text, modelPath, speakingRate);
   const cachePath = path.join(cfg.cache.directory, `${cacheKey}.wav`);
 
   if (fs.existsSync(cachePath)) {
@@ -89,7 +90,7 @@ function getCachedAudio(text: string): Buffer | null {
       level: 'info',
       category: 'action',
       event: 'tts_cache_hit',
-      details: { cacheKey, textLength: text.length },
+      details: { cacheKey, textLength: text.length, modelPath, speakingRate },
       actor: 'system',
     });
     return fs.readFileSync(cachePath);
@@ -101,11 +102,11 @@ function getCachedAudio(text: string): Buffer | null {
 /**
  * Save audio to cache
  */
-function cacheAudio(text: string, audioBuffer: Buffer): void {
+function cacheAudio(text: string, modelPath: string, speakingRate: number, audioBuffer: Buffer): void {
   const cfg = loadConfig();
   if (!cfg.cache.enabled) return;
 
-  const cacheKey = getCacheKey(text);
+  const cacheKey = getCacheKey(text, modelPath, speakingRate);
   const cachePath = path.join(cfg.cache.directory, `${cacheKey}.wav`);
 
   // Ensure cache directory exists
@@ -119,20 +120,57 @@ function cacheAudio(text: string, audioBuffer: Buffer): void {
     level: 'info',
     category: 'action',
     event: 'tts_cache_write',
-    details: { cacheKey, textLength: text.length, audioSize: audioBuffer.length },
+    details: { cacheKey, textLength: text.length, audioSize: audioBuffer.length, modelPath, speakingRate },
     actor: 'system',
   });
 }
 
 /**
  * Generate speech from text using Piper
+ *
+ * @param text - The text to convert to speech
+ * @param options - Optional parameters
+ * @param options.signal - AbortSignal for cancellation
+ * @param options.model - Override voice model path (optional)
+ * @param options.config - Override voice config path (optional)
+ * @param options.speakingRate - Override speaking rate (optional)
  */
-export async function generateSpeech(text: string, options?: { signal?: globalThis.AbortSignal }): Promise<Buffer> {
-  const cfg = loadConfig();
+export async function generateSpeech(
+  text: string,
+  options?: {
+    signal?: globalThis.AbortSignal;
+    model?: string;
+    config?: string;
+    speakingRate?: number;
+  }
+): Promise<Buffer> {
+  // Reload config if no overrides provided (ensures fresh settings from file)
+  const hasOverrides = !!(options?.model || options?.config || options?.speakingRate !== undefined);
+  const cfg = loadConfig(!hasOverrides);
+
+  // Use overrides if provided, otherwise use config
+  const modelPath = options?.model || cfg.tts.piper.model;
+  const configPath = options?.config || cfg.tts.piper.config;
+  const speakingRate = options?.speakingRate ?? cfg.tts.piper.speakingRate;
+
+  console.log('[TTS] =======================================================');
+  console.log('[TTS] Using parameters:', {
+    modelPath,
+    configPath,
+    speakingRate,
+    overrideModel: options?.model,
+    overrideConfig: options?.config,
+    overrideRate: options?.speakingRate,
+    configFileModel: cfg.tts.piper.model,
+    configFileConfig: cfg.tts.piper.config,
+    configFileRate: cfg.tts.piper.speakingRate
+  });
+  console.log('[TTS] =======================================================')
 
   // Check cache first
-  const cached = getCachedAudio(text);
+  const cached = getCachedAudio(text, modelPath, speakingRate);
   if (cached) {
+    console.log('[TTS] Returning cached audio');
     return cached;
   }
 
@@ -144,8 +182,8 @@ export async function generateSpeech(text: string, options?: { signal?: globalTh
   }
 
   // Validate model exists
-  if (!fs.existsSync(cfg.tts.piper.model)) {
-    throw new Error(`Piper model not found at ${cfg.tts.piper.model}`);
+  if (!fs.existsSync(modelPath)) {
+    throw new Error(`Piper model not found at ${modelPath}`);
   }
 
   // Generate temp output file
@@ -164,10 +202,19 @@ export async function generateSpeech(text: string, options?: { signal?: globalTh
   }
 
   try {
-    const args = ['--model', cfg.tts.piper.model, '--output_file', tempFile];
-    if (cfg.tts.piper.config) {
-      args.push('--config', cfg.tts.piper.config);
+    const args = ['--model', modelPath, '--output_file', tempFile];
+
+    // Add config if provided
+    if (configPath) {
+      args.push('--config', configPath);
     }
+
+    // Add speaking rate if different from 1.0
+    if (speakingRate && speakingRate !== 1.0) {
+      args.push('--length_scale', String(1 / speakingRate));
+    }
+
+    console.log('[TTS] Executing Piper with args:', args);
 
     const child = spawn(cfg.tts.piper.binary, args, {
       cwd: paths.root,
@@ -231,7 +278,7 @@ export async function generateSpeech(text: string, options?: { signal?: globalTh
     fs.unlinkSync(tempFile);
 
     // Cache for future use
-    cacheAudio(text, audioBuffer);
+    cacheAudio(text, modelPath, speakingRate, audioBuffer);
 
     const duration = Date.now() - startTime;
 

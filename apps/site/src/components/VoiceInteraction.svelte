@@ -139,6 +139,7 @@
 
   /**
    * Start listening (recording)
+   * Immediately stops any playing TTS audio to allow user to speak
    */
   let utteranceStartAt: number | null = null;
 
@@ -146,6 +147,17 @@
     if (!mediaRecorder || !ws || ws.readyState !== WebSocket.OPEN) {
       console.warn('[voice] Cannot start listening - not ready');
       return;
+    }
+
+    // IMPORTANT: Stop any playing TTS audio immediately when user wants to speak
+    if (currentAudio) {
+      try {
+        currentAudio.pause();
+        currentAudio.currentTime = 0; // Reset to beginning
+      } catch (e) {
+        console.warn('[voice] Failed to pause audio:', e);
+      }
+      currentAudio = null;
     }
 
     transcript = '';
@@ -295,19 +307,42 @@
 
   // Interrupt listening/speaking without ending the session
   function interrupt() {
+    console.log('[voice] Interrupt requested - stopping all audio and recording');
+
     vadEnabled = false;
     isSpeaking = false;
+
+    // Clear any pending silence timeouts
     if (silenceTimeout) {
       clearTimeout(silenceTimeout);
       silenceTimeout = null;
     }
+
+    // Stop recording immediately
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-      try { mediaRecorder.stop(); } catch {}
+      try {
+        mediaRecorder.stop();
+      } catch (e) {
+        console.warn('[voice] Failed to stop MediaRecorder:', e);
+      }
     }
+
+    // Stop and clear any playing TTS audio
     if (currentAudio) {
-      try { currentAudio.pause(); } catch {}
+      try {
+        currentAudio.pause();
+        currentAudio.currentTime = 0; // Reset to beginning
+      } catch (e) {
+        console.warn('[voice] Failed to pause audio:', e);
+      }
       currentAudio = null;
     }
+
+    // Reset transcript and response
+    transcript = '';
+    response = '';
+
+    // Return to ready state
     state = 'ready';
   }
 
@@ -451,6 +486,36 @@
       state = 'error';
       errorMessage = 'Microphone not available. Use HTTPS or localhost and grant permission.';
     }
+
+    // Add keyboard shortcuts for voice control
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Escape key: Interrupt current speech/recording
+      if (event.key === 'Escape' && state !== 'idle' && state !== 'connecting') {
+        event.preventDefault();
+        interrupt();
+      }
+      // Space bar: Toggle listening (push-to-talk) when not in VAD mode
+      else if (event.key === ' ' && !vadEnabled && state === 'ready') {
+        event.preventDefault();
+        startListening();
+      }
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      // Release space bar: Stop listening (push-to-talk)
+      if (event.key === ' ' && !vadEnabled && state === 'listening') {
+        event.preventDefault();
+        stopListening();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
   });
 
   /** Cleanup on component destroy */
@@ -530,10 +595,16 @@
 
       <div class="actions-row">
         {#if vadEnabled}
-          <button class="interrupt-button" on:click={interrupt}>Interrupt</button>
+          <button class="interrupt-button" on:click={interrupt}>
+            Interrupt <span class="keyboard-hint">(ESC)</span>
+          </button>
         {/if}
         <button class="end-button" on:click={endSession}>End Session</button>
       </div>
+
+      {#if !vadEnabled}
+        <p class="keyboard-hint-text">Press SPACE to talk, ESC to interrupt</p>
+      {/if}
     </div>
 
   {:else if state === 'listening'}
@@ -562,7 +633,9 @@
       </div>
 
       <div class="actions-row">
-        <button class="interrupt-button" on:click={interrupt}>Interrupt</button>
+        <button class="interrupt-button" on:click={interrupt}>
+          Interrupt <span class="keyboard-hint">(ESC)</span>
+        </button>
         <button class="end-button" on:click={endSession}>End Session</button>
       </div>
     </div>
@@ -575,7 +648,9 @@
         <div class="transcript">You: "{transcript}"</div>
       {/if}
       <div class="actions-row">
-        <button class="interrupt-button" on:click={interrupt}>Interrupt</button>
+        <button class="interrupt-button" on:click={interrupt}>
+          Interrupt <span class="keyboard-hint">(ESC)</span>
+        </button>
         <button class="end-button" on:click={endSession}>End Session</button>
       </div>
     </div>
@@ -588,9 +663,12 @@
         <div class="response">Me: "{response}"</div>
       {/if}
       <div class="actions-row">
-        <button class="interrupt-button" on:click={interrupt}>Interrupt</button>
+        <button class="interrupt-button" on:click={interrupt}>
+          Interrupt <span class="keyboard-hint">(ESC)</span>
+        </button>
         <button class="end-button" on:click={endSession}>End Session</button>
       </div>
+      <p class="keyboard-hint-text-speak">Press ESC or click microphone to interrupt</p>
     </div>
 
   {:else if state === 'error'}
@@ -877,5 +955,32 @@
     font-size: 1rem;
     font-weight: 600;
     margin: 0;
+  }
+
+  /* Keyboard shortcut hints */
+  .keyboard-hint {
+    font-size: 0.7rem;
+    opacity: 0.7;
+    font-weight: 400;
+    margin-left: 0.25rem;
+  }
+
+  .keyboard-hint-text,
+  .keyboard-hint-text-speak {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.6);
+    margin-top: 0.75rem;
+    text-align: center;
+    font-style: italic;
+  }
+
+  .keyboard-hint-text-speak {
+    margin-top: 1rem;
+    animation: gentle-pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes gentle-pulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 0.9; }
   }
 </style>

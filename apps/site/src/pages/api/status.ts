@@ -108,6 +108,7 @@ export const GET: APIRoute = async () => {
         identity: {
           name: persona.identity.name,
           role: persona.identity.role,
+          icon: persona.identity.icon || null,
           trustLevel: rules.trustLevel,
         },
         tasks: {

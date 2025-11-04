@@ -1120,150 +1120,102 @@ let reasoningStages: ReasoningStage[] = [];
 </div>
 
 <style>
-  .input-controls {
-    width: 100%;
-    display:flex;
-    align-items:center;
-    gap:0.75rem;
-    flex-wrap:wrap;
-    margin-bottom:0;
+  /* Component-specific overrides and unique styles only */
+
+  /* YOLO toggle special styling */
+  .small-toggle.yolo-toggle {
+    color: rgb(217 119 6);
+    font-weight: 600;
   }
-  .operator-toggle-group { position:relative; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-  .small-toggle { display:flex; align-items:center; gap:6px; font-size:12px; color: var(--muted); }
-  .small-toggle input { accent-color: rgb(79 70 229); }
-  .small-toggle span { display:inline-flex; align-items:center; gap:4px; padding-inline:4px; border-radius:999px; transition: color 0.2s ease, background 0.2s ease; }
-  .small-toggle.yolo-toggle { color: rgb(217 119 6); font-weight:600; }
-  .small-toggle.yolo-toggle input { accent-color: rgb(234 179 8); }
-  .small-toggle.yolo-toggle span { color: inherit; padding-inline:6px; }
+  .small-toggle.yolo-toggle input {
+    accent-color: rgb(234 179 8);
+  }
+  .small-toggle.yolo-toggle span {
+    color: inherit;
+    padding-inline: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: 999px;
+    transition: color 0.2s ease, background 0.2s ease;
+  }
   .small-toggle.yolo-toggle input:checked + span {
     background: rgba(234, 179, 8, 0.18);
     color: rgb(202 138 4);
   }
-  :global(.dark) .small-toggle.yolo-toggle { color: rgb(253 224 71); }
+  :global(.dark) .small-toggle.yolo-toggle {
+    color: rgb(253 224 71);
+  }
   :global(.dark) .small-toggle.yolo-toggle input:checked + span {
     background: rgba(250, 204, 21, 0.22);
     color: rgb(250 204 21);
   }
-  .operator-info-trigger {
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    width:22px;
-    height:22px;
-    border-radius:9999px;
-    border:1px solid rgba(79,70,229,0.35);
-    background: rgba(79,70,229,0.08);
-    color: rgb(79 70 229);
-    cursor:pointer;
-    transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
-  }
-  .operator-info-trigger svg { transition: transform 0.2s ease; }
-  .operator-info-trigger:hover {
-    background: rgba(79,70,229,0.15);
-    border-color: rgba(79,70,229,0.55);
+
+  /* Operator trigger SVG animation */
+  .operator-info-trigger svg {
+    transition: transform 0.2s ease;
   }
   .operator-info-trigger:focus-visible {
     outline: 2px solid rgba(79, 70, 229, 0.45);
     outline-offset: 2px;
   }
-  .operator-info-trigger[aria-expanded="true"] {
-    background: rgba(124, 58, 237, 0.15);
-    border-color: rgba(124, 58, 237, 0.5);
-    color: rgb(124 58 237);
-  }
   .operator-info-trigger[aria-expanded="true"] svg {
     transform: rotate(180deg);
   }
-  .operator-focus {
-    padding: 0.4rem 0.6rem;
-    border-radius: 6px;
-    border: 1px solid rgba(0,0,0,0.15);
-    font-size: 12px;
-    flex: 0 1 180px;
-    margin-left: auto;
-  }
-  :global(.dark) .operator-focus { background: rgb(17 24 39); color: rgb(243 244 246); border-color: rgba(255,255,255,0.2); }
-  .operator-popover {
-    position:absolute;
-    bottom: calc(100% + 8px);
-    left: 0;
-    width: min(280px, 80vw);
-    padding:12px;
-    border-radius:12px;
-    background: rgba(255,255,255,0.98);
-    border:1px solid rgba(79, 70, 229, 0.2);
-    box-shadow: 0 12px 24px rgba(15, 23, 42, 0.18);
-    color: rgb(55 65 81);
-    z-index: 20;
-  }
-  :global(.dark) .operator-popover {
-    background: rgba(17, 24, 39, 0.95);
-    border-color: rgba(167, 139, 250, 0.35);
-    box-shadow: 0 16px 32px rgba(2, 6, 23, 0.45);
-    color: rgb(226 232 240);
-  }
-  .operator-popover::before {
-    content:'';
-    position:absolute;
-    bottom:-6px;
-    left:18px;
-    width:12px;
-    height:12px;
-    background: inherit;
-    border-bottom: inherit;
-    border-right: inherit;
-    transform: rotate(45deg);
-  }
+  /* Operator popover internal components */
   .operator-popover-header {
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap:8px;
-    margin-bottom:6px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
   }
-  .operator-popover-header strong { font-size:12px; letter-spacing:0.02em; }
+  .operator-popover-header strong {
+    font-size: 12px;
+    letter-spacing: 0.02em;
+  }
   .operator-popover-close {
-    border:none;
-    background:transparent;
+    border: none;
+    background: transparent;
     color: inherit;
-    font-size:16px;
-    line-height:1;
-    cursor:pointer;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
   }
   .operator-popover-close:focus-visible {
-    outline:2px solid rgba(79,70,229,0.45);
-    outline-offset:2px;
+    outline: 2px solid rgba(79,70,229,0.45);
+    outline-offset: 2px;
   }
   .operator-popover-trust {
-    font-size:10px;
-    text-transform:uppercase;
-    letter-spacing:0.08em;
-    margin-bottom:8px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
     color: rgba(79, 70, 229, 0.85);
   }
   :global(.dark) .operator-popover-trust {
     color: rgba(167, 139, 250, 0.85);
   }
   .operator-popover-state {
-    font-size:11px;
-    line-height:1.45;
+    font-size: 11px;
+    line-height: 1.45;
   }
   .operator-popover-error {
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap:10px;
-    font-size:11px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 11px;
     color: rgb(185, 28, 28);
   }
   .operator-popover-error button {
-    font-size:10px;
-    padding:2px 8px;
-    border-radius:9999px;
-    border:1px solid rgba(185, 28, 28, 0.6);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    border: 1px solid rgba(185, 28, 28, 0.6);
     background: transparent;
     color: inherit;
-    cursor:pointer;
+    cursor: pointer;
   }
   .operator-popover-content {
     max-height: 240px;
@@ -1282,53 +1234,54 @@ let reasoningStages: ReasoningStage[] = [];
     background: rgba(167,139,250,0.4);
   }
   .operator-popover-list {
-    list-style:none;
-    margin:0;
-    padding:0;
-    display:grid;
-    gap:6px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 6px;
   }
   .operator-popover-list li {
-    padding:6px;
-    border-radius:8px;
+    padding: 6px;
+    border-radius: 8px;
     background: rgba(79, 70, 229, 0.06);
-    border:1px solid rgba(79, 70, 229, 0.08);
+    border: 1px solid rgba(79, 70, 229, 0.08);
   }
   :global(.dark) .operator-popover-list li {
     background: rgba(167, 139, 250, 0.12);
     border-color: rgba(167, 139, 250, 0.18);
   }
   .skill-head {
-    display:flex;
-    justify-content:space-between;
-    gap:6px;
-    font-size:12px;
-    font-weight:600;
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
   }
   .skill-meta {
-    font-size:10px;
-    text-transform:uppercase;
-    letter-spacing:0.05em;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
     color: rgba(79, 70, 229, 0.75);
   }
   :global(.dark) .skill-meta {
     color: rgba(167, 139, 250, 0.75);
   }
   .skill-desc {
-    margin-top:3px;
-    font-size:11px;
-    line-height:1.4;
+    margin-top: 3px;
+    font-size: 11px;
+    line-height: 1.4;
   }
   .operator-popover-footnote {
-    margin-top:8px;
-    font-size:10px;
-    line-height:1.45;
+    margin-top: 8px;
+    font-size: 10px;
+    line-height: 1.45;
     color: rgba(55, 65, 81, 0.75);
   }
   :global(.dark) .operator-popover-footnote {
     color: rgba(226, 232, 240, 0.75);
   }
 
+  /* Mobile responsive adjustments */
   @media (max-width: 640px) {
     .mode-toggle-container {
       flex-wrap: nowrap;
@@ -1393,13 +1346,6 @@ let reasoningStages: ReasoningStage[] = [];
     .icon-btn {
       padding: 0.3rem 0.4rem;
     }
-  }
-  .chat-interface {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    width: 100%;
-    overflow: hidden;
   }
 
 

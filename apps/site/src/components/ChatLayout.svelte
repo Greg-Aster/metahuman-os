@@ -28,6 +28,12 @@
   let modeError = '';
   let modeMenuAnchor: HTMLDivElement | null = null;
 
+  // Persona name and icon state
+  let personaName = 'MetaHuman OS';
+  let personaIcon: string | null = null;
+  let personaIconError = false;
+  let personaLoading = true;
+
   type ModeVisual = {
     icon: string;
     color: string;
@@ -72,6 +78,25 @@
   function updateScreenSize() {
     if (typeof window !== 'undefined') {
       isMobile = window.innerWidth < 768;
+    }
+  }
+
+  async function loadPersonaName() {
+    try {
+      const res = await fetch('/api/status', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Failed to load persona (status ${res.status})`);
+      const data = await res.json();
+      if (data?.identity?.name) {
+        personaName = data.identity.name;
+      }
+      if (data?.identity?.icon) {
+        personaIcon = data.identity.icon;
+      }
+    } catch (error) {
+      console.warn('Failed to load persona name:', error);
+      // Keep default "MetaHuman OS"
+    } finally {
+      personaLoading = false;
     }
   }
 
@@ -150,14 +175,19 @@
     // Always attempt to boot boredom-service on UI load; endpoint is idempotent
     fetch('/api/boot', { method: 'GET', cache: 'no-store', keepalive: true }).catch(() => {});
 
+    void loadPersonaName();
     void loadCognitiveModeState();
     document.addEventListener('click', handleGlobalClick, true);
+
+    // Refresh persona name every 30 seconds (in case persona file changes)
+    const personaInterval = setInterval(loadPersonaName, 30000);
 
     return () => {
       window.removeEventListener('resize', updateScreenSize);
       window.removeEventListener('resize', setVH);
       window.removeEventListener('orientationchange', setVH);
       document.removeEventListener('click', handleGlobalClick, true);
+      clearInterval(personaInterval);
     };
   });
 
@@ -193,7 +223,17 @@
         </svg>
       </button>
       <h1 class="flex items-center gap-3 text-lg font-semibold text-gray-900 dark:text-gray-100 m-0">
-        <span class="brand-name">MetaHuman OS</span>
+        {#if personaIcon && !personaIconError}
+          <img
+            src="/api/persona-icon"
+            alt="Persona icon"
+            class="persona-icon"
+            on:error={() => { personaIconError = true; }}
+          />
+        {:else}
+          <span class="persona-icon-fallback">🤖</span>
+        {/if}
+        <span class="brand-name">{personaName}</span>
       </h1>
     </div>
 
@@ -310,13 +350,12 @@
 </div>
 
 <style>
-  /* App root uses dynamic viewport height when available */
+  /* App root dynamic viewport height */
   .app-root {
     height: 100vh;
     min-height: 100vh;
   }
 
-  /* Prefer new dynamic viewport units when supported */
   @supports (height: 100dvh) {
     .app-root {
       height: 100dvh;
@@ -324,12 +363,12 @@
     }
   }
 
-  /* Use JS-computed innerHeight when available (works across iOS URL bar states) */
   .app-root {
     height: var(--app-vh, 100vh);
     min-height: var(--app-vh, 100vh);
   }
 
+  /* Component-specific mode styling with custom properties */
   .mode-icon {
     display: inline-flex;
     align-items: center;
@@ -344,18 +383,8 @@
   }
 
   .mode-label {
-    font-size: 0.8rem;
-    font-weight: 600;
-    padding: 0.3rem 0.9rem;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.55);
     box-shadow: 0 0 18px var(--mode-glow, rgba(124, 58, 237, 0.6));
-    transition: all 0.3s ease;
     color: var(--mode-accent, inherit);
-  }
-
-  :global(.dark) .mode-label {
-    background: rgba(15, 23, 42, 0.55);
   }
 
   .mode-label.loading,
@@ -365,21 +394,8 @@
   }
 
   .mode-menu-trigger {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.35rem 0.75rem;
-    border-radius: 999px;
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    background: rgba(255, 255, 255, 0.55);
     color: var(--mode-accent, inherit);
-    transition: all 0.25s ease;
     box-shadow: 0 0 12px rgba(148, 163, 184, 0.15);
-  }
-
-  :global(.dark) .mode-menu-trigger {
-    background: rgba(15, 23, 42, 0.55);
-    border-color: rgba(148, 163, 184, 0.25);
   }
 
   .mode-menu-trigger:hover {
@@ -404,29 +420,34 @@
     font-weight: 600;
   }
 
-  /* Custom scrollbar styling for sidebar content */
+  /* Sidebar scrollbars */
   aside > div::-webkit-scrollbar {
     width: 6px;
   }
-
   aside > div::-webkit-scrollbar-track {
     background: transparent;
   }
-
   aside > div::-webkit-scrollbar-thumb {
     background: rgba(0, 0, 0, 0.2);
     border-radius: 3px;
   }
-
   :global(.dark) aside > div::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.2);
   }
-
   aside > div::-webkit-scrollbar-thumb:hover {
     background: rgba(0, 0, 0, 0.3);
   }
-
   :global(.dark) aside > div::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.3);
+  }
+
+  .persona-icon-fallback {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
   }
 </style>

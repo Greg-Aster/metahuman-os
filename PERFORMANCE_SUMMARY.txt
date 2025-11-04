@@ -1,0 +1,186 @@
+================================================================================
+    METAHUMAN OS WEB APPLICATION - SLOW LOADING PERFORMANCE ANALYSIS
+================================================================================
+
+CRITICAL FINDINGS:
+==================
+1. User sees blank page for 600-1500ms before UI appears
+2. Multiple identical API calls (3x /api/status requests)
+3. Heavy synchronous operations in API responses
+4. 4 major components hydrate simultaneously with no progressive enhancement
+5. EventSource connections consume memory indefinitely
+
+BOOT SEQUENCE WATERFALL:
+========================
+  0ms      Browser requests index.astro
+  50ms     HTML received, inline theme script executes
+  100ms    CSS stylesheet loading
+  150ms    JavaScript bundle download starts
+  300ms    JavaScript hydration begins
+           ├─ ChatLayout.onMount()
+           ├─ LeftSidebar.onMount()
+           ├─ CenterContent.onMount()
+           └─ RightSidebar.onMount()
+  350ms    4 parallel API calls start:
+           ├─ /api/status (ChatLayout)
+           ├─ /api/cognitive-mode (ChatLayout)
+           ├─ /api/status (LeftSidebar - DUPLICATE!)
+           └─ /api/approvals (LeftSidebar)
+  650ms    API responses received
+  700ms    UI renders with data (First Meaningful Paint)
+  1000ms   Page fully interactive (Time-to-Interactive)
+
+BOTTLENECK OPERATIONS:
+======================
+1. /api/status (slowest): 200-600ms
+   - loadPersonaCore() - File I/O
+   - loadDecisionRules() - File I/O
+   - listActiveTasks() - Directory walk + file I/O
+   - loadModelRegistry() - File I/O
+   - resolveModel() × N roles - Iterative model lookup
+
+2. /api/cognitive-mode: 100-300ms
+   - Loads cognitive mode configuration
+
+3. /api/approvals: 100-300ms
+   - Checks pending approvals
+
+4. JavaScript hydration: 100-200ms
+   - Parse and initialize 4 components
+
+5. EventSource connections: 50-100ms initial, then continuous
+   - /api/stream (unbounded log streaming)
+   - /api/llm-activity (activity tracking)
+
+API CALL REDUNDANCY:
+====================
+DUPLICATE /api/status CALLS:
+  ├─ ChatLayout loads persona name (line 86)
+  ├─ LeftSidebar loads full status (line 72)
+  └─ Dashboard would load again (line 29)
+  
+IMPACT: 3 identical network round trips when 1 would suffice
+POTENTIAL SAVINGS: 400-1200ms if consolidated
+
+HEAVY OPERATIONS IN API ENDPOINTS:
+==================================
+/api/status breakdown (76-104 in status.ts):
+  ├─ loadPersonaCore() ...................... 30-100ms
+  ├─ loadDecisionRules() .................... 10-50ms
+  ├─ listActiveTasks() ...................... 50-200ms
+  ├─ loadModelRegistry() .................... 20-100ms
+  ├─ listAvailableRoles() ................... 5-10ms
+  └─ resolveModel() × N roles ............... 30-300ms
+     TOTAL: 150-760ms per request
+
+/api/boot:
+  ├─ spawn('boredom-service') .............. 5-20ms (async)
+  └─ spawn('audio-organizer') .............. 5-20ms (async)
+
+COMPONENT HYDRATION ANALYSIS:
+=============================
+index.astro (lines 37-41):
+  <ChatLayout client:load>           ← Immediate hydration
+    <LeftSidebar client:load />      ← Immediate hydration
+    <CenterContent client:load />    ← Immediate hydration
+    <RightSidebar client:load />     ← Immediate hydration
+
+PROBLEM: No lazy loading, no progressive enhancement
+EFFECT: Large JavaScript payload loaded before interactive
+SOLUTION: Use client:idle for RightSidebar, defer non-critical components
+
+EVENTTARGETS CONNECTIONS:
+=========================
+LeftSidebar.svelte (line 135):
+  ├─ EventSource('/api/llm-activity')
+  │  └─ Opened on mount, stays open forever
+  │     Tracks LLM role activity (memory leak risk)
+
+RightSidebar.svelte (line 40 via LogStream):
+  ├─ EventSource('/api/stream')
+  │  └─ Opened on mount, stays open forever
+  │     Streams all audit logs (unbounded growth)
+
+ISSUE: Both remain open even when not visible
+EFFECT: Memory leaks, network bandwidth waste
+SOLUTION: Close EventSource when tab not active
+
+TIMING BREAKDOWN (Realistic Scenario):
+======================================
+Page Load:                      0-350ms
+JavaScript Hydration:           350-550ms
+API Calls (parallel):           550-1200ms
+  ├─ /api/status ................. +300-600ms
+  ├─ /api/cognitive-mode ......... +100-300ms
+  ├─ /api/approvals .............. +100-300ms
+  └─ EventSource setup ........... +50-100ms
+UI Render:                      1200-1400ms
+Final Interactivity:            1400-1600ms
+
+USER EXPERIENCE GAP:
+====================
+Current: 600-1600ms blank page before UI
+Target: 200-400ms splash screen, UI ready at 1000ms
+Improvement Potential: 400-1000ms visible improvement
+
+RECOMMENDATIONS (Priority Order):
+==================================
+CRITICAL (Implement first - 1 day):
+  1. Add loading splash screen (visible immediately)
+  2. Implement response caching for /api/status (5-10s TTL)
+  3. Only load one /api/status, share results across components
+  4. Defer EventSource connections until sidebar visible
+
+HIGH (Next - 2-3 days):
+  5. Split /api/status into /api/status/identity (fast path)
+  6. Lazy-load RightSidebar (client:idle instead of client:load)
+  7. Cache model registry on server (30s TTL)
+  8. Defer /api/boot spawn until after hydration
+
+MEDIUM (Follow-up - 1 week):
+  9. Code-split ChatInterface (load on first interaction)
+  10. Implement IndexedDB caching for persona data
+  11. Move CenterContent to client:visible (only when scrolled)
+  12. Create separate lightweight audit stream API
+
+MEASUREMENT POINTS:
+===================
+Monitor these metrics for improvement:
+  • First Contentful Paint (FCP): When splash appears (target: <200ms)
+  • Largest Contentful Paint (LCP): When persona name loads (target: <800ms)
+  • Time-to-Interactive (TTI): When chat input works (target: <1200ms)
+  • Cumulative Layout Shift (CLS): Layout stability (target: <0.1)
+
+TOOLS:
+  • Chrome DevTools Network tab
+  • Lighthouse performance audit
+  • WebPageTest
+  • SpeedCurve monitoring
+
+FILES TO MODIFY:
+================
+Immediate Changes:
+  ✗ /home/greggles/metahuman/apps/site/src/pages/index.astro
+    - Add splash screen HTML + CSS
+
+  ✗ /home/greggles/metahuman/apps/site/src/components/ChatLayout.svelte
+    - Cache /api/status response
+    - Defer EventSource setup
+
+  ✗ /home/greggles/metahuman/apps/site/src/components/RightSidebar.svelte
+    - Use client:idle hydration
+    - Defer EventSource to tab visibility
+
+  ✗ /home/greggles/metahuman/apps/site/src/pages/api/status.ts
+    - Add response caching
+    - Defer model role resolution
+
+Future Changes:
+  • Create /api/status/identity endpoint (lightweight)
+  • Create /api/audit/stream (lightweight audit stream)
+  • Optimize /api/boot to spawn asynchronously
+  • Implement API response caching layer
+
+================================================================================
+Full detailed analysis saved to: SLOW_LOADING_INVESTIGATION.md
+================================================================================

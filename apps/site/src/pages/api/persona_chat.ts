@@ -703,15 +703,42 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
+        let isClosed = false;
+
+        // Safe enqueue that checks if controller is still open
         const push = (type: string, data: any) => {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type, data })}\n\n`));
+          if (!isClosed) {
+            try {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type, data })}\n\n`));
+            } catch (error) {
+              // Controller was closed, ignore
+              isClosed = true;
+            }
+          }
         };
 
         try {
           lastUserTurn[m] = { text: trimmedMessage, ts: Date.now() };
           histories[m].push({ role: 'user', content: message });
 
-          const operatorContext = routingContext || (trimmedMessage ? `User: ${trimmedMessage}` : '');
+          // Build operator context with recent conversation history
+          let operatorContext = '';
+
+          // Include last 3-5 turns for context (excluding current message which is already in 'goal')
+          const recentHistory = histories[m].slice(-6, -1); // Last 5 messages before current
+          if (recentHistory.length > 0) {
+            operatorContext += 'Recent conversation:\n';
+            for (const turn of recentHistory) {
+              const label = turn.role === 'user' ? 'User' : turn.role === 'assistant' ? 'Assistant' : 'System';
+              operatorContext += `${label}: ${turn.content.substring(0, 500)}\n`;
+            }
+            operatorContext += '\n';
+          }
+
+          // Add routing context if provided
+          if (routingContext) {
+            operatorContext += `Routing context: ${routingContext}\n`;
+          }
 
           const operatorUrl = origin ? new URL('/api/operator', origin).toString() : '/api/operator';
           const operatorResponse = await fetch(operatorUrl, {
@@ -768,7 +795,12 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
           });
           push('error', { message: (error as Error).message });
         } finally {
-          controller.close();
+          isClosed = true;
+          try {
+            controller.close();
+          } catch (error) {
+            // Already closed, ignore
+          }
         }
       },
     });
@@ -842,8 +874,18 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
+        let isClosed = false;
+
+        // Safe enqueue that checks if controller is still open
         const push = (type: string, data: any) => {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type, data })}\n\n`));
+          if (!isClosed) {
+            try {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type, data })}\n\n`));
+            } catch (error) {
+              // Controller was closed, ignore
+              isClosed = true;
+            }
+          }
         };
 
         const emitReasoningStage = (stage: string, round: number, content: string) => {
@@ -1198,7 +1240,12 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
           });
           push('error', { message: (error as Error).message });
         } finally {
-          controller.close();
+          isClosed = true;
+          try {
+            controller.close();
+          } catch (error) {
+            // Already closed, ignore
+          }
         }
       },
     });

@@ -192,17 +192,31 @@ async function assessTask(task: Task, mode: OperatorMode): Promise<TaskAssessmen
   try {
     const systemPrompt = `You are a task assessment module for an autonomous operator.
 Evaluate whether the task has enough detail to proceed safely.
+
+IMPORTANT GUIDELINES:
+- If the task references recent conversation ("this file", "that one", "it"), check the Context field carefully
+- Common file operations are ALWAYS ready: "find a file", "read a file", "list files", "show me"
+- Conversational pronouns are OK if context mentions specific files/paths
+- Only mark as unclear if TRULY ambiguous with no context (e.g., "do the thing" with empty context)
+- In YOLO mode, be even more permissive - assume reasonable defaults
+
+CONFIDENCE SCORING:
+- 0.9-1.0: Clear and specific
+- 0.7-0.9: Has enough context to proceed (common operations, conversational references with context)
+- 0.5-0.7: Somewhat vague but can make reasonable assumptions
+- 0.0-0.5: Truly unclear, needs clarification
+
 Respond ONLY as JSON with keys:
-- "ready": boolean
+- "ready": boolean (true if confidence >= 0.6, or if mode is YOLO and confidence >= 0.4)
 - "confidence": number between 0 and 1
-- "clarification": optional string describing the most important missing detail
+- "clarification": optional string (only if confidence < 0.6 and not ready)
 - "rationale": optional short explanation`;
 
     const userPrompt = `Task goal: ${task.goal}
 ${task.context ? `Context: ${task.context}` : 'No additional context provided.'}
-Operator mode: ${mode === 'yolo' ? 'YOLO (relaxed guardrails)' : 'Strict (default safeguards)'}
+Operator mode: ${mode === 'yolo' ? 'YOLO (relaxed guardrails, assume reasonable defaults)' : 'Strict (default safeguards)'}
 
-Return JSON now.`;
+Assess this task and return JSON now.`;
 
     const response = await callLLM({
       role: 'planner',

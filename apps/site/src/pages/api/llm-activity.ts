@@ -15,6 +15,8 @@ export const GET: APIRoute = async () => {
     start(controller) {
       let lastPosition = 0;
       let intervalId: NodeJS.Timeout;
+      let isClosed = false;
+      const pendingTimeouts = new Set<NodeJS.Timeout>();
 
       // Get today's audit log file
       const today = new Date().toISOString().split('T')[0];
@@ -22,6 +24,18 @@ export const GET: APIRoute = async () => {
 
       // Track active LLM calls (role -> start time)
       const activeCallsMap = new Map<string, number>();
+
+      // Safe enqueue that checks if controller is still open
+      const safeEnqueue = (data: Uint8Array) => {
+        if (!isClosed) {
+          try {
+            controller.enqueue(data);
+          } catch (error) {
+            // Controller was closed, ignore
+            isClosed = true;
+          }
+        }
+      };
 
       // Function to check for new audit entries
       const checkForUpdates = () => {
@@ -74,12 +88,12 @@ export const GET: APIRoute = async () => {
                   model: entry.details?.model,
                   timestamp: entry.timestamp,
                 });
-                controller.enqueue(encoder.encode(`data: ${startData}\n\n`));
+                safeEnqueue(encoder.encode(`data: ${startData}\n\n`));
 
                 // Schedule "end" event after estimated duration
                 // Use latencyMs if available, otherwise default to 2s
                 const duration = entry.details?.latencyMs || 2000;
-                setTimeout(() => {
+                const timeoutId = setTimeout(() => {
                   const endData = JSON.stringify({
                     type: 'end',
                     role,
@@ -87,9 +101,11 @@ export const GET: APIRoute = async () => {
                     latencyMs: duration,
                     timestamp: new Date().toISOString(),
                   });
-                  controller.enqueue(encoder.encode(`data: ${endData}\n\n`));
+                  safeEnqueue(encoder.encode(`data: ${endData}\n\n`));
                   activeCallsMap.delete(role);
+                  pendingTimeouts.delete(timeoutId);
                 }, duration);
+                pendingTimeouts.add(timeoutId);
               }
             } catch (parseError) {
               // Skip malformed lines
@@ -101,16 +117,22 @@ export const GET: APIRoute = async () => {
       };
 
       // Send initial connection message
-      controller.enqueue(encoder.encode('data: {"type":"connected"}\n\n'));
+      safeEnqueue(encoder.encode('data: {"type":"connected"}\n\n'));
 
       // Check for updates every 250ms
       intervalId = setInterval(checkForUpdates, 250);
 
       // Cleanup on close
       return () => {
+        isClosed = true;
         if (intervalId) {
           clearInterval(intervalId);
         }
+        // Clear all pending timeouts
+        for (const timeoutId of pendingTimeouts) {
+          clearTimeout(timeoutId);
+        }
+        pendingTimeouts.clear();
       };
     },
   });

@@ -124,7 +124,7 @@
 
     "default.planner": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3-coder:30b",
       "adapters": [],
       "roles": ["planner", "strategist", "task-breakdown"],
       "description": "Strategic planning and task decomposition specialist",
@@ -137,8 +137,8 @@
       "metadata": {
         "priority": "medium",
         "alwaysLoaded": false,
-        "estimatedLatency": "fast",
-        "sizeGB": 9.3,
+        "estimatedLatency": "medium",
+        "sizeGB": 18,
         "purpose": "Planning specialist - strategic thinking, task breakdown, roadmap creation",
         "specialization": "planning"
       }

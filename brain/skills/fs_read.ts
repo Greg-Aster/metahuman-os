@@ -20,8 +20,8 @@ export const manifest: SkillManifest = {
       required: true,
       description: 'Project-relative path (e.g., "docs/file.md") or absolute system path. Project-relative paths should NOT start with /',
       validation: (value) => {
-        const allowedDirs = ['memory/', 'persona/', 'logs/', 'out/', 'etc/', 'docs/'];
-        return isPathAllowed(value, allowedDirs);
+        // Allow reading from entire project (uses '.' for project root)
+        return isPathAllowed(value, ['.']);
       },
     },
   },
@@ -36,7 +36,7 @@ export const manifest: SkillManifest = {
   cost: 'cheap',
   minTrustLevel: 'observe',
   requiresApproval: false,
-  allowedDirectories: ['.', 'memory/', 'persona/', 'logs/', 'out/', 'etc/', 'docs/', 'brain/', 'packages/', 'apps/'],
+  allowedDirectories: ['.'], // Entire project
 };
 
 export async function execute(inputs: { path: string }): Promise<SkillResult> {
@@ -46,7 +46,7 @@ export async function execute(inputs: { path: string }): Promise<SkillResult> {
       : path.resolve(paths.root, inputs.path);
 
     // Double-check path is allowed (validation should have caught this)
-    if (!isPathAllowed(filepath, manifest.allowedDirectories!)) {
+    if (!isPathAllowed(filepath, ['.'])) {
       return {
         success: false,
         error: `Path not allowed: ${filepath}`,

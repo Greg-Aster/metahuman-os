@@ -5,12 +5,18 @@ import { generateSpeech } from '@metahuman/core';
  * POST /api/tts
  * Generate speech from text
  *
- * Body: { text: string }
+ * Body: {
+ *   text: string,
+ *   model?: string,        // Optional: override voice model path
+ *   config?: string,       // Optional: override voice config path
+ *   speakingRate?: number  // Optional: override speaking rate (0.5 - 2.0)
+ * }
  * Returns: audio/wav stream
  */
 export const POST: APIRoute = async ({ request }) => {
   try {
-    const { text } = await request.json();
+    const { text, model, config, speakingRate } = await request.json();
+    console.log('[TTS API] Received request:', { textLength: text?.length, model, config, speakingRate });
 
     if (!text || typeof text !== 'string') {
       return new Response(JSON.stringify({ error: 'Text is required' }), {
@@ -19,8 +25,13 @@ export const POST: APIRoute = async ({ request }) => {
       });
     }
 
-    // Generate speech audio
-    const audioBuffer = await generateSpeech(text, { signal: request.signal });
+    // Generate speech audio with optional overrides
+    const audioBuffer = await generateSpeech(text, {
+      signal: request.signal,
+      model,
+      config,
+      speakingRate,
+    });
 
     // Return audio as WAV stream
     return new Response(audioBuffer, {

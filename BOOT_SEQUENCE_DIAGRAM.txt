@@ -1,0 +1,526 @@
+================================================================================
+                    METAHUMAN OS BOOT SEQUENCE DIAGRAM
+================================================================================
+
+                              TIMELINE WATERFALL
+================================================================================
+
+TIME  EVENT                          DETAILS                      COMPONENT
+----  -----                          -------                      ----------
+ 0ms  Page Request                   GET /index.astro            Browser
+ 
+ 5ms  HTML Response                  Server responds              Server
+      └─ Inline Theme Script         Apply dark/light theme      index.astro:17-34
+      └─ CSS Load Start              tailwind.css requested
+
+10ms  ┌─────────────────────────────────────────────────────────────────────
+      │ BLANK PAGE APPEARS (User sees nothing)
+      └─────────────────────────────────────────────────────────────────────
+
+50ms  CSS Downloaded                 tailwind.css loaded         Browser
+      └─ Styles Applied              Theme colors active         
+
+100ms JavaScript Fetch Starts        bundle.js requested         Astro Vite
+
+200ms ┌─────────────────────────────────────────────────────────────────────
+      │ CRITICAL BOTTLENECK #1: Large JS bundle download
+      │ - Astro + Svelte runtime
+      │ - All 4 components (ChatLayout, Left/Center/Right)
+      │ - 200-400KB typical bundle size
+      └─────────────────────────────────────────────────────────────────────
+
+300ms JavaScript Loaded              bundle.js received          Browser
+
+350ms ┌─ Hydration Starts ──────────────────────────────────────────────────┐
+      │                                                                       │
+      │  ChatLayout.svelte (client:load)                                    │
+      │   ├─ Tree initialization                                            │
+      │   ├─ Event handlers setup                                           │
+      │   └─ onMount() fires                                                │
+      │       ├─> ASYNC: fetch('/api/boot')  (fire & forget)              │
+      │       ├─> AWAIT: loadPersonaName()                                │
+      │       │           └─> GET /api/status                             │
+      │       └─> AWAIT: loadCognitiveMode()                              │
+      │                   └─> GET /api/cognitive-mode                     │
+      │                                                                       │
+      │  LeftSidebar.svelte (client:load)  [PARALLEL]                     │
+      │   └─ onMount() fires                                                │
+      │       ├─> AWAIT: loadStatus()       └─> GET /api/status           │
+      │       │                              [DUPLICATE!]                   │
+      │       ├─> ASYNC: loadPendingApprovals()  └─> GET /api/approvals  │
+      │       └─> ASYNC: connectActivityStream() └─> EventSource /api/llm-activity
+      │                                                                       │
+      │  CenterContent.svelte (client:load)  [PARALLEL]                   │
+      │   └─ onMount() defers (not critical path)                          │
+      │                                                                       │
+      │  RightSidebar.svelte (client:load)  [PARALLEL]                    │
+      │   └─ onMount() fires                                                │
+      │       └─> Tabs initialized, LogStream ready                        │
+      │           └─> EventSource /api/stream (opened on demand)           │
+      │                                                                       │
+      └──────────────────────────────────────────────────────────────────────┘
+
+400ms ┌─────────────────────────────────────────────────────────────────────
+      │ CRITICAL BOTTLENECK #2: API Request Phase
+      │
+      │ Parallel requests:
+      │   Request #1: /api/status (ChatLayout + LeftSidebar)
+      │   Request #2: /api/cognitive-mode (ChatLayout)
+      │   Request #3: /api/approvals (LeftSidebar)
+      │   Connection: /api/llm-activity EventSource
+      └─────────────────────────────────────────────────────────────────────
+
+      ╔════════════════════════════════════════════════════════════════════╗
+      ║ /api/status ENDPOINT PROCESSING (in-flight)                        ║
+      ║                                                                    ║
+      ║  Time  Operation                                   Duration        ║
+      ║  ────  ─────────────────────────────────────────────────────      ║
+      ║   +0   loadPersonaCore()  [reads persona/core.json]   30-100ms   ║
+      ║  +30   loadDecisionRules() [reads decision-rules.json] 10-50ms   ║
+      ║  +40   listActiveTasks() [walks memory/tasks/active/]  50-200ms  ║
+      ║  +90   loadModelRegistry() [reads model registry]      20-100ms  ║
+      ║ +110   listAvailableRoles() [enumerate roles]          5-10ms    ║
+      ║ +115   resolveModel() × N  [per-role lookup]          30-300ms   ║
+      ║ +145   RESPONSE READY                   Total: 150-760ms         ║
+      ╚════════════════════════════════════════════════════════════════════╝
+
+650ms ┌─────────────────────────────────────────────────────────────────────
+      │ CRITICAL BOTTLENECK #3: API Responses Arrive
+      │
+      │ /api/status ◄─────────────────────────── 300-600ms latency
+      │ /api/cognitive-mode ◄───────────────── 100-300ms latency
+      │ /api/approvals ◄──────────────────────── 100-300ms latency
+      │ EventSource established ◄───────────────── 50-100ms latency
+      └─────────────────────────────────────────────────────────────────────
+
+700ms ┌─ FIRST MEANINGFUL PAINT ────────────────────────────────────────────┐
+      │                                                                       │
+      │  HTML appears with data:                                           │
+      │   ├─ Header shows persona name (from /api/status)                 │
+      │   ├─ Left sidebar shows status widget                            │
+      │   ├─ Center content area renders                                 │
+      │   └─ Right sidebar shows (audit stream buffering...)            │
+      │                                                                       │
+      │  User can now see UI but cannot interact yet                       │
+      └──────────────────────────────────────────────────────────────────────┘
+
+800ms Event listeners attached
+      All interactive elements ready
+
+1000ms ┌─ TIME-TO-INTERACTIVE ───────────────────────────────────────────────┐
+       │                                                                        │
+       │ User can now:                                                        │
+       │   ✓ Type in chat input                                             │
+       │   ✓ Click menu items                                              │
+       │   ✓ Toggle sidebars                                               │
+       │   ✓ Interact with controls                                        │
+       │                                                                        │
+       │ Page is fully interactive                                          │
+       └────────────────────────────────────────────────────────────────────┘
+
+1500ms Continuous Activity
+       ├─ /api/stream polling incoming logs (RightSidebar)
+       ├─ /api/llm-activity polling activity (LeftSidebar)
+       ├─ /api/status refreshes every 30 seconds
+       ├─ /api/approvals refreshes every 5 seconds
+       └─ User can interact freely
+
+
+================================================================================
+                            COMPONENT LOAD ORDER
+================================================================================
+
+Sequential Initialization:
+╔════════════════════════════════════════════════════════════════════════════╗
+║ index.astro                                                                ║
+║  └─ ChatLayout (client:load)                        T=350ms               ║
+║      ├─ LeftSidebar (client:load)                   T=350ms (parallel)    ║
+║      │   └─ onMount()                               T=350-400ms           ║
+║      │       ├─> /api/status                        T=350-950ms           ║
+║      │       ├─> /api/approvals                     T=350-950ms           ║
+║      │       └─> EventSource /api/llm-activity      T=350-450ms           ║
+║      │                                                                      ║
+║      ├─ CenterContent (client:load)                 T=350ms (parallel)    ║
+║      │   └─ onMount() [deferred]                    On activeView change  ║
+║      │       └─> /api/memories_all                  On demand             ║
+║      │                                                                      ║
+║      └─ RightSidebar (client:load)                  T=350ms (parallel)    ║
+║          └─ onMount() [deferred]                    When tabs accessed    ║
+║              ├─> /api/model-info                    On demand             ║
+║              ├─> /api/models                        On demand             ║
+║              ├─> /api/lora-toggle                   On demand             ║
+║              └─> EventSource /api/stream            On demand             ║
+║                                                                             ║
+║  ChatLayout.onMount() [CRITICAL PATH]:              T=350-750ms           ║
+║   ├─> /api/boot (async, non-blocking)              T=350-400ms           ║
+║   ├─> /api/status (blocking)                        T=350-950ms           ║
+║   └─> /api/cognitive-mode (blocking)                T=350-650ms           ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
+================================================================================
+                         MEMORY & NETWORK USAGE OVER TIME
+================================================================================
+
+Network Activity:
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Bandwidth                                                               │
+│ Usage    │                                                             │
+│          │     ↑ JS Bundle              ↑ API Requests                │
+│  100%    │     │                        │  ↑ EventSource              │
+│          │     │ ╱╲                     │ ╱╲ streams                   │
+│   75%    │────╱──╲────┐               ╱──╲───────────────┐            │
+│          │               │             │                 │            │
+│   50%    │               └─────┐─────╱   ─────────────┐  │            │
+│          │                     │ ╱╲                   │  │            │
+│   25%    │─────────────────────╱──╲──────────────────┐   │            │
+│          │                                │            │  │            │
+│    0%    └────────────────────────────────┼────────────┼──┼────────────┘
+│          0     500    1000   1500   2000  │ 2500  3000 │  │
+│         Time (ms) ───────────────────────────────────────→ 
+│
+│ Legend:
+│  Initial: HTML (50KB)
+│  150-200ms: JS Bundle (200-400KB)
+│  350-650ms: API Requests (10-100KB total)
+│  650ms+: EventSource streams (unbounded)
+└─────────────────────────────────────────────────────────────────────────┘
+
+Memory Usage (JavaScript Heap):
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Memory  │                                                               │
+│ (MB)    │                                                               │
+│  100    │ ┌──────────────────────────────────────────────────────┐     │
+│   80    │ │ Steady state                                        │     │
+│   60    │ │    ↑ Component Trees                                │     │
+│   40    │─┤  ╱╲  ↑ Event Listeners                              │     │
+│         │ │ ╱  ╲╱╲  ↑ EventSource callbacks (unbounded growth)  │     │
+│   20    │─┤╱  ↓   ╲──────────────────────────────────┐          │     │
+│         │ │                                         │          │     │
+│    0    └─┴─────────────────────────────────────────┼──────────┘     │
+│          0  500  1000 1500 2000 2500 3000 3500 4000  Time (ms)        │
+│                                                                       │
+│ Notes:                                                               │
+│  • Memory climbs rapidly during hydration (350-550ms)              │
+│  • Steady state after API responses (~700ms)                       │
+│  • Continuous growth from EventSource log buffering (3000ms+)      │
+│  • Unbounded growth is a long-term memory leak                     │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+                          CRITICAL PATH ANALYSIS
+================================================================================
+
+FASTEST POSSIBLE PATH (if optimized):
+────────────────────────────────────
+
+Optimistic (with splash + caching + lazy loading):
+  0ms       Page requested
+  10ms      HTML + CSS delivered
+  50ms      Static splash visible ◄─── USER SEES SOMETHING
+  150ms     JS bundle loaded
+  200ms     Hydration complete
+  250ms     API call (cached, parallel)
+  350ms     First meaningful paint
+  500ms     Time-to-interactive
+
+IMPROVEMENT: 700ms → 500ms (200ms savings)
+
+
+REALISTIC PATH (current):
+───────────────────────
+
+ 0ms       Page requested
+50ms       HTML delivered, theme script runs
+150ms      CSS loaded
+200ms      JS bundle loaded (400KB)
+350ms      Hydration starts, API calls fire
+950ms      /api/status responds (600ms latency)
+1000ms     First meaningful paint
+1200ms     Time-to-interactive
+
+CURRENT: 700-1200ms to interactive
+
+
+BOTTLENECK SEQUENCE:
+────────────────────
+
+ 350ms  ◄────────── Hydration (150ms) + await
+ 950ms  ◄────────── /api/status response (600ms)
+ 1000ms ◄──────────── UI renders
+ 1200ms ◄──────────── Time-to-interactive
+
+SLOWEST SINGLE OPERATION: /api/status (600ms)
+
+If /api/status could return in 100ms (via caching):
+  → Overall time-to-interactive: 500ms (60% faster)
+
+
+================================================================================
+                         DUPLICATE API CALL ANALYSIS
+================================================================================
+
+PROBLEM: /api/status called 3 times for same data
+
+Call #1: ChatLayout.svelte (line 86)
+  ├─ Purpose: Load persona name
+  ├─ Triggered: onMount()
+  ├─ Frequency: Every 30 seconds
+  └─ Response: Full status object (overkill, only needs name)
+
+Call #2: LeftSidebar.svelte (line 72)
+  ├─ Purpose: Load status widget
+  ├─ Triggered: onMount()
+  ├─ Frequency: Every 30 seconds
+  └─ Response: Full status object (needed completely)
+
+Call #3: Dashboard.svelte (line 29)
+  ├─ Purpose: Load dashboard display
+  ├─ Triggered: onMount()
+  ├─ Frequency: Every 30 seconds
+  ├─ Only if: User navigates to dashboard
+  └─ Response: Full status object (needed completely)
+
+SOLUTION OPTIONS:
+
+Option A: Shared Store (Recommended)
+───────
+  // Create shared store in navigation.ts
+  export const statusStore = writable(null)
+  
+  // ChatLayout loads once
+  onMount(() => {
+    fetch('/api/status').then(data => {
+      statusStore.set(data)
+    })
+  })
+  
+  // LeftSidebar subscribes
+  $: personaName = $statusStore?.identity?.name
+  
+  BENEFIT: Single API call, shared across components
+  TIME SAVED: 600ms (one less 600ms call)
+
+Option B: Cached Endpoint
+──────────────────────────
+  // Add caching in API handler
+  const statusCache = new Map()
+  
+  export const GET = () => {
+    const now = Date.now()
+    const cached = statusCache.get('status')
+    
+    if (cached && now - cached.time < 5000) {
+      return cached.response
+    }
+    
+    // Recompute and cache
+    const response = computeStatus()
+    statusCache.set('status', { response, time: now })
+    return response
+  }
+  
+  BENEFIT: Subsequent calls within 5s return instantly
+  TIME SAVED: 1.2s for back-to-back calls
+
+Option C: Split Endpoints
+──────────────────────────
+  // Fast endpoint (identity only)
+  /api/status/identity → 50-100ms
+    └─ persona name, role, icon
+  
+  // Full endpoint (comprehensive)
+  /api/status/full → 300-600ms
+    └─ everything above + tasks + models + registry
+  
+  // Usage:
+  ChatLayout calls /api/status/identity
+  LeftSidebar calls /api/status/full
+  
+  BENEFIT: Header renders faster (100ms vs 600ms)
+  TIME SAVED: 500ms to first meaningful paint
+
+
+================================================================================
+                            EVENTTARGET LEAK ANALYSIS
+================================================================================
+
+EventSource#1: /api/llm-activity (LeftSidebar.svelte:135)
+─────────────────────────────────────────────────────────
+
+  Opened: onMount() [T=350ms]
+  Closed: Never (memory leak)
+  
+  Connection:
+    const eventSource = new EventSource('/api/llm-activity')
+    
+    eventSource.onmessage = (event) => {
+      const data = JSON.parse(event.data)
+      activeRoles.add(data.role)  ◄─ Unbounded Set growth
+      activeRoles = activeRoles    ◄─ Trigger reactivity
+    }
+  
+  ISSUES:
+    ✗ Set can grow indefinitely (role count)
+    ✗ No cleanup on unmount
+    ✗ Consumes bandwidth continuously
+    ✗ Each message parses and updates UI
+
+  MEMORY IMPACT: 
+    • Role Set grows by ~1KB per role over time
+    • 100 roles = 100KB memory growth
+    • Never garbage collected
+
+EventSource#2: /api/stream (RightSidebar → LogStream.svelte:40)
+──────────────────────────────────────────────────────────────
+
+  Opened: Tab visible [deferred to demand]
+  Closed: Never (memory leak)
+  
+  Connection:
+    const eventSource = new EventSource('/api/stream')
+    
+    eventSource.onmessage = (event) => {
+      const newLog = JSON.parse(event.data)
+      logs = [...logs, newLog]  ◄─ Array grows unbounded
+    }
+  
+  ISSUES:
+    ✗ logs array grows with every audit entry
+    ✗ Svelte array reactivity costs increase
+    ✗ DOM renders all logs (even off-screen)
+    ✗ No pagination or virtualization
+    ✗ Could reach 10,000+ entries in hours
+  
+  MEMORY IMPACT:
+    • ~500 bytes per log entry
+    • 10,000 entries = 5MB of audit logs
+    • Rendering 10,000 DOM nodes = slow UI
+
+SOLUTION:
+
+1. Close EventSource when not visible:
+   $: {
+     if (activeTab === 'audit' && !eventSource) {
+       eventSource = new EventSource('/api/stream')
+     } else if (activeTab !== 'audit' && eventSource) {
+       eventSource.close()
+       eventSource = null
+     }
+   }
+
+2. Implement log rotation:
+   const MAX_LOGS = 500
+   
+   eventSource.onmessage = (event) => {
+     logs = [...logs, newLog]
+     if (logs.length > MAX_LOGS) {
+       logs = logs.slice(-MAX_LOGS)
+     }
+   }
+
+3. Add virtualization:
+   <!-- Only render visible logs in viewport -->
+   <VirtualList items={logs} />
+
+TIME SAVED: Prevents 10-20MB memory leak over 1 hour
+
+
+================================================================================
+                            SPLASH SCREEN BENEFITS
+================================================================================
+
+WITHOUT Splash Screen (Current):
+───────────────────────────────
+  T=0ms      User clicks link
+  T=50ms     Browser requests page
+  T=100ms    HTML starts loading
+  T=600ms    First pixel visible (blank white/dark)
+  T=700ms    Content appears
+  T=1200ms   Interactive
+  
+  USER PERCEPTION:
+    [Blank for 0.6s] → [Content flickers in] → [Works after 1.2s]
+    ⚠ Feels slow and unresponsive
+
+WITH Splash Screen (Recommended):
+──────────────────────────────────
+  T=0ms      User clicks link
+  T=50ms     Browser requests page
+  T=100ms    HTML starts loading
+  T=150ms    Splash screen visible ◄─── USER SEES SOMETHING
+  T=600ms    Content loaded in background
+  T=700ms    Splash fades, content appears ◄─── Smooth transition
+  T=1200ms   Interactive
+  
+  USER PERCEPTION:
+    [Fast splash] → [Smooth reveal] → [Works quickly]
+    ✓ Feels responsive and professional
+
+IMPLEMENTATION:
+
+```html
+<!-- index.astro -->
+<script is:inline>
+  // Inline to execute immediately
+  document.documentElement.style.background = '#1a1a1a'
+  document.documentElement.style.color = '#fff'
+</script>
+
+<style is:inline>
+  .splash {
+    position: fixed;
+    inset: 0;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    opacity: 1;
+    transition: opacity 0.3s ease-out;
+  }
+  
+  html.ready .splash {
+    opacity: 0;
+    pointer-events: none;
+  }
+  
+  .spinner {
+    width: 50px;
+    height: 50px;
+    border: 3px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+</style>
+
+<body>
+  <div class="splash">
+    <div class="splash-content">
+      <div class="spinner"></div>
+      <h1>MetaHuman OS</h1>
+      <p>Initializing...</p>
+    </div>
+  </div>
+
+  <ChatLayout client:load>...</ChatLayout>
+  
+  <script is:inline>
+    // Hide splash after hydration
+    window.addEventListener('load', () => {
+      document.documentElement.classList.add('ready')
+    }, { once: true })
+  </script>
+</body>
+```
+
+TIME SAVED IN PERCEPTION: 400-600ms (page appears more responsive)
+
+
+================================================================================

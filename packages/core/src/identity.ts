@@ -8,6 +8,10 @@ export interface PersonaCore {
     name: string;
     role: string;
     purpose: string;
+    icon?: string;
+    humanName?: string;
+    email?: string;
+    aliases?: string[];
   };
   personality: any;
   values: any;
