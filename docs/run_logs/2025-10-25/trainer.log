@@ -1,0 +1,308 @@
+[2025-10-25T23:04:40.370Z] === Starting new training run ===
+[2025-10-25T23:04:40.370Z] Date: 2025-10-25
+[2025-10-25T23:04:40.370Z] Work directory: /home/greggles/metahuman/metahuman-runs/2025-10-25
+[2025-10-25T23:04:40.370Z] Using RUNPOD_TEMPLATE_ID=runpod-torch-v280
+[2025-10-25T23:04:40.370Z] Attempting to deploy pod on COMMUNITY cloud...
+[2025-10-25T23:04:41.356Z] Pod created successfully on COMMUNITY cloud. Pod ID: eaphcx4ah007bp
+[2025-10-25T23:04:41.356Z] Waiting for pod to become RUNNING...
+[2025-10-25T23:04:41.356Z] Waiting for pod ssh gateway... (Attempt 1/60)
+[2025-10-25T23:04:46.745Z] Waiting for pod ssh gateway... (Attempt 2/60)
+[2025-10-25T23:04:52.308Z] Waiting for pod ssh gateway... (Attempt 3/60)
+[2025-10-25T23:04:53.238Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:04:53.438Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:04:53.630Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:04:58.630Z] Waiting for pod ssh gateway... (Attempt 4/60)
+[2025-10-25T23:04:59.359Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:04:59.524Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:04:59.726Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:04.727Z] Waiting for pod ssh gateway... (Attempt 5/60)
+[2025-10-25T23:05:05.459Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:05.667Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:05.870Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:10.870Z] Waiting for pod ssh gateway... (Attempt 6/60)
+[2025-10-25T23:05:11.623Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:11.817Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:12.011Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:17.011Z] Waiting for pod ssh gateway... (Attempt 7/60)
+[2025-10-25T23:05:17.915Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:18.123Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:18.318Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:23.319Z] Waiting for pod ssh gateway... (Attempt 8/60)
+[2025-10-25T23:05:24.036Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:24.236Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:24.447Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:29.447Z] Waiting for pod ssh gateway... (Attempt 9/60)
+[2025-10-25T23:05:30.152Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:30.348Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:30.547Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:35.548Z] Waiting for pod ssh gateway... (Attempt 10/60)
+[2025-10-25T23:05:36.399Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:36.588Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:36.773Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:41.773Z] Waiting for pod ssh gateway... (Attempt 11/60)
+[2025-10-25T23:05:42.566Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:42.777Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:42.971Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:47.971Z] Waiting for pod ssh gateway... (Attempt 12/60)
+[2025-10-25T23:05:48.678Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:48.889Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:49.070Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:54.071Z] Waiting for pod ssh gateway... (Attempt 13/60)
+[2025-10-25T23:05:54.816Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:55.027Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:05:55.192Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:00.193Z] Waiting for pod ssh gateway... (Attempt 14/60)
+[2025-10-25T23:06:01.114Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:01.293Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:01.488Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:06.488Z] Waiting for pod ssh gateway... (Attempt 15/60)
+[2025-10-25T23:06:07.258Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:07.449Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:07.632Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:12.632Z] Waiting for pod ssh gateway... (Attempt 16/60)
+[2025-10-25T23:06:13.540Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:13.751Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:13.983Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:18.985Z] Waiting for pod ssh gateway... (Attempt 17/60)
+[2025-10-25T23:06:19.861Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:20.043Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:20.240Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:25.241Z] Waiting for pod ssh gateway... (Attempt 18/60)
+[2025-10-25T23:06:26.003Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:26.197Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:26.377Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:31.378Z] Waiting for pod ssh gateway... (Attempt 19/60)
+[2025-10-25T23:06:32.130Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:32.299Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:32.482Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:37.483Z] Waiting for pod ssh gateway... (Attempt 20/60)
+[2025-10-25T23:06:38.236Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:38.448Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:38.622Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:43.622Z] Waiting for pod ssh gateway... (Attempt 21/60)
+[2025-10-25T23:06:44.495Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:44.680Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:44.845Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:49.846Z] Waiting for pod ssh gateway... (Attempt 22/60)
+[2025-10-25T23:06:50.576Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:50.767Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:50.928Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:55.928Z] Waiting for pod ssh gateway... (Attempt 23/60)
+[2025-10-25T23:06:56.831Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:57.040Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:06:57.221Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:02.221Z] Waiting for pod ssh gateway... (Attempt 24/60)
+[2025-10-25T23:07:02.957Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:03.141Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:03.319Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:08.320Z] Waiting for pod ssh gateway... (Attempt 25/60)
+[2025-10-25T23:07:09.254Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:09.448Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:09.685Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:14.686Z] Waiting for pod ssh gateway... (Attempt 26/60)
+[2025-10-25T23:07:15.446Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:15.622Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:15.831Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:20.832Z] Waiting for pod ssh gateway... (Attempt 27/60)
+[2025-10-25T23:07:21.588Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:21.797Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:22.021Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:27.021Z] Waiting for pod ssh gateway... (Attempt 28/60)
+[2025-10-25T23:07:27.760Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:27.964Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:28.172Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:33.172Z] Waiting for pod ssh gateway... (Attempt 29/60)
+[2025-10-25T23:07:33.931Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:34.106Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:34.288Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:39.289Z] Waiting for pod ssh gateway... (Attempt 30/60)
+[2025-10-25T23:07:40.027Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:40.210Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:40.400Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:45.401Z] Waiting for pod ssh gateway... (Attempt 31/60)
+[2025-10-25T23:07:46.126Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:46.318Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:46.540Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:51.540Z] Waiting for pod ssh gateway... (Attempt 32/60)
+[2025-10-25T23:07:52.267Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:52.427Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:52.594Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:57.594Z] Waiting for pod ssh gateway... (Attempt 33/60)
+[2025-10-25T23:07:58.338Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:58.511Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:07:58.682Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:03.683Z] Waiting for pod ssh gateway... (Attempt 34/60)
+[2025-10-25T23:08:04.426Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:04.632Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:04.826Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:09.826Z] Waiting for pod ssh gateway... (Attempt 35/60)
+[2025-10-25T23:08:10.526Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:10.697Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:10.900Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:15.901Z] Waiting for pod ssh gateway... (Attempt 36/60)
+[2025-10-25T23:08:16.875Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:17.065Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:17.256Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:22.256Z] Waiting for pod ssh gateway... (Attempt 37/60)
+[2025-10-25T23:08:23.032Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:23.226Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:23.453Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:28.454Z] Waiting for pod ssh gateway... (Attempt 38/60)
+[2025-10-25T23:08:29.219Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:29.421Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:29.598Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:34.598Z] Waiting for pod ssh gateway... (Attempt 39/60)
+[2025-10-25T23:08:35.502Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:35.703Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:35.902Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:40.903Z] Waiting for pod ssh gateway... (Attempt 40/60)
+[2025-10-25T23:08:41.651Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:41.817Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:42.017Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:47.018Z] Waiting for pod ssh gateway... (Attempt 41/60)
+[2025-10-25T23:08:47.760Z] Primary sshCommand probe failed: RunPod API Error (400): {"errors":[{"message":"Cannot query field \"sshCommand\" on type \"PodRuntime\".","locations":[{"line":5,"column":19}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:47.945Z] Introspection query failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:48.146Z] Pod type introspection failed: RunPod API Error (400): {"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type. To enable introspection, pass introspection: true to ApolloServer in production","locations":[{"line":3,"column":7}],"extensions":{"validationErrorCode":"INTROSPECTION_DISABLED","code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+[2025-10-25T23:08:53.147Z] Waiting for pod ssh gateway... (Attempt 42/60)
+[2025-10-25T23:08:58.671Z] Waiting for pod ssh gateway... (Attempt 43/60)
+[2025-10-25T23:09:04.270Z] Waiting for pod ssh gateway... (Attempt 44/60)
+[2025-10-25T23:09:09.809Z] Waiting for pod ssh gateway... (Attempt 45/60)
+[2025-10-25T23:09:15.536Z] Waiting for pod ssh gateway... (Attempt 46/60)
+[2025-10-25T23:09:21.065Z] Waiting for pod ssh gateway... (Attempt 47/60)
+[2025-10-25T23:09:26.597Z] Waiting for pod ssh gateway... (Attempt 48/60)
+[2025-10-25T23:09:32.150Z] Waiting for pod ssh gateway... (Attempt 49/60)
+[2025-10-25T23:09:37.700Z] Waiting for pod ssh gateway... (Attempt 50/60)
+[2025-10-25T23:09:43.320Z] Waiting for pod ssh gateway... (Attempt 51/60)
+[2025-10-25T23:09:48.886Z] Waiting for pod ssh gateway... (Attempt 52/60)
+[2025-10-25T23:09:54.476Z] Waiting for pod ssh gateway... (Attempt 53/60)
+[2025-10-25T23:10:00.054Z] Waiting for pod ssh gateway... (Attempt 54/60)
+[2025-10-25T23:10:05.608Z] Waiting for pod ssh gateway... (Attempt 55/60)
+[2025-10-25T23:10:11.239Z] Waiting for pod ssh gateway... (Attempt 56/60)
+[2025-10-25T23:10:16.963Z] Waiting for pod ssh gateway... (Attempt 57/60)
+[2025-10-25T23:10:22.530Z] Waiting for pod ssh gateway... (Attempt 58/60)
+[2025-10-25T23:10:28.060Z] Waiting for pod ssh gateway... (Attempt 59/60)
+[2025-10-25T23:10:33.602Z] Waiting for pod ssh gateway... (Attempt 60/60)
+[2025-10-25T23:10:39.148Z] Wrote fresh connection.json for this pod: /home/greggles/metahuman/metahuman-runs/2025-10-25/connection.json
+[2025-10-25T23:10:39.148Z] Using gateway SSH mode: <gateway username from RunPod UI>@ssh.runpod.io
+[2025-10-25T23:10:39.148Z] Uploading files via base64-over-ssh (samples: 182)...
+[2025-10-25T23:10:39.160Z] Uploading unsloth_dataset.jsonl to /workspace/input/unsloth_dataset.jsonl (attempt 1/3)...
+[2025-10-25T23:10:39.169Z] Upload attempt 1 failed: File upload failed with exit code 1
+[2025-10-25T23:10:44.175Z] Uploading unsloth_dataset.jsonl to /workspace/input/unsloth_dataset.jsonl (attempt 2/3)...
+[2025-10-25T23:10:44.184Z] Upload attempt 2 failed: File upload failed with exit code 1

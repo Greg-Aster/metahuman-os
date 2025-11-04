@@ -252,10 +252,13 @@ Track the LoRA training pipeline via:
 **Purpose:** Executes complex multi-step tasks using skills.
 
 **How it works:**
-- Takes user goals and breaks them into steps using available skills
-- Executes the plan step-by-step
-- Reviews and critiques results
-- Handles complex file operations, git commands, web search, and more
+- Takes user goals and classifies the intent into a **domain** (e.g., `tasks`, `calendar`).
+- The planner calls the `catalog.describe('<domain>')` skill to retrieve available actions for that domain.
+- It loads the relevant capability brief from `persona/capabilities/<domain>.md` for extra context.
+- It breaks the goal into steps using the available skills.
+- Executes the plan step-by-step, resolving placeholders to pass IDs from one step to the next.
+- Reviews and critiques results.
+- Handles complex file operations, git commands, web search, and more.
 
 ### 8. Auto-Approver Agent (Advanced)
 

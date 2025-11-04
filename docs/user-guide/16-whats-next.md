@@ -1,3 +1,9 @@
+## Upcoming Features
+
+The following features are currently in the planning and proposal stage. For more details, please refer to the linked design documents.
+
+-   **[Cognitive Modes](../COGNITIVE_MODES_BLUEPRINT.md)**: A proposal to implement multiple cognitive modes within MetaHuman OS, including Dual Consciousness, Agent, and Emulation modes.
+
 ## What's Next
 
 MetaHuman OS is under active development following a phased roadmap toward full autonomous operation.

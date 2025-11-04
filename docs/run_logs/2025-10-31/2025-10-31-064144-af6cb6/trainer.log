@@ -1,0 +1,145 @@
+[2025-10-31T06:44:27.324Z] === Starting new training run ===
+[2025-10-31T06:44:27.324Z] Date: 2025-10-31
+[2025-10-31T06:44:27.324Z] Run label: 2025-10-31-064144-af6cb6
+[2025-10-31T06:44:27.325Z] Work directory: /home/greggles/metahuman/metahuman-runs/2025-10-31/2025-10-31-064144-af6cb6
+[2025-10-31T06:44:27.325Z] RUNPOD_NO_GATEWAY=1 set; skipping gateway schema probes.
+[2025-10-31T06:44:27.325Z] RUNPOD_DIRECT_SSH_USER=root; will prefer this user for direct SSH.
+[2025-10-31T06:44:27.325Z] Using RUNPOD_TEMPLATE_ID=6r5jlk3b89
+[2025-10-31T06:44:27.325Z] Using GPU type: NVIDIA GeForce RTX 5090
+[2025-10-31T06:44:27.325Z] Attempting to deploy pod on COMMUNITY cloud...
+[2025-10-31T06:44:28.341Z] Pod created successfully on COMMUNITY cloud. Pod ID: e3cek4nud9zw0p
+[2025-10-31T06:44:28.342Z] Waiting for pod to become RUNNING...
+[2025-10-31T06:44:28.343Z] Waiting for pod ssh gateway... (Attempt 1/120)
+[2025-10-31T06:44:33.815Z] Waiting for pod ssh gateway... (Attempt 2/120)
+[2025-10-31T06:44:39.331Z] Waiting for pod ssh gateway... (Attempt 3/120)
+[2025-10-31T06:44:44.860Z] Waiting for pod ssh gateway... (Attempt 4/120)
+[2025-10-31T06:44:50.329Z] Waiting for pod ssh gateway... (Attempt 5/120)
+[2025-10-31T06:44:55.801Z] Waiting for pod ssh gateway... (Attempt 6/120)
+[2025-10-31T06:45:01.268Z] Waiting for pod ssh gateway... (Attempt 7/120)
+[2025-10-31T06:45:06.932Z] Waiting for pod ssh gateway... (Attempt 8/120)
+[2025-10-31T06:45:12.423Z] Waiting for pod ssh gateway... (Attempt 9/120)
+[2025-10-31T06:45:18.120Z] Waiting for pod ssh gateway... (Attempt 10/120)
+[2025-10-31T06:45:23.569Z] Waiting for pod ssh gateway... (Attempt 11/120)
+[2025-10-31T06:45:29.089Z] Waiting for pod ssh gateway... (Attempt 12/120)
+[2025-10-31T06:45:34.600Z] Waiting for pod ssh gateway... (Attempt 13/120)
+[2025-10-31T06:45:40.132Z] Waiting for pod ssh gateway... (Attempt 14/120)
+[2025-10-31T06:45:45.854Z] Waiting for pod ssh gateway... (Attempt 15/120)
+[2025-10-31T06:45:51.338Z] Waiting for pod ssh gateway... (Attempt 16/120)
+[2025-10-31T06:45:56.983Z] Waiting for pod ssh gateway... (Attempt 17/120)
+[2025-10-31T06:46:02.474Z] Waiting for pod ssh gateway... (Attempt 18/120)
+[2025-10-31T06:46:07.973Z] Waiting for pod ssh gateway... (Attempt 19/120)
+[2025-10-31T06:46:13.489Z] Waiting for pod ssh gateway... (Attempt 20/120)
+[2025-10-31T06:46:18.946Z] Waiting for pod ssh gateway... (Attempt 21/120)
+[2025-10-31T06:46:24.394Z] Waiting for pod ssh gateway... (Attempt 22/120)
+[2025-10-31T06:46:30.004Z] Waiting for pod ssh gateway... (Attempt 23/120)
+[2025-10-31T06:46:35.493Z] Waiting for pod ssh gateway... (Attempt 24/120)
+[2025-10-31T06:46:40.965Z] Waiting for pod ssh gateway... (Attempt 25/120)
+[2025-10-31T06:46:46.336Z] Waiting for pod ssh gateway... (Attempt 26/120)
+[2025-10-31T06:46:51.994Z] Waiting for pod ssh gateway... (Attempt 27/120)
+[2025-10-31T06:46:57.361Z] Waiting for pod ssh gateway... (Attempt 28/120)
+[2025-10-31T06:47:02.806Z] Waiting for pod ssh gateway... (Attempt 29/120)
+[2025-10-31T06:47:08.419Z] Waiting for pod ssh gateway... (Attempt 30/120)
+[2025-10-31T06:47:14.054Z] Waiting for pod ssh gateway... (Attempt 31/120)
+[2025-10-31T06:47:19.529Z] Waiting for pod ssh gateway... (Attempt 32/120)
+[2025-10-31T06:47:25.014Z] Waiting for pod ssh gateway... (Attempt 33/120)
+[2025-10-31T06:47:30.436Z] Waiting for pod ssh gateway... (Attempt 34/120)
+[2025-10-31T06:47:35.981Z] Waiting for pod ssh gateway... (Attempt 35/120)
+[2025-10-31T06:47:41.430Z] Waiting for pod ssh gateway... (Attempt 36/120)
+[2025-10-31T06:47:41.906Z] runtime.ports: [{"ip":"100.65.27.217","isIpPublic":false,"privatePort":19123,"publicPort":60077,"type":"http"},{"ip":"87.197.110.78","isIpPublic":true,"privatePort":22,"publicPort":41395,"type":"tcp"},{"ip":"87.197.110.78","isIpPublic":true,"privatePort":22,"publicPort":41396,"type":"udp"}]
+[2025-10-31T06:47:41.906Z] Public port mapping detected and NO_GATEWAY=1; proceeding without gateway discovery.
+[2025-10-31T06:47:41.906Z] Using default SSH key path: /home/greggles/.ssh/id_ed25519
+[2025-10-31T06:47:41.906Z] Key path candidate: /home/greggles/.ssh/id_ed25519
+[2025-10-31T06:47:41.906Z] SSH probe candidates: root
+[2025-10-31T06:47:44.214Z] Direct SSH handshake succeeded as root@87.197.110.78:41395 (attempt 1)
+[2025-10-31T06:47:44.214Z] Wrote fresh connection.json for this pod: /home/greggles/metahuman/metahuman-runs/2025-10-31/2025-10-31-064144-af6cb6/connection.json
+[2025-10-31T06:47:44.214Z] Using direct SSH mode: root@87.197.110.78:41395
+[2025-10-31T06:47:54.221Z] Uploading files via base64-over-ssh (samples: 31)...
+[2025-10-31T06:47:56.612Z] Directory creation result: total 4
+drwxr-xr-x 5 root root   97 Oct 31 06:47 .
+drwxr-xr-x 1 root root   86 Oct 31 06:47 ..
+drwxr-xr-x 3 root root   25 Oct 31 06:47 .cache
+drwxr-xr-x 2 root root   10 Oct 27 16:03 input
+-rw-rw-r-- 1 root root 3177 Oct 27 02:08 train_unsloth.py
+drwxr-xr-x 6 root root  115 Oct 31 06:47 unsloth-venv
+
+[2025-10-31T06:47:56.612Z] Uploading unsloth_dataset.jsonl to /workspace/input/unsloth_dataset.jsonl (attempt 1/3)...
+[2025-10-31T06:47:59.388Z] Upload of unsloth_dataset.jsonl successful.
+[2025-10-31T06:47:59.389Z] Uploading config.json to /workspace/input/config.json (attempt 1/3)...
+[2025-10-31T06:48:01.999Z] Upload of config.json successful.
+[2025-10-31T06:48:02.001Z] Uploading fixed training script from: /home/greggles/metahuman/docker/runpod-trainer/train_unsloth.py
+[2025-10-31T06:48:02.002Z] Uploading train_unsloth.py to /workspace/train_unsloth.py (attempt 1/3)...
+[2025-10-31T06:48:04.751Z] Upload of train_unsloth.py successful.
+[2025-10-31T06:48:07.142Z] Training script verification: 406 /workspace/train_unsloth.py
+-rw-rw-r-- 1 root root 16K Oct 31 06:48 /workspace/train_unsloth.py
+[2025-10-31T06:48:11.908Z] Upload verification: a512847a6d21c4e8d92a210088744bd2b2d51f2312254f722ebcc0488eb9bf31  /workspace/input/config.json
+[2025-10-31T06:48:11.909Z] Executing remote training script...
+[2025-10-31T06:57:38.797Z] Training exit code: 0
+[2025-10-31T06:57:38.797Z] Full training output saved to: /home/greggles/metahuman/metahuman-runs/2025-10-31/2025-10-31-064144-af6cb6/training_output.txt
+[2025-10-31T06:57:38.797Z] Training stderr (last 2000 chars): debug2: channel 0: written 110 to efd 6
+debug2: channel 0: rcvd ext data 75
+Unsloth: Merging weights into mxfp4:   0%|          | 0/3 [00:00<?, ?it/s]debug2: channel 0: written 75 to efd 6
+debug2: channel 0: rcvd ext data 91
+Unsloth: Merging weights into mxfp4:  33%|███▎      | 1/3 [00:00<00:01,  1.99it/s]debug2: channel 0: written 91 to efd 6
+debug2: channel 0: rcvd ext data 97
+Unsloth: Merging weights into mxfp4:  67%|██████▋   | 2/3 [00:00<00:00,  2.05it/s]debug2: channel 0: written 97 to efd 6
+debug2: channel 0: rcvd ext data 103
+Unsloth: Merging weights into mxfp4: 100%|██████████| 3/3 [00:03<00:00,  1.64s/it]debug2: channel 0: written 103 to efd 6
+debug2: channel 0: rcvd ext data 104
+Unsloth: Merging weights into mxfp4: 100%|██████████| 3/3 [00:03<00:00,  1.33s/it]
+debug2: channel 0: written 104 to efd 6
+debug2: channel 0: rcvd ext data 151
+[W1031 06:57:37.713271737 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+debug2: channel 0: written 151 to efd 6
+debug2: channel 0: rcvd eof
+debug2: channel 0: output open -> drain
+debug2: channel 0: obuf empty
+debug2: chan_shutdown_write: channel 0: (i0 o1 sock -1 wfd 5 efd 6 [write])
+debug2: channel 0: output drain -> closed
+debug1: client_input_channel_req: channel 0 rtype exit-status reply 0
+debug1: client_input_channel_req: channel 0 rtype eow@openssh.com reply 0
+debug2: channel 0: rcvd eow
+debug2: chan_shutdown_read: channel 0: (i0 o3 sock -1 wfd 4 efd 6 [write])
+debug2: channel 0: input open -> closed
+debug2: channel 0: rcvd close
+debug2: channel 0: almost dead
+debug2: channel 0: gc: notify user
+debug2: channel 0: gc: user detached
+debug2: channel 0: send close
+debug2: channel 0: is dead
+debug2: channel 0: garbage collecting
+debug1: channel 0: free: client-session, nchannels 1
+Transferred: sent 4036, received 23436 bytes, in 565.1 seconds
+Bytes per second: sent 7.1, received 41.5
+debug1: Exit status 0
+
+[2025-10-31T06:57:38.797Z] Training stdout (last 2000 chars): l-vocab-gpt-2.gguf (0.00 GB)
+[06:57:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-gpt-neox.gguf (0.00 GB)
+[06:57:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-llama-bpe.gguf (0.01 GB)
+[06:57:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-llama-spm.gguf (0.00 GB)
+[06:57:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-mpt.gguf (0.00 GB)
+[06:57:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-nomic-bert-moe.gguf (0.01 GB)
+[06:57:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-phi-3.gguf (0.00 GB)
+[06:57:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-qwen2.gguf (0.01 GB)
+[06:57:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-refact.gguf (0.00 GB)
+[06:57:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-starcoder.gguf (0.00 GB)
+[06:57:32] ▶️  GGUF_MERGE - Found 18 GGUF file(s): ['gpt-oss-20b.MXFP4.gguf', 'ggml-vocab-aquila.gguf', 'ggml-vocab-baichuan.gguf', 'ggml-vocab-bert-bge.gguf', 'ggml-vocab-command-r.gguf', 'ggml-vocab-deepseek-coder.gguf', 'ggml-vocab-deepseek-llm.gguf', 'ggml-vocab-falcon.gguf', 'ggml-vocab-gpt-2.gguf', 'ggml-vocab-gpt-neox.gguf', 'ggml-vocab-llama-bpe.gguf', 'ggml-vocab-llama-spm.gguf', 'ggml-vocab-mpt.gguf', 'ggml-vocab-nomic-bert-moe.gguf', 'ggml-vocab-phi-3.gguf', 'ggml-vocab-qwen2.gguf', 'ggml-vocab-refact.gguf', 'ggml-vocab-starcoder.gguf']
+[06:57:35] 📊 GGUF_MERGE (100%) - ✅ GGUF created in 4.3 minutes (12.85 GB)
+[06:57:35] ▶️  GGUF_MERGE - 📁 Source: gpt-oss-20b.MXFP4.gguf → final_merged_model.gguf
+[06:57:35] ▶️  COMPLETE - ============================================================
+[06:57:35] ▶️  COMPLETE - 🎉 Training pipeline complete in 9.3 minutes
+[06:57:35] ▶️  COMPLETE - 📁 Adapter: /output/adapter
+[06:57:35] ▶️  COMPLETE - 📁 Merged GGUF: /workspace/final_merged_model.gguf
+[06:57:35] ▶️  COMPLETE - ============================================================
+
+[2025-10-31T06:57:38.797Z] Downloading merged GGUF and adapter artifacts...
+[2025-10-31T06:57:38.798Z] Starting SCP download: scp -P 41395 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /home/greggles/.ssh/id_ed25519 root@87.197.110.78:/workspace/final_merged_model.gguf /home/greggles/metahuman/out/adapters/2025-10-31/2025-10-31-064144-af6cb6/adapter.gguf
+[2025-10-31T07:19:16.955Z] SCP download successful for /workspace/final_merged_model.gguf
+[2025-10-31T07:19:17.049Z] Merged GGUF downloaded successfully to /home/greggles/metahuman/out/adapters/2025-10-31/2025-10-31-064144-af6cb6/adapter.gguf (12.85GB)
+[2025-10-31T07:19:17.049Z] Starting SCP download: scp -r -P 41395 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /home/greggles/.ssh/id_ed25519 root@87.197.110.78:/output/adapter /home/greggles/metahuman/metahuman-runs/2025-10-31/2025-10-31-064144-af6cb6/temp_adapter_download
+[2025-10-31T07:19:59.994Z] SCP download successful for /output/adapter
+[2025-10-31T07:19:59.995Z] Adapter artifacts moved to final directory.
+[2025-10-31T07:19:59.995Z] Starting SCP download: scp -P 41395 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /home/greggles/.ssh/id_ed25519 root@87.197.110.78:/workspace/input/upload.ok /home/greggles/metahuman/out/adapters/2025-10-31/2025-10-31-064144-af6cb6/adapter/upload.ok
+[2025-10-31T07:20:03.844Z] SCP download successful for /workspace/input/upload.ok
+[2025-10-31T07:20:03.844Z] upload.ok file downloaded successfully.
+[2025-10-31T07:20:03.845Z] Terminating pod e3cek4nud9zw0p...
+[2025-10-31T07:20:04.534Z] Pod termination request sent successfully.

@@ -127,33 +127,24 @@ Policy-based reasoning system:
 
 ### 6. Skills & Integration Layer
 
-Modular capabilities for interacting with the world:
+Modular capabilities for interacting with the world, organized into domains.
 
-**Communication:** (Planned)
-- Email, Slack, SMS, social media with your voice and style
-- Draft responses that match your tone
+**Domain-Centric Capabilities:**
+- Functional areas (tasks, calendar, notes) are treated as **domains**.
+- Each domain exposes primitives like `list`, `create`, `update`.
+- Skills are namespaced (e.g., `tasks.list`, `calendar.create`).
 
-**Information Gathering:**
-- Research, monitoring, summarization, analysis
-- Web search and data extraction
+**Capability Catalog:**
+- The planner queries a **capability catalog** to discover available actions at runtime.
+- Concise "how-to" guides for each domain are stored in `persona/capabilities/*.md`.
 
-**Task Execution:**
-- File operations (via skills system)
-- API calls to external services
-- System commands within sandboxed environment
-- Workflows and multi-step tasks
-
-**Calendar & Time:** (Planned)
-- Scheduling, reminders, time blocking, meeting prep
-- Proactive calendar management
-
-**Knowledge Work:** (Planned)
-- Writing, coding, planning, reviewing in your style
-- Content generation matching your voice
-
-**Physical World:** (Planned)
-- IoT controls, location-based actions
-- Delivery coordination and automation
+**Available Domains:**
+- **Tasks & Calendar**: Manage tasks, lists, and schedule events.
+- **Communication**: (Planned) Email, Slack, SMS with your voice.
+- **Information Gathering**: Research, summarization, web search.
+- **Task Execution**: File operations, API calls, system commands.
+- **Knowledge Work**: (Planned) Writing, coding, planning.
+- **Physical World**: (Planned) IoT controls, location-based actions.
 
 ### 7. Learning & Adaptation
 

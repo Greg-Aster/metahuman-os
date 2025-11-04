@@ -108,61 +108,55 @@ interface SkillManifest {
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Available Skills (13 total)
+### Available Skills
 
-#### 🟢 Read-Only Operations (No approval needed)
+Skills are now organized into domains and are namespaced (e.g., `tasks.list`).
+
+#### Meta-Skills
+
+- **catalog.describe** - Retrieves the available actions for a given domain.
+
+#### Task Domain (`tasks`)
+
+- **tasks.list** - Lists tasks with filters (status, listId, time range).
+- **tasks.create** - Creates a task with an optional list, schedule, and tags.
+- **tasks.update** - Changes the title, description, priority, or status of a task.
+- **tasks.schedule** - Sets the start/end dates and reminders for a task.
+- **tasks.listLists** - Fetches all task lists.
+- **tasks.createList** - Creates a new task list.
+
+#### Calendar Domain (`calendar`)
+
+- **calendar.listRange** - Lists events for a given date range.
+- **calendar.create** - Adds an event to the calendar, with an option to link to a task.
+- **calendar.update** - Reschedules or edits an existing event.
+- **calendar.delete** - Removes an event from the calendar.
+- **calendar.find** - Locates an event by its title or ID.
+
+#### Other Skills
 
 **File System:**
-- **fs_list** - List/search for files (trust: observe+)
-  - "Find all markdown files in docs/"
-  - "Search for files named test"
-- **fs_read** - Read file contents (trust: observe+)  
-  - "Read persona/core.json"
-  - "Show me the package.json"
-- **summarize_file** - Summarize documents (trust: observe+)
-  - "Summarize the ARCHITECTURE.md file"
-  - "Give me a summary of docs/DESIGN.md"
+- **fs_list** - List/search for files.
+- **fs_read** - Read file contents.
+- **summarize_file** - Summarize documents.
+- **fs_write** - Create/write files (allowed: memory/, out/, logs/).
+- **fs_delete** - Delete files (has dry-run) (allowed: memory/, out/, logs/).
+- **json_update** - Update JSON files (allowed: memory/, out/, logs/, etc/).
 
 **Git:**
-- **git_status** - Check repository status (trust: observe+)
-  - "What's the git status?"
-  - "Show me what files have changed"
+- **git_status** - Check repository status.
+- **git_commit** - Commit changes.
 
 **Search:**
-- **search_index** - Semantic memory search (trust: observe+)
-  - "Search my memories for work projects"
-  - "Find conversations about AI"
-
-#### 🟡 Write Operations (Supervised auto-approve)
-
-**File System:**
-- **fs_write** - Create/write files (allowed: memory/, out/, logs/) (trust: supervised_auto+)
-  - "Create out/test.txt with Hello World"
-- **fs_delete** - Delete files (has dry-run) (allowed: memory/, out/, logs/) (trust: supervised_auto+)
-  - "Delete out/test.txt"
-- **json_update** - Update JSON files (allowed: memory/, out/, logs/, etc/) (trust: supervised_auto+)
-  - "Update etc/test.json to set status: active"
-
-**Git:**
-- **git_commit** - Commit changes (trust: supervised_auto+)
-  - "Commit changes with message: Update skills"
+- **search_index** - Semantic memory search.
 
 **Network:**
-- **http_get** - Fetch web content (trust: supervised_auto+)
-  - "Get the content from https://example.com"
-- **web_search** - Search the web (trust: supervised_auto+)
-  - "Search for TypeScript best practices 2025"
+- **http_get** - Fetch web content.
+- **web_search** - Search the web.
 
 **System:**
-- **run_agent** - Execute agents (trust: suggest+)
-  - "Run the organizer agent"
-  - "Execute the reflector"
-
-#### 🔴 High-Risk Operations (Requires bounded_auto)
-
-- **shell_safe** - Run whitelisted shell commands (trust: bounded_auto+)
-  - Currently requires higher trust level
-  - Whitelist: ls, cat, grep, find, git, pnpm, node, tsx, pwd, whoami
+- **run_agent** - Execute agents.
+- **shell_safe** - Run whitelisted shell commands.
 
 ### The Operator - Autonomous Task Execution System
 Simply ask in natural language using "operator mode" or by being specific about actions:

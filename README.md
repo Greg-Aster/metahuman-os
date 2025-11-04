@@ -121,9 +121,10 @@ MetaHuman OS requires a Python virtual environment for its extensive ML/AI depen
 - **Deep Sync**: Continuous learning from your decisions and behaviors
 - **Local-First**: All data and reasoning on your infrastructure
 - **Transparent**: Complete audit trail of all decisions and actions
-- **Modular**: Extensible skills, agents, and policies
+- **Modular & Extensible**: Domain-centric architecture with extensible skills, agents, and policies
 - **Privacy Focused**: Your identity, memories, and reasoning live on your infrastructure
 - **Advanced Memory System**: Episodic, semantic, and procedural memory with semantic search
+- **Comprehensive Task & Calendar System**: Manage tasks, task lists, and schedule events with advanced linking and recurrence.
 - **Skill-Based Execution**: Safe, sandboxed operations with trust-based permissions
 
 ## Project Structure
@@ -150,6 +151,7 @@ metahuman/
 
 ### Core Directories
 - `persona/` - Your identity and personality data
+- `persona/capabilities/` - Domain-specific capability briefs for the planner
 - `memory/episodic/` - Timeline of events and memories
 - `memory/tasks/` - Task management files
 - `logs/audit/` - Complete audit trail
@@ -203,6 +205,12 @@ cd apps/site && pnpm dev
 - `./bin/mh task add "title"` - Create task
 - `./bin/mh task start <id>` - Start task
 - `./bin/mh task done <id>` - Complete task
+- `./bin/mh task lists` - List all task lists
+- `./bin/mh task new-list "<name>"` - Create a new task list
+
+### Calendar Commands
+- `./bin/mh calendar list` - List calendar events for the upcoming week
+- `./bin/mh calendar create "<title>"` - Create a new calendar event
 
 ### Agent Commands
 - `./bin/mh agent list` - List available agents
@@ -252,63 +260,55 @@ cd apps/site && pnpm dev
 
 ## Skills System
 
-Skills are the executable capabilities of the MetaHuman OS operator model. They provide controlled, audited interfaces for the AI to interact with the file system, run agents, execute commands, and search memory.
+Skills are the executable capabilities of the MetaHuman OS operator model. They provide controlled, audited interfaces for the AI to interact with the file system, run agents, execute commands, and search memory. Skills are now organized into domains and are namespaced (e.g., `tasks.list`).
 
-### Available Skills (13 total)
+### Available Skills
 
-#### 🟢 Read-Only Operations (No approval needed)
+#### Meta-Skills
+
+- **catalog.describe** - Retrieves the available actions for a given domain.
+
+#### Task Domain (`tasks`)
+
+- **tasks.list** - Lists tasks with filters (status, listId, time range).
+- **tasks.create** - Creates a task with an optional list, schedule, and tags.
+- **tasks.update** - Changes the title, description, priority, or status of a task.
+- **tasks.schedule** - Sets the start/end dates and reminders for a task.
+- **tasks.listLists** - Fetches all task lists.
+- **tasks.createList** - Creates a new task list.
+
+#### Calendar Domain (`calendar`)
+
+- **calendar.listRange** - Lists events for a given date range.
+- **calendar.create** - Adds an event to the calendar, with an option to link to a task.
+- **calendar.update** - Reschedules or edits an existing event.
+- **calendar.delete** - Removes an event from the calendar.
+- **calendar.find** - Locates an event by its title or ID.
+
+#### Other Skills
 
 **File System:**
-- **fs_list** - List/search for files (trust: observe+)
-  - "Find all markdown files in docs/"
-  - "Search for files named test"
-- **fs_read** - Read file contents (trust: observe+)  
-  - "Read persona/core.json"
-  - "Show me the package.json"
-- **summarize_file** - Summarize documents (trust: observe+)
-  - "Summarize the ARCHITECTURE.md file"
-  - "Give me a summary of docs/DESIGN.md"
+- **fs_list** - List/search for files.
+- **fs_read** - Read file contents.
+- **summarize_file** - Summarize documents.
+- **fs_write** - Create/write files (allowed: memory/, out/, logs/).
+- **fs_delete** - Delete files (has dry-run) (allowed: memory/, out/, logs/).
+- **json_update** - Update JSON files (allowed: memory/, out/, logs/, etc/).
 
 **Git:**
-- **git_status** - Check repository status (trust: observe+)
-  - "What's the git status?"
-  - "Show me what files have changed"
+- **git_status** - Check repository status.
+- **git_commit** - Commit changes.
 
 **Search:**
-- **search_index** - Semantic memory search (trust: observe+)
-  - "Search my memories for work projects"
-  - "Find conversations about AI"
-
-#### 🟡 Write Operations (Supervised auto-approve)
-
-**File System:**
-- **fs_write** - Create/write files (allowed: memory/, out/, logs/) (trust: supervised_auto+)
-  - "Create out/test.txt with Hello World"
-- **fs_delete** - Delete files (has dry-run) (allowed: memory/, out/, logs/) (trust: supervised_auto+)
-  - "Delete out/test.txt"
-- **json_update** - Update JSON files (allowed: memory/, out/, logs/, etc/) (trust: supervised_auto+)
-  - "Update etc/test.json to set status: active"
-
-**Git:**
-- **git_commit** - Commit changes (trust: supervised_auto+)
-  - "Commit changes with message: Update skills"
+- **search_index** - Semantic memory search.
 
 **Network:**
-- **http_get** - Fetch web content (trust: supervised_auto+)
-  - "Get the content from https://example.com"
-- **web_search** - Search the web (trust: supervised_auto+)
-  - "Search for TypeScript best practices 2025"
+- **http_get** - Fetch web content.
+- **web_search** - Search the web.
 
 **System:**
-- **run_agent** - Execute agents (trust: suggest+)
-  - "Run the organizer agent"
-  - "Execute the reflector"
-
-#### 🔴 High-Risk Operations (Requires bounded_auto)
-
-- **shell_safe** - Run whitelisted shell commands (trust: bounded_auto+)
-  - Currently requires higher trust level
-  - Whitelist: ls, cat, grep, find, git, pnpm, node, tsx, pwd, whoami
+- **run_agent** - Execute agents.
+- **shell_safe** - Run whitelisted shell commands.
 
 ### The Operator - Autonomous Task Execution System
 Simply ask in natural language using "operator mode" or by being specific about actions:
@@ -358,7 +358,7 @@ MetaHuman OS runs several autonomous agents that process memories and generate i
 **4. Dreamer Agent** - Creates surreal, metaphorical dreams from memory fragments
 **5. Sleep Service** - Manages dream generation based on your sleep schedule
 **6. Ingestor Agent** - Converts raw files into episodic memories
-**7. Operator Agent** - Executes complex multi-step tasks using skills
+**7. Operator Agent** - Executes complex multi-step tasks using skills, leveraging the capability catalog for dynamic skill discovery
 
 ### Advanced Agents
 **8. Auto-Approver Agent** - Quality-based dataset approval for LoRA adaptation
@@ -389,11 +389,11 @@ We welcome contributions! Please see the [ARCHITECTURE.md](ARCHITECTURE.md) and 
 
 ## Documentation
 
-- Complete User Guide: [CLEAN_USER_GUIDE.md](CLEAN_USER_GUIDE.md)
-- Design: [DESIGN.md](DESIGN.md)
-- Architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
-- Agents overview: [brain/agents/README.md](brain/agents/README.md)
-- Memory schema: [memory/README.md](memory/README.md)
+- Comprehensive User Guide: [docs/user-guide/index.md]
+- Design: [DESIGN.md]
+- Architecture: [ARCHITECTURE.md]
+- Agents overview: [brain/agents/README.md]
+- Memory schema: [memory/README.md]
 
 ## License
 
@@ -405,4 +405,4 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 - Check the audit logs in `logs/audit/` for operation details
 - Review agent logs with `./bin/mh agent logs <name>`
 - Inspect memory and config files directly (they're just JSON)
-- Check the [Troubleshooting](CLEAN_USER_GUIDE.md#troubleshooting) section in the user guide
+- Check the [Troubleshooting](docs/user-guide/12-troubleshooting.md) section in the user guide

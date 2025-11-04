@@ -46,6 +46,24 @@ function loadConfig(): VoiceConfig {
   }
 
   config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+
+  const toAbsolute = (maybePath: string | undefined): string | undefined => {
+    if (!maybePath) return maybePath;
+    return path.isAbsolute(maybePath)
+      ? maybePath
+      : path.resolve(paths.root, maybePath);
+  };
+
+  if (config.tts?.provider === 'piper') {
+    config.tts.piper.binary = toAbsolute(config.tts.piper.binary)!;
+    config.tts.piper.model = toAbsolute(config.tts.piper.model)!;
+    config.tts.piper.config = config.tts.piper.config ? toAbsolute(config.tts.piper.config)! : '';
+  }
+
+  if (config.cache) {
+    config.cache.directory = toAbsolute(config.cache.directory)!;
+  }
+
   return config!;
 }
 

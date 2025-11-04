@@ -978,7 +978,11 @@ let reasoningStages: ReasoningStage[] = [];
         <div class="operator-toggle-group" bind:this={operatorToggleGroup}>
           <label class="small-toggle">
             <input type="checkbox" bind:checked={forceOperator} on:change={saveChatPrefs} />
-            Operator
+            <span>Operator</span>
+          </label>
+          <label class="small-toggle yolo-toggle">
+            <input type="checkbox" bind:checked={yoloMode} on:change={handleYoloToggle} />
+            <span>YOLO</span>
           </label>
           <button
             type="button"
@@ -1052,54 +1056,89 @@ let reasoningStages: ReasoningStage[] = [];
           {/each}
         </select>
       </div>
-      <textarea
-        bind:value={input}
-        on:keypress={handleKeyPress}
-        on:focus={() => { void ensureAudioUnlocked() }}
-        on:touchstart={() => { void ensureAudioUnlocked() }}
-        placeholder={mode === 'conversation' ? 'Message your MetaHuman...' : 'Explore inner dialogue...'}
-        rows="1"
-        class="chat-input"
-        disabled={loading}
-      />
-      <button
-        class="operator-icon-btn {forceOperator ? 'active' : ''}"
-        title={forceOperator ? 'Operator mode enabled' : 'Enable operator mode'}
-        aria-pressed={forceOperator}
-        on:click={() => { forceOperator = !forceOperator; saveChatPrefs(); }}
-      >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <path d="M7 9a5 5 0 0 1 10 0v3a5 5 0 0 1-10 0V9zm-2 3a7 7 0 1 0 14 0V9a7 7 0 1 0-14 0v3zm3 7h8a2 2 0 0 0 2-2v-1H6v1a2 2 0 0 0 2 2z"/>
-        </svg>
-      </button>
-      <button
-        class="mic-btn {micRecording ? 'recording' : ''}"
-        title={micRecording ? 'Listening… click to stop' : 'Click to speak'}
-        on:click={() => micRecording ? stopMic() : startMic()}
-        disabled={loading}
-      >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zM19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
-        </svg>
-      </button>
-      <button
-        class="send-btn"
-        on:click={sendMessage}
-        disabled={!input.trim() || loading}
-      >
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
-        </svg>
-      </button>
+      <div class="input-row">
+        <textarea
+          bind:value={input}
+          on:keypress={handleKeyPress}
+          on:focus={() => { void ensureAudioUnlocked() }}
+          on:touchstart={() => { void ensureAudioUnlocked() }}
+          placeholder={mode === 'conversation' ? 'Message your MetaHuman...' : 'Explore inner dialogue...'}
+          rows="1"
+          class="chat-input"
+          disabled={loading}
+        />
+        <div class="input-actions">
+          <button
+            class="operator-icon-btn {forceOperator ? 'active' : ''}"
+            title={forceOperator ? 'Operator mode enabled' : 'Enable operator mode'}
+            aria-pressed={forceOperator}
+            on:click={() => { forceOperator = !forceOperator; saveChatPrefs(); }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M7 9a5 5 0 0 1 10 0v3a5 5 0 0 1-10 0V9zm-2 3a7 7 0 1 0 14 0V9a7 7 0 1 0-14 0v3zm3 7h8a2 2 0 0 0 2-2v-1H6v1a2 2 0 0 0 2 2z"/>
+            </svg>
+          </button>
+          <button
+            class="operator-icon-btn yolo {yoloMode ? 'active' : ''}"
+            title={yoloMode ? 'YOLO mode enabled' : 'Enable YOLO mode'}
+            aria-pressed={yoloMode}
+            on:click={toggleYoloMobile}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M13 2L3 14h7l-1 8 10-12h-7z" />
+            </svg>
+          </button>
+          <button
+            class="mic-btn {micRecording ? 'recording' : ''}"
+            title={micRecording ? 'Listening… click to stop' : 'Click to speak'}
+            on:click={() => micRecording ? stopMic() : startMic()}
+            disabled={loading}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zM19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
+            </svg>
+          </button>
+          <button
+            class="send-btn"
+            on:click={sendMessage}
+            disabled={!input.trim() || loading}
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+            </svg>
+          </button>
+        </div>
+      </div>
     </div>
   </div>
   {/if}
 </div>
 
 <style>
-  .input-controls { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px; flex-wrap:wrap; }
-  .operator-toggle-group { position:relative; display:flex; align-items:center; gap:6px; }
+  .input-controls {
+    width: 100%;
+    display:flex;
+    align-items:center;
+    gap:0.75rem;
+    flex-wrap:wrap;
+    margin-bottom:0;
+  }
+  .operator-toggle-group { position:relative; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   .small-toggle { display:flex; align-items:center; gap:6px; font-size:12px; color: var(--muted); }
+  .small-toggle input { accent-color: rgb(79 70 229); }
+  .small-toggle span { display:inline-flex; align-items:center; gap:4px; padding-inline:4px; border-radius:999px; transition: color 0.2s ease, background 0.2s ease; }
+  .small-toggle.yolo-toggle { color: rgb(217 119 6); font-weight:600; }
+  .small-toggle.yolo-toggle input { accent-color: rgb(234 179 8); }
+  .small-toggle.yolo-toggle span { color: inherit; padding-inline:6px; }
+  .small-toggle.yolo-toggle input:checked + span {
+    background: rgba(234, 179, 8, 0.18);
+    color: rgb(202 138 4);
+  }
+  :global(.dark) .small-toggle.yolo-toggle { color: rgb(253 224 71); }
+  :global(.dark) .small-toggle.yolo-toggle input:checked + span {
+    background: rgba(250, 204, 21, 0.22);
+    color: rgb(250 204 21);
+  }
   .operator-info-trigger {
     display:inline-flex;
     align-items:center;
@@ -1130,7 +1169,14 @@ let reasoningStages: ReasoningStage[] = [];
   .operator-info-trigger[aria-expanded="true"] svg {
     transform: rotate(180deg);
   }
-  .operator-focus { padding: 4px 6px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.15); }
+  .operator-focus {
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid rgba(0,0,0,0.15);
+    font-size: 12px;
+    flex: 0 1 180px;
+    margin-left: auto;
+  }
   :global(.dark) .operator-focus { background: rgb(17 24 39); color: rgb(243 244 246); border-color: rgba(255,255,255,0.2); }
   .operator-popover {
     position:absolute;
@@ -1829,9 +1875,16 @@ let reasoningStages: ReasoningStage[] = [];
 
   .input-wrapper {
     display: flex;
+    flex-direction: column;
     gap: 0.75rem;
     max-width: 48rem;
     margin: 0 auto;
+  }
+
+  .input-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.75rem;
   }
 
   .chat-input {
@@ -1867,6 +1920,12 @@ let reasoningStages: ReasoningStage[] = [];
   .chat-input:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .input-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
   .send-btn {
@@ -1915,6 +1974,10 @@ let reasoningStages: ReasoningStage[] = [];
   :global(.dark) .operator-icon-btn { background: rgb(17 24 39); color: rgb(243 244 246); border-color: rgba(255,255,255,0.1); }
   .operator-icon-btn.active { border-color: rgb(167 139 250); box-shadow: 0 0 0 3px rgba(167,139,250,0.25); }
   :global(.dark) .operator-icon-btn.active { border-color: rgb(167, 139, 250); box-shadow: 0 0 0 3px rgba(167,139,250,0.35); background: rgba(167,139,250,0.15); }
+  .operator-icon-btn.yolo { border-color: rgba(234,179,8,0.4); color: rgb(202 138 4); background: rgba(253, 230, 138, 0.2); }
+  :global(.dark) .operator-icon-btn.yolo { border-color: rgba(253,224,71,0.35); background: rgba(146, 64, 14, 0.28); color: rgb(253 224 71); }
+  .operator-icon-btn.yolo.active { border-color: rgb(234,179,8); box-shadow: 0 0 0 3px rgba(234,179,8,0.32); background: rgba(253, 224, 71, 0.3); }
+  :global(.dark) .operator-icon-btn.yolo.active { border-color: rgb(250,204,21); box-shadow: 0 0 0 3px rgba(250,204,21,0.36); background: rgba(214, 158, 46, 0.4); }
 
   .mic-btn {
     display: inline-flex;
@@ -1981,6 +2044,9 @@ let reasoningStages: ReasoningStage[] = [];
     .small-toggle,
     .operator-focus,
     .mic-btn { display: none; }
+
+    .input-row { flex-direction: column; align-items: stretch; gap: 0.5rem; }
+    .input-actions { justify-content: space-between; }
 
     /* Show compact operator icon */
     .operator-icon-btn { display: inline-flex; }

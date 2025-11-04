@@ -29,15 +29,8 @@ build/
 !/persona/README.md
 
 # Personal memories - ALL types
-/memory/episodic/**
-/memory/semantic/**
-/memory/procedural/**
-/memory/preferences/**
-/memory/tasks/**
-/memory/inbox/**
-/memory/index/**
+/memory/*
 !/memory/README.md
-!/memory/**/README.md
 
 # Personal logs and audit trails
 /logs/**
@@ -46,12 +39,6 @@ build/
 # Personal generated content and outputs
 /out/**
 !/out/README.md
-
-# Brain state and journal (personal runtime data)
-/brain/journal/**
-/brain/state/**
-!/brain/journal/README.md
-!/brain/state/README.md
 
 # ============================================
 # CONFIGURATION - PERSONAL SETTINGS
@@ -114,7 +101,7 @@ Thumbs.db
 # RUNTIME & TEMPORARY FILES
 # ============================================
 /metahuman-runs/
-/docs/run_logs/
+/docs/archive/
 *.pid
 *.lock
 !pnpm-lock.yaml
@@ -129,3 +116,21 @@ Thumbs.db
 .azure/
 credentials/
 secrets/
+
+# ============================================
+# AGENTS
+# ============================================
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.Qwen/
+.Claude/
+.Gemini/
+
+# ============================================
+# VENDOR & CACHE
+# ============================================
+vendor/
+unsloth_compiled_cache/
+/bin/piper/
+/bin/whisper

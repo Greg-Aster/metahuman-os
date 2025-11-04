@@ -123,6 +123,13 @@ Implement a meta-skill `catalog.describe`:
 - Implementation: read manifests (e.g., from `brain/skills/tasks`) and return sanitized metadata.
 - Operator planner always calls this first; ensures plan stays in sync with registered skills.
 
+## Recent Enhancements (Nov 2025)
+
+- **Tasks tab** now surfaces quick filters (Today, Overdue, Completed), inline status chips, and duplicate warnings fed by the `tasks.list` metadata.
+- **Calendar glance** panel highlights events linked to tasks and mirrors reminder offsets so the assistant can narrate upcoming commitments.
+- **Operator hand-off** injects capability briefs (`persona/capabilities/tasks.md`, `persona/capabilities/calendar.md`) before planning, ensuring strict and YOLO modes share the same guardrails.
+- **Event/task cross-links** are persisted in both domains; UI badges and operator prompts remind the model to update the companion domain when schedules shift.
+
 ## UI Roadmap
 
 1. **Tasks**

@@ -185,6 +185,22 @@ All reasoning stages are logged to the audit system:
 - Full reasoning history preserved for future analysis
 - Enables debugging and improvement of reasoning prompts
 
+### Calendar System
+
+MetaHuman OS now includes a full-featured calendar system, allowing you to manage events, schedule tasks, and set reminders.
+
+**Features:**
+- **Event Management**: Create, update, delete, and find calendar events.
+- **Task Integration**: Link events to tasks, and vice-versa.
+- **Scheduling**: Set start and end times for events, and create all-day events.
+- **Reminders**: Configure reminders for important events.
+- **Recurring Events**: Support for daily, weekly, monthly, and yearly recurring events.
+
+**How it works:**
+- The calendar system is a new **domain** within the OS, with its own set of skills (e.g., `calendar.create`, `calendar.listRange`).
+- A unified state API (`packages/core/src/state/calendar.ts`) ensures consistency between the UI, CLI, and operator.
+- Events are stored in `memory/calendar/`.
+
 ### Long-Term Memory & LoRA Adaptation
 MetaHuman OS features a sophisticated personality adaptation system using LoRA (Low-Rank Adaptation) to continuously learn from your memories. This allows your digital personality to evolve over time without needing to retrain the entire base model.
 

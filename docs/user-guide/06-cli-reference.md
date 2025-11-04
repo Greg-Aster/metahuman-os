@@ -17,6 +17,13 @@
 - `./bin/mh task add "title"` - Create task
 - `./bin/mh task start <id>` - Start task
 - `./bin/mh task done <id>` - Complete task
+- `./bin/mh task lists` - List all task lists
+- `./bin/mh task new-list "<name>"` - Create a new task list
+
+### Calendar Commands
+- `./bin/mh calendar list` - List calendar events for the upcoming week
+- `./bin/mh calendar create "<title>"` - Create a new calendar event
+
 
 ### Agent Commands
 - `./bin/mh agent list` - List available agents

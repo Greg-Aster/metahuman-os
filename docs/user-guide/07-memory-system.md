@@ -33,6 +33,10 @@ Structured to-do items with:
 - Status: `todo`, `in_progress`, `blocked`, `done`, `cancelled`
 - Priority: `P1` (urgent), `P2` (normal), `P3` (low)
 - Dependencies, due dates, tags
+- `listId`: The ID of the task list this task belongs to
+- `category` or `labels`: For filtering and organization
+- `due`, `start`, `end`: ISO timestamps for scheduling
+- `reminders`: An array of reminder configurations
 
 ```json
 {
@@ -41,8 +45,29 @@ Structured to-do items with:
   "status": "todo",
   "priority": "P2",
   "tags": ["writing", "work"],
+  "listId": "list-work-projects",
+  "due": "2025-11-10T18:00:00.000Z",
   "created": "2025-10-19T14:30:00.000Z",
   "updated": "2025-10-19T14:30:00.000Z"
+}
+```
+
+#### Calendar Memory (`memory/calendar/`)
+Events for the calendar system:
+- `id`, `title`, `description`
+- `start`, `end`, `allDay`
+- `location`, `attendees`
+- `linkedTasks`: References to Task IDs
+- `reminders`: e.g., `{ type: 'email', offset: '-PT30M' }`
+
+```json
+{
+  "id": "evt-20251109100000",
+  "title": "Team Sync",
+  "start": "2025-11-09T10:00:00.000Z",
+  "end": "2025-11-09T10:30:00.000Z",
+  "attendees": ["greg@example.com"],
+  "linkedTasks": ["task-20251019143000"]
 }
 ```
 
