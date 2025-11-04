@@ -37,6 +37,9 @@ let reflectionMemories: EventItem[] = [];
 let loadingEvents = false
 let eventsError: string | null = null
 let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' = 'episodic'
+let voiceTab: 'upload' | 'training' = 'upload'
+let trainingTab: 'datasets' | 'monitor' | 'adapters' = 'datasets'
+let systemTab: 'persona' | 'lifeline' | 'terminal' = 'persona'
 let expanded: Record<string, boolean> = {}
 type MemoryContentState = { status: 'idle' | 'loading' | 'ready' | 'error'; content?: string; error?: string }
 let memoryContent: Record<string, MemoryContentState> = {}
@@ -284,7 +287,7 @@ function getMemoryContent(item: { relPath?: string; content?: string }): MemoryC
   return memoryContent[item.relPath] ?? { status: 'idle', content: item.content ?? '' };
 }
 
-$: if ($activeView === 'persona' && !personaLoaded && !personaLoading) {
+$: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && !personaLoading) {
   loadPersonaCore();
 }
 
@@ -763,174 +766,172 @@ $: if ($activeView === 'persona' && !personaLoaded && !personaLoading) {
         {/if}
       </div>
     </div>
-  {:else if $activeView === 'learnings'}
+  {:else if $activeView === 'voice'}
     <div class="view-container">
       <div class="view-header">
-        <h2 class="view-title">🌙 Overnight Learnings</h2>
-        <p class="view-subtitle">Review dream insights and nightly updates</p>
+        <h2 class="view-title">🎤 Voice</h2>
+        <p class="view-subtitle">Audio upload, transcription & voice training</p>
       </div>
       <div class="view-content">
-        <OvernightLearnings />
-      </div>
-    </div>
-  {:else if $activeView === 'audio'}
-    <div class="view-container">
-      <div class="view-header">
-        <h2 class="view-title">🎙️ Audio</h2>
-        <p class="view-subtitle">Upload and transcribe audio recordings</p>
-      </div>
-      <div class="view-content">
-        <div class="audio-grid">
-          <AudioUpload />
-          <AudioRecorder />
+        <div class="memory-tabs">
+          <button class="mem-tab" class:active={voiceTab==='upload'} on:click={() => voiceTab='upload'}>Upload & Transcribe</button>
+          <button class="mem-tab" class:active={voiceTab==='training'} on:click={() => voiceTab='training'}>Voice Clone Training</button>
         </div>
-      </div>
-    </div>
-  {:else if $activeView === 'voice-training'}
-    <div class="view-container">
-      <div class="view-header">
-        <h2 class="view-title">🎤 Voice Training</h2>
-        <p class="view-subtitle">Voice cloning progress and sample management</p>
-      </div>
-      <div class="view-content">
-        <VoiceTrainingWidget />
-      </div>
-    </div>
-  {:else if $activeView === 'adaptation'}
-    <div class="view-container">
-      <div class="view-header">
-        <h2 class="view-title">🧠 Adaptation</h2>
-        <p class="view-subtitle">Manage LoRA datasets and automation</p>
-      </div>
-      <div class="view-content">
-        <AdapterDashboard />
+        {#if voiceTab === 'upload'}
+          <div class="audio-grid">
+            <AudioUpload />
+            <AudioRecorder />
+          </div>
+        {:else if voiceTab === 'training'}
+          <VoiceTrainingWidget />
+        {/if}
       </div>
     </div>
   {:else if $activeView === 'training'}
     <div class="view-container">
       <div class="view-header">
-        <h2 class="view-title">🔥 Training Monitor</h2>
-        <p class="view-subtitle">Real-time LoRA training progress</p>
+        <h2 class="view-title">🧠 AI Training</h2>
+        <p class="view-subtitle">LoRA datasets, training & adapters</p>
       </div>
       <div class="view-content">
-        <TrainingMonitor />
-      </div>
-    </div>
-  {:else if $activeView === 'persona'}
-    <div class="view-container">
-      <div class="view-header">
-        <h2 class="view-title">🎭 Persona</h2>
-        <p class="view-subtitle">Identity and personality settings</p>
-      </div>
-      <div class="view-content">
-        <div class="persona-panel">
-          {#if personaLoading && !personaLoaded}
-            <p class="muted">Loading persona settings…</p>
-          {:else if personaError && !personaLoaded}
-            <div class="persona-alert error">
-              <div>
-                <strong>Failed to load persona settings.</strong>
-                <div>{personaError}</div>
-              </div>
-              <button class="retry-button" on:click={loadPersonaCore}>Retry</button>
-            </div>
-          {:else}
-            {#if personaError}
-              <div class="persona-alert error inline">
-                <div>{personaError}</div>
-              </div>
-            {/if}
-            {#if personaSuccess}
-              <div class="persona-alert success">
-                {personaSuccess}
-              </div>
-            {/if}
-            <form class="persona-form" on:submit|preventDefault={savePersonaCore}>
-              <section class="persona-section">
-                <h4>Identity</h4>
-                <div class="form-grid">
-                  <label class="field">
-                    <span>AI Name</span>
-                    <input type="text" bind:value={personaForm.name} placeholder="MetaHuman Greg" />
-                  </label>
-                  <label class="field">
-                    <span>Human Name</span>
-                    <input type="text" bind:value={personaForm.humanName} placeholder="Gregory Aster" />
-                  </label>
-                  <label class="field">
-                    <span>Email</span>
-                    <input type="email" bind:value={personaForm.email} placeholder="greg@example.com" />
-                  </label>
-                  <label class="field">
-                    <span>Avatar Path / URL</span>
-                    <input type="text" bind:value={personaForm.avatar} placeholder="/assets/avatar/avatar.png" />
-                  </label>
-                  <label class="field">
-                    <span>Role</span>
-                    <input type="text" bind:value={personaForm.role} placeholder="Digital persona…" />
-                  </label>
-                  <label class="field">
-                    <span>Aliases (comma separated)</span>
-                    <input type="text" bind:value={personaForm.aliases} placeholder="Greg, MetaHuman Greg" />
-                  </label>
-                </div>
-                <label class="field">
-                  <span>Purpose</span>
-                  <textarea rows="3" bind:value={personaForm.purpose}></textarea>
-                </label>
-              </section>
-
-              <section class="persona-section">
-                <h4>Communication Style</h4>
-                <div class="form-grid">
-                  <label class="field">
-                    <span>Tone (comma separated)</span>
-                    <input type="text" bind:value={personaForm.tone} placeholder="direct, friendly, pragmatic" />
-                  </label>
-                  <label class="field">
-                    <span>Humor</span>
-                    <input type="text" bind:value={personaForm.humor} placeholder="dry, occasional" />
-                  </label>
-                  <label class="field">
-                    <span>Formality</span>
-                    <input type="text" bind:value={personaForm.formality} placeholder="casual-professional" />
-                  </label>
-                  <label class="field">
-                    <span>Verbosity</span>
-                    <input type="text" bind:value={personaForm.verbosity} placeholder="concise with detail when needed" />
-                  </label>
-                </div>
-                <label class="field">
-                  <span>Narrative Style</span>
-                  <textarea rows="3" bind:value={personaForm.narrativeStyle}></textarea>
-                </label>
-              </section>
-
-              <section class="persona-section">
-                <h4>Boundaries</h4>
-                <label class="field">
-                  <span>Core Boundaries (one per line)</span>
-                  <textarea rows="4" bind:value={personaForm.boundaries} placeholder="No deceptive communication&#10;Respect privacy of others"></textarea>
-                </label>
-              </section>
-
-              <div class="persona-actions">
-                <button type="submit" class="save-button" disabled={personaSaving}>
-                  {personaSaving ? 'Saving…' : 'Save Persona'}
-                </button>
-              </div>
-            </form>
-          {/if}
+        <div class="memory-tabs">
+          <button class="mem-tab" class:active={trainingTab==='datasets'} on:click={() => trainingTab='datasets'}>Datasets</button>
+          <button class="mem-tab" class:active={trainingTab==='monitor'} on:click={() => trainingTab='monitor'}>Training Monitor</button>
+          <button class="mem-tab" class:active={trainingTab==='adapters'} on:click={() => trainingTab='adapters'}>Adapters</button>
         </div>
+        {#if trainingTab === 'datasets'}
+          <AdapterDashboard />
+        {:else if trainingTab === 'monitor'}
+          <TrainingMonitor />
+        {:else if trainingTab === 'adapters'}
+          <div class="empty-state">
+            <div class="empty-icon">🧠</div>
+            <div class="empty-title">Active Adapters</div>
+            <div class="empty-description">
+              Adapter management interface coming soon. Check the Settings tab in the right sidebar for current adapter status.
+            </div>
+          </div>
+        {/if}
       </div>
     </div>
-  {:else if $activeView === 'lifeline'}
-    <div class="view-container">
-      <Lifeline />
-    </div>
-  {:else if $activeView === 'terminal'}
-    <div class="view-container terminal-view">
-      <Terminal />
+  {:else if $activeView === 'system'}
+    <div class="view-container" class:terminal-view={systemTab === 'terminal'}>
+      <div class="view-header">
+        <h2 class="view-title">⚙️ System</h2>
+        <p class="view-subtitle">Persona, tools & settings</p>
+      </div>
+      <div class="view-content">
+        <div class="memory-tabs">
+          <button class="mem-tab" class:active={systemTab==='persona'} on:click={() => systemTab='persona'}>Persona</button>
+          <button class="mem-tab" class:active={systemTab==='lifeline'} on:click={() => systemTab='lifeline'}>Lifeline</button>
+          <button class="mem-tab" class:active={systemTab==='terminal'} on:click={() => systemTab='terminal'}>Terminal</button>
+        </div>
+        {#if systemTab === 'persona'}
+          <div class="persona-panel">
+            {#if personaLoading && !personaLoaded}
+              <p class="muted">Loading persona settings…</p>
+            {:else if personaError && !personaLoaded}
+              <div class="persona-alert error">
+                <div>
+                  <strong>Failed to load persona settings.</strong>
+                  <div>{personaError}</div>
+                </div>
+                <button class="retry-button" on:click={loadPersonaCore}>Retry</button>
+              </div>
+            {:else}
+              {#if personaError}
+                <div class="persona-alert error inline">
+                  <div>{personaError}</div>
+                </div>
+              {/if}
+              {#if personaSuccess}
+                <div class="persona-alert success">
+                  {personaSuccess}
+                </div>
+              {/if}
+              <form class="persona-form" on:submit|preventDefault={savePersonaCore}>
+                <section class="persona-section">
+                  <h4>Identity</h4>
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>AI Name</span>
+                      <input type="text" bind:value={personaForm.name} placeholder="MetaHuman Greg" />
+                    </label>
+                    <label class="field">
+                      <span>Human Name</span>
+                      <input type="text" bind:value={personaForm.humanName} placeholder="Gregory Aster" />
+                    </label>
+                    <label class="field">
+                      <span>Email</span>
+                      <input type="email" bind:value={personaForm.email} placeholder="greg@example.com" />
+                    </label>
+                    <label class="field">
+                      <span>Avatar Path / URL</span>
+                      <input type="text" bind:value={personaForm.avatar} placeholder="/assets/avatar/avatar.png" />
+                    </label>
+                    <label class="field">
+                      <span>Role</span>
+                      <input type="text" bind:value={personaForm.role} placeholder="Digital persona…" />
+                    </label>
+                    <label class="field">
+                      <span>Aliases (comma separated)</span>
+                      <input type="text" bind:value={personaForm.aliases} placeholder="Greg, MetaHuman Greg" />
+                    </label>
+                  </div>
+                  <label class="field">
+                    <span>Purpose</span>
+                    <textarea rows="3" bind:value={personaForm.purpose}></textarea>
+                  </label>
+                </section>
+
+                <section class="persona-section">
+                  <h4>Communication Style</h4>
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>Tone (comma separated)</span>
+                      <input type="text" bind:value={personaForm.tone} placeholder="direct, friendly, pragmatic" />
+                    </label>
+                    <label class="field">
+                      <span>Humor</span>
+                      <input type="text" bind:value={personaForm.humor} placeholder="dry, occasional" />
+                    </label>
+                    <label class="field">
+                      <span>Formality</span>
+                      <input type="text" bind:value={personaForm.formality} placeholder="casual-professional" />
+                    </label>
+                    <label class="field">
+                      <span>Verbosity</span>
+                      <input type="text" bind:value={personaForm.verbosity} placeholder="concise with detail when needed" />
+                    </label>
+                  </div>
+                  <label class="field">
+                    <span>Narrative Style</span>
+                    <textarea rows="3" bind:value={personaForm.narrativeStyle}></textarea>
+                  </label>
+                </section>
+
+                <section class="persona-section">
+                  <h4>Boundaries</h4>
+                  <label class="field">
+                    <span>Core Boundaries (one per line)</span>
+                    <textarea rows="4" bind:value={personaForm.boundaries} placeholder="No deceptive communication&#10;Respect privacy of others"></textarea>
+                  </label>
+                </section>
+
+                <div class="persona-actions">
+                  <button type="submit" class="save-button" disabled={personaSaving}>
+                    {personaSaving ? 'Saving…' : 'Save Persona'}
+                  </button>
+                </div>
+              </form>
+            {/if}
+          </div>
+        {:else if systemTab === 'lifeline'}
+          <Lifeline />
+        {:else if systemTab === 'terminal'}
+          <Terminal />
+        {/if}
+      </div>
     </div>
   {/if}
 </div>

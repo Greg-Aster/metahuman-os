@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { paths, generateId, timestamp } from './paths.js';
 import { appendEventToIndex, getIndexStatus } from './vector-index.js';
+import { auditDataChange } from './audit.js';
 
 export interface EpisodicEvent {
   id: string;
@@ -159,6 +160,51 @@ export function updateTaskStatus(taskId: string, status: Task['status']): void {
       fs.unlinkSync(completedPath);
     }
   }
+}
+
+export function deleteTask(taskId: string): string {
+  const activeDir = path.join(paths.tasks, 'active');
+  const completedDir = path.join(paths.tasks, 'completed');
+  const deletedDir = path.join(paths.tasks, 'deleted');
+
+  const activePath = path.join(activeDir, `${taskId}.json`);
+  const completedPath = path.join(completedDir, `${taskId}.json`);
+
+  let sourcePath: string | null = null;
+  if (fs.existsSync(activePath)) {
+    sourcePath = activePath;
+  } else if (fs.existsSync(completedPath)) {
+    sourcePath = completedPath;
+  }
+
+  if (!sourcePath) {
+    throw new Error(`Task not found: ${taskId}`);
+  }
+
+  const task: Task = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));
+  const deletedAt = timestamp();
+  const safeStamp = deletedAt.replace(/[:.]/g, '-');
+
+  fs.mkdirSync(deletedDir, { recursive: true });
+  const archivePath = path.join(deletedDir, `${taskId}-${safeStamp}.json`);
+  const archivedPayload = {
+    ...task,
+    deleted: true,
+    deletedAt,
+  };
+
+  fs.writeFileSync(archivePath, JSON.stringify(archivedPayload, null, 2));
+  fs.unlinkSync(sourcePath);
+
+  auditDataChange({
+    type: 'delete',
+    resource: 'task',
+    path: archivePath,
+    actor: 'operator',
+    details: { id: taskId, deletedAt },
+  });
+
+  return archivePath;
 }
 
 export function listActiveTasks(): Task[] {

@@ -23,6 +23,7 @@ import * as taskCreate from './task_create';
 import * as taskUpdateStatus from './task_update_status';
 import * as taskList from './task_list';
 import * as taskFind from './task_find';
+import * as taskDelete from './task_delete';
 
 /**
  * Initialize all skills
@@ -49,8 +50,9 @@ export function initializeSkills(): void {
   registerSkill(taskUpdateStatus.manifest, taskUpdateStatus.execute);
   registerSkill(taskList.manifest, taskList.execute);
   registerSkill(taskFind.manifest, taskFind.execute);
+  registerSkill(taskDelete.manifest, taskDelete.execute);
 
-  console.log('[skills] Skills registered: fs_read, fs_write, fs_list, fs_delete, json_update, http_get, summarize_file, git_status, git_commit, search_index, run_agent, shell_safe, web_search, task_create, task_update_status, task_list, task_find');
+  console.log('[skills] Skills registered: fs_read, fs_write, fs_list, fs_delete, json_update, http_get, summarize_file, git_status, git_commit, search_index, run_agent, shell_safe, web_search, task_create, task_update_status, task_list, task_find, task_delete');
 }
 
 // Export for convenience
@@ -65,4 +67,5 @@ export {
   taskUpdateStatus,
   taskList,
   taskFind,
+  taskDelete,
 };

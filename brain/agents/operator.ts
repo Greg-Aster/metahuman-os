@@ -250,6 +250,7 @@ ${inputsInfo}
     'Avoid unnecessary steps',
     'Prefer reading before writing',
     'Use tasks.list (optionally filtered) to inspect active tasks, tasks.find to match by title or ID, tasks.create for new items, tasks.update for property or status changes, and tasks.schedule when the user needs calendar alignment.',
+    'Use tasks.delete to remove or archive tasks when the user explicitly says delete/remove; by default, delete the duplicate or todo entry unless instructed otherwise.',
     'For calendar requests, use calendar.listRange / calendar.create / calendar.update as appropriate.',
     'Always validate inputs',
     'When writing files and the user did not specify a path, default to writing under the \'out/\' directory in the project root.',
@@ -266,7 +267,8 @@ ${inputsInfo}
     );
   } else {
     instructionLines.push(
-      'If anything is ambiguous, ask the user a clarifying question instead of guessing.',
+      'When ambiguity is low-risk, make a reasonable assumption, state it briefly, and continue the plan.',
+      'Reserve clarification questions for situations where acting could cause unexpected or destructive side effects.',
       'You may compose multi-step actions in a single plan step when it saves time, but explain what you will do.',
       'You may proceed without placeholders if you are certain about identifiers.'
     );
@@ -353,6 +355,11 @@ Create a step-by-step plan to accomplish this task.`;
       ['task_create', 'tasks.create'],
       ['task_update_status', 'tasks.update'],
       ['task_schedule', 'tasks.schedule'],
+      ['task_delete', 'tasks.delete'],
+      ['tasks_delete', 'tasks.delete'],
+      ['delete_task', 'tasks.delete'],
+      ['remove_task', 'tasks.delete'],
+      ['tasks_remove', 'tasks.delete'],
     ]);
     let unknown = false;
     response.steps = response.steps.map(s => {
@@ -492,15 +499,7 @@ async function execute(
   ): Record<string, any> | undefined => {
     if (!step.inputs) return step.inputs;
     const resolved = resolvePlaceholders(step.inputs, context);
-
-    if (mode === 'yolo') {
-      if (resolved && typeof resolved === 'object' && resolved !== null) {
-        if ((resolved as any).taskId && !(resolved as any).id) {
-          (resolved as any).id = (resolved as any).taskId;
-        }
-      }
-      return resolved;
-    }
+    const isYolo = mode === 'yolo';
 
     const collectCandidateTasks = () => {
       const candidates: any[] = [];
@@ -519,6 +518,12 @@ async function execute(
       }
       return candidates;
     };
+
+    if (resolved && typeof resolved === 'object' && resolved !== null) {
+      if ((resolved as any).taskId && !(resolved as any).id) {
+        (resolved as any).id = (resolved as any).taskId;
+      }
+    }
 
     if (step.skillId === 'tasks.update' && resolved) {
       if (resolved.taskId && !resolved.id) {
@@ -550,6 +555,46 @@ async function execute(
         assignFromCandidates();
       }
 
+      if (!isYolo && (!resolved.id || typeof resolved.id !== 'string' || !/^task-[a-z0-9_-]+$/i.test(resolved.id))) {
+        throw new Error('tasks.update requires a task id derived from earlier steps');
+      }
+
+      if (!isYolo && !resolved.statusBefore && typeof resolved.status === 'string') {
+        if (resolved.status === 'cancelled') resolved.statusBefore = 'todo';
+        else if (resolved.status === 'done') resolved.statusBefore = 'in_progress';
+      }
+
+      return resolved;
+    }
+
+    if (step.skillId === 'tasks.delete' && resolved) {
+      const candidates = collectCandidateTasks();
+      const assignFromCandidates = () => {
+        const filtered = candidates.filter(task => {
+          if (!task || typeof task !== 'object') return false;
+          if (task.status === 'in_progress') return false;
+          return true;
+        });
+        if (filtered.length === 1) {
+          (resolved as any).id = filtered[0].id;
+          (resolved as any).taskId = filtered[0].id;
+        }
+      };
+
+      const currentId = (resolved as any).id || (resolved as any).taskId;
+      if (!currentId || typeof currentId !== 'string' || !/^task-[a-z0-9_-]+$/i.test(currentId)) {
+        assignFromCandidates();
+      }
+
+      const finalId = (resolved as any).id || (resolved as any).taskId;
+      if (!isYolo && (!finalId || typeof finalId !== 'string' || !/^task-[a-z0-9_-]+$/i.test(finalId))) {
+        throw new Error('tasks.delete requires a task id derived from earlier steps');
+      }
+
+      if ((resolved as any).taskId && !(resolved as any).id) {
+        (resolved as any).id = (resolved as any).taskId;
+      }
+
       return resolved;
     }
 
@@ -570,6 +615,9 @@ async function execute(
         if (filtered.length === 1) {
           resolved.taskId = filtered[0].id;
         }
+      }
+      if (!isYolo && (!resolved.taskId || !/^task-[a-z0-9_-]+$/i.test(resolved.taskId))) {
+        throw new Error('task_update_status requires a concrete task id derived from earlier steps');
       }
     }
 
@@ -602,6 +650,17 @@ async function execute(
             step.inputs.statusBefore = 'todo';
           } else if (step.inputs.status === 'done') {
             step.inputs.statusBefore = 'in_progress';
+          }
+        }
+      }
+
+      if (step.skillId === 'tasks.delete') {
+        const id = step.inputs?.id || step.inputs?.taskId;
+        if (!id || typeof id !== 'string' || !/^task-[a-z0-9_-]+$/i.test(id)) {
+          if (isYolo) {
+            console.warn('[operator:executor] YOLO mode proceeding with tasks.delete without validated task id');
+          } else {
+            throw new Error('tasks.delete requires a task id derived from earlier steps');
           }
         }
       }
@@ -866,12 +925,15 @@ async function runTask(
 
   let retries = 0;
   const assessment = await assessTask(task, requestedMode);
-  const effectiveMode: OperatorMode =
-    requestedMode === 'yolo' && assessment && assessment.confidence < 0.35 && !assessment.ready
-      ? 'strict'
-      : requestedMode;
+  const shouldDowngrade =
+    requestedMode === 'yolo' &&
+    assessment &&
+    !assessment.ready &&
+    assessment.confidence < 0.2 &&
+    Boolean(assessment.clarification);
+  const effectiveMode: OperatorMode = shouldDowngrade ? 'strict' : requestedMode;
   if (requestedMode !== effectiveMode) {
-    console.log('[operator] Downgrading to strict mode due to low confidence assessment.');
+    console.log('[operator] Downgrading to strict mode due to low confidence and unresolved clarification.');
     audit({
       level: 'warn',
       category: 'action',

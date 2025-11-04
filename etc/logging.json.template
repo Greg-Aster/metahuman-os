@@ -9,7 +9,9 @@
   "suppressPatterns": [
     "/api/approvals",
     "/api/status",
-    "/api/monitor"
+    "/api/monitor",
+    "/api/sleep-status",
+    "/api/activity-ping"
   ],
   "logSlowRequests": true,
   "slowRequestThresholdMs": 1000,

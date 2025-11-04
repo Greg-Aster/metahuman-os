@@ -34,6 +34,16 @@
   let loraToggling = false
   let resettingFactory = false
 
+  // Logging configuration
+  type LogLevel = 'error' | 'warn' | 'info' | 'debug';
+  let logLevel: LogLevel = 'info';
+  let logColorize = true;
+  let logTimestamp = true;
+  let logSlowRequests = true;
+  let slowRequestThresholdMs = 1000;
+  let suppressPatterns = '/api/approvals, /api/status, /api/monitor, /api/sleep-status, /api/activity-ping';
+  let savingLogging = false;
+
   async function fetchModelInfo() {
     try {
       const res = await fetch('/api/model-info');
@@ -61,6 +71,55 @@
       }
     } catch (e) {
       console.error('Failed to fetch LoRA config:', e);
+    }
+  }
+
+  async function fetchLoggingConfig() {
+    try {
+      const res = await fetch('/api/logging-config');
+      if (res.ok) {
+        const config = await res.json();
+        logLevel = config.level || 'info';
+        logColorize = config.console?.colorize ?? true;
+        logTimestamp = config.console?.timestamp ?? true;
+        logSlowRequests = config.logSlowRequests ?? true;
+        slowRequestThresholdMs = config.slowRequestThresholdMs || 1000;
+        suppressPatterns = (config.suppressPatterns || []).join(', ');
+      }
+    } catch (e) {
+      console.error('Failed to fetch logging config:', e);
+    }
+  }
+
+  async function saveLoggingConfig() {
+    savingLogging = true;
+    try {
+      const patterns = suppressPatterns.split(',').map(s => s.trim()).filter(Boolean);
+      const res = await fetch('/api/logging-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          level: logLevel,
+          console: {
+            enabled: true,
+            colorize: logColorize,
+            timestamp: logTimestamp
+          },
+          logSlowRequests,
+          slowRequestThresholdMs,
+          suppressPatterns: patterns
+        })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to save logging config');
+      }
+      alert('Logging configuration saved. Restart the dev server for changes to take full effect.');
+    } catch (e) {
+      console.error('Failed to save logging config:', e);
+      alert((e as Error).message);
+    } finally {
+      savingLogging = false;
     }
   }
 
@@ -144,6 +203,7 @@
     } catch {}
     fetchModelInfo();
     fetchLoraConfig();
+    fetchLoggingConfig();
   });
 </script>
 
@@ -300,6 +360,50 @@
               <label for="num-predict-input" class="info-key">Max Output (num_predict)</label>
               <input id="num-predict-input" type="number" min="128" max="4096" step="64" bind:value={llmNumPredict} on:change={saveLLMOptions} class="opt-input" />
             </div>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label class="setting-label">Logging Configuration</label>
+          <div class="logging-config-container">
+            <div class="logging-field">
+              <label for="log-level-select" class="field-label">Log Level</label>
+              <select id="log-level-select" bind:value={logLevel} class="logging-select">
+                <option value="error">Error</option>
+                <option value="warn">Warning</option>
+                <option value="info">Info</option>
+                <option value="debug">Debug</option>
+              </select>
+            </div>
+
+            <div class="logging-field">
+              <label for="slow-threshold-input" class="field-label">Slow Request Threshold (ms)</label>
+              <input id="slow-threshold-input" type="number" min="100" max="10000" step="100" bind:value={slowRequestThresholdMs} class="logging-input" />
+            </div>
+
+            <div class="logging-field">
+              <label for="suppress-patterns-input" class="field-label">Suppress Patterns (comma-separated)</label>
+              <input id="suppress-patterns-input" type="text" bind:value={suppressPatterns} placeholder="/api/status, /api/monitor" class="logging-input" />
+            </div>
+
+            <div class="logging-checkboxes">
+              <label class="checkbox-label">
+                <input type="checkbox" bind:checked={logColorize} />
+                <span>Colorize output</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" bind:checked={logTimestamp} />
+                <span>Show timestamps</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" bind:checked={logSlowRequests} />
+                <span>Log slow requests</span>
+              </label>
+            </div>
+
+            <button class="save-logging-button" on:click={saveLoggingConfig} disabled={savingLogging}>
+              {savingLogging ? 'Saving...' : 'Save Logging Config'}
+            </button>
           </div>
         </div>
 
@@ -723,5 +827,112 @@
   input:disabled + .toggle-slider {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* Logging Configuration Styles */
+  .logging-config-container {
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    background: rgba(0, 0, 0, 0.05);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  :global(.dark) .logging-config-container {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .logging-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .field-label {
+    font-size: 0.75rem;
+    color: rgb(107 114 128);
+    font-weight: 500;
+  }
+
+  :global(.dark) .field-label {
+    color: rgb(156 163 175);
+  }
+
+  .logging-select,
+  .logging-input {
+    padding: 0.5rem;
+    border-radius: 0.375rem;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    background: white;
+    color: rgb(17 24 39);
+    font-size: 0.875rem;
+  }
+
+  :global(.dark) .logging-select,
+  :global(.dark) .logging-input {
+    background: rgb(17 24 39);
+    color: rgb(243 244 246);
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+
+  .logging-checkboxes {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: rgb(107 114 128);
+    cursor: pointer;
+  }
+
+  :global(.dark) .checkbox-label {
+    color: rgb(156 163 175);
+  }
+
+  .checkbox-label input[type="checkbox"] {
+    width: 1rem;
+    height: 1rem;
+    cursor: pointer;
+  }
+
+  .save-logging-button {
+    appearance: none;
+    border: none;
+    background: rgb(124 58 237);
+    color: white;
+    font-size: 0.825rem;
+    font-weight: 600;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.1s;
+  }
+
+  .save-logging-button:hover:not(:disabled) {
+    background: rgb(109 40 217);
+  }
+
+  :global(.dark) .save-logging-button {
+    background: rgb(167 139 250);
+    color: rgb(17 24 39);
+  }
+
+  :global(.dark) .save-logging-button:hover:not(:disabled) {
+    background: rgb(192 162 255);
+  }
+
+  .save-logging-button:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  .save-logging-button:disabled {
+    opacity: 0.7;
+    cursor: wait;
   }
 </style>

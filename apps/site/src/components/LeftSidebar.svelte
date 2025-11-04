@@ -14,15 +14,10 @@
     { id: 'dashboard', label: 'Dashboard', icon: '📊', description: 'System overview' },
     { id: 'tasks', label: 'Tasks', icon: '✓', description: 'Task management' },
     { id: 'approvals', label: 'Approvals', icon: '✋', description: 'Skill execution queue' },
-    { id: 'memory', label: 'Memory', icon: '🧩', description: 'Episodic events' },
-    { id: 'learnings', label: 'Learnings', icon: '🌙', description: 'Overnight insights' },
-    { id: 'audio', label: 'Audio', icon: '🎙️', description: 'Upload & transcribe' },
-    { id: 'voice-training', label: 'Voice Training', icon: '🎤', description: 'Voice clone progress' },
-    { id: 'adaptation', label: 'Adaptation', icon: '🧠', description: 'LoRA datasets' },
-    { id: 'training', label: 'Training', icon: '🔥', description: 'Monitor LoRA training' },
-    { id: 'persona', label: 'Persona', icon: '🎭', description: 'Identity settings' },
-    { id: 'lifeline', label: 'Lifeline Protocol', icon: '🆘', description: 'Emergency scaffold' },
-    { id: 'terminal', label: 'Terminal', icon: '⌨️', description: 'CLI interface' },
+    { id: 'memory', label: 'Memory', icon: '🧩', description: 'Events & insights' },
+    { id: 'voice', label: 'Voice', icon: '🎤', description: 'Audio & training' },
+    { id: 'training', label: 'AI Training', icon: '🧠', description: 'LoRA adapters' },
+    { id: 'system', label: 'System', icon: '⚙️', description: 'Settings & tools' },
   ];
 
   function selectView(viewId: string) {
@@ -204,45 +199,20 @@
         </div>
         <div class="status-sep"></div>
         <div class="status-row">
-          <span class="status-label">Current Model:</span>
+          <span class="status-label">Model:</span>
           <span class="status-value mono">{modelInfo?.current || '—'}</span>
-        </div>
-        <div class="status-row">
-          <span class="status-label">Base Model:</span>
-          <span class="status-value mono">{modelInfo?.base || '—'}</span>
-        </div>
-        <div class="status-row">
-          <span class="status-label">Adapter Mode:</span>
-          <span class="status-value">
-            <span class="adapter-mode-badge mode-{modelInfo?.adapterMode || 'none'}">{adapterModeLabels[modelInfo?.adapterMode || 'none']}</span>
-            {#if modelInfo?.useAdapter}
-              <span class="adapter-flag">useAdapter</span>
-            {/if}
-          </span>
         </div>
         <div class="status-row">
           <span class="status-label">Adapter:</span>
           <span class="status-value">
-            {#if modelInfo?.adapter}
-              <span class="adapter-badge {modelInfo.adapter.status === 'loaded' ? 'ok' : modelInfo.adapter.status === 'merged' ? 'info' : 'warn'}">{modelInfo.adapter.status || 'unknown'}</span>
-              {#if modelInfo.adapter.modelName}
-                <span class="mono">{modelInfo.adapter.modelName}</span>
-              {/if}
-              {#if modelInfo.adapter.source}
-                <span class="adapter-source">{modelInfo.adapter.source}</span>
-              {/if}
+            {#if modelInfo?.adapter?.isDualAdapter}
+              <span class="adapter-mode-badge mode-dual">dual</span>
+            {:else if modelInfo?.adapterMode === 'adapter'}
+              <span class="adapter-mode-badge mode-adapter">single</span>
             {:else}
-              <span class="mono">none</span>
+              <span class="adapter-mode-badge mode-none">none</span>
             {/if}
           </span>
-        </div>
-        <div class="status-row">
-          <span class="status-label">Dual Mode:</span>
-          <span class="status-value">{modelInfo?.adapter?.isDualAdapter ? 'enabled' : 'disabled'}</span>
-        </div>
-        <div class="status-row">
-          <span class="status-label">Persona Summary:</span>
-          <span class="status-value">{modelInfo?.personaSummary || 'disabled'}</span>
         </div>
       </div>
     {/if}
