@@ -13,6 +13,7 @@ Welcome to the MetaHuman OS User Guide. This guide is organized into the followi
 
 4.  **[Core Concepts](04-core-concepts.md)**
     *   **Identity, Memory, Agents, and Decision Engine**: Dive into the fundamental building blocks of MetaHuman OS. This chapter explains the Identity Kernel, Memory Manager, Process Scheduler, Decision Engine, and Sync Engine, and how they interact to form the core logic of your digital personality.
+    *   **[Cognitive Modes](04-core-concepts.md#8-cognitive-modes-upcoming-feature)**: Learn about the upcoming cognitive modes that will allow you to switch between different operational paradigms.
 
 5.  **[User Interface](05-user-interface.md)**
     *   **Web UI and Interaction Methods**: Discover the web dashboard built with Astro and Tailwind CSS. Learn how to visualize the state of your digital personality extension and interact with the system through a modern web interface.

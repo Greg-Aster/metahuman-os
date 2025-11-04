@@ -70,6 +70,7 @@ This provides immediate, persistent feedback to the user about the system's beha
 Implementing these cognitive modes will require changes across several parts of the MetaHuman OS.
 
 -   **State Management:** A new state management system will be needed to track the current cognitive mode and apply the corresponding settings.
+-   **Configuration Storage:** Persist current mode and history in `persona/cognitive-mode.json` so agents, the UI, and CLI share a single source of truth. Expose lightweight helpers in `packages/core/src/cognitive-mode.ts` and a `/api/cognitive-mode` endpoint for mode inspection and switching.
 -   **Persona & Configuration:** A mechanism to switch between different persona configurations (`persona/*.json`) and system settings (`etc/*.json`) will be required.
 -   **Memory System:** The memory system will need to be updated to handle the different memory logging rules for each mode (e.g., read-only for Emulation mode).
 -   **Agent & Service Control:** The agent runner and service manager will need to be aware of the current mode to enable or disable specific agents (e.g., disable `dreamer` in Agent mode).

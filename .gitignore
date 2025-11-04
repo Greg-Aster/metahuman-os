@@ -55,6 +55,7 @@ build/
 /etc/ingestor.json
 /etc/lifeline.json
 /etc/network.json
+/etc/logging.json
 /etc/config
 /etc/legacy/
 # Keep template/example configs
@@ -123,7 +124,7 @@ secrets/
 AGENTS.md
 CLAUDE.md
 GEMINI.md
-.Qwen/
+.qwen/
 .Claude/
 .Gemini/
 

@@ -106,6 +106,7 @@ function init(): void {
     { template: paths.root + '/etc/voice.json.template', target: paths.root + '/etc/voice.json' },
     { template: paths.root + '/etc/autonomy.json.template', target: paths.root + '/etc/autonomy.json' },
     { template: paths.root + '/etc/ingestor.json.template', target: paths.root + '/etc/ingestor.json' },
+    { template: paths.root + '/etc/logging.json.template', target: paths.root + '/etc/logging.json' },
   ];
 
   let copiedFiles = 0;

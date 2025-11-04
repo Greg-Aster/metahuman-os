@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, setContext } from 'svelte';
+  import { onMount, onDestroy, setContext } from 'svelte';
   import { writable } from 'svelte/store';
 
   // Sidebar visibility state - mobile-first defaults
@@ -14,12 +14,109 @@
   // Sync store with local variable
   $: leftSidebarStore.set(leftSidebarOpen);
 
+  interface ModeDefinition {
+    id: 'dual' | 'agent' | 'emulation';
+    label: string;
+    description: string;
+    guidance: string[];
+  }
+
+  let cognitiveMode: ModeDefinition | null = null;
+  let cognitiveModes: ModeDefinition[] = [];
+  let modeMenuOpen = false;
+  let modeLoading = false;
+  let modeError = '';
+  let modeMenuAnchor: HTMLDivElement | null = null;
+
+  type ModeVisual = {
+    icon: string;
+    color: string;
+    glow: string;
+  };
+
+  const defaultVisual: ModeVisual = {
+    icon: '🧠',
+    color: '#7c3aed',
+    glow: 'rgba(124, 58, 237, 0.55)',
+  };
+
+  function getModeVisual(mode: ModeDefinition | null): ModeVisual {
+    if (!mode) return defaultVisual;
+    switch (mode.id) {
+      case 'dual':
+        return {
+          icon: '🧠',
+          color: '#a855f7',
+          glow: 'rgba(168, 85, 247, 0.65)',
+        };
+      case 'agent':
+        return {
+          icon: '🛠️',
+          color: '#38bdf8',
+          glow: 'rgba(56, 189, 248, 0.6)',
+        };
+      case 'emulation':
+        return {
+          icon: '🪄',
+          color: '#fbbf24',
+          glow: 'rgba(251, 191, 36, 0.55)',
+        };
+      default:
+        return defaultVisual;
+    }
+  }
+
+  $: modeVisual = getModeVisual(cognitiveMode);
+
   // Detect screen size
   function updateScreenSize() {
     if (typeof window !== 'undefined') {
       isMobile = window.innerWidth < 768;
     }
   }
+
+  async function loadCognitiveModeState() {
+    modeLoading = true;
+    try {
+      const res = await fetch('/api/cognitive-mode', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Failed to load cognitive mode (status ${res.status})`);
+      const data = await res.json();
+      cognitiveModes = Array.isArray(data?.modes) ? data.modes : [];
+      const current = cognitiveModes.find(mode => mode.id === data?.mode);
+      cognitiveMode = current ?? null;
+      modeError = '';
+    } catch (error) {
+      modeError = (error as Error).message;
+    } finally {
+      modeLoading = false;
+    }
+  }
+
+  async function changeCognitiveMode(nextMode: ModeDefinition['id']) {
+    if (modeLoading) return;
+    modeLoading = true;
+    try {
+      const res = await fetch('/api/cognitive-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: nextMode, actor: 'web_ui' }),
+      });
+      if (!res.ok) throw new Error(`Failed to update cognitive mode (status ${res.status})`);
+      await loadCognitiveModeState();
+      modeMenuOpen = false;
+    } catch (error) {
+      modeError = (error as Error).message;
+    } finally {
+      modeLoading = false;
+    }
+  }
+
+  const handleGlobalClick = (event: MouseEvent) => {
+    if (!modeMenuOpen) return;
+    if (!modeMenuAnchor) return;
+    if (modeMenuAnchor.contains(event.target as Node)) return;
+    modeMenuOpen = false;
+  };
 
   // Load sidebar preferences from localStorage and ensure core agents are running
   onMount(() => {
@@ -53,11 +150,21 @@
     // Always attempt to boot boredom-service on UI load; endpoint is idempotent
     fetch('/api/boot', { method: 'GET', cache: 'no-store', keepalive: true }).catch(() => {});
 
+    void loadCognitiveModeState();
+    document.addEventListener('click', handleGlobalClick, true);
+
     return () => {
       window.removeEventListener('resize', updateScreenSize);
       window.removeEventListener('resize', setVH);
       window.removeEventListener('orientationchange', setVH);
+      document.removeEventListener('click', handleGlobalClick, true);
     };
+  });
+
+  onDestroy(() => {
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('click', handleGlobalClick, true);
+    }
   });
 
   // Toggle functions with persistence
@@ -85,13 +192,70 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
         </svg>
       </button>
-      <h1 class="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100 m-0">
-        <span class="text-2xl">🧠</span>
-        MetaHuman OS
+      <h1 class="flex items-center gap-3 text-lg font-semibold text-gray-900 dark:text-gray-100 m-0">
+        <span
+          class="mode-icon"
+          style={`color:${modeVisual.color}; text-shadow:0 0 12px ${modeVisual.glow}`}
+        >
+          {modeVisual.icon}
+        </span>
+        <span class="brand-name">MetaHuman OS</span>
+        {#if cognitiveMode}
+          <span
+            class="mode-label"
+            style={`color:${modeVisual.color}; box-shadow:0 0 18px ${modeVisual.glow}; --mode-accent:${modeVisual.color}; --mode-glow:${modeVisual.glow}`}
+          >
+            {cognitiveMode.label}
+          </span>
+        {:else if modeLoading}
+          <span class="mode-label loading">Loading…</span>
+        {:else}
+          <span class="mode-label muted">Mode unavailable</span>
+        {/if}
       </h1>
     </div>
 
     <div class="flex items-center gap-3">
+      <div class="relative" bind:this={modeMenuAnchor}>
+        <button
+          class={`mode-menu-trigger ${modeMenuOpen ? 'active' : ''}`}
+          style={`--mode-accent:${modeVisual.color}; --mode-glow:${modeVisual.glow}`}
+          on:click={() => { modeMenuOpen = !modeMenuOpen; }}
+          aria-haspopup="listbox"
+          aria-expanded={modeMenuOpen}
+        >
+          <span class="mode-dot" style={`background:${modeVisual.color}`}></span>
+          <span class="mode-text">{modeLoading ? 'Loading…' : cognitiveMode?.label ?? 'Mode unavailable'}</span>
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+        {#if modeMenuOpen}
+          <div class="absolute right-0 mt-2 w-72 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg z-40">
+            <div class="py-2">
+              {#if cognitiveModes.length === 0}
+                <div class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                  {modeLoading ? 'Loading modes…' : 'No modes available'}
+                </div>
+              {:else}
+                {#each cognitiveModes as mode (mode.id)}
+                  <button
+                    class="w-full text-left px-3 py-2 text-sm hover:bg-brand/10 dark:hover:bg-brand/20 transition {cognitiveMode?.id === mode.id ? 'bg-brand/5 border-l-4 border-brand pl-2' : ''}"
+                    on:click={() => changeCognitiveMode(mode.id)}
+                    disabled={modeLoading}
+                  >
+                    <div class="flex items-center gap-2">
+                      <span class="h-2 w-2 rounded-full {mode.id === 'dual' ? 'bg-purple-500' : mode.id === 'agent' ? 'bg-blue-500' : 'bg-amber-500'}"></span>
+                      <span class="font-medium">{mode.label}</span>
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400 leading-snug">{mode.description}</p>
+                  </button>
+                {/each}
+              {/if}
+            </div>
+          </div>
+        {/if}
+      </div>
       <button
         on:click={toggleRightSidebar}
         class="flex items-center justify-center p-2 border-0 bg-transparent text-purple-600 dark:text-purple-400 cursor-pointer rounded-md transition-all hover:bg-gray-100 dark:hover:bg-white/10"
@@ -105,6 +269,12 @@
       <slot name="header-actions" />
     </div>
   </header>
+
+  {#if modeError}
+    <div class="px-4 py-2 text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/40 border-b border-red-200 dark:border-red-900/60">
+      Cognitive mode error: {modeError}
+    </div>
+  {/if}
 
   <!-- Main Content Area -->
   <div class="flex flex-1 overflow-hidden relative">
@@ -176,6 +346,80 @@
   .app-root {
     height: var(--app-vh, 100vh);
     min-height: var(--app-vh, 100vh);
+  }
+
+  .mode-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.9rem;
+    transition: color 0.3s ease, text-shadow 0.3s ease;
+  }
+
+  .brand-name {
+    letter-spacing: 0.04em;
+    font-weight: 700;
+  }
+
+  .mode-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.3rem 0.9rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.55);
+    box-shadow: 0 0 18px var(--mode-glow, rgba(124, 58, 237, 0.6));
+    transition: all 0.3s ease;
+    color: var(--mode-accent, inherit);
+  }
+
+  :global(.dark) .mode-label {
+    background: rgba(15, 23, 42, 0.55);
+  }
+
+  .mode-label.loading,
+  .mode-label.muted {
+    box-shadow: none;
+    color: inherit;
+  }
+
+  .mode-menu-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    background: rgba(255, 255, 255, 0.55);
+    color: var(--mode-accent, inherit);
+    transition: all 0.25s ease;
+    box-shadow: 0 0 12px rgba(148, 163, 184, 0.15);
+  }
+
+  :global(.dark) .mode-menu-trigger {
+    background: rgba(15, 23, 42, 0.55);
+    border-color: rgba(148, 163, 184, 0.25);
+  }
+
+  .mode-menu-trigger:hover {
+    box-shadow: 0 0 20px var(--mode-glow, rgba(124, 58, 237, 0.25));
+    border-color: var(--mode-accent, rgba(124, 58, 237, 0.45));
+  }
+
+  .mode-menu-trigger.active {
+    box-shadow: 0 0 24px var(--mode-glow, rgba(124, 58, 237, 0.35));
+    border-color: var(--mode-accent, rgba(124, 58, 237, 0.55));
+  }
+
+  .mode-dot {
+    display: inline-flex;
+    height: 8px;
+    width: 8px;
+    border-radius: 999px;
+    box-shadow: 0 0 10px var(--mode-accent, rgba(124, 58, 237, 0.5));
+  }
+
+  .mode-text {
+    font-weight: 600;
   }
 
   /* Custom scrollbar styling for sidebar content */

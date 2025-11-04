@@ -1,0 +1,25 @@
+{
+  "level": "info",
+  "levels": {
+    "error": 0,
+    "warn": 1,
+    "info": 2,
+    "debug": 3
+  },
+  "suppressPatterns": [
+    "/api/approvals",
+    "/api/status",
+    "/api/monitor"
+  ],
+  "logSlowRequests": true,
+  "slowRequestThresholdMs": 1000,
+  "console": {
+    "enabled": true,
+    "colorize": true,
+    "timestamp": true
+  },
+  "file": {
+    "enabled": false,
+    "path": "logs/http.log"
+  }
+}

@@ -24,6 +24,7 @@ export * from './tts';
 export * from './stt';
 export * from './voice-training';
 export * from './autonomy';
+export * from './cognitive-mode';
 export * from './fs-glob';
 export * from './progress-tracker';
 

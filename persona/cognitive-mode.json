@@ -1,0 +1,51 @@
+{
+  "currentMode": "dual",
+  "lastChanged": "2025-11-04T01:30:53.034Z",
+  "history": [
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-02T00:00:00.000Z",
+      "actor": "system"
+    },
+    {
+      "mode": "agent",
+      "changedAt": "2025-11-04T01:16:34.179Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-04T01:20:02.185Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "emulation",
+      "changedAt": "2025-11-04T01:20:04.564Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "agent",
+      "changedAt": "2025-11-04T01:20:16.377Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-04T01:20:18.884Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "agent",
+      "changedAt": "2025-11-04T01:20:22.266Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "emulation",
+      "changedAt": "2025-11-04T01:20:24.960Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-04T01:30:53.034Z",
+      "actor": "web_ui"
+    }
+  ]
+}

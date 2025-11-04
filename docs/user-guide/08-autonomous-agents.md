@@ -2,6 +2,8 @@
 
 MetaHuman OS runs several autonomous agents that process memories and generate insights in the background.
 
+**Note:** The behavior of these agents can change based on the active [Cognitive Mode](04-core-concepts.md#8-cognitive-modes-upcoming-feature). For example, in "Agent Mode", proactive agents like the `reflector` and `dreamer` may be disabled.
+
 ### 1. Organizer Agent
 
 **Purpose:** Enriches memories with AI-extracted tags and entities.

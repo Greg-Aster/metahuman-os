@@ -412,12 +412,12 @@ This project uses a monorepo structure with pnpm workspaces:
 
 ## Contributing
 
-We welcome contributions! Please see the [ARCHITECTURE.md](ARCHITECTURE.md) and [DESIGN.md](DESIGN.md) files for technical details about the system architecture.
+We welcome contributions! Please see the [ARCHITECTURE.md](docs/dev/ARCHITECTURE.md) and [DESIGN.md](docs/dev/DESIGN.md) files for technical details about the system architecture.
 
 ## Documentation
 
 - Comprehensive User Guide: [docs/user-guide/index.md]
-- Design: [DESIGN.md]
+- Design: [docs/dev/DESIGN.md]
 - Architecture: [ARCHITECTURE.md]
 - Agents overview: [brain/agents/README.md]
 - Memory schema: [memory/README.md]

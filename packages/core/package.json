@@ -13,7 +13,8 @@
     "./ollama": "./src/ollama.ts",
     "./llm": "./src/llm.ts",
     "./agent-monitor": "./src/agent-monitor.ts",
-    "./skills": "./src/skills.ts"
+    "./skills": "./src/skills.ts",
+    "./cognitive-mode": "./src/cognitive-mode.ts"
   },
   "dependencies": {
     "fast-glob": "^3.3.2",

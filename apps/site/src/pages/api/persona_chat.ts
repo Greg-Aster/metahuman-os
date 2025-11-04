@@ -294,7 +294,15 @@ Respond with a single word: "chat" or "operator".`;
       actor: 'system',
     });
 
-    return decision === 'operator';
+    if (decision === 'operator') return true;
+    if (decision === 'chat') return false;
+
+    // Tolerate common synonyms the model may emit when strongly hinting at task tools
+    if (decision.includes('operator')) return true;
+    if (decision.startsWith('task')) return true; // e.g. "task_list", "tasks"
+    if (decision.includes('skills')) return true;
+
+    return false;
   } catch (error) {
     console.error('[shouldUseOperator] Error:', error);
     return false; // Default to chat on error

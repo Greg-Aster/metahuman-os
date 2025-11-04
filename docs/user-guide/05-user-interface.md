@@ -7,6 +7,8 @@ cd apps/site && pnpm dev
 # Open http://localhost:4321
 ```
 
+**Note:** The header bar will be updated to display the currently active cognitive mode (e.g., `MetaHuman OS - Dual Consciousness`).
+
 **Features:**
 - 💬 Chat - Conversation with your digital personality extension
 - 📊 Dashboard - System status and overview

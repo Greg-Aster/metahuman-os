@@ -2,7 +2,7 @@
 
 The following features are currently in the planning and proposal stage. For more details, please refer to the linked design documents.
 
--   **[Cognitive Modes](../COGNITIVE_MODES_BLUEPRINT.md)**: A proposal to implement multiple cognitive modes within MetaHuman OS, including Dual Consciousness, Agent, and Emulation modes.
+-   **[Cognitive Modes](04-core-concepts.md#8-cognitive-modes-upcoming-feature)**: A planned feature to allow switching between different operational paradigms, such as a deep cognitive mirror (`Dual Consciousness`), a simple command-driven assistant (`Agent Mode`), or a stable, non-learning conversational partner (`Emulation Mode`).
 
 ## What's Next
 

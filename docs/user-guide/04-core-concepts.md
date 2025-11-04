@@ -170,5 +170,13 @@ Continuous improvement system:
 - A/B test approaches within safe boundaries
 - Learn optimal strategies through trial
 
+### 8. Cognitive Modes (Upcoming Feature)
+
+To provide more granular control over the OS's function, MetaHuman OS will include multiple cognitive modes. These modes will allow the user to switch between different operational paradigms, each with distinct behaviors related to memory, learning, and interaction.
+
+-   **Dual Consciousness Mode**: Functions as a deep cognitive and data mirror of the user, designed for maximum data ingestion, learning, and synchronization.
+-   **Agent Mode**: Functions as a traditional AI assistant, focused on listening for and executing commands without deep learning or personality mirroring.
+-   **Emulation Mode (Replicant)**: Provides a stable, conversational partner that uses its accumulated knowledge without creating new memories or evolving.
+
 ---
 
