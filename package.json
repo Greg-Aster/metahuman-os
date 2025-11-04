@@ -12,18 +12,18 @@
 		"llm",
 		"ollama"
 	],
-	"homepage": "https://github.com/greggles/metahuman-os#readme",
+	"homepage": "https://github.com/Greg-Aster/metahuman-os#readme",
 	"bugs": {
-		"url": "https://github.com/greggles/metahuman-os/issues"
+		"url": "https://github.com/Greg-Aster/metahuman-os/issues"
 	},
 	"license": "MIT",
 	"author": {
 		"name": "Gregory Aster",
-		"url": "https://github.com/greggles"
+		"url": "https://github.com/Greg-Aster"
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/greggles/metahuman-os.git"
+		"url": "https://github.com/Greg-Aster/metahuman-os.git"
 	},
 	"scripts": {
 		"dev": "cd apps/site && pnpm dev",
