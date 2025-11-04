@@ -28,11 +28,24 @@ MetaHuman OS is a local-first digital personality extension that acts as a paral
 - Node.js 18+
 - pnpm 9+
 - TypeScript 5+
-- Python 3.8+ 
+- Python 3.8+
 - Ollama (for local LLM) - Install from [ollama.ai](https://ollama.ai)
   - Recommended models: `phi3:mini` (default), `dolphin-mistral:latest`, `nomic-embed-text` (embeddings)
-- Whisper (for speech-to-text) - Install from [github.com/openai/whisper](https://github.com/openai/whisper)
-- Piper (for text-to-speech) - Install from [rhasspy.github.io/piper-samples](https://rhasspy.github.io/piper-samples/)
+
+### Installation
+
+**Clone with dependencies:**
+```bash
+git clone --recurse-submodules https://github.com/Greg-Aster/metahuman-os.git
+cd metahuman-os
+```
+
+**Or if you already cloned without submodules:**
+```bash
+git submodule update --init --recursive
+```
+
+This will automatically fetch llama.cpp and whisper.cpp from their official repositories into the `vendor/` directory.
 
 ### Easy Startup (Recommended)
 MetaHuman OS includes convenient startup scripts for all platforms:
@@ -397,7 +410,7 @@ We welcome contributions! Please see the [ARCHITECTURE.md](ARCHITECTURE.md) and 
 
 ## License
 
-MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Creative Commons Attribution 4.0 International License - see the [LICENSE](LICENSE) file for details.
 
 ## Support
 
