@@ -24,6 +24,8 @@ import * as taskUpdateStatus from './task_update_status';
 import * as taskList from './task_list';
 import * as taskFind from './task_find';
 import * as taskDelete from './task_delete';
+import * as codeGenerate from './code_generate';
+import * as codeApplyPatch from './code_apply_patch';
 
 /**
  * Initialize all skills
@@ -51,8 +53,10 @@ export function initializeSkills(): void {
   registerSkill(taskList.manifest, taskList.execute);
   registerSkill(taskFind.manifest, taskFind.execute);
   registerSkill(taskDelete.manifest, taskDelete.execute);
+  registerSkill(codeGenerate.manifest, codeGenerate.execute);
+  registerSkill(codeApplyPatch.manifest, codeApplyPatch.execute);
 
-  console.log('[skills] Skills registered: fs_read, fs_write, fs_list, fs_delete, json_update, http_get, summarize_file, git_status, git_commit, search_index, run_agent, shell_safe, web_search, task_create, task_update_status, task_list, task_find, task_delete');
+  console.log('[skills] Skills registered: fs_read, fs_write, fs_list, fs_delete, json_update, http_get, summarize_file, git_status, git_commit, search_index, run_agent, shell_safe, web_search, task_create, task_update_status, task_list, task_find, task_delete, code_generate, code_apply_patch');
 }
 
 // Export for convenience
@@ -68,4 +72,6 @@ export {
   taskList,
   taskFind,
   taskDelete,
+  codeGenerate,
+  codeApplyPatch,
 };

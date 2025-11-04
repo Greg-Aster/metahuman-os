@@ -133,6 +133,11 @@ Skills are now organized into domains and are namespaced (e.g., `tasks.list`).
 - **calendar.delete** - Removes an event from the calendar.
 - **calendar.find** - Locates an event by its title or ID.
 
+#### Code Domain (`code`)
+
+- **code_generate** - Generates a code patch or new file content based on instructions.
+- **code_apply_patch** - Stages the generated code change for user approval in the UI.
+
 #### Other Skills
 
 **File System:**

@@ -2,6 +2,7 @@
   import { onMount, afterUpdate, tick, onDestroy } from 'svelte';
   import Thinking from './Thinking.svelte';
   import VoiceInteraction from './VoiceInteraction.svelte';
+  import ApprovalBox from './ApprovalBox.svelte';
 
 type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'reasoning';
 
@@ -1056,6 +1057,10 @@ let reasoningStages: ReasoningStage[] = [];
           {/each}
         </select>
       </div>
+
+      <!-- Code approval box appears here when there are pending approvals -->
+      <ApprovalBox />
+
       <div class="input-row">
         <textarea
           bind:value={input}

@@ -379,7 +379,39 @@ export function isPathAllowed(filepath: string, allowedDirs: string[]): boolean 
 }
 
 /**
- * Check if a path is writable (more restrictive than readable)
+ * Check if a file path is writable by the coder agent
+ * Coder can write to code directories but NOT to memory/persona/logs
+ */
+export function isCoderWriteAllowed(filepath: string): boolean {
+  const normalizedPath = path.isAbsolute(filepath)
+    ? path.resolve(filepath)
+    : path.resolve(paths.root, filepath);
+
+  // Explicitly forbidden directories for coder
+  const forbidden = ['memory/', 'persona/', 'logs/', 'node_modules/', '.git/'];
+  for (const forbiddenDir of forbidden) {
+    const forbiddenPath = path.resolve(paths.root, forbiddenDir);
+    if (normalizedPath.startsWith(forbiddenPath)) {
+      return false;
+    }
+  }
+
+  // Allowed directories for coder
+  const coderWritableDirectories = [
+    'apps/',
+    'packages/',
+    'brain/',
+    'docs/',
+    'etc/',
+    'out/',
+    'tests/',
+  ];
+
+  return isPathAllowed(filepath, coderWritableDirectories);
+}
+
+/**
+ * Check if a path is writable by the memory system (more restrictive than readable)
  */
 export function isWriteAllowed(filepath: string): boolean {
   const writableDirectories = [

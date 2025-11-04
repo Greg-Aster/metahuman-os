@@ -11,7 +11,7 @@ import { listGlob } from '../../packages/core/src/fs-glob'
 export const manifest: SkillManifest = {
   id: 'fs_list',
   name: 'List Files',
-  description: 'List files and directories matching a pattern',
+  description: 'List files and directories matching a pattern. Use this to search for files when exact paths are unknown',
   category: 'fs',
 
   inputs: {

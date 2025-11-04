@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { loadPersonaCore, loadDecisionRules } from '@metahuman/core/identity';
 import { listActiveTasks } from '@metahuman/core/memory';
 import { ROOT, getActiveAdapter } from '@metahuman/core';
+import { listAvailableRoles, resolveModel, loadModelRegistry } from '@metahuman/core/model-resolver';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -71,6 +72,37 @@ export const GET: APIRoute = async () => {
 
     const personaSummaryStatus = includePersonaSummary ? 'enabled' : 'disabled';
 
+    // Build model roles information from registry
+    let modelRoles: Record<string, any> = {};
+    let registryVersion: string | null = null;
+    try {
+      const registry = loadModelRegistry();
+      registryVersion = registry.version;
+
+      const roles = listAvailableRoles();
+      for (const role of roles) {
+        try {
+          const resolved = resolveModel(role);
+          modelRoles[role] = {
+            modelId: resolved.id,
+            provider: resolved.provider,
+            model: resolved.model,
+            adapters: resolved.adapters,
+            baseModel: resolved.baseModel,
+            temperature: resolved.options.temperature,
+          };
+        } catch (error) {
+          // Role may be disabled or misconfigured
+          modelRoles[role] = {
+            error: (error as Error).message,
+          };
+        }
+      }
+    } catch (error) {
+      // Registry not available or invalid - fall back to legacy behavior
+      modelRoles = {};
+    }
+
     return new Response(
       JSON.stringify({
         identity: {
@@ -89,6 +121,7 @@ export const GET: APIRoute = async () => {
         values: persona.values.core.slice(0, 3),
         goals: persona.goals.shortTerm,
         lastUpdated: persona.lastUpdated,
+        // Legacy model field (deprecated, kept for backward compatibility)
         model: {
           current: currentModel,
           base: baseModel,
@@ -97,11 +130,15 @@ export const GET: APIRoute = async () => {
           personaSummary: personaSummaryStatus,
           adapter,
         },
+        // New multi-model registry information
+        modelRoles,
+        registryVersion,
       }),
       {
         status: 200,
         headers: {
           'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
         },
       }
     );

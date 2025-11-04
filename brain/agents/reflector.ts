@@ -1,5 +1,5 @@
 
-import { llm, captureEvent, searchMemory, paths, audit, listActiveTasks, loadPersonaCore, ollama, acquireLock, isLocked, initGlobalLogger } from '../../packages/core/src/index';
+import { callLLM, type RouterMessage, captureEvent, searchMemory, paths, audit, listActiveTasks, loadPersonaCore, ollama, acquireLock, releaseLock, isLocked, initGlobalLogger } from '../../packages/core/src/index';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -308,16 +308,20 @@ What am I noticing? What thoughts or feelings are emerging?
     }
 
     // Retry generate with small backoff to handle transient errors
-    const messages = [
+    const messages: RouterMessage[] = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: prompt },
-    ] as const;
+    ];
 
     let response: { content: string } | null = null;
     const attempts = 3;
     for (let i = 0; i < attempts; i++) {
       try {
-        response = await llm.generate(messages as any);
+        response = await callLLM({
+          role: 'persona',
+          messages,
+          options: { temperature: 0.8 },
+        });
         break;
       } catch (e) {
         if (i === attempts - 1) throw e;
@@ -345,7 +349,7 @@ What am I noticing? What thoughts or feelings are emerging?
           ? 'Keep the response under two sentences (<= 60 words).'
           : 'Keep it to one short sentence (<= 25 words).';
 
-        const summaryMessages = [
+        const summaryMessages: RouterMessage[] = [
           {
             role: 'system',
             content: `
@@ -363,9 +367,13 @@ ${reflection}
 Summarize the core takeaway. ${conciseHint}
           `.trim()
           }
-        ] as const;
+        ];
 
-        const summaryResponse = await llm.generate(summaryMessages as any);
+        const summaryResponse = await callLLM({
+          role: 'summarizer',
+          messages: summaryMessages,
+          options: { temperature: 0.3 },
+        });
         const reflectionSummary = summaryResponse?.content?.trim();
 
         if (reflectionSummary) {
@@ -396,7 +404,7 @@ Summarize the core takeaway. ${conciseHint}
       // Generate an extended conclusion when the reflection is substantial
       if (chainIsLong || reflectionWordCount > 220) {
         try {
-          const extendedMessages = [
+          const extendedMessages: RouterMessage[] = [
             {
               role: 'system',
               content: `
@@ -415,9 +423,13 @@ ${reflection}
 Compose an extended conclusion (2–3 sentences, <= 120 words) that captures the essence and next steps.
               `.trim()
             }
-          ] as const;
+          ];
 
-          const extendedResponse = await llm.generate(extendedMessages as any);
+          const extendedResponse = await callLLM({
+            role: 'summarizer',
+            messages: extendedMessages,
+            options: { temperature: 0.4 },
+          });
           const extendedSummary = extendedResponse?.content?.trim();
 
           if (extendedSummary) {

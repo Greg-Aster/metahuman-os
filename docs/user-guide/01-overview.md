@@ -49,6 +49,7 @@ MetaHuman OS operates as a **personal operating system layer** between you and t
 - **Adaptive**: Learns your patterns, preferences, and evolves with you
 - **Secure**: Your digital persona is as secure as your own mind—encrypted, private, controlled
 - **Extensible**: Modular OS architecture allows skills and capabilities to grow over time
+- **Multi-Model Intelligence**: Utilizes a "dual consciousness" architecture with specialized AI models for executive function (Orchestrator) and conversational voice (Persona) to provide a more responsive, natural, and reliable experience.
 
 ---
 

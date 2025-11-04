@@ -59,6 +59,79 @@ export function acquireLock(name: string): LockHandle {
 
 export function isLocked(name: string): boolean {
   const lockPath = path.join(paths.run, 'locks', `${name}.lock`)
-  return fs.existsSync(lockPath)
+
+  if (!fs.existsSync(lockPath)) {
+    return false
+  }
+
+  // Lock file exists, check if the process is still running
+  try {
+    const content = fs.readFileSync(lockPath, 'utf8')
+    const { pid } = JSON.parse(content)
+
+    // Check if process exists (throws ESRCH if not)
+    process.kill(pid, 0)
+
+    // Process is running, lock is valid
+    return true
+  } catch (error: any) {
+    if (error.code === 'ESRCH' || error instanceof SyntaxError) {
+      // Process doesn't exist or lock file is corrupt - stale lock
+      // Clean it up automatically
+      try {
+        fs.unlinkSync(lockPath)
+      } catch {}
+      return false
+    }
+
+    // Other error (permissions, etc.) - assume locked to be safe
+    return true
+  }
+}
+
+/**
+ * Clean up all stale lock files (where the process no longer exists).
+ * Returns the number of stale locks removed.
+ */
+export function cleanupStaleLocks(): number {
+  const lockDir = path.join(paths.run, 'locks')
+
+  if (!fs.existsSync(lockDir)) {
+    return 0
+  }
+
+  const lockFiles = fs.readdirSync(lockDir).filter(f => f.endsWith('.lock'))
+  let cleaned = 0
+
+  for (const file of lockFiles) {
+    const lockPath = path.join(lockDir, file)
+
+    try {
+      const content = fs.readFileSync(lockPath, 'utf8')
+      const { pid } = JSON.parse(content)
+
+      // Check if process exists
+      try {
+        process.kill(pid, 0)
+        // Process exists, lock is valid
+      } catch (killError: any) {
+        if (killError.code === 'ESRCH') {
+          // Process doesn't exist - remove stale lock
+          fs.unlinkSync(lockPath)
+          cleaned++
+        }
+      }
+    } catch (error: any) {
+      // Corrupt lock file - remove it
+      if (error instanceof SyntaxError) {
+        try {
+          fs.unlinkSync(lockPath)
+          cleaned++
+        } catch {}
+      }
+    }
+  }
+
+  return cleaned
 }
 

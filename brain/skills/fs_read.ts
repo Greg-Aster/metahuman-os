@@ -18,7 +18,7 @@ export const manifest: SkillManifest = {
     path: {
       type: 'string',
       required: true,
-      description: 'Absolute path to the file to read',
+      description: 'Project-relative path (e.g., "docs/file.md") or absolute system path. Project-relative paths should NOT start with /',
       validation: (value) => {
         const allowedDirs = ['memory/', 'persona/', 'logs/', 'out/', 'etc/', 'docs/'];
         return isPathAllowed(value, allowedDirs);

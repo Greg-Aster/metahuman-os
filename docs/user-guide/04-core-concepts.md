@@ -170,7 +170,29 @@ Continuous improvement system:
 - A/B test approaches within safe boundaries
 - Learn optimal strategies through trial
 
-### 8. Cognitive Modes
+### 8. Multi-Model Architecture (Dual Consciousness)
+
+To deliver a more sophisticated and responsive experience, MetaHuman OS uses a "multi-model" architecture, sometimes referred to as a "dual consciousness" model. Instead of relying on a single, monolithic AI, the system delegates tasks to specialized models, each with a distinct role. This is like having a team of experts working together.
+
+| Role           | Purpose                                       | Characteristics                               |
+|----------------|-----------------------------------------------|-----------------------------------------------|
+| **Orchestrator** | Executive Function, Routing, & Safety         | Lightweight, fast, always-on, decides *what* to do. |
+| **Persona**      | Conversational Voice & Introspection          | Heavy, fine-tuned model that provides the personality. |
+| **Curator**      | Memory Curation & Training Data Prep        | Summarization-focused, acts as a data librarian.    |
+| **Specialists**  | Focused Tasks (e.g., Coding, Planning)      | Task-specific models or scripts.              |
+
+#### Why This Matters
+
+This separation of responsibilities leads to a better user experience:
+
+-   **Higher Quality Conversations**: The Persona model is trained only on identity-rich data (conversations, reflections), so it doesn't "learn" to talk like a machine. Its voice remains natural and true to your personality.
+-   **Faster, More Responsive UI**: The lightweight Orchestrator handles intent routing and tool selection instantly, so the system feels nimble and quick for most interactions.
+-   **Increased Reliability and Safety**: The Orchestrator acts as a stable guardrail, enforcing policies and ensuring that the correct tools are used, even as the Persona model creatively explores ideas.
+-   **Modularity**: Each component can be upgraded independently, allowing the system to evolve without major rewrites.
+
+This advanced architecture is configured via the `etc/models.json` file, which maps roles to specific models, making the system highly flexible and future-proof.
+
+### 9. Cognitive Modes
 
 MetaHuman OS features three distinct operational modes that control how the system processes information, routes decisions, and manages memory. You can switch between modes via the Web UI header or the API to match your current needs.
 

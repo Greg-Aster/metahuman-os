@@ -501,5 +501,41 @@ Higher trust during certain hours:
 }
 ```
 
+### Self-Healing Coder Agent
+
+MetaHuman OS includes a powerful Coder Agent that can write, edit, and fix its own source code. This "self-healing" capability allows you to ask the system to perform software development tasks directly in the chat.
+
+#### How It Works
+
+The process is designed with safety and human oversight as the top priorities:
+
+1.  **Request**: You ask the system to perform a code-related task, like "add a new function to `packages/core/src/utils.ts`" or "fix the bug in the chat interface."
+2.  **Generate**: The specialized **Coder Agent** (`qwen3-coder:30b`) analyzes your request, reads the relevant files, and generates a proposed change as a code patch or diff.
+3.  **Approve**: The generated patch is **not** applied automatically. Instead, it appears in a new **Code Approval UI** directly above the chat input box. Here you can review the exact changes (the diff), read the Coder's explanation, and see any recommended test commands.
+4.  **Apply**: If you click "Approve," the system applies the patch to the source code files. If you click "Reject," the proposed change is discarded.
+
+This workflow gives you the power of an AI coding assistant with the safety of a manual code review for every single change.
+
+#### Key Features & Guardrails
+
+-   **Specialized Coder Model**: All code generation is handled by a dedicated `coder` model role, ensuring that the conversational `persona` model isn't involved in writing code.
+-   **Strict Permissions**: The Coder Agent has unique permissions. It can **read** the entire project, including your memories for context, but it is **strictly forbidden** from **writing to or modifying** your `memory/` or `persona/` directories. Its write access is limited to code-related directories like `packages/`, `apps/`, and `brain/`.
+-   **Human-in-the-Loop**: No code is ever changed without your explicit approval through the UI.
+-   **Full Audit Trail**: Every proposed and applied change is recorded in the system's audit logs.
+
+#### Example Usage
+
+```
+"Add a new function to the `paths.ts` file that returns the path to the temporary directory."
+```
+
+```
+"There's a typo in the README.md file, please fix it."
+```
+
+```
+"Refactor the `getRelevantContext` function in `persona_chat.ts` to improve readability."
+```
+
 ---
 

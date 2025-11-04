@@ -37,6 +37,15 @@ cd apps/site && pnpm dev
 - Boredom control (reflection frequency)
 - Model selector (switch Ollama models)
 
+**Code Approval UI:**
+A special UI component for the **Self-Healing Coder Agent** appears directly above the chat input box when a code change is ready for your review.
+
+- **Collapsible Box**: Expands automatically when a new code approval is pending.
+- **Diff Viewer**: Shows the exact changes (additions and deletions) with syntax highlighting.
+- **Explanation**: Displays the Coder Agent's explanation for why the change is needed.
+- **Approve/Reject**: Buttons to apply the patch to your local files or discard it.
+- **Test Commands**: Shows any commands the agent recommends running to verify the change.
+
 ### Three Ways to Interact
 1. **Web UI (Recommended)** - Interactive interface with real-time updates
 2. **CLI (`mh` command)** - Command-line interface for quick operations

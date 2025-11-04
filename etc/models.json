@@ -1,0 +1,228 @@
+{
+  "$schema": "https://metahuman.dev/schemas/models.json",
+  "version": "1.0.0",
+  "description": "Model registry for multi-model orchestration. Defines roles and their associated models.",
+
+  "defaults": {
+    "orchestrator": "default.orchestrator",
+    "persona": "default.persona",
+    "curator": "default.curator",
+    "coder": "default.coder",
+    "planner": "default.planner",
+    "summarizer": "default.summarizer",
+    "fallback": "default.fallback"
+  },
+
+  "models": {
+    "default.orchestrator": {
+      "provider": "ollama",
+      "model": "phi3:mini",
+      "adapters": [],
+      "roles": ["orchestrator", "router", "planner"],
+      "description": "Lightweight orchestrator for fast intent routing and tool selection",
+      "options": {
+        "contextWindow": 4096,
+        "temperature": 0.1,
+        "topP": 0.9,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "high",
+        "alwaysLoaded": true,
+        "estimatedLatency": "very-fast",
+        "sizeGB": 2.2,
+        "purpose": "Executive function - quick yes/no/tool decisions"
+      }
+    },
+
+    "default.persona": {
+      "provider": "ollama",
+      "model": "qwen3-coder:30b",
+      "adapters": [],
+      "roles": ["persona", "conversation", "introspection"],
+      "description": "Default persona model for conversational responses",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "repeatPenalty": 1.2
+      },
+      "metadata": {
+        "priority": "high",
+        "alwaysLoaded": true,
+        "estimatedLatency": "medium"
+      }
+    },
+
+    "persona.with-lora": {
+      "provider": "ollama",
+      "model": "greg-local-2025-11-02-002011-c333e1",
+      "adapters": [
+        "/home/greggles/metahuman/out/adapters/2025-11-02/2025-11-02-002011-c333e1/adapter.gguf"
+      ],
+      "baseModel": "Qwen/Qwen3-14B",
+      "roles": ["persona", "conversation"],
+      "description": "Persona model with LoRA adapter for voice tuning",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "repeatPenalty": 1.2
+      },
+      "metadata": {
+        "priority": "high",
+        "alwaysLoaded": false,
+        "estimatedLatency": "medium",
+        "adapterLoadTime": 1000,
+        "trainedOn": "2025-11-02",
+        "evalScore": 0.989879518072289
+      }
+    },
+
+    "default.curator": {
+      "provider": "ollama",
+      "model": "qwen3:14b",
+      "adapters": [],
+      "roles": ["curator", "summarizer", "memory-prep"],
+      "description": "Mid-size curator model for memory curation and training data preparation",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.3,
+        "topP": 0.9,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "medium",
+        "alwaysLoaded": false,
+        "estimatedLatency": "fast",
+        "sizeGB": 9.3,
+        "purpose": "Memory curation - clean data extraction and training prep"
+      }
+    },
+
+    "default.coder": {
+      "provider": "ollama",
+      "model": "qwen3-coder:30b",
+      "adapters": [],
+      "roles": ["coder", "code-generation", "code-review"],
+      "description": "Specialized model for code generation, review, and refactoring",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.2,
+        "topP": 0.95,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "medium",
+        "alwaysLoaded": false,
+        "estimatedLatency": "medium",
+        "sizeGB": 18,
+        "purpose": "Code specialist - generation, review, debugging, refactoring",
+        "specialization": "code"
+      }
+    },
+
+    "default.planner": {
+      "provider": "ollama",
+      "model": "qwen3:14b",
+      "adapters": [],
+      "roles": ["planner", "strategist", "task-breakdown"],
+      "description": "Strategic planning and task decomposition specialist",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.4,
+        "topP": 0.9,
+        "repeatPenalty": 1.2
+      },
+      "metadata": {
+        "priority": "medium",
+        "alwaysLoaded": false,
+        "estimatedLatency": "fast",
+        "sizeGB": 9.3,
+        "purpose": "Planning specialist - strategic thinking, task breakdown, roadmap creation",
+        "specialization": "planning"
+      }
+    },
+
+    "default.summarizer": {
+      "provider": "ollama",
+      "model": "qwen3:14b",
+      "adapters": [],
+      "roles": ["summarizer", "digest", "condensation"],
+      "description": "Document and conversation summarization specialist",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.3,
+        "topP": 0.9,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "medium",
+        "alwaysLoaded": false,
+        "estimatedLatency": "fast",
+        "sizeGB": 9.3,
+        "purpose": "Summarization specialist - condensing documents, extracting key points",
+        "specialization": "summarization"
+      }
+    },
+
+    "default.fallback": {
+      "provider": "ollama",
+      "model": "qwen3-coder:30b",
+      "adapters": [],
+      "roles": ["fallback", "general"],
+      "description": "Fallback model when primary models unavailable",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.7,
+        "topP": 0.9
+      },
+      "metadata": {
+        "priority": "low",
+        "alwaysLoaded": true,
+        "estimatedLatency": "fast"
+      }
+    }
+  },
+
+  "roleHierarchy": {
+    "orchestrator": ["default.orchestrator", "default.fallback"],
+    "persona": ["default.persona", "persona.with-lora", "default.fallback"],
+    "curator": ["default.curator", "default.fallback"],
+    "coder": ["default.coder", "default.fallback"],
+    "planner": ["default.planner", "default.fallback"],
+    "summarizer": ["default.summarizer", "default.curator", "default.fallback"],
+    "fallback": ["default.fallback"]
+  },
+
+  "cognitiveModeMappings": {
+    "dual": {
+      "orchestrator": "default.orchestrator",
+      "persona": "default.persona",
+      "description": "Full cognitive mirror with operator routing"
+    },
+    "agent": {
+      "orchestrator": "default.orchestrator",
+      "persona": "default.persona",
+      "description": "Lightweight assistant mode"
+    },
+    "emulation": {
+      "orchestrator": null,
+      "persona": "persona.with-lora",
+      "description": "Read-only personality snapshot with LoRA"
+    }
+  },
+
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434",
+      "timeout": 120000,
+      "retries": 2
+    },
+    "openai": {
+      "baseUrl": "https://api.openai.com/v1",
+      "timeout": 60000,
+      "retries": 3
+    }
+  }
+}

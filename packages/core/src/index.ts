@@ -11,6 +11,9 @@ export * from './memory';
 export * from './audit';
 export * from './llm';
 export * from './ollama';
+export * from './model-resolver';
+export * from './model-router';
+export * from './specialist-broker';
 export * from './agent-monitor';
 export * from './vector-index';
 export * from './embeddings';
@@ -27,6 +30,7 @@ export * from './autonomy';
 export * from './cognitive-mode';
 export * from './fs-glob';
 export * from './progress-tracker';
+export * from './state';
 
 // Version
 export const VERSION = '0.1.0';

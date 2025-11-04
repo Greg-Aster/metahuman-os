@@ -47,13 +47,29 @@
     adapter?: AdapterInfo;
   } | null;
 
+  type ModelRoleInfo = {
+    modelId?: string;
+    provider?: string;
+    model?: string;
+    adapters?: string[];
+    baseModel?: string;
+    temperature?: number;
+    error?: string;
+  };
+
   let modelInfo: ModelStatus = null;
+  let modelRoles: Record<string, ModelRoleInfo> = {};
+  let hasModelRegistry = false;
   let taskTotals = { active: 0, inProgress: 0 };
   let pendingApprovals = 0;
 
+  // Real-time activity tracking
+  let activeRoles = new Set<string>();
+  let eventSource: EventSource | null = null;
+
   async function loadStatus() {
     try {
-      const res = await fetch('/api/status');
+      const res = await fetch('/api/status', { cache: 'no-store' });
       const data = await res.json();
       identity = data.identity;
       taskTotals = {
@@ -61,6 +77,8 @@
         inProgress: data?.tasks?.byStatus?.in_progress ?? 0,
       };
       modelInfo = data?.model || null;
+      modelRoles = data?.modelRoles || {};
+      hasModelRegistry = Object.keys(modelRoles).length > 0;
     } catch (err) {
       console.error('Failed to load status:', err);
     } finally {
@@ -109,15 +127,53 @@
     }
   }
 
+  function connectActivityStream() {
+    if (eventSource) {
+      eventSource.close();
+    }
+
+    eventSource = new EventSource('/api/llm-activity');
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'start') {
+          activeRoles.add(data.role);
+          activeRoles = activeRoles; // Trigger reactivity
+        } else if (data.type === 'end') {
+          activeRoles.delete(data.role);
+          activeRoles = activeRoles; // Trigger reactivity
+        }
+      } catch (e) {
+        console.error('Failed to parse activity event:', e);
+      }
+    };
+
+    eventSource.onerror = () => {
+      console.warn('Activity stream disconnected, reconnecting in 5s...');
+      if (eventSource) {
+        eventSource.close();
+      }
+      setTimeout(connectActivityStream, 5000);
+    };
+  }
+
   onMount(() => {
     loadStatus();
     loadPendingApprovals();
+    connectActivityStream();
+
     // Refresh every 30 seconds
     const statusInterval = setInterval(loadStatus, 30000);
     const approvalsInterval = setInterval(loadPendingApprovals, 5000);
+
     return () => {
       clearInterval(statusInterval);
       clearInterval(approvalsInterval);
+      if (eventSource) {
+        eventSource.close();
+      }
     };
   });
 
@@ -164,56 +220,50 @@
       <div class="widget-loading">Loading...</div>
     {:else if identity}
       <div class="status-info">
-        <div class="status-row">
-          <span class="status-label">Identity:</span>
-          <span class="status-value">{identity.name}</span>
-        </div>
-        <div class="status-row">
-          <span class="status-label">Role:</span>
-          <span class="status-value">{identity.role}</span>
-        </div>
-        <div class="status-row">
-          <span class="status-label">Trust:</span>
-          <div class="trust-control">
-            <button class="status-badge trust-{identity.trustLevel}" on:click={() => { trustMenuOpen = !trustMenuOpen; if (trustOptions.length === 0) loadTrustOptions(); }} aria-haspopup="listbox" aria-expanded={trustMenuOpen}>
-              {identity.trustLevel}
-              <svg class="chev" width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 011.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"/></svg>
-            </button>
-            {#if trustMenuOpen}
-              <div class="trust-menu" role="listbox">
-                {#each trustOptions as opt}
-                  <button class="trust-opt {opt===identity.trustLevel ? 'active' : ''}" role="option" aria-selected={opt===identity.trustLevel} on:click={() => setTrust(opt)}>{opt}</button>
-                {/each}
-              </div>
-            {/if}
+
+        {#if hasModelRegistry}
+          <!-- Multi-model registry view -->
+          <div class="status-row">
+            <span class="status-label">LLM Roles:</span>
           </div>
-        </div>
-        <div class="status-row">
-          <span class="status-label">Tasks:</span>
-          <span class="status-value">
-            {taskCount}
-            {#if inProgressCount > 0}
-              <span class="in-progress-badge">{inProgressCount} active</span>
-            {/if}
-          </span>
-        </div>
-        <div class="status-sep"></div>
-        <div class="status-row">
-          <span class="status-label">Model:</span>
-          <span class="status-value mono">{modelInfo?.current || '—'}</span>
-        </div>
-        <div class="status-row">
-          <span class="status-label">Adapter:</span>
-          <span class="status-value">
-            {#if modelInfo?.adapter?.isDualAdapter}
-              <span class="adapter-mode-badge mode-dual">dual</span>
-            {:else if modelInfo?.adapterMode === 'adapter'}
-              <span class="adapter-mode-badge mode-adapter">single</span>
-            {:else}
-              <span class="adapter-mode-badge mode-none">none</span>
-            {/if}
-          </span>
-        </div>
+          {#each Object.entries(modelRoles) as [role, info]}
+            <div class="model-role-row" class:active={activeRoles.has(role)}>
+              <span class="activity-indicator">
+                <span class="activity-dot"></span>
+              </span>
+              <span class="role-name">{role}</span>
+              <span class="role-arrow">→</span>
+              {#if info.error}
+                <span class="role-model error" title={info.error}>error</span>
+              {:else}
+                <span class="role-model" title="{info.model}{info.adapters && info.adapters.length > 0 ? ' + adapter' : ''}">
+                  {info.model?.replace(/:.+$/, '') || '—'}
+                  {#if info.adapters && info.adapters.length > 0}
+                    <span class="adapter-indicator">+LoRA</span>
+                  {/if}
+                </span>
+              {/if}
+            </div>
+          {/each}
+        {:else}
+          <!-- Legacy single-model view -->
+          <div class="status-row">
+            <span class="status-label">Model:</span>
+            <span class="status-value mono">{modelInfo?.current || '—'}</span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">Adapter:</span>
+            <span class="status-value">
+              {#if modelInfo?.adapter?.isDualAdapter}
+                <span class="adapter-mode-badge mode-dual">dual</span>
+              {:else if modelInfo?.adapterMode === 'adapter'}
+                <span class="adapter-mode-badge mode-adapter">single</span>
+              {:else}
+                <span class="adapter-mode-badge mode-none">none</span>
+              {/if}
+            </span>
+          </div>
+        {/if}
       </div>
     {/if}
   </div>
@@ -563,4 +613,126 @@
   .trust-opt:hover { background: rgba(0,0,0,0.06); }
   :global(.dark) .trust-opt:hover { background: rgba(255,255,255,0.08); }
   .trust-opt.active { font-weight: 700; }
+
+  /* Model Roles Display */
+  .model-role-row {
+    display: flex;
+    align-items: center;
+    font-size: 0.8rem;
+    gap: 0.375rem;
+    padding: 0.25rem 0 0.25rem 0.25rem;
+    border-radius: 0.375rem;
+    transition: all 0.3s ease;
+    position: relative;
+  }
+
+  .model-role-row.active {
+    background: rgba(124, 58, 237, 0.08);
+    box-shadow: 0 0 12px rgba(124, 58, 237, 0.3);
+  }
+
+  :global(.dark) .model-role-row.active {
+    background: rgba(167, 139, 250, 0.12);
+    box-shadow: 0 0 16px rgba(167, 139, 250, 0.4);
+  }
+
+  .activity-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+
+  .activity-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgb(156 163 175);
+    transition: all 0.3s ease;
+  }
+
+  .model-role-row.active .activity-dot {
+    width: 8px;
+    height: 8px;
+    background: rgb(124 58 237);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  :global(.dark) .model-role-row.active .activity-dot {
+    background: rgb(167 139 250);
+  }
+
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.6;
+      transform: scale(1.3);
+    }
+  }
+
+  .role-name {
+    color: rgb(107 114 128);
+    font-weight: 500;
+    min-width: 75px;
+    text-transform: capitalize;
+  }
+
+  :global(.dark) .role-name {
+    color: rgb(156 163 175);
+  }
+
+  .role-arrow {
+    color: rgb(156 163 175);
+    font-size: 0.7rem;
+  }
+
+  :global(.dark) .role-arrow {
+    color: rgb(107 114 128);
+  }
+
+  .role-model {
+    color: rgb(17 24 39);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.75rem;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex: 1;
+    min-width: 0;
+  }
+
+  :global(.dark) .role-model {
+    color: rgb(243 244 246);
+  }
+
+  .role-model.error {
+    color: rgb(239 68 68);
+    font-style: italic;
+  }
+
+  :global(.dark) .role-model.error {
+    color: rgb(248 113 113);
+  }
+
+  .adapter-indicator {
+    padding: 0.05rem 0.3rem;
+    border-radius: 0.25rem;
+    font-size: 0.65rem;
+    font-weight: 600;
+    background: rgba(167, 139, 250, 0.18);
+    color: rgb(109 40 217);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  :global(.dark) .adapter-indicator {
+    background: rgba(167, 139, 250, 0.25);
+    color: rgb(196 181 253);
+  }
 </style>

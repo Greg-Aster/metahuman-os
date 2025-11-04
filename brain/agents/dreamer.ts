@@ -7,7 +7,7 @@
  * 4. Writes overnight learnings to procedural memory
  */
 
-import { llm, captureEvent, paths, acquireLock, isLocked, releaseLock, audit } from '../../packages/core/src/index.js';
+import { callLLM, type RouterMessage, captureEvent, paths, acquireLock, isLocked, releaseLock, audit } from '../../packages/core/src/index.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -162,14 +162,14 @@ async function generateDream(memories: Memory[]): Promise<string | null> {
   const prompt = `Memory Fragments:\n${memoriesText}`;
 
   try {
-    const response = await llm.generate(
-      [
+    const response = await callLLM({
+      role: 'persona',
+      messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt },
       ],
-      'ollama',
-      { temperature: 0.95 }
-    );
+      options: { temperature: 0.95 },
+    });
 
     const dream = response.content.trim();
     return dream || null;
@@ -219,19 +219,21 @@ Respond with JSON:
 }`;
 
   try {
-    const response = await llm.generateJSON<{
+    const llmResponse = await callLLM({
+      role: 'curator',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      options: { temperature: 0.3 },
+    });
+
+    const response = JSON.parse(llmResponse.content) as {
       preferences: string[];
       heuristics: string[];
       styleNotes: string[];
       avoidances: string[];
-    }>(
-      [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      'ollama',
-      { temperature: 0.3 }
-    );
+    };
 
     return {
       preferences: response.preferences || [],

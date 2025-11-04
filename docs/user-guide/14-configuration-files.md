@@ -57,6 +57,31 @@ Specifies which Ollama model to use for persona chat:
 }
 ```
 
+### `etc/models.json` - Multi-Model Configuration
+Defines the roles and model assignments for the "Dual Consciousness" architecture. This file allows you to specify different models for different tasks, such as orchestration, persona conversation, and curation.
+
+```json
+{
+  "defaults": {
+    "orchestrator": "orchestrator.qwen3",
+    "persona": "persona.qwen3.lora"
+  },
+  "models": {
+    "orchestrator.qwen3": {
+      "provider": "ollama",
+      "model": "qwen3:1.5b",
+      "roles": ["orchestrator", "router"]
+    },
+    "persona.qwen3.lora": {
+      "provider": "ollama",
+      "model": "qwen3:30b",
+      "adapters": ["persona/greggles-lora"],
+      "roles": ["persona", "conversation"]
+    }
+  }
+}
+```
+
 ### `etc/auto-approval.json` - LoRA Quality Thresholds
 Configures auto-approval behavior for LoRA datasets:
 ```json

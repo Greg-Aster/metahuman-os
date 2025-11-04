@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { loadPersonaCore, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, llm } from '@metahuman/core';
+import { loadPersonaCore, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, llm, callLLM, type ModelRole, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode } from '@metahuman/core';
 import { loadCognitiveMode, getModeDefinition, canWriteMemory, canUseOperator } from '@metahuman/core/cognitive-mode';
 import { readFileSync, existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -329,6 +329,10 @@ function initializeChat(mode: Mode, reason = false, usingLora = false, includePe
   let systemPrompt = '';
   if (includePersonaSummary) {
     const persona = loadPersonaCore();
+
+    // Phase 5: Add persona cache context (long-term themes and facts)
+    const personaCache = getPersonaContext();
+
     systemPrompt = `
 You are ${persona.identity.name}, an autonomous digital personality extension.
 Your role is: ${persona.identity.role}.
@@ -338,6 +342,7 @@ Your personality is defined by these traits:
 - Communication Style: ${persona.personality.communicationStyle.tone.join(', ')}.
 - Values: ${persona.values.core.map(v => v.value).join(', ')}.
 
+${personaCache ? `Long-term context:\n${personaCache}\n` : ''}
 You are having a ${mode}.
     `.trim();
   } else {
@@ -428,6 +433,9 @@ async function shouldUseOperator(message: string, recentContext?: string): Promi
     .map(s => `- ${s.id}: ${s.description}`)
     .join('\n');
 
+  // Phase 5: Add orchestrator short-term state context
+  const orchestratorState = getOrchestratorContext();
+
   const systemPrompt = `You are a task routing system.
 Your job is to decide if the user's request should be handled by a conversational AI or an autonomous operator with specific skills.
 
@@ -437,6 +445,7 @@ If the user is asking to perform an action, execute a task, or do something that
 Available operator skills:
 ${skills}
 
+${orchestratorState ? `Current state:\n${orchestratorState}\n` : ''}
 Respond with a single word: "chat" or "operator".`;
 
   const contextBlock = recentContext
@@ -444,25 +453,37 @@ Respond with a single word: "chat" or "operator".`;
     : '';
 
   try {
-    const response = await llm.generate(
-      [
+    // Use orchestrator model for routing decisions (Phase 2: Orchestrator Separation)
+    const startTime = Date.now();
+    const routerResponse = await callLLM({
+      role: 'orchestrator' as ModelRole,
+      messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `${contextBlock}User request:\n${trimmed}` },
       ],
-      'ollama',
-      { temperature: 0.1 }
-    );
+      cognitiveMode: mode,
+      options: {
+        temperature: 0.1,
+      }
+    });
+    const orchestratorLatency = Date.now() - startTime;
 
-    const raw = typeof response === 'string'
-      ? response
-      : (response && (response as any).content) || String(response || '');
-    const decision = String(raw).trim().toLowerCase();
+    console.log(`[CHAT_REQUEST] Orchestrator model: ${routerResponse.modelId} (${orchestratorLatency}ms)`);
+    const decision = routerResponse.content.trim().toLowerCase();
     audit({
       level: 'info',
       category: 'decision',
       event: 'operator_route_decision',
-      details: { message, decision, cognitiveMode: mode, recentContext },
-      actor: 'system',
+      details: {
+        message,
+        decision,
+        cognitiveMode: mode,
+        recentContext,
+        orchestratorModel: routerResponse.modelId,
+        orchestratorLatencyMs: orchestratorLatency,
+        phase: 2, // Phase 2: Orchestrator Separation
+      },
+      actor: 'orchestrator',
     });
 
     let useOperator = false;
@@ -580,7 +601,7 @@ function formatOperatorResult(result: any): string {
   return output;
 }
 
-async function synthesizeOperatorAnswer(model: string, userMessage: string, operatorReport: string): Promise<string> {
+async function synthesizeOperatorAnswer(model: string, userMessage: string, operatorReport: string, cognitiveMode = 'dual'): Promise<string> {
   const instructions = `You are assisting a user after an autonomous operator fetched raw data for them.
 Summarize the findings in a concise, conversational way:
 - Open with the direct answer (1-2 sentences) focused on the user's request.
@@ -597,19 +618,24 @@ Do not mention the operator, internal steps, or unavailable data. If nothing use
     },
   ];
 
-  const summaryResp = await ollama.chat(model, prompt, {
-    temperature: 0.35,
-    top_p: 0.9,
-    repeat_penalty: 1.2,
-    repeat_last_n: 128,
-    num_predict: 768,
+  const summaryResp = await callLLM({
+    role: 'summarizer',
+    messages: prompt as RouterMessage[],
+    cognitiveMode,
+    options: {
+      temperature: 0.35,
+      topP: 0.9,
+      repeatPenalty: 1.2,
+      maxTokens: 768,
+    },
   });
 
-  const text = (summaryResp.message?.content || '').trim();
+  const text = summaryResp.content.trim();
   return text || operatorReport;
 }
 
 async function handleChatRequest({ message, mode = 'inner', newSession = false, audience, length, reason, reasoningDepth, llm, forceOperator = false, yolo = false, origin }: { message: string; mode?: string; newSession?: boolean; audience?: string; length?: string; reason?: boolean; reasoningDepth?: number; llm?: any; forceOperator?: boolean; yolo?: boolean; origin?: string }) {
+  console.log(`\n[CHAT_REQUEST] Received: "${message}"`);
   const m: Mode = mode === 'conversation' ? 'conversation' : 'inner';
 
   let model;
@@ -669,6 +695,9 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   // Decide whether to use the operator or the chat model
   const useOperator = forceOperator || await shouldUseOperator(message ?? '', routingContext);
 
+  console.log(`[CHAT_REQUEST] Cognitive Mode: ${cognitiveMode}`);
+  console.log(`[CHAT_REQUEST] Routing decision: ${useOperator ? 'OPERATOR' : 'PERSONA'}`);
+
   if (useOperator) {
     // Stream the operator response
     const stream = new ReadableStream({
@@ -710,7 +739,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
           let synthesized = formattedResult;
           try {
-            synthesized = await synthesizeOperatorAnswer(model, message, formattedResult);
+            synthesized = await synthesizeOperatorAnswer(model, message, formattedResult, cognitiveMode);
           } catch (err) {
             console.error('[persona_chat] Failed to synthesize operator answer:', err);
           }
@@ -782,7 +811,8 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   }
 
   // Get relevant context (memories + tasks) for this message
-  const { context: contextInfo } = await getRelevantContext(message, m, { usingLora, includePersonaSummary });
+  const { context: contextInfo, usedSemantic } = await getRelevantContext(message, m, { usingLora, includePersonaSummary });
+  console.log(`[CHAT_REQUEST] Context retrieved. Length: ${contextInfo.length}, Semantic Search: ${usedSemantic}`);
 
   // Add user message and context to history
   // NOTE: The context is added as a separate system message to make it clear to the model what is the user's message and what is context.
@@ -863,12 +893,18 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               }
               const plannerTemperature = Math.min(temperature, round >= 3 ? 0.3 : configIdx >= 3 ? 0.35 : configIdx === 2 ? 0.4 : 0.5);
 
-              const planResp = await ollama.chat(
-                model,
-                [...histories[m], { role: 'system', content: plannerPrompt }],
-                { temperature: plannerTemperature, top_p: 0.9, repeat_penalty: 1.3, repeat_last_n: 256, ...plannerOpts }
-              );
-              const rawPlan = (planResp.message.content || '').trim();
+              const planResp = await callLLM({
+                role: 'planner',
+                messages: [...histories[m], { role: 'system', content: plannerPrompt }] as RouterMessage[],
+                cognitiveMode: mode,
+                options: {
+                  temperature: plannerTemperature,
+                  topP: 0.9,
+                  repeatPenalty: 1.3,
+                  maxTokens: plannerOpts.num_predict,
+                },
+              });
+              const rawPlan = planResp.content.trim();
               let planSummary = '';
               try {
                 const obj = JSON.parse(rawPlan);
@@ -905,12 +941,18 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               emitReasoningStage('plan', round, planSummary);
 
               const criticPrompt = `You are a rigorous critique assistant evaluating the plan below for a conversational AI. Review the plan carefully. Respond ONLY as JSON with keys: \`approve\` (boolean), \`issues\` (array of strings describing problems), \`questions\` (array of follow-up questions or missing info), \`suggestions\` (array of improvements), and \`confidence\` (number between 0 and 1).\n\n[PLAN]\n${planSummary}`;
-              const criticResp = await ollama.chat(
-                model,
-                [...histories[m], { role: 'system', content: criticPrompt }],
-                { temperature: Math.min(0.4, plannerTemperature), top_p: 0.8, repeat_penalty: 1.3, repeat_last_n: 256, ...llmOpts }
-              );
-              const rawCritique = (criticResp.message.content || '').trim();
+              const criticResp = await callLLM({
+                role: 'planner',
+                messages: [...histories[m], { role: 'system', content: criticPrompt }] as RouterMessage[],
+                cognitiveMode: mode,
+                options: {
+                  temperature: Math.min(0.4, plannerTemperature),
+                  topP: 0.8,
+                  repeatPenalty: 1.3,
+                  maxTokens: llmOpts.num_predict,
+                },
+              });
+              const rawCritique = criticResp.content.trim();
               let critiqueSummary = rawCritique;
               let guidanceForNext = '';
               let approve = false;
@@ -953,15 +995,48 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               ? `\n\n[CRITIQUE NOTES]\n${finalCritique}`
               : '';
             const finalPlanSection = finalPlan ? `\n\n[APPROVED PLAN]\n${finalPlan}` : '';
-            const answerResp = await ollama.chat(
-              model,
-              [...histories[m], { role: 'system', content: `${answerGuard}${finalPlanSection}${guidanceNote}` }],
-              { temperature, top_p: 0.9, repeat_penalty: 1.3, repeat_last_n: 256, ...llmOpts }
-            );
-            assistantResponse = answerResp.message.content || (answerResp.message as any).thinking || '';
+            const answerResp = await callLLM({
+              role: 'persona',
+              messages: [...histories[m], { role: 'system', content: `${answerGuard}${finalPlanSection}${guidanceNote}` }] as RouterMessage[],
+              cognitiveMode: mode,
+              options: {
+                temperature,
+                topP: 0.9,
+                repeatPenalty: 1.3,
+                maxTokens: llmOpts.num_predict,
+              },
+            });
+            assistantResponse = answerResp.content || '';
           } else {
+            // Resolve and log the persona model being used
+            const personaModel = resolveModelForCognitiveMode(cognitiveMode, 'persona' as ModelRole);
+            console.log(`[CHAT_REQUEST] Persona model: ${personaModel.id}`);
+
             // Let the model work naturally without extra instructions
-            const response = await ollama.chat(model, histories[m], { temperature, top_p: 0.9, repeat_penalty: 1.3, repeat_last_n: 256, ...llmOpts });
+            // Use role-based routing for persona responses
+            const llmResponse = await callLLM({
+              role: 'persona' as ModelRole,
+              messages: histories[m].map(h => ({
+                role: h.role as 'system' | 'user' | 'assistant',
+                content: h.content
+              })),
+              cognitiveMode,
+              options: {
+                temperature,
+                topP: 0.9,
+                repeatPenalty: 1.3,
+                ...llmOpts
+              }
+            });
+
+            // For backward compatibility, construct response object matching ollama.chat format
+            const response = {
+              message: {
+                content: llmResponse.content,
+                thinking: (llmResponse as any).thinking || ''
+              },
+              model: llmResponse.model,
+            };
 
             // Handle Qwen3 thinking mode: content is in thinking field, actual answer often isn't separated
             const thinking = (response.message as any).thinking || '';
@@ -1041,15 +1116,19 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
                   },
                 ] as typeof histories[m];
                 try {
-                  const followResp = await ollama.chat(
-                    model,
-                    followMessages,
-                    { temperature, top_p: 0.9, repeat_penalty: 1.3, repeat_last_n: 256, ...llmOpts }
-                  );
+                  const followResp = await callLLM({
+                    role: 'persona',
+                    messages: followMessages as RouterMessage[],
+                    cognitiveMode: mode,
+                    options: {
+                      temperature,
+                      topP: 0.9,
+                      repeatPenalty: 1.3,
+                      maxTokens: llmOpts.num_predict,
+                    },
+                  });
 
-                  const followContent = followResp.message.content || '';
-                  const followThinking = (followResp.message as any).thinking || '';
-                  extracted = followContent || extractFromThinking(followThinking) || extracted;
+                  extracted = followResp.content || extracted;
                 } catch (followError) {
                   console.error('[persona_chat] follow-up extraction failed:', followError);
                 }

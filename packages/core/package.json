@@ -14,7 +14,9 @@
     "./llm": "./src/llm.ts",
     "./agent-monitor": "./src/agent-monitor.ts",
     "./skills": "./src/skills.ts",
-    "./cognitive-mode": "./src/cognitive-mode.ts"
+    "./cognitive-mode": "./src/cognitive-mode.ts",
+    "./model-resolver": "./src/model-resolver.ts",
+    "./model-router": "./src/model-router.ts"
   },
   "dependencies": {
     "fast-glob": "^3.3.2",

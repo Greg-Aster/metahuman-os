@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { llm, paths, audit, acquireLock, isLocked, loadPersonaCore, captureEvent } from '../../packages/core/src/index';
+import { callLLM, type RouterMessage, paths, audit, acquireLock, releaseLock, isLocked, loadPersonaCore, captureEvent } from '../../packages/core/src/index';
 import { initializeSkills } from '../skills/index';
 import {
   listSkills,
@@ -56,6 +56,14 @@ interface CriticReview {
   suggestedFixes?: string;
 }
 
+interface RetryContext {
+  attemptNumber: number;
+  previousPlan: Plan;
+  previousResults: ExecutionResult[];
+  criticFeedback: string;
+  suggestedFixes?: string;
+}
+
 // Narrow operator focus profiles to bias planning toward certain skill sets
 type OperatorProfile = 'files' | 'git' | 'web' | undefined;
 type OperatorMode = 'strict' | 'yolo';
@@ -78,6 +86,25 @@ let lastListedPaths: Array<{ absolute: string; relative: string }> = [];
 let inited = false;
 
 const KNOWN_FILE_ROOTS = ['out', 'memory', 'docs', 'persona', 'logs', 'etc'];
+
+/**
+ * Extract JSON from LLM response that might be wrapped in markdown
+ */
+function extractJSON(content: string): string {
+  // Try to extract JSON from markdown code blocks
+  const jsonMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (jsonMatch) {
+    return jsonMatch[1].trim();
+  }
+
+  // If no code block, try to find JSON object
+  const objMatch = content.match(/\{[\s\S]*\}/);
+  if (objMatch) {
+    return objMatch[0];
+  }
+
+  return content.trim();
+}
 
 function toAbsolutePath(pathLike: string): string {
   const sanitized = pathLike.replace(/^\.\//, '');
@@ -177,15 +204,16 @@ Operator mode: ${mode === 'yolo' ? 'YOLO (relaxed guardrails)' : 'Strict (defaul
 
 Return JSON now.`;
 
-    const raw = await llm.generateJSON<TaskAssessment>(
-      [
+    const response = await callLLM({
+      role: 'planner',
+      messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      'ollama',
-      { temperature: mode === 'yolo' ? 0.3 : 0.2 }
-    );
+      options: { temperature: mode === 'yolo' ? 0.3 : 0.2 },
+    });
 
+    const raw = JSON.parse(extractJSON(response.content)) as TaskAssessment;
     const confidence = Math.max(0, Math.min(1, Number(raw.confidence) || 0));
     const assessment: TaskAssessment = {
       ready: Boolean(raw.ready),
@@ -233,7 +261,8 @@ async function plan(
   task: Task,
   profile: OperatorProfile | undefined,
   mode: OperatorMode,
-  assessment?: TaskAssessment | null
+  assessment?: TaskAssessment | null,
+  retryContext?: RetryContext
 ): Promise<Plan | null> {
   console.log('[operator:planner] Planning task:', task.goal);
 
@@ -276,6 +305,10 @@ ${inputsInfo}
     })
     .join('\n\n');
 
+  // Detect if this is a coding task
+  const codingKeywords = ['fix', 'bug', 'error', 'add function', 'implement', 'refactor', 'debug', 'code', 'write code', 'modify code', 'create function', 'update function', 'change code', 'syntax error', 'type error', 'compile error'];
+  const isCodingTask = codingKeywords.some(keyword => task.goal.toLowerCase().includes(keyword));
+
   const allowedSkillsList = availableSkills.map(s => s.id).join(', ');
   // Profile focus instructions
   const focus = profile === 'files'
@@ -306,7 +339,25 @@ ${inputsInfo}
     'Always validate inputs',
     'When writing files and the user did not specify a path, default to writing under the \'out/\' directory in the project root.',
     'When a file name is referenced without a path, reuse the most recent matching file or list files under out/ before assuming it is missing.',
+    'When file paths are uncertain or not found, use fs_list to search for the file first before giving up',
+    'If a path validation fails, try searching with fs_list or adjusting the path format before retrying',
+    'Project-relative paths should NOT start with / (e.g., use "docs/file.md" not "/docs/file.md")',
+    'When you encounter an error, think about alternative approaches using available skills',
   ];
+
+  // Add coding-specific instructions if this is a coding task
+  if (isCodingTask) {
+    instructionLines.push(
+      'CODING TASK DETECTED: Use code_generate and code_apply_patch for code changes',
+      'Workflow: 1) Read existing code with fs_read, 2) Generate changes with code_generate, 3) Stage changes with code_apply_patch',
+      'code_generate creates diffs/patches using the coder LLM - provide clear instructions and context',
+      'code_apply_patch stages changes for user approval - changes appear in the web UI approval queue',
+      'Do NOT use fs_write for code changes - always use the code_generate → code_apply_patch workflow',
+      'For bug fixes: read the file, identify the issue, use code_generate with fix instructions, then code_apply_patch',
+      'For new features: read related files for context, use code_generate with implementation instructions, then code_apply_patch',
+      'Always include test commands in code_apply_patch inputs (e.g., "pnpm tsc", "pnpm test", "pnpm build")'
+    );
+  }
 
   if (mode === 'strict') {
     instructionLines.splice(
@@ -351,6 +402,31 @@ STRICT RULES:
 - To write a file, you MUST use skillId "fs_write" with inputs: { "path": "<absolute or project-relative path>", "content": "<string>", "overwrite": true/false }
 - Do NOT add fs_read before fs_write. Only include a read-after-write step if the user explicitly asks to verify content. If not asked, omit fs_read entirely.
 
+${isCodingTask ? `
+CODING WORKFLOW EXAMPLES:
+
+Example 1 - Fix a bug:
+User: "Fix the syntax error in src/utils.ts"
+Plan:
+  1. fs_read: Read src/utils.ts to understand the code
+  2. code_generate: Generate fix for syntax error with context from file
+  3. code_apply_patch: Stage the fix for approval with test commands ["pnpm tsc"]
+
+Example 2 - Add a function:
+User: "Add a helper function to calculate totals in src/calc.ts"
+Plan:
+  1. fs_read: Read src/calc.ts to understand existing code
+  2. code_generate: Generate new function implementation
+  3. code_apply_patch: Stage changes for approval with test commands ["pnpm tsc", "pnpm test"]
+
+Example 3 - Refactor code:
+User: "Refactor the authentication module to use async/await"
+Plan:
+  1. fs_read: Read the authentication module file
+  2. code_generate: Generate refactored version using async/await
+  3. code_apply_patch: Stage refactored code for approval with test commands ["pnpm tsc", "pnpm test"]
+` : ''}
+
 Current Trust Level: ${trustLevel}
 
   IMPORTANT:
@@ -371,22 +447,56 @@ Respond with JSON only:
   ]
   }`;
 
+  // Build retry context section if this is a retry attempt
+  let retryContextSection = '';
+  if (retryContext) {
+    const failedSteps = retryContext.previousResults
+      .filter(r => !r.success)
+      .map(r => `  - Step ${r.stepId}: ${r.error}`)
+      .join('\n');
+
+    retryContextSection = `
+
+⚠️  RETRY ATTEMPT #${retryContext.attemptNumber}
+
+Previous attempt failed. Learn from these mistakes:
+
+Previous Plan Reasoning:
+${retryContext.previousPlan.reasoning}
+
+Previous Steps:
+${retryContext.previousPlan.steps.map(s => `  ${s.id}. [${s.skillId}] ${s.description}`).join('\n')}
+
+Failed Steps:
+${failedSteps}
+
+Critic Feedback:
+${retryContext.criticFeedback}
+
+${retryContext.suggestedFixes ? `Suggested Fixes:\n${retryContext.suggestedFixes}\n` : ''}
+IMPORTANT: Analyze what went wrong and try a DIFFERENT approach. Don't repeat the same mistake.
+`;
+  }
+
   const userPrompt = `Task: ${task.goal}
 
 ${task.context ? `Context: ${task.context}` : ''}
 ${assessment ? `\nAssessment:\n- Ready: ${assessment.ready ? 'yes' : 'no'}\n- Confidence: ${(assessment.confidence * 100).toFixed(0)}%\n${assessment.clarification ? `- Missing detail: ${assessment.clarification}\n` : ''}${assessment.rationale ? `- Notes: ${assessment.rationale}` : ''}` : ''}
+${retryContextSection}
 
 Create a step-by-step plan to accomplish this task.`;
 
   try {
-    let response = await llm.generateJSON<Plan>(
-      [
+    const llmResponse = await callLLM({
+      role: 'planner',
+      messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      'ollama',
-      { temperature: 0.3 }
-    );
+      options: { temperature: 0.3 },
+    });
+
+    let response = JSON.parse(extractJSON(llmResponse.content)) as Plan;
     // Plan validator: map common synonyms and ensure only allowed skills
     const allowedIds = new Set(availableSkills.map(s => s.id));
     const synonyms = new Map<string, string>([
@@ -428,10 +538,15 @@ Create a step-by-step plan to accomplish this task.`;
     });
     if (unknown && mode === 'strict') {
       const stricter = `Your last plan used invalid or unknown skills. Replan using ONLY these skills: ${Array.from(allowedIds).join(', ')}. Use fs_write for writing; avoid fs_read before fs_write.`;
-      response = await llm.generateJSON<Plan>([
-        { role: 'system', content: systemPrompt + '\n\n' + stricter },
-        { role: 'user', content: userPrompt },
-      ], 'ollama', { temperature: 0.2 });
+      const retryResponse = await callLLM({
+        role: 'planner',
+        messages: [
+          { role: 'system', content: systemPrompt + '\n\n' + stricter },
+          { role: 'user', content: userPrompt },
+        ],
+        options: { temperature: 0.2 },
+      });
+      response = JSON.parse(extractJSON(retryResponse.content)) as Plan;
     }
 
     console.log(`[operator:planner] Generated plan with ${response.steps.length} steps`);
@@ -553,6 +668,20 @@ async function execute(
     if (!step.inputs) return step.inputs;
     const resolved = resolvePlaceholders(step.inputs, context);
     const isYolo = mode === 'yolo';
+
+    // Auto-fix common path mistakes for file system skills
+    if (['fs_read', 'fs_write', 'fs_list'].includes(step.skillId) && resolved?.path) {
+      const originalPath = resolved.path;
+      if (typeof originalPath === 'string' && originalPath.startsWith('/')) {
+        // Check if it's NOT an absolute system path (like /home/... or /usr/...)
+        if (!originalPath.startsWith('/home/') && !originalPath.startsWith('/usr/') &&
+            !originalPath.startsWith('/etc/') && !originalPath.startsWith('/var/')) {
+          // Remove leading slash for project-relative paths
+          resolved.path = originalPath.slice(1);
+          console.log(`[operator:executor] Auto-fixed path: ${originalPath} -> ${resolved.path}`);
+        }
+      }
+    }
 
     const collectCandidateTasks = () => {
       const candidates: any[] = [];
@@ -894,16 +1023,22 @@ Your job is to review the results of task execution and determine:
 1. Did the task succeed?
 2. If not, what went wrong?
 3. Should we retry with a different approach?
-4. What improvements can be made?
+4. What specific actions should be taken to fix the problem?
 
 Be concise and actionable in your feedback.
+
+When providing suggestedFixes, be SPECIFIC and ACTIONABLE:
+- If path validation failed: "Try using fs_list to search for the file, or remove the leading / from the path"
+- If file not found: "Use fs_list with pattern '**/*filename*' to search the entire project"
+- If permission denied: "Check if the path is accessible or try writing to the 'out/' directory instead"
+- If missing information: "Use [specific skill] to gather [specific data] first"
 
 Respond with JSON only:
 {
   "success": true/false,
-  "feedback": "Brief assessment of the execution",
+  "feedback": "Brief assessment of what happened",
   "shouldRetry": true/false,
-  "suggestedFixes": "Specific suggestions if retry is recommended (optional)"
+  "suggestedFixes": "Specific actionable steps to fix the problem (required if shouldRetry is true)"
 }`;
 
   const userPrompt = `Original Task: ${task.goal}
@@ -914,14 +1049,16 @@ ${executionSummary}
 Review the execution and provide feedback.`;
 
   try {
-    const response = await llm.generateJSON<CriticReview>(
-      [
+    const llmResponse = await callLLM({
+      role: 'planner',
+      messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      'ollama',
-      { temperature: 0.3 }
-    );
+      options: { temperature: 0.3 },
+    });
+
+    const response = JSON.parse(extractJSON(llmResponse.content)) as CriticReview;
 
     console.log(`[operator:critic] Review: ${response.success ? 'SUCCESS' : 'NEEDS WORK'}`);
     console.log(`[operator:critic] Feedback: ${response.feedback}`);
@@ -1039,13 +1176,15 @@ async function runTask(
     });
   }
 
+  let retryContext: RetryContext | undefined = undefined;
+
   while (retries <= maxRetries) {
     if (retries > 0) {
       console.log(`\n[operator] Retry attempt ${retries}/${maxRetries}\n`);
     }
 
     // Step 1: Plan
-    const planResult = await plan(task, options.profile, effectiveMode, assessment);
+    const planResult = await plan(task, options.profile, effectiveMode, assessment, retryContext);
     if (!planResult) {
       console.error('[operator] Planning failed. Aborting task.');
       return { success: false, task, error: 'planning_failed' };
@@ -1128,6 +1267,15 @@ async function runTask(
 
       return { success: false, task, plan: planResult, results: executionResults, critique: review };
     }
+
+    // Build retry context for next iteration
+    retryContext = {
+      attemptNumber: retries + 1,
+      previousPlan: planResult,
+      previousResults: executionResults,
+      criticFeedback: review.feedback,
+      suggestedFixes: review.suggestedFixes,
+    };
 
     retries++;
   }

@@ -4,7 +4,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, audit, llm, captureEvent } from '@metahuman/core';
+import { paths, audit, callLLM, type RouterMessage, captureEvent } from '@metahuman/core';
 
 const AUDIO_CONFIG_PATH = path.join(paths.etc, 'audio.json');
 const POLL_INTERVAL_MS = 900000; // Check every 15 minutes (15 * 60 * 1000 ms)
@@ -82,17 +82,20 @@ Respond with JSON only:
 }`;
 
       try {
-        const response = await llm.generateJSON<{
-          summary: string;
-          tags: string[];
-          entities: string[];
-        }>(
-          [
+        const llmResponse = await callLLM({
+          role: 'curator',
+          messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
           ],
-          'ollama'
-        );
+          options: { temperature: 0.3 },
+        });
+
+        const response = JSON.parse(llmResponse.content) as {
+          summary: string;
+          tags: string[];
+          entities: string[];
+        };
 
         summary = response.summary || '';
         tags = response.tags || [];

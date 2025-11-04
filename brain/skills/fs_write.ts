@@ -18,7 +18,7 @@ export const manifest: SkillManifest = {
     path: {
       type: 'string',
       required: true,
-      description: 'Absolute path where file should be written',
+      description: 'Project-relative path (e.g., "out/file.txt") or absolute system path. Project-relative paths should NOT start with /',
       validation: (value) => isWriteAllowed(value),
     },
     content: {

@@ -1,6 +1,10 @@
 ## Autonomous Agents
 
-MetaHuman OS runs several autonomous agents that process memories and generate insights in the background.
+MetaHuman OS runs several autonomous agents that process memories and generate insights in the background. These agents are increasingly powered by the system's **Multi-Model Architecture**, which dedicates specific AI models to different roles.
+
+For example, the **Operator Agent**'s complex planning and skill execution is guided by the **Orchestrator** model, which specializes in executive function. In contrast, agents that generate conversational content, like the **Reflector Agent**, leverage the **Persona** model to ensure the voice and tone are aligned with your identity.
+
+This specialization allows the system to use the best cognitive resources for each task, leading to more efficient and intelligent autonomous operation.
 
 **Note:** The behavior of these agents can change based on the active [Cognitive Mode](04-core-concepts.md#8-cognitive-modes-upcoming-feature). For example, in "Agent Mode", proactive agents like the `reflector` and `dreamer` may be disabled.
 
@@ -262,7 +266,17 @@ Track the LoRA training pipeline via:
 - Reviews and critiques results.
 - Handles complex file operations, git commands, web search, and more.
 
-### 8. Auto-Approver Agent (Advanced)
+### 8. Coder Agent (Self-Healing)
+
+**Purpose:** A specialized agent that can write and modify the MetaHuman OS source code.
+
+**How it works:**
+- Uses the dedicated `coder` model (`qwen3-coder:30b`) to generate code patches.
+- All proposed changes appear in the **Code Approval UI** for you to review before they are applied.
+- Has special permissions to write to code directories but is blocked from modifying `memory/` or `persona/` files.
+- For a full description, see the [Self-Healing Coder Agent](11-special-features.md#self-healing-coder-agent) section.
+
+### 9. Auto-Approver Agent (Advanced)
 
 **Purpose:** Quality-based dataset approval for LoRA adaptation.
 
@@ -271,7 +285,7 @@ Track the LoRA training pipeline via:
 - Automatically approves datasets meeting quality thresholds
 - Runs in dry-run mode by default for safety
 
-### 9. Adapter Builder Agent (Advanced)
+### 10. Adapter Builder Agent (Advanced)
 
 **Purpose:** Generates training datasets for LoRA models.
 
@@ -280,7 +294,7 @@ Track the LoRA training pipeline via:
 - Applies quality filters to ensure high-quality data
 - Formats data appropriately for training
 
-### 10. LoRA Trainer Agent (Advanced)
+### 11. LoRA Trainer Agent (Advanced)
 
 **Purpose:** Orchestrates LoRA model training.
 
@@ -290,7 +304,7 @@ Track the LoRA training pipeline via:
 - Runs training via Axolotl
 - Handles errors and monitoring
 
-### 11. Eval Adapter Agent (Advanced)
+### 12. Eval Adapter Agent (Advanced)
 
 **Purpose:** Evaluates quality of trained adapters.
 
@@ -299,7 +313,7 @@ Track the LoRA training pipeline via:
 - Compares performance to baseline
 - Records results for approval workflows
 
-### 12. Transcriber Agent (Advanced)
+### 13. Transcriber Agent (Advanced)
 
 **Purpose:** Transcribes raw audio files into text.
 
@@ -308,7 +322,7 @@ Track the LoRA training pipeline via:
 - Uses the configured speech-to-text engine (e.g., `whisper.cpp`) to generate a Markdown transcript.
 - Saves the transcript to `memory/audio/transcripts` and archives the original audio file.
 
-### 13. Audio Organizer Agent (Advanced)
+### 14. Audio Organizer Agent (Advanced)
 
 **Purpose:** Converts transcripts into structured episodic memories.
 
@@ -317,7 +331,7 @@ Track the LoRA training pipeline via:
 - Uses an LLM to segment the transcript and extract key points, entities, and action items.
 - Creates new episodic memories, linking them back to the source transcript file.
 
-### 14. Night Processor Agent (Advanced)
+### 15. Night Processor Agent (Advanced)
 
 **Purpose:** Runs nightly catch-up tasks for audio processing.
 
@@ -325,7 +339,7 @@ Track the LoRA training pipeline via:
 - Triggered by the `sleep-service` during the configured sleep window.
 - Runs the `transcriber` and `audio-organizer` agents to process any backlog of audio files from the day.
 
-### 15. Drift Monitor Agent (Future)
+### 16. Drift Monitor Agent (Future)
 
 **Purpose:** Automatically detect and revert poorly performing model adapters.
 

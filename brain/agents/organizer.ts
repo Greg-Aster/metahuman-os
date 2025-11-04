@@ -19,7 +19,7 @@ const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, '..', '..');
 
 // Import from core
-import { paths, audit, auditAction, llm, type LLMMessage, acquireLock, isLocked, initGlobalLogger } from '@metahuman/core';
+import { paths, audit, auditAction, callLLM, type RouterMessage, acquireLock, releaseLock, isLocked, initGlobalLogger } from '@metahuman/core';
 
 interface EpisodicMemory {
   id: string;
@@ -48,7 +48,7 @@ interface AnalysisResult {
 async function analyzeMemoryContent(content: string): Promise<AnalysisResult> {
   console.log(`[Organizer] Analyzing: "${content.substring(0, 50)}..."`);
 
-  const messages: LLMMessage[] = [
+  const messages: RouterMessage[] = [
     {
       role: 'system',
       content: 'You are an expert text analysis agent. Extract key tags and named entities from text. Respond with ONLY valid JSON: {"tags": ["tag1", "tag2"], "entities": ["entity1", "entity2"]}',
@@ -60,10 +60,17 @@ async function analyzeMemoryContent(content: string): Promise<AnalysisResult> {
   ];
 
   try {
-    // Use Ollama by default, falls back to mock if not available
-    const result = await llm.generateJSON<AnalysisResult>(messages, 'ollama', {
-      temperature: 0.3,
+    // Use curator role for memory analysis
+    const response = await callLLM({
+      role: 'curator',
+      messages,
+      options: {
+        temperature: 0.3,
+      },
     });
+
+    // Parse JSON from response
+    const result = JSON.parse(response.content) as AnalysisResult;
 
     console.log(`[Organizer] Found ${result.tags?.length || 0} tags, ${result.entities?.length || 0} entities`);
 
@@ -72,7 +79,12 @@ async function analyzeMemoryContent(content: string): Promise<AnalysisResult> {
       skill: 'organizer:analyze',
       inputs: { contentLength: content.length },
       success: true,
-      output: { tags: result.tags, entities: result.entities },
+      output: {
+        tags: result.tags,
+        entities: result.entities,
+        modelId: response.modelId,
+        latencyMs: response.latencyMs,
+      },
     });
 
     return {

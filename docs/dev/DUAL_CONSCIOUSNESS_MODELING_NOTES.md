@@ -107,3 +107,117 @@ Treat the system as a duet:
 - **Persona LoRA** carries the melody—speaking in the individual’s voice, weaving memories, and expressing intent.
 
 By keeping those roles distinct yet synchronized, the “dual consciousness” vision—one human, one digital twin—remains achievable, maintainable, and fast enough for day-to-day use.
+
+---
+
+## 10. Extending Toward Multi-Model Routing
+
+To make the stack future-proof and allow us to swap in additional models or LoRAs without rewriting core logic, introduce a **model registry** and lightweight call-site abstractions.
+
+### 10.1 Configuration Layer
+
+- Add a new JSON config in `etc/` (e.g., `etc/models.json`) that declares:
+  ```json
+  {
+    "defaults": {
+      "orchestrator": "orchestrator.qwen3-1.5b",
+      "persona": "persona.qwen3-30b.lora",
+      "curator": "curator.mistral-7b",
+      "fallback": "general.ollama-13b"
+    },
+    "models": {
+      "orchestrator.qwen3-1.5b": {
+        "provider": "ollama",
+        "model": "qwen3:1.5b",
+        "adapters": [],
+        "roles": ["orchestrator", "router"]
+      },
+      "persona.qwen3-30b.lora": {
+        "provider": "ollama",
+        "model": "qwen3:30b",
+        "adapters": ["persona/greggles-lora"],
+        "roles": ["persona", "conversation"]
+      },
+      "curator.mistral-7b": {
+        "provider": "ollama",
+        "model": "mistral:7b",
+        "adapters": ["curation/semantic-cleaner"],
+        "roles": ["curator", "memory-prep"]
+      }
+    }
+  }
+  ```
+- `agent.json` can reference the new registry via a simple pointer (`"modelRegistry": "./etc/models.json"`), keeping backward compatibility.
+- Each model entry can include load hints (context window, GPU preference) and safety options.
+- The orchestrator and persona modules request models by role name (`requestModel('persona')`), decoupling code from specific IDs.
+
+### 10.2 Runtime Resolver
+
+- Implement a `model-resolver` helper in `packages/core`:
+  ```ts
+  type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'fallback';
+  function resolveModel(role: ModelRole, overrides?: Partial<RequestOptions>): ResolvedModel;
+  ```
+- The helper reads the registry, merges runtime overrides, and returns the provider + model ID + adapter stack.
+- Allow hot-swapping at runtime by updating the JSON and reloading (or caching last-known-good configs to avoid downtime).
+
+### 10.3 Call-Site Abstractions
+
+- Replace raw `ollama.chat(...)` calls with wrappers:
+  ```ts
+  import { callLLM } from '@metahuman/core/model-router';
+  const reply = await callLLM({ role: 'persona', messages, options });
+  ```
+- The wrapper handles:
+  - Adapter loading/unloading (LoRA swaps).
+  - Provider differences (Ollama vs. OpenAI vs. local gguf).
+  - Telemetry/audit logging so we know which model was used per request.
+- This design lets us add new roles (e.g., `dreaming`, `planner`, `critic`) without chasing code references.
+
+---
+
+## 11. Memory Curation / Curator Role
+
+Persona training needs curated input rather than raw logs. Introduce a **curator** component responsible for:
+
+1. **Pre-flight Cleaning:** Runs periodically to summarise raw transcripts into persona-friendly notes, flagging sensitive data.
+2. **Training Dataset Prep:** Converts curated memories into LoRA-ready format (dialogue pairs, reflection snippets).
+3. **Real-time Filtering:** When orchestrator retrieves memories, the curator can refine or redact before handing them to the persona.
+
+Implementation sketch:
+
+- `brain/agents/curator.ts` driven by the orchestrator or scheduled agent.
+- Uses the `curator` model role for summarisation and tagging tasks.
+- Writes outputs into `memory/curated/` so LoRA trainers and runtime retrieval share a consistent source.
+
+---
+
+## 12. Conscious vs. Unconscious Modes (Future)
+
+To emulate dual consciousness more faithfully:
+
+- **Conscious Layer (short-term goals):** The orchestrator keeps a rolling cache (e.g., `out/state/short-term.json`) with immediate objectives, active tasks, and guardrails. Persona can query this state to stay grounded (“We’re focusing on project X today”).
+- **Unconscious Layer (long-term drift):** Periodic curator jobs digest episodic memories into themes, biases, or evolving values. These influence the next LoRA training cycle or adjust baseline prompts.
+- **Persona Cache:** Maintain a lightweight `persona/cache.json` with frequently referenced facts (quirks, catchphrases) so we don’t hammer the embedding search for trivial reminders.
+
+---
+
+## 13. Loading & Switching Models
+
++ Keep the existing Ollama runtime (or any other providers) but hide direct model names behind a `callLLM({ role, ... })` helper in `packages/core`.
++ The helper resolves roles via `etc/models.json`, then dispatches to the appropriate client (Ollama, OpenAI, etc.) under the hood; swapping models is just a config change.
++ For LoRAs, register adapters that Ollama can load on demand. The resolver can list adapters in the request options, or point to pre-merged modelfiles.
++ All orchestrator, persona, curator, and specialist calls go through the helper (`callLLM({ role: 'persona', messages })`), so later we can reassign roles to new models without editing call sites.
++ Bonus: add audit logging to record which role/model handled each request; helps debug future model swaps.
+
+---
+
+## 14. Incremental Adoption Plan
+
+1. **Phase 1:** Introduce the model registry + resolver. Update orchestrator/persona code paths to use role-based calls while still running the same models.
+2. **Phase 2:** Stand up the curator agent using an existing mid-size model. Begin generating curated summaries for future LoRA fine-tuning.
+3. **Phase 3:** Experiment with swapping in a lightweight orchestrator model. Measure latency and reliability. Add automated fallbacks.
+4. **Phase 4:** Train/refine persona LoRA with the curated dataset. Plug into runtime via the role resolver.
+5. **Phase 5:** Layer on conscious/unconscious state caches, giving the persona and orchestrator richer shared context.
+
+This staged approach keeps the system functional at every step while progressively unlocking the multi-model, dual-consciousness behaviour we’re aiming for.
