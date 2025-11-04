@@ -130,7 +130,11 @@ GEMINI.md
 # ============================================
 # VENDOR & CACHE
 # ============================================
-vendor/
+# vendor/ subdirectories are tracked as git submodules
+# Only ignore non-submodule vendor contents
+vendor/cmake*/
+vendor/*.tar.gz
+vendor/qwen*/
 unsloth_compiled_cache/
 /bin/piper/
 /bin/whisper
