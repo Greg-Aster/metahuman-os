@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=MetaHuman OS
+Comment=Start MetaHuman OS Web Interface
+Exec=/bin/bash -c "cd '$HOME/metahuman' && exec ./start.sh"
+Icon=utilities-terminal
+Terminal=true
+Categories=Development;Utility;
+Keywords=AI;LLM;Personal;Assistant;Development;

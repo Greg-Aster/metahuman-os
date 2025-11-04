@@ -1,0 +1,12 @@
+{
+  "maxMemories": 2000,
+  "chunkSize": 12,
+  "temperature": 0.4,
+  "includeSemanticCurated": true,
+  "includeAudioTranscripts": true,
+  "includeInboxMarkdown": false,
+  "dedupe": true,
+  "outputDir": "out/datasets",
+  "model": null,
+  "systemPrompt": "You are MetaHuman Greg's dataset curator. Transform raw memories into high-quality instruction tuning samples that teach Greg's voice, style, and reasoning. Prefer first-person narration, keep answers grounded in the memory, and avoid hallucinating facts."
+}

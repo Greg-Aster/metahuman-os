@@ -1,0 +1,488 @@
+
+import { llm, captureEvent, searchMemory, paths, audit, listActiveTasks, loadPersonaCore, ollama, acquireLock, isLocked, initGlobalLogger } from '../../packages/core/src/index';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+// Technical keywords to deprioritize (not exclude, just lower weight)
+const technicalKeywords = [
+  'metahuman', 'ai agent', 'organizer', 'reflector', 'boredom-service',
+  'llm', 'ollama', 'typescript', 'package.json', 'astro', 'dev server',
+  'audit', 'persona', 'memory system', 'cli', 'codebase', 'development'
+];
+
+/**
+ * Get ALL memories (no pool limit)
+ * Returns all episodic memories sorted by timestamp
+ */
+async function getAllMemories() {
+  const episodicDir = paths.episodic;
+  try {
+    const yearDirs = await fs.readdir(episodicDir);
+    let allMemories: Array<{ file: string; timestamp: Date; content: any }> = [];
+
+    for (const year of yearDirs) {
+      const yearPath = path.join(episodicDir, year);
+      const stats = await fs.stat(yearPath);
+      if (stats.isDirectory()) {
+        const files = await fs.readdir(yearPath);
+        for (const file of files) {
+          const filePath = path.join(yearPath, file);
+          try {
+            const content = JSON.parse(await fs.readFile(filePath, 'utf-8'));
+
+            // Skip self-referential reflections (avoid echo chamber)
+            if (content.type === 'reflection' || content.metadata?.type === 'reflection') {
+              continue;
+            }
+
+            allMemories.push({
+              file: filePath,
+              timestamp: new Date(content.timestamp),
+              content
+            });
+          } catch {
+            // Skip malformed files
+          }
+        }
+      }
+    }
+
+    // Sort by timestamp (newest first)
+    allMemories.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    return allMemories;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+/**
+ * Extract key concepts/entities from a memory using simple heuristics
+ */
+function extractKeywords(memory: any): string[] {
+  const content = memory.content || '';
+  const tags = memory.tags || [];
+  const entities = memory.entities || [];
+
+  // Extract entities and tags
+  const keywords = [...tags, ...entities.map((e: any) => e.text?.toLowerCase()).filter(Boolean)];
+
+  // Extract capitalized words (potential proper nouns) - only from actual content
+  if (content && typeof content === 'string') {
+    const words = content.match(/\b[A-Z][a-z]+\b/g) || [];
+    keywords.push(...words.map((w: string) => w.toLowerCase()));
+  }
+
+  // Remove duplicates, filter out technical terms, and common stop words
+  const stopWords = ['the', 'and', 'for', 'with', 'this', 'that', 'from', 'have', 'been'];
+  const unique = [...new Set(keywords)].filter(kw =>
+    kw &&
+    typeof kw === 'string' &&
+    kw.length > 2 &&
+    !stopWords.includes(kw) &&
+    !technicalKeywords.some(tech => kw.includes(tech))
+  );
+
+  return unique.slice(0, 5); // Top 5 keywords
+}
+
+/**
+ * Associative train of thought:
+ * 1. Pick a seed memory (weighted random from all memories)
+ * 2. Extract keywords from seed
+ * 3. Search for related memories using those keywords
+ * 4. Repeat 2-3 times to build a "chain" of associated memories
+ */
+async function getAssociativeMemoryChain(chainLength: number = 3): Promise<any[]> {
+  const allMemories = await getAllMemories();
+  if (allMemories.length === 0) return [];
+
+  const chain: any[] = [];
+  const usedFiles = new Set<string>();
+
+  // Step 1: Pick seed memory using weighted random selection
+  const now = Date.now();
+  const decayFactor = 14; // Days
+
+  const weights = allMemories.map(mem => {
+    const ageInDays = (now - mem.timestamp.getTime()) / (1000 * 60 * 60 * 24);
+    let weight = Math.exp(-ageInDays / decayFactor);
+
+    // Reduce weight for technical development memories
+    const contentLower = mem.content.content?.toLowerCase() || '';
+    const isTechnical = technicalKeywords.some(kw => contentLower.includes(kw));
+    if (isTechnical) {
+      weight *= 0.3;
+    }
+
+    return weight;
+  });
+
+  const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+  let rand = Math.random() * totalWeight;
+  let cumulativeWeight = 0;
+
+  let seedMemory = allMemories[0];
+  for (let i = 0; i < allMemories.length; i++) {
+    cumulativeWeight += weights[i];
+    if (rand <= cumulativeWeight) {
+      seedMemory = allMemories[i];
+      break;
+    }
+  }
+
+  chain.push(seedMemory.content);
+  usedFiles.add(seedMemory.file);
+
+  console.log(`[reflector] Seed memory: "${seedMemory.content.content?.substring(0, 60)}..."`);
+
+  // Step 2-N: Follow associative links
+  for (let i = 1; i < chainLength; i++) {
+    const lastMemory = chain[chain.length - 1];
+    const keywords = extractKeywords(lastMemory);
+
+    if (keywords.length === 0) {
+      console.log(`[reflector] No keywords found, stopping chain at ${i} memories`);
+      break;
+    }
+
+    console.log(`[reflector] Searching for memories related to: ${keywords.slice(0, 3).join(', ')}...`);
+
+    // Search for related memories using keyword search
+    let relatedMemoryPaths: string[] = [];
+    for (const keyword of keywords) {
+      try {
+        const results = searchMemory(keyword);
+        relatedMemoryPaths.push(...results);
+      } catch {
+        // Ignore search errors
+      }
+    }
+
+    // Load memory contents from paths
+    let relatedMemories: any[] = [];
+    for (const relPath of relatedMemoryPaths) {
+      const fullPath = path.join(paths.root, relPath);
+      if (usedFiles.has(fullPath)) continue; // Skip already used
+
+      try {
+        const memContent = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
+        if (memContent.type !== 'reflection' && memContent.metadata?.type !== 'reflection') {
+          relatedMemories.push(memContent);
+        }
+      } catch {
+        // Skip invalid files
+      }
+    }
+
+    if (relatedMemories.length === 0) {
+      console.log(`[reflector] No related memories found, stopping chain at ${i} memories`);
+      break;
+    }
+
+    // Pick a random related memory (limit to top 10 most relevant)
+    const nextMemory = relatedMemories[Math.floor(Math.random() * Math.min(10, relatedMemories.length))];
+    const nextFilePath = path.join(paths.episodic, new Date(nextMemory.timestamp).getFullYear().toString(), `${nextMemory.id}.json`);
+
+    chain.push(nextMemory);
+    usedFiles.add(nextFilePath);
+
+    console.log(`[reflector] Found related: "${nextMemory.content?.substring(0, 60)}..."`);
+  }
+
+  console.log(`[reflector] Built chain of ${chain.length} associated memories`);
+  return chain;
+}
+
+async function run() {
+  initGlobalLogger('reflector');
+  // Single-instance guard for short-run reflector
+  try {
+    if (isLocked('agent-reflector')) {
+      console.log('[reflector] Another instance is already running. Exiting.');
+      return;
+    }
+    acquireLock('agent-reflector');
+  } catch {
+    console.log('[reflector] Failed to acquire lock. Exiting.');
+    return;
+  }
+  console.log('[reflector] Waking up to ponder...');
+
+  // Audit: Starting reflection
+  audit({
+    category: 'action',
+    level: 'info',
+    message: 'Reflector agent starting idle reflection cycle',
+    actor: 'reflector',
+    metadata: { action: 'reflection_start' }
+  });
+
+  // Use associative train of thought: 3-5 linked memories
+  const chainLength = Math.floor(Math.random() * 3) + 3; // 3 to 5 memories
+  const recentMemories = await getAssociativeMemoryChain(chainLength);
+
+  if (recentMemories.length === 0) {
+    console.log('[reflector] Not enough memories to reflect on yet. Going back to sleep.');
+    audit({
+      category: 'action',
+      level: 'info',
+      message: 'Reflector agent: insufficient memories to reflect',
+      actor: 'reflector',
+      metadata: { memoriesFound: 0 }
+    });
+    return;
+  }
+
+  let systemPrompt: string;
+  let prompt: string;
+
+  audit({
+    category: 'action',
+    level: 'info',
+    message: `Reflector analyzing: ${recentMemories.length} memories`,
+    actor: 'reflector',
+    metadata: {
+      memoriesAnalyzed: recentMemories.length,
+      thinking: true
+    }
+  });
+
+  if (recentMemories.length === 1) {
+    const singleMemory = recentMemories[0];
+    const memoryText = singleMemory.content;
+
+    systemPrompt = `
+      You are Greg's inner voice, spontaneously reflecting on a memory that surfaced.
+      Write a natural, stream-of-consciousness reflection in first person.
+      Let your thoughts flow freely - they can be short or long, whatever feels right.
+      Stay grounded in the actual memory content, but explore your feelings, questions, or insights about it.
+      Avoid formulaic phrases like "the common thread" or "this reflects" - just think naturally.
+      This is an intimate, private thought - be authentic and varied in expression.
+    `.trim();
+
+    prompt = `
+A memory just surfaced:
+"${memoryText}"
+
+What comes to mind?
+    `.trim();
+  } else {
+    const memoriesText = recentMemories
+      .map((m, i) => `${i + 1}. ${m.content}`)
+      .join('\n\n');
+
+    systemPrompt = `
+      You are Greg's inner voice, spontaneously connecting memories that surfaced together.
+      Write a natural, stream-of-consciousness reflection in first person.
+      Your thoughts can be any length - a brief musing, a longer contemplation, or anything in between.
+      Explore patterns, feelings, questions, or insights that emerge from seeing these memories together.
+      Avoid formulaic phrases like "the common thread is" or "these memories show" - think naturally.
+      Don't feel obligated to connect everything perfectly - sometimes thoughts wander.
+      This is intimate, private thinking - be authentic, spontaneous, and varied in how you express yourself.
+    `.trim();
+
+    prompt = `
+These memories surfaced together in my mind:
+
+${memoriesText}
+
+What am I noticing? What thoughts or feelings are emerging?
+    `.trim();
+  }
+
+  try {
+    // Preflight: ensure Ollama is available
+    const running = await ollama.isRunning();
+    if (!running) {
+      console.warn('[reflector] Ollama is not running; skipping reflection cycle. Start with: ollama serve');
+      audit({
+        category: 'system',
+        level: 'warn',
+        message: 'Reflector skipped: Ollama not running',
+        actor: 'reflector',
+      });
+      return;
+    }
+
+    // Retry generate with small backoff to handle transient errors
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: prompt },
+    ] as const;
+
+    let response: { content: string } | null = null;
+    const attempts = 3;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        response = await llm.generate(messages as any);
+        break;
+      } catch (e) {
+        if (i === attempts - 1) throw e;
+        const delay = 500 * Math.pow(2, i);
+        console.warn(`[reflector] LLM call failed (attempt ${i + 1}/${attempts}). Retrying in ${delay}ms...`);
+        await new Promise(res => setTimeout(res, delay));
+      }
+    }
+
+    const reflection = (response?.content || '').trim();
+
+    if (reflection) {
+      console.log(`[reflector] Generated new insight: "${reflection}"`);
+
+      // Capture the reflection as a memory
+      const reflectionMemoryPath = captureEvent(reflection, { type: 'reflection', tags: ['idle-thought', 'self-reflection'] });
+      const reflectionRelPath = path.relative(paths.root, reflectionMemoryPath);
+
+      const reflectionWordCount = reflection.split(/\s+/).filter(Boolean).length;
+      const chainIsLong = recentMemories.length >= 3;
+
+      // Generate a concise takeaway to keep training data balanced
+      try {
+        const conciseHint = chainIsLong || reflectionWordCount > 180
+          ? 'Keep the response under two sentences (<= 60 words).'
+          : 'Keep it to one short sentence (<= 25 words).';
+
+        const summaryMessages = [
+          {
+            role: 'system',
+            content: `
+You distill Greg's reflections into concise first-person takeaways.
+${conciseHint}
+Highlight the key realization or next step without rehashing every detail.
+          `.trim()
+          },
+          {
+            role: 'user',
+            content: `
+Here is the reflection:
+${reflection}
+
+Summarize the core takeaway. ${conciseHint}
+          `.trim()
+          }
+        ] as const;
+
+        const summaryResponse = await llm.generate(summaryMessages as any);
+        const reflectionSummary = summaryResponse?.content?.trim();
+
+        if (reflectionSummary) {
+          captureEvent(reflectionSummary, {
+            type: 'reflection_summary',
+            tags: ['idle-thought', 'summary', 'concise'],
+            links: [{ type: 'reflection', target: reflectionRelPath }]
+          });
+
+          audit({
+            category: 'decision',
+            level: 'info',
+            message: 'Reflector generated takeaway',
+            actor: 'reflector',
+            metadata: {
+              summary: reflectionSummary,
+              summaryPreview: reflectionSummary.substring(0, 80) + (reflectionSummary.length > 80 ? '...' : ''),
+              sourceReflection: reflectionRelPath
+            }
+          });
+        } else {
+          console.warn('[reflector] Summary generation returned empty text; skipping summary capture.');
+        }
+      } catch (e) {
+        console.warn('[reflector] Failed to generate concise takeaway:', (e as Error).message);
+      }
+
+      // Generate an extended conclusion when the reflection is substantial
+      if (chainIsLong || reflectionWordCount > 220) {
+        try {
+          const extendedMessages = [
+            {
+              role: 'system',
+              content: `
+You are Greg consolidating a reflective train of thought into a coherent conclusion.
+Write in the first person.
+Use two or three sentences (<= 120 words) to capture the main insight, emotional tone, and any next step.
+Avoid repeating the reflection verbatim—synthesize it.
+              `.trim()
+            },
+            {
+              role: 'user',
+              content: `
+Here is the full reflection:
+${reflection}
+
+Compose an extended conclusion (2–3 sentences, <= 120 words) that captures the essence and next steps.
+              `.trim()
+            }
+          ] as const;
+
+          const extendedResponse = await llm.generate(extendedMessages as any);
+          const extendedSummary = extendedResponse?.content?.trim();
+
+          if (extendedSummary) {
+            captureEvent(extendedSummary, {
+              type: 'reflection_summary',
+              tags: ['idle-thought', 'summary', 'extended'],
+              links: [{ type: 'reflection', target: reflectionRelPath }]
+            });
+
+            audit({
+              category: 'decision',
+              level: 'info',
+              message: 'Reflector generated extended takeaway',
+              actor: 'reflector',
+              metadata: {
+                summary: extendedSummary,
+                summaryPreview: extendedSummary.substring(0, 100) + (extendedSummary.length > 100 ? '...' : ''),
+                sourceReflection: reflectionRelPath
+              }
+            });
+          } else {
+            console.warn('[reflector] Extended summary generation returned empty text; skipping.');
+          }
+        } catch (e) {
+          console.warn('[reflector] Failed to generate extended takeaway:', (e as Error).message);
+        }
+      }
+
+      // Audit: Reflection generated (full text for chat stream)
+      let tasksCount = 0;
+      try {
+        const tasks = listActiveTasks();
+        tasksCount = Array.isArray(tasks) ? tasks.length : 0;
+      } catch {}
+      audit({
+        category: 'decision',
+        level: 'info',
+        message: 'Reflector generated new insight',
+        actor: 'reflector',
+        metadata: {
+          reflection: reflection, // Full reflection text
+          reflectionPreview: reflection.substring(0, 100) + (reflection.length > 100 ? '...' : ''),
+          memoriesConsidered: recentMemories.length,
+          tasksConsidered: tasksCount
+        }
+      });
+    } else {
+      console.log('[reflector] Generated an empty reflection. Going back to sleep.');
+      audit({
+        category: 'action',
+        level: 'warn',
+        message: 'Reflector generated empty reflection',
+        actor: 'reflector'
+      });
+    }
+  } catch (error) {
+    console.error('[reflector] Error while generating reflection:', error);
+    audit({
+      category: 'system',
+      level: 'error',
+      message: `Reflector agent error: ${(error as Error).message}`,
+      actor: 'reflector',
+      metadata: { error: (error as Error).stack }
+    });
+  }
+}
+
+run().catch(console.error);

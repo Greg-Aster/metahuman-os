@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Wrapper script for local LoRA training
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+cd "$PROJECT_ROOT"
+
+echo "🚀 MetaHuman OS - Local Training"
+echo "================================"
+echo ""
+echo "This will train a LoRA adapter on your local machine."
+echo "Requirements:"
+echo "  - NVIDIA GPU with 24GB+ VRAM"
+echo "  - Python 3.10+ with unsloth installed"
+echo ""
+
+# Check for GPU
+if ! command -v nvidia-smi &> /dev/null; then
+    echo "❌ nvidia-smi not found. This requires an NVIDIA GPU."
+    exit 1
+fi
+
+echo "📊 GPU Info:"
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+echo ""
+
+# Check for Python
+if ! command -v python3 &> /dev/null; then
+    echo "❌ python3 not found. Please install Python 3.10+"
+    exit 1
+fi
+
+echo "🐍 Python version: $(python3 --version)"
+echo ""
+
+# Check for venv and activate if available
+VENV_DIR="$PROJECT_ROOT/venv"
+if [ -d "$VENV_DIR" ]; then
+    echo "📦 Using virtual environment: $VENV_DIR"
+    source "$VENV_DIR/bin/activate"
+    PYTHON_CMD="$VENV_DIR/bin/python3"
+else
+    echo "⚠️  No venv found. Using system python."
+    echo "   Recommended: Run ./bin/setup-local-training first"
+    PYTHON_CMD="python3"
+fi
+echo ""
+
+# Check for unsloth
+if ! $PYTHON_CMD -c "import unsloth" 2>/dev/null; then
+    echo "❌ Unsloth not installed."
+    echo ""
+    echo "Run the setup script:"
+    echo "  ./bin/setup-local-training"
+    echo ""
+    echo "Or install manually:"
+    echo "  pip install \"unsloth[cu121-torch220] @ git+https://github.com/unslothai/unsloth.git\""
+    exit 1
+fi
+
+echo "✅ Unsloth is installed"
+echo ""
+
+# Set base model from argument or use default
+export LORA_BASE_MODEL="${1:-openai/gpt-oss-20b}"
+
+echo "📚 Base model: $LORA_BASE_MODEL"
+echo ""
+
+# Run the local training
+npx tsx brain/agents/full-cycle-local.ts

@@ -1,0 +1,36 @@
+{
+  "version": "1.0.0",
+  "relationships": [
+    {
+      "name": "[Person Name]",
+      "relationship": "family/friend/colleague",
+      "communicationStyle": "formal/casual",
+      "preferences": [
+        "prefer email for detailed discussions",
+        "available during business hours"
+      ],
+      "interactionHistory": [
+        {
+          "date": "YYYY-MM-DD",
+          "summary": "Interaction summary"
+        }
+      ]
+    }
+  ],
+  "contacts": [
+    {
+      "name": "[Contact Name]",
+      "role": "[Role/Position]",
+      "contactMethod": "[email/phone/etc]",
+      "lastContact": "YYYY-MM-DD"
+    }
+  ],
+  "socialCircles": [
+    {
+      "name": "[Circle Name]",
+      "members": ["[Member Names]"],
+      "purpose": "[Purpose of the circle]",
+      "frequency": "[interaction frequency]"
+    }
+  ]
+}

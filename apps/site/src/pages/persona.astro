@@ -1,0 +1,31 @@
+---
+import fs from 'node:fs';
+import path from 'node:path';
+import Layout from '../layouts/Base.astro';
+
+import ModelSelector from '../components/ModelSelector.svelte';
+import BoredomControl from '../components/BoredomControl.svelte';
+
+const repoRoot = path.resolve(process.cwd(), '..', '..');
+const profilePath = path.join(repoRoot, 'persona', 'profile.md');
+const policyPath = path.join(repoRoot, 'persona', 'policy.md');
+const profile = fs.existsSync(profilePath) ? fs.readFileSync(profilePath, 'utf8') : '# Persona\nMissing profile.md';
+const policy = fs.existsSync(policyPath) ? fs.readFileSync(policyPath, 'utf8') : '# Policy\nMissing policy.md';
+---
+<Layout title="Persona">
+  <h1 class="text-2xl font-semibold mb-6">Persona</h1>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+    <ModelSelector client:load />
+    <BoredomControl client:load />
+  </div>
+  <section class="grid gap-6">
+    <article class="card p-6">
+      <h2 class="text-xl font-semibold mb-2">Profile</h2>
+      <pre class="whitespace-pre-wrap text-sm">{profile}</pre>
+    </article>
+    <article class="card p-6">
+      <h2 class="text-xl font-semibold mb-2">Policy</h2>
+      <pre class="whitespace-pre-wrap text-sm">{policy}</pre>
+    </article>
+  </section>
+</Layout>

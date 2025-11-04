@@ -1,0 +1,56 @@
+
+{
+  "entrypoint": {
+    "description": "User requests enter the system via an Astro web server, which has a specific API route for handling chat.",
+    "key_files": [
+      "apps/site/package.json",
+      "apps/site/src/pages/api/persona_chat.ts"
+    ],
+    "key_functions_or_scripts": {
+      "apps/site/package.json[scripts.dev]": "../../bin/run-with-agents astro dev",
+      "apps/site/src/pages/api/persona_chat.ts": "POST and GET to handleChatRequest"
+    }
+  },
+  "core_logic": {
+    "description": "The main logic resides in the 'persona_chat.ts' API route. It orchestrates calls to the core library to fetch context, manage memory, and interact with the LLM. It can also route requests to an 'operator' for skill-based actions.",
+    "key_files": [
+      "apps/site/src/pages/api/persona_chat.ts",
+      "packages/core/src/llm.ts",
+      "packages/core/src/ollama.ts"
+    ],
+    "key_functions": [
+      "handleChatRequest(prompt)",
+      "getRelevantContext(userMessage)",
+      "shouldUseOperator(message)"
+    ],
+    "import_chains": [
+      "apps/site/src/pages/api/persona_chat.ts -> @metahuman/core"
+    ]
+  },
+  "data_management": {
+    "description": "The application uses the local file system for all data and state. A central 'paths.ts' file in the core package defines the locations for memory, persona, logs, and other data. It does not use a database.",
+    "key_files": [
+      "packages/core/src/paths.ts",
+      "packages/core/src/vector-index.ts"
+    ],
+    "patterns": [
+      "Uses a central 'paths.ts' object to define all file paths.",
+      "Reads from 'persona/' for identity and 'memory/' for episodic/semantic data using 'node:fs'.",
+      "Writes conversation logs to 'memory/episodic/' and other logs to 'logs/'.",
+      "Uses a vector index stored in 'memory/index/' for semantic search."
+    ]
+  },
+  "environment": {
+    "description": "The application is a Node.js/TypeScript project run with Astro. It communicates with a separate Ollama service for LLM inference via an HTTP client.",
+    "key_files": [
+      "apps/site/package.json",
+      "packages/core/src/ollama.ts",
+      "Dockerfile"
+    ],
+    "patterns": [
+      "Application is started with 'pnpm dev'.",
+      "Communicates with an 'Ollama' service via an HTTP client defined in 'packages/core/src/ollama.ts'.",
+      "A 'Dockerfile' exists for a CUDA/Python environment, likely for model training, but not for running the main application."
+    ]
+  }
+}

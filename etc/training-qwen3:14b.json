@@ -1,0 +1,29 @@
+{
+  "base_model": "Qwen/Qwen3-14B",
+  "max_seq_length": 2048,
+  "lora_rank": 8,
+  "lora_alpha": 16,
+  "lora_dropout": 0.05,
+  "num_train_epochs": 2,
+  "learning_rate": 0.0002,
+  "per_device_train_batch_size": 1,
+  "gradient_accumulation_steps": 16,
+  "optimizer": "paged_adamw_8bit",
+  "load_in_4bit": true,
+  "dtype": "bfloat16",
+  "use_gradient_checkpointing": true,
+  "fp16": false,
+  "bf16": true,
+  "logging_steps": 10,
+  "save_strategy": "epoch",
+  "save_total_limit": 2,
+  "comment": "Training configuration for Qwen3-14B - smaller, faster model",
+  "notes": {
+    "model_size": "14B parameters - fits easily on 32GB VRAM",
+    "vram_usage": "~8GB with 4-bit quantization",
+    "training_speed": "~2x faster than 30B model",
+    "batch_size": "Increased to 2 due to smaller model size",
+    "gradient_accumulation": "Reduced to 8 (effective batch = 16)",
+    "use_case": "Faster iteration, lower cost, good for testing"
+  }
+}

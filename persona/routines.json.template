@@ -1,0 +1,44 @@
+{
+  "version": "1.0.0",
+  "sleep": {
+    "schedule": {
+      "start": "23:00",
+      "end": "07:00"
+    },
+    "timezone": "local"
+  },
+  "work": {
+    "schedule": {
+      "weekday": {
+        "start": "09:00",
+        "end": "18:00"
+      },
+      "weekend": {
+        "start": "10:00",
+        "end": "17:00"
+      }
+    }
+  },
+  "energy": {
+    "peakTimes": [
+      "09:00-11:00",
+      "14:00-16:00"
+    ],
+    "lowEnergy": [
+      "12:00-14:00"
+    ]
+  },
+  "habits": [
+    {
+      "name": "daily_review",
+      "time": "21:00",
+      "description": "Review day's activities and plan tomorrow"
+    },
+    {
+      "name": "weekly_sync",
+      "day": "sunday",
+      "time": "10:00",
+      "description": "Review week and adjust goals"
+    }
+  ]
+}

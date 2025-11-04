@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { color-scheme: light dark; }
+
+  body {
+    @apply bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100;
+  }
+
+  /* Ensure all text defaults to proper colors in dark mode */
+  .dark {
+    color: rgb(243 244 246); /* gray-100 */
+  }
+}
+
+@layer components {
+  .container-page {
+    @apply min-h-screen bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100;
+  }
+  .page-max {
+    @apply max-w-6xl mx-auto px-4 py-8;
+  }
+  .card {
+    @apply rounded-lg border border-gray-200/60 dark:border-white/10 bg-white/70 dark:bg-gray-900/60 shadow-sm;
+  }
+  .muted {
+    @apply text-gray-500 dark:text-gray-400;
+  }
+  .btn {
+    @apply inline-flex items-center gap-2 rounded-md px-4 py-2 bg-brand text-white hover:bg-brand/90 transition font-medium;
+  }
+
+  /* Brand color */
+  :root {
+    --color-brand: #3b82f6;
+  }
+  .dark {
+    --color-brand: #60a5fa;
+  }
+  .bg-brand { background-color: var(--color-brand); }
+  .text-brand { color: var(--color-brand); }
+  .ring-brand { --tw-ring-color: var(--color-brand); }
+}

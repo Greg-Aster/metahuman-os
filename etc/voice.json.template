@@ -1,0 +1,38 @@
+{
+  "tts": {
+    "provider": "piper",
+    "piper": {
+      "binary": "./bin/piper/piper",
+      "model": "./out/voices/en_US-ryan-high.onnx",
+      "config": "./out/voices/en_US-ryan-high.onnx.json",
+      "speakingRate": 1.0,
+      "outputFormat": "wav"
+    }
+  },
+  "stt": {
+    "provider": "whisper",
+    "whisper": {
+      "model": "base.en",
+      "device": "cpu",
+      "computeType": "int8",
+      "language": "en"
+    }
+  },
+  "cache": {
+    "enabled": true,
+    "directory": "./out/voice-cache",
+    "maxSizeMB": 500
+  },
+  "webSocket": {
+    "path": "/voice-stream",
+    "maxPayloadMB": 10,
+    "audioChunkMs": 100
+  },
+  "training": {
+    "enabled": true,
+    "minDuration": 2,
+    "maxDuration": 120,
+    "minQuality": 0.6,
+    "targetHours": 3
+  }
+}

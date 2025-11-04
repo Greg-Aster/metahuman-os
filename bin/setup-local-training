@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Setup script for local LoRA training environment
+
+set -e
+
+echo "🔧 Setting up local training environment..."
+echo ""
+
+# Check for NVIDIA GPU
+if ! command -v nvidia-smi &> /dev/null; then
+    echo "❌ nvidia-smi not found. This requires an NVIDIA GPU with CUDA support."
+    exit 1
+fi
+
+echo "✅ NVIDIA GPU detected:"
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+echo ""
+
+# Create/activate venv
+VENV_DIR="/home/greggles/metahuman/venv"
+
+if [ ! -d "$VENV_DIR" ]; then
+    echo "📦 Creating virtual environment..."
+    python3 -m venv "$VENV_DIR"
+else
+    echo "✅ Virtual environment exists at $VENV_DIR"
+fi
+
+echo "📦 Activating virtual environment..."
+source "$VENV_DIR/bin/activate"
+
+# Upgrade pip
+echo "📦 Upgrading pip..."
+pip install --upgrade pip
+
+# Install Unsloth (this will automatically install compatible PyTorch version)
+echo "📦 Installing Unsloth (will auto-install PyTorch 2.8.0)..."
+pip install unsloth
+
+# Install additional dependencies
+echo "📦 Installing additional dependencies..."
+pip install datasets transformers accelerate bitsandbytes
+
+# Install GGUF conversion dependencies
+echo "📦 Installing GGUF conversion tools..."
+pip install gguf protobuf sentencepiece mistral_common
+
+echo ""
+echo "✅ Setup complete!"
+echo ""
+echo "To use local training:"
+echo "  1. Activate venv: source venv/bin/activate"
+echo "  2. Run training: ./bin/mh-train-local"
+echo ""
+echo "Or the venv will be used automatically if you run:"
+echo "  npx tsx brain/agents/full-cycle-local.ts"

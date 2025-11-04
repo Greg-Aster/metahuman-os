@@ -1,0 +1,21 @@
+{
+  "model": "qwen3-coder:30b",
+  "useAdapter": false,
+  "adapterModel": "greg-local-2025-10-30-213652-9f24f0",
+  "includePersonaSummary": true,
+  "baseModel": "qwen3-coder:30b",
+  "adapterMeta": {
+    "modelName": "greg-local-2025-10-30-213652-9f24f0",
+    "activatedAt": "2025-10-30T22:11:22.222Z",
+    "adapterPath": "/home/greggles/metahuman/out/adapters/2025-10-30/2025-10-30-213652-9f24f0/adapter.gguf",
+    "evalScore": 1,
+    "dataset": "2025-10-30-213652-9f24f0",
+    "date": "2025-10-30",
+    "modelfilePath": "/home/greggles/metahuman/out/adapters/2025-10-30/2025-10-30-213652-9f24f0/Modelfile",
+    "status": "loaded",
+    "activatedBy": "full-cycle-local",
+    "trainingMethod": "local",
+    "runLabel": "2025-10-30-213652-9f24f0",
+    "baseModel": "qwen3-coder:30b"
+  }
+}

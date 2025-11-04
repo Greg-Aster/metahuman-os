@@ -1,0 +1,131 @@
+# ============================================
+# DEPENDENCIES
+# ============================================
+node_modules/
+.pnpm-store/
+pnpm-lock.yaml
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# ============================================
+# PERSONAL DATA - DO NOT COMMIT
+# ============================================
+
+# Personal persona configuration (keep templates only)
+/persona/core.json
+/persona/relationships.json
+/persona/routines.json
+/persona/decision-rules.json
+/persona/profile.md
+/persona/policy.md
+/persona/overrides/**
+/persona/capabilities/**
+!/persona/*.template
+!/persona/README.md
+
+# Personal memories - ALL types
+/memory/episodic/**
+/memory/semantic/**
+/memory/procedural/**
+/memory/preferences/**
+/memory/tasks/**
+/memory/inbox/**
+/memory/index/**
+!/memory/README.md
+!/memory/**/README.md
+
+# Personal logs and audit trails
+/logs/**
+!/logs/README.md
+
+# Personal generated content and outputs
+/out/**
+!/out/README.md
+
+# Brain state and journal (personal runtime data)
+/brain/journal/**
+/brain/state/**
+!/brain/journal/README.md
+!/brain/state/README.md
+
+# ============================================
+# CONFIGURATION - PERSONAL SETTINGS
+# ============================================
+
+# Runtime configuration (contains personal settings)
+/etc/agent.json
+/etc/audio.json
+/etc/boredom.json
+/etc/sleep.json
+/etc/voice.json
+/etc/autonomy.json
+/etc/auto-approval.json
+/etc/ingestor.json
+/etc/lifeline.json
+/etc/network.json
+/etc/config
+/etc/legacy/
+# Keep template/example configs
+!/etc/*.template
+!/etc/README*.md
+!/etc/training*.json
+!/etc/model_map.json
+
+# ============================================
+# BUILD ARTIFACTS
+# ============================================
+.astro/
+.turbo/
+*.tsbuildinfo
+dist/
+build/
+
+# ============================================
+# ENVIRONMENT & SECRETS
+# ============================================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.key
+*.pem
+*.cert
+*.crt
+
+# ============================================
+# OS & EDITOR FILES
+# ============================================
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# ============================================
+# RUNTIME & TEMPORARY FILES
+# ============================================
+/metahuman-runs/
+/docs/run_logs/
+*.pid
+*.lock
+!pnpm-lock.yaml
+!package-lock.json
+
+# ============================================
+# SENSITIVE PATHS
+# ============================================
+.ssh/
+.aws/
+.gcp/
+.azure/
+credentials/
+secrets/

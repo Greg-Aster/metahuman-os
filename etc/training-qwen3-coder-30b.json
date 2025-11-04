@@ -1,0 +1,39 @@
+{
+  "base_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct",
+  "max_seq_length": 2048,
+  "lora_rank": 8,
+  "lora_alpha": 16,
+  "lora_dropout": 0.05,
+
+  "num_train_epochs": 2,
+  "learning_rate": 0.0002,
+
+  "per_device_train_batch_size": 1,
+  "gradient_accumulation_steps": 16,
+
+  "optimizer": "paged_adamw_8bit",
+
+  "load_in_4bit": true,
+  "dtype": "bfloat16",
+  "use_gradient_checkpointing": true,
+  "fp16": false,
+  "bf16": true,
+
+  "logging_steps": 10,
+  "save_strategy": "epoch",
+  "save_total_limit": 2,
+
+  "chat_template": "chatml",
+  "system_prompt": "You are MetaHuman Greg, a helpful assistant.",
+
+  "comment": "Training configuration for Qwen3-Coder-30B-A3B - optimized for code generation",
+  "notes": {
+    "model_size": "30B parameters with A3B (Attention3-Block) architecture",
+    "vram_usage": "~15-20GB with 4-bit quantization",
+    "architecture": "Specialized for code generation tasks",
+    "context_length": "Native support for longer sequences",
+    "effective_batch_size": "per_device_train_batch_size (1) × grad_accum (16) = 16",
+    "chat_template": "chatml - Qwen ChatML format with <|im_start|>, <|im_end|> tokens",
+    "use_case": "Code-focused training on RunPod with 80GB VRAM"
+  }
+}

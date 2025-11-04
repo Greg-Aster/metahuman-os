@@ -1,0 +1,26 @@
+{
+  "transcription": {
+    "provider": "whisper.cpp",
+    "model": "base.en",
+    "language": "en",
+    "temperature": 0.0,
+    "autoTranscribe": true,
+    "whisperCppPath": "/path/to/whisper.cpp/build/bin/whisper-cli",
+    "modelPath": "/path/to/models/ggml-base.en.bin"
+  },
+  "formats": {
+    "supported": ["mp3", "wav", "m4a", "ogg", "webm", "flac"],
+    "maxSizeMB": 100
+  },
+  "processing": {
+    "autoOrganize": true,
+    "extractEntities": true,
+    "generateSummary": true,
+    "minDurationSeconds": 5
+  },
+  "retention": {
+    "keepOriginal": true,
+    "archiveAfterDays": 90,
+    "deleteTranscriptsAfterDays": 365
+  }
+}

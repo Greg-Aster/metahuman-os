@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "window": {
+    "start": "23:00",
+    "end": "06:30"
+  },
+  "minIdleMins": 15,
+  "maxDreamsPerNight": 3,
+  "showInUI": true,
+  "evaluate": true,
+  "adapters": {
+    "prompt": true,
+    "rag": true,
+    "lora": true
+  }
+}

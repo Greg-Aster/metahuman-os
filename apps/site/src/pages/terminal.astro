@@ -1,0 +1,28 @@
+---
+import Layout from '../layouts/Base.astro';
+import Terminal from '../components/Terminal.svelte';
+import LogStream from '../components/LogStream.svelte';
+import PersonaChat from '../components/PersonaChat.svelte';
+
+const mainClass = "page-max flex-grow py-0";
+---
+<Layout title="Terminal — MetaHuman OS" {mainClass}>
+  <div class="w-full max-w-6xl mx-auto">
+    <div class="h-[calc(100vh-12rem)] min-h-[600px] min-w-0 overflow-hidden">
+      <div class="w-full h-full min-h-0 grid grid-cols-1 md:grid-cols-2 grid-rows-[2fr,1fr] gap-4">
+        <!-- Top Left Pane -->
+        <div class="terminal-pane h-full min-h-0 min-w-0">
+          <Terminal client:load />
+        </div>
+        <!-- Top Right Pane -->
+        <div class="log-stream-pane h-full min-h-0 min-w-0 overflow-hidden">
+          <LogStream client:load />
+        </div>
+        <!-- Bottom Pane -->
+        <div class="persona-chat-pane h-full min-h-0 min-w-0 md:col-span-2">
+          <PersonaChat client:load />
+        </div>
+      </div>
+    </div>
+  </div>
+</Layout>

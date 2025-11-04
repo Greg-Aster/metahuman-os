@@ -1,0 +1,30 @@
+{
+  "skills_analysis": {
+    "file_analyzed": "packages/core/src/skills.ts",
+    "discovered_skills": [
+      "fs_read",
+      "fs_write",
+      "fs_list",
+      "fs_delete",
+      "json_update",
+      "http_get",
+      "summarize_file",
+      "git_status",
+      "git_commit",
+      "search_index",
+      "run_agent",
+      "shell_safe",
+      "web_search"
+    ],
+    "summary": "Skills are defined through a registry system with manifests that specify ID, name, description, inputs, outputs, risk, cost, and trust requirements. They are registered via a registerSkill function that takes a manifest and implementation. Skills are implemented as separate modules in the brain/skills directory and loaded through the skills index file."
+  },
+  "task_samples": {
+    "directory_analyzed": "memory/tasks/",
+    "sampled_task_goals": [
+      {
+        "file_name": "No task files found",
+        "goal": "No active or completed task files were found in memory/tasks directory. The directory exists but is empty. This suggests either no tasks have been completed yet or tasks might be stored elsewhere."
+      }
+    ]
+  }
+}

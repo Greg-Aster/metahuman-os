@@ -1,0 +1,38 @@
+{
+  "base_model": "Qwen/Qwen3-8B",
+  "max_seq_length": 4096,
+  "lora_rank": 16,
+  "lora_alpha": 32,
+  "lora_dropout": 0.05,
+
+  "num_train_epochs": 2,
+  "learning_rate": 0.0001,
+
+  "per_device_train_batch_size": 2,
+  "gradient_accumulation_steps": 8,
+
+  "optimizer": "paged_adamw_8bit",
+
+  "load_in_4bit": true,
+  "dtype": "bfloat16",
+  "use_gradient_checkpointing": true,
+  "fp16": false,
+  "bf16": true,
+
+  "logging_steps": 10,
+  "save_strategy": "epoch",
+  "save_total_limit": 2,
+
+  "chat_template": "chatml",
+  "system_prompt": "You are MetaHuman Greg, a helpful assistant.",
+
+  "comment": "Training configuration for Qwen3-8B - smaller model for faster runs",
+  "notes": {
+    "model_size": "8B parameters - comfortably fits on 16–24GB VRAM with 4-bit",
+    "vram_usage": "~5–7GB with 4-bit quantization (depends on seq len)",
+    "training_speed": "faster than 14B and 30B models",
+    "effective_batch_size": "per_device_train_batch_size (2) × grad_accum (8) = 16",
+    "chat_template": "chatml - Qwen ChatML format with <|im_start|>, <|im_end|> tokens",
+    "use_case": "Quick iteration on Qwen/Qwen3-8B from Hugging Face"
+  }
+}

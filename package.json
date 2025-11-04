@@ -1,0 +1,44 @@
+{
+	"name": "metahuman",
+	"version": "1.0.0",
+	"description": "An autonomous digital personality extension operating system that mirrors your identity, memories, goals, and personality—operating 24/7 as a seamless extension of yourself",
+	"keywords": [
+		"ai",
+		"artificial-intelligence",
+		"digital-personality",
+		"autonomous-agents",
+		"memory-system",
+		"personal-os",
+		"llm",
+		"ollama"
+	],
+	"homepage": "https://github.com/greggles/metahuman-os#readme",
+	"bugs": {
+		"url": "https://github.com/greggles/metahuman-os/issues"
+	},
+	"license": "MIT",
+	"author": {
+		"name": "Gregory Aster",
+		"url": "https://github.com/greggles"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/greggles/metahuman-os.git"
+	},
+	"scripts": {
+		"dev": "cd apps/site && pnpm dev",
+		"build": "cd apps/site && pnpm build",
+		"start": "cd apps/site && pnpm preview"
+	},
+	"dependencies": {
+		"dotenv": "^17.2.3",
+		"mkdirp": "^3.0.1",
+		"node-fetch": "^2.7.0",
+		"node-ssh": "^13.2.1",
+		"tsx": "^4.20.6"
+	},
+	"packageManager": "pnpm@10.15.1+sha512.34e538c329b5553014ca8e8f4535997f96180a1d0f614339357449935350d924e22f8614682191264ec33d1462ac21561aff97f6bb18065351c162c7e8f6de67",
+	"devDependencies": {
+		"@types/node-fetch": "^2.6.13"
+	}
+}

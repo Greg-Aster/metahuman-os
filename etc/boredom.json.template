@@ -1,0 +1,10 @@
+{
+  "level": "off",
+  "showInChat": true,
+  "intervals": {
+    "high": 60,
+    "medium": 300,
+    "low": 900,
+    "off": -1
+  }
+}

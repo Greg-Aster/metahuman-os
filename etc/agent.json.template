@@ -1,0 +1,6 @@
+{
+  "model": "qwen3-coder:30b",
+  "useAdapter": false,
+  "includePersonaSummary": true,
+  "baseModel": "Qwen/Qwen3-14B"
+}

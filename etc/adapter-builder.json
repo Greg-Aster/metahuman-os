@@ -1,0 +1,44 @@
+{
+  "days": 999999,
+  "max": 500,
+  "requireProcessed": false,
+  "minContentLength": 20,
+  "requireTagsOrEntities": true,
+  "allowedTypes": [
+    "conversation",
+    "inner_dialogue",
+    "reflection",
+    "chat",
+    "observation",
+    "dream",
+    "audio",
+    "action",
+    "journal"
+  ],
+  "useTimeWeighting": true,
+  "decayHalfLife": 30,
+  "comment": "Adapter Builder Configuration",
+  "notes": {
+    "days": "Time window in days (999999 = all time when useTimeWeighting=true)",
+    "max": "Maximum number of training samples to generate",
+    "useTimeWeighting": "Enable exponential time decay (recent memories weighted higher)",
+    "decayHalfLife": "Days until a memory's weight is halved. Examples:",
+    "decayExamples": {
+      "14": "Aggressive decay - 2-week-old memories are 50% weight",
+      "30": "Balanced decay - 1-month-old memories are 50% weight",
+      "90": "Gentle decay - 3-month-old memories are 50% weight"
+    },
+    "decayFormula": "weight = 2^(-age_in_days / decayHalfLife)",
+    "decayWeights": {
+      "today": "1.0 (100%)",
+      "30d_with_halfLife30": "0.5 (50%)",
+      "60d_with_halfLife30": "0.25 (25%)",
+      "90d_with_halfLife30": "0.125 (12.5%)",
+      "180d_with_halfLife30": "0.016 (1.6%)"
+    },
+    "requireProcessed": "Only include memories processed by organizer agent (false = include all)",
+    "minContentLength": "Minimum characters in memory content",
+    "requireTagsOrEntities": "Only include memories with tags or entities (false = include all)",
+    "allowedTypes": "Memory types to include in training data"
+  }
+}

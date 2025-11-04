@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [ "$#" -eq 0 ]; then
+  echo "Usage: run-with-agents <command> [args...]" >&2
+  exit 1
+fi
+
+cleanup() {
+  "$REPO_ROOT/bin/mh" agent stop --all >/dev/null 2>&1 || true
+}
+
+trap cleanup EXIT INT TERM
+
+"$REPO_ROOT/bin/mh" start --restart
+
+cd "$REPO_ROOT/apps/site"
+
+"$@"

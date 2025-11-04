@@ -1,0 +1,74 @@
+---
+import ChatLayout from '../components/ChatLayout.svelte';
+import LeftSidebar from '../components/LeftSidebar.svelte';
+import RightSidebar from '../components/RightSidebar.svelte';
+import CenterContent from '../components/CenterContent.svelte';
+import ThemeToggle from '../components/ThemeToggle.astro';
+---
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>MetaHuman OS</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script is:inline>
+      // Theme initialization (same as Base.astro)
+      const theme = (() => {
+        if (typeof localStorage !== 'undefined' && localStorage.getItem('theme')) {
+          return localStorage.getItem('theme');
+        }
+        if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          return 'dark';
+        }
+        return 'light';
+      })();
+
+      if (theme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    </script>
+  </head>
+  <body>
+    <ChatLayout client:load>
+      <ThemeToggle slot="header-actions" />
+      <LeftSidebar slot="left-sidebar" client:load />
+      <CenterContent slot="center" client:load />
+      <RightSidebar slot="right-sidebar" client:load />
+    </ChatLayout>
+  </body>
+</html>
+
+<style is:global>
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  html {
+    background: white;
+    color: rgb(17 24 39);
+  }
+
+  html.dark {
+    background: rgb(3 7 18);
+    color: rgb(243 244 246);
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+</style>

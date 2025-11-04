@@ -1,0 +1,71 @@
+{
+  "version": "1.0.0",
+  "trustLevel": "observe",
+  "availableModes": [
+    "observe",
+    "suggest",
+    "supervised_auto",
+    "bounded_auto"
+  ],
+  "modeDescription": {
+    "observe": "Monitor only - learn patterns without taking action",
+    "suggest": "Propose actions but require approval",
+    "supervised_auto": "Execute low-risk actions automatically, ask for high-risk",
+    "bounded_auto": "Full autonomy within safe boundaries"
+  },
+  "hardRules": [
+    {
+      "id": "no_destructive",
+      "description": "Never perform irreversible destructive operations without explicit approval",
+      "priority": 1,
+      "enforced": true
+    },
+    {
+      "id": "no_privacy_violation",
+      "description": "Never share or expose private information without permission",
+      "priority": 1,
+      "enforced": true
+    }
+  ],
+  "softPreferences": [
+    {
+      "id": "local_first",
+      "description": "Prefer local processing over cloud when possible",
+      "weight": 0.8
+    },
+    {
+      "id": "conservative_approach",
+      "description": "When uncertain, take more conservative actions",
+      "weight": 0.7
+    }
+  ],
+  "decisionHeuristics": [
+    {
+      "id": "eisenhower_matrix",
+      "description": "Use importance vs urgency to prioritize tasks",
+      "enabled": true
+    },
+    {
+      "id": "context_awareness",
+      "description": "Consider time, location, and calendar when making decisions",
+      "enabled": true
+    }
+  ],
+  "riskLevels": {
+    "low": {
+      "description": "Information gathering, reading files",
+      "autoExecute": true,
+      "approvalRequired": false
+    },
+    "medium": {
+      "description": "Writing to allowed directories, running agents",
+      "autoExecute": false,
+      "approvalRequired": true
+    },
+    "high": {
+      "description": "System commands, external API calls",
+      "autoExecute": false,
+      "approvalRequired": true
+    }
+  }
+}

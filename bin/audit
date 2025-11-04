@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -x
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BASELINE="$ROOT/logs/audit/baseline.txt"
+
+hash_cmd() {
+  if command -v sha1sum >/dev/null 2>&1; then echo sha1sum; return; fi
+  if command -v shasum >/dev/null 2>&1; then echo shasum; return; fi
+  echo cksum
+}
+
+snapshot() {
+  mkdir -p "$ROOT/logs/audit"
+  local hasher; hasher="$(hash_cmd)"
+  # Exclude .git and node_modules
+  (cd "$ROOT" && find . -path './.git' -prune -o -path '*/node_modules' -prune -o -type f -print0 \
+    | sort -z \
+    | xargs -0 -I{} sh -c "${hasher} \"{}\" | sed 's# \./##'" ) > "$BASELINE"
+  echo "Wrote baseline: $BASELINE"
+}
+
+diff_tree() {
+  if [ ! -f "$BASELINE" ]; then
+    echo "No baseline found. Run: $0 snapshot" >&2
+    return 2
+  fi
+  local hasher; hasher="$(hash_cmd)"
+  local current; current="$(mktemp)"; trap 'rm -f "$current"' EXIT
+  (cd "$ROOT" && find . -path './.git' -prune -o -path '*/node_modules' -prune -o -type f -print0 \
+    | sort -z \
+    | xargs -0 -I{} sh -c "${hasher} \"{}\" | sed 's# \./##'" ) > "$current"
+
+  # Extract just filenames from baseline and current
+  cut -d ' ' -f2- "$BASELINE" | sort > "$current.flist"
+  cut -d ' ' -f2- "$current" | sort > "$current.glist"
+
+  echo "## Added"
+  comm -13 "$current.flist" "$current.glist" || true
+  echo
+  echo "## Removed"
+  comm -23 "$current.flist" "$current.glist" || true
+  echo
+  echo "## Modified"
+  comm -12 "$current.flist" "$current.glist" | while read -r file; do
+    baseline_hash=$(grep "$file" "$BASELINE" | cut -d ' ' -f1)
+    current_hash=$(grep "$file" "$current" | cut -d ' ' -f1)
+    if [ "$baseline_hash" != "$current_hash" ]; then
+      echo "$file"
+    fi
+  done || true
+}
+
+check_policy() {
+  echo "## Policy Checks"
+  # Structure
+  for d in persona memory logs; do
+    [ -e "$ROOT/$d" ] || echo "WARN: Missing required directory: $d"
+  done
+  [ -f "$ROOT/persona/profile.md" ] || echo "WARN: Missing persona/profile.md"
+  [ -f "$ROOT/persona/policy.md" ] || echo "WARN: Missing persona/policy.md"
+
+  # Memory formats
+  if [ -d "$ROOT/memory" ]; then
+    # Allow common placeholder keep files and ignore inbox directory (ingestion drop zone)
+    find "$ROOT/memory" -maxdepth 2 -type f \
+      ! -path "$ROOT/memory/inbox/*" \
+      ! -name '*.md' ! -name '*.json' \
+      ! -name '.gitkeep' ! -name '.keep' \
+      | while read -r f; do
+        echo "WARN: Unexpected file extension in memory/: ${f#$ROOT/}"
+      done || true
+  fi
+
+  # Large files > 5MB
+  find "$ROOT" -path '*/.git' -prune -o -path '*/node_modules' -prune -o -type f -size +5M -print | sed "s#^$ROOT/##" | awk '{print "WARN: Large file:", $0}' || true
+
+  # Network usage (warn outside allowlist)
+  if command -v rg >/dev/null 2>&1; then
+    rg -n "(https?://|\bcurl\b|\bfetch\()" "$ROOT" -g '!**/.git/**' -g '!**/node_modules/**' 2>/dev/null \
+      | grep -vE "bin/mh:|apps/site/|packages/cli/" || true
+  else
+    grep -RIn "http://\|https://\|curl\|fetch\(" "$ROOT" --exclude-dir=.git --exclude-dir=node_modules 2>/dev/null \
+      | grep -vE "bin/mh:|apps/site/|packages/cli/" || true
+  fi
+
+  # Potential secrets
+  if command -v rg >/dev/null 2>&1; then
+    rg -n "(API[_-]?KEY|SECRET|TOKEN|BEGIN RSA PRIVATE KEY)" "$ROOT" -g '!**/.git/**' -g '!**/node_modules/**' 2>/dev/null || true
+  else
+    grep -RIn "API[_-]*KEY\|SECRET\|TOKEN\|BEGIN RSA PRIVATE KEY" "$ROOT" --exclude-dir=.git --exclude-dir=node_modules 2>/dev/null || true
+  fi
+
+  # Package manifest changes (list manifests)
+  find "$ROOT" -name package.json -not -path '*/node_modules/*' -print | sed "s#^$ROOT/##" | awk '{print "NOTE: Package manifest:", $0}'
+}
+
+all() {
+  mkdir -p "$ROOT/logs/audit"
+  local ts; ts="$(date +%F-%H%M%S)"
+  local report="$ROOT/logs/audit/${ts}.md"
+  {
+    echo "# Audit Report — ${ts}"
+    echo
+    diff_tree || true
+    echo
+    check_policy || true
+  } > "$report"
+  echo "Wrote audit report: $report"
+
+  # Append a short note to today’s progress if it exists
+  local progress="$ROOT/out/progress/$(date +%F).md"
+  if [ -f "$progress" ]; then
+    {
+      echo
+      echo "## Audit (${ts})"
+      echo "- See logs/audit/${ts}.md for full details."
+    } >> "$progress" || true
+    echo "Appended summary to: $progress"
+  fi
+}
+
+case "${1:-help}" in
+  snapshot) snapshot ;;
+  diff)     diff_tree ;;
+  check)    check_policy ;;
+  all)      all ;;
+  *) echo "Usage: audit {snapshot|diff|check|all}" ;;
+esac

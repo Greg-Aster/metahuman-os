@@ -1,0 +1,615 @@
+import type { APIRoute } from 'astro';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import {
+  listAdapterDatasets,
+  readAutoApprovalConfig,
+  writeAutoApprovalConfig,
+  getActiveAdapter,
+  setActiveAdapter,
+  paths,
+  audit,
+} from '@metahuman/core';
+import { execSync } from 'node:child_process';
+import type { ActiveAdapterInfo } from '@metahuman/core';
+
+function datasetDir(date: string): string {
+  return path.join(paths.out, 'adapters', date);
+}
+
+function ensureDataset(date: string): string {
+  const dir = datasetDir(date);
+  if (!fs.existsSync(dir)) {
+    throw new Error(`Dataset not found for date ${date}`);
+  }
+  return dir;
+}
+
+function backgroundAgent(agentFile: string, args: string[]): void {
+  const agentPath = path.join(paths.brain, 'agents', agentFile);
+  if (!fs.existsSync(agentPath)) {
+    throw new Error(`Agent not found: ${agentFile}`);
+  }
+  const child = spawn('tsx', [agentPath, ...args], {
+    cwd: paths.root,
+    stdio: 'ignore',
+    detached: true,
+  });
+  child.unref();
+}
+
+function createApproval(date: string, approvedBy: string, notes?: string): void {
+  const dir = ensureDataset(date);
+  const jsonlPath = path.join(dir, 'instructions.jsonl');
+  if (!fs.existsSync(jsonlPath)) {
+    throw new Error('instructions.jsonl not found for dataset');
+  }
+  const approvalPath = path.join(dir, 'approved.json');
+  if (fs.existsSync(approvalPath)) {
+    throw new Error('Dataset already approved');
+  }
+  const pairCount = fs.readFileSync(jsonlPath, 'utf-8').trim().split('\n').filter(Boolean).length;
+  const approval = {
+    approvedAt: new Date().toISOString(),
+    approvedBy,
+    notes: notes ?? '',
+    pairCount,
+    autoApproved: false,
+    qualityScore: null,
+    dryRun: false,
+  };
+  fs.writeFileSync(approvalPath, JSON.stringify(approval, null, 2));
+}
+
+function rejectDataset(date: string, reason: string, actor: string): string {
+  const dir = ensureDataset(date);
+  const archiveDir = path.join(paths.out, 'adapters', '_rejected');
+  fs.mkdirSync(archiveDir, { recursive: true });
+  const destination = path.join(archiveDir, date);
+  fs.renameSync(dir, destination);
+  const rejection = {
+    rejectedAt: new Date().toISOString(),
+    rejectedBy: actor,
+    reason,
+  };
+  fs.writeFileSync(path.join(destination, 'rejected.json'), JSON.stringify(rejection, null, 2));
+  return destination;
+}
+
+function activateAdapter(date: string, actor: string): void {
+  const dir = ensureDataset(date);
+  const evalPath = path.join(dir, 'eval.json');
+  const adapterPath = path.join(dir, 'adapter_model.safetensors');
+  const ggufAdapterPath = path.join(dir, 'adapter.gguf');
+
+  if (!fs.existsSync(evalPath)) {
+    throw new Error('Adapter has not been evaluated yet');
+  }
+  if (!fs.existsSync(adapterPath) && !fs.existsSync(ggufAdapterPath)) {
+    throw new Error('adapter_model.safetensors or adapter.gguf not found');
+  }
+
+  const evalResult = JSON.parse(fs.readFileSync(evalPath, 'utf-8')) as { score?: number; passed?: boolean };
+  if (!evalResult.passed) {
+    throw new Error('Adapter eval has not passed threshold');
+  }
+
+  // Check for historical merged adapter (dual-adapter system)
+  const historyMergedPath = path.join(paths.out, 'adapters', 'history-merged', 'adapter-merged.gguf');
+  const hasHistoricalAdapter = fs.existsSync(historyMergedPath);
+
+  const modelName = `greg-${date}`;
+  const modelfilePath = path.join(dir, 'Modelfile');
+  const baseModel = process.env.METAHUMAN_BASE_MODEL || 'dolphin-mistral:latest';
+
+  // Always regenerate Modelfile to ensure it includes both adapters if available
+  let modelfile = `# MetaHuman OS LoRA Adapter - ${date}
+FROM ${baseModel}
+`;
+
+  // Add historical adapter first (if exists) for dual-adapter mode
+  if (hasHistoricalAdapter) {
+    modelfile += `ADAPTER ${historyMergedPath}\n`;
+  }
+
+  // Add recent adapter (use GGUF if available, otherwise safetensors)
+  const recentAdapterPath = fs.existsSync(ggufAdapterPath) ? ggufAdapterPath : adapterPath;
+  modelfile += `ADAPTER ${recentAdapterPath}\n`;
+
+  fs.writeFileSync(modelfilePath, modelfile);
+
+  const activatedAt = new Date().toISOString();
+  const activeInfo: ActiveAdapterInfo = {
+    modelName,
+    activatedAt,
+    adapterPath,
+    ggufAdapterPath: fs.existsSync(ggufAdapterPath) ? ggufAdapterPath : undefined,
+    evalScore: evalResult.score,
+    dataset: date,
+    modelfilePath,
+    status: 'ready_for_ollama_load',
+    activatedBy: actor,
+    trainingMethod: 'remote',
+    baseModel,
+    isDualAdapter: hasHistoricalAdapter,
+    dual: hasHistoricalAdapter,
+  };
+
+  setActiveAdapter(activeInfo);
+}
+
+function activateDualAdapter(date: string, actor: string): void {
+  const dir = ensureDataset(date);
+  const recentGGUF = path.join(dir, 'adapter.gguf');
+  const mergedGGUF = path.join(paths.out, 'adapters', 'history-merged', 'adapter-merged.gguf');
+  if (!fs.existsSync(recentGGUF)) throw new Error('Recent adapter.gguf not found');
+  if (!fs.existsSync(mergedGGUF)) throw new Error('history-merged/adapter-merged.gguf not found');
+
+  const modelName = `greg-dual-${date}`;
+  const modelfilePath = path.join(dir, 'DualModelfile');
+  const baseModel = process.env.METAHUMAN_BASE_MODEL || 'dolphin-mistral:latest';
+  const modelfile = `# MetaHuman OS Dual LoRA - ${date}\nFROM ${baseModel}\nADAPTER ${mergedGGUF}\nADAPTER ${recentGGUF}\n`;
+  fs.writeFileSync(modelfilePath, modelfile);
+
+  const evalPath = path.join(dir, 'eval.json');
+  const evalScore = fs.existsSync(evalPath) ? (JSON.parse(fs.readFileSync(evalPath, 'utf-8')).score) : undefined;
+  const activatedAt = new Date().toISOString();
+  const cfg: ActiveAdapterInfo = {
+    modelName,
+    activatedAt,
+    adapterPath: recentGGUF,
+    evalScore,
+    dataset: date,
+    modelfilePath,
+    status: 'ready_for_ollama_load',
+    dual: true,
+    mergedPath: mergedGGUF,
+    activatedBy: actor,
+    trainingMethod: 'remote-dual',
+    baseModel,
+    ggufAdapterPath: recentGGUF,
+    adapters: {
+      historical: mergedGGUF,
+      recent: recentGGUF,
+    },
+    isDualAdapter: true,
+  };
+  setActiveAdapter(cfg);
+
+  try {
+    execSync(`ollama create ${modelName} -f "${modelfilePath}"`, { stdio: 'ignore', cwd: paths.root });
+    cfg.status = 'loaded';
+    setActiveAdapter(cfg);
+  } catch {}
+}
+
+function readRecentAdapterLogs(limit = 50): Array<{ timestamp: string; event: string; actor?: string; details?: any }> {
+  const logs: Array<{ timestamp: string; event: string; actor?: string; details?: any }> = []
+  try {
+    const today = new Date().toISOString().slice(0, 10)
+    const days = [0, 1] // today + yesterday
+    for (const d of days) {
+      const date = new Date(Date.now() - d * 24 * 3600 * 1000).toISOString().slice(0, 10)
+      const file = path.join(paths.logs, 'audit', `${date}.ndjson`)
+      if (!fs.existsSync(file)) continue
+      const content = fs.readFileSync(file, 'utf-8')
+      const lines = content.trim().split('\n').slice(-1000) // cap
+      for (const line of lines) {
+        try {
+          const obj = JSON.parse(line)
+          const e = String(obj.event || '')
+          if (/adapter_|lora_|full_cycle_|gguf_/.test(e)) {
+            logs.push({ timestamp: obj.timestamp, event: e, actor: obj.actor, details: obj.details })
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+  // sort asc by time and slice last N
+  logs.sort((a, b) => (a.timestamp < b.timestamp ? -1 : 1))
+  return logs.slice(-limit)
+}
+
+export const GET: APIRoute = async () => {
+  try {
+    const datasets = listAdapterDatasets();
+    const autoApproval = readAutoApprovalConfig();
+    const activeAdapter = getActiveAdapter();
+    const recentLogs = readRecentAdapterLogs(75)
+    // Read sleep config for LoRA enabled flag
+    let loraEnabled = false;
+    try {
+      const sleepPath = path.join(paths.etc, 'sleep.json');
+      if (fs.existsSync(sleepPath)) {
+        const sleep = JSON.parse(fs.readFileSync(sleepPath, 'utf-8'));
+        loraEnabled = !!(sleep?.adapters?.lora);
+      }
+    } catch {}
+
+    return new Response(
+      JSON.stringify({ success: true, datasets, autoApproval, activeAdapter, sleep: { loraEnabled }, recentLogs }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ success: false, error: (error as Error).message }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+};
+
+export const POST: APIRoute = async ({ request }) => {
+  try {
+    const body = await request.json();
+    const action = body?.action;
+
+    if (!action) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Missing action' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // Handle special case for getting config
+    if (action === 'config') {
+      try {
+        const agentConfigPath = path.join(paths.etc, 'agent.json');
+        if (fs.existsSync(agentConfigPath)) {
+          const config = JSON.parse(fs.readFileSync(agentConfigPath, 'utf-8'));
+          return new Response(
+            JSON.stringify({ success: true, model: config.model }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        } else {
+          return new Response(
+            JSON.stringify({ success: false, error: 'etc/agent.json not found' }),
+            { status: 404, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+      } catch (error) {
+        return new Response(
+          JSON.stringify({ success: false, error: (error as Error).message }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    switch (action) {
+      case 'sleep': {
+        const { loraEnabled } = body || {};
+        const sleepPath = path.join(paths.etc, 'sleep.json');
+        if (!fs.existsSync(sleepPath)) throw new Error('sleep.json not found');
+        const sleep = JSON.parse(fs.readFileSync(sleepPath, 'utf-8'));
+        if (typeof loraEnabled === 'boolean') {
+          sleep.adapters = sleep.adapters || {};
+          sleep.adapters.lora = loraEnabled;
+        }
+        fs.writeFileSync(sleepPath, JSON.stringify(sleep, null, 2));
+
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'sleep_config_updated',
+          details: { adapters: sleep.adapters },
+          actor: 'web-ui',
+        });
+
+        return new Response(JSON.stringify({ success: true, sleep: { loraEnabled: !!sleep.adapters?.lora } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      case 'runBuilder': {
+        backgroundAgent('adapter-builder.ts', []);
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'adapter_builder_queued',
+          details: { actor: 'web-ui' },
+          actor: 'web-ui',
+        });
+        // If auto-approval is enabled (live) and auto pipeline flags are set,
+        // kick off the full cycle orchestrator to approve→train→eval→activate.
+        try {
+          const aa = readAutoApprovalConfig() as any;
+          if (aa && aa.enabled && aa.dryRun === false && (aa.autoTrain !== false)) {
+            backgroundAgent('full-cycle.ts', []);
+            audit({
+              level: 'info',
+              category: 'action',
+              event: 'full_cycle_queued',
+              details: { trigger: 'runBuilder', autoTrain: aa.autoTrain !== false, autoEval: aa.autoEval !== false, autoActivate: aa.autoActivate !== false },
+              actor: 'web-ui',
+            });
+          }
+        } catch {}
+
+        return new Response(JSON.stringify({ success: true, message: 'Adapter-builder started in background' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      case 'runDreamer': {
+        backgroundAgent('dreamer.ts', []);
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'dreamer_queued',
+          details: { actor: 'web-ui' },
+          actor: 'web-ui',
+        });
+        return new Response(JSON.stringify({ success: true, message: 'Dreamer started in background' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      case 'runNightProcessor': {
+        backgroundAgent('night-processor.ts', []);
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'night_processor_queued',
+          details: { actor: 'web-ui' },
+          actor: 'web-ui',
+        });
+        return new Response(JSON.stringify({ success: true, message: 'Night processor started in background' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      case 'startSleepService': {
+        backgroundAgent('sleep-service.ts', []);
+        audit({
+          level: 'info',
+          category: 'system',
+          event: 'sleep_service_started_from_ui',
+          details: { actor: 'web-ui' },
+          actor: 'web-ui',
+        });
+        return new Response(JSON.stringify({ success: true, message: 'Sleep service started (long-running)' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      case 'fullCycle': {
+        const { model, dualMode } = body;
+        // Set environment variables for the full cycle
+        const env = { ...process.env };
+        if (model) {
+          env.METAHUMAN_BASE_MODEL = model;
+        }
+        if (typeof dualMode === 'boolean') {
+          env.METAHUMAN_DUAL_MODE = dualMode ? '1' : '0';
+        }
+        
+        // Create a child process with the specified environment
+        const agentPath = path.join(paths.brain, 'agents', 'full-cycle.ts');
+        const child = spawn('tsx', [agentPath], {
+          cwd: paths.root,
+          stdio: 'ignore',
+          detached: true,
+          env
+        });
+        child.unref();
+        
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'full_cycle_queued',
+          details: { actor: 'web-ui', model, dualMode },
+          actor: 'web-ui',
+        });
+        return new Response(JSON.stringify({ success: true, message: 'Full cycle started in background' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      case 'approve': {
+        const { date, notes } = body;
+        if (!date) throw new Error('Missing dataset date');
+        createApproval(date, 'web-ui', notes);
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'adapter_approved',
+          details: { date, notes, actor: 'web-ui' },
+          actor: 'web-ui',
+        });
+        return new Response(JSON.stringify({ success: true, message: 'Dataset approved' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      case 'reject': {
+        const { date, reason } = body;
+        if (!date) throw new Error('Missing dataset date');
+        const destination = rejectDataset(date, reason || 'Not specified', 'web-ui');
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'adapter_rejected',
+          details: { date, reason, actor: 'web-ui' },
+          actor: 'web-ui',
+        });
+        return new Response(JSON.stringify({ success: true, message: 'Dataset rejected', archive: destination }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      case 'train': {
+        const { date } = body;
+        if (!date) throw new Error('Missing dataset date');
+        const dir = ensureDataset(date);
+        // Auto-approve if enabled and not in dry run
+        const aa = readAutoApprovalConfig();
+        const approvedPath = path.join(dir, 'approved.json');
+        if (!fs.existsSync(approvedPath)) {
+          if (aa.enabled && !aa.dryRun) {
+            createApproval(date, 'web-ui:auto', 'Auto-approved before training');
+            audit({
+              level: 'info',
+              category: 'action',
+              event: 'lora_dataset_auto_approved',
+              details: { date, actor: 'web-ui' },
+              actor: 'web-ui',
+            });
+          } else {
+            return new Response(
+              JSON.stringify({ success: false, error: 'Dataset is not approved. Enable live auto-approval or approve manually first.' }),
+              { status: 400, headers: { 'Content-Type': 'application/json' } }
+            );
+          }
+        }
+        backgroundAgent('lora-trainer.ts', [date]);
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'adapter_training_queued',
+          details: { date, actor: 'web-ui' },
+          actor: 'web-ui',
+        });
+        return new Response(JSON.stringify({ success: true, message: 'Training started in background' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      case 'eval': {
+        const { date } = body;
+        if (!date) throw new Error('Missing dataset date');
+        ensureDataset(date);
+        backgroundAgent('eval-adapter.ts', [date]);
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'adapter_evaluation_queued',
+          details: { date, actor: 'web-ui' },
+          actor: 'web-ui',
+        });
+        return new Response(JSON.stringify({ success: true, message: 'Evaluation started in background' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      case 'activate': {
+        const { date } = body;
+        if (!date) throw new Error('Missing dataset date');
+        // Stage activation metadata and Modelfile
+        activateAdapter(date, 'web-ui');
+
+        // Attempt to load into Ollama automatically
+        try {
+          const dir = ensureDataset(date);
+          const modelfilePath = path.join(dir, 'Modelfile');
+          const modelName = `greg-${date}`;
+
+          const { execSync } = require('node:child_process');
+          execSync(`ollama create ${modelName} -f "${modelfilePath}"`, {
+            stdio: 'inherit',
+            cwd: paths.root,
+          });
+
+          const current = getActiveAdapter();
+          if (current && current.dataset === date) {
+            setActiveAdapter({ ...current, status: 'loaded' });
+          }
+
+          audit({
+            level: 'info',
+            category: 'action',
+            event: 'adapter_activated',
+            details: { date, modelName, status: 'loaded' },
+            actor: 'web-ui',
+          });
+
+          return new Response(
+            JSON.stringify({ success: true, message: 'Adapter loaded into Ollama and activated.' }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        } catch (e) {
+          // Leave status as ready_for_ollama_load and return instructions
+          audit({
+            level: 'warn',
+            category: 'action',
+            event: 'adapter_activation_partial',
+            details: { date, error: (e as Error).message },
+            actor: 'web-ui',
+          });
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message: 'Adapter activation metadata updated. Manual step required: ollama create greg-<date> -f Modelfile',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+      }
+      case 'activateDual': {
+        const { date } = body;
+        if (!date) throw new Error('Missing dataset date');
+        activateDualAdapter(date, 'web-ui');
+        audit({ level: 'info', category: 'action', event: 'adapter_activation_requested_dual', details: { date, actor: 'web-ui' }, actor: 'web-ui' });
+        return new Response(JSON.stringify({ success: true, message: 'Dual adapter activated (history-merged + recent). If Ollama was running, it was auto-loaded.' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      case 'autoApproval': {
+        const { enabled, dryRun, thresholds, autoTrain, autoEval, autoActivate } = body;
+        const config = readAutoApprovalConfig();
+        if (typeof enabled === 'boolean') config.enabled = enabled;
+        if (typeof dryRun === 'boolean') config.dryRun = dryRun;
+        if (thresholds && typeof thresholds === 'object') {
+          config.thresholds = {
+            ...config.thresholds,
+            ...thresholds,
+          };
+        }
+        if (typeof autoTrain === 'boolean') (config as any).autoTrain = autoTrain;
+        if (typeof autoEval === 'boolean') (config as any).autoEval = autoEval;
+        if (typeof autoActivate === 'boolean') (config as any).autoActivate = autoActivate;
+        writeAutoApprovalConfig(config);
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'auto_approval_updated',
+          details: config,
+          actor: 'web-ui',
+        });
+        return new Response(JSON.stringify({ success: true, config }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      case 'mergeAdapters': {
+        // Run adapter-merger agent to merge historical adapters
+        const agentPath = path.join(paths.brain, 'agents', 'adapter-merger.ts');
+        if (!fs.existsSync(agentPath)) {
+          throw new Error('adapter-merger.ts not found');
+        }
+
+        backgroundAgent('adapter-merger.ts', []);
+
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'adapter_merge_started',
+          details: { actor: 'web-ui' },
+          actor: 'web-ui',
+        });
+
+        return new Response(
+          JSON.stringify({ success: true, message: 'Adapter merge started. Check audit logs for progress.' }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      default:
+        return new Response(
+          JSON.stringify({ success: false, error: `Unknown action: ${action}` }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+    }
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ success: false, error: (error as Error).message }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+};

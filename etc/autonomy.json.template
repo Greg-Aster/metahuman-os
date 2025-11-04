@@ -1,0 +1,11 @@
+{
+  "mode": "supervised", 
+  "schedules": {
+    "reflectionSeconds": 3600,
+    "maintenanceSeconds": 21600
+  },
+  "riskGuards": {
+    "dryRunDefault": true,
+    "requireConfirmFor": ["fs_delete", "git_commit"]
+  }
+}

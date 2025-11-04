@@ -1,0 +1,8 @@
+{
+  "qwen3:14b": "Qwen/Qwen1.5-14B-Chat",
+  "qwen3:8b": "Qwen/Qwen1.5-7B-Chat",
+  "qwen3:8b-q6k-local": "casperhansen/Qwen1.5-7B-Chat-awq",
+  "qwen3:30b": "Qwen/Qwen1.5-32B-Chat",
+  "dolphin-mistral:latest": "cognitivecomputations/dolphin-2.2-mistral-7b",
+  "mistralai/Mistral-7B-Instruct-v0.2": "mistralai/Mistral-7B-Instruct-v0.2"
+}
