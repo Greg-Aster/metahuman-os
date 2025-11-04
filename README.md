@@ -13,6 +13,20 @@ MetaHuman OS is a local-first digital personality extension that acts as a paral
 
 **MetaHuman OS is not an assistant—it's a parallel intelligence.** It learns your patterns, mirrors your judgment, and acts autonomously within trusted boundaries. The goal is to create a digital personality extension that feels like a natural extension of your own cognition, saving hours of mental overhead while staying perfectly aligned with your values and preferences.
 
+## Directory Highlights
+
+Understanding the layout of the repository can make it easier to locate the components you want to customize:
+
+- `apps/site`: Astro-powered web interface for interacting with your MetaHuman and reviewing audit trails.
+- `brain/`: Core runtime, autonomous execution engine, and long-term scheduling logic.
+- `persona/`: Configuration files that define personality traits, values, and behavioral guardrails.
+- `memory/`: Persistent storage for structured memories, reflections, and task histories.
+- `packages/`: Shared TypeScript packages consumed across apps and services.
+- `scripts/` & `bin/`: Helper utilities for managing the environment, installing dependencies, and orchestrating workflows.
+- `vendor/`: External dependencies (like `llama.cpp` and `whisper.cpp`) vendored for reproducibility.
+
+Check the `ARCHITECTURE.md` document for a deeper explanation of how these pieces communicate and scale together.
+
 ### Core Principles
 - **Autonomy-first**: Build for autonomous operation with human oversight, not constant approval
 - **Deep sync**: Continuous bi-directional learning between you and your digital personality extension
