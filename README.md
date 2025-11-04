@@ -184,8 +184,22 @@ cd apps/site && pnpm dev
 - 💬 Chat - Conversation with your digital personality extension
 - 📊 Dashboard - System status and overview
 - ✓ Tasks - Task management
-- 🧩 Memory - Browse episodic events
+- ✋ Approvals - Skill execution queue
+- 🧩 Memory - Browse episodic events with specialized tabs:
+  - **Episodic** - All captured observations and events
+  - **Reflections** - AI-generated reflections from the reflector agent
+  - **Tasks** - Task files from memory/tasks/
+  - **Curated** - Hand-picked memories from memory/curated/
+  - **AI Ingestor** - Memories created by the ingestor agent from inbox files
+  - **Audio** - Memories from transcribed audio recordings
+  - **Dreams** - Dream narratives from the dreamer agent
+- 🌙 Learnings - Overnight insights and preferences
+- 🎙️ Audio - Upload and transcribe audio recordings
+- 🎤 Voice Training - Voice cloning progress
+- 🧠 Adaptation - LoRA dataset management
+- 🔥 Training - Real-time LoRA training monitor
 - 🎭 Persona - Identity and personality settings
+- 🆘 Lifeline Protocol - Emergency scaffold
 - ⌨️ Terminal - Embedded CLI interface
 
 **Developer Tools (Right Sidebar):**
@@ -365,13 +379,13 @@ MetaHuman OS runs several autonomous agents that process memories and generate i
 
 ### Core Agents
 
-**1. Organizer Agent** - Enriches memories with AI-extracted tags and entities
-**2. Reflector Agent** - Generates thoughtful reflections on recent memories
-**3. Boredom Service** - Simulates a "wandering mind" by triggering reflections during idle time
-**4. Dreamer Agent** - Creates surreal, metaphorical dreams from memory fragments
-**5. Sleep Service** - Manages dream generation based on your sleep schedule
-**6. Ingestor Agent** - Converts raw files into episodic memories
-**7. Operator Agent** - Executes complex multi-step tasks using skills, leveraging the capability catalog for dynamic skill discovery
+**1. Organizer Agent** - Enriches memories with AI-extracted tags and entities.
+**2. Reflector Agent** - Generates thoughtful reflections on recent memories to find connections and insights.
+**3. Boredom Service** - Simulates a "wandering mind" by triggering reflections during idle time.
+**4. Dreamer Agent** - Creates surreal, metaphorical dreams from memory fragments during the nightly sleep cycle.
+**5. Sleep Service** - Orchestrates the complete nightly "sleep window" pipeline—dreams, audio processing, preference learning, and optional model training.
+**6. Ingestor Agent** - Converts raw files from the `memory/inbox` into episodic memories.
+**7. Operator Agent** - Executes complex multi-step tasks using skills, leveraging the capability catalog for dynamic skill discovery.
 
 ### Advanced Agents
 **8. Auto-Approver Agent** - Quality-based dataset approval for LoRA adaptation
@@ -419,3 +433,12 @@ This project is licensed under the Creative Commons Attribution 4.0 Internationa
 - Review agent logs with `./bin/mh agent logs <name>`
 - Inspect memory and config files directly (they're just JSON)
 - Check the [Troubleshooting](docs/user-guide/12-troubleshooting.md) section in the user guide
+
+## Further Reading
+
+For a deeper dive into the MetaHuman OS, please refer to the comprehensive user guide:
+
+-   **[Overview](docs/user-guide/01-overview.md)**: Introduction and core principles.
+-   **[Quick Start](docs/user-guide/02-quick-start.md)**: Installation and initial setup.
+-   **[Core Concepts](docs/user-guide/04-core-concepts.md)**: Identity, memory, agents, and the decision engine.
+-   **[Full User Guide](docs/user-guide/index.md)**: The complete user guide.
