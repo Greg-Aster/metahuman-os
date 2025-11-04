@@ -1,6 +1,6 @@
 {
   "currentMode": "dual",
-  "lastChanged": "2025-11-04T01:30:53.034Z",
+  "lastChanged": "2025-11-04T06:54:22.111Z",
   "history": [
     {
       "mode": "dual",
@@ -45,6 +45,26 @@
     {
       "mode": "dual",
       "changedAt": "2025-11-04T01:30:53.034Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "agent",
+      "changedAt": "2025-11-04T06:43:51.280Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-04T06:50:39.517Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "emulation",
+      "changedAt": "2025-11-04T06:51:48.950Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-04T06:54:22.111Z",
       "actor": "web_ui"
     }
   ]

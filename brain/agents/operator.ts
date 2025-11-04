@@ -5,6 +5,8 @@
  * Uses skills system with trust-aware policy enforcement.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { llm, paths, audit, acquireLock, isLocked, loadPersonaCore, captureEvent } from '../../packages/core/src/index';
 import { initializeSkills } from '../skills/index';
 import {
@@ -72,7 +74,56 @@ interface TaskAssessment {
 let trustLevel: TrustLevel = 'observe';
 let availableSkills: SkillManifest[] = [];
 let lastFilePath: string | null = null;
+let lastListedPaths: Array<{ absolute: string; relative: string }> = [];
 let inited = false;
+
+const KNOWN_FILE_ROOTS = ['out', 'memory', 'docs', 'persona', 'logs', 'etc'];
+
+function toAbsolutePath(pathLike: string): string {
+  const sanitized = pathLike.replace(/^\.\//, '');
+  const root = path.resolve(paths.root);
+  const absolute = path.isAbsolute(sanitized) ? path.resolve(sanitized) : path.resolve(root, sanitized);
+  if (!absolute.startsWith(root)) {
+    return path.join(root, path.basename(sanitized));
+  }
+  return absolute;
+}
+
+function resolveFilePathHint(rawInput?: unknown): string | null {
+  const candidate = typeof rawInput === 'string' ? rawInput.trim() : '';
+  if (candidate) {
+    if (path.isAbsolute(candidate)) {
+      return path.resolve(candidate);
+    }
+
+    const cleaned = candidate.replace(/^\.\//, '');
+    const fromList = lastListedPaths.find(entry => entry.relative === cleaned || entry.absolute.endsWith(cleaned));
+    if (fromList) {
+      return fromList.absolute;
+    }
+
+    if (cleaned.includes('/')) {
+      return toAbsolutePath(cleaned);
+    }
+
+    if (lastFilePath && path.basename(lastFilePath) === cleaned) {
+      return lastFilePath;
+    }
+
+    for (const relRoot of KNOWN_FILE_ROOTS) {
+      const guess = path.resolve(paths.root, relRoot, cleaned);
+      if (fs.existsSync(guess)) {
+        return guess;
+      }
+    }
+  }
+
+  if (!candidate && lastFilePath) {
+    return lastFilePath;
+  }
+
+  return null;
+}
 
 // ============================================================================
 // Initialization
@@ -254,6 +305,7 @@ ${inputsInfo}
     'For calendar requests, use calendar.listRange / calendar.create / calendar.update as appropriate.',
     'Always validate inputs',
     'When writing files and the user did not specify a path, default to writing under the \'out/\' directory in the project root.',
+    'When a file name is referenced without a path, reuse the most recent matching file or list files under out/ before assuming it is missing.',
   ];
 
   if (mode === 'strict') {
@@ -425,6 +477,7 @@ async function execute(
   options: { autoApprove?: boolean; mode?: OperatorMode } = {}
 ): Promise<ExecutionResult[]> {
   console.log('[operator:executor] Executing plan...');
+  lastListedPaths = [];
 
   const mode: OperatorMode = options.mode ?? 'strict';
   const isYolo = mode === 'yolo';
@@ -676,13 +729,17 @@ async function execute(
         continue;
       }
 
-      // If fs_read and no concrete path provided, try to use lastFilePath
+      // Normalize fs_read paths to leverage operator memory and recent listings
       if (step.skillId === 'fs_read') {
-        const p = step.inputs?.path;
-        const missing = !p || typeof p !== 'string' || p.includes('<absolute') || p.trim() === '';
-        if (missing && lastFilePath) {
-          console.log(`[operator:executor] Resolving missing fs_read path using lastFilePath: ${lastFilePath}`);
-          step.inputs = { ...(step.inputs || {}), path: lastFilePath };
+        const current = step.inputs?.path;
+        const resolved = resolveFilePathHint(current);
+        if (resolved) {
+          if (typeof current !== 'string' || current.trim() !== resolved) {
+            console.log(`[operator:executor] Normalized fs_read path '${current ?? '<empty>'}' -> '${resolved}'`);
+          }
+          step.inputs = { ...(step.inputs || {}), path: resolved };
+        } else {
+          console.warn('[operator:executor] Unable to auto-resolve fs_read path; proceeding with original input');
         }
       }
       
@@ -725,7 +782,23 @@ async function execute(
       // Track last written file path
       if (step.skillId === 'fs_write' && result.success) {
         const outPath = (result.outputs && (result.outputs as any).path) as string | undefined;
-        if (outPath && typeof outPath === 'string') lastFilePath = outPath;
+        if (outPath && typeof outPath === 'string') {
+          lastFilePath = path.isAbsolute(outPath) ? path.resolve(outPath) : path.resolve(paths.root, outPath);
+        }
+      }
+
+      if (step.skillId === 'fs_list' && result.success) {
+        const items = Array.isArray(result.outputs?.items) ? result.outputs?.items : [];
+        if (items.length > 0) {
+          lastListedPaths = items.map(item => {
+            const relative = typeof item === 'string' ? item : String(item ?? '');
+            const absolute = toAbsolutePath(relative);
+            return { relative: relative.replace(/^\.\//, ''), absolute };
+          });
+          if (lastListedPaths.length > 0) {
+            lastFilePath = lastListedPaths[0].absolute;
+          }
+        }
       }
 
       if (!result.success) {
@@ -909,6 +982,23 @@ async function runTask(
   options: { autoApprove?: boolean; profile?: OperatorProfile; mode?: OperatorMode } = {}
 ): Promise<OperatorRunResult> {
   if (!inited) initialize();
+
+  const memoryHints: string[] = [];
+  if (lastFilePath) {
+    memoryHints.push(`Most recently accessed file: ${lastFilePath}`);
+  }
+  if (lastListedPaths.length > 0) {
+    const sample = lastListedPaths.slice(0, 3).map(entry => entry.relative).join(', ');
+    memoryHints.push(`Recent fs_list results: ${sample}`);
+  }
+  if (memoryHints.length > 0) {
+    const memoryBlock = `Operator short-term memory:\n${memoryHints.map(hint => `- ${hint}`).join('\n')}`;
+    task = {
+      ...task,
+      context: task.context ? `${task.context}\n\n${memoryBlock}` : memoryBlock,
+    };
+  }
+
   console.log('\n='.repeat(60));
   console.log(`[operator] Starting task: ${task.goal}`);
   console.log('='.repeat(60) + '\n');

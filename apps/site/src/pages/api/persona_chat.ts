@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { loadPersonaCore, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, llm } from '@metahuman/core';
+import { loadCognitiveMode, getModeDefinition, canWriteMemory, canUseOperator } from '@metahuman/core/cognitive-mode';
 import { readFileSync, existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { initializeSkills } from '../../../../../brain/skills/index';
@@ -21,6 +22,82 @@ const lastUserTurn: Record<Mode, { text: string; ts: number } | null> = { inner:
 const lastAssistantReplies: Record<Mode, string[]> = { inner: [], conversation: [] };
 // Track recently used memory IDs to avoid repeating the same snippets turn after turn
 const recentMemoryIds: Record<Mode, string[]> = { inner: [], conversation: [] };
+
+/**
+ * Helper to load cognitive mode context and compute derived flags.
+ * Returns mode, defaults, and permission flags for consistent behavior.
+ */
+function getCognitiveModeContext() {
+  const cognitiveConfig = loadCognitiveMode();
+  const mode = cognitiveConfig.currentMode;
+  const modeDefinition = getModeDefinition(mode);
+  const defaults = modeDefinition.defaults;
+
+  return {
+    mode,
+    config: cognitiveConfig,
+    definition: modeDefinition,
+    defaults,
+    allowMemoryWrites: canWriteMemory(mode),
+    allowOperator: canUseOperator(mode),
+  };
+}
+
+/**
+ * Load persona summary and recent reflections as fallback grounding context.
+ * Used in dual mode when semantic index is unavailable.
+ */
+async function loadPersonaFallbackContext(persona: any): Promise<string> {
+  try {
+    const fallbackParts: string[] = [];
+
+    // Add core identity
+    if (persona?.identity) {
+      const { name, role, purpose } = persona.identity;
+      fallbackParts.push(`I am ${name}. ${role}. ${purpose}`);
+    }
+
+    // Add key personality traits
+    if (persona?.personality?.communicationStyle) {
+      const tone = persona.personality.communicationStyle.tone || [];
+      if (Array.isArray(tone) && tone.length > 0) {
+        fallbackParts.push(`Communication style: ${tone.join(', ')}`);
+      }
+    }
+
+    // Add core values
+    if (persona?.values?.core) {
+      const values = persona.values.core.map((v: any) => v.value).filter(Boolean);
+      if (values.length > 0) {
+        fallbackParts.push(`Core values: ${values.join(', ')}`);
+      }
+    }
+
+    // Try to load recent reflections as lightweight grounding
+    try {
+      const reflectionsPath = path.join(ROOT, 'memory/reflections');
+      if (existsSync(reflectionsPath)) {
+        const files = await fs.readdir(reflectionsPath);
+        const jsonFiles = files.filter(f => f.endsWith('.json')).sort().reverse().slice(0, 2);
+
+        for (const file of jsonFiles) {
+          try {
+            const content = await fs.readFile(path.join(reflectionsPath, file), 'utf-8');
+            const reflection = JSON.parse(content);
+            if (reflection.content) {
+              fallbackParts.push(`Recent reflection: ${reflection.content.substring(0, 200)}`);
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+
+    return fallbackParts.join('\n\n');
+  } catch (error) {
+    console.error('[loadPersonaFallbackContext] Error:', error);
+    return 'Core identity available but details unavailable.';
+  }
+}
 
 function stripChainOfThought(raw: string): string {
   if (!raw) return '';
@@ -68,61 +145,127 @@ async function getRelevantContext(
   opts?: { usingLora?: boolean; includePersonaSummary?: boolean }
 ): Promise<{ context: string; usedSemantic: boolean }> {
   try {
+    // Load cognitive mode to enforce mode-specific retrieval behavior
+    const cognitiveContext = getCognitiveModeContext();
+    const cognitiveMode = cognitiveContext.mode;
+
     const tasks = listActiveTasks();
     const idx = getIndexStatus();
     const persona = loadPersonaCore();
 
     let usedSemantic = false;
     let memoryContext = '';
-    if ((idx as any).exists) {
-      try {
-        const hits = await queryIndex(userMessage, { topK: 8 });
-        // Tighten threshold to reduce spurious recalls
-        const threshold = 0.62;
-        // Filter by score and de-emphasize inner_dialogue/reflections to avoid fixation
-        // NOTE: We do not filter `conversation` memories here, as they are essential for the AI to have a coherent personality and remember past interactions.
-        // The `inner_dialogue` memories are filtered out to prevent the AI from getting stuck in loops of its own thoughts.
-        const filtered = [] as typeof hits;
-        for (const h of hits) {
-          if (h.score < threshold) continue;
-          try {
-            const raw = readFileSync(h.item.path, 'utf-8');
-            const obj = JSON.parse(raw);
-            const t = (obj && obj.type) ? String(obj.type) : '';
-            const tags: string[] = Array.isArray(obj?.tags) ? obj.tags.map((x: any) => String(x)) : [];
-            if (t === 'inner_dialogue') continue;
-            if (tags.includes('reflection') || tags.includes('dream')) continue;
-          } catch {}
-          filtered.push(h);
-        }
-        if (filtered.length > 0) {
-          usedSemantic = true;
-          // Avoid repeating the same memories across turns
-          const recent = recentMemoryIds[mode] || [];
-          const novel = filtered.filter(h => !recent.includes(h.item.id));
-          const chosen = (novel.length > 0 ? novel : filtered).slice(0, 2);
-          // Build a clean context using only the original content (no paths/tags/ids)
-          const lines: string[] = [];
-          let used = 0;
-          for (const h of chosen) {
+
+    // DUAL MODE: Mandatory semantic search with fallback
+    if (cognitiveMode === 'dual') {
+      if (!(idx as any).exists) {
+        // Log warning but provide fallback context
+        console.warn('[DUAL MODE] No semantic index available - memory grounding degraded');
+        audit({
+          level: 'warn',
+          category: 'action',
+          event: 'dual_mode_missing_index',
+          details: { message: 'Semantic index unavailable in dual mode, using persona fallback' },
+          actor: 'system',
+        });
+        // Fallback: provide persona summary as baseline grounding
+        memoryContext = await loadPersonaFallbackContext(persona);
+      } else {
+        // Force semantic search in dual mode
+        try {
+          const hits = await queryIndex(userMessage, { topK: 8 });
+          const threshold = 0.62;
+          const filtered = [] as typeof hits;
+          for (const h of hits) {
+            if (h.score < threshold) continue;
             try {
               const raw = readFileSync(h.item.path, 'utf-8');
               const obj = JSON.parse(raw);
-              const content = String(obj?.content || '').trim();
-              if (!content) continue;
-              const chunk = `- ${content}`;
-              if (used + chunk.length > 900) break;
-              lines.push(chunk);
-              used += chunk.length;
-              // remember recent id
-              recentMemoryIds[mode] = [...recent.slice(-9), h.item.id];
+              const t = (obj && obj.type) ? String(obj.type) : '';
+              const tags: string[] = Array.isArray(obj?.tags) ? obj.tags.map((x: any) => String(x)) : [];
+              if (t === 'inner_dialogue') continue;
+              if (tags.includes('reflection') || tags.includes('dream')) continue;
             } catch {}
+            filtered.push(h);
           }
-          if (lines.length) {
-            memoryContext = lines.join('\n');
+          if (filtered.length > 0) {
+            usedSemantic = true;
+            const recent = recentMemoryIds[mode] || [];
+            const novel = filtered.filter(h => !recent.includes(h.item.id));
+            const chosen = (novel.length > 0 ? novel : filtered).slice(0, 2);
+            const lines: string[] = [];
+            let used = 0;
+            for (const h of chosen) {
+              try {
+                const raw = readFileSync(h.item.path, 'utf-8');
+                const obj = JSON.parse(raw);
+                const content = String(obj?.content || '').trim();
+                if (!content) continue;
+                const chunk = `- ${content}`;
+                if (used + chunk.length > 900) break;
+                lines.push(chunk);
+                used += chunk.length;
+                recentMemoryIds[mode] = [...recent.slice(-9), h.item.id];
+              } catch {}
+            }
+            if (lines.length) {
+              memoryContext = lines.join('\n');
+            }
+          } else {
+            // No results above threshold - use persona fallback
+            memoryContext = await loadPersonaFallbackContext(persona);
           }
+        } catch (error) {
+          console.error('[DUAL MODE] Semantic search failed:', error);
+          memoryContext = await loadPersonaFallbackContext(persona);
         }
-      } catch {/* ignore semantic errors and fall back */}
+      }
+    }
+    // EMULATION MODE & AGENT MODE: Use existing semantic search logic
+    else {
+      if ((idx as any).exists) {
+        try {
+          const hits = await queryIndex(userMessage, { topK: 8 });
+          const threshold = 0.62;
+          const filtered = [] as typeof hits;
+          for (const h of hits) {
+            if (h.score < threshold) continue;
+            try {
+              const raw = readFileSync(h.item.path, 'utf-8');
+              const obj = JSON.parse(raw);
+              const t = (obj && obj.type) ? String(obj.type) : '';
+              const tags: string[] = Array.isArray(obj?.tags) ? obj.tags.map((x: any) => String(x)) : [];
+              if (t === 'inner_dialogue') continue;
+              if (tags.includes('reflection') || tags.includes('dream')) continue;
+            } catch {}
+            filtered.push(h);
+          }
+          if (filtered.length > 0) {
+            usedSemantic = true;
+            const recent = recentMemoryIds[mode] || [];
+            const novel = filtered.filter(h => !recent.includes(h.item.id));
+            const chosen = (novel.length > 0 ? novel : filtered).slice(0, 2);
+            const lines: string[] = [];
+            let used = 0;
+            for (const h of chosen) {
+              try {
+                const raw = readFileSync(h.item.path, 'utf-8');
+                const obj = JSON.parse(raw);
+                const content = String(obj?.content || '').trim();
+                if (!content) continue;
+                const chunk = `- ${content}`;
+                if (used + chunk.length > 900) break;
+                lines.push(chunk);
+                used += chunk.length;
+                recentMemoryIds[mode] = [...recent.slice(-9), h.item.id];
+              } catch {}
+            }
+            if (lines.length) {
+              memoryContext = lines.join('\n');
+            }
+          }
+        } catch {/* ignore semantic errors and fall back */}
+      }
     }
 
     // Fallback to keyword search if no semantic results
@@ -160,12 +303,18 @@ async function getRelevantContext(
 
 
 
-    // Log context retrieval
+    // Log context retrieval with cognitive mode tracking
     audit({
       level: 'info',
       category: 'action',
       event: 'chat_context_retrieved',
-      details: { query: userMessage, tasks: tasks.length, indexUsed: usedSemantic },
+      details: {
+        query: userMessage,
+        tasks: tasks.length,
+        indexUsed: usedSemantic,
+        cognitiveMode,
+        usedFallback: cognitiveMode === 'dual' && !usedSemantic,
+      },
       actor: 'system',
     });
 
@@ -236,24 +385,43 @@ export const POST: APIRoute = async ({ request }) => {
   return handleChatRequest({ ...body, origin: url.origin });
 };
 
-async function shouldUseOperator(message: string): Promise<boolean> {
-  const trust = loadTrustLevel();
-  // Only consider auto-operator in higher trust levels
-  if (trust !== 'supervised_auto' && trust !== 'bounded_auto') {
+async function shouldUseOperator(message: string, recentContext?: string): Promise<boolean> {
+  const cognitiveContext = getCognitiveModeContext();
+  const { mode } = cognitiveContext;
+
+  const trimmed = String(message ?? '').trim();
+  const lowered = trimmed.toLowerCase();
+  const contextLower = (recentContext ?? '').toLowerCase();
+
+  if (mode === 'emulation') {
     return false;
   }
 
-  // Cheap heuristic: require action-oriented intent to even consider routing
-  const actionLike = /(make|create|add|log|record|track|schedule|write|edit|modify|delete|remove|move|rename|open|scan|check|mark|complete|finish|update|run|execute|start|stop|install|uninstall|build|compile|test|fetch|download|upload|commit|push|pull|git|grep|search|replace|apply|patch|launch|train|generate|summarize|index|ingest)\b/i;
+  const trust = loadTrustLevel();
+
+  if (mode === 'agent' && trust !== 'supervised_auto' && trust !== 'bounded_auto') {
+    return false;
+  }
+
+  const followUpRead = contextLower.includes('assistant: i found the file') && /\bread\b/.test(lowered);
+  if (followUpRead) {
+    return true;
+  }
+
+  const actionLike = /(make|create|add|log|record|track|schedule|write|edit|modify|delete|remove|move|rename|open|scan|check|mark|complete|finish|update|run|execute|start|stop|install|uninstall|build|compile|test|fetch|download|upload|commit|push|pull|git|grep|search|replace|apply|patch|launch|train|generate|summarize|index|ingest|read)\b/i;
   const looksLikePath = /\b(\.{1,2}\/[\w\-\.\/]+|\/[\w\-\.\/]+|[A-Za-z]:\\)/;
   const taskIntent = /\b(task|tasks|todo|to[- ]do|checklist|reminder)\b/i;
   const taskAction = /\b(make|create|add|log|record|track|schedule|set|mark|complete|finish|update|check)\b/i;
   const taskQuery = /\b(what|list|show|display|read|review)\b/i;
-  if (taskIntent.test(message) && (taskAction.test(message) || taskQuery.test(message))) {
+  if (taskIntent.test(trimmed) && (taskAction.test(trimmed) || taskQuery.test(trimmed))) {
     return true;
   }
 
-  const hasActionSignals = actionLike.test(message) || looksLikePath.test(message) || /https?:\/\//i.test(message);
+  const hasActionSignals =
+    followUpRead ||
+    actionLike.test(trimmed) ||
+    looksLikePath.test(trimmed) ||
+    /https?:\/\//i.test(trimmed);
   if (!hasActionSignals) return false;
 
   const skills = getAvailableSkills(trust)
@@ -271,17 +439,20 @@ ${skills}
 
 Respond with a single word: "chat" or "operator".`;
 
+  const contextBlock = recentContext
+    ? `Recent conversation:\n${recentContext}\n\n`
+    : '';
+
   try {
     const response = await llm.generate(
       [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: message },
+        { role: 'user', content: `${contextBlock}User request:\n${trimmed}` },
       ],
       'ollama',
       { temperature: 0.1 }
     );
 
-    // Normalize provider response into a simple string
     const raw = typeof response === 'string'
       ? response
       : (response && (response as any).content) || String(response || '');
@@ -290,27 +461,66 @@ Respond with a single word: "chat" or "operator".`;
       level: 'info',
       category: 'decision',
       event: 'operator_route_decision',
-      details: { message, decision },
+      details: { message, decision, cognitiveMode: mode, recentContext },
       actor: 'system',
     });
 
-    if (decision === 'operator') return true;
-    if (decision === 'chat') return false;
+    let useOperator = false;
+    if (decision === 'operator') {
+      useOperator = true;
+    } else if (decision === 'chat') {
+      useOperator = false;
+    } else if (decision.includes('operator') || decision.startsWith('task') || decision.includes('skills')) {
+      useOperator = true;
+    }
 
-    // Tolerate common synonyms the model may emit when strongly hinting at task tools
-    if (decision.includes('operator')) return true;
-    if (decision.startsWith('task')) return true; // e.g. "task_list", "tasks"
-    if (decision.includes('skills')) return true;
+    if (!useOperator) {
+      const actionPattern = /\b(read|write|create|delete|open|update|append|modify|summarize|scan|list|execute|run|schedule|mark|complete)\b/;
+      const targetPattern = /\b(file|document|note|folder|directory|task|calendar|memory|dataset)\b/;
+      if (actionPattern.test(lowered) && targetPattern.test(lowered)) {
+        useOperator = true;
+      } else if (followUpRead) {
+        useOperator = true;
+      }
+    }
 
-    return false;
+    return useOperator;
   } catch (error) {
     console.error('[shouldUseOperator] Error:', error);
-    return false; // Default to chat on error
+    return false;
   }
 }
 
 function formatOperatorResult(result: any): string {
   let output = `### Operator Execution Report\n\n**Task:** ${result.task.goal}\n\n**Outcome:** ${result.success ? '✅ Success' : '❌ Failed'}\n`;
+
+  // Check if operator produced a file write with conversational content (e.g., greeting response)
+  // If so, extract the content to return directly to chat instead of just showing the file path
+  let extractedContent = '';
+  if (result.results && Array.isArray(result.results)) {
+    for (const res of result.results) {
+      if (res.success && res.output && res.skillId === 'fs_write') {
+        // Try to read the file content if it's a conversational response
+        const filePath = res.output.path;
+        if (filePath && typeof filePath === 'string') {
+          try {
+            const content = readFileSync(path.join(ROOT, filePath), 'utf-8').trim();
+            // If content looks conversational (not code/json), extract it
+            if (content && !content.startsWith('{') && !content.startsWith('[')) {
+              extractedContent = content;
+            }
+          } catch {
+            // Ignore file read errors
+          }
+        }
+      }
+    }
+  }
+
+  // If we extracted conversational content, return it directly for synthesis
+  if (extractedContent) {
+    return extractedContent;
+  }
 
   if (result.plan && result.plan.steps) {
     output += '\n**Plan:**\n';
@@ -437,8 +647,27 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     return new Response(JSON.stringify({ error: 'Could not determine model: ' + (error as Error).message }), { status: 500 });
   }
 
+  // Load cognitive mode context once for consistent routing and memory policies
+  const cognitiveContext = getCognitiveModeContext();
+  const { mode: cognitiveMode, allowMemoryWrites } = cognitiveContext;
+
+  const trimmedMessage = String(message ?? '').trim();
+  const recentDialogue = histories[m]
+    .filter(turn => turn.role !== 'system')
+    .slice(-8)
+    .map(turn => {
+      if (turn.role === 'assistant') return `Assistant: ${turn.content}`;
+      if (turn.role === 'user') return `User: ${turn.content}`;
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n');
+  const routingContext = trimmedMessage
+    ? [recentDialogue, `User: ${trimmedMessage}`].filter(Boolean).join('\n')
+    : recentDialogue;
+
   // Decide whether to use the operator or the chat model
-  const useOperator = forceOperator || await shouldUseOperator(message);
+  const useOperator = forceOperator || await shouldUseOperator(message ?? '', routingContext);
 
   if (useOperator) {
     // Stream the operator response
@@ -450,15 +679,22 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
         };
 
         try {
+          lastUserTurn[m] = { text: trimmedMessage, ts: Date.now() };
+          histories[m].push({ role: 'user', content: message });
+
+          const operatorContext = routingContext || (trimmedMessage ? `User: ${trimmedMessage}` : '');
+
           const operatorUrl = origin ? new URL('/api/operator', origin).toString() : '/api/operator';
           const operatorResponse = await fetch(operatorUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               goal: message,
+              context: operatorContext,
               autoApprove: true,
               profile: (typeof audience === 'string' && ['files','git','web'].includes(audience) ? audience : undefined),
               yolo,
+              allowMemoryWrites, // Pass cognitive mode memory write permission to operator
             }),
           });
 
@@ -479,12 +715,28 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
             console.error('[persona_chat] Failed to synthesize operator answer:', err);
           }
 
+          // Audit operator execution with cognitive mode tracking
+          audit({
+            level: 'info',
+            category: 'action',
+            event: 'chat_assistant',
+            details: { mode: m, content: synthesized, cognitiveMode, usedOperator: true },
+            actor: 'assistant'
+          });
+
           push('answer', { response: synthesized });
 
           histories[m].push({ role: 'assistant', content: synthesized });
           lastAssistantReplies[m].push(synthesized);
         } catch (error) {
           console.error('[persona_chat] Operator error:', error);
+          audit({
+            level: 'error',
+            category: 'action',
+            event: 'chat_assistant_error',
+            details: { mode: m, error: (error as Error).message, cognitiveMode, usedOperator: true },
+            actor: 'assistant'
+          });
           push('error', { message: (error as Error).message });
         } finally {
           controller.close();
@@ -518,13 +770,12 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
   // Debounce duplicate user messages within a short window
   const nowTs = Date.now();
-  const trimmedMsg = String(message).trim();
   const lastU = lastUserTurn[m];
-  if (lastU && lastU.text === trimmedMsg && (nowTs - lastU.ts) < 1500) {
+  if (lastU && lastU.text === trimmedMessage && (nowTs - lastU.ts) < 1500) {
     const lastA = (lastAssistantReplies[m][lastAssistantReplies[m].length - 1]) || '';
     return new Response(JSON.stringify({ response: lastA, duplicate: true }), { status: 200 });
   }
-  lastUserTurn[m] = { text: trimmedMsg, ts: nowTs };
+  lastUserTurn[m] = { text: trimmedMessage, ts: nowTs };
 
   if (m === 'conversation' && audience && forceOperator) {
     histories[m].push({ role: 'system', content: `Audience/context: ${audience}` });
@@ -821,22 +1072,51 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
           histories[m].push({ role: 'user', content: message });
           histories[m].push({ role: 'assistant', content: assistantResponse });
 
-          // Capture event and audit
-          const eventType = m === 'inner' ? 'inner_dialogue' : 'conversation';
-          const responseForMemory = assistantResponse && assistantResponse.trim().length > 0 ? assistantResponse.trim() : undefined;
-          const userPath = captureEvent(`Me: "${message}"`, {
-            type: eventType,
-            tags: ['chat', m],
-            response: responseForMemory,
-          });
-          const userRelPath = path.relative(ROOT, userPath);
-          audit({ level: 'info', category: 'action', event: 'chat_assistant', details: { mode: m, content: assistantResponse }, actor: 'assistant' });
+          // Capture event and audit (only if mode allows writes)
+          // Note: cognitiveMode and allowMemoryWrites are already loaded at function start
+          if (allowMemoryWrites) {
+            const eventType = m === 'inner' ? 'inner_dialogue' : 'conversation';
+            const responseForMemory = assistantResponse && assistantResponse.trim().length > 0 ? assistantResponse.trim() : undefined;
+            const userPath = captureEvent(`Me: "${message}"`, {
+              type: eventType,
+              tags: ['chat', m],
+              response: responseForMemory,
+            });
+            const userRelPath = path.relative(ROOT, userPath);
 
-          // Stream the final answer
-          push('answer', { response: assistantResponse, saved: { userRelPath } });
+            audit({
+              level: 'info',
+              category: 'action',
+              event: 'chat_assistant',
+              details: { mode: m, content: assistantResponse, cognitiveMode, usedOperator: false },
+              actor: 'assistant'
+            });
+
+            // Stream the final answer with save confirmation
+            push('answer', { response: assistantResponse, saved: { userRelPath } });
+          } else {
+            // Emulation mode: return response without saving
+            audit({
+              level: 'info',
+              category: 'action',
+              event: 'chat_assistant_readonly',
+              details: { mode: m, content: assistantResponse, cognitiveMode, usedOperator: false },
+              actor: 'assistant'
+            });
+
+            // Stream the final answer without save confirmation
+            push('answer', { response: assistantResponse });
+          }
 
         } catch (error) {
           console.error('Persona chat stream error:', error);
+          audit({
+            level: 'error',
+            category: 'action',
+            event: 'chat_assistant_error',
+            details: { mode: m, error: (error as Error).message, cognitiveMode, usedOperator: false },
+            actor: 'assistant'
+          });
           push('error', { message: (error as Error).message });
         } finally {
           controller.close();
@@ -854,6 +1134,13 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   } catch (error) {
     histories[m].pop();
     console.error('Persona chat API error:', error);
+    audit({
+      level: 'error',
+      category: 'action',
+      event: 'chat_handler_error',
+      details: { mode: m, error: (error as Error).message, cognitiveMode },
+      actor: 'system'
+    });
     return new Response(JSON.stringify({ error: (error as Error).message }), { status: 500 });
   }
 };

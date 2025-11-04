@@ -19,6 +19,7 @@ interface OperatorRequest {
   profile?: 'files' | 'git' | 'web';
   yolo?: boolean;
   mode?: 'strict' | 'yolo';
+  allowMemoryWrites?: boolean; // Cognitive mode memory write permission
 }
 
 interface OperatorResponse {
@@ -55,13 +56,13 @@ interface OperatorResponse {
 export const POST: APIRoute = async ({ request }) => {
   try {
     const body: OperatorRequest = await request.json();
-    const { goal, context, autoApprove = false, profile, yolo, mode } = body;
+    const { goal, context, autoApprove = false, profile, yolo, mode, allowMemoryWrites = true } = body;
 
     if (!goal) {
       return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: 'Goal is required' 
+        JSON.stringify({
+          success: false,
+          error: 'Goal is required'
         }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
@@ -74,10 +75,13 @@ export const POST: APIRoute = async ({ request }) => {
       level: 'info',
       category: 'action',
       event: 'operator_api_request',
-      details: { goal, context, autoApprove, mode: resolvedMode },
+      details: { goal, context, autoApprove, mode: resolvedMode, allowMemoryWrites },
       actor: 'web_ui',
     });
 
+    // TODO: Pass allowMemoryWrites to runTask and skill execution context
+    // For now, the flag is logged but not yet enforced in skill execution
+    // This requires updates to the operator agent and skill execution pipeline
     // Run the task through the operator agent
     const result = await runTask({ goal, context }, 1, { autoApprove, profile, mode: resolvedMode }); // Max 1 retry, honor auto-approve + profile
 

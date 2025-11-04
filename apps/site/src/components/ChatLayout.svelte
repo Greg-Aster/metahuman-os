@@ -193,25 +193,7 @@
         </svg>
       </button>
       <h1 class="flex items-center gap-3 text-lg font-semibold text-gray-900 dark:text-gray-100 m-0">
-        <span
-          class="mode-icon"
-          style={`color:${modeVisual.color}; text-shadow:0 0 12px ${modeVisual.glow}`}
-        >
-          {modeVisual.icon}
-        </span>
         <span class="brand-name">MetaHuman OS</span>
-        {#if cognitiveMode}
-          <span
-            class="mode-label"
-            style={`color:${modeVisual.color}; box-shadow:0 0 18px ${modeVisual.glow}; --mode-accent:${modeVisual.color}; --mode-glow:${modeVisual.glow}`}
-          >
-            {cognitiveMode.label}
-          </span>
-        {:else if modeLoading}
-          <span class="mode-label loading">Loading…</span>
-        {:else}
-          <span class="mode-label muted">Mode unavailable</span>
-        {/if}
       </h1>
     </div>
 

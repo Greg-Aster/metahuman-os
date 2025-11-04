@@ -170,13 +170,198 @@ Continuous improvement system:
 - A/B test approaches within safe boundaries
 - Learn optimal strategies through trial
 
-### 8. Cognitive Modes (Upcoming Feature)
+### 8. Cognitive Modes
 
-To provide more granular control over the OS's function, MetaHuman OS will include multiple cognitive modes. These modes will allow the user to switch between different operational paradigms, each with distinct behaviors related to memory, learning, and interaction.
+MetaHuman OS features three distinct operational modes that control how the system processes information, routes decisions, and manages memory. You can switch between modes via the Web UI header or the API to match your current needs.
 
--   **Dual Consciousness Mode**: Functions as a deep cognitive and data mirror of the user, designed for maximum data ingestion, learning, and synchronization.
--   **Agent Mode**: Functions as a traditional AI assistant, focused on listening for and executing commands without deep learning or personality mirroring.
--   **Emulation Mode (Replicant)**: Provides a stable, conversational partner that uses its accumulated knowledge without creating new memories or evolving.
+**Why Cognitive Modes?**
+Different situations call for different levels of system engagement. Cognitive modes let you choose between:
+- Full learning and adaptation (Dual Consciousness)
+- Lightweight assistant behavior (Agent Mode)
+- Stable, read-only operation (Emulation)
+
+#### Dual Consciousness Mode (Default)
+
+**Purpose:** Full cognitive mirror with deep learning and memory grounding.
+
+**Behavior:**
+- **Routing**: Always uses the operator pipeline (planner → skills → narrator)
+- **Memory**: Full read/write access, captures all interactions for training
+- **Context**: Mandatory semantic search with persona fallback when index unavailable
+- **Learning**: Proactive agents enabled, training pipeline active
+- **Use Case**: Primary operational mode for maximum system capabilities
+
+**When to Use:**
+- Daily operation and conversations
+- Building long-term personality model
+- When you want the system to learn from every interaction
+- Task execution with full memory integration
+
+**Technical Details:**
+```json
+{
+  "operatorRouting": "operator_only",
+  "memoryWriteLevel": "read_write",
+  "proactiveAgents": true,
+  "trainingPipeline": "dual_trigger",
+  "contextRetrieval": "semantic_required"
+}
+```
+
+**Audit Tracking:**
+All chat operations include `cognitiveMode: "dual"` and `usedOperator: true` in logs.
+
+#### Agent Mode
+
+**Purpose:** Lightweight assistant mode with selective memory capture.
+
+**Behavior:**
+- **Routing**: Smart heuristics (simple chat vs. action-oriented operator routing)
+- **Memory**: Command outcomes only (not casual conversations)
+- **Context**: Optional semantic search (graceful degradation)
+- **Learning**: Proactive agents disabled, training pipeline disabled
+- **Use Case**: Traditional assistant experience with reduced cognitive load
+
+**When to Use:**
+- Quick questions without deep processing
+- When you want faster responses
+- Temporary sessions where you don't need learning
+- Testing or experimentation
+
+**Routing Logic:**
+```typescript
+// Simple query → Chat response (no operator)
+"What's the weather?" → Direct chat
+
+// Action request → Operator pipeline
+"Create a task to review documentation" → Planner + Skills
+```
+
+**Technical Details:**
+```json
+{
+  "operatorRouting": "heuristic",
+  "memoryWriteLevel": "command_only",
+  "proactiveAgents": false,
+  "trainingPipeline": "disabled",
+  "contextRetrieval": "semantic_optional"
+}
+```
+
+**Audit Tracking:**
+Logs include `cognitiveMode: "agent"` and `usedOperator: true/false` based on routing decision.
+
+#### Emulation Mode (Replicant)
+
+**Purpose:** Read-only personality snapshot without learning or side effects.
+
+**Behavior:**
+- **Routing**: Never uses operator (chat only)
+- **Memory**: Read-only access, no new memories created
+- **Context**: Can access existing memories but doesn't learn
+- **Learning**: All learning and training disabled
+- **Use Case**: Demonstration, testing, or safe exploration
+
+**When to Use:**
+- Showing the system to others without side effects
+- Testing responses without polluting memory
+- Accessing knowledge without changing state
+- Creating stable personality snapshots
+
+**Safety Features:**
+- No memory writes (audit event: `chat_assistant_readonly`)
+- No task creation or file modifications
+- No training data generation
+- Existing memories accessible but frozen
+
+**Technical Details:**
+```json
+{
+  "operatorRouting": "chat_only",
+  "memoryWriteLevel": "read_only",
+  "proactiveAgents": false,
+  "trainingPipeline": "disabled",
+  "contextRetrieval": "semantic_optional"
+}
+```
+
+**Audit Tracking:**
+All operations logged with `event: "chat_assistant_readonly"` and `cognitiveMode: "emulation"`.
+
+#### Switching Modes
+
+**Via Web UI:**
+1. Look at the header (top of the page)
+2. Click the cognitive mode selector
+3. Choose your desired mode:
+   - 🧠 Dual Consciousness (purple glow)
+   - 🛠️ Agent Mode (blue)
+   - 🪄 Emulation (amber)
+4. Mode switches instantly and persists across sessions
+
+**Via API:**
+```bash
+# Get current mode
+curl http://localhost:4321/api/cognitive-mode
+
+# Set mode
+curl -X POST http://localhost:4321/api/cognitive-mode \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "dual"}'
+```
+
+**Mode Persistence:**
+- Current mode stored in `persona/cognitive-mode.json`
+- Full history of mode changes tracked
+- Survives page reloads and system restarts
+
+#### Mode Comparison Table
+
+| Feature | Dual Consciousness | Agent Mode | Emulation |
+|---------|-------------------|------------|-----------|
+| **Operator Pipeline** | Always | Heuristic | Never |
+| **Memory Writes** | Full | Commands only | None |
+| **Context Grounding** | Required | Optional | Optional |
+| **Proactive Agents** | Enabled | Disabled | Disabled |
+| **Training Pipeline** | Active | Disabled | Disabled |
+| **Use Case** | Full system | Quick assistant | Demo/testing |
+| **Speed** | Slower | Faster | Fastest |
+| **Learning** | Yes | Limited | No |
+
+#### Advanced: Fallback Context
+
+**Dual Mode Robustness:**
+When semantic index is unavailable, Dual Mode automatically provides fallback grounding:
+- Core persona identity (name, role, purpose)
+- Communication style and values
+- Recent reflections (last 2)
+- Prevents empty context, ensures grounded responses
+
+**Warning Logged:**
+```
+[DUAL MODE] No semantic index available - memory grounding degraded
+```
+
+**Audit Event:**
+```json
+{
+  "event": "dual_mode_missing_index",
+  "level": "warn",
+  "details": {
+    "message": "Semantic index unavailable, using persona fallback"
+  }
+}
+```
+
+#### Implementation Details
+
+Cognitive modes are implemented through:
+- **Core Module**: `packages/core/src/cognitive-mode.ts`
+- **Config File**: `persona/cognitive-mode.json`
+- **Chat Integration**: `apps/site/src/pages/api/persona_chat.ts`
+- **UI Controls**: Mode selector in `ChatLayout.svelte` header
+
+All mode switches are fully audited with actor tracking (user vs. system).
 
 ---
 

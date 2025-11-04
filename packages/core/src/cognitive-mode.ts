@@ -61,7 +61,7 @@ const MODE_DEFINITIONS: Record<CognitiveModeId, CognitiveModeDefinition> = {
   },
   emulation: {
     id: 'emulation',
-    label: 'Emulation (Replicant)',
+    label: 'Emulation',
     description: 'Stable conversational personality with read-only memories.',
     guidance: [
       'Do not create new memories or modify persona state.',
@@ -164,4 +164,57 @@ export function applyModeDefaults(mode: CognitiveModeId): void {
     },
   });
   // TODO: integrate with agent scheduler, memory service, and training pipeline toggles.
+}
+
+/**
+ * Helper to check if memory writes are allowed based on cognitive mode defaults.
+ * Returns true for dual mode (full write access), true for agent mode (command outcomes),
+ * and false for emulation mode (read-only).
+ *
+ * @param input - Mode key, full config object, or defaults object
+ */
+export function canWriteMemory(
+  input: CognitiveModeId | CognitiveModeConfig | CognitiveModeDefinition['defaults']
+): boolean {
+  let defaults: CognitiveModeDefinition['defaults'];
+
+  if (typeof input === 'string') {
+    // Mode key provided
+    defaults = MODE_DEFINITIONS[input].defaults;
+  } else if ('currentMode' in input) {
+    // Full config object provided
+    defaults = MODE_DEFINITIONS[input.currentMode].defaults;
+  } else {
+    // Defaults object provided
+    defaults = input;
+  }
+
+  return defaults.memoryWriteLevel !== 'read_only';
+}
+
+/**
+ * Helper to check if operator routing is allowed based on cognitive mode.
+ * Returns true for dual mode (always operator), true for agent mode (heuristic),
+ * and false for emulation mode (chat-only).
+ *
+ * @param input - Mode key, full config object, or mode definition
+ */
+export function canUseOperator(
+  input: CognitiveModeId | CognitiveModeConfig | CognitiveModeDefinition
+): boolean {
+  let mode: CognitiveModeId;
+
+  if (typeof input === 'string') {
+    // Mode key provided
+    mode = input;
+  } else if ('currentMode' in input) {
+    // Full config object provided
+    mode = input.currentMode;
+  } else {
+    // Mode definition provided
+    mode = input.id;
+  }
+
+  // Emulation mode never uses operator (chat-only)
+  return mode !== 'emulation';
 }

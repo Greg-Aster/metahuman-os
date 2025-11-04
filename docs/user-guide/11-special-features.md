@@ -204,7 +204,7 @@ MetaHuman OS now includes a full-featured calendar system, allowing you to manag
 ### Long-Term Memory & LoRA Adaptation
 MetaHuman OS features a sophisticated personality adaptation system using LoRA (Low-Rank Adaptation) to continuously learn from your memories. This allows your digital personality to evolve over time without needing to retrain the entire base model.
 
-**Note:** The training pipeline is also affected by the active [Cognitive Mode](04-core-concepts.md#8-cognitive-modes-upcoming-feature). For example, in "Agent Mode" and "Emulation Mode", the training pipeline is disabled to prevent the model from learning and evolving.
+**Note:** The training pipeline is also affected by the active [Cognitive Mode](04-core-concepts.md#8-cognitive-modes). For example, in "Agent Mode" and "Emulation Mode", the training pipeline is disabled to prevent the model from learning and evolving.
 
 Two tiers of adaptation are available:
 - **Tier-1: Prompt Adaptation**: A lightweight, daily process that injects recent memories and persona traits directly into the LLM's system prompt. This provides immediate context for conversations.
