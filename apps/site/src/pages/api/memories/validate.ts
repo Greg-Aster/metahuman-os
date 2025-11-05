@@ -2,10 +2,11 @@ import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
 import { paths, timestamp } from '@metahuman/core'
+import { requireWriteMode } from '../../../../../../packages/core/src/security-policy.js'
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = requireWriteMode(async (context) => {
   try {
-    const body = await request.json()
+    const body = await context.request.json()
     const { relPath, status } = body || {}
 
     if (!relPath || typeof relPath !== 'string') {
@@ -35,5 +36,5 @@ export const POST: APIRoute = async ({ request }) => {
   } catch (err) {
     return new Response(JSON.stringify({ error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
-}
+})
 

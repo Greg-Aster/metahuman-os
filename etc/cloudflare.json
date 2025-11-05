@@ -1,0 +1,6 @@
+{
+  "enabled": false,
+  "tunnelName": "metahuman",
+  "hostname": "mh.dndiy.org",
+  "autoStart": false
+}

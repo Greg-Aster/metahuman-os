@@ -1,6 +1,6 @@
 {
-  "currentMode": "dual",
-  "lastChanged": "2025-11-05T00:07:23.215Z",
+  "currentMode": "emulation",
+  "lastChanged": "2025-11-05T05:26:00.320Z",
   "history": [
     {
       "mode": "dual",
@@ -466,6 +466,111 @@
       "mode": "dual",
       "changedAt": "2025-11-05T00:07:23.215Z",
       "actor": "test"
+    },
+    {
+      "mode": "emulation",
+      "changedAt": "2025-11-05T02:48:17.784Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-05T02:57:42.016Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "emulation",
+      "changedAt": "2025-11-05T02:59:40.141Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-05T04:48:20.128Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "emulation",
+      "changedAt": "2025-11-05T04:48:24.897Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-05T04:48:27.748Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "emulation",
+      "changedAt": "2025-11-05T04:49:28.583Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-05T04:54:48.723Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "emulation",
+      "changedAt": "2025-11-05T04:55:04.509Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-05T04:56:23.450Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "emulation",
+      "changedAt": "2025-11-05T04:56:39.825Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "agent",
+      "changedAt": "2025-11-05T04:56:54.465Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-05T04:56:57.457Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "emulation",
+      "changedAt": "2025-11-05T05:13:26.557Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "agent",
+      "changedAt": "2025-11-05T05:18:06.422Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-05T05:18:16.114Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "agent",
+      "changedAt": "2025-11-05T05:24:05.966Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "emulation",
+      "changedAt": "2025-11-05T05:24:21.780Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "agent",
+      "changedAt": "2025-11-05T05:24:48.803Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-05T05:25:56.417Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "emulation",
+      "changedAt": "2025-11-05T05:26:00.320Z",
+      "actor": "web_ui"
     }
   ]
 }

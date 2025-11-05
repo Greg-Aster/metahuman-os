@@ -8,12 +8,11 @@
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import bcrypt from 'bcrypt';
 import { paths } from './paths.js';
 import { audit } from './audit.js';
 
-// Import bcrypt - will need to install this
-// For now, using a simple hash for development (REPLACE WITH BCRYPT IN PRODUCTION)
-import crypto from 'crypto';
+const BCRYPT_ROUNDS = 12; // Standard secure rounds for bcrypt
 
 /**
  * User account
@@ -86,30 +85,28 @@ function saveUsers(store: UserStore): void {
 }
 
 /**
- * Hash password using SHA-256
- * TODO: Replace with bcrypt in production!
+ * Hash password using bcrypt with per-user salts
  *
- * This is a temporary implementation for development.
- * Use bcrypt.hash() in production for proper security.
+ * Uses bcrypt with 12 rounds for secure password hashing.
+ * Each password gets a unique salt automatically.
  */
 function hashPassword(password: string): string {
-  // TEMPORARY: Simple SHA-256 hash
-  // PRODUCTION: Use bcrypt.hash(password, 12)
-  const salt = 'metahuman-os-temp-salt'; // TODO: Remove in production
-  return crypto
-    .createHash('sha256')
-    .update(password + salt)
-    .digest('hex');
+  return bcrypt.hashSync(password, BCRYPT_ROUNDS);
 }
 
 /**
- * Verify password against hash
- * TODO: Replace with bcrypt in production!
+ * Verify password against bcrypt hash
+ *
+ * Safely compares password with hash using constant-time comparison.
  */
 function verifyPassword(password: string, hash: string): boolean {
-  // TEMPORARY: Compare SHA-256 hashes
-  // PRODUCTION: Use bcrypt.compare(password, hash)
-  return hashPassword(password) === hash;
+  try {
+    return bcrypt.compareSync(password, hash);
+  } catch (error) {
+    // Invalid hash format
+    console.error('[users] Password verification error:', error);
+    return false;
+  }
 }
 
 /**
@@ -364,4 +361,116 @@ export function changePassword(
   });
 
   return true;
+}
+
+/**
+ * Update user password (without verifying old password)
+ * Use this when you've already verified the user's identity via other means
+ */
+export function updatePassword(userId: string, newPassword: string): void {
+  const store = loadUsers();
+  const user = store.users.find((u) => u.id === userId);
+
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  if (newPassword.length < 4) {
+    throw new Error('Password must be at least 4 characters');
+  }
+
+  user.passwordHash = hashPassword(newPassword);
+  saveUsers(store);
+
+  audit({
+    level: 'info',
+    category: 'security',
+    event: 'password_updated',
+    details: { userId },
+    actor: userId,
+  });
+}
+
+/**
+ * Verify password for a user by username
+ * Returns true if password matches, false otherwise
+ */
+export function verifyUserPassword(username: string, password: string): boolean {
+  const store = loadUsers();
+  const user = store.users.find((u) => u.username === username);
+
+  if (!user) {
+    return false;
+  }
+
+  return verifyPassword(password, user.passwordHash);
+}
+
+/**
+ * Update username
+ */
+export function updateUsername(userId: string, newUsername: string): void {
+  const store = loadUsers();
+  const user = store.users.find((u) => u.id === userId);
+
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  // Validate username
+  if (!newUsername || newUsername.length < 3 || newUsername.length > 50) {
+    throw new Error('Username must be 3-50 characters');
+  }
+
+  if (!/^[a-zA-Z0-9_-]+$/.test(newUsername)) {
+    throw new Error('Username can only contain letters, numbers, underscore, and hyphen');
+  }
+
+  // Check if username already exists
+  const existing = store.users.find((u) => u.username === newUsername && u.id !== userId);
+  if (existing) {
+    throw new Error('Username already exists');
+  }
+
+  const oldUsername = user.username;
+  user.username = newUsername;
+  saveUsers(store);
+
+  audit({
+    level: 'info',
+    category: 'security',
+    event: 'username_changed',
+    details: { userId, oldUsername, newUsername },
+    actor: userId,
+  });
+}
+
+/**
+ * Update user metadata (display name, email)
+ */
+export function updateUserMetadata(
+  userId: string,
+  metadata: { displayName?: string; email?: string }
+): void {
+  const store = loadUsers();
+  const user = store.users.find((u) => u.id === userId);
+
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  user.metadata = {
+    ...user.metadata,
+    ...metadata,
+  };
+
+  saveUsers(store);
+
+  audit({
+    level: 'info',
+    category: 'data_change',
+    event: 'user_metadata_updated',
+    details: { userId, metadata },
+    actor: userId,
+  });
 }

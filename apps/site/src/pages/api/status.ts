@@ -2,28 +2,42 @@ import type { APIRoute } from 'astro';
 import { loadPersonaCore, loadDecisionRules } from '@metahuman/core/identity';
 import { listActiveTasks } from '@metahuman/core/memory';
 import { ROOT, getActiveAdapter } from '@metahuman/core';
-import { listAvailableRoles, resolveModel, loadModelRegistry } from '@metahuman/core/model-resolver';
+import { listAvailableRoles, resolveModelForCognitiveMode, loadModelRegistry } from '@metahuman/core/model-resolver';
+import { loadCognitiveMode } from '@metahuman/core/cognitive-mode';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 // Cache implementation for /api/status
-const statusCache = { data: null, timestamp: 0 };
+// Note: Cache key now includes cognitive mode to ensure accurate status per mode
+const statusCache = new Map<string, { data: any; timestamp: number }>();
 const CACHE_TTL = 5000; // 5 seconds
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ cookies }) => {
   try {
     const now = Date.now();
 
-    // Return cached if fresh
-    if (statusCache.data && now - statusCache.timestamp < CACHE_TTL) {
+    // Check authentication to determine effective cognitive mode
+    const sessionCookie = cookies?.get('mh_session');
+    const isAuthenticated = !!sessionCookie;
+
+    // Load cognitive mode, but override for unauthenticated users
+    const cognitiveConfig = loadCognitiveMode();
+    const cognitiveMode = isAuthenticated ? cognitiveConfig.currentMode : 'emulation';
+
+    // Cache key includes cognitive mode for accurate per-mode caching
+    const cacheKey = `status-${cognitiveMode}`;
+
+    // Return cached if fresh for this cognitive mode
+    const cached = statusCache.get(cacheKey);
+    if (cached && now - cached.timestamp < CACHE_TTL) {
       return new Response(
-        JSON.stringify(statusCache.data),
-        { 
-          status: 200, 
-          headers: { 
-            'Content-Type': 'application/json', 
+        JSON.stringify(cached.data),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
             'Cache-Control': 'no-store' // Still no-store to avoid browser caching, but we have server-side caching
-          } 
+          }
         }
       );
     }
@@ -93,29 +107,57 @@ export const GET: APIRoute = async () => {
     const personaSummaryStatus = includePersonaSummary ? 'enabled' : 'disabled';
 
     // Build model roles information from registry
+    // Only show roles that are defined for the current cognitive mode
     let modelRoles: Record<string, any> = {};
     let registryVersion: string | null = null;
     try {
       const registry = loadModelRegistry();
       registryVersion = registry.version;
 
-      const roles = listAvailableRoles();
-      for (const role of roles) {
-        try {
-          const resolved = resolveModel(role);
-          modelRoles[role] = {
-            modelId: resolved.id,
-            provider: resolved.provider,
-            model: resolved.model,
-            adapters: resolved.adapters,
-            baseModel: resolved.baseModel,
-            temperature: resolved.options.temperature,
-          };
-        } catch (error) {
-          // Role may be disabled or misconfigured
-          modelRoles[role] = {
-            error: (error as Error).message,
-          };
+      // Get roles defined for this cognitive mode
+      const modeMappings = registry.cognitiveModeMappings?.[cognitiveMode];
+      if (modeMappings) {
+        // Only include roles that are explicitly mapped (not null) for this mode
+        for (const [role, modelId] of Object.entries(modeMappings)) {
+          // Skip non-role fields like 'description'
+          if (role === 'description') continue;
+
+          // Skip roles that are explicitly disabled (null)
+          if (modelId === null) continue;
+
+          try {
+            // Use cognitive-mode-aware resolution to show what's actually being used
+            const resolved = resolveModelForCognitiveMode(cognitiveMode, role as any);
+            modelRoles[role] = {
+              modelId: resolved.id,
+              provider: resolved.provider,
+              model: resolved.model,
+              adapters: resolved.adapters,
+              baseModel: resolved.baseModel,
+              temperature: resolved.options.temperature,
+            };
+          } catch (error) {
+            // Role failed to resolve - skip it
+            console.error(`[status] Failed to resolve role ${role} for mode ${cognitiveMode}:`, error);
+          }
+        }
+      } else {
+        // Fallback: show all available roles if mode mappings not found
+        const roles = listAvailableRoles();
+        for (const role of roles) {
+          try {
+            const resolved = resolveModelForCognitiveMode(cognitiveMode, role);
+            modelRoles[role] = {
+              modelId: resolved.id,
+              provider: resolved.provider,
+              model: resolved.model,
+              adapters: resolved.adapters,
+              baseModel: resolved.baseModel,
+              temperature: resolved.options.temperature,
+            };
+          } catch (error) {
+            // Skip roles that can't be resolved
+          }
         }
       }
     } catch (error) {
@@ -151,13 +193,15 @@ export const GET: APIRoute = async () => {
         personaSummary: personaSummaryStatus,
         adapter,
       },
-      // New multi-model registry information
+      // New multi-model registry information (cognitive-mode-aware)
       modelRoles,
       registryVersion,
+      cognitiveMode,
+      isAuthenticated,
     };
 
-    statusCache.data = responseData;
-    statusCache.timestamp = now;
+    // Cache the response with cognitive-mode-specific key
+    statusCache.set(cacheKey, { data: responseData, timestamp: now });
 
     return new Response(
       JSON.stringify(responseData),

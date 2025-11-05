@@ -17,6 +17,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 "$REPO_ROOT/bin/mh" start --restart
+# Auto-start Cloudflare tunnel if enabled
+"$REPO_ROOT/bin/start-cloudflare" 2>/dev/null || true
+
 
 cd "$REPO_ROOT/apps/site"
 

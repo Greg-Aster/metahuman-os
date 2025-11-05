@@ -69,6 +69,14 @@ export default defineConfig({
   },
   output: 'server',
   vite: {
-    logLevel: process.env.LOG_LEVEL === 'debug' ? 'info' : 'warn'
+    logLevel: process.env.LOG_LEVEL === 'debug' ? 'info' : 'warn',
+    server: {
+      allowedHosts: [
+        'localhost',
+        '127.0.0.1',
+        'mh.dndiy.org',
+        '.dndiy.org' // Allow all subdomains
+      ]
+    }
   }
 });

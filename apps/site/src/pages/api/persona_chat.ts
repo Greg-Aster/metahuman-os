@@ -354,7 +354,8 @@ You are having a ${mode}.
   histories[mode] = [{ role: 'system', content: systemPrompt }];
 }
 
-export const GET: APIRoute = async ({ request }) => {
+export const GET: APIRoute = async (context) => {
+  const { request, cookies } = context;
   const url = new URL(request.url);
   const message = url.searchParams.get('message') || '';
   const mode = url.searchParams.get('mode') || 'inner';
@@ -381,13 +382,13 @@ export const GET: APIRoute = async ({ request }) => {
     }
   }
 
-  return handleChatRequest({ message, mode, newSession, audience, length, reason, reasoningDepth, llm, forceOperator, yolo, origin: url.origin });
+  return handleChatRequest({ message, mode, newSession, audience, length, reason, reasoningDepth, llm, forceOperator, yolo, origin: url.origin, cookies });
 };
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, cookies }) => {
   const url = new URL(request.url);
   const body = await request.json();
-  return handleChatRequest({ ...body, origin: url.origin });
+  return handleChatRequest({ ...body, origin: url.origin, cookies });
 };
 
 async function shouldUseOperator(message: string, recentContext?: string): Promise<boolean> {
@@ -410,6 +411,17 @@ async function shouldUseOperator(message: string, recentContext?: string): Promi
 
   const followUpRead = contextLower.includes('assistant: i found the file') && /\bread\b/.test(lowered);
   if (followUpRead) {
+    return true;
+  }
+
+  // Strong file reading indicators
+  const fileReadPatterns = [
+    /\b(read|show|display|view|cat|open)\s+(the\s+)?(content|contents|file)\s+(of|from|in)\b/i,
+    /\b(read|show|display|view|cat)\s+.*\.(txt|md|json|csv|log|py|js|ts|jsx|tsx)\b/i,
+    /\b(what|what's|whats)\s+(in|inside)\s+(the\s+)?file\b/i,
+  ];
+
+  if (fileReadPatterns.some(pattern => pattern.test(trimmed))) {
     return true;
   }
 
@@ -634,7 +646,7 @@ Do not mention the operator, internal steps, or unavailable data. If nothing use
   return text || operatorReport;
 }
 
-async function handleChatRequest({ message, mode = 'inner', newSession = false, audience, length, reason, reasoningDepth, llm, forceOperator = false, yolo = false, origin }: { message: string; mode?: string; newSession?: boolean; audience?: string; length?: string; reason?: boolean; reasoningDepth?: number; llm?: any; forceOperator?: boolean; yolo?: boolean; origin?: string }) {
+async function handleChatRequest({ message, mode = 'inner', newSession = false, audience, length, reason, reasoningDepth, llm, forceOperator = false, yolo = false, origin, cookies }: { message: string; mode?: string; newSession?: boolean; audience?: string; length?: string; reason?: boolean; reasoningDepth?: number; llm?: any; forceOperator?: boolean; yolo?: boolean; origin?: string; cookies?: any }) {
   console.log(`\n[CHAT_REQUEST] Received: "${message}"`);
   const m: Mode = mode === 'conversation' ? 'conversation' : 'inner';
 
@@ -673,9 +685,15 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     return new Response(JSON.stringify({ error: 'Could not determine model: ' + (error as Error).message }), { status: 500 });
   }
 
+  // Check if user is authenticated (has session cookie)
+  const sessionCookie = cookies?.get('mh_session');
+  const isAuthenticated = !!sessionCookie;
+
   // Load cognitive mode context once for consistent routing and memory policies
+  // For unauthenticated users, force emulation mode (read-only, safe for guests)
   const cognitiveContext = getCognitiveModeContext();
-  const { mode: cognitiveMode, allowMemoryWrites } = cognitiveContext;
+  const cognitiveMode: 'dual' | 'agent' | 'emulation' = isAuthenticated ? cognitiveContext.mode : 'emulation';
+  const allowMemoryWrites = isAuthenticated ? cognitiveContext.allowMemoryWrites : false;
 
   const trimmedMessage = String(message ?? '').trim();
   const recentDialogue = histories[m]
@@ -693,10 +711,30 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     : recentDialogue;
 
   // Decide whether to use the operator or the chat model
-  const useOperator = forceOperator || await shouldUseOperator(message ?? '', routingContext);
+  // Optimization: Skip expensive shouldUseOperator check if not authenticated or in emulation
+  // This avoids unnecessary LLM calls for routing decisions
+  let wouldUseOperator = false;
+  if (isAuthenticated && cognitiveMode !== 'emulation') {
+    wouldUseOperator = forceOperator || await shouldUseOperator(message ?? '', routingContext);
+  }
+  const useOperator = isAuthenticated && wouldUseOperator;
 
   console.log(`[CHAT_REQUEST] Cognitive Mode: ${cognitiveMode}`);
+  console.log(`[CHAT_REQUEST] Authenticated: ${isAuthenticated}`);
   console.log(`[CHAT_REQUEST] Routing decision: ${useOperator ? 'OPERATOR' : 'PERSONA'}`);
+
+  // Log and notify when operator is blocked due to lack of authentication
+  if (wouldUseOperator && !isAuthenticated) {
+    console.log('[CHAT_REQUEST] Operator routing blocked - user not authenticated');
+
+    // Add a system message to inform the user about limited capabilities
+    const authWarning = `_Note: I'm currently in **Emulation Mode** (read-only) because you're not authenticated. Some features like file operations, task management, and code execution require authentication. [Learn more about modes](/user-guide) or contact the owner for access._`;
+
+    histories[m].push({
+      role: 'system',
+      content: authWarning
+    });
+  }
 
   if (useOperator) {
     // Stream the operator response
@@ -741,9 +779,21 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
           }
 
           const operatorUrl = origin ? new URL('/api/operator', origin).toString() : '/api/operator';
+
+          // Build headers with session cookie to pass through authentication
+          const operatorHeaders: Record<string, string> = {
+            'Content-Type': 'application/json'
+          };
+
+          // Forward session cookie for authentication
+          const sessionCookie = cookies.get('mh_session');
+          if (sessionCookie) {
+            operatorHeaders['Cookie'] = `mh_session=${sessionCookie.value}`;
+          }
+
           const operatorResponse = await fetch(operatorUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: operatorHeaders,
             body: JSON.stringify({
               goal: message,
               context: operatorContext,

@@ -168,7 +168,7 @@ function initialize(): void {
   initializeSkills();
 
   // Get available skills for current trust level
-  availableSkills = getAvailableSkills(trustLevel);
+  availableSkills = getAvailableSkills(trustLevel) || [];
   console.log(`[operator] Available skills (${availableSkills.length}):`, availableSkills.map(s => s.id).join(', '));
 
   audit({

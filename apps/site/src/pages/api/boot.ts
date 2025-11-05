@@ -9,6 +9,7 @@ import {
   audit,
   loadPersonaCore,
 } from '@metahuman/core'
+import { loadCognitiveMode } from '@metahuman/core/cognitive-mode'
 
 // Minimal, idempotent agent boot endpoint used by the UI to ensure
 // core autonomous services are running. Safe to call multiple times.
@@ -16,10 +17,14 @@ import {
 // UI-only boot: start boredom-service and audio-organizer from the web app
 const DEFAULT_AGENTS = ['boredom-service', 'audio-organizer'] as const
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ cookies }) => {
   const started: string[] = []
   const already: string[] = []
   const missing: string[] = []
+
+  // Check authentication and determine effective cognitive mode
+  const sessionCookie = cookies?.get('mh_session');
+  const isAuthenticated = !!sessionCookie;
 
   // Prefer a deterministic tsx path under the site app to avoid PATH issues
   const tsxPath = path.join(paths.root, 'apps', 'site', 'node_modules', '.bin', 'tsx')
@@ -92,9 +97,14 @@ export const GET: APIRoute = async () => {
   let persona = null
   let version = '1.0.0'
   let modelInfo = null
+  let cognitiveMode = 'emulation'
 
   try {
     persona = loadPersonaCore()
+
+    // Load cognitive mode, but override for unauthenticated users
+    const cognitiveConfig = loadCognitiveMode()
+    cognitiveMode = isAuthenticated ? cognitiveConfig.currentMode : 'emulation'
 
     // Try to get version from package.json
     try {
@@ -120,7 +130,16 @@ export const GET: APIRoute = async () => {
   }
 
   return new Response(
-    JSON.stringify({ started, already, missing, persona, version, modelInfo }),
+    JSON.stringify({
+      started,
+      already,
+      missing,
+      persona,
+      version,
+      modelInfo,
+      cognitiveMode,
+      isAuthenticated
+    }),
     { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }
   )
 }

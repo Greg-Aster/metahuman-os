@@ -1,0 +1,9 @@
+#!/usr/bin/env tsx
+/**
+ * Start Cloudflare Tunnel (if enabled)
+ * Called automatically when dev server starts
+ */
+
+import { autoStartTunnel } from '../packages/core/src/cloudflare-tunnel.js';
+
+autoStartTunnel();

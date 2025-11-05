@@ -1,0 +1,127 @@
+#!/usr/bin/env tsx
+/**
+ * Create Guest User Script
+ *
+ * Create a guest user account for sharing MetaHuman OS with friends.
+ * Guest users have limited permissions (read-only, emulation mode).
+ *
+ * Usage:
+ *   1. Edit the credentials below
+ *   2. Run: npx tsx scripts/create-guest.ts
+ */
+
+import { createUser } from '../packages/core/src/users.js';
+
+// =============================================================================
+// CONFIGURATION - EDIT THESE VALUES
+// =============================================================================
+
+const username = 'guest1';        // Guest username (lowercase, no spaces)
+const password = 'guest-password'; // Guest password (change this!)
+const displayName = 'Guest User';  // Display name
+const email = 'guest@example.com'; // Optional: guest's email
+
+// =============================================================================
+// DO NOT EDIT BELOW THIS LINE
+// =============================================================================
+
+async function main() {
+  console.log('');
+  console.log('╔════════════════════════════════════════════════════════════╗');
+  console.log('║       MetaHuman OS - Create Guest User                    ║');
+  console.log('╚════════════════════════════════════════════════════════════╝');
+  console.log('');
+
+  // Validate input
+  if (!username || username.trim() === '' || username === 'guest1') {
+    console.error('❌ Error: Please edit the script and set a guest username');
+    console.error('   Open: scripts/create-guest.ts');
+    console.error('   Change line: const username = \'guest1\'');
+    process.exit(1);
+  }
+
+  if (!password || password === 'guest-password') {
+    console.error('❌ Error: Please edit the script and set a password');
+    console.error('   Open: scripts/create-guest.ts');
+    console.error('   Change line: const password = \'guest-password\'');
+    process.exit(1);
+  }
+
+  if (password.length < 4) {
+    console.error('⚠️  Warning: Password is very short (less than 4 characters)');
+    console.error('   For security, use a strong password (12+ characters)');
+    console.error('');
+  }
+
+  console.log('Creating guest user with:');
+  console.log(`  Username:     ${username}`);
+  console.log(`  Display Name: ${displayName || '(none)'}`);
+  console.log(`  Email:        ${email || '(none)'}`);
+  console.log(`  Role:         guest`);
+  console.log('');
+
+  try {
+    const user = createUser(username, password, 'guest', {
+      displayName: displayName || undefined,
+      email: email || undefined,
+    });
+
+    console.log('✅ Guest user created successfully!');
+    console.log('');
+    console.log('User Details:');
+    console.log(`  ID:           ${user.id}`);
+    console.log(`  Username:     ${user.username}`);
+    console.log(`  Role:         ${user.role}`);
+    console.log(`  Display Name: ${user.metadata?.displayName || '(none)'}`);
+    console.log(`  Email:        ${user.metadata?.email || '(none)'}`);
+    console.log(`  Created:      ${user.createdAt}`);
+    console.log('');
+    console.log('Guest Permissions:');
+    console.log('  ✓ Read-only access to memories');
+    console.log('  ✓ Chat with persona (emulation mode)');
+    console.log('  ✗ Cannot modify persona or settings');
+    console.log('  ✗ Cannot access security settings');
+    console.log('  ✗ 1-hour session duration');
+    console.log('');
+    console.log('Share with guest:');
+    console.log(`  Username: ${user.username}`);
+    console.log(`  Password: (share securely)`);
+    console.log(`  URL: https://metahuman.yourdomain.com`);
+    console.log('');
+    console.log('🎉 Guest user is ready!');
+    console.log('');
+
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('already exists')) {
+        console.log('⚠️  User already exists!');
+        console.log('');
+        console.log('Options:');
+        console.log('  1. Use a different username (edit scripts/create-guest.ts)');
+        console.log('  2. Delete existing guest via Security Settings UI');
+        console.log('  3. Use existing credentials to login');
+        console.log('');
+        process.exit(1);
+      } else if (error.message.includes('Invalid username')) {
+        console.error('❌ Invalid username');
+        console.error('   Username must:');
+        console.error('   - Be 3-50 characters long');
+        console.error('   - Contain only letters, numbers, underscore, hyphen');
+        console.error('   - Not contain spaces');
+        console.error('');
+        process.exit(1);
+      } else {
+        console.error('❌ Failed to create guest user:');
+        console.error(`   ${error.message}`);
+        console.error('');
+        process.exit(1);
+      }
+    } else {
+      console.error('❌ Unknown error occurred');
+      console.error(error);
+      process.exit(1);
+    }
+  }
+}
+
+main();

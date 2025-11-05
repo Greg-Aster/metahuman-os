@@ -4,6 +4,10 @@ The following features are currently in the planning and proposal stage. For mor
 
 -   **[Cognitive Modes](04-core-concepts.md#8-cognitive-modes-upcoming-feature)**: A planned feature to allow switching between different operational paradigms, such as a deep cognitive mirror (`Dual Consciousness`), a simple command-driven assistant (`Agent Mode`), or a stable, non-learning conversational partner (`Emulation Mode`).
 -   **Direct `llama.cpp` Integration**: Future versions will explore direct `llama.cpp` integration, offering an alternative to Ollama for users who prefer a more direct local LLM setup.
+-   **Password Recovery System**: Future authentication enhancements will include secure password recovery options:
+    -   **Recovery Codes** (No external dependencies): Generate one-time recovery codes during account creation for offline password reset
+    -   **Email Integration** (Requires SMTP): Email-based password reset flow with time-limited tokens (requires SMTP server configuration)
+    -   **SMS Recovery** (Requires SMS service): Mobile-based password reset via SMS (requires Twilio/AWS SNS or similar service)
 
 ## What's Next
 
@@ -27,6 +31,14 @@ MetaHuman OS is under active development following a phased roadmap toward full 
 - ✅ Inner dialogue system
 - ✅ Memory validation UI
 - ✅ Approval queue for skill execution
+- ✅ **Phase 6: Authentication & Multi-User Support**
+  - Cookie-based session management (24h owner, 1h guest, 30min anonymous)
+  - Role-based access control (owner/guest/anonymous)
+  - Security settings UI (change username, password, profile)
+  - bcrypt password hashing (12 rounds)
+  - Environment-based system triggers (WETWARE_DECEASED, HIGH_SECURITY)
+  - Authenticated memory API endpoints
+  - Write mode restrictions for emulation mode
 
 **In Progress:**
 - Preference learning from repeated decisions
@@ -57,6 +69,8 @@ MetaHuman OS is under active development following a phased roadmap toward full 
 - Contextual reasoning: Understand situation and timing
 - Skills v2: Email, messaging, research, content drafting
 - Notification system: Timely nudges and updates
+- **Email Integration**: SMTP/IMAP support for notifications, password recovery, and proactive email management
+- **Password Recovery Options**: Recovery codes (local-first), email reset tokens, SMS recovery
 
 **Timeline:** 6-8 weeks after Phase 2
 

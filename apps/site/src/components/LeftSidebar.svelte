@@ -19,6 +19,7 @@
     { id: 'training', label: 'AI Training', icon: '🧠', description: 'LoRA adapters' },
     { id: 'terminal', label: 'Terminal', icon: '💻', description: 'Command line' },
     { id: 'system', label: 'System', icon: '⚙️', description: 'Settings & tools' },
+    { id: 'network', label: 'Network', icon: '🌐', description: 'Cloudflare & connectivity' },
     { id: 'security', label: 'Security', icon: '🔒', description: 'User & authentication' },
   ];
 

@@ -3,7 +3,7 @@
   import Thinking from './Thinking.svelte';
   import VoiceInteraction from './VoiceInteraction.svelte';
   import ApprovalBox from './ApprovalBox.svelte';
-  import { canUseOperator } from '../stores/security-policy';
+  import { canUseOperator, currentMode } from '../stores/security-policy';
 
 type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'reasoning';
 
@@ -978,85 +978,91 @@ let reasoningStages: ReasoningStage[] = [];
     <div class="input-wrapper">
       <div class="input-controls">
         <div class="operator-toggle-group" bind:this={operatorToggleGroup}>
-          <label class="small-toggle">
-            <input type="checkbox" bind:checked={forceOperator} on:change={saveChatPrefs} />
-            <span>Operator</span>
-          </label>
-          <label class="small-toggle yolo-toggle">
-            <input type="checkbox" bind:checked={yoloMode} on:change={handleYoloToggle} />
-            <span>YOLO</span>
-          </label>
-          <button
-            type="button"
-            class="operator-info-trigger"
-            on:click={toggleOperatorInfo}
-            aria-expanded={showOperatorInfo}
-            aria-label="Show operator capabilities"
-            title="See operator capabilities"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M6 9l6 6 6-6" />
-            </svg>
-          </button>
-          {#if showOperatorInfo}
-            <div
-              class="operator-popover"
-              bind:this={operatorInfoContainer}
-              on:click|stopPropagation
+          {#if $currentMode !== 'emulation'}
+            <label class="small-toggle">
+              <input type="checkbox" bind:checked={forceOperator} on:change={saveChatPrefs} />
+              <span>Operator</span>
+            </label>
+            <label class="small-toggle yolo-toggle">
+              <input type="checkbox" bind:checked={yoloMode} on:change={handleYoloToggle} />
+              <span>YOLO</span>
+            </label>
+          {/if}
+          {#if $currentMode !== 'emulation'}
+            <button
+              type="button"
+              class="operator-info-trigger"
+              on:click={toggleOperatorInfo}
+              aria-expanded={showOperatorInfo}
+              aria-label="Show operator capabilities"
+              title="See operator capabilities"
             >
-              <div class="operator-popover-header">
-                <strong>Operator automations</strong>
-                <button
-                  type="button"
-                  class="operator-popover-close"
-                  on:click={closeOperatorInfo}
-                  aria-label="Close operator capabilities"
-                >
-                  ×
-                </button>
-              </div>
-              {#if operatorTrustLevel}
-                <div class="operator-popover-trust">Trust level: {operatorTrustLevel}</div>
-              {/if}
-              <div class="operator-popover-content">
-                {#if operatorStatusLoading}
-                  <div class="operator-popover-state">Loading capabilities…</div>
-                {:else if operatorStatusError}
-                  <div class="operator-popover-error">
-                    <span>Failed to load skills: {operatorStatusError}</span>
-                    <button type="button" on:click={() => { void loadOperatorStatus(); }}>Retry</button>
-                  </div>
-                {:else if operatorSkills.length === 0}
-                  <div class="operator-popover-state">
-                    No operator skills are available at the current trust level yet.
-                  </div>
-                {:else}
-                  <ul class="operator-popover-list">
-                    {#each operatorSkills as skill}
-                      <li>
-                        <div class="skill-head">
-                          <span class="skill-name">{skill.name || skill.id}</span>
-                          <span class="skill-meta">{skill.risk}{skill.requiresApproval ? ' · approval' : ''}</span>
-                        </div>
-                        {#if skill.description}
-                          <div class="skill-desc">{skill.description}</div>
-                        {/if}
-                      </li>
-                    {/each}
-                  </ul>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+            {#if showOperatorInfo}
+              <div
+                class="operator-popover"
+                bind:this={operatorInfoContainer}
+                on:click|stopPropagation
+              >
+                <div class="operator-popover-header">
+                  <strong>Operator automations</strong>
+                  <button
+                    type="button"
+                    class="operator-popover-close"
+                    on:click={closeOperatorInfo}
+                    aria-label="Close operator capabilities"
+                  >
+                    ×
+                  </button>
+                </div>
+                {#if operatorTrustLevel}
+                  <div class="operator-popover-trust">Trust level: {operatorTrustLevel}</div>
                 {/if}
+                <div class="operator-popover-content">
+                  {#if operatorStatusLoading}
+                    <div class="operator-popover-state">Loading capabilities…</div>
+                  {:else if operatorStatusError}
+                    <div class="operator-popover-error">
+                      <span>Failed to load skills: {operatorStatusError}</span>
+                      <button type="button" on:click={() => { void loadOperatorStatus(); }}>Retry</button>
+                    </div>
+                  {:else if operatorSkills.length === 0}
+                    <div class="operator-popover-state">
+                      No operator skills are available at the current trust level yet.
+                    </div>
+                  {:else}
+                    <ul class="operator-popover-list">
+                      {#each operatorSkills as skill}
+                        <li>
+                          <div class="skill-head">
+                            <span class="skill-name">{skill.name || skill.id}</span>
+                            <span class="skill-meta">{skill.risk}{skill.requiresApproval ? ' · approval' : ''}</span>
+                          </div>
+                          {#if skill.description}
+                            <div class="skill-desc">{skill.description}</div>
+                          {/if}
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
+                </div>
+                <p class="operator-popover-footnote">
+                  Operator plans and executes multi-step tasks. Use the focus menu to bias toward file, git, or web tools.
+                </p>
               </div>
-              <p class="operator-popover-footnote">
-                Operator plans and executes multi-step tasks. Use the focus menu to bias toward file, git, or web tools.
-              </p>
-            </div>
+            {/if}
           {/if}
         </div>
-        <select class="operator-focus" bind:value={audience} on:change={saveChatPrefs} title="Bias operator toward a specific toolkit">
-          {#each operatorProfiles as option}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
+        {#if $currentMode !== 'emulation'}
+          <select class="operator-focus" bind:value={audience} on:change={saveChatPrefs} title="Bias operator toward a specific toolkit">
+            {#each operatorProfiles as option}
+              <option value={option.value}>{option.label}</option>
+            {/each}
+          </select>
+        {/if}
       </div>
 
       <!-- Code approval box appears here when there are pending approvals -->
@@ -1074,28 +1080,30 @@ let reasoningStages: ReasoningStage[] = [];
           disabled={loading}
         />
         <div class="input-actions">
-          <button
-            class="operator-icon-btn {forceOperator ? 'active' : ''}"
-            title={!$canUseOperator ? 'Operator disabled in current mode' : (forceOperator ? 'Operator mode enabled' : 'Enable operator mode')}
-            aria-pressed={forceOperator}
-            disabled={!$canUseOperator}
-            on:click={() => { forceOperator = !forceOperator; saveChatPrefs(); }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path d="M7 9a5 5 0 0 1 10 0v3a5 5 0 0 1-10 0V9zm-2 3a7 7 0 1 0 14 0V9a7 7 0 1 0-14 0v3zm3 7h8a2 2 0 0 0 2-2v-1H6v1a2 2 0 0 0 2 2z"/>
-            </svg>
-          </button>
-          <button
-            class="operator-icon-btn yolo {yoloMode ? 'active' : ''}"
-            title={!$canUseOperator ? 'YOLO mode disabled in current mode' : (yoloMode ? 'YOLO mode enabled' : 'Enable YOLO mode')}
-            aria-pressed={yoloMode}
-            disabled={!$canUseOperator}
-            on:click={toggleYoloMobile}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path d="M13 2L3 14h7l-1 8 10-12h-7z" />
-            </svg>
-          </button>
+          {#if $currentMode !== 'emulation'}
+            <button
+              class="operator-icon-btn {forceOperator ? 'active' : ''}"
+              title={!$canUseOperator ? 'Operator disabled in current mode' : (forceOperator ? 'Operator mode enabled' : 'Enable operator mode')}
+              aria-pressed={forceOperator}
+              disabled={!$canUseOperator}
+              on:click={() => { forceOperator = !forceOperator; saveChatPrefs(); }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M7 9a5 5 0 0 1 10 0v3a5 5 0 0 1-10 0V9zm-2 3a7 7 0 1 0 14 0V9a7 7 0 1 0-14 0v3zm3 7h8a2 2 0 0 0 2-2v-1H6v1a2 2 0 0 0 2 2z"/>
+              </svg>
+            </button>
+            <button
+              class="operator-icon-btn yolo {yoloMode ? 'active' : ''}"
+              title={!$canUseOperator ? 'YOLO mode disabled in current mode' : (yoloMode ? 'YOLO mode enabled' : 'Enable YOLO mode')}
+              aria-pressed={yoloMode}
+              disabled={!$canUseOperator}
+              on:click={toggleYoloMobile}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M13 2L3 14h7l-1 8 10-12h-7z" />
+              </svg>
+            </button>
+          {/if}
           <button
             class="mic-btn {micRecording ? 'recording' : ''}"
             title={micRecording ? 'Listening… click to stop' : 'Click to speak'}

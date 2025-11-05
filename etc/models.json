@@ -199,17 +199,25 @@
     "dual": {
       "orchestrator": "default.orchestrator",
       "persona": "default.persona",
+      "coder": "default.coder",
+      "planner": "default.planner",
+      "curator": "default.curator",
+      "summarizer": "default.summarizer",
       "description": "Full cognitive mirror with operator routing"
     },
     "agent": {
       "orchestrator": "default.orchestrator",
       "persona": "default.persona",
+      "coder": "default.coder",
+      "planner": "default.planner",
+      "curator": "default.curator",
+      "summarizer": "default.summarizer",
       "description": "Lightweight assistant mode"
     },
     "emulation": {
       "orchestrator": null,
-      "persona": "persona.with-lora",
-      "description": "Read-only personality snapshot with LoRA"
+      "persona": "default.persona",
+      "description": "Read-only personality snapshot"
     }
   },
 

@@ -15,6 +15,8 @@
   import Lifeline from './Lifeline.svelte';
   import OvernightLearnings from './OvernightLearnings.svelte';
   import SystemSettings from './SystemSettings.svelte';
+  import SecuritySettings from './SecuritySettings.svelte';
+  import NetworkSettings from './NetworkSettings.svelte';
 
   // Memory/Events (loaded from /api/memories)
   type EventItem = {
@@ -947,6 +949,14 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
       <div class="view-content">
         <Terminal />
       </div>
+    </div>
+  {:else if $activeView === 'network'}
+    <div class="view-container network-view">
+      <NetworkSettings />
+    </div>
+  {:else if $activeView === 'security'}
+    <div class="view-container security-view">
+      <SecuritySettings />
     </div>
   {/if}
 </div>

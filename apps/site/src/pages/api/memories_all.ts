@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
 import { paths } from '@metahuman/core'
+import { getSecurityPolicy } from '../../../../../packages/core/src/security-policy.js'
 
 type EpisodicItem = {
   id: string
@@ -102,8 +103,17 @@ function listCurated(): CuratedItem[] {
   return out
 }
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async (context) => {
   try {
+    // Require authentication to access memory data
+    const policy = getSecurityPolicy(context);
+    if (!policy.canReadMemory()) {
+      return new Response(
+        JSON.stringify({ error: 'Authentication required to access memories' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     const episodic = listEpisodic()
     const reflections = episodic.filter(item => item.type === 'reflection')
     const dreams = episodic.filter(item => item.type === 'dream')

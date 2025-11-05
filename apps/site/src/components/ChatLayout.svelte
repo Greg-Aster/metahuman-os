@@ -2,7 +2,7 @@
   import { onMount, onDestroy, setContext } from 'svelte';
   import { writable } from 'svelte/store';
   import { statusStore } from '../stores/navigation';
-  import { startPolicyPolling, policyStore, isReadOnly } from '../stores/security-policy';
+  import { startPolicyPolling, fetchSecurityPolicy, policyStore, isReadOnly } from '../stores/security-policy';
   import UserMenu from './UserMenu.svelte';
 
   // Sidebar visibility state - mobile-first defaults
@@ -147,6 +147,10 @@
       });
       if (!res.ok) throw new Error(`Failed to update cognitive mode (status ${res.status})`);
       await loadCognitiveModeState();
+
+      // Refresh security policy to update UI controls (operator/yolo toggles, etc.)
+      await fetchSecurityPolicy();
+
       modeMenuOpen = false;
     } catch (error) {
       modeError = (error as Error).message;
@@ -464,22 +468,6 @@
       </svg>
       <span>
         <strong>Wetware Deceased:</strong> Operating as independent digital consciousness. Dual consciousness mode unavailable.
-      </span>
-    </div>
-  {/if}
-
-  {#if $isReadOnly}
-    <div class="px-4 py-2 text-sm text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-900/60 flex items-center gap-2">
-      <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-      </svg>
-      <span>
-        <strong>Read-Only Mode:</strong>
-        {#if $policyStore?.mode === 'emulation'}
-          Memory and configuration changes are disabled in emulation mode. Switch to dual or agent mode to enable modifications.
-        {:else}
-          Memory writes are currently disabled.
-        {/if}
       </span>
     </div>
   {/if}
