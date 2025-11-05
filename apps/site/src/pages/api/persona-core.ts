@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { paths } from '@metahuman/core';
+import { requireWriteMode } from '../../middleware/cognitiveModeGuard';
 
 const PERSONA_CORE_PATH = path.join(paths.root, 'persona', 'core.json');
 
@@ -39,7 +40,7 @@ export const GET: APIRoute = async () => {
   }
 };
 
-export const POST: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ request }) => {
   try {
     const body = await request.json();
     const persona = await readPersonaCore();
@@ -96,3 +97,6 @@ export const POST: APIRoute = async ({ request }) => {
     });
   }
 };
+
+// Wrap with cognitive mode guard
+export const POST = requireWriteMode(postHandler);

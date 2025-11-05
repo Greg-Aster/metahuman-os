@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { canWriteMemory } from '../stores/security-policy';
 
   type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
 
@@ -393,6 +394,8 @@
       <button
         on:click={() => showNewTask = !showNewTask}
         class="btn"
+        disabled={!$canWriteMemory}
+        title={$canWriteMemory ? 'Create a new task' : 'Task creation disabled in read-only mode'}
       >
         + New Task
       </button>

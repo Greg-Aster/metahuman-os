@@ -19,6 +19,7 @@ import {
   TrustLevel,
 } from '../../packages/core/src/skills';
 import { evaluatePolicy, queueForApproval, getPendingApprovals } from '../../packages/core/src/policy';
+import { SecurityPolicy } from '../../packages/core/src/security-policy';
 
 // ============================================================================
 // Types
@@ -603,7 +604,7 @@ Create a step-by-step plan to accomplish this task.`;
  */
 async function execute(
   plan: Plan,
-  options: { autoApprove?: boolean; mode?: OperatorMode } = {}
+  options: { autoApprove?: boolean; mode?: OperatorMode; policy?: SecurityPolicy } = {}
 ): Promise<ExecutionResult[]> {
   console.log('[operator:executor] Executing plan...');
   lastListedPaths = [];
@@ -899,13 +900,13 @@ async function execute(
             : `${paths.out}/operator-output.txt`;
           const content = step.inputs?.content ?? step.inputs?.text ?? step.inputs?.data ?? '';
           console.log(`[operator:executor] Fallback mapping '${step.skillId}' -> fs_write (${resolvedPath})`);
-          result = await executeSkill('fs_write', { path: resolvedPath, content, overwrite: true }, trustLevel, options.autoApprove === true);
+          result = await executeSkill('fs_write', { path: resolvedPath, content, overwrite: true }, trustLevel, options.autoApprove === true, options.policy);
         } else {
           result = { success: false, error: `Skill '${step.skillId}' not found` } as any;
         }
       } else {
-        // Execute the skill
-        result = await executeSkill(step.skillId, step.inputs, trustLevel, options.autoApprove === true);
+        // Execute the skill with policy context
+        result = await executeSkill(step.skillId, step.inputs, trustLevel, options.autoApprove === true, options.policy);
         // Non-fatal: allow fs_read missing file to continue
         if (!result.success && step.skillId === 'fs_read' && (result.error || '').toLowerCase().includes('file not found')) {
           console.warn(`[operator:executor] fs_read file not found at ${step.inputs?.path}, continuing`);
@@ -1130,7 +1131,7 @@ type OperatorRunResult = {
 async function runTask(
   task: Task,
   maxRetries: number = 1,
-  options: { autoApprove?: boolean; profile?: OperatorProfile; mode?: OperatorMode } = {}
+  options: { autoApprove?: boolean; profile?: OperatorProfile; mode?: OperatorMode; policy?: SecurityPolicy } = {}
 ): Promise<OperatorRunResult> {
   if (!inited) initialize();
 
@@ -1213,7 +1214,7 @@ async function runTask(
     console.log('');
 
     // Step 2: Execute
-    const executionResults = await execute(planResult, { autoApprove: options.autoApprove, mode: effectiveMode });
+    const executionResults = await execute(planResult, { autoApprove: options.autoApprove, mode: effectiveMode, policy: options.policy });
 
     console.log('\n--- EXECUTION RESULTS ---');
     executionResults.forEach(result => {

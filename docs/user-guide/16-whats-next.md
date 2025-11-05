@@ -130,7 +130,12 @@ A major focus is bringing the MetaHuman OS experience to mobile devices. The roa
 - **Offline Support:** Caching memories, tasks, and chat history for offline access.
 
 ### Deployment & Remote Access
-Future versions will support deploying the web frontend to a public URL (e.g., on Vercel) while keeping the AI backend running on your local machine. This will allow you to access your MetaHuman from anywhere. The planned steps are:
+Future versions will support deploying the web frontend to a public URL (e.g., on Vercel) while keeping the AI backend running on your local machine. This will allow you to access your MetaHuman from anywhere.
+
+The core foundation for this is now in place with the **Unified Security Policy**, which is ready for an authentication layer and user roles (`owner`, `guest`).
+
+The planned steps are:
+- **Implement Authentication**: Add a session management system to distinguish between users.
 - **Expose Local Backend:** Use a secure tunneling service like `ngrok` to create a public URL for your local server.
 - **Update Frontend API Calls:** Modify the frontend components to send API requests to the public tunnel URL instead of a relative path.
 - **Deploy to a Hosting Service:** Host the static frontend on a service like Vercel, configured to point to your public backend URL.

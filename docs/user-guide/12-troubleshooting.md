@@ -108,6 +108,27 @@ Fixed in bug patch. Ensure latest code: `git pull`
 ### "Model not found" error
 Run `ollama create <model>` or check `active-adapter.json` status field
 
+### 403 Forbidden / "Write operations not allowed" Error
+
+**Symptom:** You receive a "403 Forbidden" error when trying to create a task, capture a memory, or change a setting.
+
+**Cause:** You are likely in **Emulation Mode**.
+
+**Solution:**
+Emulation Mode is a secure, **read-only** mode designed for safe demonstrations. It blocks all write operations. To create or modify data, you must switch to a different cognitive mode.
+
+1.  **Check your current mode** in the Web UI header.
+2.  **Switch to "Dual Consciousness" or "Agent Mode"** using the mode selector in the header.
+3.  Try your action again.
+
+You can switch modes via the API as well:
+```bash
+# Switch to Dual Consciousness mode to re-enable writes
+curl -X POST http://localhost:4321/api/cognitive-mode \
+  -H "Content-Type: application/json" \
+  -d '{'''mode''': '''dual'''}'
+```
+
 ### Dataset has 0 pairs
 Run `./bin/mh agent run organizer` to process memories first
 

@@ -489,13 +489,15 @@ export function validateInputs(manifest: SkillManifest, inputs: Record<string, a
  * @param inputs - Input parameters for the skill
  * @param trustLevel - Current trust level (affects approval requirements)
  * @param autoApprove - If true, skip approval for non-required skills (testing only)
+ * @param policy - Optional security policy to enforce (overrides mode-based checks)
  * @returns Skill execution result
  */
 export async function executeSkill(
   skillId: string,
   inputs: Record<string, any>,
   trustLevel: TrustLevel = 'observe',
-  autoApprove: boolean = false
+  autoApprove: boolean = false,
+  policy?: any
 ): Promise<SkillResult> {
   const startTime = Date.now();
 
@@ -541,7 +543,34 @@ export async function executeSkill(
     return { success: false, error: validation.error };
   }
 
-  // 4. Check if approval is required
+  // 4. Check security policy for memory-writing skills
+  if (policy) {
+    // Skills that write to memory/ directories need write permission
+    const isMemoryWrite = manifest.allowedDirectories?.some(dir =>
+      dir.startsWith('memory/') && (skillId === 'fs_write' || skillId === 'fs_delete')
+    );
+
+    if (isMemoryWrite && !policy.canWriteMemory) {
+      audit({
+        level: 'warn',
+        category: 'security',
+        event: 'skill_execution_blocked_by_policy',
+        details: {
+          skillId,
+          reason: 'Memory writes not allowed in current mode',
+          mode: policy.mode,
+          role: policy.role
+        },
+        actor: 'operator',
+      });
+      return {
+        success: false,
+        error: `Skill '${skillId}' blocked: Memory writes not allowed in ${policy.mode} mode`,
+      };
+    }
+  }
+
+  // 5. Check if approval is required
   const requiresApproval = manifest.requiresApproval && !autoApprove;
 
   if (requiresApproval) {

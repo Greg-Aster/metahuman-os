@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { activeView } from '../stores/navigation';
+  import { activeView, statusStore } from '../stores/navigation';
 
   interface MenuItem {
     id: string;
@@ -17,8 +17,18 @@
     { id: 'memory', label: 'Memory', icon: '🧩', description: 'Events & insights' },
     { id: 'voice', label: 'Voice', icon: '🎤', description: 'Audio & training' },
     { id: 'training', label: 'AI Training', icon: '🧠', description: 'LoRA adapters' },
+    { id: 'terminal', label: 'Terminal', icon: '💻', description: 'Command line' },
     { id: 'system', label: 'System', icon: '⚙️', description: 'Settings & tools' },
+    { id: 'security', label: 'Security', icon: '🔒', description: 'User & authentication' },
   ];
+
+  // Current user state
+  interface User {
+    id: string;
+    username: string;
+    role: 'owner' | 'guest' | 'anonymous';
+  }
+  let currentUser: User | null = null;
 
   function selectView(viewId: string) {
     activeView.set(viewId);
@@ -63,27 +73,28 @@
   let taskTotals = { active: 0, inProgress: 0 };
   let pendingApprovals = 0;
 
+  // Subscribe to the shared status store
+  let statusSubscription = null;
+
   // Real-time activity tracking
   let activeRoles = new Set<string>();
   let eventSource: EventSource | null = null;
 
+  // Load status from shared store instead of making API call directly
   async function loadStatus() {
-    try {
-      const res = await fetch('/api/status', { cache: 'no-store' });
-      const data = await res.json();
-      identity = data.identity;
-      taskTotals = {
-        active: data?.tasks?.active ?? 0,
-        inProgress: data?.tasks?.byStatus?.in_progress ?? 0,
-      };
-      modelInfo = data?.model || null;
-      modelRoles = data?.modelRoles || {};
-      hasModelRegistry = Object.keys(modelRoles).length > 0;
-    } catch (err) {
-      console.error('Failed to load status:', err);
-    } finally {
-      loading = false;
-    }
+    statusSubscription = statusStore.subscribe((data) => {
+      if (data) {
+        identity = data.identity;
+        taskTotals = {
+          active: data?.tasks?.active ?? 0,
+          inProgress: data?.tasks?.byStatus?.in_progress ?? 0,
+        };
+        modelInfo = data?.model || null;
+        modelRoles = data?.modelRoles || {};
+        hasModelRegistry = Object.keys(modelRoles).length > 0;
+        loading = false;
+      }
+    });
   }
 
   async function loadPendingApprovals() {
@@ -128,10 +139,7 @@
   }
 
   function connectActivityStream() {
-    if (eventSource) {
-      eventSource.close();
-    }
-
+    if (eventSource) return;
     eventSource = new EventSource('/api/llm-activity');
 
     eventSource.onmessage = (event) => {
@@ -154,26 +162,64 @@
       console.warn('Activity stream disconnected, reconnecting in 5s...');
       if (eventSource) {
         eventSource.close();
+        eventSource = null;
       }
       setTimeout(connectActivityStream, 5000);
     };
   }
 
+  function disconnectActivityStream() {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+  }
+
+  async function fetchCurrentUser() {
+    try {
+      const response = await fetch('/api/auth/me');
+      const data = await response.json();
+      if (data.success && data.user) {
+        currentUser = data.user;
+      } else {
+        currentUser = null;
+      }
+    } catch (err) {
+      console.error('[LeftSidebar] Failed to fetch user:', err);
+      currentUser = null;
+    }
+  }
+
   onMount(() => {
+    void fetchCurrentUser();
+    // Don't auto-connect initially
     loadStatus();
     loadPendingApprovals();
-    connectActivityStream();
 
-    // Refresh every 30 seconds
-    const statusInterval = setInterval(loadStatus, 30000);
+    // Refresh approvals every 5 seconds (no need to refresh status as we're using the shared store)
     const approvalsInterval = setInterval(loadPendingApprovals, 5000);
 
-    return () => {
-      clearInterval(statusInterval);
-      clearInterval(approvalsInterval);
-      if (eventSource) {
-        eventSource.close();
+    // Set up visibility change handling to connect/disconnect EventSource
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        disconnectActivityStream();
+      } else {
+        connectActivityStream();
       }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Connect after a small delay to allow for any initial page setup
+    setTimeout(connectActivityStream, 1000);
+
+    return () => {
+      clearInterval(approvalsInterval);
+      if (statusSubscription) {
+        statusSubscription();
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      disconnectActivityStream();
     };
   });
 
@@ -192,15 +238,25 @@
   <!-- Menu Items -->
   <nav class="menu">
     {#each menuItems as item}
+      {@const isSecurityTab = item.id === 'security'}
+      {@const isDisabled = isSecurityTab && !currentUser}
       <button
         class="menu-item"
         class:active={$activeView === item.id}
-        on:click={() => selectView(item.id)}
+        class:disabled={isDisabled}
+        on:click={() => !isDisabled && selectView(item.id)}
+        disabled={isDisabled}
+        title={isDisabled ? 'Login required to access security settings' : item.description}
       >
         <span class="menu-icon">{item.icon}</span>
         <div class="menu-text">
           <div class="menu-label">
             {item.label}
+            {#if isDisabled}
+              <svg class="w-3 h-3 inline ml-1 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+              </svg>
+            {/if}
             {#if item.id === 'approvals' && pendingApprovals > 0}
               <span class="approval-badge">{pendingApprovals}</span>
             {/if}
@@ -629,5 +685,19 @@
   :global(.dark) .adapter-indicator {
     background: rgba(167, 139, 250, 0.25);
     color: rgb(196 181 253);
+  }
+
+  /* Disabled menu item styles */
+  .menu-item.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .menu-item.disabled:hover {
+    background: transparent !important;
+  }
+
+  :global(.dark) .menu-item.disabled:hover {
+    background: transparent !important;
   }
 </style>

@@ -2,8 +2,9 @@ import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
 import { paths } from '@metahuman/core'
+import { requireWriteMode } from '../../../middleware/cognitiveModeGuard'
 
-export const POST: APIRoute = async ({ request }) => {
+const handler: APIRoute = async ({ request }) => {
   try {
     const body = await request.json()
     const { relPath } = body || {}
@@ -30,4 +31,7 @@ export const POST: APIRoute = async ({ request }) => {
     return new Response(JSON.stringify({ error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
 }
+
+// Wrap with cognitive mode guard
+export const POST = requireWriteMode(handler)
 

@@ -3,6 +3,7 @@
   import Thinking from './Thinking.svelte';
   import VoiceInteraction from './VoiceInteraction.svelte';
   import ApprovalBox from './ApprovalBox.svelte';
+  import { canUseOperator } from '../stores/security-policy';
 
 type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'reasoning';
 
@@ -1075,8 +1076,9 @@ let reasoningStages: ReasoningStage[] = [];
         <div class="input-actions">
           <button
             class="operator-icon-btn {forceOperator ? 'active' : ''}"
-            title={forceOperator ? 'Operator mode enabled' : 'Enable operator mode'}
+            title={!$canUseOperator ? 'Operator disabled in current mode' : (forceOperator ? 'Operator mode enabled' : 'Enable operator mode')}
             aria-pressed={forceOperator}
+            disabled={!$canUseOperator}
             on:click={() => { forceOperator = !forceOperator; saveChatPrefs(); }}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -1085,8 +1087,9 @@ let reasoningStages: ReasoningStage[] = [];
           </button>
           <button
             class="operator-icon-btn yolo {yoloMode ? 'active' : ''}"
-            title={yoloMode ? 'YOLO mode enabled' : 'Enable YOLO mode'}
+            title={!$canUseOperator ? 'YOLO mode disabled in current mode' : (yoloMode ? 'YOLO mode enabled' : 'Enable YOLO mode')}
             aria-pressed={yoloMode}
+            disabled={!$canUseOperator}
             on:click={toggleYoloMobile}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

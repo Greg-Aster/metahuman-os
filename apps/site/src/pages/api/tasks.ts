@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { listActiveTasks, listCompletedTasks, createTask, updateTaskStatus } from '@metahuman/core/memory';
 import { auditDataChange } from '@metahuman/core/audit';
+import { requireWriteMode } from '../../middleware/cognitiveModeGuard';
 
 export const GET: APIRoute = async ({ request }) => {
   try {
@@ -45,7 +46,7 @@ export const GET: APIRoute = async ({ request }) => {
   }
 };
 
-export const POST: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ request }) => {
   try {
     const body = await request.json();
     const { title, description, priority, tags } = body;
@@ -95,7 +96,10 @@ export const POST: APIRoute = async ({ request }) => {
   }
 };
 
-export const PATCH: APIRoute = async ({ request }) => {
+// Wrap with cognitive mode guard
+export const POST = requireWriteMode(postHandler);
+
+const patchHandler: APIRoute = async ({ request }) => {
   try {
     const body = await request.json();
     const { taskId, status } = body;
@@ -144,3 +148,6 @@ export const PATCH: APIRoute = async ({ request }) => {
     );
   }
 };
+
+// Wrap with cognitive mode guard
+export const PATCH = requireWriteMode(patchHandler);

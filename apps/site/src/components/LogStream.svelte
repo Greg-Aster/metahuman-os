@@ -17,6 +17,9 @@
   let bottomSentinel: HTMLDivElement;
   let observer: IntersectionObserver | null = null;
   let eventSource: EventSource | null = null;
+  
+  // Limit for log rotation to prevent unbounded growth
+  const MAX_LOGS = 500;
 
   // Auto-scroll to bottom
   $: if (logs.length > 0 && autoScroll && bottomSentinel) {
@@ -50,6 +53,11 @@
           logs = [...logs, { timestamp: new Date().toISOString(), level: 'info', category: 'system', event: 'stream_connected', actor: 'system' }];
         } else {
           logs = [...logs, newLog];
+        }
+        
+        // Rotate logs if too many
+        if (logs.length > MAX_LOGS) {
+          logs = logs.slice(-MAX_LOGS);
         }
       } catch (e) {
         console.error('Failed to parse log event:', e);

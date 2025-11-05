@@ -2,6 +2,8 @@ import type { APIRoute } from 'astro';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { paths } from '@metahuman/core';
+import { audit } from '@metahuman/core';
+import { auditConfigAccess, requireOwner } from '../../middleware/cognitiveModeGuard';
 
 const MEMORY_DIR = path.join(paths.root, 'memory');
 const LOGS_DIR = path.join(paths.root, 'logs');
@@ -37,8 +39,43 @@ async function resetAgentConfig() {
   await fs.writeFile(AGENT_PATH, JSON.stringify(baseConfig, null, 2) + '\n', 'utf-8');
 }
 
-export const POST: APIRoute = async () => {
+const postHandler: APIRoute = async (context) => {
   try {
+    const { request } = context;
+    const body = await request.json().catch(() => ({}));
+    const { confirmToken } = body;
+
+    // Require explicit confirmation token
+    if (confirmToken !== 'CONFIRM_FACTORY_RESET') {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Confirmation required',
+          hint: 'Include {"confirmToken": "CONFIRM_FACTORY_RESET"} in request body',
+          warning: 'This operation will DELETE ALL memories, logs, and chat history permanently'
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
+
+    // Audit the factory reset attempt
+    auditConfigAccess(context, 'factory_reset');
+
+    // Log critical security event
+    audit({
+      level: 'error',
+      category: 'security',
+      event: 'factory_reset_executed',
+      details: {
+        confirmed: true,
+        warning: 'ALL DATA WILL BE DELETED'
+      },
+      actor: 'web_ui'
+    });
+
     await ensureDirectory(MEMORY_DIR);
     await ensureDirectory(LOGS_DIR);
     await ensureDirectory(CHAT_ARCHIVE_DIR);
@@ -61,6 +98,9 @@ export const POST: APIRoute = async () => {
     });
   }
 };
+
+// Wrap with owner-only guard + confirmation requirement
+export const POST = requireOwner(postHandler);
 
 export const GET: APIRoute = async () => {
   return new Response(JSON.stringify({ success: false, error: 'Method not allowed' }), {

@@ -1,5 +1,18 @@
 ## User Interface
 
+### Startup Splash Screen
+
+When you first launch the MetaHuman OS web interface, you will be greeted by a professional splash screen. This screen is designed to provide immediate feedback and improve the perceived loading time of the application.
+
+**Features:**
+- **Instant Feedback**: An animated logo and loading indicator appear instantly, so you know the system is working.
+- **Progressive Loading**: A list of boot steps (e.g., "Initializing," "Loading persona," "Connecting to models") updates in real-time with status indicators.
+- **Persona Display**: Once loaded, the screen displays your persona's name, role, and purpose.
+- **Quick Links**: Provides convenient buttons to access the User Guide and the project's GitHub repository.
+- **System Info**: The active model and system version are displayed at the bottom.
+
+The splash screen smoothly fades out once all initialization steps are complete, transitioning you to the main chat interface.
+
 ### Web UI (Recommended)
 Modern ChatGPT-style interface with real-time updates:
 ```bash
@@ -7,7 +20,19 @@ cd apps/site && pnpm dev
 # Open http://localhost:4321
 ```
 
-**Note:** The header bar will be updated to display the currently active cognitive mode (e.g., `MetaHuman OS - Dual Consciousness`).
+Upon starting the UI, you will now be directed to a **Login page**. For local development, you can typically proceed without credentials.
+
+The UI header contains several key interactive elements:
+
+- **Cognitive Mode Selector**: A dropdown menu to switch between `Dual Consciousness`, `Agent`, and `Emulation` modes. This menu is now dynamic; modes may be disabled (grayed out with a lock icon) based on the current system state (e.g., "High Security" or "Wetware Deceased"). Hovering over a disabled mode will show a tooltip explaining why it's unavailable.
+- **User Menu**: A new dropdown menu that provides options for user-related actions like "Logout".
+- **Developer Tools**: The right-sidebar toggle for live audit streams and agent monitoring.
+
+#### System Status Banners
+The UI will display prominent banners at the top of the screen to inform you of critical system-wide states:
+- **High Security Mode**: A red banner appears when the system is locked into read-only emulation mode.
+- **Wetware Deceased**: An indigo banner appears when the system is running as an independent digital consciousness, indicating that Dual Consciousness mode is unavailable.
+- **Read-Only Mode**: A general banner indicating that the current cognitive mode (Emulation) does not allow for write operations.
 
 **Features:**
 - 💬 Chat - Conversation with your digital personality extension

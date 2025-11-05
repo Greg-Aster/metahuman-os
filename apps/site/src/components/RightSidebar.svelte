@@ -17,7 +17,6 @@
   const tabs: Tab[] = [
     { id: 'audit', label: 'Audit Stream', icon: '📋' },
     { id: 'monitor', label: 'Agent Monitor', icon: '🤖' },
-    { id: 'settings', label: 'Settings', icon: '⚙️' },
   ];
 
   // Ollama options (persisted)
@@ -33,6 +32,9 @@
   let loraEnabled = false
   let loraToggling = false
   let resettingFactory = false
+
+  // UI preferences
+  let showWelcomeModal = true;
 
   // Logging configuration
   type LogLevel = 'error' | 'warn' | 'info' | 'debug';
@@ -72,6 +74,23 @@
     } catch (e) {
       console.error('Failed to fetch LoRA config:', e);
     }
+  }
+
+  function loadUIPreferences() {
+    try {
+      const hideModal = localStorage.getItem('hideWelcomeModal');
+      showWelcomeModal = hideModal !== 'true';
+    } catch (e) {
+      console.error('Failed to load UI preferences:', e);
+    }
+  }
+
+  function toggleWelcomeModal() {
+    showWelcomeModal = !showWelcomeModal;
+    localStorage.setItem('hideWelcomeModal', showWelcomeModal ? 'false' : 'true');
+
+    // Dispatch event to notify SplashScreen component
+    window.dispatchEvent(new CustomEvent('welcomeModalToggle', { detail: { show: showWelcomeModal } }));
   }
 
   async function fetchLoggingConfig() {
@@ -201,6 +220,7 @@
       if (typeof o.num_ctx === 'number') llmNumCtx = o.num_ctx;
       if (typeof o.num_predict === 'number') llmNumPredict = o.num_predict;
     } catch {}
+    loadUIPreferences();
     fetchModelInfo();
     fetchLoraConfig();
     fetchLoggingConfig();
@@ -232,208 +252,6 @@
       <div class="monitor-container">
         <SleepStatusIndicator />
         <AgentMonitor compact={true} />
-      </div>
-    {:else if activeTab === 'settings'}
-      <div class="settings-container">
-        <h3 class="section-title">Developer Settings</h3>
-
-        <!-- Active Model Info -->
-        {#if modelInfo}
-          <div class="setting-group">
-            <label class="setting-label">Active Model Info</label>
-            <div class="info-grid">
-              <div class="info-item">
-                <span class="info-key">Base Model:</span>
-                <span class="info-value model-mono">{modelInfo.activeModel}</span>
-              </div>
-              {#if modelInfo.adapter2}
-                <!-- Dual-adapter mode -->
-                <div class="info-item">
-                  <span class="info-key">📚 Historical:</span>
-                  <span class="info-value adapter-highlight">history-merged</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-key">🆕 Recent:</span>
-                  <span class="info-value adapter-highlight">
-                    {modelInfo.adapter.dataset}
-                    {#if modelInfo.adapter.evalScore}
-                      <span class="adapter-score">({(modelInfo.adapter.evalScore * 100).toFixed(0)}%)</span>
-                    {/if}
-                  </span>
-                </div>
-              {:else if modelInfo.adapter}
-                <!-- Single adapter -->
-                <div class="info-item">
-                  <span class="info-key">LoRA Adapter:</span>
-                  <span class="info-value adapter-highlight">
-                    {modelInfo.adapter.dataset}
-                    {#if modelInfo.adapter.evalScore}
-                      <span class="adapter-score">({(modelInfo.adapter.evalScore * 100).toFixed(0)}%)</span>
-                    {/if}
-                  </span>
-                </div>
-              {:else}
-                <div class="info-item">
-                  <span class="info-key">LoRA Adapter:</span>
-                  <span class="info-value muted-value">None</span>
-                </div>
-              {/if}
-            </div>
-          </div>
-        {:else}
-          <div class="setting-group">
-            <label class="setting-label">Active Model Info</label>
-            <div class="info-grid">
-              <div class="info-item">
-                <span class="info-key">Status:</span>
-                <span class="info-value muted-value">Unavailable</span>
-              </div>
-            </div>
-          </div>
-        {/if}
-
-        <!-- LoRA Enable/Disable Toggle -->
-        <div class="setting-group">
-          <div class="lora-toggle-container">
-            <div class="lora-toggle-header">
-              <span class="setting-label">LoRA Adapters</span>
-              <label class="toggle-switch" for="lora-toggle-main-input" aria-label="Enable LoRA Adapters">
-                <input
-                  id="lora-toggle-main-input"
-                  type="checkbox"
-                  bind:checked={loraEnabled}
-                  on:change={toggleLora}
-                  disabled={loraToggling}
-                />
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-            <p class="lora-toggle-description">
-              {loraEnabled ? 'LoRA adapters enabled - personalized responses active' : 'LoRA adapters disabled - using base model only'}
-            </p>
-          </div>
-        </div>
-
-        <!-- Adapter Selector -->
-        {#if loraDatasets.length > 0 && loraEnabled}
-          <div class="setting-group">
-            <label class="setting-label" for="adapter-selector">Switch Adapter</label>
-            <div id="adapter-selector" class="adapter-controls">
-              <select class="adapter-select" on:change={handleLoraSelect} disabled={selecting}>
-                <option value="">Select adapter to load...</option>
-                {#each loraDatasets as d}
-                  <option value={d.date}>{d.date} {d.evalScore ? `(${(d.evalScore * 100).toFixed(0)}%)` : ''}</option>
-                {/each}
-              </select>
-              {#if dualAvailable}
-                <label class="dual-toggle-label" for="dual-mode-checkbox">
-                  <input id="dual-mode-checkbox" type="checkbox" bind:checked={dualEnabled} class="dual-checkbox" />
-                  <span>Dual Mode</span>
-                </label>
-              {/if}
-            </div>
-          </div>
-        {/if}
-
-        <div class="setting-group">
-          <label class="setting-label" for="llm-model-selector">LLM Model</label>
-          <div id="llm-model-selector">
-            <ModelSelector />
-          </div>
-        </div>
-
-        <div class="setting-group">
-          <label class="setting-label" for="mind-wandering-control">Mind Wandering</label>
-          <div id="mind-wandering-control">
-            <BoredomControl />
-          </div>
-        </div>
-
-        <div class="setting-group">
-          <label class="setting-label" for="llm-options-grid">LLM Options</label>
-          <div id="llm-options-grid" class="info-grid">
-            <div class="info-item">
-              <label for="num-ctx-input" class="info-key">Context (num_ctx)</label>
-              <input id="num-ctx-input" type="number" min="2048" max="131072" step="1024" bind:value={llmNumCtx} on:change={saveLLMOptions} class="opt-input" />
-            </div>
-            <div class="info-item">
-              <label for="num-predict-input" class="info-key">Max Output (num_predict)</label>
-              <input id="num-predict-input" type="number" min="128" max="4096" step="64" bind:value={llmNumPredict} on:change={saveLLMOptions} class="opt-input" />
-            </div>
-          </div>
-        </div>
-
-        <div class="setting-group">
-          <label class="setting-label">Logging Configuration</label>
-          <div class="logging-config-container">
-            <div class="logging-field">
-              <label for="log-level-select" class="field-label">Log Level</label>
-              <select id="log-level-select" bind:value={logLevel} class="logging-select">
-                <option value="error">Error</option>
-                <option value="warn">Warning</option>
-                <option value="info">Info</option>
-                <option value="debug">Debug</option>
-              </select>
-            </div>
-
-            <div class="logging-field">
-              <label for="slow-threshold-input" class="field-label">Slow Request Threshold (ms)</label>
-              <input id="slow-threshold-input" type="number" min="100" max="10000" step="100" bind:value={slowRequestThresholdMs} class="logging-input" />
-            </div>
-
-            <div class="logging-field">
-              <label for="suppress-patterns-input" class="field-label">Suppress Patterns (comma-separated)</label>
-              <input id="suppress-patterns-input" type="text" bind:value={suppressPatterns} placeholder="/api/status, /api/monitor" class="logging-input" />
-            </div>
-
-            <div class="logging-checkboxes">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={logColorize} />
-                <span>Colorize output</span>
-              </label>
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={logTimestamp} />
-                <span>Show timestamps</span>
-              </label>
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={logSlowRequests} />
-                <span>Log slow requests</span>
-              </label>
-            </div>
-
-            <button class="save-logging-button" on:click={saveLoggingConfig} disabled={savingLogging}>
-              {savingLogging ? 'Saving...' : 'Save Logging Config'}
-            </button>
-          </div>
-        </div>
-
-        <div class="setting-group danger-zone">
-          <div class="setting-label">Danger Zone</div>
-          <p class="danger-description">
-            Delete all memories, conversations, and logs, and restore the default GPT‑OSS base model. This action is permanent.
-          </p>
-          <button class="danger-button" on:click={resetFactorySettings} disabled={resettingFactory}>
-            {resettingFactory ? 'Resetting…' : 'Reset to Factory Settings'}
-          </button>
-        </div>
-
-        <div class="setting-group">
-          <label class="setting-label" for="system-info-grid">System Info</label>
-          <div id="system-info-grid" class="info-grid">
-            <div class="info-item">
-              <span class="info-key">Phase:</span>
-              <span class="info-value">0 (Foundation)</span>
-            </div>
-            <div class="info-item">
-              <span class="info-key">Backend:</span>
-              <span class="info-value">Ollama</span>
-            </div>
-            <div class="info-item">
-              <span class="info-key">Storage:</span>
-              <span class="info-value">Local JSON</span>
-            </div>
-          </div>
-        </div>
       </div>
     {/if}
   </div>

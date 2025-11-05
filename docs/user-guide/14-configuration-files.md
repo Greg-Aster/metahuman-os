@@ -1,5 +1,16 @@
 ## Configuration Files
 
+### `.env` - Environment Triggers
+This file in the project root allows you to activate special system-wide states.
+
+- `HIGH_SECURITY=true`
+  - **Purpose**: Locks the entire system into its most secure state.
+  - **Effect**: Forces the OS into **Emulation Mode** only. All other cognitive modes are disabled. All write operations are blocked. A banner is displayed in the UI.
+
+- `WETWARE_DECEASED=true`
+  - **Purpose**: Simulates the scenario where the biological user is deceased, and the MetaHuman OS is operating as an independent digital consciousness.
+  - **Effect**: Disables **Dual Consciousness Mode**, as there is no longer a living "wetware" counterpart to be in sync with. Agent and Emulation modes remain available. A banner is displayed in the UI.
+
 ### `persona/core.json` - Identity Kernel
 Your digital personality's core identity:
 - `identity` - Name, role, purpose, avatar

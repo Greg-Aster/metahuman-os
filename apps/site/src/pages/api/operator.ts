@@ -8,6 +8,8 @@ import { initializeSkills } from '../../../../../brain/skills/index';
 import { runTask } from '../../../../../brain/agents/operator';
 import { executeSkill, loadTrustLevel, getAvailableSkills, listSkills } from '../../../../../packages/core/src/skills';
 import { audit } from '@metahuman/core/audit';
+import { requireOperatorMode } from '../../middleware/cognitiveModeGuard';
+import { getSecurityPolicy } from '@metahuman/core/security-policy';
 
 // Initialize skills when module loads
 initializeSkills();
@@ -53,10 +55,11 @@ interface OperatorResponse {
   mode?: 'strict' | 'yolo';
 }
 
-export const POST: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async (context) => {
   try {
+    const { request } = context;
     const body: OperatorRequest = await request.json();
-    const { goal, context, autoApprove = false, profile, yolo, mode, allowMemoryWrites = true } = body;
+    const { goal, context: taskContext, autoApprove = false, profile, yolo, mode, allowMemoryWrites } = body;
 
     if (!goal) {
       return new Response(
@@ -70,25 +73,41 @@ export const POST: APIRoute = async ({ request }) => {
 
     const resolvedMode: 'strict' | 'yolo' = mode === 'yolo' || yolo ? 'yolo' : 'strict';
 
+    // Get security policy
+    const policy = getSecurityPolicy(context);
+
+    // Determine effective memory write permission
+    // Use explicit flag if provided, otherwise use policy default
+    const effectiveMemoryWrites = allowMemoryWrites ?? policy.canWriteMemory;
+
     // Log the incoming request
     audit({
       level: 'info',
       category: 'action',
       event: 'operator_api_request',
-      details: { goal, context, autoApprove, mode: resolvedMode, allowMemoryWrites },
+      details: {
+        goal,
+        context: taskContext,
+        autoApprove,
+        mode: resolvedMode,
+        allowMemoryWrites: effectiveMemoryWrites,
+        cognitiveMode: policy.mode,
+        role: policy.role
+      },
       actor: 'web_ui',
     });
 
-    // TODO: Pass allowMemoryWrites to runTask and skill execution context
-    // For now, the flag is logged but not yet enforced in skill execution
-    // This requires updates to the operator agent and skill execution pipeline
-    // Run the task through the operator agent
-    const result = await runTask({ goal, context }, 1, { autoApprove, profile, mode: resolvedMode }); // Max 1 retry, honor auto-approve + profile
+    // Pass policy to runTask so skills can enforce security at execution layer
+    const result = await runTask(
+      { goal, context: taskContext },
+      1,
+      { autoApprove, profile, mode: resolvedMode, policy }
+    );
 
     // Return success response
     const response: OperatorResponse = {
       success: result.success,
-      task: { goal, context },
+      task: { goal, context: taskContext },
       plan: result.plan,
       results: result.results,
       critique: result.critique,
@@ -121,6 +140,9 @@ export const POST: APIRoute = async ({ request }) => {
     );
   }
 };
+
+// Wrap POST with operator mode guard (blocks in emulation mode and for non-owners)
+export const POST = requireOperatorMode(postHandler);
 
 export const GET: APIRoute = async ({ request }) => {
   try {

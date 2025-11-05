@@ -153,24 +153,9 @@ export async function generateSpeech(
   const configPath = options?.config || cfg.tts.piper.config;
   const speakingRate = options?.speakingRate ?? cfg.tts.piper.speakingRate;
 
-  console.log('[TTS] =======================================================');
-  console.log('[TTS] Using parameters:', {
-    modelPath,
-    configPath,
-    speakingRate,
-    overrideModel: options?.model,
-    overrideConfig: options?.config,
-    overrideRate: options?.speakingRate,
-    configFileModel: cfg.tts.piper.model,
-    configFileConfig: cfg.tts.piper.config,
-    configFileRate: cfg.tts.piper.speakingRate
-  });
-  console.log('[TTS] =======================================================')
-
   // Check cache first
   const cached = getCachedAudio(text, modelPath, speakingRate);
   if (cached) {
-    console.log('[TTS] Returning cached audio');
     return cached;
   }
 
@@ -213,8 +198,6 @@ export async function generateSpeech(
     if (speakingRate && speakingRate !== 1.0) {
       args.push('--length_scale', String(1 / speakingRate));
     }
-
-    console.log('[TTS] Executing Piper with args:', args);
 
     const child = spawn(cfg.tts.piper.binary, args, {
       cwd: paths.root,

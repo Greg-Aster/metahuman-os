@@ -16,7 +16,6 @@ import { generateSpeech } from '@metahuman/core';
 export const POST: APIRoute = async ({ request }) => {
   try {
     const { text, model, config, speakingRate } = await request.json();
-    console.log('[TTS API] Received request:', { textLength: text?.length, model, config, speakingRate });
 
     if (!text || typeof text !== 'string') {
       return new Response(JSON.stringify({ error: 'Text is required' }), {

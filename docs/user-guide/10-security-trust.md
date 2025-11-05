@@ -1,5 +1,31 @@
 ## Security & Trust Model
 
+### Unified Security Policy
+
+MetaHuman OS now operates under a **Unified Security Policy**, a centralized system that governs all permissions. This policy is the single source of truth for what actions are allowed, making the system safer and more predictable.
+
+**How it Works:**
+The policy considers two main factors to make decisions:
+1.  **Cognitive Mode**: The currently active mode (`Dual Consciousness`, `Agent`, or `Emulation`) is the primary driver of permissions.
+2.  **User Role** (Future): The system is designed for future authentication, where roles like `owner` and `guest` will grant different levels of access.
+
+**Key Implications:**
+
+-   **Emulation Mode is a Secure "Read-Only" Mode**: The most significant impact of this policy is that **Emulation Mode** is now strictly read-only. Any attempt to create or modify memories, tasks, or configuration via the API will be blocked with a `403 Forbidden` error. This makes it a safe "guest" or "demo" mode.
+-   **Configuration is Protected**: Changing critical settings, such as the cognitive mode or trust level, is now restricted to the `owner` role. While authentication is not yet implemented, all such attempts are logged for security auditing.
+-   **Centralized Enforcement**: Instead of scattered checks, all security rules are enforced consistently by middleware that consults the central policy for every relevant API request.
+
+This new architecture provides a robust foundation for current safety and future multi-user capabilities.
+
+#### High Security Mode
+For situations requiring maximum safety, the system can be placed in **High Security Mode** by setting the `HIGH_SECURITY=true` environment variable. This is the most restrictive state of the OS:
+- It forces the system into **Emulation Mode**.
+- It disables the ability to switch to any other mode.
+- All API endpoints that perform write operations are blocked.
+- A prominent banner is displayed in the UI to ensure the user is aware of the lockdown state.
+
+This mode is ideal for safely exposing a read-only version of the OS on a network or for preventing any accidental changes during a critical analysis.
+
 ### Trust Levels (Progressive Autonomy)
 1. **`observe`** - Monitor only, learn patterns (no autonomous actions)
 2. **`suggest`** - Propose actions, require manual approval

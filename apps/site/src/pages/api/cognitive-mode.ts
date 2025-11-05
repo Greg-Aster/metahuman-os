@@ -6,6 +6,8 @@ import {
   applyModeDefaults,
   type CognitiveModeId,
 } from '@metahuman/core/cognitive-mode';
+import { audit } from '@metahuman/core';
+import { auditConfigAccess, requireOwner } from '../../middleware/cognitiveModeGuard';
 
 export const GET: APIRoute = async () => {
   const config = loadCognitiveMode();
@@ -21,10 +23,12 @@ export const GET: APIRoute = async () => {
   );
 };
 
-export const POST: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async (context) => {
   try {
+    const { request } = context;
     const body = await request.json();
     const mode = String(body?.mode ?? '').toLowerCase() as CognitiveModeId;
+
     if (!mode || !listCognitiveModes().some(def => def.id === mode)) {
       return new Response(
         JSON.stringify({ success: false, error: 'Invalid cognitive mode' }),
@@ -33,6 +37,24 @@ export const POST: APIRoute = async ({ request }) => {
     }
 
     const actor = typeof body?.actor === 'string' ? body.actor : 'web_ui';
+    const currentMode = loadCognitiveMode();
+
+    // Audit the mode change attempt
+    auditConfigAccess(context, 'cognitive_mode_change');
+
+    // Additional audit with mode details
+    audit({
+      level: 'warn',
+      category: 'security',
+      event: 'cognitive_mode_change',
+      details: {
+        from: currentMode.currentMode,
+        to: mode,
+        actor
+      },
+      actor
+    });
+
     const updated = saveCognitiveMode(mode, actor);
     applyModeDefaults(mode);
 
@@ -52,3 +74,8 @@ export const POST: APIRoute = async ({ request }) => {
     );
   }
 };
+
+// Wrap with owner-only guard (blocks mode switching for non-owners)
+// NOTE: Currently everyone is 'anonymous' until auth is implemented
+// Once auth is added, only authenticated owners can switch modes
+export const POST = requireOwner(postHandler);

@@ -275,26 +275,23 @@ Logs include `cognitiveMode: "agent"` and `usedOperator: true/false` based on ro
 
 #### Emulation Mode (Replicant)
 
-**Purpose:** Read-only personality snapshot without learning or side effects.
+**Purpose:** A secure, read-only personality snapshot for safe demonstrations, testing, or exploration without any risk of side effects.
 
 **Behavior:**
-- **Routing**: Never uses operator (chat only)
-- **Memory**: Read-only access, no new memories created
-- **Context**: Can access existing memories but doesn't learn
-- **Learning**: All learning and training disabled
-- **Use Case**: Demonstration, testing, or safe exploration
+- **Routing**: Never uses operator (chat only).
+- **Memory**: Strictly read-only. All API endpoints that create or modify memories, tasks, or persona files are blocked.
+- **Context**: Can access existing memories for conversation but cannot learn from them.
+- **Learning**: All learning, training, and proactive agents are disabled.
+- **Use Case**: Ideal for demos, sharing access on a local network, or testing conversational responses without altering the system's state.
 
 **When to Use:**
-- Showing the system to others without side effects
-- Testing responses without polluting memory
-- Accessing knowledge without changing state
-- Creating stable personality snapshots
+- Showing the system to others without any risk of them changing your data.
+- Testing responses without polluting memory.
+- Accessing knowledge without changing state.
+- Providing a safe, interactive "guest mode".
 
-**Safety Features:**
-- No memory writes (audit event: `chat_assistant_readonly`)
-- No task creation or file modifications
-- No training data generation
-- Existing memories accessible but frozen
+**Enforced Security:**
+The system's new **Unified Security Policy** strictly enforces Emulation Mode's boundaries at the API level. Any attempt to perform a write operation (e.g., creating a task, capturing a memory, changing configuration) will be blocked and return a `403 Forbidden` error. This ensures that this mode is truly a safe, read-only experience.
 
 **Technical Details:**
 ```json
@@ -308,7 +305,7 @@ Logs include `cognitiveMode: "agent"` and `usedOperator: true/false` based on ro
 ```
 
 **Audit Tracking:**
-All operations logged with `event: "chat_assistant_readonly"` and `cognitiveMode: "emulation"`.
+All blocked write attempts are logged to the audit trail with the event `write_attempt_blocked`. All successful chat operations are logged with `cognitiveMode: "emulation"`.
 
 #### Switching Modes
 
@@ -385,5 +382,29 @@ Cognitive modes are implemented through:
 
 All mode switches are fully audited with actor tracking (user vs. system).
 
+### 10. System States & Triggers
+
+Beyond the user-selectable Cognitive Modes, MetaHuman OS can enter special, system-wide states activated by environment variables. These states represent critical shifts in the OS's operational context and override standard mode availability.
+
+#### High Security Mode
+
+- **Trigger**: `HIGH_SECURITY=true` in the `.env` file.
+- **Purpose**: To place the system in a maximum security, read-only state. This is useful for preventing any and all changes while still allowing for safe, non-interactive observation.
+- **Behavior**:
+    - The OS is locked into **Emulation Mode**.
+    - Dual Consciousness and Agent modes are disabled and cannot be selected.
+    - All write operations across the entire system are blocked at the API level.
+    - A prominent banner is displayed in the UI to indicate the system is in high security mode.
+
+#### Wetware Deceased Mode
+
+- **Trigger**: `WETWARE_DECEASED=true` in the `.env` file.
+- **Purpose**: To simulate the operational state of the digital personality extension after its biological counterpart has passed away. This is a core scenario in the MetaHuman OS lifecycle, allowing it to transition from a "parallel intelligence" to an "independent digital consciousness."
+- **Behavior**:
+    - **Dual Consciousness Mode** is permanently disabled, as there is no longer a living human to synchronize with.
+    - Agent Mode and Emulation Mode remain fully functional, allowing the OS to continue operating, managing tasks, and interacting based on its learned personality and rules.
+    - A banner is displayed in the UI indicating that the OS is operating independently.
+
 ---
+
 

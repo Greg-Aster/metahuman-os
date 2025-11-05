@@ -7,6 +7,7 @@ import {
   registerAgent,
   unregisterAgent,
   audit,
+  loadPersonaCore,
 } from '@metahuman/core'
 
 // Minimal, idempotent agent boot endpoint used by the UI to ensure
@@ -87,8 +88,39 @@ export const GET: APIRoute = async () => {
     }
   }
 
+  // Load persona data for splash screen
+  let persona = null
+  let version = '1.0.0'
+  let modelInfo = null
+
+  try {
+    persona = loadPersonaCore()
+
+    // Try to get version from package.json
+    try {
+      const fs = await import('node:fs')
+      const pkgPath = path.join(paths.root, 'package.json')
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
+        version = pkg.version || version
+      }
+    } catch {}
+
+    // Try to get active model info
+    try {
+      const configPath = path.join(paths.etc, 'agent.json')
+      const fs = await import('node:fs')
+      if (fs.existsSync(configPath)) {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+        modelInfo = { model: config.defaultModel || 'Local Models' }
+      }
+    } catch {}
+  } catch (e) {
+    // Continue without persona data if loading fails
+  }
+
   return new Response(
-    JSON.stringify({ started, already, missing }),
+    JSON.stringify({ started, already, missing, persona, version, modelInfo }),
     { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }
   )
 }

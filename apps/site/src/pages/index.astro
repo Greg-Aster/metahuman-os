@@ -35,31 +35,18 @@ import '../styles/tailwind.css';
     </script>
   </head>
   <body>
-    <!-- Splash Screen -->
+    <!-- Welcome Modal (shown on first visit) -->
     <SplashScreen client:only="svelte" />
 
-    <!-- Main Application -->
-    <div id="main-app" style="opacity: 0; transition: opacity 0.3s ease-in;">
+    <!-- Main Application (show immediately, no blocking) -->
+    <div id="main-app">
       <ChatLayout client:load>
         <ThemeToggle slot="header-actions" />
         <LeftSidebar slot="left-sidebar" client:load />
         <CenterContent slot="center" client:load />
-        <RightSidebar slot="right-sidebar" client:load />
+        <RightSidebar slot="right-sidebar" client:idle />
       </ChatLayout>
     </div>
-
-    <script>
-      // Show main app after splash screen completes
-      window.addEventListener('DOMContentLoaded', () => {
-        // Wait for splash to complete (handled by SplashScreen component)
-        setTimeout(() => {
-          const mainApp = document.getElementById('main-app');
-          if (mainApp) {
-            mainApp.style.opacity = '1';
-          }
-        }, 2500); // Should match splash screen total duration
-      });
-    </script>
   </body>
 </html>
 

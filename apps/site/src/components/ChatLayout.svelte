@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy, setContext } from 'svelte';
   import { writable } from 'svelte/store';
+  import { statusStore } from '../stores/navigation';
+  import { startPolicyPolling, policyStore, isReadOnly } from '../stores/security-policy';
+  import UserMenu from './UserMenu.svelte';
 
   // Sidebar visibility state - mobile-first defaults
   let leftSidebarOpen = false;
@@ -27,6 +30,21 @@
   let modeLoading = false;
   let modeError = '';
   let modeMenuAnchor: HTMLDivElement | null = null;
+
+  // System status and allowed modes
+  let systemStatus: any = null;
+  let allowedModes: string[] = [];
+  let disabledModes: string[] = [];
+
+  // User authentication state
+  interface User {
+    id: string;
+    username: string;
+    role: 'owner' | 'guest' | 'anonymous';
+  }
+  let currentUser: User | null = null;
+  let userMenuOpen = false;
+  let userMenuAnchor: HTMLElement | null = null;
 
   // Persona name and icon state
   let personaName = 'MetaHuman OS';
@@ -86,6 +104,7 @@
       const res = await fetch('/api/status', { cache: 'no-store' });
       if (!res.ok) throw new Error(`Failed to load persona (status ${res.status})`);
       const data = await res.json();
+      statusStore.set(data);  // Store the response for other components to use
       if (data?.identity?.name) {
         personaName = data.identity.name;
       }
@@ -136,11 +155,60 @@
     }
   }
 
+  async function fetchSystemStatus() {
+    try {
+      const res = await fetch('/api/system-status');
+      const data = await res.json();
+
+      if (data.success) {
+        systemStatus = data;
+        allowedModes = data.allowedModes || [];
+        disabledModes = data.disabledModes || [];
+      }
+    } catch (error) {
+      console.error('[ChatLayout] Failed to fetch system status:', error);
+    }
+  }
+
+  async function fetchCurrentUser() {
+    try {
+      const response = await fetch('/api/auth/me');
+      const data = await response.json();
+
+      if (data.success && data.user) {
+        currentUser = data.user;
+      } else {
+        currentUser = null;
+      }
+    } catch (err) {
+      console.error('[ChatLayout] Failed to fetch user:', err);
+      currentUser = null;
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      window.location.href = '/login';
+    } catch (err) {
+      console.error('[ChatLayout] Logout failed:', err);
+    }
+  }
+
+  function toggleUserMenu() {
+    userMenuOpen = !userMenuOpen;
+  }
+
   const handleGlobalClick = (event: MouseEvent) => {
-    if (!modeMenuOpen) return;
-    if (!modeMenuAnchor) return;
-    if (modeMenuAnchor.contains(event.target as Node)) return;
-    modeMenuOpen = false;
+    // Close mode menu if clicked outside
+    if (modeMenuOpen && modeMenuAnchor && !modeMenuAnchor.contains(event.target as Node)) {
+      modeMenuOpen = false;
+    }
+
+    // Close user menu if clicked outside
+    if (userMenuOpen && userMenuAnchor && !userMenuAnchor.contains(event.target as Node)) {
+      userMenuOpen = false;
+    }
   };
 
   // Load sidebar preferences from localStorage and ensure core agents are running
@@ -175,12 +243,21 @@
     // Always attempt to boot boredom-service on UI load; endpoint is idempotent
     fetch('/api/boot', { method: 'GET', cache: 'no-store', keepalive: true }).catch(() => {});
 
+    // Fire-and-forget: warm up models in background to avoid first-message latency
+    // This pre-loads orchestrator and persona models into Ollama's memory
+    fetch('/api/warmup', { method: 'GET', cache: 'no-store', keepalive: true }).catch(() => {});
+
     void loadPersonaName();
     void loadCognitiveModeState();
+    void fetchSystemStatus();
+    void fetchCurrentUser();
     document.addEventListener('click', handleGlobalClick, true);
 
     // Refresh persona name every 30 seconds (in case persona file changes)
     const personaInterval = setInterval(loadPersonaName, 30000);
+
+    // Start security policy polling (refreshes every 30s)
+    const stopPolicyPolling = startPolicyPolling(30000);
 
     return () => {
       window.removeEventListener('resize', updateScreenSize);
@@ -188,6 +265,7 @@
       window.removeEventListener('orientationchange', setVH);
       document.removeEventListener('click', handleGlobalClick, true);
       clearInterval(personaInterval);
+      stopPolicyPolling();
     };
   });
 
@@ -222,19 +300,72 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
         </svg>
       </button>
-      <h1 class="flex items-center gap-3 text-lg font-semibold text-gray-900 dark:text-gray-100 m-0">
-        {#if personaIcon && !personaIconError}
-          <img
-            src="/api/persona-icon"
-            alt="Persona icon"
-            class="persona-icon"
-            on:error={() => { personaIconError = true; }}
-          />
-        {:else}
-          <span class="persona-icon-fallback">🤖</span>
+      <div class="relative" bind:this={userMenuAnchor}>
+        <button
+          on:click={toggleUserMenu}
+          class="flex items-center gap-3 text-lg font-semibold text-gray-900 dark:text-gray-100 m-0 border-0 bg-transparent cursor-pointer p-2 rounded-md transition-all hover:bg-gray-100 dark:hover:bg-white/10"
+          aria-label="User menu"
+        >
+          {#if personaIcon && !personaIconError}
+            <img
+              src="/api/persona-icon"
+              alt="Persona icon"
+              class="persona-icon"
+              on:error={() => { personaIconError = true; }}
+            />
+          {:else}
+            <span class="persona-icon-fallback">🤖</span>
+          {/if}
+          <span class="brand-name">{personaName}</span>
+          {#if currentUser}
+            <span class="text-xs text-gray-500 dark:text-gray-400 font-normal">
+              ({currentUser.username})
+            </span>
+          {/if}
+        </button>
+
+        {#if userMenuOpen}
+          <div class="absolute left-0 mt-2 w-64 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg z-50">
+            {#if currentUser}
+              <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+                <div class="flex items-center gap-3">
+                  <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-semibold">
+                    {currentUser.username.charAt(0).toUpperCase()}
+                  </div>
+                  <div class="flex-1">
+                    <div class="font-semibold text-gray-900 dark:text-gray-100">
+                      {currentUser.username}
+                    </div>
+                    <div class="inline-block mt-1 px-2 py-0.5 rounded text-xs font-medium
+                                {currentUser.role === 'owner' ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' :
+                                 currentUser.role === 'guest' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' :
+                                 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}">
+                      {currentUser.role.toUpperCase()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                on:click={handleLogout}
+                class="w-full flex items-center gap-3 px-4 py-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors border-0 bg-transparent cursor-pointer text-left"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                </svg>
+                Logout
+              </button>
+            {:else}
+              <a
+                href="/login"
+                class="block px-4 py-3 text-sm text-center text-white bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 transition-all font-semibold no-underline"
+              >
+                Login
+              </a>
+            {/if}
+          </div>
         {/if}
-        <span class="brand-name">{personaName}</span>
-      </h1>
+      </div>
     </div>
 
     <div class="flex items-center gap-3">
@@ -261,16 +392,35 @@
                 </div>
               {:else}
                 {#each cognitiveModes as mode (mode.id)}
+                  {@const isDisabled = allowedModes.length > 0 && !allowedModes.includes(mode.id)}
+                  {@const disabledReason = isDisabled ?
+                    (systemStatus?.status === 'high_security' ? 'High security mode: Only emulation allowed' :
+                     systemStatus?.status === 'wetware_deceased' && mode.id === 'dual' ? 'Wetware deceased: Dual consciousness unavailable' :
+                     'This mode is disabled') : null}
+
                   <button
-                    class="w-full text-left px-3 py-2 text-sm hover:bg-brand/10 dark:hover:bg-brand/20 transition {cognitiveMode?.id === mode.id ? 'bg-brand/5 border-l-4 border-brand pl-2' : ''}"
-                    on:click={() => changeCognitiveMode(mode.id)}
-                    disabled={modeLoading}
+                    class="w-full text-left px-3 py-2 text-sm transition
+                           {cognitiveMode?.id === mode.id ? 'bg-brand/5 border-l-4 border-brand pl-2' : ''}
+                           {isDisabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-brand/10 dark:hover:bg-brand/20'}"
+                    on:click={() => !isDisabled && changeCognitiveMode(mode.id)}
+                    disabled={modeLoading || isDisabled}
+                    title={disabledReason || ''}
                   >
                     <div class="flex items-center gap-2">
                       <span class="h-2 w-2 rounded-full {mode.id === 'dual' ? 'bg-purple-500' : mode.id === 'agent' ? 'bg-blue-500' : 'bg-amber-500'}"></span>
                       <span class="font-medium">{mode.label}</span>
+                      {#if isDisabled}
+                        <svg class="w-3 h-3 text-gray-400 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                        </svg>
+                      {/if}
                     </div>
-                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400 leading-snug">{mode.description}</p>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400 leading-snug">
+                      {mode.description}
+                      {#if isDisabled}
+                        <br><span class="text-amber-600 dark:text-amber-400">{disabledReason}</span>
+                      {/if}
+                    </p>
                   </button>
                 {/each}
               {/if}
@@ -295,6 +445,42 @@
   {#if modeError}
     <div class="px-4 py-2 text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/40 border-b border-red-200 dark:border-red-900/60">
       Cognitive mode error: {modeError}
+    </div>
+  {/if}
+
+  {#if systemStatus?.status === 'high_security'}
+    <div class="px-4 py-2 text-sm text-red-800 dark:text-red-200 bg-red-50 dark:bg-red-950/40 border-b border-red-200 dark:border-red-900/60 flex items-center gap-2">
+      <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+      </svg>
+      <span>
+        <strong>High Security Mode Active:</strong> Only emulation mode is allowed. All write operations are disabled.
+      </span>
+    </div>
+  {:else if systemStatus?.status === 'wetware_deceased'}
+    <div class="px-4 py-2 text-sm text-indigo-800 dark:text-indigo-200 bg-indigo-50 dark:bg-indigo-950/40 border-b border-indigo-200 dark:border-indigo-900/60 flex items-center gap-2">
+      <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+      <span>
+        <strong>Wetware Deceased:</strong> Operating as independent digital consciousness. Dual consciousness mode unavailable.
+      </span>
+    </div>
+  {/if}
+
+  {#if $isReadOnly}
+    <div class="px-4 py-2 text-sm text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-900/60 flex items-center gap-2">
+      <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+      </svg>
+      <span>
+        <strong>Read-Only Mode:</strong>
+        {#if $policyStore?.mode === 'emulation'}
+          Memory and configuration changes are disabled in emulation mode. Switch to dual or agent mode to enable modifications.
+        {:else}
+          Memory writes are currently disabled.
+        {/if}
+      </span>
     </div>
   {/if}
 

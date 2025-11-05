@@ -6,8 +6,28 @@ import { listAvailableRoles, resolveModel, loadModelRegistry } from '@metahuman/
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+// Cache implementation for /api/status
+const statusCache = { data: null, timestamp: 0 };
+const CACHE_TTL = 5000; // 5 seconds
+
 export const GET: APIRoute = async () => {
   try {
+    const now = Date.now();
+
+    // Return cached if fresh
+    if (statusCache.data && now - statusCache.timestamp < CACHE_TTL) {
+      return new Response(
+        JSON.stringify(statusCache.data),
+        { 
+          status: 200, 
+          headers: { 
+            'Content-Type': 'application/json', 
+            'Cache-Control': 'no-store' // Still no-store to avoid browser caching, but we have server-side caching
+          } 
+        }
+      );
+    }
+
     const persona = loadPersonaCore();
     const rules = loadDecisionRules();
     const tasks = listActiveTasks();
@@ -103,38 +123,44 @@ export const GET: APIRoute = async () => {
       modelRoles = {};
     }
 
+    // Cache the response
+    const responseData = {
+      identity: {
+        name: persona.identity.name,
+        role: persona.identity.role,
+        icon: persona.identity.icon || null,
+        trustLevel: rules.trustLevel,
+      },
+      tasks: {
+        active: tasks.length,
+        byStatus: {
+          todo: tasks.filter(t => t.status === 'todo').length,
+          in_progress: tasks.filter(t => t.status === 'in_progress').length,
+          blocked: tasks.filter(t => t.status === 'blocked').length,
+        },
+      },
+      values: persona.values.core.slice(0, 3),
+      goals: persona.goals.shortTerm,
+      lastUpdated: persona.lastUpdated,
+      // Legacy model field (deprecated, kept for backward compatibility)
+      model: {
+        current: currentModel,
+        base: baseModel,
+        useAdapter,
+        adapterMode,
+        personaSummary: personaSummaryStatus,
+        adapter,
+      },
+      // New multi-model registry information
+      modelRoles,
+      registryVersion,
+    };
+
+    statusCache.data = responseData;
+    statusCache.timestamp = now;
+
     return new Response(
-      JSON.stringify({
-        identity: {
-          name: persona.identity.name,
-          role: persona.identity.role,
-          icon: persona.identity.icon || null,
-          trustLevel: rules.trustLevel,
-        },
-        tasks: {
-          active: tasks.length,
-          byStatus: {
-            todo: tasks.filter(t => t.status === 'todo').length,
-            in_progress: tasks.filter(t => t.status === 'in_progress').length,
-            blocked: tasks.filter(t => t.status === 'blocked').length,
-          },
-        },
-        values: persona.values.core.slice(0, 3),
-        goals: persona.goals.shortTerm,
-        lastUpdated: persona.lastUpdated,
-        // Legacy model field (deprecated, kept for backward compatibility)
-        model: {
-          current: currentModel,
-          base: baseModel,
-          useAdapter,
-          adapterMode,
-          personaSummary: personaSummaryStatus,
-          adapter,
-        },
-        // New multi-model registry information
-        modelRoles,
-        registryVersion,
-      }),
+      JSON.stringify(responseData),
       {
         status: 200,
         headers: {

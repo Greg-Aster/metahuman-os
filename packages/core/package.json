@@ -16,7 +16,11 @@
     "./skills": "./src/skills.ts",
     "./cognitive-mode": "./src/cognitive-mode.ts",
     "./model-resolver": "./src/model-resolver.ts",
-    "./model-router": "./src/model-router.ts"
+    "./model-router": "./src/model-router.ts",
+    "./security-policy": "./src/security-policy.ts",
+    "./users": "./src/users.ts",
+    "./sessions": "./src/sessions.ts",
+    "./env-config": "./src/env-config.ts"
   },
   "dependencies": {
     "fast-glob": "^3.3.2",

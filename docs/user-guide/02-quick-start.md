@@ -39,5 +39,7 @@ pnpm install
    # Then open http://localhost:4321
    ```
 
+   You will be greeted by a splash screen that provides real-time feedback as the OS initializes, loads your persona, and connects to the local models. This improves the startup experience by showing immediate activity.
+
 ---
 

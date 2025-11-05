@@ -14,6 +14,7 @@
   import TrainingMonitor from './TrainingMonitor.svelte';
   import Lifeline from './Lifeline.svelte';
   import OvernightLearnings from './OvernightLearnings.svelte';
+  import SystemSettings from './SystemSettings.svelte';
 
   // Memory/Events (loaded from /api/memories)
   type EventItem = {
@@ -40,7 +41,7 @@ let eventsError: string | null = null
 let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'datasets' | 'monitor' | 'adapters' = 'datasets'
-let systemTab: 'persona' | 'lifeline' | 'terminal' = 'persona'
+let systemTab: 'persona' | 'lifeline' | 'settings' = 'persona'
 let expanded: Record<string, boolean> = {}
 type MemoryContentState = { status: 'idle' | 'loading' | 'ready' | 'error'; content?: string; error?: string }
 let memoryContent: Record<string, MemoryContentState> = {}
@@ -827,8 +828,8 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
       <div class="view-content">
         <div class="tab-group">
           <button class="tab-button" class:active={systemTab==='persona'} on:click={() => systemTab='persona'}>Persona</button>
+          <button class="tab-button" class:active={systemTab==='settings'} on:click={() => systemTab='settings'}>Settings</button>
           <button class="tab-button" class:active={systemTab==='lifeline'} on:click={() => systemTab='lifeline'}>Lifeline</button>
-          <button class="tab-button" class:active={systemTab==='terminal'} on:click={() => systemTab='terminal'}>Terminal</button>
         </div>
         {#if systemTab === 'persona'}
           <div class="persona-panel">
@@ -930,11 +931,21 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
               </form>
             {/if}
           </div>
+        {:else if systemTab === 'settings'}
+          <SystemSettings />
         {:else if systemTab === 'lifeline'}
           <Lifeline />
-        {:else if systemTab === 'terminal'}
-          <Terminal />
         {/if}
+      </div>
+    </div>
+  {:else if $activeView === 'terminal'}
+    <div class="view-container terminal-view">
+      <div class="view-header">
+        <h2 class="view-title">💻 Terminal</h2>
+        <p class="view-subtitle">Command line interface</p>
+      </div>
+      <div class="view-content">
+        <Terminal />
       </div>
     </div>
   {/if}
