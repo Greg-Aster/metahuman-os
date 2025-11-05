@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "description": "Trust level coupling with cognitive modes",
+  "coupled": true,
+  "mappings": {
+    "dual": "supervised_auto",
+    "agent": "suggest",
+    "emulation": "observe"
+  },
+  "description_text": {
+    "dual": "Full cognitive mirroring with supervised autonomy",
+    "agent": "Assistant mode with suggestion-based trust",
+    "emulation": "Read-only demonstration mode with observe-only trust"
+  }
+}

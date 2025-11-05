@@ -28,10 +28,12 @@ export * from './stt';
 export * from './voice-training';
 export * from './autonomy';
 export * from './cognitive-mode';
+export * from './trust-coupling';
 export * from './fs-glob';
 export * from './progress-tracker';
 export * from './state';
 export * from './context-builder';
+export * from './cognitive-layers';
 
 // Version
 export const VERSION = '0.1.0';

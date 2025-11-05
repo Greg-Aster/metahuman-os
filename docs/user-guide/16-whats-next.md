@@ -136,6 +136,10 @@ MetaHuman OS is under active development following a phased roadmap toward full 
 - Mobile notifications
 - Complete audit system
 
+**M5: Bare-Metal Integration** (Future)
+- Optimized for direct deployment on Linux kernel for maximum performance and resource control.
+- All-in-one package for simplified deployment and management.
+
 ### Cross-Platform & Mobile App
 A major focus is bringing the MetaHuman OS experience to mobile devices. The roadmap for this includes:
 - **API Readiness:** Enhancing the core API with mobile-friendly endpoints for chat, memory search, and task management.

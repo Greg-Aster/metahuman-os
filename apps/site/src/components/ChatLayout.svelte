@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, setContext } from 'svelte';
   import { writable } from 'svelte/store';
-  import { statusStore } from '../stores/navigation';
+  import { statusStore, statusRefreshTrigger } from '../stores/navigation';
   import { startPolicyPolling, fetchSecurityPolicy, policyStore, isReadOnly } from '../stores/security-policy';
   import UserMenu from './UserMenu.svelte';
 
@@ -151,6 +151,9 @@
       // Refresh security policy to update UI controls (operator/yolo toggles, etc.)
       await fetchSecurityPolicy();
 
+      // Trigger status refresh (trust level may have auto-adjusted if coupled)
+      statusRefreshTrigger.update(n => n + 1);
+
       modeMenuOpen = false;
     } catch (error) {
       modeError = (error as Error).message;
@@ -278,6 +281,12 @@
       document.removeEventListener('click', handleGlobalClick, true);
     }
   });
+
+  // Watch for refresh trigger changes
+  $: if ($statusRefreshTrigger > 0) {
+    void loadPersonaName();
+    void loadCognitiveModeState();
+  }
 
   // Toggle functions with persistence
   function toggleLeftSidebar() {

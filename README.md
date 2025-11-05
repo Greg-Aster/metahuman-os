@@ -4,7 +4,7 @@ An autonomous digital personality extension operating system that mirrors your i
 
 ## Overview
 
-MetaHuman OS is a local-first digital personality extension that acts as a parallel intelligence—not an assistant. It:
+MetaHuman OS is a local-first digital personality extension that acts as a parallel intelligence—not an assistant. It is designed as an all-in-one package, capable of running directly on a Linux kernel for optimal performance and control. It:
 - Stores and processes your memories, tasks, and reflections locally as JSON
 - Learns your patterns and mirrors your judgment
 - Operates autonomously (with your permission) 24/7

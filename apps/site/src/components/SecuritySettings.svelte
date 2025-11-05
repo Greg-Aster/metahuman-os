@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { statusRefreshTrigger } from '../stores/navigation';
 
   interface User {
     id: string;
@@ -38,6 +39,9 @@
 
   onMount(async () => {
     await fetchCurrentUser();
+    await loadTrustLevel();
+    await loadAgentConfig();
+    await loadTrustCoupling();
   });
 
   async function fetchCurrentUser() {
@@ -194,6 +198,163 @@
       newEmail = currentUser.metadata?.email || '';
     }
     error = '';
+  }
+
+  // Trust Level state
+  let trustLevel = '';
+  let trustOptions: string[] = [];
+  let trustLoading = false;
+  let trustSaving = false;
+
+  // Persona Summary state
+  let includePersonaSummary = true;
+  let personaSummaryLoading = false;
+  let personaSummarySaving = false;
+
+  // Trust Coupling state
+  let trustCoupled = true;
+  let couplingLoading = false;
+  let couplingSaving = false;
+
+  async function loadTrustLevel() {
+    trustLoading = true;
+    try {
+      const response = await fetch('/api/trust');
+      const data = await response.json();
+      if (response.ok) {
+        trustLevel = data.level || 'observe';
+        trustOptions = data.available || [];
+      }
+    } catch (err) {
+      console.error('Failed to load trust level:', err);
+    } finally {
+      trustLoading = false;
+    }
+  }
+
+  async function handleTrustLevelChange(event: Event) {
+    const target = event.target as HTMLSelectElement;
+    const newLevel = target.value;
+
+    trustSaving = true;
+    error = '';
+    success = '';
+
+    try {
+      const response = await fetch('/api/trust', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level: newLevel }),
+      });
+
+      const data = await response.json();
+
+      if (data.ok) {
+        trustLevel = newLevel;
+        success = `Trust level changed to: ${newLevel}`;
+        // Trigger status refresh
+        statusRefreshTrigger.update(n => n + 1);
+      } else {
+        error = data.error || 'Failed to change trust level';
+        // Revert the select
+        target.value = trustLevel;
+      }
+    } catch (err) {
+      error = 'Network error. Please try again.';
+      console.error(err);
+      // Revert the select
+      target.value = trustLevel;
+    } finally {
+      trustSaving = false;
+    }
+  }
+
+  async function loadAgentConfig() {
+    personaSummaryLoading = true;
+    try {
+      const response = await fetch('/api/agent-config');
+      const data = await response.json();
+      if (response.ok && data.config) {
+        includePersonaSummary = data.config.includePersonaSummary ?? true;
+      }
+    } catch (err) {
+      console.error('Failed to load agent config:', err);
+    } finally {
+      personaSummaryLoading = false;
+    }
+  }
+
+  async function handlePersonaSummaryToggle() {
+    personaSummarySaving = true;
+    error = '';
+    success = '';
+
+    try {
+      const response = await fetch('/api/agent-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ includePersonaSummary: !includePersonaSummary }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        includePersonaSummary = !includePersonaSummary;
+        success = `Persona summary ${includePersonaSummary ? 'enabled' : 'disabled'}`;
+      } else {
+        error = data.error || 'Failed to update persona summary setting';
+      }
+    } catch (err) {
+      error = 'Network error. Please try again.';
+      console.error(err);
+    } finally {
+      personaSummarySaving = false;
+    }
+  }
+
+  async function loadTrustCoupling() {
+    couplingLoading = true;
+    try {
+      const response = await fetch('/api/trust-coupling');
+      const data = await response.json();
+      if (response.ok && data.success) {
+        trustCoupled = data.coupled ?? true;
+      }
+    } catch (err) {
+      console.error('Failed to load trust coupling:', err);
+    } finally {
+      couplingLoading = false;
+    }
+  }
+
+  async function handleCouplingToggle() {
+    couplingSaving = true;
+    error = '';
+    success = '';
+
+    try {
+      const response = await fetch('/api/trust-coupling', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coupled: !trustCoupled }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        trustCoupled = !trustCoupled;
+        success = `Trust level ${trustCoupled ? 'coupled to' : 'decoupled from'} cognitive mode`;
+        // Trigger status refresh
+        statusRefreshTrigger.update(n => n + 1);
+      } else {
+        error = data.error || 'Failed to toggle coupling';
+      }
+    } catch (err) {
+      error = 'Network error. Please try again.';
+      console.error(err);
+    } finally {
+      couplingSaving = false;
+    }
   }
 </script>
 
@@ -402,6 +563,118 @@
       {/if}
     </div>
 
+    <!-- Trust Coupling (Owner Only) -->
+    {#if currentUser.role === 'owner'}
+      <div class="card">
+        <h2>🔗 Trust & Cognitive Mode Coupling</h2>
+        <p>Link trust level to cognitive mode for automatic permission adjustment</p>
+        {#if couplingLoading}
+          <p class="loading-text">Loading coupling state...</p>
+        {:else}
+          <div class="toggle-control">
+            <label class="toggle-label">
+              <input
+                type="checkbox"
+                checked={trustCoupled}
+                on:change={handleCouplingToggle}
+                disabled={couplingSaving}
+              />
+              <span class="toggle-switch"></span>
+              <span class="toggle-text">
+                {trustCoupled ? 'Coupled (automatic)' : 'Decoupled (manual)'}
+              </span>
+            </label>
+            {#if couplingSaving}
+              <span class="saving-indicator">Saving...</span>
+            {/if}
+          </div>
+          <div class="coupling-info">
+            {#if trustCoupled}
+              <small>
+                ✓ Trust level adjusts automatically when switching cognitive modes:<br>
+                • <strong>Dual Consciousness</strong> → supervised_auto (full autonomy with logging)<br>
+                • <strong>Agent Mode</strong> → suggest (approval required)<br>
+                • <strong>Emulation</strong> → observe (read-only, no actions)
+              </small>
+            {:else}
+              <small>
+                ⚠️ Trust level must be manually adjusted. Cognitive mode changes won't affect permissions.
+              </small>
+            {/if}
+          </div>
+        {/if}
+      </div>
+
+      <!-- Trust Level (Owner Only) -->
+      <div class="card">
+        <h2>🔐 Trust Level (Progressive Autonomy)</h2>
+        <p>Controls what skills the operator can access and whether actions require approval</p>
+        {#if trustLoading}
+          <p class="loading-text">Loading trust level...</p>
+        {:else}
+          <div class="trust-level-control">
+            <div class="form-group">
+              <label for="trustLevel">Current Trust Level</label>
+              <select
+                id="trustLevel"
+                bind:value={trustLevel}
+                on:change={handleTrustLevelChange}
+                disabled={trustSaving}
+              >
+                {#each trustOptions as option}
+                  <option value={option}>{option}</option>
+                {/each}
+              </select>
+              <small>
+                {#if trustLevel === 'observe'}
+                  Monitor only, no actions, learn patterns
+                {:else if trustLevel === 'suggest'}
+                  Propose actions, require explicit approval for each
+                {:else if trustLevel === 'supervised_auto'}
+                  Execute within approved categories, log all actions
+                {:else if trustLevel === 'bounded_auto'}
+                  Full autonomy within defined trust boundaries
+                {:else if trustLevel === 'adaptive_auto'}
+                  Self-expand boundaries based on successful outcomes
+                {/if}
+              </small>
+            </div>
+            <div class="trust-info">
+              <strong>Trust Progression:</strong> observe → suggest → supervised_auto → bounded_auto → adaptive_auto
+            </div>
+          </div>
+        {/if}
+      </div>
+
+      <!-- Persona Summary Toggle -->
+      <div class="card">
+        <h2>🧠 Persona Summary</h2>
+        <p>Include your persona identity, values, and goals in chat context</p>
+        {#if personaSummaryLoading}
+          <p class="loading-text">Loading persona summary setting...</p>
+        {:else}
+          <div class="toggle-control">
+            <label class="toggle-label">
+              <input
+                type="checkbox"
+                checked={includePersonaSummary}
+                on:change={handlePersonaSummaryToggle}
+                disabled={personaSummarySaving}
+              />
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">
+                {includePersonaSummary ? 'Enabled' : 'Disabled'}
+              </span>
+            </label>
+            <small>
+              When enabled, the AI will have access to your persona's identity, values, goals, and personality traits.
+              This helps the AI respond more consistently with your configured personality.
+            </small>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <!-- Security Information -->
     <div class="card info-card">
       <h2>Security Information</h2>
@@ -410,6 +683,10 @@
         <li>Session cookies are HTTPOnly and secure</li>
         <li>Owner sessions last 24 hours, guest sessions last 1 hour</li>
         <li>Clear your browser cookies to log out from all devices</li>
+        {#if currentUser.role === 'owner'}
+          <li>Trust level changes are audited and logged for security</li>
+          <li>All skill executions respect the current trust level</li>
+        {/if}
       </ul>
     </div>
   {/if}
@@ -785,5 +1062,160 @@
 
   :global(.dark) .info-card li {
     color: rgb(156 163 175);
+  }
+
+  .loading-text {
+    color: rgb(107 114 128);
+    font-style: italic;
+  }
+
+  :global(.dark) .loading-text {
+    color: rgb(156 163 175);
+  }
+
+  .trust-level-control {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .trust-info {
+    padding: 0.75rem;
+    background: rgb(243 244 246);
+    border-left: 3px solid rgb(139, 92, 246);
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+    color: rgb(55 65 81);
+  }
+
+  :global(.dark) .trust-info {
+    background: rgb(31 41 55);
+    color: rgb(209 213 219);
+  }
+
+  .form-group select {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid rgb(209 213 219);
+    border-radius: 0.5rem;
+    font-size: 1rem;
+    background: white;
+    color: rgb(17 24 39);
+    cursor: pointer;
+  }
+
+  :global(.dark) .form-group select {
+    background: rgb(31 41 55);
+    border-color: rgb(55 65 81);
+    color: rgb(243 244 246);
+  }
+
+  .form-group select:focus {
+    outline: none;
+    border-color: rgb(139, 92, 246);
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+  }
+
+  .form-group select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .toggle-control {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    cursor: pointer;
+  }
+
+  .toggle-label input[type="checkbox"] {
+    display: none;
+  }
+
+  .toggle-slider,
+  .toggle-switch {
+    position: relative;
+    width: 48px;
+    height: 24px;
+    background: rgb(209 213 219);
+    border-radius: 9999px;
+    transition: background 0.2s;
+  }
+
+  :global(.dark) .toggle-slider,
+  :global(.dark) .toggle-switch {
+    background: rgb(55 65 81);
+  }
+
+  .toggle-slider::after,
+  .toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+
+  .toggle-label input:checked + .toggle-slider,
+  .toggle-label input:checked + .toggle-switch {
+    background: rgb(139, 92, 246);
+  }
+
+  .toggle-label input:checked + .toggle-slider::after,
+  .toggle-label input:checked + .toggle-switch::after {
+    transform: translateX(24px);
+  }
+
+  .toggle-label input:disabled + .toggle-slider,
+  .toggle-label input:disabled + .toggle-switch {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .toggle-text {
+    font-weight: 500;
+    color: rgb(17 24 39);
+  }
+
+  :global(.dark) .toggle-text {
+    color: rgb(243 244 246);
+  }
+
+  .coupling-info {
+    margin-top: 0.5rem;
+    padding: 0.75rem;
+    background: rgb(243 244 246);
+    border-radius: 0.5rem;
+    border-left: 3px solid rgb(139, 92, 246);
+  }
+
+  :global(.dark) .coupling-info {
+    background: rgb(31 41 55);
+  }
+
+  .coupling-info small {
+    display: block;
+    color: rgb(75 85 99);
+    line-height: 1.6;
+  }
+
+  :global(.dark) .coupling-info small {
+    color: rgb(156 163 175);
+  }
+
+  .saving-indicator {
+    color: rgb(139, 92, 246);
+    font-size: 0.875rem;
+    font-style: italic;
   }
 </style>

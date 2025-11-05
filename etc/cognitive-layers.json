@@ -1,0 +1,152 @@
+{
+  "$schema": "https://metahuman.dev/schemas/cognitive-layers.json",
+  "version": "1.0.0",
+  "description": "Cognitive layer configuration for MetaHuman OS multi-layer architecture",
+
+  "dual": {
+    "description": "Full cognitive depth for dual consciousness mode - all layers active with maximum capabilities",
+    "layers": [
+      {
+        "name": "subconscious",
+        "enabled": true,
+        "config": {
+          "searchDepth": "deep",
+          "similarityThreshold": 0.62,
+          "maxMemories": 8,
+          "maxContextChars": 1500,
+          "filterInnerDialogue": true,
+          "filterReflections": true,
+          "includeShortTermState": true,
+          "includePersonaCache": true,
+          "includeTaskContext": false,
+          "detectPatterns": true,
+          "forceSemanticSearch": true,
+          "usingLoRA": false
+        }
+      },
+      {
+        "name": "personality-core",
+        "enabled": true,
+        "config": {
+          "useLoRA": true,
+          "loraMode": "latest",
+          "includePersonaContext": false,
+          "trackVoiceConsistency": true,
+          "fallbackToBase": true
+        }
+      },
+      {
+        "name": "meta-cognition",
+        "enabled": true,
+        "config": {
+          "validationLevel": "full",
+          "checkValueAlignment": true,
+          "checkConsistency": true,
+          "applySafetyFilters": true,
+          "refineResponses": true,
+          "refinementThreshold": 0.7
+        }
+      }
+    ]
+  },
+
+  "agent": {
+    "description": "Lightweight assistant mode - selective layers with reduced overhead for faster responses",
+    "layers": [
+      {
+        "name": "subconscious",
+        "enabled": true,
+        "config": {
+          "searchDepth": "normal",
+          "similarityThreshold": 0.62,
+          "maxMemories": 2,
+          "maxContextChars": 900,
+          "filterInnerDialogue": true,
+          "filterReflections": true,
+          "includeShortTermState": true,
+          "includePersonaCache": true,
+          "includeTaskContext": false,
+          "detectPatterns": false,
+          "forceSemanticSearch": false,
+          "usingLoRA": false
+        }
+      },
+      {
+        "name": "personality-core",
+        "enabled": true,
+        "config": {
+          "useLoRA": false,
+          "includePersonaContext": true,
+          "trackVoiceConsistency": false,
+          "fallbackToBase": true
+        }
+      },
+      {
+        "name": "meta-cognition",
+        "enabled": true,
+        "config": {
+          "validationLevel": "selective",
+          "checkValueAlignment": false,
+          "checkConsistency": false,
+          "applySafetyFilters": true,
+          "refineResponses": false
+        }
+      }
+    ]
+  },
+
+  "emulation": {
+    "description": "Read-only personality snapshot - frozen personality using LoRA adapter, minimal validation",
+    "layers": [
+      {
+        "name": "subconscious",
+        "enabled": true,
+        "config": {
+          "searchDepth": "shallow",
+          "similarityThreshold": 0.62,
+          "maxMemories": 2,
+          "maxContextChars": 600,
+          "filterInnerDialogue": true,
+          "filterReflections": true,
+          "includeShortTermState": false,
+          "includePersonaCache": true,
+          "includeTaskContext": false,
+          "detectPatterns": false,
+          "forceSemanticSearch": false,
+          "usingLoRA": true
+        }
+      },
+      {
+        "name": "personality-core",
+        "enabled": true,
+        "config": {
+          "useLoRA": true,
+          "loraMode": "snapshot",
+          "loraSnapshot": "snapshot-2025-11-01",
+          "includePersonaContext": false,
+          "trackVoiceConsistency": false,
+          "fallbackToBase": false
+        }
+      },
+      {
+        "name": "meta-cognition",
+        "enabled": false,
+        "config": {
+          "validationLevel": "none",
+          "checkValueAlignment": false,
+          "checkConsistency": false,
+          "applySafetyFilters": false,
+          "refineResponses": false
+        }
+      }
+    ]
+  },
+
+  "_comments": {
+    "searchDepth": "shallow=4, normal=8, deep=16 memory results",
+    "validationLevel": "none, selective (safety only), full (all checks)",
+    "loraMode": "latest (use newest adapter), snapshot (use specific date), none (base model)",
+    "maxContextChars": "Character limit for memory context in prompt",
+    "refinementThreshold": "Score below which response gets refined (0-1)"
+  }
+}

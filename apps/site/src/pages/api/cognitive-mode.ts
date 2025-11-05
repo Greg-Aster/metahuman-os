@@ -7,6 +7,8 @@ import {
   type CognitiveModeId,
 } from '@metahuman/core/cognitive-mode';
 import { audit } from '@metahuman/core';
+import { loadTrustCoupling, getMappedTrustLevel } from '@metahuman/core';
+import { setTrustLevel } from '@metahuman/core';
 import { auditConfigAccess, requireOwner } from '../../middleware/cognitiveModeGuard';
 
 export const GET: APIRoute = async () => {
@@ -57,6 +59,26 @@ const postHandler: APIRoute = async (context) => {
 
     const updated = saveCognitiveMode(mode, actor);
     applyModeDefaults(mode);
+
+    // Check if trust level should be automatically adjusted based on coupling
+    const coupling = loadTrustCoupling();
+    if (coupling.coupled) {
+      const mappedTrustLevel = getMappedTrustLevel(mode);
+      setTrustLevel(mappedTrustLevel);
+
+      audit({
+        level: 'info',
+        category: 'security',
+        event: 'trust_level_auto_adjusted',
+        details: {
+          trigger: 'cognitive_mode_change',
+          mode,
+          newTrustLevel: mappedTrustLevel,
+          reason: 'Trust coupling enabled',
+        },
+        actor,
+      });
+    }
 
     return new Response(
       JSON.stringify({

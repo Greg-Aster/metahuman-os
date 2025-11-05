@@ -321,6 +321,25 @@
             </span>
           </div>
         {/if}
+
+        <!-- Trust Level & Persona Summary -->
+        <div class="status-sep"></div>
+        <div class="status-row">
+          <span class="status-label">Trust:</span>
+          <span class="status-value">
+            <span class="trust-badge" title="Operator autonomy level">{identity.trustLevel || 'observe'}</span>
+          </span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Persona:</span>
+          <span class="status-value">
+            {#if modelInfo?.personaSummary === 'enabled'}
+              <span class="persona-badge enabled" title="Persona context included in chat">on</span>
+            {:else}
+              <span class="persona-badge disabled" title="Persona context not included">off</span>
+            {/if}
+          </span>
+        </div>
       </div>
     {/if}
   </div>
@@ -686,6 +705,51 @@
   :global(.dark) .adapter-indicator {
     background: rgba(167, 139, 250, 0.25);
     color: rgb(196 181 253);
+  }
+
+  /* Trust level badge */
+  .trust-badge {
+    padding: 0.125rem 0.4rem;
+    border-radius: 9999px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: lowercase;
+    background: rgba(34,197,94,0.16);
+    color: rgb(22 101 52);
+  }
+
+  :global(.dark) .trust-badge {
+    background: rgba(34,197,94,0.2);
+    color: rgb(134 239 172);
+  }
+
+  /* Persona summary badge */
+  .persona-badge {
+    padding: 0.125rem 0.4rem;
+    border-radius: 9999px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: lowercase;
+  }
+
+  .persona-badge.enabled {
+    background: rgba(139,92,246,0.16);
+    color: rgb(109 40 217);
+  }
+
+  .persona-badge.disabled {
+    background: rgba(107,114,128,0.16);
+    color: rgb(107 114 128);
+  }
+
+  :global(.dark) .persona-badge.enabled {
+    background: rgba(139,92,246,0.2);
+    color: rgb(196 181 253);
+  }
+
+  :global(.dark) .persona-badge.disabled {
+    background: rgba(148,163,184,0.16);
+    color: rgb(148 163 184);
   }
 
   /* Disabled menu item styles */
