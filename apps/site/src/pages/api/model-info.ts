@@ -9,12 +9,14 @@ import { paths, getActiveAdapter } from '@metahuman/core';
 
 export const GET: APIRoute = async () => {
   try {
-    // Get base model from config
+    // Get base model from model registry
     let baseModel = 'phi3:mini';
     try {
-      const configPath = path.join(paths.root, 'etc', 'agent.json');
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      baseModel = config.baseModel || config.model || 'phi3:mini';
+      const { loadModelRegistry } = await import('@metahuman/core');
+      const registry = loadModelRegistry();
+      const fallbackId = registry.defaults?.fallback || 'default.fallback';
+      const fallbackModel = registry.models?.[fallbackId];
+      baseModel = fallbackModel?.model || 'phi3:mini';
     } catch {
       // Use default if config not found
     }

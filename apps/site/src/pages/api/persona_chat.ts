@@ -1,8 +1,6 @@
 import type { APIRoute } from 'astro';
-import { loadPersonaCore, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, llm, callLLM, type ModelRole, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt } from '@metahuman/core';
+import { loadPersonaCore, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, pruneHistory, type Message } from '@metahuman/core';
 import { loadCognitiveMode, getModeDefinition, canWriteMemory, canUseOperator } from '@metahuman/core/cognitive-mode';
-import { PersonalityCoreLayer, checkResponseSafety, refineResponseSafely } from '@metahuman/core/cognitive-layers';
-import { pruneHistory, type Message } from '@metahuman/core';
 import { readFileSync, existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { initializeSkills } from '../../../../../brain/skills/index';
@@ -577,23 +575,26 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   const reasoningRequested = depthLevel > 0;
 
   try {
-    const agentConfigPath = path.join(ROOT, 'etc', 'agent.json');
-    if (!existsSync(agentConfigPath)) {
-      throw new Error('agent.json not found in etc/');
-    }
-    const config = JSON.parse(await fs.readFile(agentConfigPath, 'utf-8'));
-    if (!config.model) {
-      throw new Error('Default model not configured in etc/agent.json');
+    const { loadModelRegistry } = await import('@metahuman/core');
+    const registry = loadModelRegistry();
+    const fallbackId = registry.defaults?.fallback || 'default.fallback';
+    const fallbackModel = registry.models?.[fallbackId];
+    if (!fallbackModel?.model) {
+      throw new Error('Default fallback model not configured in etc/models.json');
     }
 
-    includePersonaSummary = config.includePersonaSummary !== false;
+    const globalSettings = registry.globalSettings || {};
+    includePersonaSummary = globalSettings.includePersonaSummary !== false;
 
     // Use adapter if enabled, otherwise use base model
-    if (config.useAdapter && config.adapterModel) {
-      model = config.adapterModel;
+    if (globalSettings.useAdapter && globalSettings.activeAdapter) {
+      const adapterInfo = typeof globalSettings.activeAdapter === 'string'
+        ? globalSettings.activeAdapter
+        : globalSettings.activeAdapter.modelName;
+      model = adapterInfo;
       usingLora = true;
     } else {
-      model = config.model;
+      model = fallbackModel.model;
       usingLora = false;
     }
   } catch (error) {

@@ -154,23 +154,33 @@ export function listAdapterDatasets(): AdapterDatasetInfo[] {
   return datasets;
 }
 
-function getAgentConfig(): any {
-  const cfgPath = path.join(paths.etc, 'agent.json');
+function getModelRegistry(): any {
+  const cfgPath = path.join(paths.etc, 'models.json');
   return safeReadJSON<any>(cfgPath) ?? null;
 }
 
-function writeAgentConfig(config: any): void {
-  const cfgPath = path.join(paths.etc, 'agent.json');
+function writeModelRegistry(registry: any): void {
+  const cfgPath = path.join(paths.etc, 'models.json');
   fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
-  fs.writeFileSync(cfgPath, JSON.stringify(config, null, 2));
+  fs.writeFileSync(cfgPath, JSON.stringify(registry, null, 2));
 }
 
 export function getActiveAdapter(): ActiveAdapterInfo | null {
-  const agentCfg = getAgentConfig();
-  if (agentCfg?.useAdapter && agentCfg.adapterModel) {
-    const meta = agentCfg.adapterMeta || {};
+  const registry = getModelRegistry();
+  const globalSettings = registry?.globalSettings;
+
+  if (globalSettings?.useAdapter && globalSettings?.activeAdapter) {
+    const meta = globalSettings.activeAdapter;
+    // Handle both string (model name) and object (full metadata) formats
+    if (typeof meta === 'string') {
+      return {
+        modelName: meta,
+        activatedAt: new Date().toISOString(),
+        status: 'loaded',
+      };
+    }
     return {
-      modelName: agentCfg.adapterModel,
+      modelName: meta.modelName,
       activatedAt: meta.activatedAt || new Date().toISOString(),
       adapterPath: meta.adapterPath,
       evalScore: meta.evalScore,
@@ -181,7 +191,7 @@ export function getActiveAdapter(): ActiveAdapterInfo | null {
       trainingMethod: meta.trainingMethod,
       runLabel: meta.runLabel,
       ggufAdapterPath: meta.ggufAdapterPath,
-      baseModel: agentCfg.baseModel || agentCfg.model,
+      baseModel: meta.baseModel,
       activatedBy: meta.activatedBy,
       isDualAdapter: meta.isDualAdapter ?? meta.dual ?? false,
       dual: meta.dual,
@@ -194,19 +204,21 @@ export function getActiveAdapter(): ActiveAdapterInfo | null {
   const legacyPath = path.join(paths.persona, 'overrides', 'active-adapter.json');
   const legacy = safeReadJSON<ActiveAdapterInfo>(legacyPath);
   if (legacy) {
-    // Upgrade legacy config into agent.json and remove file to avoid future divergence
-    const cfg = agentCfg || {};
-    if (!cfg.baseModel && cfg.model) {
-      cfg.baseModel = cfg.model;
-    }
+    // Upgrade legacy config into models.json and remove file to avoid future divergence
+    if (!registry) return null;
+
     const upgraded: ActiveAdapterInfo = {
       ...legacy,
-      baseModel: cfg.baseModel || cfg.model || legacy.baseModel,
+      baseModel: legacy.baseModel,
     };
-    cfg.useAdapter = true;
-    cfg.adapterModel = upgraded.modelName;
-    cfg.adapterMeta = upgraded;
-    writeAgentConfig(cfg);
+
+    if (!registry.globalSettings) {
+      registry.globalSettings = { includePersonaSummary: true, useAdapter: false, activeAdapter: null };
+    }
+    registry.globalSettings.useAdapter = true;
+    registry.globalSettings.activeAdapter = upgraded;
+
+    writeModelRegistry(registry);
     try { fs.rmSync(legacyPath); } catch {}
     return upgraded;
   }
@@ -215,45 +227,24 @@ export function getActiveAdapter(): ActiveAdapterInfo | null {
 }
 
 export function setActiveAdapter(info: ActiveAdapterInfo | null): void {
-  const cfg = getAgentConfig() || {};
+  const registry = getModelRegistry() || {};
 
-  const currentBase = cfg.baseModel || cfg.model || null;
-  if (!cfg.baseModel && cfg.model) {
-    cfg.baseModel = cfg.model;
-  }
-
-  const baseFromInfo = info?.baseModel || null;
-  if (baseFromInfo) {
-    cfg.baseModel = baseFromInfo;
-    // If current model looks like a prior adapter, reset to the provided base
-    if (!cfg.model || cfg.model.startsWith('greg-')) {
-      cfg.model = baseFromInfo;
-    }
+  // Ensure globalSettings exists
+  if (!registry.globalSettings) {
+    registry.globalSettings = { includePersonaSummary: true, useAdapter: false, activeAdapter: null };
   }
 
   if (info) {
     const status = info.status ?? 'loaded';
     const enableAdapter = status === 'loaded' || status === 'active';
-    cfg.useAdapter = enableAdapter;
-    cfg.adapterModel = info.modelName;
-    cfg.adapterMeta = { ...info, status };
-    // Preserve base model if present; if current model equals adapter name, reset to base
-    if (cfg.model === info.modelName && cfg.baseModel) {
-      cfg.model = cfg.baseModel;
-    }
+    registry.globalSettings.useAdapter = enableAdapter;
+    registry.globalSettings.activeAdapter = { ...info, status };
   } else {
-    cfg.useAdapter = false;
-    cfg.adapterModel = null;
-    delete cfg.adapterMeta;
-    if (cfg.baseModel) {
-      cfg.model = cfg.baseModel;
-    } else if (currentBase === null && cfg.model && cfg.model.startsWith('greg-')) {
-      // No recorded base, fall back to qwen3-coder as a sane default
-      cfg.model = 'qwen3-coder:30b';
-    }
+    registry.globalSettings.useAdapter = false;
+    registry.globalSettings.activeAdapter = null;
   }
 
-  writeAgentConfig(cfg);
+  writeModelRegistry(registry);
 
   // Remove legacy file if present to prevent stale overrides
   const legacyPath = path.join(paths.persona, 'overrides', 'active-adapter.json');

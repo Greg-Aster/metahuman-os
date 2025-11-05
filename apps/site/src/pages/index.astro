@@ -42,9 +42,9 @@ import '../styles/tailwind.css';
     <div id="main-app">
       <ChatLayout client:load>
         <ThemeToggle slot="header-actions" />
-        <LeftSidebar slot="left-sidebar" client:load />
+        <LeftSidebar slot="left-sidebar" client:visible />
         <CenterContent slot="center" client:load />
-        <RightSidebar slot="right-sidebar" client:idle />
+        <RightSidebar slot="right-sidebar" client:visible />
       </ChatLayout>
     </div>
   </body>

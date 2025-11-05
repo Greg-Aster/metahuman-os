@@ -1,20 +1,25 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, audit } from '@metahuman/core';
+import { paths, audit, loadModelRegistry } from '@metahuman/core';
 
 export const POST: APIRoute = async ({ request }) => {
   try {
     const body = await request.json();
     const enabled = body.enabled ?? false;
 
-    const agentConfigPath = path.join(paths.root, 'etc', 'agent.json');
-    const config = JSON.parse(fs.readFileSync(agentConfigPath, 'utf-8'));
+    const modelsPath = path.join(paths.root, 'etc', 'models.json');
+    const registry = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
+
+    // Ensure globalSettings exists
+    if (!registry.globalSettings) {
+      registry.globalSettings = { includePersonaSummary: true, useAdapter: false, activeAdapter: null };
+    }
 
     // Update useAdapter flag
-    config.useAdapter = enabled;
+    registry.globalSettings.useAdapter = enabled;
 
-    fs.writeFileSync(agentConfigPath, JSON.stringify(config, null, 2));
+    fs.writeFileSync(modelsPath, JSON.stringify(registry, null, 2));
 
     audit({
       level: 'info',
@@ -44,11 +49,11 @@ export const POST: APIRoute = async ({ request }) => {
 
 export const GET: APIRoute = async () => {
   try {
-    const agentConfigPath = path.join(paths.root, 'etc', 'agent.json');
-    const config = JSON.parse(fs.readFileSync(agentConfigPath, 'utf-8'));
+    const registry = loadModelRegistry();
+    const enabled = registry.globalSettings?.useAdapter ?? false;
 
     return new Response(
-      JSON.stringify({ enabled: config.useAdapter ?? false }),
+      JSON.stringify({ enabled }),
       {
         status: 200,
         headers: { 'Content-Type': 'application/json' },

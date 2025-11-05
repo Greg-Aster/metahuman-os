@@ -433,7 +433,7 @@ FROM ${baseModel}
     console.log(`  Mode: ${hasHistoricalAdapter ? 'Dual-adapter (historical + recent)' : 'Single-adapter (recent only)'}`);
     console.log(`  Eval score: ${evalResult.score.toFixed(3)}`);
     console.log(`  Status: loaded`);
-    console.log(`  Metadata stored in etc/agent.json\n`);
+    console.log(`  Metadata stored in etc/models.json\n`);
     if (hasHistoricalAdapter) {
       console.log('✓ Dual-adapter system active: Long-term memory preserved!');
     } else {

@@ -8,7 +8,6 @@ import { auditConfigAccess, requireOwner } from '../../middleware/cognitiveModeG
 const MEMORY_DIR = path.join(paths.root, 'memory');
 const LOGS_DIR = path.join(paths.root, 'logs');
 const CHAT_ARCHIVE_DIR = path.join(paths.root, 'out', 'chat');
-const AGENT_PATH = path.join(paths.root, 'etc', 'agent.json');
 
 async function emptyDirectory(dir: string, preserve: Set<string> = new Set()) {
   try {

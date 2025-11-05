@@ -118,12 +118,11 @@ export const GET: APIRoute = async ({ cookies }) => {
 
     // Try to get active model info
     try {
-      const configPath = path.join(paths.etc, 'agent.json')
-      const fs = await import('node:fs')
-      if (fs.existsSync(configPath)) {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-        modelInfo = { model: config.defaultModel || 'Local Models' }
-      }
+      const { loadModelRegistry } = await import('@metahuman/core')
+      const registry = loadModelRegistry()
+      const fallbackId = registry.defaults?.fallback || 'default.fallback'
+      const fallbackModel = registry.models?.[fallbackId]
+      modelInfo = { model: fallbackModel?.model || 'Local Models' }
     } catch {}
   } catch (e) {
     // Continue without persona data if loading fails

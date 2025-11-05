@@ -98,8 +98,7 @@ function init(): void {
     { template: paths.persona + '/relationships.json.template', target: paths.persona + '/relationships.json' },
     { template: paths.persona + '/routines.json.template', target: paths.persona + '/routines.json' },
     { template: paths.persona + '/decision-rules.json.template', target: paths.persona + '/decision-rules.json' },
-    // etc/ config templates
-    { template: paths.root + '/etc/agent.json.template', target: paths.root + '/etc/agent.json' },
+    // etc/ config templates (agent.json is now deprecated - use models.json instead)
     { template: paths.root + '/etc/boredom.json.template', target: paths.root + '/etc/boredom.json' },
     { template: paths.root + '/etc/audio.json.template', target: paths.root + '/etc/audio.json' },
     { template: paths.root + '/etc/sleep.json.template', target: paths.root + '/etc/sleep.json' },
@@ -186,7 +185,8 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
   const restart = options.restart !== undefined ? options.restart : true;
   const force = options.force ?? false;
   ensureInitialized();
-  const defaults = ['organizer', 'sleep-service'];
+  // New agent scheduler system - replaces individual timers
+  const defaults = ['scheduler-service', 'boredom-service', 'sleep-service'];
 
   const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
@@ -646,11 +646,19 @@ async function ollamaCmd(args: string[]): Promise<void> {
           const models = await ollama.listModels();
           console.log(`- Installed models: ${models.map(m => m.name).join(', ') || '(none)'}`);
 
-          // Load preferred chat model from etc/agent.json if present
+          // Load preferred chat model from etc/models.json if present
           const fsMod = require('node:fs');
           const pathMod = require('node:path');
-          const agentCfg = path.join(paths.root, 'etc', 'agent.json');
-          const preferred = fs.existsSync(agentCfg) ? (JSON.parse(fs.readFileSync(agentCfg, 'utf8')).model || 'phi3:mini') : 'phi3:mini';
+          const modelsCfg = path.join(paths.root, 'etc', 'models.json');
+          let preferred = 'phi3:mini';
+          if (fs.existsSync(modelsCfg)) {
+            try {
+              const registry = JSON.parse(fs.readFileSync(modelsCfg, 'utf8'));
+              const fallbackId = registry.defaults?.fallback || 'default.fallback';
+              const fallbackModel = registry.models?.[fallbackId];
+              preferred = fallbackModel?.model || 'phi3:mini';
+            } catch {}
+          }
           const embedModel = 'nomic-embed-text';
 
           console.log(`- Preferred chat model: ${preferred}`);

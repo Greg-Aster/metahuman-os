@@ -254,19 +254,15 @@ export const POST: APIRoute = async ({ request }) => {
     // Handle special case for getting config
     if (action === 'config') {
       try {
-        const agentConfigPath = path.join(paths.etc, 'agent.json');
-        if (fs.existsSync(agentConfigPath)) {
-          const config = JSON.parse(fs.readFileSync(agentConfigPath, 'utf-8'));
-          return new Response(
-            JSON.stringify({ success: true, model: config.model }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } }
-          );
-        } else {
-          return new Response(
-            JSON.stringify({ success: false, error: 'etc/agent.json not found' }),
-            { status: 404, headers: { 'Content-Type': 'application/json' } }
-          );
-        }
+        const { loadModelRegistry } = await import('@metahuman/core');
+        const registry = loadModelRegistry();
+        const fallbackId = registry.defaults?.fallback || 'default.fallback';
+        const fallbackModel = registry.models?.[fallbackId];
+        const model = fallbackModel?.model || 'phi3:mini';
+        return new Response(
+          JSON.stringify({ success: true, model }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
       } catch (error) {
         return new Response(
           JSON.stringify({ success: false, error: (error as Error).message }),

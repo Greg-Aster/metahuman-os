@@ -40,6 +40,11 @@ export interface ModelDefinition {
 export interface ModelRegistry {
   version: string;
   description: string;
+  globalSettings?: {
+    includePersonaSummary?: boolean;
+    useAdapter?: boolean;
+    activeAdapter?: any;
+  };
   defaults: Record<ModelRole, string>;
   models: Record<string, ModelDefinition>;
   roleHierarchy?: Record<ModelRole, string[]>;

@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { loadPersonaCore, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, llm } from '@metahuman/core';
+import { loadPersonaCore, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel } from '@metahuman/core';
 import { readFileSync, existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { initializeSkills } from '../../../../brain/skills/index.js';

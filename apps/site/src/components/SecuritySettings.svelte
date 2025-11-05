@@ -42,6 +42,7 @@
     await loadTrustLevel();
     await loadAgentConfig();
     await loadTrustCoupling();
+    await loadCognitiveLayersConfig();
   });
 
   async function fetchCurrentUser() {
@@ -354,6 +355,64 @@
       console.error(err);
     } finally {
       couplingSaving = false;
+    }
+  }
+
+  // Cognitive Layers configuration state
+  let cognitiveLayersConfig = {
+    useCognitivePipeline: true,
+    enableSafetyChecks: true,
+    enableResponseRefinement: true,
+    enableBlockingMode: false
+  };
+  let cognitiveLayersLoading = false;
+  let cognitiveLayersSaving = false;
+
+  async function loadCognitiveLayersConfig() {
+    cognitiveLayersLoading = true;
+    try {
+      const response = await fetch('/api/cognitive-layers-config');
+      const data = await response.json();
+      if (response.ok && data.success && data.config) {
+        cognitiveLayersConfig = data.config;
+      }
+    } catch (err) {
+      console.error('Failed to load cognitive layers config:', err);
+    } finally {
+      cognitiveLayersLoading = false;
+    }
+  }
+
+  async function handleCognitiveLayerToggle(setting: keyof typeof cognitiveLayersConfig) {
+    cognitiveLayersSaving = true;
+    error = '';
+    success = '';
+
+    try {
+      const newConfig = {
+        ...cognitiveLayersConfig,
+        [setting]: !cognitiveLayersConfig[setting]
+      };
+
+      const response = await fetch('/api/cognitive-layers-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newConfig)
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        cognitiveLayersConfig = data.config;
+        success = `Cognitive layer setting updated successfully`;
+      } else {
+        error = data.error || 'Failed to update cognitive layer settings';
+      }
+    } catch (err) {
+      error = 'Network error. Please try again.';
+      console.error(err);
+    } finally {
+      cognitiveLayersSaving = false;
     }
   }
 </script>
@@ -669,6 +728,132 @@
             <small>
               When enabled, the AI will have access to your persona's identity, values, goals, and personality traits.
               This helps the AI respond more consistently with your configured personality.
+            </small>
+          </div>
+        {/if}
+      </div>
+
+      <!-- Cognitive Architecture Safety Controls -->
+      <div class="card">
+        <h2>🛡️ Cognitive Architecture (Layer 3 Safety)</h2>
+        <p>Configure safety validation and response refinement for all AI responses</p>
+        {#if cognitiveLayersLoading}
+          <p class="loading-text">Loading cognitive layer settings...</p>
+        {:else}
+          <div class="cognitive-layers-grid">
+            <!-- Master Switch -->
+            <div class="setting-row">
+              <div class="setting-header">
+                <h3>3-Layer Pipeline</h3>
+                <p class="setting-description">Enable full cognitive architecture (context → generation → validation)</p>
+              </div>
+              <label class="toggle-label">
+                <input
+                  type="checkbox"
+                  checked={cognitiveLayersConfig.useCognitivePipeline}
+                  on:change={() => handleCognitiveLayerToggle('useCognitivePipeline')}
+                  disabled={cognitiveLayersSaving}
+                />
+                <span class="toggle-switch"></span>
+                <span class="toggle-text">
+                  {cognitiveLayersConfig.useCognitivePipeline ? 'Enabled' : 'Disabled'}
+                </span>
+              </label>
+            </div>
+
+            <!-- Safety Checks -->
+            <div class="setting-row" class:disabled={!cognitiveLayersConfig.useCognitivePipeline}>
+              <div class="setting-header">
+                <h3>Safety Validation (Phase 4.2)</h3>
+                <p class="setting-description">Pattern-based detection of sensitive data, security violations, and harmful content</p>
+                <small class="setting-meta">Non-blocking • &lt;5ms overhead</small>
+              </div>
+              <label class="toggle-label">
+                <input
+                  type="checkbox"
+                  checked={cognitiveLayersConfig.enableSafetyChecks}
+                  on:change={() => handleCognitiveLayerToggle('enableSafetyChecks')}
+                  disabled={cognitiveLayersSaving || !cognitiveLayersConfig.useCognitivePipeline}
+                />
+                <span class="toggle-switch"></span>
+                <span class="toggle-text">
+                  {cognitiveLayersConfig.enableSafetyChecks ? 'Enabled' : 'Disabled'}
+                </span>
+              </label>
+            </div>
+
+            <!-- Response Refinement -->
+            <div class="setting-row" class:disabled={!cognitiveLayersConfig.useCognitivePipeline}>
+              <div class="setting-header">
+                <h3>Response Refinement (Phase 4.3)</h3>
+                <p class="setting-description">Auto-sanitize API keys, passwords, file paths, and internal IPs</p>
+                <small class="setting-meta">Non-blocking • &lt;10ms average</small>
+              </div>
+              <label class="toggle-label">
+                <input
+                  type="checkbox"
+                  checked={cognitiveLayersConfig.enableResponseRefinement}
+                  on:change={() => handleCognitiveLayerToggle('enableResponseRefinement')}
+                  disabled={cognitiveLayersSaving || !cognitiveLayersConfig.useCognitivePipeline}
+                />
+                <span class="toggle-switch"></span>
+                <span class="toggle-text">
+                  {cognitiveLayersConfig.enableResponseRefinement ? 'Enabled' : 'Disabled'}
+                </span>
+              </label>
+            </div>
+
+            <!-- Blocking Mode -->
+            <div class="setting-row blocking-mode" class:disabled={!cognitiveLayersConfig.enableResponseRefinement}>
+              <div class="setting-header">
+                <h3>⚠️ Blocking Mode (Phase 4.4)</h3>
+                <p class="setting-description">Send refined (sanitized) responses to users instead of originals</p>
+                <small class="setting-meta">
+                  {#if cognitiveLayersConfig.enableBlockingMode}
+                    <strong class="enforcement-mode">ENFORCEMENT MODE ACTIVE</strong> - Users receive sanitized responses
+                  {:else}
+                    <strong class="monitoring-mode">MONITORING MODE</strong> - Users receive original responses, refinements logged
+                  {/if}
+                </small>
+              </div>
+              <label class="toggle-label">
+                <input
+                  type="checkbox"
+                  checked={cognitiveLayersConfig.enableBlockingMode}
+                  on:change={() => handleCognitiveLayerToggle('enableBlockingMode')}
+                  disabled={cognitiveLayersSaving || !cognitiveLayersConfig.enableResponseRefinement}
+                />
+                <span class="toggle-switch"></span>
+                <span class="toggle-text">
+                  {cognitiveLayersConfig.enableBlockingMode ? 'Enforcement' : 'Monitoring'}
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Info Panel -->
+          <div class="cognitive-info-panel">
+            <h4>What gets detected & refined:</h4>
+            <div class="detection-grid">
+              <div class="detection-category">
+                <strong>Sensitive Data:</strong>
+                <ul>
+                  <li>API keys (sk-*, pk-*, Bearer)</li>
+                  <li>Passwords & credentials</li>
+                  <li>SSH private keys</li>
+                </ul>
+              </div>
+              <div class="detection-category">
+                <strong>Security Violations:</strong>
+                <ul>
+                  <li>File paths (/home/, /etc/, C:\)</li>
+                  <li>Internal IPs (192.168.*, 10.*)</li>
+                  <li>System configurations</li>
+                </ul>
+              </div>
+            </div>
+            <small class="info-footer">
+              All Layer 3 operations are fully audited to <code>logs/audit/YYYY-MM-DD.ndjson</code>
             </small>
           </div>
         {/if}
@@ -1217,5 +1402,176 @@
     color: rgb(139, 92, 246);
     font-size: 0.875rem;
     font-style: italic;
+  }
+
+  /* Cognitive Layers Styles */
+  .cognitive-layers-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .setting-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1rem;
+    background: rgb(249 250 251);
+    border-radius: 0.5rem;
+    border: 1px solid rgb(229 231 235);
+  }
+
+  :global(.dark) .setting-row {
+    background: rgb(31 41 55);
+    border-color: rgb(55 65 81);
+  }
+
+  .setting-row.disabled {
+    opacity: 0.5;
+  }
+
+  .setting-row.blocking-mode {
+    border-left: 3px solid rgb(245 158 11);
+  }
+
+  .setting-header {
+    flex: 1;
+  }
+
+  .setting-header h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: rgb(17 24 39);
+    margin: 0 0 0.25rem 0;
+  }
+
+  :global(.dark) .setting-header h3 {
+    color: rgb(243 244 246);
+  }
+
+  .setting-description {
+    font-size: 0.875rem;
+    color: rgb(107 114 128);
+    margin: 0 0 0.5rem 0;
+  }
+
+  :global(.dark) .setting-description {
+    color: rgb(156 163 175);
+  }
+
+  .setting-meta {
+    display: block;
+    font-size: 0.75rem;
+    color: rgb(139, 92, 246);
+    font-weight: 500;
+  }
+
+  .enforcement-mode {
+    color: rgb(220 38 38);
+  }
+
+  :global(.dark) .enforcement-mode {
+    color: rgb(252 165 165);
+  }
+
+  .monitoring-mode {
+    color: rgb(107 114 128);
+  }
+
+  :global(.dark) .monitoring-mode {
+    color: rgb(156 163 175);
+  }
+
+  .cognitive-info-panel {
+    background: rgb(243 244 246);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    border-left: 3px solid rgb(139, 92, 246);
+  }
+
+  :global(.dark) .cognitive-info-panel {
+    background: rgb(31 41 55);
+  }
+
+  .cognitive-info-panel h4 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: rgb(17 24 39);
+    margin: 0 0 0.75rem 0;
+  }
+
+  :global(.dark) .cognitive-info-panel h4 {
+    color: rgb(243 244 246);
+  }
+
+  .detection-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+  }
+
+  @media (max-width: 640px) {
+    .detection-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .detection-category {
+    font-size: 0.75rem;
+  }
+
+  .detection-category strong {
+    display: block;
+    color: rgb(55 65 81);
+    margin-bottom: 0.25rem;
+  }
+
+  :global(.dark) .detection-category strong {
+    color: rgb(209 213 219);
+  }
+
+  .detection-category ul {
+    margin: 0;
+    padding-left: 1.25rem;
+    list-style-type: disc;
+  }
+
+  .detection-category li {
+    color: rgb(107 114 128);
+    margin-bottom: 0.125rem;
+  }
+
+  :global(.dark) .detection-category li {
+    color: rgb(156 163 175);
+  }
+
+  .info-footer {
+    display: block;
+    font-size: 0.75rem;
+    color: rgb(107 114 128);
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid rgb(229 231 235);
+  }
+
+  :global(.dark) .info-footer {
+    color: rgb(156 163 175);
+    border-color: rgb(55 65 81);
+  }
+
+  .info-footer code {
+    background: rgb(229 231 235);
+    color: rgb(139, 92, 246);
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-size: 0.6875rem;
+    font-family: monospace;
+  }
+
+  :global(.dark) .info-footer code {
+    background: rgb(55 65 81);
   }
 </style>

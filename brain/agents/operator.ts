@@ -558,10 +558,10 @@ Create a step-by-step plan to accomplish this task.`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      options: { temperature: 0.3 },
+      options: { temperature: 0.3, format: 'json' },
     });
 
-    let response = JSON.parse(extractJSON(llmResponse.content)) as Plan;
+    let response = JSON.parse(llmResponse.content) as Plan;
     // Plan validator: map common synonyms and ensure only allowed skills
     const allowedIds = new Set(availableSkills.map(s => s.id));
     const synonyms = new Map<string, string>([
@@ -609,9 +609,9 @@ Create a step-by-step plan to accomplish this task.`;
           { role: 'system', content: systemPrompt + '\n\n' + stricter },
           { role: 'user', content: userPrompt },
         ],
-        options: { temperature: 0.2 },
+        options: { temperature: 0.2, format: 'json' },
       });
-      response = JSON.parse(extractJSON(retryResponse.content)) as Plan;
+      response = JSON.parse(retryResponse.content) as Plan;
     }
 
     console.log(`[operator:planner] Generated plan with ${response.steps.length} steps`);

@@ -9,7 +9,6 @@ export * from './paths';
 export * from './identity';
 export * from './memory';
 export * from './audit';
-export * from './llm';
 export * from './ollama';
 export * from './model-resolver';
 export * from './model-router';
@@ -36,6 +35,7 @@ export * from './progress-tracker';
 export * from './state';
 export * from './context-builder';
 export * from './cognitive-layers';
+export * from './agent-scheduler';
 
 // Version
 export const VERSION = '0.1.0';

@@ -191,13 +191,22 @@ async function processMemory(filepath: string): Promise<void> {
       memory.entities = normalizeEntities(mergedEntities).filter((entity, index, self) => self.indexOf(entity) === index);
 
       // Mark as processed
-      // Read active model from etc/agent.json to record provenance
+      // Read active model from etc/models.json to record provenance
       let activeModel = 'unknown';
       try {
-        const agentCfgPath = path.join(paths.root, 'etc', 'agent.json');
-        const cfgRaw = fs.readFileSync(agentCfgPath, 'utf8');
-        const cfg = JSON.parse(cfgRaw);
-        activeModel = cfg.model || activeModel;
+        const { loadModelRegistry } = await import('../../packages/core/src/index.js');
+        const registry = loadModelRegistry();
+        const fallbackId = registry.defaults?.fallback || 'default.fallback';
+        const fallbackModel = registry.models?.[fallbackId];
+        activeModel = fallbackModel?.model || activeModel;
+
+        // Check if using adapter
+        if (registry.globalSettings?.useAdapter && registry.globalSettings?.activeAdapter) {
+          const adapterInfo = typeof registry.globalSettings.activeAdapter === 'string'
+            ? registry.globalSettings.activeAdapter
+            : registry.globalSettings.activeAdapter.modelName;
+          activeModel = adapterInfo;
+        }
       } catch {}
 
       memory.metadata = {
@@ -271,34 +280,19 @@ async function runCycle() {
 }
 
 /**
- * Main entry point for the continuous agent
+ * Main entry point
+ *
+ * NOTE: This agent is now managed by the AgentScheduler.
+ * When called directly (e.g., by tsx), it runs a single cycle and exits.
+ * The scheduler handles the interval timing and respects quiet hours, etc.
  */
 async function main() {
     initGlobalLogger('organizer');
-    // Single-instance lock
-    try {
-      if (isLocked('agent-organizer')) {
-        // Only log if not in quiet mode (for clean dev server output)
-        if (!process.argv.includes('--quiet')) {
-          console.log('[Organizer] Another instance is already running. Exiting.');
-        }
-        return;
-      }
-      acquireLock('agent-organizer');
-    } catch (e) {
-      console.log('[Organizer] Failed to acquire lock, exiting.');
-      return;
-    }
 
-    console.log('🚀 Starting Continuous Organizer Agent...');
-    // Run once immediately
+    console.log('🤖 Organizer Agent: Running single cycle (managed by scheduler)...');
+
+    // Run once and exit
     await runCycle();
-
-    // Then run every 1 minute
-    const interval = 60 * 1000;
-    setInterval(runCycle, interval);
-
-    console.log(`[Main] Agent will run every ${interval / 1000} seconds.`);
 }
 
 // Run if executed directly

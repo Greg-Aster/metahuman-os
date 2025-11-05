@@ -1,11 +1,9 @@
 import type { APIRoute } from 'astro';
 import { loadPersonaCore, loadDecisionRules } from '@metahuman/core/identity';
 import { listActiveTasks } from '@metahuman/core/memory';
-import { ROOT, getActiveAdapter } from '@metahuman/core';
+import { getActiveAdapter } from '@metahuman/core';
 import { listAvailableRoles, resolveModelForCognitiveMode, loadModelRegistry } from '@metahuman/core/model-resolver';
 import { loadCognitiveMode } from '@metahuman/core/cognitive-mode';
-import { existsSync, readFileSync } from 'node:fs';
-import path from 'node:path';
 
 // Cache implementation for /api/status
 // Note: Cache key now includes cognitive mode to ensure accurate status per mode
@@ -47,26 +45,37 @@ export const GET: APIRoute = async ({ cookies }) => {
     const tasks = listActiveTasks();
 
     // Determine base model and active adapter from single config file
-    let agentCfg: any = {};
     let currentModel: string | null = null;
     let baseModel: string | null = null;
     let adapter: any = null;
     let adapterMode: 'none' | 'adapter' | 'merged' | 'dual' = 'none';
     let useAdapter = false;
     let includePersonaSummary = false;
+    let adapterModelName: string | null = null;
+    let adapterMetaCfg: any = {};
+
     try {
-      const agentCfgPath = path.join(ROOT, 'etc', 'agent.json');
-      if (existsSync(agentCfgPath)) {
-        agentCfg = JSON.parse(readFileSync(agentCfgPath, 'utf-8'));
-        currentModel = agentCfg.model || null;
-        baseModel = agentCfg.baseModel || agentCfg.model || null;
-        useAdapter = !!agentCfg.useAdapter;
-        includePersonaSummary = !!agentCfg.includePersonaSummary;
+      const registry = loadModelRegistry();
+      const globalSettings = registry.globalSettings || {};
+
+      // Get model info from registry
+      const fallbackId = registry.defaults?.fallback || 'default.fallback';
+      const fallbackModel = registry.models?.[fallbackId];
+      currentModel = fallbackModel?.model || null;
+      baseModel = fallbackModel?.baseModel || currentModel;
+
+      useAdapter = !!globalSettings.useAdapter;
+      includePersonaSummary = globalSettings.includePersonaSummary ?? true;
+
+      if (globalSettings.activeAdapter) {
+        if (typeof globalSettings.activeAdapter === 'string') {
+          adapterModelName = globalSettings.activeAdapter;
+        } else {
+          adapterModelName = globalSettings.activeAdapter.modelName;
+          adapterMetaCfg = globalSettings.activeAdapter;
+        }
       }
     } catch {}
-
-    const adapterModelName = agentCfg.adapterModel ?? null;
-    const adapterMetaCfg = agentCfg.adapterMeta ?? {};
 
     const active = getActiveAdapter();
     const isMergedActive = !useAdapter && adapterModelName && currentModel && adapterModelName === currentModel;

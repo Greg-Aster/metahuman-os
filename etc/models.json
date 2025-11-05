@@ -3,6 +3,12 @@
   "version": "1.0.0",
   "description": "Model registry for multi-model orchestration. Defines roles and their associated models.",
 
+  "globalSettings": {
+    "includePersonaSummary": true,
+    "useAdapter": false,
+    "activeAdapter": null
+  },
+
   "defaults": {
     "orchestrator": "default.orchestrator",
     "persona": "default.persona",
@@ -16,12 +22,12 @@
   "models": {
     "default.orchestrator": {
       "provider": "ollama",
-      "model": "phi3:mini",
+      "model": "qwen3-coder:30b",
       "adapters": [],
       "roles": ["orchestrator", "router", "planner"],
-      "description": "Lightweight orchestrator for fast intent routing and tool selection",
+      "description": "Capable orchestrator using same model as persona for better intent routing",
       "options": {
-        "contextWindow": 4096,
+        "contextWindow": 8192,
         "temperature": 0.1,
         "topP": 0.9,
         "repeatPenalty": 1.1
@@ -29,9 +35,9 @@
       "metadata": {
         "priority": "high",
         "alwaysLoaded": true,
-        "estimatedLatency": "very-fast",
-        "sizeGB": 2.2,
-        "purpose": "Executive function - quick yes/no/tool decisions"
+        "estimatedLatency": "medium",
+        "sizeGB": 18,
+        "purpose": "Executive function - intelligent intent routing and tool selection"
       }
     },
 

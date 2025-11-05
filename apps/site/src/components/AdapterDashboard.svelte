@@ -223,7 +223,7 @@
   }
   
   async function runFullCycleNow() {
-    // Load current base model from etc/agent.json to use as default
+    // Load current base model from etc/models.json to use as default
     try {
       const res = await fetch('/api/model-info');
       if (res.ok) {
@@ -489,12 +489,12 @@
           <div class="form-group">
             <label for="model-select">Base Model:</label>
             <select id="model-select" bind:value={selectedModel}>
-              <option value="">Use default from etc/agent.json</option>
+              <option value="">Use default from etc/models.json</option>
               {#each availableModels as model}
                 <option value={model}>{model}</option>
               {/each}
             </select>
-            <p class="help-text">Select the base model to use for training the LoRA adapter. If empty, will use the model specified in etc/agent.json</p>
+            <p class="help-text">Select the base model to use for training the LoRA adapter. If empty, will use the model specified in etc/models.json</p>
           </div>
           <div class="form-group">
             <label class="checkbox-label">

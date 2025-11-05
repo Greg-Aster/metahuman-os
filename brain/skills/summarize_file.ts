@@ -5,7 +5,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths, llm } from '../../packages/core/src/index'
+import { paths, callLLM } from '../../packages/core/src/index'
 import { SkillManifest, SkillResult, isPathAllowed } from '../../packages/core/src/skills'
 
 export const manifest: SkillManifest = {
@@ -39,10 +39,14 @@ export async function execute(inputs: { path: string, maxChars?: number }): Prom
     const text = raw.slice(0, max)
     const system = 'You are a helpful assistant that writes concise summaries with key points.'
     const prompt = `Summarize the following content in 5-8 bullet points with a one-line headline.\n\n---\n${text}`
-    const resp = await llm.generate([
-      { role: 'system', content: system },
-      { role: 'user', content: prompt },
-    ], 'ollama', { temperature: 0.2 })
+    const resp = await callLLM({
+      role: 'summarizer',
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: prompt },
+      ],
+      options: { temperature: 0.2 }
+    })
     return { success: true, outputs: { summary: resp.content } }
   } catch (e) {
     return { success: false, error: (e as Error).message }

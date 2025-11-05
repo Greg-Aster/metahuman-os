@@ -48,17 +48,19 @@ export class OllamaProvider implements LLMProvider {
   constructor(endpoint = 'http://localhost:11434') {
     this.endpoint = endpoint;
 
-    // Read single config file for ALL LLM settings
+    // Read model registry for ALL LLM settings
     try {
-      const configPath = path.join(ROOT, 'etc', 'agent.json');
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      const configPath = path.join(ROOT, 'etc', 'models.json');
+      const registry = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
-      // Base model (required)
-      this.defaultModel = config.model || 'phi3:mini';
+      // Get fallback/default model from registry
+      const fallbackModelId = registry.defaults?.fallback || 'default.fallback';
+      const fallbackModel = registry.models?.[fallbackModelId];
+      this.defaultModel = fallbackModel?.model || 'phi3:mini';
 
-      // Adapter (optional) - only use if explicitly enabled
-      if (config.useAdapter && config.adapterModel) {
-        this.activeAdapter = config.adapterModel;
+      // Adapter (optional) - only use if explicitly enabled in globalSettings
+      if (registry.globalSettings?.useAdapter && registry.globalSettings?.activeAdapter) {
+        this.activeAdapter = registry.globalSettings.activeAdapter;
         if (!OllamaProvider.adapterLogged) {
           console.log(`[llm] Using adapter: ${this.activeAdapter}`);
           OllamaProvider.adapterLogged = true;
@@ -71,7 +73,7 @@ export class OllamaProvider implements LLMProvider {
         }
       }
     } catch (error) {
-      console.error('Error reading agent config, falling back to defaults:', error);
+      console.error('Error reading model registry, falling back to defaults:', error);
       this.defaultModel = 'phi3:mini';
       this.activeAdapter = null;
     }

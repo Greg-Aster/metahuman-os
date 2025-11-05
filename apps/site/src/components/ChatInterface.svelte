@@ -4,6 +4,7 @@
   import VoiceInteraction from './VoiceInteraction.svelte';
   import ApprovalBox from './ApprovalBox.svelte';
   import { canUseOperator, currentMode } from '../stores/security-policy';
+  import { triggerClearAuditStream } from '../stores/clear-events';
 
 type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'reasoning';
 
@@ -416,10 +417,11 @@ let reasoningStages: ReasoningStage[] = [];
       console.log('Reflection stream disconnected, will auto-reconnect');
     };
 
-    // Load local session first for instant UX, then merge with server history
+    // Start with fresh interface - no history loading
+    // User can use Clear button to explicitly clear the session
+    // Chat conversations are saved to memory/episodic for training purposes
     const cached = loadSessionFromStorage();
     if (cached) messages = cached;
-    void loadHistoryForMode();
 
     return () => observer.disconnect();
   });
@@ -655,9 +657,31 @@ let reasoningStages: ReasoningStage[] = [];
     }
   }
 
-  function clearChat() {
+  async function clearChat() {
     messages = [];
     reasoningStages = [];
+    // Clear localStorage session cache
+    try {
+      localStorage.removeItem(sessionKey());
+    } catch {}
+    // Clear the audit stream display in the right sidebar
+    triggerClearAuditStream();
+
+    // Clear audit log files from disk for privacy
+    try {
+      const response = await fetch('/api/audit/clear', {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        console.warn('Failed to clear audit logs:', response.statusText);
+      } else {
+        const result = await response.json();
+        console.log('Audit logs cleared:', result.message);
+      }
+    } catch (error) {
+      console.warn('Error clearing audit logs:', error);
+    }
   }
 
   function formatTime(timestamp: number): string {

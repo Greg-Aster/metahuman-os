@@ -1,16 +1,26 @@
+#!/usr/bin/env tsx
+/**
+ * Boredom Service (Legacy Compatibility Layer)
+ *
+ * This service maintains backward compatibility with the original boredom.json
+ * configuration by translating it to the new AgentScheduler system.
+ *
+ * The boredom.json config controls the reflector agent's interval timing,
+ * and the scheduler-service.ts handles the actual execution.
+ *
+ * NOTE: This service is now much simpler - it just updates the scheduler
+ * configuration when boredom.json changes. The actual agent scheduling
+ * is handled by scheduler-service.ts.
+ */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { paths, audit, acquireLock, initGlobalLogger } from '../../packages/core/src/index';
-import { loadTrustLevel, getAvailableSkills } from '../../packages/core/src/skills';
-import { readAutonomyConfig } from '../../packages/core/src/autonomy';
-import { runTask } from './operator';
+import { paths, audit, acquireLock, initGlobalLogger } from '@metahuman/core';
+import { loadTrustLevel, getAvailableSkills } from '@metahuman/core';
+import { readAutonomyConfig } from '@metahuman/core';
 
-const boredomConfigFile = path.join(paths.root, 'etc', 'boredom.json');
-
-let boredomInterval;
-let activeIntervalId: NodeJS.Timeout | null = null;
+const boredomConfigFile = path.join(paths.etc, 'boredom.json');
+const agentsConfigFile = path.join(paths.etc, 'agents.json');
 
 function getBoredomConfig() {
   try {
@@ -22,72 +32,55 @@ function getBoredomConfig() {
   }
 }
 
-function runReflectorAgent() {
-  console.log('[boredom-service] Triggering reflector agent...');
-  const agentPath = path.join(paths.brain, 'agents', 'reflector.ts');
-
-  // Audit the trigger so the monitor can reflect service activity
-  try {
-    audit({
-      category: 'action',
-      level: 'info',
-      message: 'Boredom service triggering reflector agent',
-      actor: 'boredom-service',
-      metadata: { target: 'reflector' }
-    });
-  } catch {}
-
-  const child = spawn('tsx', [agentPath], {
-    stdio: 'inherit',
-    cwd: paths.root,
-  });
-
-  child.on('error', (err) => {
-    console.error(`[boredom-service] Failed to start reflector agent: ${err.message}`);
-  });
-
-  child.on('close', (code) => {
-    if (code !== 0) {
-      console.error(`[boredom-service] Reflector agent exited with code ${code}`);
-    }
-  });
-}
-
-function startBoredomTimer() {
-  if (activeIntervalId) {
-    clearInterval(activeIntervalId);
-    activeIntervalId = null;
-  }
-
+function syncToScheduler() {
   const config = getBoredomConfig();
   const autonomy = readAutonomyConfig();
+
   if (!config) {
-    console.log('[boredom-service] No config found, service will not run.');
+    console.log('[boredom-service] No config found, cannot sync to scheduler.');
     return;
   }
 
   const currentLevel = config.level || 'off';
   const intervalSeconds = config.intervals[currentLevel];
 
-  if (intervalSeconds && intervalSeconds > 0) {
-    boredomInterval = intervalSeconds * 1000;
-    activeIntervalId = setInterval(runReflectorAgent, boredomInterval);
-    console.log(`[boredom-service] Started. Will reflect every ${intervalSeconds} seconds (level: ${currentLevel}).`);
+  // Read current agents.json
+  let agentsConfig;
+  try {
+    agentsConfig = JSON.parse(fs.readFileSync(agentsConfigFile, 'utf-8'));
+  } catch (error) {
+    console.error('[boredom-service] Error reading agents.json:', error);
+    return;
+  }
+
+  // Update reflector agent configuration
+  if (agentsConfig.agents.reflector) {
+    agentsConfig.agents.reflector.enabled = intervalSeconds && intervalSeconds > 0;
+    agentsConfig.agents.reflector.interval = intervalSeconds || 900;
+  }
+
+  // Update boredom-maintenance configuration
+  if (agentsConfig.agents['boredom-maintenance']) {
+    agentsConfig.agents['boredom-maintenance'].enabled = autonomy.mode !== 'off';
+    agentsConfig.agents['boredom-maintenance'].inactivityThreshold = intervalSeconds || 900;
+  }
+
+  // Write updated configuration
+  try {
+    fs.writeFileSync(agentsConfigFile, JSON.stringify(agentsConfig, null, 2));
+    console.log(`[boredom-service] Synced to scheduler: level=${currentLevel}, interval=${intervalSeconds}s`);
 
     audit({
       category: 'system',
       level: 'info',
-      message: `Boredom service started: ${currentLevel} mode`,
+      message: `Boredom config synced to scheduler: ${currentLevel} mode`,
       actor: 'boredom-service',
       metadata: {
         level: currentLevel,
         intervalSeconds,
-        nextReflection: new Date(Date.now() + boredomInterval).toISOString()
+        autonomyMode: autonomy.mode
       }
     });
-
-    // Trigger an immediate reflection shortly after start for UI visibility
-    setTimeout(runReflectorAgent, 1000);
 
     // Capability banner (trust + skills + autonomy)
     try {
@@ -101,52 +94,36 @@ function startBoredomTimer() {
         metadata: { trustLevel: trust, skills, autonomy }
       });
     } catch {}
-
-    // Optional low-risk maintenance in supervised/bounded modes
-    if (autonomy.mode !== 'off') {
-      const delay = Math.min(5000, Math.max(2000, 0.05 * boredomInterval));
-      setTimeout(async () => {
-        try {
-          await runTask(
-            { goal: 'Summarize docs/README.md and save the summary to out/summaries/README-summary.md' },
-            0,
-            { autoApprove: true, profile: 'files' }
-          );
-        } catch (e) {
-          console.error('[boredom-service] maintenance task failed:', (e as Error).message)
-        }
-      }, delay);
-    }
-  } else {
-    console.log('[boredom-service] Boredom is turned off. Service is idle.');
-
-    audit({
-      category: 'system',
-      level: 'info',
-      message: 'Boredom service stopped: set to off',
-      actor: 'boredom-service'
-    });
+  } catch (error) {
+    console.error('[boredom-service] Error writing agents.json:', error);
   }
 }
 
 function main() {
   initGlobalLogger('boredom-service');
-  console.log('[boredom-service] Initializing...');
+  console.log('[boredom-service] Initializing compatibility layer...');
+  console.log('[boredom-service] This service translates boredom.json → agents.json for scheduler');
+
   // Single-instance guard using lock acquisition (heals stale locks)
   try {
     acquireLock('service-boredom');
   } catch {
-    console.log('[boredom-service] Failed to acquire lock. Exiting.');
+    console.log('[boredom-service] Another instance is running. Exiting.');
     return;
   }
-  startBoredomTimer();
 
+  // Initial sync
+  syncToScheduler();
+
+  // Watch boredom.json for changes
   fs.watch(boredomConfigFile, (eventType) => {
     if (eventType === 'change') {
-      console.log('[boredom-service] Boredom config changed, restarting timer...');
-      startBoredomTimer();
+      console.log('[boredom-service] Boredom config changed, syncing to scheduler...');
+      syncToScheduler();
     }
   });
+
+  console.log('[boredom-service] Watching boredom.json for changes...');
 }
 
 main();

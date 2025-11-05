@@ -1,30 +1,26 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '@metahuman/core';
-import { audit } from '@metahuman/core';
+import { paths, audit, loadModelRegistry } from '@metahuman/core';
 import { requireOwner } from '../../middleware/cognitiveModeGuard';
 
-const AGENT_CONFIG_PATH = path.join(paths.root, 'etc', 'agent.json');
+const MODELS_CONFIG_PATH = path.join(paths.root, 'etc', 'models.json');
 
 /**
  * GET /api/agent-config
- * Retrieve current agent configuration
+ * Retrieve global settings from models.json
  */
 export const GET: APIRoute = async () => {
   try {
-    if (!fs.existsSync(AGENT_CONFIG_PATH)) {
-      return new Response(
-        JSON.stringify({ error: 'Agent config not found' }),
-        { status: 404, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const configData = fs.readFileSync(AGENT_CONFIG_PATH, 'utf-8');
-    const config = JSON.parse(configData);
+    const registry = loadModelRegistry();
+    const globalSettings = registry.globalSettings || {
+      includePersonaSummary: true,
+      useAdapter: false,
+      activeAdapter: null,
+    };
 
     return new Response(
-      JSON.stringify({ success: true, config }),
+      JSON.stringify({ success: true, config: globalSettings }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   } catch (error) {
@@ -38,39 +34,36 @@ export const GET: APIRoute = async () => {
 
 /**
  * POST /api/agent-config
- * Update agent configuration (owner only)
- * Body: { includePersonaSummary?: boolean, model?: string, useAdapter?: boolean }
+ * Update global settings in models.json (owner only)
+ * Body: { includePersonaSummary?: boolean, useAdapter?: boolean }
  */
 const postHandler: APIRoute = async ({ request }) => {
   try {
     const body = await request.json();
 
-    // Read current config
-    if (!fs.existsSync(AGENT_CONFIG_PATH)) {
-      return new Response(
-        JSON.stringify({ error: 'Agent config not found' }),
-        { status: 404, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    // Read current registry
+    const registry = JSON.parse(fs.readFileSync(MODELS_CONFIG_PATH, 'utf-8'));
 
-    const configData = fs.readFileSync(AGENT_CONFIG_PATH, 'utf-8');
-    const config = JSON.parse(configData);
+    // Ensure globalSettings exists
+    if (!registry.globalSettings) {
+      registry.globalSettings = {
+        includePersonaSummary: true,
+        useAdapter: false,
+        activeAdapter: null,
+      };
+    }
 
     // Update only the provided fields
     if (body.includePersonaSummary !== undefined) {
-      config.includePersonaSummary = Boolean(body.includePersonaSummary);
-    }
-
-    if (body.model !== undefined) {
-      config.model = String(body.model);
+      registry.globalSettings.includePersonaSummary = Boolean(body.includePersonaSummary);
     }
 
     if (body.useAdapter !== undefined) {
-      config.useAdapter = Boolean(body.useAdapter);
+      registry.globalSettings.useAdapter = Boolean(body.useAdapter);
     }
 
-    // Write updated config
-    fs.writeFileSync(AGENT_CONFIG_PATH, JSON.stringify(config, null, 2));
+    // Write updated registry
+    fs.writeFileSync(MODELS_CONFIG_PATH, JSON.stringify(registry, null, 2));
 
     // Audit the change
     audit({
@@ -79,13 +72,13 @@ const postHandler: APIRoute = async ({ request }) => {
       event: 'agent_config_updated',
       details: {
         changes: Object.keys(body),
-        includePersonaSummary: config.includePersonaSummary,
+        includePersonaSummary: registry.globalSettings.includePersonaSummary,
       },
       actor: 'web_ui',
     });
 
     return new Response(
-      JSON.stringify({ success: true, config }),
+      JSON.stringify({ success: true, config: registry.globalSettings }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   } catch (error) {

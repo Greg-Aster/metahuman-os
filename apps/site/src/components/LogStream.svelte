@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { clearAuditStreamTrigger } from '../stores/clear-events';
 
   interface LogEntry {
     timestamp: string;
@@ -115,6 +116,16 @@
     training: stageStatus(['lora_training_started','adapter_training_queued'], ['lora_training_completed'], ['lora_training_failed']),
     evaluation: stageStatus(['adapter_evaluation_started','adapter_evaluation_queued'], ['adapter_evaluation_completed'], ['adapter_evaluation_failed']),
     activation: stageStatus(['adapter_activation_requested'], ['lora_adapter_activated','adapter_activated'], []),
+  }
+
+  // Export clear function for external access
+  export function clear() {
+    logs = [];
+  }
+
+  // Subscribe to clear trigger from other components
+  $: if ($clearAuditStreamTrigger > 0) {
+    clear();
   }
 </script>
 

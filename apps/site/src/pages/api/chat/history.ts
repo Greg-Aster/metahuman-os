@@ -9,12 +9,57 @@ function readJSON(p: string): any | null {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return null }
 }
 
+// Cache chat history to avoid expensive filesystem scans
+const historyCache = new Map<string, { data: any; timestamp: number; episodicMtime: number; auditMtime: number }>();
+const CACHE_TTL = 30000; // 30 seconds
+
+function getCacheKey(mode: string, limit: number, maxDays: number): string {
+  return `${mode}-${limit}-${maxDays}`;
+}
+
+function getLatestMtime(dir: string, pattern?: RegExp): number {
+  try {
+    if (!fs.existsSync(dir)) return 0;
+    const files = fs.readdirSync(dir);
+    let latest = 0;
+    for (const file of files) {
+      if (pattern && !pattern.test(file)) continue;
+      const stat = fs.statSync(path.join(dir, file));
+      if (stat.mtimeMs > latest) latest = stat.mtimeMs;
+    }
+    return latest;
+  } catch {
+    return 0;
+  }
+}
+
 export const GET: APIRoute = async ({ request }) => {
   try {
     const url = new URL(request.url)
     const mode = (url.searchParams.get('mode') === 'inner') ? 'inner' : 'conversation'
     const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit') || '80')))
-    const maxDays = Math.max(1, Math.min(365, Number(url.searchParams.get('days') || '30')))
+    // Reduced from 30 to 7 days for faster boot - users can request more via query param
+    const maxDays = Math.max(1, Math.min(365, Number(url.searchParams.get('days') || '7')))
+
+    // Check cache
+    const cacheKey = getCacheKey(mode, limit, maxDays);
+    const now = Date.now();
+    const cached = historyCache.get(cacheKey);
+
+    // Get latest modification times for cache invalidation
+    const episodicMtime = getLatestMtime(paths.episodic);
+    const auditMtime = getLatestMtime(path.join(paths.logs, 'audit'), /\d{4}-\d{2}-\d{2}\.ndjson$/);
+
+    // Return cached if fresh and files haven't changed
+    if (cached &&
+        (now - cached.timestamp < CACHE_TTL) &&
+        cached.episodicMtime === episodicMtime &&
+        cached.auditMtime === auditMtime) {
+      return new Response(JSON.stringify(cached.data), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'X-Cache': 'HIT' }
+      });
+    }
 
     const items: Array<{ ts: number; role: ChatRole; content: string; relPath?: string }> = []
 
@@ -99,7 +144,20 @@ export const GET: APIRoute = async ({ request }) => {
     const sliced = dedup.slice(-limit)
     const messages = sliced.map(m => ({ role: m.role, content: m.content, timestamp: m.ts, relPath: m.relPath }))
 
-    return new Response(JSON.stringify({ messages }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    const responseData = { messages };
+
+    // Update cache
+    historyCache.set(cacheKey, {
+      data: responseData,
+      timestamp: now,
+      episodicMtime,
+      auditMtime
+    });
+
+    return new Response(JSON.stringify(responseData), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'X-Cache': 'MISS' }
+    });
   } catch (err) {
     return new Response(JSON.stringify({ error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }

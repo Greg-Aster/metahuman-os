@@ -1,0 +1,64 @@
+{
+  "$schema": "https://metahuman.dev/schemas/agents.json",
+  "version": "1.0.0",
+  "description": "Central agent scheduler configuration",
+  "globalSettings": {
+    "pauseAll": false,
+    "quietHours": {
+      "enabled": false,
+      "start": "22:00",
+      "end": "08:00"
+    },
+    "maxConcurrentAgents": 3
+  },
+  "agents": {
+    "reflector": {
+      "id": "reflector",
+      "enabled": true,
+      "type": "interval",
+      "priority": "normal",
+      "agentPath": "reflector.ts",
+      "interval": 900,
+      "runOnBoot": false,
+      "autoRestart": true,
+      "maxRetries": 3
+    },
+    "organizer": {
+      "id": "organizer",
+      "enabled": true,
+      "type": "interval",
+      "priority": "high",
+      "agentPath": "organizer.ts",
+      "interval": 60,
+      "runOnBoot": false,
+      "autoRestart": true,
+      "maxRetries": 3
+    },
+    "dreamer": {
+      "id": "dreamer",
+      "enabled": true,
+      "type": "time-of-day",
+      "priority": "low",
+      "agentPath": "dreamer.ts",
+      "schedule": "02:00",
+      "runOnBoot": false,
+      "autoRestart": false,
+      "conditions": {
+        "requiresSleepMode": true
+      }
+    },
+    "boredom-maintenance": {
+      "id": "boredom-maintenance",
+      "enabled": true,
+      "type": "activity",
+      "priority": "low",
+      "inactivityThreshold": 900,
+      "runOnBoot": false,
+      "task": {
+        "goal": "Summarize docs/README.md and save the summary to out/summaries/README-summary.md",
+        "autoApprove": true,
+        "profile": "files"
+      }
+    }
+  }
+}

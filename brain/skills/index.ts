@@ -27,11 +27,20 @@ import * as taskDelete from './task_delete';
 import * as codeGenerate from './code_generate';
 import * as codeApplyPatch from './code_apply_patch';
 
+// Track whether skills have been initialized
+let skillsInitialized = false;
+
 /**
  * Initialize all skills
  * Call this at startup to register all available skills
+ * This function is idempotent - safe to call multiple times
  */
 export function initializeSkills(): void {
+  // Skip if already initialized
+  if (skillsInitialized) {
+    return;
+  }
+
   console.log('[skills] Initializing skills registry...');
 
   // Register each skill
@@ -57,6 +66,8 @@ export function initializeSkills(): void {
   registerSkill(codeApplyPatch.manifest, codeApplyPatch.execute);
 
   console.log('[skills] Skills registered: fs_read, fs_write, fs_list, fs_delete, json_update, http_get, summarize_file, git_status, git_commit, search_index, run_agent, shell_safe, web_search, task_create, task_update_status, task_list, task_find, task_delete, code_generate, code_apply_patch');
+
+  skillsInitialized = true;
 }
 
 // Export for convenience

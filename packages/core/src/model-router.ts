@@ -179,6 +179,7 @@ async function callOllama(
   if (options.topP !== undefined) ollamaOptions.top_p = options.topP;
   if (options.repeatPenalty !== undefined) ollamaOptions.repeat_penalty = options.repeatPenalty;
   if (options.maxTokens !== undefined) ollamaOptions.num_predict = options.maxTokens;
+  if (options.format !== undefined) ollamaOptions.format = options.format; // Support JSON mode
 
   // Call Ollama
   const response = await ollama.chat(resolved.model, ollamaMessages, ollamaOptions);
@@ -225,6 +226,32 @@ export async function callLLMPrompt(
     options,
   });
   return response.content;
+}
+
+/**
+ * Helper: Call LLM and return parsed JSON response
+ * Uses Ollama's JSON mode to ensure structured output
+ */
+export async function callLLMJSON<T = any>(
+  role: ModelRole,
+  messages: RouterMessage[],
+  options?: RouterCallOptions['options']
+): Promise<T> {
+  const response = await callLLM({
+    role,
+    messages,
+    options: {
+      ...options,
+      format: 'json' // Enable Ollama JSON mode
+    }
+  });
+
+  try {
+    return JSON.parse(response.content) as T;
+  } catch (error) {
+    console.error('[callLLMJSON] Failed to parse JSON response:', response.content);
+    throw new Error(`LLM returned invalid JSON: ${(error as Error).message}`);
+  }
 }
 
 /**

@@ -9,7 +9,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths, audit, auditAction, captureEvent, acquireLock, isLocked, OllamaProvider } from '@metahuman/core'
+import { paths, audit, auditAction, captureEvent, acquireLock, isLocked, callLLMJSON } from '@metahuman/core'
 
 const INBOX = paths.inbox
 const ARCHIVE_ROOT = paths.inboxArchive
@@ -34,7 +34,7 @@ function readFileAsText(filePath: string): string {
   }
 }
 
-async function classifyAndSummarize(text: string, provider: OllamaProvider): Promise<{
+async function classifyAndSummarize(text: string): Promise<{
   type: 'conversation' | 'journal' | 'search' | 'fragment' | 'observation' | 'inner_dialogue' | 'reflection'
   title: string
   summary: string
@@ -53,10 +53,14 @@ Rules:
 - quality: 0..1 (skip spam/garbage with <0.4)`
   const user = `Text:\n---\n${text}\n---`;
   try {
-    const json = await provider.generateJSON<any>([
-      { role: 'system', content: sys },
-      { role: 'user', content: user },
-    ], { temperature: 0.2, maxTokens: 512 })
+    const json = await callLLMJSON<any>(
+      'curator',
+      [
+        { role: 'system', content: sys },
+        { role: 'user', content: user },
+      ],
+      { temperature: 0.2, maxTokens: 512 }
+    )
 
     // Basic sanitization
     const type = (json?.type || 'observation').toString().trim()
@@ -73,16 +77,20 @@ Rules:
   }
 }
 
-async function generateOutlineHighlights(text: string, provider: OllamaProvider): Promise<{ outline: string[]; highlights: string[] }> {
+async function generateOutlineHighlights(text: string): Promise<{ outline: string[]; highlights: string[] }> {
   const sys = `You create outlines and highlights.
 Return strict JSON: { outline: string[], highlights: string[] }.
 Rules: outline 5-12 items max; highlights 5-12 bullets; no markdown.`
   const user = `Text to organize:\n---\n${text}\n---`
   try {
-    const json = await provider.generateJSON<any>([
-      { role: 'system', content: sys },
-      { role: 'user', content: user },
-    ], { temperature: 0.2, maxTokens: 700 })
+    const json = await callLLMJSON<any>(
+      'curator',
+      [
+        { role: 'system', content: sys },
+        { role: 'user', content: user },
+      ],
+      { temperature: 0.2, maxTokens: 700 }
+    )
     const outline = Array.isArray(json?.outline) ? json.outline.map((s: any) => String(s)).slice(0, 20) : []
     const highlights = Array.isArray(json?.highlights) ? json.highlights.map((s: any) => String(s)).slice(0, 30) : []
     return { outline, highlights }
@@ -108,12 +116,12 @@ function loadIngestorConfig(): { mode: 'organize' | 'summarize' | 'hybrid'; long
 
 function slugify(s: string): string { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'doc' }
 
-async function ingestFileAI(filePath: string, provider: OllamaProvider) {
+async function ingestFileAI(filePath: string) {
   const fileName = path.basename(filePath)
   const raw = readFileAsText(filePath)
 
   const cfg = loadIngestorConfig()
-  const res = await classifyAndSummarize(raw, provider)
+  const res = await classifyAndSummarize(raw)
 
   if (res.quality < 0.4) {
     auditAction({ skill: 'ai-ingestor:skip', inputs: { file: fileName }, success: true, output: { reason: 'low_quality', quality: res.quality } })
@@ -130,7 +138,7 @@ async function ingestFileAI(filePath: string, provider: OllamaProvider) {
     fs.writeFileSync(rawPath, raw, 'utf-8')
 
     // Outline + highlights
-    const oh = await generateOutlineHighlights(raw, provider)
+    const oh = await generateOutlineHighlights(raw)
     const meta = {
       title: res.title || fileName,
       abstract: res.summary || raw.slice(0, 400),
@@ -188,11 +196,10 @@ async function main() {
   const files = entries.filter(e => e.isFile()).map(e => path.join(INBOX, e.name))
   if (files.length === 0) { console.log('Inbox is empty.'); return }
 
-  const provider = new OllamaProvider()
   let total = 0
   for (const file of files) {
     try {
-      const { created } = await ingestFileAI(file, provider)
+      const { created } = await ingestFileAI(file)
       if (created) { total += created; console.log(`✓ Ingested (AI): ${path.basename(file)}`) }
       else { console.log(`• Skipped (low quality): ${path.basename(file)}`) }
     } catch (e) {

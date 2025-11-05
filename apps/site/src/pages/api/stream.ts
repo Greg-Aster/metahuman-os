@@ -63,7 +63,14 @@ export const GET: APIRoute = ({ request }) => {
       };
 
       sendEvent({ type: 'connected' });
-      readNewLines();
+
+      // Start from current end of file (don't read historical data)
+      if (fileExists) {
+        try {
+          const stats = fs.statSync(auditFile);
+          lastPosition = stats.size; // Skip to end
+        } catch {}
+      }
 
       // Poll for new lines
       const pollInterval = setInterval(readNewLines, 1000);
