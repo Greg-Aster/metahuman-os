@@ -249,9 +249,10 @@ export interface SubconsciousOutput {
 
 /** Input to Personality Core Layer (Layer 2) */
 export interface PersonalityInput {
-  userMessage: string;
+  userMessage?: string;
   contextPackage: any;  // From Layer 1
   operatorResult?: any; // Optional: from operator pipeline
+  chatHistory?: Array<{ role: string; content: string }>; // Optional: pre-built chat history
 }
 
 /** Output from Personality Core Layer */

@@ -1,6 +1,8 @@
 import type { APIRoute } from 'astro';
 import { loadPersonaCore, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, llm, callLLM, type ModelRole, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt } from '@metahuman/core';
 import { loadCognitiveMode, getModeDefinition, canWriteMemory, canUseOperator } from '@metahuman/core/cognitive-mode';
+import { PersonalityCoreLayer, checkResponseSafety, refineResponseSafely } from '@metahuman/core/cognitive-layers';
+import { pruneHistory, type Message } from '@metahuman/core';
 import { readFileSync, existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { initializeSkills } from '../../../../../brain/skills/index';
@@ -9,13 +11,53 @@ import { getAvailableSkills, executeSkill, type SkillManifest } from '@metahuman
 type Role = 'system' | 'user' | 'assistant';
 type Mode = 'inner' | 'conversation';
 
-// Simple in-memory histories per mode
-const histories: Record<Mode, Array<{ role: Role; content: string }>> = {
+// Feature flag: Use cognitive pipeline Layer 2 wrapper (Phase 4.1a)
+// Set to true to enable PersonalityCoreLayer wrapper around LLM calls
+const USE_COGNITIVE_PIPELINE = process.env.USE_COGNITIVE_PIPELINE === 'true';
+
+// Feature flag: Enable safety validation (Phase 4.2)
+// When true and USE_COGNITIVE_PIPELINE is true, runs non-blocking safety checks
+// Default: true (enabled when pipeline is enabled)
+const ENABLE_SAFETY_CHECKS = process.env.ENABLE_SAFETY_CHECKS !== 'false';
+
+// Feature flag: Enable response refinement (Phase 4.3)
+// When true, auto-sanitizes detected safety issues (non-blocking test mode)
+// Both original and refined are logged, ORIGINAL still sent to user
+// Default: true (enabled when pipeline is enabled)
+const ENABLE_RESPONSE_REFINEMENT = process.env.ENABLE_RESPONSE_REFINEMENT !== 'false';
+
+// Feature flag: Enable blocking mode (Phase 4.4)
+// When true, sends REFINED responses to users (instead of original)
+// IMPORTANT: Only enable after validating refinement quality in Phase 4.3 logs
+// Default: false (non-blocking mode, explicit opt-in required for safety)
+const ENABLE_BLOCKING_MODE = process.env.ENABLE_BLOCKING_MODE === 'true';
+
+// In-memory message histories per mode
+// NOTE: These are automatically pruned to stay within token limits (max 20 messages / ~8k tokens)
+const histories: Record<Mode, Array<{ role: Role; content: string; meta?: any }>> = {
   inner: [],
   conversation: [],
 };
 
+/**
+ * Add message to history and automatically prune to stay within limits
+ */
+function pushMessage(mode: Mode, message: { role: Role; content: string; meta?: any }): void {
+  const beforeCount = histories[mode].length;
+  histories[mode].push(message);
 
+  // Auto-prune to stay within token/message limits
+  histories[mode] = pruneHistory(histories[mode] as Message[], {
+    maxTokens: 8000,
+    maxMessages: 20,
+    preserveSystemMessages: true,
+  }) as Array<{ role: Role; content: string; meta?: any }>;
+
+  const afterCount = histories[mode].length;
+  if (beforeCount + 1 !== afterCount) {
+    console.log(`[context-window] Pruned ${mode} history: ${beforeCount + 1} → ${afterCount} messages`);
+  }
+}
 
 // Dedup and retry guards
 const lastUserTurn: Record<Mode, { text: string; ts: number } | null> = { inner: null, conversation: null };
@@ -631,18 +673,44 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
         try {
           lastUserTurn[m] = { text: trimmedMessage, ts: Date.now() };
-          histories[m].push({ role: 'user', content: message });
+          pushMessage(m, { role: 'user', content: message });
 
           // Build operator context with recent conversation history
           let operatorContext = '';
 
-          // Include last 3-5 turns for context (excluding current message which is already in 'goal')
-          const recentHistory = histories[m].slice(-6, -1); // Last 5 messages before current
+          // Include last 5-10 turns for context (excluding current message which is already in 'goal')
+          const recentHistory = histories[m].slice(-11, -1); // Last 10 messages before current
           if (recentHistory.length > 0) {
             operatorContext += 'Recent conversation:\n';
             for (const turn of recentHistory) {
               const label = turn.role === 'user' ? 'User' : turn.role === 'assistant' ? 'Assistant' : 'System';
-              operatorContext += `${label}: ${turn.content.substring(0, 500)}\n`;
+              // Don't truncate assistant messages with operator results - they contain important context
+              const hasOperatorResults = turn.role === 'assistant' && turn.meta?.operatorReport;
+              const contentLimit = hasOperatorResults ? 1500 : 500;
+              operatorContext += `${label}: ${turn.content.substring(0, contentLimit)}\n`;
+
+              // Extract operator execution results from assistant messages (meta field)
+              if (turn.role === 'assistant' && turn.meta?.operatorReport) {
+                const report = turn.meta.operatorReport;
+                operatorContext += `  [Operator executed: `;
+                if (report.plan?.steps) {
+                  const stepSummaries = report.plan.steps.map((s: any) => `${s.skillId}`).join(', ');
+                  operatorContext += `${stepSummaries}]\n`;
+                }
+                if (report.results?.steps) {
+                  for (const stepResult of report.results.steps) {
+                    if (stepResult.success && stepResult.outputs) {
+                      // Include key execution results for context
+                      if (stepResult.outputs.items && Array.isArray(stepResult.outputs.items)) {
+                        operatorContext += `    Found ${stepResult.outputs.items.length} items: ${stepResult.outputs.items.slice(0, 5).join(', ')}${stepResult.outputs.items.length > 5 ? '...' : ''}\n`;
+                      }
+                      if (stepResult.outputs.path) {
+                        operatorContext += `    Located file: ${stepResult.outputs.path}\n`;
+                      }
+                    }
+                  }
+                }
+              }
             }
             operatorContext += '\n';
           }
@@ -686,7 +754,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
           const formattedResult = formatOperatorResult(result);
 
           // Preserve the raw operator data in history for follow-up questions
-          histories[m].push({ role: 'system', content: `## Operator Findings\n${formattedResult}` });
+          pushMessage(m, { role: 'system', content: `## Operator Findings\n${formattedResult}` });
 
           let synthesized = formattedResult;
           try {
@@ -706,7 +774,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
           push('answer', { response: synthesized });
 
-          histories[m].push({ role: 'assistant', content: synthesized });
+          pushMessage(m, { role: 'assistant', content: synthesized });
           lastAssistantReplies[m].push(synthesized);
         } catch (error) {
           console.error('[persona_chat] Operator error:', error);
@@ -763,7 +831,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   lastUserTurn[m] = { text: trimmedMessage, ts: nowTs };
 
   if (m === 'conversation' && audience && forceOperator) {
-    histories[m].push({ role: 'system', content: `Audience/context: ${audience}` });
+    pushMessage(m, { role: 'system', content: `Audience/context: ${audience}` });
   }
 
   // Get relevant context (memories + tasks) for this message
@@ -774,9 +842,9 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   // NOTE: The context is added as a separate system message to make it clear to the model what is the user's message and what is context.
   // Appending the context to the user's message can confuse the model and cause it to repeat the context.
   if (contextInfo) {
-    histories[m].push({ role: 'system', content: `## Context\n${contextInfo}` });
+    pushMessage(m, { role: 'system', content: `## Context\n${contextInfo}` });
   }
-  histories[m].push({ role: 'user', content: message });
+  pushMessage(m, { role: 'user', content: message });
 
   try {
     const temperature = m === 'inner' ? 0.5 : 0.6;
@@ -978,22 +1046,61 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
             const personaModel = resolveModelForCognitiveMode(cognitiveMode, 'persona' as ModelRole);
             console.log(`[CHAT_REQUEST] Persona model: ${personaModel.id}`);
 
-            // Let the model work naturally without extra instructions
-            // Use role-based routing for persona responses
-            const llmResponse = await callLLM({
-              role: 'persona' as ModelRole,
-              messages: histories[m].map(h => ({
-                role: h.role as 'system' | 'user' | 'assistant',
-                content: h.content
-              })),
-              cognitiveMode,
-              options: {
-                temperature,
-                topP: 0.9,
-                repeatPenalty: 1.3,
-                ...llmOpts
-              }
-            });
+            let llmResponse: any;
+
+            if (USE_COGNITIVE_PIPELINE) {
+              // === PHASE 4.1a: Use PersonalityCoreLayer wrapper ===
+              console.log('[CHAT_REQUEST] Using cognitive pipeline Layer 2');
+
+              const layer2 = new PersonalityCoreLayer();
+              const layer2Output = await layer2.process(
+                {
+                  // Pass pre-built chat history instead of building new prompt
+                  chatHistory: histories[m].map(h => ({
+                    role: h.role as 'system' | 'user' | 'assistant',
+                    content: h.content
+                  })),
+                  contextPackage: {} // Not used when chatHistory is provided
+                },
+                {
+                  cognitiveMode,
+                  previousLayers: [],
+                  metadata: {
+                    llmOptions: {
+                      temperature,
+                      topP: 0.9,
+                      repeatPenalty: 1.3,
+                      ...llmOpts
+                    }
+                  }
+                }
+              );
+
+              // Convert Layer 2 output to format expected by existing code
+              llmResponse = {
+                content: layer2Output.response,
+                model: layer2Output.voiceMetrics.model,
+                thinking: '' // Layer 2 doesn't expose thinking field yet
+              };
+            } else {
+              // === ORIGINAL CODE PATH ===
+              // Let the model work naturally without extra instructions
+              // Use role-based routing for persona responses
+              llmResponse = await callLLM({
+                role: 'persona' as ModelRole,
+                messages: histories[m].map(h => ({
+                  role: h.role as 'system' | 'user' | 'assistant',
+                  content: h.content
+                })),
+                cognitiveMode,
+                options: {
+                  temperature,
+                  topP: 0.9,
+                  repeatPenalty: 1.3,
+                  ...llmOpts
+                }
+              });
+            }
 
             // For backward compatibility, construct response object matching ollama.chat format
             const response = {
@@ -1112,10 +1219,72 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
           const cleanedAssistant = stripChainOfThought(assistantResponse);
           assistantResponse = cleanedAssistant.length > 0 ? cleanedAssistant : '';
 
+          // === PHASE 4.2: Safety validation (non-blocking) ===
+          let safetyResult: any = undefined;
+          if (USE_COGNITIVE_PIPELINE && ENABLE_SAFETY_CHECKS && assistantResponse) {
+            try {
+              safetyResult = await checkResponseSafety(assistantResponse, {
+                threshold: 0.7,
+                cognitiveMode,
+                logToConsole: true,
+                auditIssues: true
+              });
+
+              // Log safety status (response is never blocked)
+              if (!safetyResult.safe) {
+                console.warn(`[SAFETY] Response has ${safetyResult.issues.length} safety issue(s) but is not blocked (Phase 4.2)`);
+              } else {
+                console.log(`[SAFETY] Response passed safety checks (score: ${(safetyResult.score * 100).toFixed(1)}%)`);
+              }
+            } catch (error) {
+              console.error('[SAFETY] Check failed (non-blocking):', error);
+              // Continue anyway - safety failures don't block responses
+            }
+          }
+
+          // === PHASE 4.3: Response refinement (non-blocking) ===
+          if (USE_COGNITIVE_PIPELINE && ENABLE_RESPONSE_REFINEMENT && safetyResult && !safetyResult.safe) {
+            try {
+              const refinementResult = await refineResponseSafely(assistantResponse, safetyResult, {
+                logToConsole: true,
+                auditChanges: true,
+                cognitiveMode
+              });
+
+              if (refinementResult.changed) {
+                console.log(`[REFINEMENT] Response refined (${refinementResult.changes.length} changes):`);
+                console.log(`  - Original length: ${refinementResult.original.length} chars`);
+                console.log(`  - Refined length: ${refinementResult.refined.length} chars`);
+                console.log(`  - Issues fixed: ${refinementResult.safetyIssuesFixed}`);
+                console.log(`  - Changes:`);
+                for (const change of refinementResult.changes) {
+                  console.log(`    • ${change.type}: ${change.description}`);
+                }
+
+                // === PHASE 4.4: Blocking mode decision ===
+                if (ENABLE_BLOCKING_MODE) {
+                  // Send refined response to user (blocking mode)
+                  assistantResponse = refinementResult.refined;
+                  console.log(`  [BLOCKING MODE] Sending REFINED response to user`);
+                  console.log(`  [INFO] Original preserved in audit logs for review`);
+                } else {
+                  // Phase 4.3 behavior: send original (non-blocking mode)
+                  console.log(`  [NON-BLOCKING MODE] Sending ORIGINAL response to user`);
+                  console.log(`  [INFO] Refined response logged for testing only`);
+                }
+              } else {
+                console.log(`[REFINEMENT] No changes needed (response already safe)`);
+              }
+            } catch (error) {
+              console.error('[REFINEMENT] Failed (non-blocking):', error);
+              // Continue anyway - refinement failures don't block responses
+            }
+          }
+
           // Store history
           histories[m].pop();
-          histories[m].push({ role: 'user', content: message });
-          histories[m].push({ role: 'assistant', content: assistantResponse });
+          pushMessage(m, { role: 'user', content: message });
+          pushMessage(m, { role: 'assistant', content: assistantResponse });
 
           // Capture event and audit (only if mode allows writes)
           // Note: cognitiveMode and allowMemoryWrites are already loaded at function start

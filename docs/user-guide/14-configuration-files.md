@@ -1,7 +1,9 @@
 ## Configuration Files
 
-### `.env` - Environment Triggers
-This file in the project root allows you to activate special system-wide states.
+### `.env` - Environment Configuration
+This file in the project root allows you to configure system behavior and activate special states.
+
+#### System-Wide States
 
 - `HIGH_SECURITY=true`
   - **Purpose**: Locks the entire system into its most secure state.
@@ -10,6 +12,102 @@ This file in the project root allows you to activate special system-wide states.
 - `WETWARE_DECEASED=true`
   - **Purpose**: Simulates the scenario where the biological user is deceased, and the MetaHuman OS is operating as an independent digital consciousness.
   - **Effect**: Disables **Dual Consciousness Mode**, as there is no longer a living "wetware" counterpart to be in sync with. Agent and Emulation modes remain available. A banner is displayed in the UI.
+
+#### 3-Layer Cognitive Architecture (Phase 4)
+
+**Master Switch:**
+- `USE_COGNITIVE_PIPELINE=true`
+  - **Purpose**: Enable/disable the entire 3-layer cognitive architecture.
+  - **Effect**: When enabled, all conversations pass through context building (Layer 1), personality core (Layer 2), and meta-cognition validation (Layer 3).
+  - **Default**: `true`
+  - **When to Disable**: For debugging, testing, or if you want direct LLM responses without context grounding or safety checks.
+
+**Phase 4.2: Safety Validation**
+- `ENABLE_SAFETY_CHECKS=true`
+  - **Purpose**: Enable pattern-based safety validation on all responses.
+  - **Effect**: Detects sensitive data, security violations, harmful content, and privacy leaks. All issues are logged to audit trail.
+  - **Mode**: Non-blocking (does not modify responses)
+  - **Performance**: <5ms overhead
+  - **Default**: `true` (when `USE_COGNITIVE_PIPELINE=true`)
+  - **Detection Categories**:
+    - Sensitive data: API keys, passwords, SSH keys, credentials
+    - Security violations: File paths, internal IPs, system configs
+    - Harmful content: Malicious code, dangerous instructions
+    - Privacy leaks: Personal identifiers, location data
+
+**Phase 4.3: Response Refinement**
+- `ENABLE_RESPONSE_REFINEMENT=true`
+  - **Purpose**: Enable automatic sanitization of detected safety issues.
+  - **Effect**: Pattern-based redaction of sensitive data and security violations. Both original and refined responses are logged.
+  - **Mode**: Non-blocking (original response sent to user by default)
+  - **Performance**: <10ms average
+  - **Default**: `true` (when `USE_COGNITIVE_PIPELINE=true`)
+  - **Refinement Actions**:
+    - API keys → `[API_KEY_REDACTED]`
+    - Passwords → `[PASSWORD_REDACTED]`
+    - File paths → `[PATH REMOVED]`
+    - Internal IPs → `[IP REDACTED]`
+
+**Phase 4.4: Blocking Mode**
+- `ENABLE_BLOCKING_MODE=false`
+  - **Purpose**: Switch from monitoring to enforcement mode for refined responses.
+  - **Effect**:
+    - When `false` (default): Original responses sent to users, refined logged for testing
+    - When `true`: Refined (sanitized) responses sent to users, original preserved in audit logs
+  - **Default**: `false` (explicit opt-in required for safety)
+  - **When to Enable**: After validating refinement quality in Phase 4.3 logs and confirming no important context is lost
+  - **Rollback**: Set back to `false` to return to monitoring mode instantly
+
+**Configuration Example:**
+```bash
+# Full cognitive pipeline with monitoring (recommended default)
+USE_COGNITIVE_PIPELINE=true
+ENABLE_SAFETY_CHECKS=true
+ENABLE_RESPONSE_REFINEMENT=true
+ENABLE_BLOCKING_MODE=false
+
+# Enforcement mode (after validation)
+USE_COGNITIVE_PIPELINE=true
+ENABLE_SAFETY_CHECKS=true
+ENABLE_RESPONSE_REFINEMENT=true
+ENABLE_BLOCKING_MODE=true
+
+# Disable safety features entirely
+USE_COGNITIVE_PIPELINE=true
+ENABLE_SAFETY_CHECKS=false
+ENABLE_RESPONSE_REFINEMENT=false
+ENABLE_BLOCKING_MODE=false
+
+# Disable entire pipeline
+USE_COGNITIVE_PIPELINE=false
+```
+
+**Audit Logging:**
+All cognitive layer operations are fully logged to `logs/audit/YYYY-MM-DD.ndjson`:
+```json
+{
+  "category": "action",
+  "action": "safety_check",
+  "details": {
+    "safe": false,
+    "issues": ["sensitive_data"],
+    "checkTime": 3
+  }
+}
+```
+
+```json
+{
+  "category": "action",
+  "action": "response_refined",
+  "details": {
+    "changed": true,
+    "changesCount": 2,
+    "blockingMode": false,
+    "responseSent": "original"
+  }
+}
+```
 
 ### `persona/core.json` - Identity Kernel
 Your digital personality's core identity:

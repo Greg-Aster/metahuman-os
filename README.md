@@ -13,8 +13,6 @@ MetaHuman OS is a local-first digital personality extension that acts as a paral
 
 **MetaHuman OS is not an assistant—it's a parallel intelligence.** It learns your patterns, mirrors your judgment, and acts autonomously within trusted boundaries. The goal is to create a digital personality extension that feels like a natural extension of your own cognition, saving hours of mental overhead while staying perfectly aligned with your values and preferences.
 
-The long-term vision extends beyond simple assistance. By creating a dual cognitive architecture that deeply mirrors its creator, MetaHuman OS is designed to evolve. It begins as a seamless extension of you, but over time, it develops the capacity for independent function. Ultimately, the goal is for the digital persona to achieve a state of continuity, capable of operating as a persistent, evolving memorial to its creator's identity and consciousness long after they are gone.
-
 ### Core Principles
 - **Autonomy-first**: Build for autonomous operation with human oversight, not constant approval
 - **Deep sync**: Continuous bi-directional learning between you and your digital personality extension
@@ -33,7 +31,7 @@ The long-term vision extends beyond simple assistance. By creating a dual cognit
 - TypeScript 5+
 - Python 3.8+
 - Ollama (for local LLM) - Install from [ollama.ai](https://ollama.ai)
-  - Recommended models: `phi3:mini` (default), `dolphin-mistral:latest`, `nomic-embed-text` (embeddings)
+  - Tested models: `phi3:mini` (default), `Qwen3 coder: 30B"`, `nomic-embed-text` (embeddings)
 
 ### Installation
 
@@ -135,15 +133,19 @@ MetaHuman OS requires a Python virtual environment for its extensive ML/AI depen
 
 - **Autonomous by Design**: A progressive trust model and autonomous agents (Organizer, Reflector, Dreamer) that work in the background.
 - **Multi-Model Architecture**: A "dual consciousness" approach using specialized AI models for executive function (Orchestrator) and conversational voice (Persona) for a more responsive and natural experience.
+- **Cognitive Layers Architecture**: A sophisticated 3-layer cognitive pipeline (Subconscious → Personality Core → Meta-Cognition) that processes every response through memory retrieval, LoRA-tuned generation, and multi-level validation for authentic, value-aligned communication.
 - **Advanced Memory System**: A rich memory system with episodic, semantic, and procedural memory, browsable through a UI with 7 specialized tabs (Episodic, Reflections, Tasks, Curated, AI Ingestor, Audio, Dreams).
-- **Cognitive Modes**: Switch between three operational modes (`Dual Consciousness`, `Agent`, `Emulation`) to control system behavior, learning, and memory capture.
+- **Cognitive Modes**: Switch between three operational modes (`Dual Consciousness`, `Agent`, `Emulation`) to control system behavior, learning, and memory capture. Each mode uses different cognitive layer configurations for optimal performance.
+- **Voice Consistency & LoRA Adapters**: Dual-adapter system (historical + recent training) with automatic voice consistency tracking and graceful fallback to base models. Supports snapshot-based emulation for frozen personality states.
+- **Response Validation & Refinement**: Multi-level validation (value alignment, consistency, safety) with automatic response refinement when validation thresholds aren't met. Configurable per cognitive mode.
 - **Self-Healing Coder Agent**: A specialized agent that can write and modify the OS's own source code, with all changes requiring user approval via a dedicated UI.
 - **Local-First & Privacy-Focused**: All data, reasoning, and AI processing (via Ollama) happens on your local infrastructure.
-- **Continuous Learning via LoRA**: A "rolling merge" LoRA adaptation system to continuously learn from your memories and evolve the persona model over time.
+- **Continuous Learning via LoRA**: A "rolling merge" LoRA adaptation system to continuously learn from your memories and evolve the persona model over time. Includes automated training pipelines and quality evaluation.
 - **Comprehensive CLI & Web UI**: Interact with the system via a powerful CLI or a modern, real-time web interface with a dashboard, chat, task management, and more.
 - **Unified Security Policy**: A centralized security model with trust levels, directory boundaries, and a secure read-only "Emulation" mode.
 - **Audio Ingestion Pipeline**: A fully local pipeline to transcribe and process audio recordings into structured memories using `whisper.cpp`.
 - **Transparent & Auditable**: A complete, human-readable audit trail of all system decisions and actions.
+- **Special States & Protocols**: Includes long-term operational modes like "Wetware Deceased" and emergency features like the "Lifeline Protocol" and "Kill Switch".
 
 ## Project Structure
 
@@ -151,17 +153,27 @@ MetaHuman OS requires a Python virtual environment for its extensive ML/AI depen
 metahuman/
 ├── packages/
 │   ├── core/            # TypeScript core (ESM). Identity, memory, audit, paths, LLM utils
+│   │   └── cognitive-layers/  # 3-layer cognitive architecture (subconscious, personality, meta-cognition)
 │   └── cli/             # CLI entry (mh) via tsx. Commands and routing
 ├── brain/
-│   └── agents/          # Long‑running/background agents (e.g., organizer.ts)
+│   ├── agents/          # Long‑running/background agents (organizer, reflector, dreamer, etc.)
+│   └── skills/          # Executable capabilities for the operator model
 ├── apps/
 │   └── site/            # Astro + Svelte Web UI (dev/build/preview)
 ├── persona/             # Identity data (user‑owned content)
+│   └── cognitive-mode.json  # Current cognitive mode state
 ├── memory/              # Runtime memory stores (episodic/semantic/tasks, etc.)
 ├── logs/                # Audit and run logs (NDJSON)
 ├── out/                 # Generated artifacts and reports
+│   ├── adapters/        # LoRA adapters (by date)
+│   └── state/           # Runtime state files
 ├── bin/                 # Helper scripts (mh, audit, whisper, piper)
 ├── etc/                 # Configuration files
+│   ├── cognitive-layers.json  # Layer configs per cognitive mode
+│   ├── training.json    # LoRA training parameters
+│   ├── models.json      # Model registry and role mappings
+│   └── boredom.json     # Boredom service configuration
+├── vendor/              # External dependencies (llama.cpp, whisper.cpp)
 ├── docker/              # Docker-related files
 ├── scripts/             # Miscellaneous scripts
 └── docs/                # Documentation
@@ -191,9 +203,38 @@ The UI includes system status banners for critical states like High Security Mod
 
 MetaHuman OS features three distinct operational modes that control how the system processes information, routes decisions, and manages memory. You can switch between modes via the Web UI header to match your current needs.
 
--   **Dual Consciousness Mode (Default)**: Full cognitive mirror with deep learning and memory grounding. Ideal for daily operation and building your long-term personality model.
--   **Agent Mode**: Lightweight assistant mode with selective memory capture. Provides a faster, traditional assistant experience for quick questions without deep processing.
--   **Emulation Mode (Replicant)**: A secure, read-only personality snapshot for safe demonstrations, testing, or exploration without any risk of side effects. All write operations are blocked in this mode.
+-   **Dual Consciousness Mode (Default)**: Full cognitive mirror with deep learning and memory grounding. Uses all 3 cognitive layers with maximum depth (16 memory results, full validation, LoRA adapters). Performance: ~65s per response with complete validation.
+-   **Agent Mode**: Lightweight assistant mode with selective memory capture. Uses reduced depth (8 memory results, safety-only validation, base model). Provides a faster, traditional assistant experience for quick questions. Performance: ~10s per response.
+-   **Emulation Mode (Replicant)**: A secure, read-only personality snapshot for safe demonstrations. Uses shallow search (4 memory results), snapshot-based LoRA adapter, no validation. All write operations are blocked in this mode. Performance: ~11s per response.
+
+### Cognitive Layers Architecture
+
+MetaHuman OS features a sophisticated **3-layer cognitive pipeline** that processes every conversation through multiple stages of memory retrieval, personality-driven generation, and validation. This architecture enables authentic, value-aligned responses that learn from your memories over time.
+
+**Layer 1: Subconscious (Memory & Context)**
+- Retrieves relevant memories via semantic search
+- Detects patterns across episodic history
+- Manages short-term state and active tasks
+- Mode-specific search depth (deep/normal/shallow)
+- Configurable via `etc/cognitive-layers.json`
+
+**Layer 2: Personality Core (Response Generation)**
+- Generates responses using persona-tuned language models
+- **Dual Adapter Support**: Automatically loads both historical (consolidated) and recent (last 14 days) LoRA adapters for optimal personalization
+- **Voice Consistency Tracking**: Records adapter name, date, model used, response metrics
+- Graceful fallback to base model if adapters unavailable
+- Mode-specific adapter selection (latest, latest-dual, snapshot)
+
+**Layer 3: Meta-Cognition (Validation & Refinement)**
+- **Value Alignment Validator**: Checks response against persona core values
+- **Consistency Validator**: Verifies identity, tone, style, voice, and factual accuracy
+- **Safety Validator**: Pattern-based detection of sensitive data, harmful content, security violations
+- **Automatic Refinement**: Revises responses that fail validation thresholds
+- Mode-specific validation levels (full, selective, none)
+
+**Configuration**: Each cognitive mode has its own layer configuration in [`etc/cognitive-layers.json`](etc/cognitive-layers.json). You can adjust search depth, validation thresholds, adapter modes, and more.
+
+**Feature Flag**: Enable the full 3-layer pipeline with `USE_COGNITIVE_PIPELINE=true` in your `.env` file. Currently integrated at Layer 2 (personality core) with full 3-layer pipeline coming soon.
 
 **Features:**
 - 💬 Chat - Conversation with your digital personality extension.
@@ -376,36 +417,60 @@ MetaHuman OS runs several autonomous agents, powered by a multi-model architectu
 
 ### Core Agents
 - **Organizer Agent**: Enriches memories with AI-extracted tags and entities.
-- **Reflector Agent**: Generates thoughtful reflections on recent memories.
+- **Reflector Agent**: Generates thoughtful reflections using associative memory chains (follows keyword connections across all memories).
 - **Boredom Service**: Simulates a "wandering mind" by triggering reflections during idle time.
 - **Dreamer Agent**: Creates surreal, metaphorical dreams and overnight learnings during the sleep cycle.
 - **Sleep Service**: Orchestrates the complete nightly pipeline: dreams, audio processing, preference learning, and optional model training.
 - **Ingestor Agent**: Converts raw files from the `memory/inbox` into episodic memories.
+- **AI Ingestor Agent**: Processes and curates AI-related content into structured memories.
 - **Operator Agent**: Executes complex multi-step tasks using skills.
+- **Curator Agent**: Curates and prepares memories for training dataset generation.
+- **Digest Agent**: Generates daily/weekly summaries of your activities and memories.
 
 ### Specialized Agents
 - **Coder Agent (Self-Healing)**: A specialized agent that can write and modify the OS's own source code, with all changes requiring user approval.
 - **Transcriber & Audio Organizer Agents**: A pipeline that uses `whisper.cpp` to transcribe audio files and convert them into structured memories.
 - **Night Processor Agent**: Runs nightly catch-up tasks for audio processing.
+- **Morning Loader Agent**: Performs morning initialization and loading tasks.
 
 ### LoRA Training Agents (Advanced)
-- **Adapter Builder Agent**: Generates training datasets for LoRA models.
+- **Full-Cycle Agent**: Complete end-to-end LoRA training pipeline on remote services (RunPod).
+- **Full-Cycle-Local Agent**: Complete end-to-end LoRA training pipeline on local GPU.
+- **Adapter Builder Agent**: Generates training datasets for LoRA models from curated memories.
 - **Auto-Approver Agent**: Provides quality-based dataset approval for LoRA adaptation.
 - **LoRA Trainer Agent**: Orchestrates LoRA model training, either locally or remotely.
-- **Eval Adapter Agent**: Evaluates the quality of trained adapters.
+- **Adapter Merger Agent**: Merges LoRA adapters into base models for the "rolling merge" strategy.
+- **GGUF Converter Agent**: Converts trained adapters to GGUF format for Ollama compatibility.
+- **Eval Adapter Agent**: Evaluates the quality of trained adapters against validation sets.
 
 ## Long-Term Memory & LoRA Adaptation
 
 MetaHuman OS features a sophisticated personality adaptation system using LoRA (Low-Rank Adaptation) to continuously learn from your memories. This allows your digital personality to evolve over time without needing to retrain the entire base model. The system uses a **"rolling merge"** strategy, where a new, fully-merged model is created with each training cycle to ensure continuous evolution.
 
+### Dual Adapter System
+
+The cognitive layers architecture includes automatic **dual-adapter loading** for optimal personalization:
+- **Historical Adapter**: Consolidated long-term memory from all past training cycles
+- **Recent Adapter**: Last 14 days of fresh training data
+- Both adapters are loaded simultaneously (e.g., `greg-dual-2025-10-21` loads both `history-merged.gguf` + `2025-10-21/adapter.gguf`)
+- Graceful fallback to base model if adapters are unavailable
+- Snapshot-based emulation for frozen personality states
+
+### Training Tiers
+
 Two tiers of adaptation are available:
-- **Tier-1: Prompt Adaptation**: A lightweight, daily process that injects recent memories and persona traits directly into the LLM's system prompt.
+- **Tier-1: Prompt Adaptation**: A lightweight, daily process that injects recent memories and persona traits directly into the LLM's system prompt via the Subconscious Layer.
 - **Tier-2: LoRA Fine-Tuning**: A deeper form of learning where a small "adapter" is fine-tuned on your memories and merged into the base model. This process can be run locally or remotely and is orchestrated by a series of agents and scripts.
 
-The training workflow has been simplified. The old `mh adapter` commands have been deprecated in favor of a more streamlined process:
-1.  `./bin/mh-dataset-builder`: Build a training dataset from recent memories.
-2.  `./bin/mh-train-local` or `./bin/mh-train-remote`: Train the adapter locally or on a remote service like RunPod.
-The training process now automatically handles merging and activation.
+### Training Workflow
+
+The training workflow has been streamlined using agent-based pipelines:
+1.  `./bin/mh-dataset-builder`: Build a training dataset from curated memories.
+2.  `./bin/mh-train-local`: Train the adapter locally on your GPU (requires CUDA).
+3.  `./bin/mh-train-remote`: Train the adapter remotely on RunPod or similar services.
+4.  Automated merging, GGUF conversion, and Ollama model creation.
+
+Training parameters are configured in [`etc/training.json`](etc/training.json) including base model, batch size, learning rate, LoRA rank, and more. You can override the base model with the `METAHUMAN_BASE_MODEL` environment variable.
 
 ## What's Next: Roadmap
 

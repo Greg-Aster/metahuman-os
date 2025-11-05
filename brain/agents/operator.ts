@@ -407,6 +407,24 @@ ${personaContext}
 
 Your job is to break down tasks into a sequence of steps using available skills.
 
+WORKING DIRECTORY:
+/home/greggles/metahuman
+
+IMPORTANT - File Path Resolution:
+- User paths like "Docs/user-guide" are case-insensitive and may refer to directories
+- The actual filesystem uses lowercase: "docs/user-guide/" not "Docs/user-guide"
+- When user mentions a path, convert it to case-insensitive glob patterns
+- Example: "Docs/user-guide" → use pattern "docs/user-guide/**/*" or "docs/user-guide*"
+- If searching fails with exact match, try fuzzy patterns: "**/docs/**/*user*guide*"
+- Check if path is a directory first - if so, list its contents instead of reading it as a file
+
+CONTEXT AWARENESS:
+- Review the "Recent conversation" section carefully for previous execution results
+- If a previous operator execution found files/paths, USE THOSE RESULTS instead of searching again
+- Example: If previous turn found "docs/user-guide/01-intro.md", use that exact path in your plan
+- Look for lines like "[Operator executed: ...]" and "Found X items: ..." for context
+- Pronouns like "it", "that file", "those folders" likely refer to items from previous results
+
 Available Skills:
 ${skillsCatalog}
 
@@ -416,6 +434,7 @@ STRICT RULES:
 - Skill IDs must be chosen EXACTLY from this set: ${allowedSkillsList}
 - To write a file, you MUST use skillId "fs_write" with inputs: { "path": "<absolute or project-relative path>", "content": "<string>", "overwrite": true/false }
 - Do NOT add fs_read before fs_write. Only include a read-after-write step if the user explicitly asks to verify content. If not asked, omit fs_read entirely.
+- For filesystem operations, ALWAYS use lowercase paths and fuzzy glob patterns to handle case mismatches
 
 ${isCodingTask ? `
 CODING WORKFLOW EXAMPLES:
@@ -441,6 +460,37 @@ Plan:
   2. code_generate: Generate refactored version using async/await
   3. code_apply_patch: Stage refactored code for approval with test commands ["pnpm tsc", "pnpm test"]
 ` : ''}
+
+FILESYSTEM EXAMPLES:
+
+Example 1 - User mentions case-insensitive path:
+User: "Read the contents of Docs/user-guide for me"
+Plan:
+  1. fs_list: List files matching pattern "docs/user-guide/**/*" or "docs/user-guide*" (note: lowercase!)
+  2. fs_read: Read the located files
+
+Example 2 - Directory vs file confusion:
+User: "Show me what's in packages/core"
+Plan:
+  1. fs_list: List directory contents with pattern "packages/core/**/*" (not fs_read - it's a directory!)
+
+Example 3 - Fuzzy path matching:
+User: "Find the user guide"
+Plan:
+  1. fs_list: Search with pattern "**/user*guide*" or "**/*user*guide*" (fuzzy match)
+
+Example 4 - Context-aware follow-up (USE PREVIOUS RESULTS):
+Context shows: "[Operator executed: fs_list] Found 3 items: docs/user-guide/01-intro.md, docs/user-guide/02-setup.md, docs/user-guide/03-usage.md"
+User: "Read the first one"
+Plan:
+  1. fs_read: Read "docs/user-guide/01-intro.md" (from context - don't search again!)
+
+Example 5 - Pronoun reference to previous results:
+Context shows: "Found 5 items: packages/core/src/index.ts, packages/core/src/paths.ts, ..."
+User: "Show me what's in those files"
+Plan:
+  1. fs_read: Read "packages/core/src/index.ts"
+  2. fs_read: Read "packages/core/src/paths.ts" (use exact paths from context)
 
 Current Trust Level: ${trustLevel}
 

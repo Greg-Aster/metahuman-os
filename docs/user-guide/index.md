@@ -51,5 +51,8 @@ Welcome to the MetaHuman OS User Guide. This guide is organized into the followi
 16. **[What's Next](16-whats-next.md)**
     *   **Roadmap and Future Features**: Get a glimpse into the future of MetaHuman OS by reviewing the project roadmap and upcoming features.
 
-17. **[Support](16-support.md)**
+17. **[Support](17-support.md)**
     *   **Getting Help**: Information on how to get support, report issues, and contribute to the MetaHuman OS project.
+
+18. **[Special States & Protocols](18-special-states.md)**
+    *   **Easter Eggs & Emergency Features**: Learn about special modes like "Wetware Deceased", "Lifeline Protocol", and the "Kill Switch".

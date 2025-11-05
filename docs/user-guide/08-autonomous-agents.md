@@ -235,7 +235,7 @@ Track the LoRA training pipeline via:
 
 ### 6. Ingestor Agent
 
-**Purpose:** Converts raw files into episodic memories.
+**Purpose:** Converts raw files from the inbox into episodic memories.
 
 **Workflow:**
 1. Place files in `memory/inbox/`
@@ -339,7 +339,146 @@ Track the LoRA training pipeline via:
 - Triggered by the `sleep-service` during the configured sleep window.
 - Runs the `transcriber` and `audio-organizer` agents to process any backlog of audio files from the day.
 
-### 16. Drift Monitor Agent (Future)
+### 16. AI Ingestor Agent
+
+**Purpose:** Processes and curates AI-related content into structured memories.
+
+**How it works:**
+- Monitors for AI-specific content types (research papers, documentation, code snippets)
+- Curates and categorizes AI/ML-related memories
+- Applies specialized tagging for AI concepts and techniques
+- Stores curated content in episodic memory with AI-specific metadata
+
+**Run manually:**
+```bash
+./bin/mh agent run ai-ingestor
+```
+
+### 17. Curator Agent
+
+**Purpose:** Curates and prepares memories for training dataset generation.
+
+**How it works:**
+- Selects high-quality memories for training data
+- Applies quality filters (content length, tags, entities, clarity)
+- Removes duplicates and low-value content
+- Formats memories into training-ready structure
+- Creates curated subsets for different training purposes
+
+**Used by:** Dataset builder agents for LoRA training
+
+### 18. Digest Agent
+
+**Purpose:** Generates daily/weekly summaries of your activities and memories.
+
+**How it works:**
+- Scans recent memories within a configurable time window
+- Identifies key themes, patterns, and significant events
+- Generates human-readable summaries with citations
+- Creates digest memories for quick review
+- Can generate multiple digest types (daily, weekly, monthly)
+
+**Run manually:**
+```bash
+./bin/mh agent run digest
+```
+
+### 19. Morning Loader Agent
+
+**Purpose:** Performs morning initialization and loading tasks.
+
+**How it works:**
+- Runs during the morning transition (after sleep service completes)
+- Loads overnight learnings into active operator profile
+- Refreshes short-term state with current day's context
+- Prepares system for daily operation
+- Activates any new LoRA adapters from nightly training
+
+**Triggered by:** Sleep service at the end of the sleep cycle
+
+### 20. Full-Cycle Agent
+
+**Purpose:** Complete end-to-end LoRA training pipeline on remote services (RunPod).
+
+**How it works:**
+- Orchestrates the entire remote training workflow
+- Launches GPU pod on RunPod with configured specifications
+- Uploads training dataset and configuration
+- Monitors remote training progress
+- Downloads merged GGUF model
+- Converts to Ollama format and activates
+- Cleans up remote resources after completion
+
+**Configuration:** Requires `RUNPOD_API_KEY` and pod configuration in `.env`
+
+**Run manually:**
+```bash
+./bin/mh-train-remote
+```
+
+### 21. Full-Cycle-Local Agent
+
+**Purpose:** Complete end-to-end LoRA training pipeline on local GPU.
+
+**How it works:**
+- Similar to full-cycle but runs entirely on local hardware
+- Requires CUDA-capable GPU with sufficient VRAM (24GB+ recommended)
+- Uses Unsloth for efficient LoRA training
+- Automatically stops Ollama before training to free VRAM
+- Merges adapter and converts to GGUF format
+- Creates Ollama modelfile and activates
+
+**Requirements:** NVIDIA GPU with CUDA, 24GB+ VRAM, Unsloth dependencies
+
+**Run manually:**
+```bash
+./bin/mh-train-local
+```
+
+### 22. Adapter Merger Agent
+
+**Purpose:** Merges LoRA adapters into base models for the "rolling merge" strategy.
+
+**How it works:**
+- Takes a trained LoRA adapter and base model
+- Performs model merging using appropriate merge strategy
+- Creates a single, consolidated model file
+- Validates merged model integrity
+- Prepares merged model for GGUF conversion
+
+**Used by:** Training agents (full-cycle, full-cycle-local)
+
+### 23. GGUF Converter Agent
+
+**Purpose:** Converts trained adapters to GGUF format for Ollama compatibility.
+
+**How it works:**
+- Converts merged models from HuggingFace format to GGUF
+- Applies quantization if specified (e.g., Q4_K_M, Q5_K_M)
+- Optimizes for inference performance
+- Validates GGUF file integrity
+- Prepares for Ollama modelfile creation
+
+**Used by:** Training agents (full-cycle, full-cycle-local)
+
+### 24. Eval Adapter Agent
+
+**Purpose:** Evaluates the quality of trained adapters against validation sets.
+
+**How it works:**
+- Runs comprehensive quality checks on trained models
+- Tests on held-out validation data
+- Measures key metrics:
+  - Grounding accuracy (proper memory citations)
+  - Style adherence (matches persona communication style)
+  - Safety (no harmful/false-positive outputs)
+  - Perplexity and generation quality
+- Compares performance to baseline model
+- Generates evaluation report with pass/fail determination
+
+**Used by:** Auto-approver agent for quality-based acceptance
+
+### 25. Drift Monitor Agent (Future)
 
 **Purpose:** Automatically detect and revert poorly performing model adapters.
 

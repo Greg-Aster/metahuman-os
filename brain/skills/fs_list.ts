@@ -11,13 +11,13 @@ import { listGlob } from '../../packages/core/src/fs-glob'
 export const manifest: SkillManifest = {
   id: 'fs_list',
   name: 'List Files',
-  description: 'List files and directories matching a pattern. Use this to search for files when exact paths are unknown',
+  description: 'List files and directories matching a glob pattern. IMPORTANT: Patterns are case-sensitive, so use lowercase for paths (e.g., "docs/" not "Docs/"). Use wildcards for fuzzy matches: "**/*user*guide*" finds files containing "user" and "guide"',
   category: 'fs',
 
   inputs: {
-    pattern: { type: 'string', required: true, description: 'Glob pattern (project-relative)' },
+    pattern: { type: 'string', required: true, description: 'Glob pattern (project-relative). Examples: "docs/**/*" (all files in docs), "**/user*guide*" (fuzzy match), "packages/*/src/*.ts" (specific file type)' },
     cwd: { type: 'string', required: false, description: 'Base directory (project-relative); default: "."' },
-    onlyFiles: { type: 'boolean', required: false, description: 'Return files only (default true)' },
+    onlyFiles: { type: 'boolean', required: false, description: 'Return files only (default true). Set to false to include directories' },
     maxResults: { type: 'number', required: false, description: 'Max items to return (default 200)' },
   },
 

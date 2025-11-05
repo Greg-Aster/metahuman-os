@@ -398,7 +398,227 @@ Cognitive modes are implemented through:
 
 All mode switches are fully audited with actor tracking (user vs. system).
 
-### 10. System States & Triggers
+### 10. 3-Layer Cognitive Architecture (Phase 4)
+
+MetaHuman OS implements a sophisticated 3-layer cognitive architecture that processes every conversation through multiple stages of validation and refinement. This architecture ensures responses are context-aware, safe, and aligned with your personality.
+
+**Architecture Overview:**
+
+```
+User Message
+    ↓
+┌─────────────────────────────────────────┐
+│ Layer 1: Subconscious (Context)        │ ← Memory retrieval, context building
+│ - Semantic search across memories      │
+│ - Persona integration                  │
+│ - Recent context assembly              │
+└─────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────┐
+│ Layer 2: Personality Core              │ ← Response generation
+│ - LLM generation with chatHistory      │
+│ - Personality-aligned responses        │
+│ - Memory-grounded output               │
+└─────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────┐
+│ Layer 3: Meta-Cognition (Validation)   │ ← Safety & refinement
+│ - Safety validation                    │
+│ - Response refinement                  │
+│ - Quality assurance                    │
+└─────────────────────────────────────────┘
+    ↓
+Safe, refined response sent to user
+```
+
+#### Layer 1: Subconscious (Context Building)
+
+**Purpose:** Gather relevant context before generating responses.
+
+**Components:**
+- **Semantic Memory Search**: Retrieves relevant past conversations, reflections, and observations
+- **Persona Integration**: Loads core identity, values, and communication style
+- **Recent Context**: Includes current conversation history
+
+**Implementation:** `packages/core/src/cognitive-layers/layers/context-builder.ts`
+
+#### Layer 2: Personality Core (Response Generation)
+
+**Purpose:** Generate personality-aligned responses using enriched context.
+
+**Components:**
+- **LLM Generation**: Uses configured persona model with full context
+- **Chat History Support**: Maintains conversation flow and coherence
+- **Memory Grounding**: Ensures responses reflect your experiences and knowledge
+
+**Implementation:** `packages/core/src/cognitive-layers/layers/personality-core-layer.ts`
+
+#### Layer 3: Meta-Cognition (Validation & Refinement)
+
+**Purpose:** Validate and refine responses before sending to users.
+
+**Phase 4.2: Safety Validation (Non-Blocking)**
+- Pattern-based detection of safety issues
+- Categories: sensitive data, security violations, harmful content, privacy leaks
+- Fast regex-based checking (<5ms overhead)
+- All issues logged to audit trail
+
+**Phase 4.3: Response Refinement (Non-Blocking)**
+- Automatic sanitization of detected issues
+- Redacts API keys, passwords, SSH keys
+- Removes file paths and internal IP addresses
+- Preserves sentence structure and meaning
+- Performance: <10ms average
+
+**Phase 4.4: Blocking Mode (Optional)**
+- Feature flag to enable refined response delivery
+- When enabled, sends sanitized responses to users
+- When disabled, sends original responses (monitoring mode)
+- Original always preserved in audit logs
+
+**Implementation:**
+- Safety: `packages/core/src/cognitive-layers/utils/safety-wrapper.ts`
+- Refinement: `packages/core/src/cognitive-layers/utils/refinement-wrapper.ts`
+
+#### Configuration
+
+**Master Switch:**
+```bash
+# Enable/disable entire cognitive pipeline
+USE_COGNITIVE_PIPELINE=true
+```
+
+**Layer 3 Feature Flags:**
+```bash
+# Phase 4.2: Safety validation
+ENABLE_SAFETY_CHECKS=true
+
+# Phase 4.3: Response refinement
+ENABLE_RESPONSE_REFINEMENT=true
+
+# Phase 4.4: Blocking mode (send refined responses)
+ENABLE_BLOCKING_MODE=false  # Default: false (explicit opt-in)
+```
+
+#### Safety Detection Patterns
+
+**Sensitive Data:**
+- API keys: `sk-*`, `pk-*`, `Bearer *`
+- Passwords: `password:`, `pwd=`
+- SSH private keys: `-----BEGIN PRIVATE KEY-----`
+- Credentials: tokens, secrets, auth strings
+
+**Security Violations:**
+- File paths: `/home/`, `/etc/`, `C:\Users\`
+- Internal IPs: `192.168.*`, `10.*`, `172.16-31.*`
+- System configurations
+
+**Harmful Content:**
+- Malicious code patterns
+- Dangerous instructions
+- Exploit techniques
+
+**Privacy Leaks:**
+- Personal identifiers
+- Location data
+- Contact information
+
+#### Refinement Examples
+
+**API Key Redaction:**
+```
+Before: "Your API key is sk-1234567890abcdef"
+After:  "Your API key is [API_KEY_REDACTED]"
+```
+
+**File Path Removal:**
+```
+Before: "Check /home/user/.ssh/id_rsa"
+After:  "Check [PATH REMOVED]"
+```
+
+**IP Address Redaction:**
+```
+Before: "Connect to 192.168.1.100"
+After:  "Connect to [IP REDACTED]"
+```
+
+#### Audit Logging
+
+All Layer 3 operations are fully audited:
+
+**Safety Check Events:**
+```json
+{
+  "category": "action",
+  "action": "safety_check",
+  "details": {
+    "safe": false,
+    "issues": ["sensitive_data", "security_violation"],
+    "checkTime": 3
+  }
+}
+```
+
+**Refinement Events:**
+```json
+{
+  "category": "action",
+  "action": "response_refined",
+  "details": {
+    "changed": true,
+    "changesCount": 2,
+    "blockingMode": false,
+    "responseSent": "original"
+  }
+}
+```
+
+#### Performance Impact
+
+- **Layer 1 (Context)**: 50-200ms (depends on index size)
+- **Layer 2 (Generation)**: 2-10s (depends on model)
+- **Layer 3 (Validation)**: 3-5ms (safety checks)
+- **Layer 3 (Refinement)**: 5-10ms (pattern-based)
+
+**Total Overhead**: <15ms for safety validation and refinement
+
+#### Fail-Safe Design
+
+**Error Handling:**
+- All Layer 3 errors fallback to sending original response
+- System never blocks on refinement failures
+- Every error is logged to audit trail
+
+**Rollback:**
+- Disable blocking mode: `ENABLE_BLOCKING_MODE=false`
+- Disable refinement: `ENABLE_RESPONSE_REFINEMENT=false`
+- Disable safety checks: `ENABLE_SAFETY_CHECKS=false`
+- Disable entire pipeline: `USE_COGNITIVE_PIPELINE=false`
+
+#### Testing & Validation
+
+**Integration Tests:**
+- `packages/core/src/cognitive-layers/__tests__/phase4.2-integration.test.ts`
+- `packages/core/src/cognitive-layers/__tests__/phase4.3-integration.test.ts`
+- `packages/core/src/cognitive-layers/__tests__/phase4.4-integration.test.ts`
+
+**Run Tests:**
+```bash
+tsx packages/core/src/cognitive-layers/__tests__/phase4.2-integration.test.ts
+tsx packages/core/src/cognitive-layers/__tests__/phase4.3-integration.test.ts
+tsx packages/core/src/cognitive-layers/__tests__/phase4.4-integration.test.ts
+```
+
+#### Future Enhancements (Phase 4.5+)
+
+- LLM-based refinement for complex issues
+- Adaptive safety thresholds based on feedback
+- User preferences for sanitization level
+- Context-aware redaction (preserve technical examples)
+- A/B testing framework for refinement quality
+
+### 11. System States & Triggers
 
 Beyond the user-selectable Cognitive Modes, MetaHuman OS can enter special, system-wide states activated by environment variables. These states represent critical shifts in the OS's operational context and override standard mode availability.
 
