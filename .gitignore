@@ -129,6 +129,15 @@ GEMINI.md
 .Gemini/
 
 # ============================================
+# AI MODELS & LARGE FILES
+# ============================================
+*.gguf
+*.ggml
+*.safetensors
+*.bin
+.ollama/
+
+# ============================================
 # VENDOR & CACHE
 # ============================================
 # vendor/ subdirectories are tracked as git submodules

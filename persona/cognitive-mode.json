@@ -1,6 +1,6 @@
 {
-  "currentMode": "emulation",
-  "lastChanged": "2025-11-05T05:26:00.320Z",
+  "currentMode": "dual",
+  "lastChanged": "2025-11-05T16:09:09.510Z",
   "history": [
     {
       "mode": "dual",
@@ -570,6 +570,11 @@
     {
       "mode": "emulation",
       "changedAt": "2025-11-05T05:26:00.320Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-05T16:09:09.510Z",
       "actor": "web_ui"
     }
   ]

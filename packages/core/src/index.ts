@@ -31,6 +31,7 @@ export * from './cognitive-mode';
 export * from './fs-glob';
 export * from './progress-tracker';
 export * from './state';
+export * from './context-builder';
 
 // Version
 export const VERSION = '0.1.0';

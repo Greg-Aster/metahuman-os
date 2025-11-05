@@ -53,6 +53,22 @@ Structured storage of your experiences, knowledge, and learnings:
 - Associative links between related memories
 - Tag-based filtering for quick categorization
 
+### 2a. Memory-Grounded Generation (RAG)
+
+To provide responses that are deeply personal and context-aware, MetaHuman OS is built on a **Retrieval-Augmented Generation (RAG)** architecture. This is a sophisticated pattern where the system retrieves relevant information from its memory *before* generating a response.
+
+This is not a new feature, but rather a core architectural principle that has been recently refactored and improved with the introduction of the **Context Builder** module.
+
+Here’s how it works:
+
+1.  **Retrieval**: When you send a message, the system doesn't immediately talk to the language model. First, the **Context Builder** module acts as a "Retriever." It queries the vector index of your memories to find the most relevant past events, conversations, and notes.
+
+2.  **Augmentation**: The Context Builder then "augments" the prompt. It combines your message with the retrieved memories, your core persona details, and any relevant short-term state (like your current focus).
+
+3.  **Generation**: Finally, this complete, context-rich package is sent to the generative language model (LLM), which produces a response that is grounded in the specific information provided.
+
+The Context Builder is, therefore, the heart of the RAG system in MetaHuman OS. It ensures that the AI isn't just a generic chatbot, but a true digital extension of yourself, speaking with the context of your own experiences.
+
 ### 3. Autonomous Agent Runtime
 
 Background processes that operate continuously:

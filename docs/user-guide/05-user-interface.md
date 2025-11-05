@@ -35,26 +35,17 @@ The UI will display prominent banners at the top of the screen to inform you of 
 - **Read-Only Mode**: A general banner indicating that the current cognitive mode (Emulation) does not allow for write operations.
 
 **Features:**
-- 💬 Chat - Conversation with your digital personality extension
-- 📊 Dashboard - System status and overview
-- ✓ Tasks - Task management
-- ✋ Approvals - Skill execution queue
-- 🧩 Memory - Browse episodic events with specialized tabs:
-  - **Episodic** - All captured observations and events
-  - **Reflections** - AI-generated reflections from the reflector agent
-  - **Tasks** - Task files from memory/tasks/
-  - **Curated** - Hand-picked memories from memory/curated/
-  - **AI Ingestor** - Memories created by the ingestor agent from inbox files
-  - **Audio** - Memories from transcribed audio recordings
-  - **Dreams** - Dream narratives from the dreamer agent
-- 🌙 Learnings - Overnight insights and preferences
-- 🎙️ Audio - Upload and transcribe audio recordings
-- 🎤 Voice Training - Voice cloning progress
-- 🧠 Adaptation - LoRA dataset management
-- 🔥 Training - Real-time LoRA training monitor
-- 🎭 Persona - Identity and personality settings
-- 🆘 Lifeline Protocol - Emergency scaffold
-- ⌨️ Terminal - Embedded CLI interface
+- 💬 Chat - Conversation with your digital personality extension.
+- 📊 Dashboard - System status and overview.
+- ✓ Tasks - Task management.
+- ✋ Approvals - Skill execution queue.
+- 🧩 Memory - Browse events & insights.
+- 🎤 Voice - Audio & voice training.
+- 🧠 AI Training - LoRA adapters and training management.
+- 💻 Terminal - Embedded command line.
+- ⚙️ System - System settings and tools.
+- 🌐 Network - Cloudflare tunnel and connectivity settings.
+- 🔒 Security - User and authentication settings.
 
 **Developer Tools (Right Sidebar):**
 - Live audit stream

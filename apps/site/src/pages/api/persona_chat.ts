@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { loadPersonaCore, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, llm, callLLM, type ModelRole, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode } from '@metahuman/core';
+import { loadPersonaCore, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, llm, callLLM, type ModelRole, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt } from '@metahuman/core';
 import { loadCognitiveMode, getModeDefinition, canWriteMemory, canUseOperator } from '@metahuman/core/cognitive-mode';
 import { readFileSync, existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -149,171 +149,45 @@ async function getRelevantContext(
     const cognitiveContext = getCognitiveModeContext();
     const cognitiveMode = cognitiveContext.mode;
 
-    const tasks = listActiveTasks();
-    const idx = getIndexStatus();
-    const persona = loadPersonaCore();
-
-    let usedSemantic = false;
-    let memoryContext = '';
-
-    // DUAL MODE: Mandatory semantic search with fallback
-    if (cognitiveMode === 'dual') {
-      if (!(idx as any).exists) {
-        // Log warning but provide fallback context
-        console.warn('[DUAL MODE] No semantic index available - memory grounding degraded');
-        audit({
-          level: 'warn',
-          category: 'action',
-          event: 'dual_mode_missing_index',
-          details: { message: 'Semantic index unavailable in dual mode, using persona fallback' },
-          actor: 'system',
-        });
-        // Fallback: provide persona summary as baseline grounding
-        memoryContext = await loadPersonaFallbackContext(persona);
-      } else {
-        // Force semantic search in dual mode
-        try {
-          const hits = await queryIndex(userMessage, { topK: 8 });
-          const threshold = 0.62;
-          const filtered = [] as typeof hits;
-          for (const h of hits) {
-            if (h.score < threshold) continue;
-            try {
-              const raw = readFileSync(h.item.path, 'utf-8');
-              const obj = JSON.parse(raw);
-              const t = (obj && obj.type) ? String(obj.type) : '';
-              const tags: string[] = Array.isArray(obj?.tags) ? obj.tags.map((x: any) => String(x)) : [];
-              if (t === 'inner_dialogue') continue;
-              if (tags.includes('reflection') || tags.includes('dream')) continue;
-            } catch {}
-            filtered.push(h);
-          }
-          if (filtered.length > 0) {
-            usedSemantic = true;
-            const recent = recentMemoryIds[mode] || [];
-            const novel = filtered.filter(h => !recent.includes(h.item.id));
-            const chosen = (novel.length > 0 ? novel : filtered).slice(0, 2);
-            const lines: string[] = [];
-            let used = 0;
-            for (const h of chosen) {
-              try {
-                const raw = readFileSync(h.item.path, 'utf-8');
-                const obj = JSON.parse(raw);
-                const content = String(obj?.content || '').trim();
-                if (!content) continue;
-                const chunk = `- ${content}`;
-                if (used + chunk.length > 900) break;
-                lines.push(chunk);
-                used += chunk.length;
-                recentMemoryIds[mode] = [...recent.slice(-9), h.item.id];
-              } catch {}
-            }
-            if (lines.length) {
-              memoryContext = lines.join('\n');
-            }
-          } else {
-            // No results above threshold - use persona fallback
-            memoryContext = await loadPersonaFallbackContext(persona);
-          }
-        } catch (error) {
-          console.error('[DUAL MODE] Semantic search failed:', error);
-          memoryContext = await loadPersonaFallbackContext(persona);
-        }
-      }
-    }
-    // EMULATION MODE & AGENT MODE: Use existing semantic search logic
-    else {
-      if ((idx as any).exists) {
-        try {
-          const hits = await queryIndex(userMessage, { topK: 8 });
-          const threshold = 0.62;
-          const filtered = [] as typeof hits;
-          for (const h of hits) {
-            if (h.score < threshold) continue;
-            try {
-              const raw = readFileSync(h.item.path, 'utf-8');
-              const obj = JSON.parse(raw);
-              const t = (obj && obj.type) ? String(obj.type) : '';
-              const tags: string[] = Array.isArray(obj?.tags) ? obj.tags.map((x: any) => String(x)) : [];
-              if (t === 'inner_dialogue') continue;
-              if (tags.includes('reflection') || tags.includes('dream')) continue;
-            } catch {}
-            filtered.push(h);
-          }
-          if (filtered.length > 0) {
-            usedSemantic = true;
-            const recent = recentMemoryIds[mode] || [];
-            const novel = filtered.filter(h => !recent.includes(h.item.id));
-            const chosen = (novel.length > 0 ? novel : filtered).slice(0, 2);
-            const lines: string[] = [];
-            let used = 0;
-            for (const h of chosen) {
-              try {
-                const raw = readFileSync(h.item.path, 'utf-8');
-                const obj = JSON.parse(raw);
-                const content = String(obj?.content || '').trim();
-                if (!content) continue;
-                const chunk = `- ${content}`;
-                if (used + chunk.length > 900) break;
-                lines.push(chunk);
-                used += chunk.length;
-                recentMemoryIds[mode] = [...recent.slice(-9), h.item.id];
-              } catch {}
-            }
-            if (lines.length) {
-              memoryContext = lines.join('\n');
-            }
-          }
-        } catch {/* ignore semantic errors and fall back */}
-      }
-    }
-
-    // Fallback to keyword search if no semantic results
-    // NOTE: We intentionally do not use keyword fallback for grounding decisions
-    // to enforce strict memory-grounded responses (semantic index only).
-    const keywordContext = '';
-
-    // Compose context string
-    let context = '';
-    if (memoryContext) context += `\n\n## Relevant Memories\n${memoryContext}\n`;
-    if (keywordContext) context += `\n\n## Keyword Matches (fallback):\n${keywordContext}\n`;
-    // Persona context (aliases, current projects) — omitted in LoRA mode to avoid double-conditioning
-    const allowPersona = opts?.includePersonaSummary !== false;
-    if (allowPersona && !opts?.usingLora) {
-      try {
-        const aliases = (persona as any)?.identity?.aliases || [];
-        const projects = (persona as any)?.context?.projects?.current || [];
-        const projList = Array.isArray(projects) ? projects.map((p: any) => p.name).join(', ') : '';
-        const aliasList = Array.isArray(aliases) ? aliases.join(', ') : '';
-        const personaBits = [
-          aliasList ? `Aliases: ${aliasList}` : '',
-          projList ? `Current Projects: ${projList}` : '',
-        ].filter(Boolean).join(' | ');
-        if (personaBits) context += `\n\n## Persona Context\n${personaBits}\n`;
-      } catch {/* ignore persona enrich failures */}
-    }
-    // Only include tasks if the user asks about them
+    // Determine if user is asking about tasks
     const wantsTasks = /\b(task|tasks|todo|to[- ]do|project|projects|what am i working|current work)\b/i.test(userMessage);
-    if (wantsTasks && tasks.length > 0) {
-      context += '\n\n## Active Tasks:\n';
-      tasks.forEach((task, idx) => {
-        context += `${idx + 1}. ${task.title} (${task.status}) - Priority: ${task.priority}\n`;
-      });
-    }
 
+    // Build context package using context builder
+    const contextPackage = await buildContextPackage(userMessage, cognitiveMode, {
+      searchDepth: 'normal',          // 8 results (matching old topK: 8)
+      similarityThreshold: 0.62,      // Matching old threshold
+      maxMemories: 2,                 // Matching old limit
+      maxContextChars: 900,           // Matching old character limit
+      filterInnerDialogue: true,      // Matching old filtering
+      filterReflections: true,        // Matching old filtering
+      includeShortTermState: true,    // Include orchestrator state
+      includePersonaCache: opts?.includePersonaSummary !== false,
+      includeTaskContext: wantsTasks, // Only include tasks if mentioned
+      detectPatterns: false,          // Skip pattern detection for now
+      forceSemanticSearch: cognitiveMode === 'dual', // Dual mode requires semantic
+      usingLoRA: opts?.usingLora || false
+    });
 
+    // Format context for prompt
+    const context = formatContextForPrompt(contextPackage, {
+      maxChars: 900,
+      includePersona: opts?.includePersonaSummary !== false && !opts?.usingLora
+    });
 
-    // Log context retrieval with cognitive mode tracking
+    // Track used semantic search
+    const usedSemantic = contextPackage.indexStatus === 'available' && contextPackage.memoryCount > 0;
+
+    // Legacy audit event for compatibility
     audit({
       level: 'info',
       category: 'action',
       event: 'chat_context_retrieved',
       details: {
         query: userMessage,
-        tasks: tasks.length,
+        tasks: contextPackage.activeTasks.length,
         indexUsed: usedSemantic,
         cognitiveMode,
-        usedFallback: cognitiveMode === 'dual' && !usedSemantic,
+        usedFallback: contextPackage.fallbackUsed,
       },
       actor: 'system',
     });
