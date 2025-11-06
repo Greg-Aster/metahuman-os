@@ -12,9 +12,9 @@ function resolvePath(relPath: string): string {
   return absolute;
 }
 
-export const GET: APIRoute = async ({ url }) => {
+export const GET: APIRoute = async (context) => {
   try {
-    const relPath = url.searchParams.get('relPath');
+    const relPath = context.url.searchParams.get('relPath');
     if (!relPath) {
       return new Response(JSON.stringify({ success: false, error: 'relPath is required' }), {
         status: 400,
@@ -23,6 +23,22 @@ export const GET: APIRoute = async ({ url }) => {
     }
 
     const absolute = resolvePath(relPath);
+
+    // Check file access permissions
+    const policy = getSecurityPolicy(context);
+    try {
+      policy.requireFileAccess(absolute);
+    } catch (error) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: (error as Error).message,
+          details: (error as any).details
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     if (!fs.existsSync(absolute)) {
       return new Response(JSON.stringify({ success: false, error: 'File not found' }), {
         status: 404,
@@ -82,6 +98,21 @@ export const PUT: APIRoute = async (context) => {
     }
 
     const absolute = resolvePath(relPath);
+
+    // Check file access permissions (admin for system files, owner for own profile)
+    try {
+      policy.requireFileAccess(absolute);
+    } catch (error) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: (error as Error).message,
+          details: (error as any).details
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     if (!fs.existsSync(absolute)) {
       return new Response(
         JSON.stringify({ success: false, error: 'File not found' }),
@@ -92,13 +123,18 @@ export const PUT: APIRoute = async (context) => {
     // Write the file
     fs.writeFileSync(absolute, content, 'utf8');
 
-    // Audit the change
+    // Audit the change with username
     audit({
       level: 'info',
       category: 'data',
       event: 'memory_file_edited',
-      details: { relPath, size: content.length },
-      actor: policy.role,
+      details: {
+        relPath,
+        size: content.length,
+        username: policy.username,
+        isAdmin: policy.isAdmin
+      },
+      actor: policy.username || policy.role,
     });
 
     return new Response(

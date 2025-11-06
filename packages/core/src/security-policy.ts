@@ -13,12 +13,30 @@ import { getUser } from './users.js';
 export type UserRole = 'owner' | 'guest' | 'anonymous';
 
 /**
+ * Check if a username is in the administrator list
+ * Administrators can edit system code and access all profiles
+ */
+export function isAdministrator(username?: string): boolean {
+  if (!username) return false;
+
+  const adminUsers = process.env.ADMIN_USERS || '';
+  const adminList = adminUsers
+    .split(',')
+    .map((u) => u.trim())
+    .filter((u) => u.length > 0);
+
+  return adminList.includes(username);
+}
+
+/**
  * Session information extracted from request context
  */
 export interface SessionInfo {
   role: UserRole;
   id?: string;
   email?: string;
+  username?: string;
+  isAdmin?: boolean;
 }
 
 /**
@@ -60,16 +78,25 @@ export interface SecurityPolicy {
   canAccessTraining: boolean;
   canFactoryReset: boolean;
 
+  // Multi-user permissions
+  canEditSystemCode: boolean;
+  canAccessAllProfiles: boolean;
+  canEditOwnProfile: boolean;
+
   // Context
   role: UserRole;
   mode: CognitiveModeId;
   sessionId?: string;
+  username?: string;
+  isAdmin: boolean;
 
   // Helper methods that throw SecurityError if not allowed
   requireWrite(): void;
   requireOperator(): void;
   requireOwner(): void;
   requireConfig(): void;
+  requireAdmin(): void;
+  requireFileAccess(filePath: string): void;
 }
 
 /**
@@ -82,8 +109,10 @@ function computeSecurityPolicy(
   session: SessionInfo | null
 ): SecurityPolicy {
   const role = session?.role ?? 'anonymous';
+  const username = session?.username;
+  const isAdmin = session?.isAdmin ?? false;
 
-  // Determine permissions based on mode + role
+  // Determine permissions based on mode + role + admin status
   const policy: SecurityPolicy = {
     // Memory reads: any authenticated user (not anonymous)
     canReadMemory: role !== 'anonymous',
@@ -108,10 +137,22 @@ function computeSecurityPolicy(
     // Factory reset: owner only
     canFactoryReset: role === 'owner',
 
+    // Multi-user permissions
+    // System code editing: administrators only
+    canEditSystemCode: isAdmin,
+
+    // Access all profiles: administrators only
+    canAccessAllProfiles: isAdmin,
+
+    // Edit own profile: any authenticated user (not anonymous or guest)
+    canEditOwnProfile: role !== 'anonymous' && role !== 'guest',
+
     // Context
     role,
     mode,
     sessionId: session?.id,
+    username,
+    isAdmin,
 
     // Helper methods
     requireWrite() {
@@ -164,6 +205,84 @@ function computeSecurityPolicy(
         });
       }
     },
+
+    requireAdmin() {
+      if (!this.canEditSystemCode) {
+        throw new SecurityError('Administrator privileges required', {
+          reason: 'not_administrator',
+          role,
+          username,
+          required: 'admin privileges (set in ADMIN_USERS env var)',
+        });
+      }
+    },
+
+    requireFileAccess(filePath: string) {
+      const normalizedPath = filePath.replace(/\\/g, '/');
+
+      // System directories (brain/, packages/, apps/, bin/)
+      const systemDirs = ['brain/', 'packages/', 'apps/', 'bin/', 'scripts/'];
+      const isSystemPath = systemDirs.some((dir) => normalizedPath.includes(dir));
+
+      if (isSystemPath) {
+        // System code requires admin privileges
+        if (!this.canEditSystemCode) {
+          throw new SecurityError('Cannot edit system code', {
+            reason: 'not_administrator',
+            role,
+            username,
+            filePath: normalizedPath,
+            required: 'admin privileges (set in ADMIN_USERS env var)',
+          });
+        }
+        return; // Admin can edit anything
+      }
+
+      // Profile-specific paths (profiles/{username}/)
+      if (normalizedPath.includes('profiles/')) {
+        const profileMatch = normalizedPath.match(/profiles\/([^/]+)\//);
+        if (profileMatch) {
+          const targetUsername = profileMatch[1];
+
+          // Check if user is accessing their own profile
+          if (targetUsername === username) {
+            if (!this.canEditOwnProfile) {
+              throw new SecurityError('Cannot edit own profile', {
+                reason: 'insufficient_permissions',
+                role,
+                username,
+                filePath: normalizedPath,
+              });
+            }
+            return; // User can edit their own profile
+          }
+
+          // Accessing another user's profile requires admin
+          if (!this.canAccessAllProfiles) {
+            throw new SecurityError('Cannot access other user profiles', {
+              reason: 'not_administrator',
+              role,
+              username,
+              targetUsername,
+              filePath: normalizedPath,
+              required: 'admin privileges (set in ADMIN_USERS env var)',
+            });
+          }
+          return; // Admin can access any profile
+        }
+      }
+
+      // Root-level files - admin only for safety
+      if (!this.canEditSystemCode) {
+        throw new SecurityError('Cannot edit root-level files', {
+          reason: 'not_administrator',
+          role,
+          username,
+          filePath: normalizedPath,
+          required: 'admin privileges (set in ADMIN_USERS env var)',
+        });
+      }
+    },
   };
 
   return policy;
@@ -201,11 +320,17 @@ function extractSession(context?: any): SessionInfo | null {
   // Get user details
   const user = getUser(session.userId);
 
+  // Check if user is administrator
+  const username = user?.username;
+  const isAdmin = isAdministrator(username);
+
   // Return session info
   return {
     role: session.role,
     id: session.userId,
     email: user?.metadata?.email,
+    username,
+    isAdmin,
   };
 }
 

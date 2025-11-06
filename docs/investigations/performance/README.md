@@ -164,21 +164,21 @@ Creates 200-400KB bundle that blocks rendering
 All critical files identified in investigation:
 
 **Main Page**:
-- `/home/greggles/metahuman/apps/site/src/pages/index.astro` (entry point)
+- `apps/site/src/pages/index.astro` (entry point)
 
 **Components** (causing bottlenecks):
-- `/home/greggles/metahuman/apps/site/src/components/ChatLayout.svelte` (makes 2-3 API calls)
-- `/home/greggles/metahuman/apps/site/src/components/LeftSidebar.svelte` (makes 2-3 API calls)
-- `/home/greggles/metahuman/apps/site/src/components/RightSidebar.svelte` (lazy loads OK)
-- `/home/greggles/metahuman/apps/site/src/components/CenterContent.svelte` (defers loading)
+- `apps/site/src/components/ChatLayout.svelte` (makes 2-3 API calls)
+- `apps/site/src/components/LeftSidebar.svelte` (makes 2-3 API calls)
+- `apps/site/src/components/RightSidebar.svelte` (lazy loads OK)
+- `apps/site/src/components/CenterContent.svelte` (defers loading)
 
 **API Endpoints** (slow responders):
-- `/home/greggles/metahuman/apps/site/src/pages/api/status.ts` (slowest: 200-600ms)
-- `/home/greggles/metahuman/apps/site/src/pages/api/boot.ts` (spawns agents)
-- `/home/greggles/metahuman/apps/site/src/pages/api/cognitive-mode.ts` (100-300ms)
+- `apps/site/src/pages/api/status.ts` (slowest: 200-600ms)
+- `apps/site/src/pages/api/boot.ts` (spawns agents)
+- `apps/site/src/pages/api/cognitive-mode.ts` (100-300ms)
 
 **Config**:
-- `/home/greggles/metahuman/apps/site/astro.config.mjs` (no optimizations set)
+- `apps/site/astro.config.mjs` (no optimizations set)
 
 ---
 
@@ -302,7 +302,7 @@ For questions about this investigation, refer to:
 3. Visual diagrams: **BOOT_SEQUENCE_DIAGRAM.txt**
 4. Summary: **PERFORMANCE_SUMMARY.txt**
 
-All documents located in repository root: `/home/greggles/metahuman/`
+All documents located in: /home/greggles/metahuman/docs/investigations/performance/
 
 ---
 

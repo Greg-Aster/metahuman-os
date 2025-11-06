@@ -7,6 +7,7 @@ import type { APIRoute } from 'astro';
 import { initializeSkills } from '../../brain/skills/index.ts';
 import { executeSkill, loadTrustLevel, getAvailableSkills } from '@metahuman/core/skills';
 import { paths } from '@metahuman/core/paths';
+import { getSecurityPolicy } from '@metahuman/core/security-policy';
 import path from 'node:path';
 
 // Initialize skills when module loads
@@ -27,27 +28,42 @@ interface FileOperationResponse {
   error?: string;
 }
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async (context) => {
   try {
-    const body: Partial<FileOperationRequest> = await request.json();
+    const body: Partial<FileOperationRequest> = await context.request.json();
     const { action, filename, content, overwrite } = body;
 
     if (!action || !filename) {
       return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: 'Action and filename are required' 
+        JSON.stringify({
+          success: false,
+          error: 'Action and filename are required'
         }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    const trustLevel = loadTrustLevel();
-    const availableSkills = getAvailableSkills(trustLevel);
-    
     // Validate filename
     const safeFilename = path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, '_');
     const fullPath = path.join(paths.root, 'out', safeFilename);
+
+    // Check file access permissions
+    const policy = getSecurityPolicy(context);
+    try {
+      policy.requireFileAccess(fullPath);
+    } catch (error) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: (error as Error).message,
+          details: (error as any).details
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const trustLevel = loadTrustLevel();
+    const availableSkills = getAvailableSkills(trustLevel);
 
     switch (action) {
       case 'create':

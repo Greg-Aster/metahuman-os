@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "version": "0.1.0",
-  "lastUpdated": "2025-11-06T17:10:14.150Z",
-  "activeFacet": "default",
+  "lastUpdated": "2025-11-06T17:42:22.442Z",
+  "activeFacet": "poet",
   "description": "Persona facets allow Greg to present different aspects of personality depending on context. Each facet emphasizes different traits while maintaining core identity.",
   "facets": {
     "default": {

@@ -129,18 +129,57 @@ interface UserContext {
 
 const contextStorage = new AsyncLocalStorage<UserContext>();
 
+/**
+ * Set user context (deprecated - use withUserContext instead)
+ *
+ * WARNING: enterWith() can leak context to unrelated async operations.
+ * Prefer withUserContext() for guaranteed isolation.
+ */
 export function setUserContext(userId: string, username: string, role: string) {
-  const profilePaths = getProfilePaths(username);  // Use username for profile path
+  const profilePaths = getProfilePaths(username);
   contextStorage.enterWith({ userId, username, role, profilePaths });
 }
 
+/**
+ * Clear user context (deprecated - automatic with withUserContext)
+ */
 export function clearUserContext() {
-  // Context is automatically cleared when async context exits
-  // This is a no-op but provided for explicitness
+  // Context is automatically cleared when async context exits with withUserContext
+  // This is a no-op but provided for backward compatibility
 }
 
+/**
+ * Get current user context
+ */
 export function getUserContext(): UserContext | null {
   return contextStorage.getStore() || null;
+}
+
+/**
+ * Run function with isolated user context (RECOMMENDED)
+ *
+ * Automatically manages context lifecycle and prevents leakage to other async operations.
+ *
+ * @example
+ * await withUserContext({ userId: '123', username: 'alice', role: 'guest' }, async () => {
+ *   // All code here (and async operations) use alice's context
+ *   const memories = await captureEvent('Test');
+ * });
+ * // Context automatically cleaned up - no leakage to subsequent operations
+ */
+export function withUserContext<T>(
+  user: { userId: string; username: string; role: string },
+  fn: () => T | Promise<T>
+): Promise<T> {
+  const profilePaths = getProfilePaths(user.username);
+  const context: UserContext = {
+    userId: user.userId,
+    username: user.username,
+    role: user.role as 'owner' | 'guest' | 'anonymous',
+    profilePaths,
+  };
+
+  return contextStorage.run(context, fn);
 }
 ```
 
@@ -274,7 +313,7 @@ const modelConfig = loadUserConfig('models.json', {
 ```typescript
 // apps/site/src/middleware/userContext.ts (NEW FILE)
 
-import { setUserContext, clearUserContext } from '@metahuman/core/context';
+import { withUserContext as runWithUserContext } from '@metahuman/core/context';
 import { validateSession, getUser } from '@metahuman/core';
 
 export function withUserContext(handler: APIRoute): APIRoute {
@@ -286,17 +325,17 @@ export function withUserContext(handler: APIRoute): APIRoute {
       if (session) {
         const user = getUser(session.userId);
         if (user) {
-          // Set user context for this request
-          setUserContext(user.id, user.username, user.role);
+          // Run handler with user context (automatic isolation and cleanup)
+          return await runWithUserContext(
+            { userId: user.id, username: user.username, role: user.role },
+            () => handler(context)
+          );
         }
       }
     }
 
-    try {
-      return await handler(context);
-    } finally {
-      clearUserContext();
-    }
+    // No session - run without user context
+    return await handler(context);
   };
 }
 ```
@@ -319,7 +358,7 @@ export const POST = withUserContext(requireWriteMode(handler));
 // brain/agents/organizer.ts
 
 import { listUsers } from '@metahuman/core/users';
-import { setUserContext, clearUserContext } from '@metahuman/core/context';
+import { withUserContext } from '@metahuman/core/context';
 
 async function runCycle() {
   const users = listUsers();
@@ -327,20 +366,21 @@ async function runCycle() {
   for (const user of users) {
     console.log(`[Organizer] Processing user: ${user.username}`);
 
-    // Set context for this user
-    setUserContext(user.id, user.username, user.role);
-
     try {
-      // Find and process unprocessed memories
-      const memories = findUnprocessedMemories(); // Uses context!
-      for (const mem of memories) {
-        await processMemory(mem);
-      }
+      // Use withUserContext for automatic isolation and cleanup
+      await withUserContext(
+        { userId: user.id, username: user.username, role: user.role },
+        async () => {
+          // Find and process unprocessed memories
+          const memories = findUnprocessedMemories(); // Uses context!
+          for (const mem of memories) {
+            await processMemory(mem);
+          }
+        }
+      );
+      // Context automatically cleaned up - no leakage to next user
     } catch (error) {
       console.error(`[Organizer] Error processing ${user.username}:`, error);
-    } finally {
-      // Clear context before next user
-      clearUserContext();
     }
   }
 
@@ -358,8 +398,11 @@ async function runCycle() {
 
 **Tasks:**
 1. ✅ Create `packages/core/src/context.ts` with AsyncLocalStorage
+   - Implement `withUserContext()` for automatic isolation (RECOMMENDED)
+   - Implement `setUserContext()` and `clearUserContext()` for backward compatibility
+   - Implement `getUserContext()` to retrieve current user
 2. ✅ Update `packages/core/src/paths.ts`:
-   - Add `getProfilePaths(userId)` function
+   - Add `getProfilePaths(username)` function (uses username, NOT userId)
    - Add `systemPaths` for non-user operations
    - Replace `export const paths` with Proxy
 3. ✅ Create `apps/site/src/middleware/userContext.ts`
@@ -446,7 +489,35 @@ async function migrateToProfiles() {
 
   console.log('');
 
-  // 5. Move persona files (EXCEPT users.json which stays at root for auth)
+  // 5. Move config files FIRST (before moving persona directory)
+  // This ensures persona/cognitive-mode.json is moved before persona/ tree is relocated
+  const etcDir = path.join(profileDir, 'etc');
+  await fs.ensureDir(etcDir);
+
+  const configFiles = [
+    { src: 'persona/cognitive-mode.json', dest: 'cognitive-mode.json' },
+    { src: 'etc/models.json', dest: 'models.json' },
+    { src: 'etc/training.json', dest: 'training.json' },
+    { src: 'etc/boredom.json', dest: 'boredom.json' },
+    { src: 'etc/sleep.json', dest: 'sleep.json' },
+    { src: 'etc/audio.json', dest: 'audio.json' },
+    { src: 'etc/ingestor.json', dest: 'ingestor.json' },
+    { src: 'etc/autonomy.json', dest: 'autonomy.json' },
+  ];
+
+  for (const { src, dest } of configFiles) {
+    const srcPath = path.join(ROOT, src);
+    const destPath = path.join(etcDir, dest);
+
+    if (await fs.pathExists(srcPath)) {
+      console.log(`📄 Moving ${src} → etc/${dest}`);
+      await fs.move(srcPath, destPath);
+    }
+  }
+
+  console.log('');
+
+  // 6. Move persona files (EXCEPT users.json which stays at root for auth)
   const personaSrcDir = path.join(ROOT, 'persona');
   const personaDestDir = path.join(profileDir, 'persona');
   await fs.ensureDir(personaDestDir);
@@ -476,7 +547,7 @@ async function migrateToProfiles() {
 
   console.log('');
 
-  // 6. Move user-specific logs (EXCEPT logs/run/ which stays at root for system)
+  // 7. Move user-specific logs (EXCEPT logs/run/ which stays at root for system)
   const logsSrcDir = path.join(ROOT, 'logs');
   const logsDestDir = path.join(profileDir, 'logs');
   await fs.ensureDir(logsDestDir);
@@ -498,33 +569,6 @@ async function migrateToProfiles() {
         console.log(`📦 Moving logs/${dir}/ → profiles/${owner.username}/logs/${dir}/`);
         await fs.move(srcPath, destPath);
       }
-    }
-  }
-
-  console.log('');
-
-  // 7. Move config files from etc/ to user etc/
-  const etcDir = path.join(profileDir, 'etc');
-  await fs.ensureDir(etcDir);
-
-  const configFiles = [
-    { src: 'persona/cognitive-mode.json', dest: 'cognitive-mode.json' },
-    { src: 'etc/models.json', dest: 'models.json' },
-    { src: 'etc/training.json', dest: 'training.json' },
-    { src: 'etc/boredom.json', dest: 'boredom.json' },
-    { src: 'etc/sleep.json', dest: 'sleep.json' },
-    { src: 'etc/audio.json', dest: 'audio.json' },
-    { src: 'etc/ingestor.json', dest: 'ingestor.json' },
-    { src: 'etc/autonomy.json', dest: 'autonomy.json' },
-  ];
-
-  for (const { src, dest } of configFiles) {
-    const srcPath = path.join(ROOT, src);
-    const destPath = path.join(etcDir, dest);
-
-    if (await fs.pathExists(srcPath)) {
-      console.log(`📄 Moving ${src} → etc/${dest}`);
-      await fs.move(srcPath, destPath);
     }
   }
 
@@ -644,9 +688,11 @@ export function captureEvent(content: string, opts = {}) {
 }
 
 // packages/core/src/memory.ts (AFTER)
+import { paths } from './paths.js'; // Uses context-aware proxy!
+import { getUserContext } from './context.js';
+
 export function captureEvent(content: string, opts = {}) {
   const ctx = getUserContext();
-  const paths = getPaths(); // Now context-aware!
 
   const event = {
     id: generateId('evt'),
@@ -660,6 +706,7 @@ export function captureEvent(content: string, opts = {}) {
     // ... rest of event
   };
 
+  // paths.episodic automatically resolves to the correct user profile
   const filepath = path.join(paths.episodic, year, filename);
   fs.writeFileSync(filepath, JSON.stringify(event, null, 2));
 
@@ -750,8 +797,8 @@ export const POST: APIRoute = async (context) => {
   // Create user account
   const user = createUser(username, password, role);
 
-  // Initialize profile directory
-  const profilePath = getProfilePaths(user.id).root;
+  // Initialize profile directory (use username, not user.id!)
+  const profilePath = getProfilePaths(user.username).root;
   await initializeProfile(profilePath);
 
   audit({
@@ -811,7 +858,7 @@ export const POST: APIRoute = async (context) => {
 // brain/agents/organizer.ts
 
 import { listUsers } from '@metahuman/core/users';
-import { setUserContext, clearUserContext } from '@metahuman/core/context';
+import { withUserContext } from '@metahuman/core/context';
 
 async function runCycle() {
   const users = listUsers();
@@ -820,22 +867,23 @@ async function runCycle() {
   for (const user of users) {
     console.log(`[Organizer] Processing: ${user.username}`);
 
-    // Set context for this user
-    setUserContext(user.id, user.username, user.role);
-
     try {
-      // Find unprocessed memories (uses user context!)
-      const memories = findUnprocessedMemories();
-      console.log(`[Organizer]   Found ${memories.length} unprocessed memories`);
+      // Use withUserContext for automatic isolation and cleanup
+      await withUserContext(
+        { userId: user.id, username: user.username, role: user.role },
+        async () => {
+          // Find unprocessed memories (uses user context!)
+          const memories = findUnprocessedMemories();
+          console.log(`[Organizer]   Found ${memories.length} unprocessed memories`);
 
-      for (const mem of memories) {
-        await processMemory(mem);
-      }
+          for (const mem of memories) {
+            await processMemory(mem);
+          }
+        }
+      );
+      // Context automatically cleaned up - no leakage to next user
     } catch (error) {
       console.error(`[Organizer] Error processing ${user.username}:`, error);
-    } finally {
-      // Always clear context before next user
-      clearUserContext();
     }
   }
 
@@ -883,8 +931,11 @@ cat profiles/testuser/memory/episodic/2025/evt-*.json
 // packages/cli/src/mh.ts
 
 import { program } from 'commander';
-import { setUserContext } from '@metahuman/core/context';
-import { getUser } from '@metahuman/core/users';
+import { withUserContext } from '@metahuman/core/context';
+import { listUsers } from '@metahuman/core/users';
+
+// Store user context for command execution
+let cliUser: { userId: string; username: string; role: string } | null = null;
 
 // Global option for all commands
 program
@@ -902,10 +953,30 @@ program
         process.exit(1);
       }
 
-      // Set context for CLI operations
-      setUserContext(user.id, user.username, user.role);
+      // Store user for command execution
+      cliUser = { userId: user.id, username: user.username, role: user.role };
       console.log(`[CLI] Operating as user: ${user.username}`);
     }
+  });
+
+// Wrap command execution with user context
+async function runCommand(fn: () => Promise<void>) {
+  if (cliUser) {
+    await withUserContext(cliUser, fn);
+  } else {
+    await fn();
+  }
+}
+
+// Example command
+program
+  .command('capture <content>')
+  .action(async (content) => {
+    await runCommand(async () => {
+      // This code runs with correct user context
+      const path = captureEvent(content);
+      console.log(`Captured: ${path}`);
+    });
   });
 ```
 
@@ -1087,13 +1158,62 @@ time ./bin/mh agent run organizer
 
 ### For System Administrators
 
-**What They Do:**
-- ✅ Manage server/VM
-- ✅ Run migrations
-- ✅ Backup profiles
-- ✅ Monitor resource usage
+**Administrator Privileges:**
 
-**Commands:**
+MetaHuman OS includes a role-based access control system where specific users can be designated as **administrators** with elevated privileges.
+
+**Configuration:**
+```bash
+# .env file
+ADMIN_USERS=greggles,alice
+```
+
+**Administrator Capabilities:**
+- ✅ **Edit system code** - Modify files in `brain/`, `packages/`, `apps/`, `bin/`
+- ✅ **Access all profiles** - View and edit any user's profile data
+- ✅ **Execute dangerous operations** - File system access, code editing
+- ✅ **Manage dependencies** - Install packages, modify package.json
+- ✅ **System configuration** - Modify root-level config files
+
+**Regular User Restrictions:**
+- ❌ Cannot edit system code (brain/, packages/, apps/, bin/)
+- ❌ Cannot access other users' profiles
+- ❌ Cannot modify root-level configuration
+- ✅ **Can only edit files within their own profile** (`profiles/{username}/`)
+
+**Security Enforcement:**
+
+The security policy enforces file access restrictions at multiple levels:
+
+1. **API-level checks** - `policy.requireFileAccess(filePath)` throws SecurityError for unauthorized access
+2. **Path validation** - System paths vs. profile paths detected automatically
+3. **Admin detection** - Username checked against `ADMIN_USERS` env var
+4. **Audit logging** - All file operations logged with username and admin status
+
+**Example Security Flow:**
+```typescript
+// Regular user tries to edit system code
+const policy = getSecurityPolicy(context);
+policy.requireFileAccess('brain/agents/organizer.ts');
+// ❌ Throws: "Cannot edit system code - admin privileges required"
+
+// Admin user edits system code
+const policy = getSecurityPolicy(context);
+policy.requireFileAccess('brain/agents/organizer.ts');
+// ✅ Allowed - user is in ADMIN_USERS list
+
+// Regular user edits own profile
+const policy = getSecurityPolicy(context);
+policy.requireFileAccess('profiles/alice/persona/core.json');
+// ✅ Allowed - accessing own profile
+
+// Regular user tries to access another profile
+const policy = getSecurityPolicy(context);
+policy.requireFileAccess('profiles/bob/persona/core.json');
+// ❌ Throws: "Cannot access other user profiles - admin privileges required"
+```
+
+**Administrator Commands:**
 ```bash
 # Backup all profiles
 tar -czf profiles-backup-$(date +%Y%m%d).tar.gz profiles/
@@ -1118,18 +1238,55 @@ mv profiles/old-user profiles/_archive/old-user-$(date +%Y%m%d)
 **anonymous** → Read-only, no memory writes
 **guest** → Read/write own profile, cannot manage users
 **owner** → Full access, can switch profiles, manage users
+**admin** → Elevated privileges, can edit system code (set via `ADMIN_USERS` env var)
+
+### Administrator Privileges
+
+**Configuration:** Add usernames to `.env` file:
+```bash
+ADMIN_USERS=greggles,alice
+```
+
+**What Administrators Can Do:**
+- ✅ Edit system code (`brain/`, `packages/`, `apps/`, `bin/`)
+- ✅ Access all user profiles (not just own)
+- ✅ Modify root-level configuration
+- ✅ Execute dangerous operations (file editing, package management)
+
+**What Regular Users CANNOT Do:**
+- ❌ Edit system code
+- ❌ Access other users' profiles
+- ❌ Modify system directories
+- ✅ **Can only edit files within `profiles/{username}/`**
+
+**Security Enforcement:**
+```typescript
+// packages/core/src/security-policy.ts
+export function isAdministrator(username?: string): boolean {
+  const adminUsers = process.env.ADMIN_USERS || '';
+  return adminUsers.split(',').map(u => u.trim()).includes(username);
+}
+
+// In SecurityPolicy
+policy.requireFileAccess('brain/agents/organizer.ts');
+// ✅ Allowed for admins
+// ❌ Throws SecurityError for regular users
+```
 
 ### Authorization Matrix
 
-| Action | Anonymous | Guest | Owner |
-|--------|-----------|-------|-------|
-| View own memories | ❌ | ✅ | ✅ |
-| Create memories | ❌ | ✅ | ✅ |
-| View other memories | ❌ | ❌ | ✅ |
-| Switch profiles | ❌ | ❌ | ✅ |
-| Create users | ❌ | ❌ | ✅ |
-| Delete users | ❌ | ❌ | ✅ |
-| Manage system config | ❌ | ❌ | ✅ |
+| Action | Anonymous | Guest | Owner | Admin |
+|--------|-----------|-------|-------|-------|
+| View own memories | ❌ | ✅ | ✅ | ✅ |
+| Create memories | ❌ | ✅ | ✅ | ✅ |
+| View other memories | ❌ | ❌ | ✅ | ✅ |
+| Edit own profile | ❌ | ✅ | ✅ | ✅ |
+| Edit other profiles | ❌ | ❌ | ❌ | ✅ |
+| Edit system code | ❌ | ❌ | ❌ | ✅ |
+| Switch profiles | ❌ | ❌ | ✅ | ✅ |
+| Create users | ❌ | ❌ | ✅ | ✅ |
+| Delete users | ❌ | ❌ | ✅ | ✅ |
+| Manage system config | ❌ | ❌ | ✅ | ✅ |
 
 ### File Permissions
 
