@@ -19,10 +19,10 @@ export const GET: APIRoute = async (context) => {
   try {
     // Require authentication to access memory data
     const policy = getSecurityPolicy(context);
-    if (!policy.canReadMemory()) {
+    if (!policy.canReadMemory) {
       return new Response(
-        JSON.stringify({ error: 'Authentication required to access memories' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Access not permitted. Please log in to view memories.' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
       );
     }
 

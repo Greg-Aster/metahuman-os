@@ -207,6 +207,8 @@ export interface ContextBuilderOptions {
  *
  * Current: Refactored from persona_chat.ts getRelevantContext()
  * Future: Enhanced with pattern recognition, smarter fallbacks
+ *
+ * Bug fix: Corrected field mapping to use item.text instead of hit.content
  */
 export async function buildContextPackage(
   userMessage: string,
@@ -271,6 +273,7 @@ export async function buildContextPackage(
       let filtered = hits.filter((hit: any) => hit.score >= similarityThreshold);
 
       // Apply content-based filters (matching persona_chat.ts behavior)
+      // Also enrich hits with metadata from files for better context
       if (filterInnerDialogue || filterReflections) {
         filtered = filtered.filter((hit: any) => {
           try {
@@ -280,13 +283,21 @@ export async function buildContextPackage(
             const type = obj?.type ? String(obj.type) : '';
             const tags: string[] = Array.isArray(obj?.tags) ? obj.tags.map((x: any) => String(x)) : [];
 
+            // Store metadata on hit for later use
+            hit._metadata = { type, tags };
+
             // Filter inner dialogue
             if (filterInnerDialogue && type === 'inner_dialogue') {
               return false;
             }
 
             // Filter reflections and dreams
-            if (filterReflections && (tags.includes('reflection') || tags.includes('dream'))) {
+            // Check both tags AND type field (dreams use type='dream', not tag='dream')
+            if (filterReflections && (
+              tags.includes('reflection') ||
+              tags.includes('dream') ||
+              type === 'dream'  // ← FIX: Also check type field for dreams
+            )) {
               return false;
             }
 
@@ -304,13 +315,15 @@ export async function buildContextPackage(
       filtered = filtered.slice(0, maxMemories);
 
       // Map to RelevantMemory interface
+      // Note: queryIndex returns { item: VectorIndexItem, score: number }
+      // where VectorIndexItem has: id, path, type, timestamp, text, vector
       memories = filtered.map((hit: any) => ({
-        id: hit.id || hit.item?.id,
-        content: hit.content || hit.item?.content,
-        timestamp: hit.timestamp || hit.item?.timestamp,
+        id: hit.item?.id || hit.id,
+        content: hit.item?.text || hit.content,  // Index stores 'text', not 'content'
+        timestamp: hit.item?.timestamp || hit.timestamp,
         score: hit.score,
-        type: hit.type || hit.item?.type,
-        tags: hit.tags || hit.item?.tags || []
+        type: hit._metadata?.type || hit.item?.type || hit.type,  // Use enriched metadata if available
+        tags: hit._metadata?.tags || hit.item?.tags || hit.tags || []  // Use enriched tags
       }));
 
       indexStatus = 'available';

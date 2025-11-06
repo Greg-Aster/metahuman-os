@@ -183,7 +183,7 @@ async function getRelevantContext(
   userMessage: string,
   mode: Mode,
   opts?: { usingLora?: boolean; includePersonaSummary?: boolean }
-): Promise<{ context: string; usedSemantic: boolean }> {
+): Promise<{ context: string; usedSemantic: boolean; contextPackage: any }> {
   try {
     // Load cognitive mode to enforce mode-specific retrieval behavior
     const cognitiveContext = getCognitiveModeContext();
@@ -192,14 +192,23 @@ async function getRelevantContext(
     // Determine if user is asking about tasks
     const wantsTasks = /\b(task|tasks|todo|to[- ]do|project|projects|what am i working|current work)\b/i.test(userMessage);
 
+    // Smart filtering: Don't filter dreams/reflections if user is explicitly asking about them
+    const askingAboutDreams = /\b(dream|dreams|dreamed|dreaming|nightmare)\b/i.test(userMessage);
+    const askingAboutReflections = /\b(reflect|reflection|reflections|thought about|thinking about)\b/i.test(userMessage);
+    const shouldFilterReflections = !askingAboutDreams && !askingAboutReflections;
+
+    // Lower similarity threshold when asking about dreams/reflections
+    // Dreams often have abstract/poetic language that doesn't match literal queries well
+    const threshold = (askingAboutDreams || askingAboutReflections) ? 0.55 : 0.62;
+
     // Build context package using context builder
     const contextPackage = await buildContextPackage(userMessage, cognitiveMode, {
       searchDepth: 'normal',          // 8 results (matching old topK: 8)
-      similarityThreshold: 0.62,      // Matching old threshold
+      similarityThreshold: threshold,  // Lower threshold for dream/reflection queries
       maxMemories: 2,                 // Matching old limit
       maxContextChars: 900,           // Matching old character limit
       filterInnerDialogue: true,      // Matching old filtering
-      filterReflections: true,        // Matching old filtering
+      filterReflections: shouldFilterReflections,  // Smart filter: allow dreams/reflections when user asks for them
       includeShortTermState: true,    // Include orchestrator state
       includePersonaCache: opts?.includePersonaSummary !== false,
       includeTaskContext: wantsTasks, // Only include tasks if mentioned
@@ -228,14 +237,15 @@ async function getRelevantContext(
         indexUsed: usedSemantic,
         cognitiveMode,
         usedFallback: contextPackage.fallbackUsed,
+        memoryCount: contextPackage.memoryCount,
       },
       actor: 'system',
     });
 
-    return { context, usedSemantic };
+    return { context, usedSemantic, contextPackage };
   } catch (error) {
     console.error('Error retrieving context:', error);
-    return { context: '', usedSemantic: false };
+    return { context: '', usedSemantic: false, contextPackage: {} };
   }
 }
 
@@ -305,141 +315,24 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   return handleChatRequest({ ...body, origin: url.origin, cookies });
 };
 
-async function shouldUseOperator(message: string, recentContext?: string): Promise<boolean> {
-  const cognitiveContext = getCognitiveModeContext();
-  const { mode } = cognitiveContext;
-
-  const trimmed = String(message ?? '').trim();
-  const lowered = trimmed.toLowerCase();
-  const contextLower = (recentContext ?? '').toLowerCase();
-
-  if (mode === 'emulation') {
-    return false;
-  }
-
-  const trust = loadTrustLevel();
-
-  if (mode === 'agent' && trust !== 'supervised_auto' && trust !== 'bounded_auto') {
-    return false;
-  }
-
-  const followUpRead = contextLower.includes('assistant: i found the file') && /\bread\b/.test(lowered);
-  if (followUpRead) {
-    return true;
-  }
-
-  // Strong file reading indicators
-  const fileReadPatterns = [
-    /\b(read|show|display|view|cat|open)\s+(the\s+)?(content|contents|file)\s+(of|from|in)\b/i,
-    /\b(read|show|display|view|cat)\s+.*\.(txt|md|json|csv|log|py|js|ts|jsx|tsx)\b/i,
-    /\b(what|what's|whats)\s+(in|inside)\s+(the\s+)?file\b/i,
-  ];
-
-  if (fileReadPatterns.some(pattern => pattern.test(trimmed))) {
-    return true;
-  }
-
-  const actionLike = /(make|create|add|log|record|track|schedule|write|edit|modify|delete|remove|move|rename|open|scan|check|mark|complete|finish|update|run|execute|start|stop|install|uninstall|build|compile|test|fetch|download|upload|commit|push|pull|git|grep|search|replace|apply|patch|launch|train|generate|summarize|index|ingest|read)\b/i;
-  const looksLikePath = /\b(\.{1,2}\/[\w\-\.\/]+|\/[\w\-\.\/]+|[A-Za-z]:\\)/;
-  const taskIntent = /\b(task|tasks|todo|to[- ]do|checklist|reminder)\b/i;
-  const taskAction = /\b(make|create|add|log|record|track|schedule|set|mark|complete|finish|update|check)\b/i;
-  const taskQuery = /\b(what|list|show|display|read|review)\b/i;
-  if (taskIntent.test(trimmed) && (taskAction.test(trimmed) || taskQuery.test(trimmed))) {
-    return true;
-  }
-
-  const hasActionSignals =
-    followUpRead ||
-    actionLike.test(trimmed) ||
-    looksLikePath.test(trimmed) ||
-    /https?:\/\//i.test(trimmed);
-  if (!hasActionSignals) return false;
-
-  const skills = getAvailableSkills(trust)
-    .map(s => `- ${s.id}: ${s.description}`)
-    .join('\n');
-
-  // Phase 5: Add orchestrator short-term state context
-  const orchestratorState = getOrchestratorContext();
-
-  const systemPrompt = `You are a task routing system.
-Your job is to decide if the user's request should be handled by a conversational AI or an autonomous operator with specific skills.
-
-If the user is asking a question, having a conversation, or asking for information, respond with "chat".
-If the user is asking to perform an action, execute a task, or do something that requires using a skill, respond with "operator".
-
-Available operator skills:
-${skills}
-
-${orchestratorState ? `Current state:\n${orchestratorState}\n` : ''}
-Respond with a single word: "chat" or "operator".`;
-
-  const contextBlock = recentContext
-    ? `Recent conversation:\n${recentContext}\n\n`
-    : '';
-
-  try {
-    // Use orchestrator model for routing decisions (Phase 2: Orchestrator Separation)
-    const startTime = Date.now();
-    const routerResponse = await callLLM({
-      role: 'orchestrator' as ModelRole,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `${contextBlock}User request:\n${trimmed}` },
-      ],
-      cognitiveMode: mode,
-      options: {
-        temperature: 0.1,
-      }
-    });
-    const orchestratorLatency = Date.now() - startTime;
-
-    console.log(`[CHAT_REQUEST] Orchestrator model: ${routerResponse.modelId} (${orchestratorLatency}ms)`);
-    const decision = routerResponse.content.trim().toLowerCase();
-    audit({
-      level: 'info',
-      category: 'decision',
-      event: 'operator_route_decision',
-      details: {
-        message,
-        decision,
-        cognitiveMode: mode,
-        recentContext,
-        orchestratorModel: routerResponse.modelId,
-        orchestratorLatencyMs: orchestratorLatency,
-        phase: 2, // Phase 2: Orchestrator Separation
-      },
-      actor: 'orchestrator',
-    });
-
-    let useOperator = false;
-    if (decision === 'operator') {
-      useOperator = true;
-    } else if (decision === 'chat') {
-      useOperator = false;
-    } else if (decision.includes('operator') || decision.startsWith('task') || decision.includes('skills')) {
-      useOperator = true;
-    }
-
-    if (!useOperator) {
-      const actionPattern = /\b(read|write|create|delete|open|update|append|modify|summarize|scan|list|execute|run|schedule|mark|complete)\b/;
-      const targetPattern = /\b(file|document|note|folder|directory|task|calendar|memory|dataset)\b/;
-      if (actionPattern.test(lowered) && targetPattern.test(lowered)) {
-        useOperator = true;
-      } else if (followUpRead) {
-        useOperator = true;
-      }
-    }
-
-    return useOperator;
-  } catch (error) {
-    console.error('[shouldUseOperator] Error:', error);
-    return false;
-  }
-}
+// DEPRECATED: This function is no longer used.
+// The unified reasoning layer (ReAct operator) now handles ALL requests from authenticated users.
+// The operator intelligently chooses whether to use skills or conversational_response.
+// This eliminates the need for hardcoded routing patterns and LLM-based routing decisions.
 
 function formatOperatorResult(result: any): string {
-  let output = `### Operator Execution Report\n\n**Task:** ${result.task.goal}\n\n**Outcome:** ${result.success ? '✅ Success' : '❌ Failed'}\n`;
+  // Handle ReAct operator response format
+  if (result.iterations !== undefined && result.result !== undefined) {
+    // ReAct operator response
+    if (result.error) {
+      return `Task failed after ${result.iterations} iteration(s): ${result.error}`;
+    }
+    // Return the synthesized result directly
+    return result.result;
+  }
+
+  // Handle legacy operator response format
+  let output = `### Operator Execution Report\n\n**Task:** ${result.task?.goal || result.goal}\n\n**Outcome:** ${result.success ? '✅ Success' : '❌ Failed'}\n`;
 
   // Check if operator produced a file write with conversational content (e.g., greeting response)
   // If so, extract the content to return directly to chat instead of just showing the file path
@@ -627,22 +520,23 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     ? [recentDialogue, `User: ${trimmedMessage}`].filter(Boolean).join('\n')
     : recentDialogue;
 
-  // Decide whether to use the operator or the chat model
-  // Optimization: Skip expensive shouldUseOperator check if not authenticated or in emulation
-  // This avoids unnecessary LLM calls for routing decisions
-  let wouldUseOperator = false;
-  if (isAuthenticated && cognitiveMode !== 'emulation') {
-    wouldUseOperator = forceOperator || await shouldUseOperator(message ?? '', routingContext);
-  }
-  const useOperator = isAuthenticated && wouldUseOperator;
+  // UNIFIED REASONING: Always use ReAct operator for authenticated users
+  // The operator will decide whether to use skills or conversational_response
+  // Emulation mode users get chat-only (no operator access)
+  const useOperator = isAuthenticated && cognitiveMode !== 'emulation';
 
   console.log(`[CHAT_REQUEST] Cognitive Mode: ${cognitiveMode}`);
   console.log(`[CHAT_REQUEST] Authenticated: ${isAuthenticated}`);
-  console.log(`[CHAT_REQUEST] Routing decision: ${useOperator ? 'OPERATOR' : 'PERSONA'}`);
+  console.log(`[CHAT_REQUEST] Routing decision: ${useOperator ? 'REACT_OPERATOR (unified)' : 'CHAT_ONLY (emulation)'}`);
 
-  // Log and notify when operator is blocked due to lack of authentication
-  if (wouldUseOperator && !isAuthenticated) {
-    console.log('[CHAT_REQUEST] Operator routing blocked - user not authenticated');
+  // Get relevant context (memories + tasks) BEFORE routing decision
+  // This context will be used by both operator and chat paths
+  const { context: contextInfo, usedSemantic, contextPackage } = await getRelevantContext(message, m, { usingLora, includePersonaSummary });
+  console.log(`[CHAT_REQUEST] Context retrieved. Length: ${contextInfo.length}, Semantic Search: ${usedSemantic}, Memories: ${contextPackage?.memoryCount || 0}`);
+
+  // Log when operator is blocked due to lack of authentication
+  if (!isAuthenticated) {
+    console.log('[CHAT_REQUEST] Operator blocked - user not authenticated (emulation mode)');
 
     // Add a system message to inform the user about limited capabilities
     const authWarning = `_Note: I'm currently in **Emulation Mode** (read-only) because you're not authenticated. Some features like file operations, task management, and code execution require authentication. [Learn more about modes](/user-guide) or contact the owner for access._`;
@@ -676,13 +570,19 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
           lastUserTurn[m] = { text: trimmedMessage, ts: Date.now() };
           pushMessage(m, { role: 'user', content: message });
 
-          // Build operator context with recent conversation history
+          // Build operator context with recent conversation history AND memory context
           let operatorContext = '';
 
-          // Include last 5-10 turns for context (excluding current message which is already in 'goal')
+          // MEMORY CONTEXT: Add retrieved memories from semantic search (if available)
+          if (contextInfo && contextInfo.length > 0) {
+            operatorContext += '# Memory Context\n';
+            operatorContext += contextInfo + '\n\n';
+          }
+
+          // CONVERSATION HISTORY: Include last 5-10 turns for context (excluding current message which is already in 'goal')
           const recentHistory = histories[m].slice(-11, -1); // Last 10 messages before current
           if (recentHistory.length > 0) {
-            operatorContext += 'Recent conversation:\n';
+            operatorContext += '# Recent Conversation\n';
             for (const turn of recentHistory) {
               const label = turn.role === 'user' ? 'User' : turn.role === 'assistant' ? 'Assistant' : 'System';
               // Don't truncate assistant messages with operator results - they contain important context
@@ -718,10 +618,11 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
           // Add routing context if provided
           if (routingContext) {
-            operatorContext += `Routing context: ${routingContext}\n`;
+            operatorContext += `# Routing Context\n${routingContext}\n`;
           }
 
-          const operatorUrl = origin ? new URL('/api/operator', origin).toString() : '/api/operator';
+          // Use ReAct operator for dynamic observation-based execution
+          const operatorUrl = origin ? new URL('/api/operator/react', origin).toString() : '/api/operator/react';
 
           // Build headers with session cookie to pass through authentication
           const operatorHeaders: Record<string, string> = {
@@ -741,6 +642,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               goal: message,
               context: operatorContext,
               autoApprove: true,
+              reasoningDepth: depthLevel,  // Pass reasoning slider value (0-3)
               profile: (typeof audience === 'string' && ['files','git','web'].includes(audience) ? audience : undefined),
               yolo,
               allowMemoryWrites, // Pass cognitive mode memory write permission to operator
@@ -835,9 +737,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     pushMessage(m, { role: 'system', content: `Audience/context: ${audience}` });
   }
 
-  // Get relevant context (memories + tasks) for this message
-  const { context: contextInfo, usedSemantic } = await getRelevantContext(message, m, { usingLora, includePersonaSummary });
-  console.log(`[CHAT_REQUEST] Context retrieved. Length: ${contextInfo.length}, Semantic Search: ${usedSemantic}`);
+  // Note: Context already retrieved earlier (line 525) and available as contextInfo, usedSemantic, contextPackage
 
   // Add user message and context to history
   // NOTE: The context is added as a separate system message to make it clear to the model what is the user's message and what is context.
@@ -1052,16 +952,19 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
             if (USE_COGNITIVE_PIPELINE) {
               // === PHASE 4.1a: Use PersonalityCoreLayer wrapper ===
               console.log('[CHAT_REQUEST] Using cognitive pipeline Layer 2');
+              console.log(`[CHAT_REQUEST] Passing contextPackage with ${contextPackage?.memoryCount || 0} memories to Layer 2`);
 
               const layer2 = new PersonalityCoreLayer();
               const layer2Output = await layer2.process(
                 {
-                  // Pass pre-built chat history instead of building new prompt
+                  // Pass pre-built chat history for full conversation context
                   chatHistory: histories[m].map(h => ({
                     role: h.role as 'system' | 'user' | 'assistant',
                     content: h.content
                   })),
-                  contextPackage: {} // Not used when chatHistory is provided
+                  // Pass actual contextPackage from Layer 1 (memory retrieval)
+                  contextPackage: contextPackage || {},
+                  userMessage: message
                 },
                 {
                   cognitiveMode,

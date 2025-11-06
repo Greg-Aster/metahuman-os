@@ -1,5 +1,34 @@
 ## Troubleshooting
 
+### Slow Boot / UI Takes Long to Load
+
+**Symptom:** Web interface takes 30+ seconds to become interactive after page load.
+
+**Recent Fixes (v1.0):**
+The following optimizations were implemented to dramatically improve boot performance:
+
+1. **Fixed Duplicate Skill Registration**: Skills were being registered multiple times during boot
+   - Solution: Made `initializeSkills()` idempotent
+   - Impact: Eliminated 20+ duplicate audit entries, faster startup
+
+2. **Optimized Chat History Loading**: API was scanning 30+ days of data on every request
+   - Solution: Added server-side caching with file modification time invalidation
+   - Solution: Reduced default scan from 30 days to 7 days
+   - Impact: 60+ second load time reduced to <5 seconds
+
+3. **Fresh Session Interface**: Historical data no longer loads automatically
+   - Solution: Disabled automatic history loading on page load
+   - Impact: Clean, fast interface startup
+
+4. **Audit Stream Optimization**: Live stream was loading all historical events
+   - Solution: Stream now starts from end of file (only shows new events)
+   - Impact: Instant stream connection, no historical data bloat
+
+**Performance Tips:**
+- Use the **Clear button** to reset session and clear audit logs for maximum privacy
+- Chat history is cached for 30 seconds - subsequent loads are instant
+- If boot is still slow, check for stuck agents: `./bin/mh agent ps`
+
 ### Boredom Service Not Triggering Reflections
 
 **Symptom:** Reflector agent never runs automatically.
@@ -134,6 +163,36 @@ Run `./bin/mh agent run organizer` to process memories first
 
 ### Auto-approver always rejects
 Lower thresholds in `etc/auto-approval.json` or improve data quality
+
+### Persona Toggle Button Requires Server Restart
+
+**Symptom:** When clicking the persona badge in the status widget to toggle persona context on/off, the button styling doesn't update to reflect the new state. The toggle only works reliably after restarting the dev server.
+
+**Cause:** The `/api/status` endpoint has a 5-second server-side cache to improve performance. When toggling the persona setting, the cache-busting mechanism doesn't fully invalidate the cache across all cognitive modes.
+
+**Workaround:**
+1. **Option 1:** Restart the dev server after toggling persona mode:
+   ```bash
+   # Stop dev server (Ctrl+C)
+   pnpm dev
+   ```
+
+2. **Option 2:** Wait 5 seconds after toggling for the cache to expire, then refresh the page
+
+3. **Option 3:** Use the API directly to verify the setting:
+   ```bash
+   # Check current persona setting
+   curl http://localhost:4321/api/persona-toggle
+
+   # Toggle persona setting
+   curl -X POST http://localhost:4321/api/persona-toggle \
+     -H "Content-Type: application/json" \
+     -d '{"enabled": true}'  # or false
+   ```
+
+**Note:** The setting IS successfully saved to `etc/models.json` even if the UI doesn't update immediately. This is purely a UI refresh issue, not a data persistence problem.
+
+**Status:** Known issue - investigating cache invalidation improvements.
 
 ---
 

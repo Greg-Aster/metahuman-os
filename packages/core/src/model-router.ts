@@ -5,9 +5,10 @@
  * Handles provider dispatching, adapter loading, audit logging, and error handling.
  */
 
-import { resolveModel, resolveModelForCognitiveMode, type ModelRole, type ResolvedModel } from './model-resolver.js';
+import { resolveModel, resolveModelForCognitiveMode, type ModelRole, type ResolvedModel, loadModelRegistry } from './model-resolver.js';
 import { audit } from './audit.js';
 import { ollama } from './ollama.js';
+import { loadPersonaCore } from './identity.js';
 
 // Re-export ModelRole for convenience
 export type { ModelRole } from './model-resolver.js';
@@ -59,6 +60,64 @@ export interface RouterStreamChunk {
 }
 
 /**
+ * Build persona context summary from persona files
+ * This is injected as a system message when includePersonaSummary is enabled
+ */
+function buildPersonaContext(): string {
+  try {
+    const persona = loadPersonaCore();
+
+    // Build a concise summary of identity, values, and goals
+    const parts: string[] = [];
+
+    // Identity
+    parts.push(`You are ${persona.identity.name}, ${persona.identity.role}.`);
+    parts.push(persona.identity.purpose);
+
+    // Core values (top 3)
+    if (persona.values?.core && Array.isArray(persona.values.core)) {
+      const topValues = persona.values.core.slice(0, 3);
+      const valueNames = topValues.map((v: any) => v.value || v).filter(Boolean);
+      if (valueNames.length > 0) {
+        parts.push(`\nCore values: ${valueNames.join(', ')}.`);
+      }
+    }
+
+    // Short-term goals
+    if (persona.goals?.shortTerm && Array.isArray(persona.goals.shortTerm)) {
+      parts.push(`\nCurrent goals:`);
+      persona.goals.shortTerm.forEach((goal: any) => {
+        const goalText = goal.goal || goal;
+        parts.push(`- ${goalText}`);
+      });
+    }
+
+    // Long-term goals (just titles or descriptions)
+    if (persona.goals?.longTerm && Array.isArray(persona.goals.longTerm)) {
+      const aspirations = persona.goals.longTerm
+        .map((g: any) => g.goal || g.title || g.description || g)
+        .filter(Boolean);
+      if (aspirations.length > 0) {
+        parts.push(`\nLong-term goals: ${aspirations.slice(0, 3).join(', ')}.`);
+      }
+    }
+
+    // Communication style hints (personality is typed as 'any' so we can access it)
+    if (persona.personality?.communicationStyle?.tone) {
+      const tone = Array.isArray(persona.personality.communicationStyle.tone)
+        ? persona.personality.communicationStyle.tone.join(', ')
+        : persona.personality.communicationStyle.tone;
+      parts.push(`\nCommunication style: ${tone}.`);
+    }
+
+    return parts.join('\n');
+  } catch (error) {
+    console.warn('[model-router] Failed to load persona context:', error);
+    return ''; // Fail silently - don't block LLM calls if persona can't be loaded
+  }
+}
+
+/**
  * Call an LLM using role-based routing
  */
 export async function callLLM(callOptions: RouterCallOptions): Promise<RouterResponse> {
@@ -68,6 +127,47 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
   const resolved = callOptions.cognitiveMode
     ? resolveModelForCognitiveMode(callOptions.cognitiveMode, callOptions.role)
     : resolveModel(callOptions.role, callOptions.overrides);
+
+  // Check if we should include persona summary
+  let shouldIncludePersona = false;
+  if (callOptions.role === 'persona') {
+    try {
+      const registry = loadModelRegistry();
+      shouldIncludePersona = registry.globalSettings?.includePersonaSummary ?? true;
+    } catch {
+      // If registry can't be loaded, default to true for backward compatibility
+      shouldIncludePersona = true;
+    }
+  }
+
+  // Inject persona context if needed
+  let messages = callOptions.messages;
+  if (shouldIncludePersona) {
+    const personaContext = buildPersonaContext();
+    if (personaContext) {
+      // Check if there's already a system message
+      const hasSystemMessage = messages.some(m => m.role === 'system');
+
+      if (hasSystemMessage) {
+        // Prepend persona context to existing system message
+        messages = messages.map(m => {
+          if (m.role === 'system') {
+            return {
+              ...m,
+              content: `${personaContext}\n\n${m.content}`
+            };
+          }
+          return m;
+        });
+      } else {
+        // Add persona context as a new system message at the start
+        messages = [
+          { role: 'system', content: personaContext },
+          ...messages
+        ];
+      }
+    }
+  }
 
   // Merge options: model defaults + call-specific options
   const mergedOptions = {
@@ -81,7 +181,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
   try {
     switch (resolved.provider) {
       case 'ollama':
-        response = await callOllama(resolved, callOptions.messages, mergedOptions);
+        response = await callOllama(resolved, messages, mergedOptions);
         break;
 
       case 'openai':

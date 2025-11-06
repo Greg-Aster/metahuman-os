@@ -103,6 +103,15 @@ export class PersonalityCoreLayer implements CognitiveLayer<PersonalityInput, Pe
   ): Promise<PersonalityOutput> {
     const startTime = Date.now();
 
+    // Debug logging for input validation
+    console.log('[personality-core] Processing input...');
+    console.log(`[personality-core] - Cognitive mode: ${context.cognitiveMode}`);
+    console.log(`[personality-core] - Has chatHistory: ${!!input.chatHistory} (${input.chatHistory?.length || 0} messages)`);
+    console.log(`[personality-core] - Has contextPackage: ${!!input.contextPackage}`);
+    console.log(`[personality-core] - Memory count: ${input.contextPackage?.memoryCount || 0}`);
+    console.log(`[personality-core] - Index status: ${input.contextPackage?.indexStatus || 'unknown'}`);
+    console.log(`[personality-core] - Has userMessage: ${!!input.userMessage}`);
+
     // Get layer configuration
     const config = this.getConfigForMode(context.cognitiveMode, context);
 
@@ -221,10 +230,23 @@ export class PersonalityCoreLayer implements CognitiveLayer<PersonalityInput, Pe
    */
   validate(input: PersonalityInput): ValidationResult {
     const errors: string[] = [];
+    const warnings: string[] = [];
 
-    // Require context package
+    // Require context package (can be empty object)
     if (!input.contextPackage) {
       errors.push('contextPackage is required');
+    }
+
+    // Warn if contextPackage is empty or has no memories
+    if (input.contextPackage && Object.keys(input.contextPackage).length === 0) {
+      warnings.push('contextPackage is empty - no memory context available');
+    } else if (input.contextPackage && (!input.contextPackage.memoryCount || input.contextPackage.memoryCount === 0)) {
+      warnings.push('contextPackage has no memories - response may lack personal context');
+    }
+
+    // Require either chatHistory or userMessage
+    if (!input.chatHistory && !input.userMessage) {
+      errors.push('Either chatHistory or userMessage is required');
     }
 
     // If operator result provided, validate structure
@@ -236,7 +258,8 @@ export class PersonalityCoreLayer implements CognitiveLayer<PersonalityInput, Pe
 
     return {
       valid: errors.length === 0,
-      errors
+      errors,
+      warnings
     };
   }
 

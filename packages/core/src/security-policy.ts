@@ -52,6 +52,7 @@ export class SecurityError extends Error {
  */
 export interface SecurityPolicy {
   // Core permissions
+  canReadMemory: boolean;
   canWriteMemory: boolean;
   canUseOperator: boolean;
   canChangeMode: boolean;
@@ -84,6 +85,9 @@ function computeSecurityPolicy(
 
   // Determine permissions based on mode + role
   const policy: SecurityPolicy = {
+    // Memory reads: any authenticated user (not anonymous)
+    canReadMemory: role !== 'anonymous',
+
     // Memory writes: mode allows writes AND user is not a guest
     canWriteMemory: canWriteMemory(mode) && role !== 'guest',
 
@@ -254,6 +258,7 @@ export function getSecurityPolicy(context?: any): SecurityPolicy {
 export function checkPermission(
   permission: keyof Pick<
     SecurityPolicy,
+    | 'canReadMemory'
     | 'canWriteMemory'
     | 'canUseOperator'
     | 'canChangeMode'
@@ -273,6 +278,7 @@ export function checkPermission(
 export function getPermissionSummary(context?: any): Record<string, boolean> {
   const policy = getSecurityPolicy(context);
   return {
+    canReadMemory: policy.canReadMemory,
     canWriteMemory: policy.canWriteMemory,
     canUseOperator: policy.canUseOperator,
     canChangeMode: policy.canChangeMode,

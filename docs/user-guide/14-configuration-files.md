@@ -218,6 +218,76 @@ Configures the audio transcription engine (`whisper.cpp`), including the model, 
 }
 ```
 
+### `etc/agents.json` - Agent Scheduler Configuration
+Controls the centralized agent scheduler system. This file defines all autonomous agents, their trigger types, and scheduling parameters.
+
+```json
+{
+  "agents": {
+    "reflector": {
+      "id": "reflector",
+      "enabled": true,
+      "type": "interval",
+      "interval": 900,
+      "runOnBoot": false,
+      "agentPath": "brain/agents/reflector.ts"
+    },
+    "organizer": {
+      "id": "organizer",
+      "enabled": true,
+      "type": "interval",
+      "interval": 60,
+      "runOnBoot": false,
+      "agentPath": "brain/agents/organizer.ts"
+    },
+    "dreamer": {
+      "id": "dreamer",
+      "enabled": true,
+      "type": "time-of-day",
+      "schedule": "02:00",
+      "agentPath": "brain/agents/dreamer.ts"
+    },
+    "boredom-maintenance": {
+      "id": "boredom-maintenance",
+      "enabled": true,
+      "type": "activity",
+      "inactivityThreshold": 900
+    }
+  }
+}
+```
+
+**Fields:**
+- `agents`: Object containing all agent configurations
+- Per-agent configuration:
+  - `id`: Unique identifier for the agent
+  - `enabled`: Whether the agent is active
+  - `type`: Trigger type (`interval`, `time-of-day`, `event`, `activity`)
+  - `interval`: For interval-based agents, seconds between runs
+  - `schedule`: For time-of-day agents, 24-hour time (e.g., "02:00")
+  - `inactivityThreshold`: For activity-based agents, seconds of inactivity before triggering
+  - `runOnBoot`: Whether to run immediately when scheduler starts
+  - `agentPath`: Path to agent file (relative to project root)
+  - `task`: Alternative to agentPath - operator task configuration with goal/audience/autoApprove
+
+**Trigger Types:**
+1. **interval**: Runs agent every N seconds
+   - Example: `organizer` runs every 60 seconds to process new memories
+2. **time-of-day**: Runs agent once per day at specified time
+   - Example: `dreamer` runs at 2:00 AM during sleep cycle
+3. **activity**: Runs agent after period of inactivity
+   - Example: `boredom-maintenance` triggers after 15 minutes idle
+4. **event** (future): Runs agent when specific system events occur
+
+**Hot-Reloading:**
+The scheduler-service watches `etc/agents.json` for changes and automatically reloads configuration without restart. This allows you to:
+- Enable/disable agents on the fly
+- Adjust intervals and schedules
+- Add new agents without downtime
+
+**Backward Compatibility:**
+The `boredom-service` (`etc/boredom.json`) continues to work and automatically syncs its configuration to the agent scheduler for the `reflector` and `boredom-maintenance` agents.
+
 ### `etc/sleep.json` - Sleep & Dreaming Configuration
 Controls the nightly sleep window, dreaming system, and model adaptation:
 ```json

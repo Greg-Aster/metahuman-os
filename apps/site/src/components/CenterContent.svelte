@@ -45,8 +45,10 @@ let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'datasets' | 'monitor' | 'adapters' = 'datasets'
 let systemTab: 'persona' | 'lifeline' | 'settings' = 'persona'
 let expanded: Record<string, boolean> = {}
+let expandedVersion = 0  // Increment this to force UI updates
 type MemoryContentState = { status: 'idle' | 'loading' | 'ready' | 'error'; content?: string; error?: string }
 let memoryContent: Record<string, MemoryContentState> = {}
+let memoryContentVersion = 0  // Increment this to force UI updates
 
 type PersonaForm = {
   name: string
@@ -245,16 +247,21 @@ function getEventKey(item: { relPath?: string; id?: string; name?: string }): st
 }
 
 function isExpanded(item: { relPath?: string; id?: string; name?: string }): boolean {
+  expandedVersion;  // Access to create dependency
   const key = getEventKey(item);
   return key ? !!expanded[key] : false;
 }
 
 function toggleExpanded(item: { relPath?: string; id?: string; name?: string }) {
   const key = getEventKey(item);
+  console.log('[toggleExpanded]', { key, item, currentlyExpanded: expanded[key || ''] });
   if (!key) return;
   const next = !expanded[key];
-  expanded = { ...expanded, [key]: next };
+  expanded[key] = next;
+  expandedVersion++;  // Force reactivity update
+  console.log('[toggleExpanded] Updated expanded state:', { key, next, hasRelPath: !!item.relPath, version: expandedVersion });
   if (next && item.relPath) {
+    console.log('[toggleExpanded] Loading memory content for:', item.relPath);
     loadMemoryContent(item.relPath);
   }
 }
@@ -268,23 +275,24 @@ async function loadMemoryContent(relPath: string) {
   const current = memoryContent[relPath];
   if (current && (current.status === 'loading' || current.status === 'ready')) return;
 
-  memoryContent = { ...memoryContent, [relPath]: { status: 'loading' } };
+  memoryContent[relPath] = { status: 'loading' };
+  memoryContentVersion++;  // Force reactivity update
   try {
     const res = await fetch(`/api/memory-content?relPath=${encodeURIComponent(relPath)}`);
     const data = await res.json();
     if (!res.ok || !data.success) {
       throw new Error(data?.error || 'Failed to load memory content');
     }
-    memoryContent = { ...memoryContent, [relPath]: { status: 'ready', content: data.content } };
+    memoryContent[relPath] = { status: 'ready', content: data.content };
+    memoryContentVersion++;  // Force reactivity update
   } catch (error) {
-    memoryContent = {
-      ...memoryContent,
-      [relPath]: { status: 'error', error: (error as Error).message },
-    };
+    memoryContent[relPath] = { status: 'error', error: (error as Error).message };
+    memoryContentVersion++;  // Force reactivity update
   }
 }
 
 function getMemoryContent(item: { relPath?: string; content?: string }): MemoryContentState {
+  memoryContentVersion;  // Access to create dependency
   if (!item.relPath) {
     return { status: 'ready', content: item.content ?? '' };
   }

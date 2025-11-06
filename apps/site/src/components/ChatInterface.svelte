@@ -5,6 +5,7 @@
   import ApprovalBox from './ApprovalBox.svelte';
   import { canUseOperator, currentMode } from '../stores/security-policy';
   import { triggerClearAuditStream } from '../stores/clear-events';
+  import { yoloModeStore } from '../stores/navigation';
 
 type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'reasoning';
 
@@ -23,13 +24,7 @@ interface ReasoningStage {
   timestamp: number;
 }
 
-interface OperatorSkillInfo {
-  id: string;
-  name: string;
-  description: string;
-  risk: string;
-  requiresApproval: boolean;
-}
+// OperatorSkillInfo interface removed - operator controls moved to left sidebar
 
 let messages: ChatMessage[] = [];
   let input = '';
@@ -46,8 +41,8 @@ let reasoningStages: ReasoningStage[] = [];
   let reflectionStream: EventSource | null = null;
   // Convenience toggles
   let ttsEnabled = false;
-  let forceOperator = false;
-  let audience: string = '';
+  // forceOperator removed - unified reasoning always uses operator for authenticated users
+  // audience removed - focus selector obsolete with ReAct operator
   let showMiniVoice = false;
   let boredomTtsEnabled = false; // For inner dialog voice
   let audioUnlocked = false;
@@ -56,22 +51,15 @@ let reasoningStages: ReasoningStage[] = [];
   let currentObjectUrl: string | null = null;
   let currentTtsAbort: AbortController | null = null;
   let ttsPlaybackToken = 0;
-  let operatorStatusLoading = false;
-  let operatorStatusError: string | null = null;
-  let operatorSkills: OperatorSkillInfo[] = [];
-  let operatorTrustLevel: string | null = null;
-  let showOperatorInfo = false;
+  // Operator status variables removed - controls moved to left sidebar status widget
   let controlsExpanded = true;
-  let operatorToggleGroup: HTMLDivElement | null = null;
-  let operatorInfoContainer: HTMLDivElement | null = null;
-  let removeOutsideListener: (() => void) | null = null;
   let yoloMode = false;
-  const operatorProfiles = [
-    { value: '', label: 'Focus: Auto (smart mix)' },
-    { value: 'files', label: 'Focus: Files & docs' },
-    { value: 'git', label: 'Focus: Git repo' },
-    { value: 'web', label: 'Focus: Web research' },
-  ];
+
+  // Subscribe to shared YOLO mode store
+  yoloModeStore.subscribe(value => {
+    yoloMode = value;
+  });
+
 
   function isMobileDevice(): boolean {
     if (typeof navigator === 'undefined') return false;
@@ -105,74 +93,11 @@ let reasoningStages: ReasoningStage[] = [];
     }
   }
 
-  async function loadOperatorStatus() {
-    operatorStatusLoading = true;
-    operatorStatusError = null;
-    try {
-      const res = await fetch('/api/operator?action=status', { cache: 'no-store' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (data && Array.isArray(data.availableSkills)) {
-        operatorSkills = data.availableSkills.map((skill: any) => ({
-          id: String(skill.id ?? ''),
-          name: String(skill.name ?? skill.id ?? 'Skill'),
-          description: String(skill.description ?? ''),
-          risk: String(skill.risk ?? 'unknown'),
-          requiresApproval: Boolean(skill.requiresApproval),
-        }));
-      } else {
-        operatorSkills = [];
-      }
-      operatorTrustLevel = typeof data?.trustLevel === 'string' ? data.trustLevel : null;
-    } catch (error) {
-      operatorStatusError = (error as Error).message;
-      operatorSkills = [];
-    } finally {
-      operatorStatusLoading = false;
-    }
-  }
-
-  function teardownOperatorOutsideListener() {
-    if (removeOutsideListener) {
-      removeOutsideListener();
-      removeOutsideListener = null;
-    }
-  }
-
-  function setupOperatorOutsideListener() {
-    teardownOperatorOutsideListener();
-    const handler = (event: MouseEvent) => {
-      if (!operatorToggleGroup) return;
-      if (operatorToggleGroup.contains(event.target as Node)) return;
-      closeOperatorInfo();
-    };
-    document.addEventListener('click', handler);
-    removeOutsideListener = () => document.removeEventListener('click', handler);
-  }
-
-  function toggleOperatorInfo(event?: MouseEvent) {
-    event?.stopPropagation();
-    const next = !showOperatorInfo;
-    showOperatorInfo = next;
-    if (next) {
-      if (operatorSkills.length === 0 && !operatorStatusLoading && !operatorStatusError) {
-        void loadOperatorStatus();
-      }
-      setupOperatorOutsideListener();
-    } else {
-      teardownOperatorOutsideListener();
-    }
-  }
-
-  function closeOperatorInfo() {
-    if (!showOperatorInfo) return;
-    showOperatorInfo = false;
-    teardownOperatorOutsideListener();
-  }
+  // Operator status functions removed - functionality moved to left sidebar status widget
 
   function setYoloMode(value: boolean, persist = true, suppressWarn = false) {
     const changed = yoloMode !== value;
-    yoloMode = value;
+    yoloModeStore.set(value); // Update shared store instead of local variable
     if (persist) saveChatPrefs();
     if (changed && value && !suppressWarn) {
       try {
@@ -221,8 +146,13 @@ let reasoningStages: ReasoningStage[] = [];
   }
 
   async function speakText(text: string): Promise<void> {
+    console.log('[chat-tts] speakText called with text length:', text.length);
     const speechText = normalizeTextForSpeech(text);
-    if (!speechText) return;
+    console.log('[chat-tts] normalized text length:', speechText?.length || 0);
+    if (!speechText) {
+      console.log('[chat-tts] No speech text after normalization, aborting');
+      return;
+    }
 
     const token = ++ttsPlaybackToken;
     stopActiveAudio();
@@ -232,6 +162,7 @@ let reasoningStages: ReasoningStage[] = [];
     currentTtsAbort = controller;
 
     try {
+      console.log('[chat-tts] Fetching TTS from /api/tts...');
       const ttsRes = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -314,8 +245,8 @@ let reasoningStages: ReasoningStage[] = [];
         reasoningDepth = p.reasoningEnabled ? 2 : 0;
       }
       if (typeof p.boredomTtsEnabled === 'boolean') boredomTtsEnabled = p.boredomTtsEnabled;
-      if (typeof p.forceOperator === 'boolean') forceOperator = p.forceOperator;
-      if (typeof p.audience === 'string') audience = p.audience;
+      // forceOperator removed - no longer used
+      // audience removed - focus selector obsolete with ReAct operator
       if (typeof p.yoloMode === 'boolean') setYoloMode(p.yoloMode, false, true);
     } catch {}
   }
@@ -326,8 +257,8 @@ let reasoningStages: ReasoningStage[] = [];
         reasoningDepth,
         reasoningEnabled: reasoningDepth > 0,
         boredomTtsEnabled,
-        forceOperator,
-        audience,
+        // forceOperator removed - no longer used
+        // audience removed - focus selector obsolete with ReAct operator
         yoloMode,
       };
       localStorage.setItem('chatPrefs', JSON.stringify(prefs));
@@ -468,7 +399,7 @@ let reasoningStages: ReasoningStage[] = [];
       try { audioCtx.close(); } catch {}
       audioCtx = null;
     }
-    teardownOperatorOutsideListener();
+    // teardownOperatorOutsideListener removed - operator info popover removed
   });
 
   afterUpdate(() => {
@@ -520,10 +451,10 @@ let reasoningStages: ReasoningStage[] = [];
         reason: String(reasoningDepth > 0),
         reasoningDepth: String(reasoningDepth),
         llm: JSON.stringify(llm_opts),
-        forceOperator: String(forceOperator),
+        // forceOperator removed - no longer used
       });
       params.set('yolo', String(yoloMode));
-      if (forceOperator && audience) params.set('audience', audience);
+      // audience removed - focus selector obsolete with ReAct operator
 
       // Use EventSource for streaming with a GET request
       chatResponseStream = new EventSource(`/api/persona_chat?${params.toString()}`);
@@ -565,7 +496,10 @@ let reasoningStages: ReasoningStage[] = [];
             saveSession();
 
             if (ttsEnabled && mode !== 'voice' && data.response) {
+              console.log('[chat-tts] TTS enabled, speaking response:', data.response.substring(0, 50));
               void speakText(data.response);
+            } else {
+              console.log('[chat-tts] TTS skipped - enabled:', ttsEnabled, 'mode:', mode, 'hasResponse:', !!data.response);
             }
 
             loading = false;
@@ -1001,92 +935,7 @@ let reasoningStages: ReasoningStage[] = [];
   <div class="input-container">
     <div class="input-wrapper">
       <div class="input-controls">
-        <div class="operator-toggle-group" bind:this={operatorToggleGroup}>
-          {#if $currentMode !== 'emulation'}
-            <label class="small-toggle">
-              <input type="checkbox" bind:checked={forceOperator} on:change={saveChatPrefs} />
-              <span>Operator</span>
-            </label>
-            <label class="small-toggle yolo-toggle">
-              <input type="checkbox" bind:checked={yoloMode} on:change={handleYoloToggle} />
-              <span>YOLO</span>
-            </label>
-          {/if}
-          {#if $currentMode !== 'emulation'}
-            <button
-              type="button"
-              class="operator-info-trigger"
-              on:click={toggleOperatorInfo}
-              aria-expanded={showOperatorInfo}
-              aria-label="Show operator capabilities"
-              title="See operator capabilities"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M6 9l6 6 6-6" />
-              </svg>
-            </button>
-            {#if showOperatorInfo}
-              <div
-                class="operator-popover"
-                bind:this={operatorInfoContainer}
-                on:click|stopPropagation
-              >
-                <div class="operator-popover-header">
-                  <strong>Operator automations</strong>
-                  <button
-                    type="button"
-                    class="operator-popover-close"
-                    on:click={closeOperatorInfo}
-                    aria-label="Close operator capabilities"
-                  >
-                    ×
-                  </button>
-                </div>
-                {#if operatorTrustLevel}
-                  <div class="operator-popover-trust">Trust level: {operatorTrustLevel}</div>
-                {/if}
-                <div class="operator-popover-content">
-                  {#if operatorStatusLoading}
-                    <div class="operator-popover-state">Loading capabilities…</div>
-                  {:else if operatorStatusError}
-                    <div class="operator-popover-error">
-                      <span>Failed to load skills: {operatorStatusError}</span>
-                      <button type="button" on:click={() => { void loadOperatorStatus(); }}>Retry</button>
-                    </div>
-                  {:else if operatorSkills.length === 0}
-                    <div class="operator-popover-state">
-                      No operator skills are available at the current trust level yet.
-                    </div>
-                  {:else}
-                    <ul class="operator-popover-list">
-                      {#each operatorSkills as skill}
-                        <li>
-                          <div class="skill-head">
-                            <span class="skill-name">{skill.name || skill.id}</span>
-                            <span class="skill-meta">{skill.risk}{skill.requiresApproval ? ' · approval' : ''}</span>
-                          </div>
-                          {#if skill.description}
-                            <div class="skill-desc">{skill.description}</div>
-                          {/if}
-                        </li>
-                      {/each}
-                    </ul>
-                  {/if}
-                </div>
-                <p class="operator-popover-footnote">
-                  Operator plans and executes multi-step tasks. Use the focus menu to bias toward file, git, or web tools.
-                </p>
-              </div>
-            {/if}
-          {/if}
-        </div>
-        {#if $currentMode !== 'emulation'}
-          <select class="operator-focus" bind:value={audience} on:change={saveChatPrefs} title="Bias operator toward a specific toolkit">
-            {#each operatorProfiles as option}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </select>
-        {/if}
+        <!-- All operator controls removed: YOLO, trust, and focus now in left sidebar status widget or obsolete -->
       </div>
 
       <!-- Code approval box appears here when there are pending approvals -->
@@ -1105,17 +954,7 @@ let reasoningStages: ReasoningStage[] = [];
         />
         <div class="input-actions">
           {#if $currentMode !== 'emulation'}
-            <button
-              class="operator-icon-btn {forceOperator ? 'active' : ''}"
-              title={!$canUseOperator ? 'Operator disabled in current mode' : (forceOperator ? 'Operator mode enabled' : 'Enable operator mode')}
-              aria-pressed={forceOperator}
-              disabled={!$canUseOperator}
-              on:click={() => { forceOperator = !forceOperator; saveChatPrefs(); }}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M7 9a5 5 0 0 1 10 0v3a5 5 0 0 1-10 0V9zm-2 3a7 7 0 1 0 14 0V9a7 7 0 1 0-14 0v3zm3 7h8a2 2 0 0 0 2-2v-1H6v1a2 2 0 0 0 2 2z"/>
-              </svg>
-            </button>
+            <!-- Operator toggle removed: unified reasoning always uses operator for authenticated users -->
             <button
               class="operator-icon-btn yolo {yoloMode ? 'active' : ''}"
               title={!$canUseOperator ? 'YOLO mode disabled in current mode' : (yoloMode ? 'YOLO mode enabled' : 'Enable YOLO mode')}
@@ -2028,7 +1867,6 @@ let reasoningStages: ReasoningStage[] = [];
   @media (max-width: 767px) {
     /* Hide verbose controls on mobile */
     .small-toggle,
-    .operator-focus,
     .mic-btn { display: none; }
 
     .input-row { flex-direction: column; align-items: stretch; gap: 0.5rem; }

@@ -1,20 +1,28 @@
 /**
- * Sleep Service
- * Enhanced version that:
- * 1. Reads etc/sleep.json configuration
- * 2. Monitors sleep window and idle time
- * 3. Triggers dreamer agent during sleep hours
- * 4. Triggers night-processor for audio backlog
- * 5. Respects maxDreamsPerNight limit
+ * Sleep Service - Nightly Pipeline Orchestration
+ *
+ * This module provides the core logic for the nightly processing pipeline.
+ * It is now triggered by the night-pipeline.ts agent via the AgentScheduler,
+ * rather than managing its own timer.
+ *
+ * Functions:
+ * 1. loadSleepConfig() - Read etc/sleep.json configuration
+ * 2. isSleepTime() - Check if current time is within sleep window
+ * 3. isIdle() - Check if system has been idle for threshold duration
+ * 4. runNightlyPipeline() - Orchestrate the full nightly pipeline:
+ *    - Run dreamer agent (with maxDreamsPerNight limit)
+ *    - Process audio backlog (transcriber + organizer)
+ *    - LoRA training pipeline (adapter-builder, auto-approver, trainer, eval, activation)
+ * 5. updateActivity() - Record user activity for idle detection
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { paths, acquireLock, isLocked, audit, setActiveAdapter } from '../../packages/core/src/index.js';
+import { paths, audit, setActiveAdapter } from '../../packages/core/src/index.js';
 import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
 
-interface SleepConfig {
+export interface SleepConfig {
   enabled: boolean;
   window: { start: string; end: string };
   minIdleMins: number;
@@ -31,7 +39,7 @@ let lastDreamDate = '';
 // Track last activity time (for idle detection)
 let lastActivityTime = Date.now();
 
-function loadSleepConfig(): SleepConfig {
+export function loadSleepConfig(): SleepConfig {
   try {
     const configPath = path.join(paths.etc, 'sleep.json');
     const data = fs.readFileSync(configPath, 'utf-8');
@@ -50,7 +58,7 @@ function loadSleepConfig(): SleepConfig {
   }
 }
 
-function isSleepTime(schedule: { start: string; end: string }): boolean {
+export function isSleepTime(schedule: { start: string; end: string }): boolean {
   if (!schedule || !schedule.start || !schedule.end) {
     return false;
   }
@@ -74,14 +82,14 @@ function isSleepTime(schedule: { start: string; end: string }): boolean {
   return currentTime >= startTime && currentTime < endTime;
 }
 
-function isIdle(minIdleMins: number): boolean {
+export function isIdle(minIdleMins: number): boolean {
   const now = Date.now();
   const idleTimeMs = now - lastActivityTime;
   const idleTimeMins = idleTimeMs / (60 * 1000);
   return idleTimeMins >= minIdleMins;
 }
 
-function resetDayCounter() {
+export function resetDayCounter() {
   const today = new Date().toISOString().split('T')[0];
   if (lastDreamDate !== today) {
     dreamsToday = 0;
@@ -130,7 +138,7 @@ function runAgent(agentName: string, description: string, args: string[] = []): 
   });
 }
 
-async function runNightlyPipeline(config: SleepConfig) {
+export async function runNightlyPipeline(config: SleepConfig) {
   console.log('[sleep-service] Starting nightly pipeline...');
 
   audit({
@@ -371,84 +379,24 @@ async function runNightlyPipeline(config: SleepConfig) {
   }
 }
 
-function checkSchedule() {
-  const config = loadSleepConfig();
-
-  if (!config.enabled) {
-    console.log('[sleep-service] Sleep system is disabled in configuration.');
-    return;
-  }
-
-  resetDayCounter();
-
-  const inSleepWindow = isSleepTime(config.window);
-  const systemIdle = isIdle(config.minIdleMins);
-
-  if (inSleepWindow && systemIdle) {
-    console.log('[sleep-service] Sleep conditions met (in window + idle). Starting nightly pipeline...');
-    runNightlyPipeline(config).catch(err => {
-      console.error('[sleep-service] Nightly pipeline failed:', err);
-    });
-  } else {
-    if (!inSleepWindow) {
-      console.log(`[sleep-service] Not in sleep window (${config.window.start} - ${config.window.end}). Next check in 30 minutes.`);
-    } else if (!systemIdle) {
-      const idleTime = Math.floor((Date.now() - lastActivityTime) / (60 * 1000));
-      console.log(`[sleep-service] System not idle (${idleTime}/${config.minIdleMins} mins). Next check in 30 minutes.`);
-    }
-  }
-}
-
-function updateActivity() {
+export function updateActivity() {
   // This could be hooked into audit events or user interactions
   // For now, we assume activity = recent audit events
   lastActivityTime = Date.now();
 }
 
-function main() {
-  console.log('[sleep-service] Initializing...');
-
-  // Single-instance guard
-  try {
-    if (isLocked('service-sleep')) {
-      if (!process.argv.includes('--quiet')) {
-        console.log('[sleep-service] Another instance is already running. Exiting.');
-      }
-      return;
-    }
-    acquireLock('service-sleep');
-  } catch {
-    console.log('[sleep-service] Failed to acquire lock. Exiting.');
-    return;
-  }
-
-  const config = loadSleepConfig();
-  console.log(`[sleep-service] Sleep window: ${config.window.start} - ${config.window.end}`);
-  console.log(`[sleep-service] Min idle time: ${config.minIdleMins} minutes`);
-  console.log(`[sleep-service] Max dreams per night: ${config.maxDreamsPerNight}`);
-
-  audit({
-    level: 'info',
-    category: 'system',
-    event: 'sleep_service_started',
-    details: {
-      enabled: config.enabled,
-      window: config.window,
-      minIdleMins: config.minIdleMins,
-      maxDreamsPerNight: config.maxDreamsPerNight,
-    },
-    actor: 'sleep-service',
-  });
-
-  // Check every 30 minutes
-  const CHECK_INTERVAL = 30 * 60 * 1000;
-  setInterval(checkSchedule, CHECK_INTERVAL);
-
-  // Run once on startup
-  checkSchedule();
-}
-
-// Export the updateActivity function for API access
-export { updateActivity };
-
-main();
+/**
+ * MIGRATION NOTE:
+ *
+ * This file previously ran as a standalone service with its own setInterval timer.
+ * It has been refactored to export functions for use by the night-pipeline.ts agent,
+ * which is triggered by the AgentScheduler.
+ *
+ * The main() function and setInterval have been removed to eliminate timer duplication.
+ * All orchestration logic remains intact and is now invoked via:
+ *   - night-pipeline.ts (scheduled by AgentScheduler)
+ *   - runNightlyPipeline() (called from night-pipeline.ts)
+ *
+ * If you need to run this pipeline manually, use:
+ *   npx tsx brain/agents/night-pipeline.ts
+ */

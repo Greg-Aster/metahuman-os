@@ -8,6 +8,30 @@ This specialization allows the system to use the best cognitive resources for ea
 
 **Note:** The behavior of these agents can change based on the active [Cognitive Mode](04-core-concepts.md#8-cognitive-modes-upcoming-feature). For example, in "Agent Mode", proactive agents like the `reflector` and `dreamer` may be disabled.
 
+### Agent Scheduler System
+
+All autonomous agents are now managed by a centralized **Agent Scheduler** service that provides intelligent triggering and coordination.
+
+**Features:**
+- **Centralized Management**: Single configuration file (`etc/agents.json`) controls all agent behavior
+- **Multiple Trigger Types**:
+  - `interval`: Run agent every N seconds (e.g., organizer every 60s)
+  - `time-of-day`: Run agent at specific time (e.g., dreamer at 02:00)
+  - `event`: Run agent when specific events occur (future feature)
+  - `activity`: Run agent after inactivity threshold (e.g., boredom maintenance after 15 minutes idle)
+- **Hot-Reloading**: Changes to `etc/agents.json` take effect immediately without restart
+- **Status Tracking**: Monitors agent execution count, errors, and last run time
+- **Graceful Shutdown**: Proper cleanup of timers and resources
+
+**Configuration:** See `etc/agents.json` in the [Configuration Files](14-configuration-files.md#etcagentsjson---agent-scheduler-configuration) section.
+
+**Run as service:**
+```bash
+./bin/mh agent run scheduler-service
+```
+
+The scheduler-service is automatically started with the web UI (`pnpm dev`) and replaces individual agent timers with a more robust, centralized system.
+
 ### 1. Organizer Agent
 
 **Purpose:** Enriches memories with AI-extracted tags and entities.
@@ -257,14 +281,36 @@ Track the LoRA training pipeline via:
 
 **Purpose:** Executes complex multi-step tasks using skills.
 
-**How it works:**
-- Takes user goals and classifies the intent into a **domain** (e.g., `tasks`, `calendar`).
-- The planner calls the `catalog.describe('<domain>')` skill to retrieve available actions for that domain.
-- It loads the relevant capability brief from `persona/capabilities/<domain>.md` for extra context.
-- It breaks the goal into steps using the available skills.
-- Executes the plan step-by-step, resolving placeholders to pass IDs from one step to the next.
-- Reviews and critiques results.
-- Handles complex file operations, git commands, web search, and more.
+**Two Modes Available:**
+
+#### ReAct Operator (Recommended) - `/api/operator/react`
+Modern **Reason + Act** loop with dynamic observation:
+- Plans **ONE step at a time** based on actual observed results
+- Never hallucinates data - only uses what it observes
+- Adapts strategy when skills fail
+- Real-time streaming via Server-Sent Events
+- Max 10 iterations with intelligent completion detection
+- **Example**: When asked to "list files in docs", it runs `fs_list` FIRST, observes the actual filenames, then reads those specific files (not hallucinated ones)
+
+**Test it:**
+```bash
+curl -X POST http://localhost:4321/api/operator/react \
+  -H "Content-Type: application/json" \
+  -d '{"goal": "List files in docs/user-guide"}'
+```
+
+#### Legacy Operator (Static Planner) - `/api/operator`
+Original 3-phase flow preserved for backward compatibility:
+- Plans ALL steps upfront (before seeing any results)
+- 3 phases: planner → executor → critic
+- Can hallucinate filenames it hasn't observed yet
+- Kept for comparison and rollback
+
+**How both work:**
+- Take user goals and execute them using the skills system
+- Handle complex file operations, git commands, web search, and more
+- Support approval flows for high-risk skills
+- Full audit trail of all operations
 
 ### 8. Coder Agent (Self-Healing)
 

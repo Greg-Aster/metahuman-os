@@ -34,18 +34,17 @@
       "autoRestart": true,
       "maxRetries": 3
     },
-    "dreamer": {
-      "id": "dreamer",
+    "night-pipeline": {
+      "id": "night-pipeline",
       "enabled": true,
       "type": "time-of-day",
       "priority": "low",
-      "agentPath": "dreamer.ts",
+      "agentPath": "night-pipeline.ts",
       "schedule": "02:00",
       "runOnBoot": false,
       "autoRestart": false,
-      "conditions": {
-        "requiresSleepMode": true
-      }
+      "maxRetries": 1,
+      "comment": "Runs nightly processing: dreamer, audio backlog, LoRA training (orchestrated by sleep-service.ts)"
     },
     "boredom-maintenance": {
       "id": "boredom-maintenance",

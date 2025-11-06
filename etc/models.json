@@ -2,13 +2,11 @@
   "$schema": "https://metahuman.dev/schemas/models.json",
   "version": "1.0.0",
   "description": "Model registry for multi-model orchestration. Defines roles and their associated models.",
-
   "globalSettings": {
     "includePersonaSummary": true,
     "useAdapter": false,
     "activeAdapter": null
   },
-
   "defaults": {
     "orchestrator": "default.orchestrator",
     "persona": "default.persona",
@@ -18,13 +16,16 @@
     "summarizer": "default.summarizer",
     "fallback": "default.fallback"
   },
-
   "models": {
     "default.orchestrator": {
       "provider": "ollama",
       "model": "qwen3-coder:30b",
       "adapters": [],
-      "roles": ["orchestrator", "router", "planner"],
+      "roles": [
+        "orchestrator",
+        "router",
+        "planner"
+      ],
       "description": "Capable orchestrator using same model as persona for better intent routing",
       "options": {
         "contextWindow": 8192,
@@ -40,12 +41,15 @@
         "purpose": "Executive function - intelligent intent routing and tool selection"
       }
     },
-
     "default.persona": {
       "provider": "ollama",
       "model": "qwen3-coder:30b",
       "adapters": [],
-      "roles": ["persona", "conversation", "introspection"],
+      "roles": [
+        "persona",
+        "conversation",
+        "introspection"
+      ],
       "description": "Default persona model for conversational responses",
       "options": {
         "contextWindow": 8192,
@@ -59,7 +63,6 @@
         "estimatedLatency": "medium"
       }
     },
-
     "persona.with-lora": {
       "provider": "ollama",
       "model": "greg-local-2025-11-02-002011-c333e1",
@@ -67,7 +70,10 @@
         "/home/greggles/metahuman/out/adapters/2025-11-02/2025-11-02-002011-c333e1/adapter.gguf"
       ],
       "baseModel": "Qwen/Qwen3-14B",
-      "roles": ["persona", "conversation"],
+      "roles": [
+        "persona",
+        "conversation"
+      ],
       "description": "Persona model with LoRA adapter for voice tuning",
       "options": {
         "contextWindow": 8192,
@@ -84,12 +90,15 @@
         "evalScore": 0.989879518072289
       }
     },
-
     "default.curator": {
       "provider": "ollama",
       "model": "qwen3:14b",
       "adapters": [],
-      "roles": ["curator", "summarizer", "memory-prep"],
+      "roles": [
+        "curator",
+        "summarizer",
+        "memory-prep"
+      ],
       "description": "Mid-size curator model for memory curation and training data preparation",
       "options": {
         "contextWindow": 8192,
@@ -105,12 +114,15 @@
         "purpose": "Memory curation - clean data extraction and training prep"
       }
     },
-
     "default.coder": {
       "provider": "ollama",
       "model": "qwen3-coder:30b",
       "adapters": [],
-      "roles": ["coder", "code-generation", "code-review"],
+      "roles": [
+        "coder",
+        "code-generation",
+        "code-review"
+      ],
       "description": "Specialized model for code generation, review, and refactoring",
       "options": {
         "contextWindow": 8192,
@@ -127,12 +139,15 @@
         "specialization": "code"
       }
     },
-
     "default.planner": {
       "provider": "ollama",
       "model": "qwen3-coder:30b",
       "adapters": [],
-      "roles": ["planner", "strategist", "task-breakdown"],
+      "roles": [
+        "planner",
+        "strategist",
+        "task-breakdown"
+      ],
       "description": "Strategic planning and task decomposition specialist",
       "options": {
         "contextWindow": 8192,
@@ -149,12 +164,15 @@
         "specialization": "planning"
       }
     },
-
     "default.summarizer": {
       "provider": "ollama",
       "model": "qwen3:14b",
       "adapters": [],
-      "roles": ["summarizer", "digest", "condensation"],
+      "roles": [
+        "summarizer",
+        "digest",
+        "condensation"
+      ],
       "description": "Document and conversation summarization specialist",
       "options": {
         "contextWindow": 8192,
@@ -171,12 +189,14 @@
         "specialization": "summarization"
       }
     },
-
     "default.fallback": {
       "provider": "ollama",
       "model": "qwen3-coder:30b",
       "adapters": [],
-      "roles": ["fallback", "general"],
+      "roles": [
+        "fallback",
+        "general"
+      ],
       "description": "Fallback model when primary models unavailable",
       "options": {
         "contextWindow": 8192,
@@ -190,17 +210,37 @@
       }
     }
   },
-
   "roleHierarchy": {
-    "orchestrator": ["default.orchestrator", "default.fallback"],
-    "persona": ["default.persona", "persona.with-lora", "default.fallback"],
-    "curator": ["default.curator", "default.fallback"],
-    "coder": ["default.coder", "default.fallback"],
-    "planner": ["default.planner", "default.fallback"],
-    "summarizer": ["default.summarizer", "default.curator", "default.fallback"],
-    "fallback": ["default.fallback"]
+    "orchestrator": [
+      "default.orchestrator",
+      "default.fallback"
+    ],
+    "persona": [
+      "default.persona",
+      "persona.with-lora",
+      "default.fallback"
+    ],
+    "curator": [
+      "default.curator",
+      "default.fallback"
+    ],
+    "coder": [
+      "default.coder",
+      "default.fallback"
+    ],
+    "planner": [
+      "default.planner",
+      "default.fallback"
+    ],
+    "summarizer": [
+      "default.summarizer",
+      "default.curator",
+      "default.fallback"
+    ],
+    "fallback": [
+      "default.fallback"
+    ]
   },
-
   "cognitiveModeMappings": {
     "dual": {
       "orchestrator": "default.orchestrator",
@@ -226,7 +266,6 @@
       "description": "Read-only personality snapshot"
     }
   },
-
   "providers": {
     "ollama": {
       "baseUrl": "http://localhost:11434",

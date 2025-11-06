@@ -99,9 +99,11 @@
     }
   }
 
-  async function loadPersonaName() {
+  async function loadPersonaName(bustCache = false) {
     try {
-      const res = await fetch('/api/status', { cache: 'no-store' });
+      // Add timestamp to bust server-side cache when explicitly requested
+      const cacheBust = bustCache ? `?_t=${Date.now()}` : '';
+      const res = await fetch(`/api/status${cacheBust}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Failed to load persona (status ${res.status})`);
       const data = await res.json();
       statusStore.set(data);  // Store the response for other components to use
@@ -282,9 +284,9 @@
     }
   });
 
-  // Watch for refresh trigger changes
+  // Watch for refresh trigger changes - bust cache on manual refresh
   $: if ($statusRefreshTrigger > 0) {
-    void loadPersonaName();
+    void loadPersonaName(true);  // Always bust cache on manual refresh
     void loadCognitiveModeState();
   }
 

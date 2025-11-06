@@ -1,28 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { auditDataStore, auditLoadingStore, auditErrorStore, type AuditEntry, type AuditResponse } from '../stores/audit';
 
-  interface AuditEntry {
-    timestamp: string;
-    level: 'info' | 'warn' | 'error' | 'critical';
-    category: 'system' | 'decision' | 'action' | 'security' | 'data';
-    event: string;
-    details?: any;
-    actor?: 'human' | 'system' | 'agent';
-  }
-
-  interface AuditResponse {
-    date: string;
-    entries: AuditEntry[];
-    summary: {
-      total: number;
-      byLevel: Record<string, number>;
-      byCategory: Record<string, number>;
-    };
-  }
-
-  let data: AuditResponse | null = null;
-  let loading = true;
-  let error = '';
   let selectedCategory: string = 'all';
   let selectedLevel: string = 'all';
 
@@ -30,11 +9,13 @@
     try {
       const res = await fetch('/api/audit');
       if (!res.ok) throw new Error('Failed to load audit log');
-      data = await res.json();
-      loading = false;
+      const data = await res.json();
+      auditDataStore.set(data);
+      auditLoadingStore.set(false);
+      auditErrorStore.set('');
     } catch (e) {
-      error = (e as Error).message;
-      loading = false;
+      auditErrorStore.set((e as Error).message);
+      auditLoadingStore.set(false);
     }
   }
 
@@ -59,14 +40,17 @@
     }
   }
 
-  $: filteredEntries = data?.entries.filter(e => {
+  $: filteredEntries = $auditDataStore?.entries.filter(e => {
     if (selectedCategory !== 'all' && e.category !== selectedCategory) return false;
     if (selectedLevel !== 'all' && e.level !== selectedLevel) return false;
     return true;
   }) || [];
 
   onMount(() => {
-    loadAudit();
+    // Only load if we don't have data yet
+    if (!$auditDataStore) {
+      loadAudit();
+    }
     // Refresh every 5 seconds
     const interval = setInterval(loadAudit, 5000);
     return () => clearInterval(interval);
@@ -76,9 +60,9 @@
   type StageStatus = 'idle' | 'in_progress' | 'completed' | 'failed'
 
   function findLatest(eventNames: string[]): AuditEntry | null {
-    if (!data?.entries) return null
-    for (let i = data.entries.length - 1; i >= 0; i--) {
-      const e = data.entries[i]
+    if (!$auditDataStore?.entries) return null
+    for (let i = $auditDataStore.entries.length - 1; i >= 0; i--) {
+      const e = $auditDataStore.entries[i]
       if (eventNames.includes(e.event)) return e
     }
     return null
@@ -131,9 +115,9 @@
 <div class="space-y-4">
   <div class="flex items-center justify-between">
     <h2 class="text-xl font-semibold">Audit Log</h2>
-    {#if data}
+    {#if $auditDataStore}
       <div class="text-sm muted">
-        {data.date} · {filteredEntries.length} entries
+        {$auditDataStore.date} · {filteredEntries.length} entries
       </div>
     {/if}
   </div>
@@ -169,36 +153,36 @@
     </div>
   </div>
 
-  {#if loading}
+  {#if $auditLoadingStore}
     <div class="card p-6 animate-pulse">
       <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
     </div>
-  {:else if error}
+  {:else if $auditErrorStore}
     <div class="card p-6 border-red-500">
-      <p class="text-red-600 dark:text-red-400">{error}</p>
+      <p class="text-red-600 dark:text-red-400">{$auditErrorStore}</p>
     </div>
-  {:else if data}
+  {:else if $auditDataStore}
     <!-- Summary -->
     <div class="grid gap-3 sm:grid-cols-5 text-sm">
       <div class="card p-3">
         <div class="text-xs muted uppercase">Total</div>
-        <div class="text-2xl font-bold mt-1">{data.summary.total}</div>
+        <div class="text-2xl font-bold mt-1">{$auditDataStore.summary.total}</div>
       </div>
       <div class="card p-3">
         <div class="text-xs muted uppercase">Info</div>
-        <div class="text-2xl font-bold mt-1 text-blue-600">{data.summary.byLevel.info || 0}</div>
+        <div class="text-2xl font-bold mt-1 text-blue-600">{$auditDataStore.summary.byLevel.info || 0}</div>
       </div>
       <div class="card p-3">
         <div class="text-xs muted uppercase">Warnings</div>
-        <div class="text-2xl font-bold mt-1 text-yellow-600">{data.summary.byLevel.warn || 0}</div>
+        <div class="text-2xl font-bold mt-1 text-yellow-600">{$auditDataStore.summary.byLevel.warn || 0}</div>
       </div>
       <div class="card p-3">
         <div class="text-xs muted uppercase">Errors</div>
-        <div class="text-2xl font-bold mt-1 text-red-600">{data.summary.byLevel.error || 0}</div>
+        <div class="text-2xl font-bold mt-1 text-red-600">{$auditDataStore.summary.byLevel.error || 0}</div>
       </div>
       <div class="card p-3">
         <div class="text-xs muted uppercase">Critical</div>
-        <div class="text-2xl font-bold mt-1 text-red-800">{data.summary.byLevel.critical || 0}</div>
+        <div class="text-2xl font-bold mt-1 text-red-800">{$auditDataStore.summary.byLevel.critical || 0}</div>
       </div>
     </div>
 

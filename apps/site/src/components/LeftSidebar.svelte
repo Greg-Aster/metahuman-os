@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { activeView, statusStore } from '../stores/navigation';
+  import { activeView, statusStore, statusRefreshTrigger, yoloModeStore } from '../stores/navigation';
+  import { currentMode } from '../stores/security-policy';
 
   interface MenuItem {
     id: string;
@@ -40,6 +41,12 @@
   let loading = true;
   let trustMenuOpen = false;
   let trustOptions: string[] = [];
+  let yoloMode = false;
+
+  // Subscribe to YOLO mode store
+  yoloModeStore.subscribe(value => {
+    yoloMode = value;
+  });
 
   type AdapterInfo = {
     status?: string;
@@ -136,6 +143,124 @@
       trustMenuOpen = false;
     } catch (e) {
       alert((e as Error).message);
+    }
+  }
+
+  /**
+   * Cycle through trust levels, culminating in YOLO mode
+   * Trust progression: observe → suggest → supervised_auto → bounded_auto → adaptive_auto → YOLO → (back to observe)
+   * In emulation mode, always stays at 'observe'
+   */
+  async function cycleTrustLevel() {
+    // Emulation mode is always locked to lowest level
+    if ($currentMode === 'emulation') {
+      alert('Trust level is locked to "observe" in emulation mode for safety.');
+      return;
+    }
+
+    const trustProgression = ['observe', 'suggest', 'supervised_auto', 'bounded_auto', 'adaptive_auto'];
+    const currentTrust = identity?.trustLevel || 'observe';
+    const currentYolo = yoloMode;
+
+    // If YOLO is active, cycle back to observe
+    if (currentYolo) {
+      yoloModeStore.set(false);
+      await setTrust('observe');
+      saveChatPrefs();
+      return;
+    }
+
+    // Find current position in progression
+    const currentIndex = trustProgression.indexOf(currentTrust);
+
+    // If at max trust level (adaptive_auto), enable YOLO
+    if (currentIndex === trustProgression.length - 1) {
+      // Show warning before enabling YOLO
+      try {
+        if (!localStorage.getItem('yoloWarned')) {
+          alert('YOLO mode relaxes ALL safety checks and allows maximum operator autonomy. Use with extreme caution.');
+          localStorage.setItem('yoloWarned', '1');
+        }
+      } catch {}
+
+      yoloModeStore.set(true);
+      saveChatPrefs();
+      return;
+    }
+
+    // Otherwise, advance to next trust level
+    const nextIndex = currentIndex + 1;
+    if (nextIndex < trustProgression.length) {
+      await setTrust(trustProgression[nextIndex]);
+    }
+  }
+
+  function saveChatPrefs() {
+    // Save YOLO mode to localStorage
+    try {
+      const prefs = localStorage.getItem('chatPrefs');
+      const parsed = prefs ? JSON.parse(prefs) : {};
+      parsed.yoloMode = yoloMode;
+      localStorage.setItem('chatPrefs', JSON.stringify(parsed));
+    } catch {}
+  }
+
+  /**
+   * Toggle persona summary (includePersonaSummary in models.json)
+   * Rules:
+   * - Emulation mode: Always ON (locked for safety)
+   * - Other modes: Can toggle OFF
+   * - Default: ON (recommended when no active LoRAs)
+   */
+  async function togglePersonaMode() {
+    // Emulation mode is always locked to persona ON
+    if ($currentMode === 'emulation') {
+      alert('Persona context is locked to "active" in emulation mode for stable personality.');
+      return;
+    }
+
+    const currentlyEnabled = modelInfo?.personaSummary === 'enabled';
+    const newState = !currentlyEnabled;
+
+    // Warn if disabling without active LoRAs or specialized models
+    if (!newState && !modelInfo?.useAdapter && !modelInfo?.activeAdapter) {
+      const proceed = confirm(
+        'Disabling persona context removes personality, values, and memory grounding.\n\n' +
+        'You have no active LoRA adapters or specialized models loaded.\n\n' +
+        'Without persona context, the LLM will use default behavior without your personality scaffold.\n\n' +
+        'Recommended: Keep persona context ENABLED until you have trained adapters.\n\n' +
+        'Disable anyway?'
+      );
+      if (!proceed) return;
+    }
+
+    // Toggle the setting via API
+    try {
+      const response = await fetch('/api/persona-toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: newState }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        // Show confirmation
+        alert(result.message || (newState ? 'Persona context enabled' : 'Persona context disabled'));
+
+        // Small delay to ensure file write completes, then refresh status
+        setTimeout(() => {
+          statusRefreshTrigger.update(n => n + 1);
+        }, 100);
+      } else if (result.locked) {
+        // Emulation mode lock (should be caught earlier, but just in case)
+        alert(result.error);
+      } else {
+        alert('Failed to toggle persona context: ' + (result.error || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Error toggling persona context:', error);
+      alert('Failed to toggle persona context: ' + (error as Error).message);
     }
   }
 
@@ -322,21 +447,43 @@
           </div>
         {/if}
 
-        <!-- Trust Level & Persona Summary -->
+        <!-- Unified Trust Level (includes YOLO as max level) -->
         <div class="status-sep"></div>
         <div class="status-row">
           <span class="status-label">Trust:</span>
           <span class="status-value">
-            <span class="trust-badge" title="Operator autonomy level">{identity.trustLevel || 'observe'}</span>
+            <button
+              class="trust-badge clickable trust-level-{yoloMode ? 'yolo' : (identity.trustLevel || 'observe')}"
+              title="Click to cycle trust level: {identity.trustLevel || 'observe'}{yoloMode ? ' + YOLO' : ''}\nProgression: observe → suggest → supervised_auto → bounded_auto → adaptive_auto → YOLO"
+              on:click={cycleTrustLevel}
+            >
+              {#if yoloMode}
+                <span class="yolo-indicator">YOLO</span>
+              {:else}
+                {identity.trustLevel || 'observe'}
+              {/if}
+            </button>
           </span>
         </div>
         <div class="status-row">
           <span class="status-label">Persona:</span>
           <span class="status-value">
             {#if modelInfo?.personaSummary === 'enabled'}
-              <span class="persona-badge enabled" title="Persona context included in chat">on</span>
+              <button
+                class="persona-badge persona-active clickable"
+                title="Click to toggle persona context\n\nActive: Personality, values, and memory grounding enabled\n\nLocked ON in emulation mode"
+                on:click={togglePersonaMode}
+              >
+                active
+              </button>
             {:else}
-              <span class="persona-badge disabled" title="Persona context not included">off</span>
+              <button
+                class="persona-badge persona-inactive clickable"
+                title="Click to toggle persona context\n\nInactive: Default LLM behavior without personality context\n\nLocked ON in emulation mode"
+                on:click={togglePersonaMode}
+              >
+                inactive
+              </button>
             {/if}
           </span>
         </div>
@@ -707,49 +854,311 @@
     color: rgb(196 181 253);
   }
 
-  /* Trust level badge */
+  /* Unified trust level badge (cycles through levels + YOLO) */
   .trust-badge {
     padding: 0.125rem 0.4rem;
     border-radius: 9999px;
     font-size: 0.65rem;
     font-weight: 600;
     text-transform: lowercase;
-    background: rgba(34,197,94,0.16);
-    color: rgb(22 101 52);
+    border: 1px solid transparent;
+    cursor: default;
+    transition: all 0.2s ease;
   }
 
-  :global(.dark) .trust-badge {
+  .trust-badge.clickable {
+    cursor: pointer;
+  }
+
+  .trust-badge.clickable:hover {
+    transform: scale(1.05);
+  }
+
+  /* Temperature gradient: Cool (observe) → Warm (suggest) → Hot (supervised) → Hotter (bounded) → Hottest (adaptive) → YOLO */
+
+  /* Level 1: observe - Cool blue-green */
+  .trust-badge.trust-level-observe {
+    background: rgba(6,182,212,0.16);
+    color: rgb(8 145 178);
+    border-color: transparent;
+  }
+
+  .trust-badge.trust-level-observe:hover {
+    background: rgba(6,182,212,0.25);
+  }
+
+  /* Level 2: suggest - Light green */
+  .trust-badge.trust-level-suggest {
+    background: rgba(34,197,94,0.16);
+    color: rgb(22 101 52);
+    border-color: transparent;
+  }
+
+  .trust-badge.trust-level-suggest:hover {
+    background: rgba(34,197,94,0.25);
+  }
+
+  /* Level 3: supervised_auto - Yellow-green */
+  .trust-badge.trust-level-supervised_auto {
+    background: rgba(132,204,22,0.16);
+    color: rgb(77 124 15);
+    border-color: transparent;
+  }
+
+  .trust-badge.trust-level-supervised_auto:hover {
+    background: rgba(132,204,22,0.25);
+  }
+
+  /* Level 4: bounded_auto - Orange */
+  .trust-badge.trust-level-bounded_auto {
+    background: rgba(249,115,22,0.16);
+    color: rgb(194 65 12);
+    border-color: transparent;
+  }
+
+  .trust-badge.trust-level-bounded_auto:hover {
+    background: rgba(249,115,22,0.25);
+  }
+
+  /* Level 5: adaptive_auto - Red-orange */
+  .trust-badge.trust-level-adaptive_auto {
+    background: rgba(239,68,68,0.16);
+    color: rgb(185 28 28);
+    border-color: transparent;
+  }
+
+  .trust-badge.trust-level-adaptive_auto:hover {
+    background: rgba(239,68,68,0.25);
+  }
+
+  /* Level 6: YOLO - Hot yellow with glow */
+  .trust-badge.trust-level-yolo {
+    background: rgba(234,179,8,0.25);
+    color: rgb(202 138 4);
+    border-color: rgb(234 179 8);
+    box-shadow: 0 0 0 2px rgba(234,179,8,0.2);
+  }
+
+  .trust-badge.trust-level-yolo:hover {
+    background: rgba(234,179,8,0.35);
+  }
+
+  .yolo-indicator {
+    text-transform: uppercase;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+  }
+
+  /* Dark mode temperature gradient */
+  :global(.dark) .trust-badge.trust-level-observe {
+    background: rgba(34,211,238,0.2);
+    color: rgb(103 232 249);
+  }
+
+  :global(.dark) .trust-badge.trust-level-observe:hover {
+    background: rgba(34,211,238,0.3);
+  }
+
+  :global(.dark) .trust-badge.trust-level-suggest {
     background: rgba(34,197,94,0.2);
     color: rgb(134 239 172);
   }
 
-  /* Persona summary badge */
+  :global(.dark) .trust-badge.trust-level-suggest:hover {
+    background: rgba(34,197,94,0.3);
+  }
+
+  :global(.dark) .trust-badge.trust-level-supervised_auto {
+    background: rgba(163,230,53,0.2);
+    color: rgb(190 242 100);
+  }
+
+  :global(.dark) .trust-badge.trust-level-supervised_auto:hover {
+    background: rgba(163,230,53,0.3);
+  }
+
+  :global(.dark) .trust-badge.trust-level-bounded_auto {
+    background: rgba(251,146,60,0.2);
+    color: rgb(253 186 116);
+  }
+
+  :global(.dark) .trust-badge.trust-level-bounded_auto:hover {
+    background: rgba(251,146,60,0.3);
+  }
+
+  :global(.dark) .trust-badge.trust-level-adaptive_auto {
+    background: rgba(248,113,113,0.2);
+    color: rgb(252 165 165);
+  }
+
+  :global(.dark) .trust-badge.trust-level-adaptive_auto:hover {
+    background: rgba(248,113,113,0.3);
+  }
+
+  :global(.dark) .trust-badge.trust-level-yolo {
+    background: rgba(250,204,21,0.25);
+    color: rgb(250 204 21);
+    border-color: rgb(250 204 21);
+    box-shadow: 0 0 0 2px rgba(250,204,21,0.2);
+  }
+
+  :global(.dark) .trust-badge.trust-level-yolo:hover {
+    background: rgba(250,204,21,0.35);
+  }
+
+  /* Trust level dropdown menu (kept for backward compatibility if needed) */
+  .trust-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    background: white;
+    border: 1px solid rgba(0,0,0,0.1);
+    border-radius: 0.5rem;
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+  }
+
+  :global(.dark) .trust-menu {
+    background: rgb(31 41 55);
+    border-color: rgba(255,255,255,0.1);
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3);
+  }
+
+  .trust-option {
+    padding: 0.375rem 0.5rem;
+    background: transparent;
+    border: none;
+    border-radius: 0.375rem;
+    font-size: 0.75rem;
+    text-transform: lowercase;
+    text-align: left;
+    cursor: pointer;
+    color: rgb(55 65 81);
+    transition: all 0.15s ease;
+  }
+
+  .trust-option:hover {
+    background: rgba(34,197,94,0.1);
+    color: rgb(22 101 52);
+  }
+
+  .trust-option.active {
+    background: rgba(34,197,94,0.16);
+    color: rgb(22 101 52);
+    font-weight: 600;
+  }
+
+  :global(.dark) .trust-option {
+    color: rgb(209 213 219);
+  }
+
+  :global(.dark) .trust-option:hover {
+    background: rgba(34,197,94,0.15);
+    color: rgb(134 239 172);
+  }
+
+  :global(.dark) .trust-option.active {
+    background: rgba(34,197,94,0.2);
+    color: rgb(134 239 172);
+  }
+
+  /* Persona badge - shows personality context state */
   .persona-badge {
     padding: 0.125rem 0.4rem;
     border-radius: 9999px;
     font-size: 0.65rem;
     font-weight: 600;
     text-transform: lowercase;
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
   }
 
-  .persona-badge.enabled {
-    background: rgba(139,92,246,0.16);
+  /* Clickable button reset */
+  .persona-badge.clickable {
+    cursor: pointer;
+  }
+
+  /* Active persona: Vibrant purple with subtle glow */
+  .persona-badge.persona-active {
+    background: linear-gradient(135deg, rgba(139,92,246,0.2), rgba(168,85,247,0.16));
     color: rgb(109 40 217);
+    border-color: rgba(139,92,246,0.3);
+    box-shadow: 0 0 8px rgba(139,92,246,0.15);
+  }
+
+  .persona-badge.persona-active:hover {
+    background: linear-gradient(135deg, rgba(139,92,246,0.3), rgba(168,85,247,0.25));
+    border-color: rgba(139,92,246,0.4);
+    box-shadow: 0 0 12px rgba(139,92,246,0.25);
+    transform: translateY(-1px);
+  }
+
+  /* Inactive persona: Neutral gray */
+  .persona-badge.persona-inactive {
+    background: rgba(107,114,128,0.16);
+    color: rgb(107 114 128);
+    border-color: transparent;
+  }
+
+  .persona-badge.persona-inactive:hover {
+    background: rgba(107,114,128,0.25);
+    border-color: rgba(107,114,128,0.2);
+    transform: translateY(-1px);
+  }
+
+  /* Backwards compatibility with old class names */
+  .persona-badge.enabled {
+    background: linear-gradient(135deg, rgba(139,92,246,0.2), rgba(168,85,247,0.16));
+    color: rgb(109 40 217);
+    border-color: rgba(139,92,246,0.3);
+    box-shadow: 0 0 8px rgba(139,92,246,0.15);
   }
 
   .persona-badge.disabled {
     background: rgba(107,114,128,0.16);
     color: rgb(107 114 128);
+    border-color: transparent;
+  }
+
+  /* Dark mode */
+  :global(.dark) .persona-badge.persona-active {
+    background: linear-gradient(135deg, rgba(167,139,250,0.25), rgba(196,181,253,0.2));
+    color: rgb(196 181 253);
+    border-color: rgba(167,139,250,0.4);
+    box-shadow: 0 0 12px rgba(167,139,250,0.2);
+  }
+
+  :global(.dark) .persona-badge.persona-active:hover {
+    background: linear-gradient(135deg, rgba(167,139,250,0.35), rgba(196,181,253,0.3));
+    border-color: rgba(167,139,250,0.5);
+    box-shadow: 0 0 16px rgba(167,139,250,0.3);
+    transform: translateY(-1px);
+  }
+
+  :global(.dark) .persona-badge.persona-inactive {
+    background: rgba(107,114,128,0.2);
+    color: rgb(156 163 175);
+    border-color: transparent;
+  }
+
+  :global(.dark) .persona-badge.persona-inactive:hover {
+    background: rgba(107,114,128,0.3);
+    border-color: rgba(107,114,128,0.2);
+    transform: translateY(-1px);
   }
 
   :global(.dark) .persona-badge.enabled {
-    background: rgba(139,92,246,0.2);
+    background: linear-gradient(135deg, rgba(167,139,250,0.25), rgba(196,181,253,0.2));
     color: rgb(196 181 253);
+    border-color: rgba(167,139,250,0.4);
+    box-shadow: 0 0 12px rgba(167,139,250,0.2);
   }
 
   :global(.dark) .persona-badge.disabled {
-    background: rgba(148,163,184,0.16);
-    color: rgb(148 163 184);
+    background: rgba(107,114,128,0.2);
+    color: rgb(156 163 175);
+    border-color: transparent;
   }
 
   /* Disabled menu item styles */

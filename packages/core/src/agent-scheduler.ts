@@ -628,7 +628,7 @@ export class AgentScheduler extends EventEmitter {
     if (!config.task) return;
 
     // Dynamically import operator to avoid circular dependencies
-    const { runTask } = await import(path.join(paths.brain, 'agents', 'operator.js'));
+    const { runTask } = await import(/* @vite-ignore */ path.join(paths.brain, 'agents', 'operator.js'));
 
     await runTask(
       { goal: config.task.goal },

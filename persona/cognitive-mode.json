@@ -1,6 +1,6 @@
 {
   "currentMode": "dual",
-  "lastChanged": "2025-11-05T18:16:23.831Z",
+  "lastChanged": "2025-11-06T00:28:22.505Z",
   "history": [
     {
       "mode": "dual",
@@ -585,6 +585,26 @@
     {
       "mode": "dual",
       "changedAt": "2025-11-05T18:16:23.831Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "emulation",
+      "changedAt": "2025-11-05T22:57:29.196Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-05T23:01:23.635Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "emulation",
+      "changedAt": "2025-11-06T00:26:22.020Z",
+      "actor": "web_ui"
+    },
+    {
+      "mode": "dual",
+      "changedAt": "2025-11-06T00:28:22.505Z",
       "actor": "web_ui"
     }
   ]

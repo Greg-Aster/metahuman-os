@@ -48,10 +48,21 @@ The UI will display prominent banners at the top of the screen to inform you of 
 - 🔒 Security - User and authentication settings.
 
 **Developer Tools (Right Sidebar):**
-- Live audit stream
+- Live audit stream (real-time system events)
 - Agent monitor with statistics
 - Boredom control (reflection frequency)
 - Model selector (switch Ollama models)
+
+**Privacy Features:**
+- **Clear Button**: Located in the chat interface header, the Clear button provides complete session cleanup:
+  - Clears all chat messages from the UI
+  - Clears reasoning stages
+  - Clears localStorage cache
+  - Clears the live audit stream display
+  - **Deletes all audit log files from disk** (`logs/audit/*.ndjson`)
+  - Creates a new audit entry recording the clear action for accountability
+- **Fresh Session Interface**: Each session starts with a clean slate - no historical chat or audit data loads automatically
+- **Audit Logs**: All system events are saved to `logs/audit/YYYY-MM-DD.ndjson` for accountability, but can be cleared at any time via the Clear button
 
 **Code Approval UI:**
 A special UI component for the **Self-Healing Coder Agent** appears directly above the chat input box when a code change is ready for your review.
