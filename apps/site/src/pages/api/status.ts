@@ -1,9 +1,15 @@
 import type { APIRoute } from 'astro';
 import { loadPersonaCore, loadDecisionRules } from '@metahuman/core/identity';
-import { listActiveTasks } from '@metahuman/core/memory';
+import { listActiveTasks, searchMemory } from '@metahuman/core/memory';
 import { getActiveAdapter } from '@metahuman/core';
 import { listAvailableRoles, resolveModelForCognitiveMode, loadModelRegistry } from '@metahuman/core/model-resolver';
 import { loadCognitiveMode } from '@metahuman/core/cognitive-mode';
+import { getIndexStatus } from '@metahuman/core/vector-index';
+import { listAvailableAgents, getProcessingStatus } from '@metahuman/core/agent-monitor';
+import { isRunning as isOllamaRunning } from '@metahuman/core/ollama';
+import fs from 'node:fs';
+import path from 'node:path';
+import { paths } from '@metahuman/core/paths';
 
 // Cache implementation for /api/status
 // Note: Cache key now includes cognitive mode to ensure accurate status per mode
@@ -174,6 +180,171 @@ export const GET: APIRoute = async ({ cookies }) => {
       modelRoles = {};
     }
 
+    // MEMORY SYSTEM STATUS
+    const indexStatus = await getIndexStatus();
+    let memoryStats: any = {
+      totalIndexed: indexStatus.items || 0,
+      indexAvailable: indexStatus.exists,
+      indexModel: indexStatus.model || null,
+      lastIndexed: indexStatus.createdAt || null,
+    };
+
+    // Count memory files by type
+    try {
+      const episodicPath = paths.episodic;
+      const walkDir = (dir: string): string[] => {
+        if (!fs.existsSync(dir)) return [];
+        let files: string[] = [];
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            files = files.concat(walkDir(fullPath));
+          } else if (entry.isFile() && entry.name.endsWith('.json')) {
+            files.push(fullPath);
+          }
+        }
+        return files;
+      };
+
+      const allEpisodicFiles = walkDir(episodicPath);
+
+      // Count by type
+      const typeCounts: Record<string, number> = {};
+      let lastCaptureTime: string | null = null;
+
+      for (const file of allEpisodicFiles.slice(-100)) { // Check last 100 for performance
+        try {
+          const content = JSON.parse(fs.readFileSync(file, 'utf-8'));
+          const type = content.type || 'episodic';
+          typeCounts[type] = (typeCounts[type] || 0) + 1;
+          if (content.timestamp && (!lastCaptureTime || content.timestamp > lastCaptureTime)) {
+            lastCaptureTime = content.timestamp;
+          }
+        } catch {}
+      }
+
+      memoryStats.totalFiles = allEpisodicFiles.length;
+      memoryStats.byType = typeCounts;
+      memoryStats.lastCapture = lastCaptureTime;
+    } catch (error) {
+      memoryStats.totalFiles = 0;
+      memoryStats.byType = {};
+    }
+
+    // AGENT ACTIVITY
+    let agentActivity: any = {
+      available: [],
+      processing: null,
+    };
+
+    try {
+      const agentNames = listAvailableAgents(); // Returns string[]
+      const processing = getProcessingStatus();
+
+      // listAvailableAgents returns just names, not full objects
+      // We'll need to get run stats from audit logs or processing status
+      agentActivity.available = agentNames.map((name: string) => ({
+        name,
+        lastRun: null, // TODO: Parse from audit logs
+        runCount: 0,   // TODO: Parse from audit logs
+      }));
+
+      // Only show processing if it has actual data
+      if (processing && processing.agent) {
+        agentActivity.processing = {
+          agent: processing.agent,
+          status: processing.status || 'processing',
+          lastActivity: processing.lastActivity,
+        };
+      } else {
+        agentActivity.processing = null;
+      }
+    } catch {}
+
+    // SYSTEM HEALTH
+    let systemHealth: any = {
+      ollama: 'unknown',
+      auditLogSize: 0,
+      storageUsed: 0,
+    };
+
+    try {
+      systemHealth.ollama = await isOllamaRunning() ? 'connected' : 'disconnected';
+    } catch {
+      systemHealth.ollama = 'error';
+    }
+
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const auditFile = path.join(paths.logs, 'audit', `${today}.ndjson`);
+      if (fs.existsSync(auditFile)) {
+        const stats = fs.statSync(auditFile);
+        systemHealth.auditLogSize = stats.size;
+      }
+    } catch {}
+
+    try {
+      const getDirSize = (dir: string): number => {
+        if (!fs.existsSync(dir)) return 0;
+        let size = 0;
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            size += getDirSize(fullPath);
+          } else {
+            try {
+              size += fs.statSync(fullPath).size;
+            } catch {}
+          }
+        }
+        return size;
+      };
+
+      systemHealth.storageUsed = getDirSize(paths.root);
+    } catch {}
+
+    // RECENT ACTIVITY
+    let recentActivity: any[] = [];
+
+    try {
+      // Get last 5 episodic memories by reading files directly
+      const episodicPath = paths.episodic;
+      const walkDir = (dir: string): string[] => {
+        if (!fs.existsSync(dir)) return [];
+        let files: string[] = [];
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            files = files.concat(walkDir(fullPath));
+          } else if (entry.isFile() && entry.name.endsWith('.json')) {
+            files.push(fullPath);
+          }
+        }
+        return files;
+      };
+
+      const allFiles = walkDir(episodicPath);
+
+      // Get last 5 files sorted by modification time
+      const recentFiles = allFiles
+        .map(f => ({ path: f, mtime: fs.statSync(f).mtime }))
+        .sort((a, b) => b.mtime.getTime() - a.mtime.getTime())
+        .slice(0, 5);
+
+      recentActivity = recentFiles.map(({ path: filePath }) => {
+        try {
+          const content = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+          return {
+            type: content.type || 'episodic',
+            content: content.content?.substring(0, 100) || '',
+            timestamp: content.timestamp || new Date(fs.statSync(filePath).mtime).toISOString(),
+          };
+        } catch {
+          return null;
+        }
+      }).filter(Boolean);
+    } catch {}
+
     // Cache the response
     const responseData = {
       identity: {
@@ -207,6 +378,11 @@ export const GET: APIRoute = async ({ cookies }) => {
       registryVersion,
       cognitiveMode,
       isAuthenticated,
+      // New dashboard metrics
+      memoryStats,
+      agentActivity,
+      systemHealth,
+      recentActivity,
     };
 
     // Cache the response with cognitive-mode-specific key

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { paths } from './paths.js';
 
 export interface PersonaCore {
@@ -94,4 +95,77 @@ export function setTrustLevel(level: string): void {
   rules.trustLevel = level;
   saveDecisionRules(rules);
   console.log(`Trust level set to: ${level}`);
+}
+
+/**
+ * Load persona with facet support
+ * Falls back to core.json if facets not configured or facet file missing
+ */
+export function loadPersonaWithFacet(): PersonaCore {
+  try {
+    const facetsPath = path.join(paths.persona, 'facets.json');
+
+    // If no facets config, use core persona
+    if (!fs.existsSync(facetsPath)) {
+      return loadPersonaCore();
+    }
+
+    const facetsConfig = JSON.parse(fs.readFileSync(facetsPath, 'utf-8'));
+    const activeFacet = facetsConfig.activeFacet || 'default';
+
+    // If default facet or facet not found, use core persona
+    if (activeFacet === 'default' || !facetsConfig.facets[activeFacet]) {
+      return loadPersonaCore();
+    }
+
+    const facetInfo = facetsConfig.facets[activeFacet];
+    const facetFilePath = path.join(paths.persona, facetInfo.personaFile);
+
+    // If facet file doesn't exist, fall back to core
+    if (!fs.existsSync(facetFilePath)) {
+      console.warn(`[identity] Facet file not found: ${facetFilePath}, using core persona`);
+      return loadPersonaCore();
+    }
+
+    // Load facet persona and merge with core for any missing fields
+    const facetPersona = JSON.parse(fs.readFileSync(facetFilePath, 'utf-8'));
+    const corePersona = loadPersonaCore();
+
+    // Merge facet with core (facet takes precedence)
+    return {
+      ...corePersona,
+      ...facetPersona,
+      identity: {
+        ...corePersona.identity,
+        ...facetPersona.identity,
+      },
+      personality: {
+        ...corePersona.personality,
+        ...facetPersona.personality,
+      },
+      values: {
+        ...corePersona.values,
+        ...facetPersona.values,
+      },
+    };
+  } catch (error) {
+    console.warn('[identity] Error loading faceted persona, using core:', error);
+    return loadPersonaCore();
+  }
+}
+
+/**
+ * Get current active facet name
+ */
+export function getActiveFacet(): string {
+  try {
+    const facetsPath = path.join(paths.persona, 'facets.json');
+    if (!fs.existsSync(facetsPath)) {
+      return 'default';
+    }
+    const facetsConfig = JSON.parse(fs.readFileSync(facetsPath, 'utf-8'));
+    return facetsConfig.activeFacet || 'default';
+  } catch {
+    return 'default';
+  }
 }

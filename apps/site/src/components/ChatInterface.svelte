@@ -4,7 +4,7 @@
   import VoiceInteraction from './VoiceInteraction.svelte';
   import ApprovalBox from './ApprovalBox.svelte';
   import { canUseOperator, currentMode } from '../stores/security-policy';
-  import { triggerClearAuditStream } from '../stores/clear-events';
+  import { triggerClearAuditStream, clearChatTrigger } from '../stores/clear-events';
   import { yoloModeStore } from '../stores/navigation';
 
 type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'reasoning';
@@ -59,7 +59,6 @@ let reasoningStages: ReasoningStage[] = [];
   yoloModeStore.subscribe(value => {
     yoloMode = value;
   });
-
 
   function isMobileDevice(): boolean {
     if (typeof navigator === 'undefined') return false;
@@ -491,7 +490,7 @@ let reasoningStages: ReasoningStage[] = [];
               reasoningStages = [];
             }
             if (!data.duplicate) {
-              pushMessage('assistant', data.response, data?.saved?.assistantRelPath);
+              pushMessage('assistant', data.response, data?.saved?.assistantRelPath, { facet: data.facet });
             }
             saveSession();
 
@@ -839,7 +838,7 @@ let reasoningStages: ReasoningStage[] = [];
   <div class="messages-container" bind:this={messagesContainer}>
     {#if messages.length === 0}
       <div class="welcome-screen">
-        <div class="welcome-icon">🧠=>💻</div>
+        <div class="welcome-icon">🧠 => 💻</div>
         <h2 class="welcome-title">MetaHuman OS</h2>
         <p class="welcome-subtitle">
           {#if mode === 'conversation'}
@@ -871,13 +870,13 @@ let reasoningStages: ReasoningStage[] = [];
                 initiallyOpen={false}
               />
             {:else}
-              <div class="message message-{message.role}">
+              <div class="message message-{message.role}" data-facet={message.meta?.facet || 'default'}>
                 <div class="message-header">
                   <span class="message-role">
                     {#if message.role === 'user'}
                       You
                     {:else if message.role === 'assistant'}
-                      MetaHuman
+                      MetaHuman{#if message.meta?.facet && message.meta.facet !== 'default'}<span class="facet-indicator" title="Speaking as {message.meta.facet} facet"> · {message.meta.facet}</span>{/if}
                     {:else if message.role === 'reflection'}
                       💭 Idle Thought
                     {:else}
@@ -1610,6 +1609,35 @@ let reasoningStages: ReasoningStage[] = [];
   :global(.dark) .message-assistant .message-content {
     background: rgba(255, 255, 255, 0.05);
     color: rgb(243 244 246);
+  }
+
+  /* Facet-specific border colors for assistant messages */
+  .message-assistant[data-facet="poet"] .message-content {
+    border-left: 3px solid rgba(99,102,241,0.6);
+  }
+
+  .message-assistant[data-facet="thinker"] .message-content {
+    border-left: 3px solid rgba(59,130,246,0.6);
+  }
+
+  .message-assistant[data-facet="friend"] .message-content {
+    border-left: 3px solid rgba(34,197,94,0.6);
+  }
+
+  .message-assistant[data-facet="antagonist"] .message-content {
+    border-left: 3px solid rgba(239,68,68,0.6);
+  }
+
+  .message-assistant[data-facet="default"] .message-content {
+    border-left: 3px solid rgba(139,92,246,0.6);
+  }
+
+  /* Facet indicator styling */
+  .facet-indicator {
+    font-size: 0.75rem;
+    opacity: 0.7;
+    font-weight: normal;
+    text-transform: capitalize;
   }
 
   .message-reflection .message-content {

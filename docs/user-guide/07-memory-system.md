@@ -21,12 +21,19 @@ Each memory is stored as JSON:
   "entities": ["Sarah", "ML project"],
   "importance": 0.7,
   "metadata": {
+    "cognitiveMode": "dual",
     "processed": true,
     "processedAt": "2025-10-19T14:35:00.000Z",
     "model": "ollama:phi3:mini"
   }
 }
 ```
+
+**Metadata Fields:**
+- **cognitiveMode**: The cognitive mode active when the memory was created (dual/agent/emulation)
+- **processed**: Whether the organizer agent has enriched this memory
+- **processedAt**: Timestamp when enrichment occurred
+- **model**: The LLM model used for processing
 
 #### Task Memory (`memory/tasks/`)
 Structured to-do items with:
@@ -75,17 +82,40 @@ Events for the calendar system:
 
 The web interface provides a powerful Memory browser with **7 specialized tabs** for organizing and viewing different types of memories. Each tab automatically filters memories based on their tags, links, and types.
 
+#### Memory Interaction Controls
+
+Each memory card includes several interactive features:
+- **Expand/Collapse Toggle (▼/▶)**: Click to view full memory content inline
+- **Edit Button (✏️)**: Click the blue pencil icon to open the memory editor modal
+- **Validate Button (+)**: Mark memory as correct for training data quality
+- **Delete Button (−)**: Remove memory immediately
+
+#### Memory Editor Modal
+
+The Memory Editor provides a full-screen editing experience for viewing and modifying memory files:
+- **Full-screen modal**: Takes up 80% of screen height with 1200px width
+- **Keyboard shortcuts**:
+  - Ctrl+S to save changes
+  - Esc to close editor
+- **Auto-save detection**: Warns when closing with unsaved changes
+- **Permission-based**: Requires authentication to edit (read-only in emulation mode)
+- **Audit logging**: All edits are logged to audit trail with timestamp and actor
+- **JSON formatting**: Automatically pretty-prints JSON content for readability
+
+To use the editor: Click the blue pencil icon (✏️) next to any memory entry in any tab.
+
 #### Episodic Tab
 - **Purpose**: View all captured observations and manually created events
 - **Filtering**: Shows all memories without type-specific filters
 - **Visual**: Standard white/dark background cards
-- **Actions**: Expand/collapse, validate (mark correct), delete
+- **Actions**: Expand/collapse, edit, validate (mark correct), delete
 
 #### Reflections Tab
 - **Purpose**: View AI-generated reflections from the reflector agent
 - **Filtering**: Memories with `type: "reflection"`
 - **Content**: 1-3 sentence first-person thoughts connecting multiple memories
 - **Visual**: Standard cards with reflection-specific metadata
+- **Actions**: Expand/collapse, edit, validate, delete
 
 #### Tasks Tab
 - **Purpose**: View all task files from `memory/tasks/`
@@ -123,10 +153,12 @@ The web interface provides a powerful Memory browser with **7 specialized tabs**
 - **Content**: Abstract, metaphorical narratives woven from memory fragments
 - **Metadata**: Shows source memory IDs that inspired the dream
 - **Generated**: During nightly sleep cycles (configurable in `etc/sleep.json`)
+- **Actions**: Expand/collapse, edit, validate, delete
 
 ### Memory Validation
 
 Each memory card in the web UI includes validation controls:
+- **✏️ Button**: Open memory editor modal for full editing
 - **+ Button**: Mark memory as correct (useful for training data quality)
 - **− Button**: Delete memory immediately (fast cleanup)
 - **Validation Status**: Shows "correct" or "incorrect" badge if validated

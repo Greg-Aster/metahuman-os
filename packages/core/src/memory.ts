@@ -14,6 +14,13 @@ export interface EpisodicEvent {
   tags?: string[];
   importance?: number;
   links?: Array<{ type: string; target: string }>;
+  metadata?: {
+    cognitiveMode?: string;
+    processed?: boolean;
+    processedAt?: string;
+    model?: string;
+    [key: string]: any;
+  };
 }
 
 export interface Task {
@@ -41,6 +48,7 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
     tags: opts.tags || [],
     importance: opts.importance || 0.5,
     links: opts.links || [],
+    metadata: opts.metadata || {},
   };
 
   const year = new Date().getFullYear().toString();

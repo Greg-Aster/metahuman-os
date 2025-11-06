@@ -21,7 +21,8 @@
     "./users": "./src/users.ts",
     "./sessions": "./src/sessions.ts",
     "./env-config": "./src/env-config.ts",
-    "./cloudflare-tunnel": "./src/cloudflare-tunnel.ts"
+    "./cloudflare-tunnel": "./src/cloudflare-tunnel.ts",
+    "./vector-index": "./src/vector-index.ts"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

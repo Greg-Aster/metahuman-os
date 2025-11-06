@@ -88,8 +88,10 @@ function computeSecurityPolicy(
     // Memory reads: any authenticated user (not anonymous)
     canReadMemory: role !== 'anonymous',
 
-    // Memory writes: mode allows writes AND user is not a guest
-    canWriteMemory: canWriteMemory(mode) && role !== 'guest',
+    // Memory writes: any authenticated user (not anonymous or guest)
+    // NOTE: Changed to save memories in ALL modes (dual, agent, emulation) when logged in
+    // The cognitiveMode is saved in metadata for LoRA training differentiation
+    canWriteMemory: role !== 'anonymous' && role !== 'guest',
 
     // Operator: dual or agent mode AND owner only (not emulation)
     canUseOperator: canUseOperator(mode) && role === 'owner',
@@ -116,10 +118,10 @@ function computeSecurityPolicy(
       if (!this.canWriteMemory) {
         throw new SecurityError('Write operations not allowed', {
           reason:
-            role === 'guest'
+            role === 'anonymous'
+              ? 'anonymous_user'
+              : role === 'guest'
               ? 'guest_user'
-              : !canWriteMemory(mode)
-              ? 'read_only_mode'
               : 'unknown',
           currentMode: mode,
           role,

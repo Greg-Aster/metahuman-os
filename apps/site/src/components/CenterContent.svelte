@@ -17,6 +17,7 @@
   import SystemSettings from './SystemSettings.svelte';
   import SecuritySettings from './SecuritySettings.svelte';
   import NetworkSettings from './NetworkSettings.svelte';
+  import MemoryEditor from './MemoryEditor.svelte';
 
   // Memory/Events (loaded from /api/memories)
   type EventItem = {
@@ -44,9 +45,16 @@ let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' 
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'datasets' | 'monitor' | 'adapters' = 'datasets'
 let systemTab: 'persona' | 'lifeline' | 'settings' = 'persona'
+
+// Legacy expansion state (no longer used but kept to prevent errors)
 let expanded: Record<string, boolean> = {}
 type MemoryContentState = { status: 'idle' | 'loading' | 'ready' | 'error'; content?: string; error?: string }
 let memoryContent: Record<string, MemoryContentState> = {}
+
+// Memory Editor state
+let editorOpen = false
+let editorRelPath = ''
+let editorMemoryType = 'Memory'
 
 type PersonaForm = {
   name: string
@@ -263,6 +271,17 @@ function getPreview(content = '', limit = 160): string {
   return content.length > limit ? `${content.slice(0, limit)}…` : content;
 }
 
+function openMemoryEditor(relPath: string, type: string = 'Memory') {
+  editorRelPath = relPath
+  editorMemoryType = type
+  editorOpen = true
+}
+
+function handleEditorSaved() {
+  // Reload memories to reflect changes
+  loadEvents()
+}
+
 async function loadMemoryContent(relPath: string) {
   let current = memoryContent[relPath];
   if (current && (current.status === 'loading' || current.status === 'ready')) return;
@@ -435,6 +454,11 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                     <span class="sr-only">{isOpen ? 'Collapse memory' : 'Expand memory'}</span>
                   </button>
                   <div class="validation-controls">
+                    <button class="val-btn edit" title="Edit memory" on:click|stopPropagation={() => openMemoryEditor(event.relPath, 'Memory')}>
+                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                      </svg>
+                    </button>
                     <button class="val-btn good" title="Mark as correct" on:click={() => setValidation(event, 'correct')} disabled={saving[event.relPath] || event.validation?.status === 'correct'}>+
                     </button>
                     <button class="val-btn bad" title="Delete memory" on:click={() => onMinusClick(event)} disabled={deleting[event.relPath]}>−
@@ -494,6 +518,11 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                       <span class="sr-only">{isOpen ? 'Collapse memory' : 'Expand memory'}</span>
                     </button>
                     <div class="validation-controls">
+                      <button class="val-btn edit" title="Edit reflection" on:click|stopPropagation={() => openMemoryEditor(event.relPath, 'Reflection')}>
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                        </svg>
+                      </button>
                       <button class="val-btn good" title="Mark as correct" on:click={() => setValidation(event, 'correct')} disabled={saving[event.relPath] || event.validation?.status === 'correct'}>+
                       </button>
                       <button class="val-btn bad" title="Delete memory" on:click={() => onMinusClick(event)} disabled={deleting[event.relPath]}>−
@@ -785,6 +814,13 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                       <span class="event-toggle-icon" aria-hidden="true">{isOpen ? '▲' : '▼'}</span>
                       <span class="sr-only">{isOpen ? 'Collapse memory' : 'Expand memory'}</span>
                     </button>
+                    <div class="validation-controls">
+                      <button class="val-btn edit" title="Edit dream" on:click|stopPropagation={() => openMemoryEditor(event.relPath, 'Dream')}>
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                   {#if isOpen}
                     {#if event.relPath}
@@ -1062,6 +1098,11 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
            transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
+  .val-btn.edit {
+    @apply text-blue-600 border-blue-600/30
+           hover:bg-blue-50 dark:hover:bg-blue-900/20;
+  }
+
   .val-btn.good {
     @apply text-green-600 border-green-600/30
            hover:bg-green-50 dark:hover:bg-green-900/20;
@@ -1244,3 +1285,12 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
            text-blue-600 dark:text-blue-400 font-medium;
   }
 </style>
+
+<!-- Memory Editor Modal -->
+<MemoryEditor
+  bind:isOpen={editorOpen}
+  relPath={editorRelPath}
+  memoryType={editorMemoryType}
+  on:saved={handleEditorSaved}
+  on:close={() => editorOpen = false}
+/>

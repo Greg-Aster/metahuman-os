@@ -306,7 +306,7 @@ tail -f logs/audit/2025-11-04.ndjson | jq 'select(.event == "llm_call")'
 
 ### Specialist Detection Test
 ```bash
-node test-integration.mjs
+node tests/test-integration.mjs
 # Tests specialist type detection from task descriptions
 # Expected: 100% pass rate on coder/planner/summarizer/curator detection
 ```

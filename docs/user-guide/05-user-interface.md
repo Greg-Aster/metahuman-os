@@ -39,7 +39,7 @@ The UI will display prominent banners at the top of the screen to inform you of 
 - 📊 Dashboard - System status and overview.
 - ✓ Tasks - Task management.
 - ✋ Approvals - Skill execution queue.
-- 🧩 Memory - Browse events & insights.
+- 🧩 Memory - Browse events & insights with inline expansion and modal editor.
 - 🎤 Voice - Audio & voice training.
 - 🧠 AI Training - LoRA adapters and training management.
 - 💻 Terminal - Embedded command line.
@@ -47,11 +47,35 @@ The UI will display prominent banners at the top of the screen to inform you of 
 - 🌐 Network - Cloudflare tunnel and connectivity settings.
 - 🔒 Security - User and authentication settings.
 
+**Left Sidebar - Status Widget:**
+- **Trust Level**: Click to cycle through trust progression (observe → suggest → supervised_auto → bounded_auto → adaptive_auto → YOLO)
+- **Persona Facets**: Click to cycle through personality facets
+  - **inactive** (Gray) - Persona disabled
+  - **default** (Purple) - Balanced, authentic self
+  - **poet** (Indigo) - Creative, metaphorical, expressive
+  - **thinker** (Blue) - Analytical, systematic
+  - **friend** (Green) - Warm, supportive, empathetic
+  - **antagonist** (Red) - Critical, challenging
+  - Each facet shows as a colored badge
+  - Messages are color-coded with left borders matching the active facet
+  - Facet name appears in message header (e.g., "MetaHuman · poet")
+  - Chat history persists across changes for multi-faceted conversations
+
 **Developer Tools (Right Sidebar):**
 - Live audit stream (real-time system events)
 - Agent monitor with statistics
 - Boredom control (reflection frequency)
 - Model selector (switch Ollama models)
+
+**Memory Management:**
+- **Inline Expansion**: Click the expand/collapse toggle (▼/▶) next to any memory entry to view its full content inline
+- **Memory Editor**: Click the blue pencil icon (✏️) to open a full-screen modal editor
+  - View and edit memory JSON files directly in the browser
+  - Keyboard shortcuts: Ctrl+S to save, Esc to close
+  - Auto-save detection with unsaved changes warning
+  - Permission-based access (requires authentication to edit)
+  - All edits are audited to the audit log
+- **Memory Types**: Episodic events, reflections, dreams, tasks, curated files, AI ingestions, and audio transcripts
 
 **Privacy Features:**
 - **Clear Button**: Located in the chat interface header, the Clear button provides complete session cleanup:

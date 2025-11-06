@@ -81,6 +81,11 @@
   let taskTotals = { active: 0, inProgress: 0 };
   let pendingApprovals = 0;
 
+  // Persona facet state
+  let activeFacet: string = 'default';
+  let facets: Record<string, any> = {};
+  const facetOrder = ['inactive', 'default', 'poet', 'thinker', 'friend', 'antagonist'];
+
   // Subscribe to the shared status store
   let statusSubscription = null;
 
@@ -264,6 +269,91 @@
     }
   }
 
+  /**
+   * Load persona facets configuration
+   */
+  async function loadFacets() {
+    try {
+      const response = await fetch('/api/persona-facet');
+      const data = await response.json();
+      activeFacet = data.activeFacet || 'default';
+      facets = data.facets || {};
+    } catch (error) {
+      console.error('Error loading facets:', error);
+    }
+  }
+
+  /**
+   * Cycle to next persona facet
+   * Order: inactive → default → poet → thinker → friend → antagonist → inactive
+   */
+  async function cyclePersonaFacet() {
+    const currentIndex = facetOrder.indexOf(activeFacet);
+    const nextIndex = (currentIndex + 1) % facetOrder.length;
+    const nextFacet = facetOrder[nextIndex];
+
+    // Handle "inactive" - turn off persona
+    if (nextFacet === 'inactive') {
+      // Disable persona context
+      try {
+        const response = await fetch('/api/persona-toggle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: false }),
+        });
+        const result = await response.json();
+        if (result.success) {
+          activeFacet = 'inactive';
+          setTimeout(() => statusRefreshTrigger.update(n => n + 1), 100);
+        }
+      } catch (error) {
+        console.error('Error disabling persona:', error);
+      }
+      return;
+    }
+
+    // Handle switching from inactive to active facet
+    if (activeFacet === 'inactive') {
+      // Enable persona context first
+      try {
+        const response = await fetch('/api/persona-toggle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: true }),
+        });
+        const result = await response.json();
+        if (!result.success) {
+          console.error('Failed to enable persona');
+          return;
+        }
+      } catch (error) {
+        console.error('Error enabling persona:', error);
+        return;
+      }
+    }
+
+    // Switch to the next facet
+    try {
+      const response = await fetch('/api/persona-facet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ facet: nextFacet }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        activeFacet = nextFacet;
+        // Refresh status to show new facet
+        setTimeout(() => statusRefreshTrigger.update(n => n + 1), 100);
+      } else {
+        console.error('Failed to switch facet:', result.error);
+      }
+    } catch (error) {
+      console.error('Error cycling facet:', error);
+    }
+  }
+
   function connectActivityStream() {
     if (eventSource) return;
     eventSource = new EventSource('/api/llm-activity');
@@ -321,6 +411,7 @@
     // Don't auto-connect initially
     loadStatus();
     loadPendingApprovals();
+    loadFacets();
 
     // Refresh approvals every 5 seconds (no need to refresh status as we're using the shared store)
     const approvalsInterval = setInterval(loadPendingApprovals, 5000);
@@ -468,23 +559,13 @@
         <div class="status-row">
           <span class="status-label">Persona:</span>
           <span class="status-value">
-            {#if modelInfo?.personaSummary === 'enabled'}
-              <button
-                class="persona-badge persona-active clickable"
-                title="Click to toggle persona context\n\nActive: Personality, values, and memory grounding enabled\n\nLocked ON in emulation mode"
-                on:click={togglePersonaMode}
-              >
-                active
-              </button>
-            {:else}
-              <button
-                class="persona-badge persona-inactive clickable"
-                title="Click to toggle persona context\n\nInactive: Default LLM behavior without personality context\n\nLocked ON in emulation mode"
-                on:click={togglePersonaMode}
-              >
-                inactive
-              </button>
-            {/if}
+            <button
+              class="persona-badge persona-facet-{activeFacet} clickable"
+              title="Click to cycle persona facet\n\nCurrent: {activeFacet === 'inactive' ? 'Persona disabled' : (facets[activeFacet]?.name || activeFacet)}\n{activeFacet !== 'inactive' && facets[activeFacet]?.description ? facets[activeFacet].description : ''}\n\nProgression: inactive → default → poet → thinker → friend → antagonist → inactive"
+              on:click={cyclePersonaFacet}
+            >
+              {activeFacet === 'inactive' ? 'inactive' : (facets[activeFacet]?.name || activeFacet)}
+            </button>
           </span>
         </div>
       </div>
@@ -1159,6 +1240,170 @@
     background: rgba(107,114,128,0.2);
     color: rgb(156 163 175);
     border-color: transparent;
+  }
+
+  /* Facet-specific colors */
+  /* Inactive - Gray */
+  .persona-badge.persona-facet-inactive {
+    background: rgba(107,114,128,0.16);
+    color: rgb(107 114 128);
+    border-color: transparent;
+  }
+
+  .persona-badge.persona-facet-inactive:hover {
+    background: rgba(107,114,128,0.25);
+    border-color: rgba(107,114,128,0.2);
+    transform: translateY(-1px);
+  }
+
+  :global(.dark) .persona-badge.persona-facet-inactive {
+    background: rgba(107,114,128,0.2);
+    color: rgb(156 163 175);
+  }
+
+  :global(.dark) .persona-badge.persona-facet-inactive:hover {
+    background: rgba(107,114,128,0.3);
+    border-color: rgba(107,114,128,0.2);
+  }
+
+  /* Default - Purple */
+  .persona-badge.persona-facet-default {
+    background: linear-gradient(135deg, rgba(139,92,246,0.2), rgba(168,85,247,0.16));
+    color: rgb(109 40 217);
+    border-color: rgba(139,92,246,0.3);
+    box-shadow: 0 0 8px rgba(139,92,246,0.15);
+  }
+
+  .persona-badge.persona-facet-default:hover {
+    background: linear-gradient(135deg, rgba(139,92,246,0.3), rgba(168,85,247,0.25));
+    border-color: rgba(139,92,246,0.4);
+    box-shadow: 0 0 12px rgba(139,92,246,0.25);
+    transform: translateY(-1px);
+  }
+
+  :global(.dark) .persona-badge.persona-facet-default {
+    background: linear-gradient(135deg, rgba(167,139,250,0.25), rgba(196,181,253,0.2));
+    color: rgb(196 181 253);
+    border-color: rgba(167,139,250,0.4);
+    box-shadow: 0 0 12px rgba(167,139,250,0.2);
+  }
+
+  :global(.dark) .persona-badge.persona-facet-default:hover {
+    background: linear-gradient(135deg, rgba(167,139,250,0.35), rgba(196,181,253,0.3));
+    border-color: rgba(167,139,250,0.5);
+    box-shadow: 0 0 16px rgba(167,139,250,0.3);
+  }
+
+  /* Poet - Indigo */
+  .persona-badge.persona-facet-poet {
+    background: linear-gradient(135deg, rgba(99,102,241,0.2), rgba(129,140,248,0.16));
+    color: rgb(67 56 202);
+    border-color: rgba(99,102,241,0.3);
+    box-shadow: 0 0 8px rgba(99,102,241,0.15);
+  }
+
+  .persona-badge.persona-facet-poet:hover {
+    background: linear-gradient(135deg, rgba(99,102,241,0.3), rgba(129,140,248,0.25));
+    border-color: rgba(99,102,241,0.4);
+    box-shadow: 0 0 12px rgba(99,102,241,0.25);
+    transform: translateY(-1px);
+  }
+
+  :global(.dark) .persona-badge.persona-facet-poet {
+    background: linear-gradient(135deg, rgba(129,140,248,0.25), rgba(165,180,252,0.2));
+    color: rgb(165 180 252);
+    border-color: rgba(129,140,248,0.4);
+    box-shadow: 0 0 12px rgba(129,140,248,0.2);
+  }
+
+  :global(.dark) .persona-badge.persona-facet-poet:hover {
+    background: linear-gradient(135deg, rgba(129,140,248,0.35), rgba(165,180,252,0.3));
+    border-color: rgba(129,140,248,0.5);
+    box-shadow: 0 0 16px rgba(129,140,248,0.3);
+  }
+
+  /* Thinker - Blue */
+  .persona-badge.persona-facet-thinker {
+    background: linear-gradient(135deg, rgba(59,130,246,0.2), rgba(96,165,250,0.16));
+    color: rgb(29 78 216);
+    border-color: rgba(59,130,246,0.3);
+    box-shadow: 0 0 8px rgba(59,130,246,0.15);
+  }
+
+  .persona-badge.persona-facet-thinker:hover {
+    background: linear-gradient(135deg, rgba(59,130,246,0.3), rgba(96,165,250,0.25));
+    border-color: rgba(59,130,246,0.4);
+    box-shadow: 0 0 12px rgba(59,130,246,0.25);
+    transform: translateY(-1px);
+  }
+
+  :global(.dark) .persona-badge.persona-facet-thinker {
+    background: linear-gradient(135deg, rgba(96,165,250,0.25), rgba(147,197,253,0.2));
+    color: rgb(147 197 253);
+    border-color: rgba(96,165,250,0.4);
+    box-shadow: 0 0 12px rgba(96,165,250,0.2);
+  }
+
+  :global(.dark) .persona-badge.persona-facet-thinker:hover {
+    background: linear-gradient(135deg, rgba(96,165,250,0.35), rgba(147,197,253,0.3));
+    border-color: rgba(96,165,250,0.5);
+    box-shadow: 0 0 16px rgba(96,165,250,0.3);
+  }
+
+  /* Friend - Green */
+  .persona-badge.persona-facet-friend {
+    background: linear-gradient(135deg, rgba(34,197,94,0.2), rgba(74,222,128,0.16));
+    color: rgb(21 128 61);
+    border-color: rgba(34,197,94,0.3);
+    box-shadow: 0 0 8px rgba(34,197,94,0.15);
+  }
+
+  .persona-badge.persona-facet-friend:hover {
+    background: linear-gradient(135deg, rgba(34,197,94,0.3), rgba(74,222,128,0.25));
+    border-color: rgba(34,197,94,0.4);
+    box-shadow: 0 0 12px rgba(34,197,94,0.25);
+    transform: translateY(-1px);
+  }
+
+  :global(.dark) .persona-badge.persona-facet-friend {
+    background: linear-gradient(135deg, rgba(74,222,128,0.25), rgba(134,239,172,0.2));
+    color: rgb(134 239 172);
+    border-color: rgba(74,222,128,0.4);
+    box-shadow: 0 0 12px rgba(74,222,128,0.2);
+  }
+
+  :global(.dark) .persona-badge.persona-facet-friend:hover {
+    background: linear-gradient(135deg, rgba(74,222,128,0.35), rgba(134,239,172,0.3));
+    border-color: rgba(74,222,128,0.5);
+    box-shadow: 0 0 16px rgba(74,222,128,0.3);
+  }
+
+  /* Antagonist - Red */
+  .persona-badge.persona-facet-antagonist {
+    background: linear-gradient(135deg, rgba(239,68,68,0.2), rgba(248,113,113,0.16));
+    color: rgb(185 28 28);
+    border-color: rgba(239,68,68,0.3);
+    box-shadow: 0 0 8px rgba(239,68,68,0.15);
+  }
+
+  .persona-badge.persona-facet-antagonist:hover {
+    background: linear-gradient(135deg, rgba(239,68,68,0.3), rgba(248,113,113,0.25));
+    border-color: rgba(239,68,68,0.4);
+    box-shadow: 0 0 12px rgba(239,68,68,0.25);
+    transform: translateY(-1px);
+  }
+
+  :global(.dark) .persona-badge.persona-facet-antagonist {
+    background: linear-gradient(135deg, rgba(248,113,113,0.25), rgba(252,165,165,0.2));
+    color: rgb(252 165 165);
+    border-color: rgba(248,113,113,0.4);
+    box-shadow: 0 0 12px rgba(248,113,113,0.2);
+  }
+
+  :global(.dark) .persona-badge.persona-facet-antagonist:hover {
+    background: linear-gradient(135deg, rgba(248,113,113,0.35), rgba(252,165,165,0.3));
+    border-color: rgba(248,113,113,0.5);
+    box-shadow: 0 0 16px rgba(248,113,113,0.3);
   }
 
   /* Disabled menu item styles */

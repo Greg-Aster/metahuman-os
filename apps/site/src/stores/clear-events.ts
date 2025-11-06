@@ -5,8 +5,13 @@ import { writable } from 'svelte/store';
 
 // Increment this counter to trigger clear events
 export const clearAuditStreamTrigger = writable(0);
+export const clearChatTrigger = writable(0);
 
 // Helper to trigger a clear
 export function triggerClearAuditStream() {
   clearAuditStreamTrigger.update(n => n + 1);
+}
+
+export function triggerClearChat() {
+  clearChatTrigger.update(n => n + 1);
 }

@@ -18,6 +18,35 @@ Your core identity model stored in `persona/*.json` files:
 - `persona/relationships.json` - Key people and interaction patterns
 - `persona/routines.json` - Habits, patterns, energy cycles
 - `persona/decision-rules.json` - Heuristics and boundaries
+- `persona/facets.json` - Configuration for persona facets (see below)
+- `persona/facets/*.json` - Individual facet definitions
+
+**Persona Facets:**
+
+Facets allow your digital personality to present different aspects of itself depending on context. Rather than being separate personalities, facets are emphasized lenses through which you can view and respond to the world.
+
+**Available Facets:**
+- **Default** (Purple) - Balanced, authentic self - the primary persona
+- **Poet** (Indigo) - Creative, metaphorical, expressive - explores ideas through imagery and feeling
+- **Thinker** (Blue) - Analytical, philosophical, systematic - breaks down complex ideas
+- **Friend** (Green) - Warm, supportive, empathetic - focuses on connection and understanding
+- **Antagonist** (Red) - Critical, challenging, provocative - questions assumptions and pushes back
+- **Inactive** (Gray) - Persona system disabled - default LLM behavior without personality context
+
+**How Facets Work:**
+- Switch facets using the persona badge in the status widget (left sidebar)
+- Click to cycle: inactive → default → poet → thinker → friend → antagonist → inactive
+- Each response is color-coded with a left border matching the active facet
+- Facet name appears in message header (e.g., "MetaHuman · poet")
+- Chat history persists across facet changes, allowing multi-faceted conversations
+- Each facet merges with core persona (facet traits take precedence)
+
+**Use Cases:**
+- Switch to **Poet** for creative brainstorming or exploring ideas through metaphor
+- Use **Thinker** for analytical problem-solving and systematic reasoning
+- Engage **Friend** for emotional support or empathetic conversation
+- Activate **Antagonist** to challenge your ideas and find weaknesses in arguments
+- Have conversations spanning multiple facets to see different perspectives on the same topic
 
 ### 2. Memory System (Persistent State)
 
@@ -224,7 +253,7 @@ Different situations call for different levels of system engagement. Cognitive m
 
 **Behavior:**
 - **Routing**: Always uses the operator pipeline (planner → skills → narrator)
-- **Memory**: Full read/write access, captures all interactions for training
+- **Memory**: Captures all interactions with `cognitiveMode: "dual"` metadata
 - **Context**: Mandatory semantic search with persona fallback when index unavailable
 - **Learning**: Proactive agents enabled, training pipeline active
 - **Use Case**: Primary operational mode for maximum system capabilities
@@ -251,11 +280,11 @@ All chat operations include `cognitiveMode: "dual"` and `usedOperator: true` in 
 
 #### Agent Mode
 
-**Purpose:** Lightweight assistant mode with selective memory capture.
+**Purpose:** Lightweight assistant mode with smart routing.
 
 **Behavior:**
 - **Routing**: Smart heuristics (simple chat vs. action-oriented operator routing)
-- **Memory**: Command outcomes only (not casual conversations)
+- **Memory**: Captures all interactions with `cognitiveMode: "agent"` metadata (when authenticated)
 - **Context**: Optional semantic search (graceful degradation)
 - **Learning**: Proactive agents disabled, training pipeline disabled
 - **Use Case**: Traditional assistant experience with reduced cognitive load
@@ -291,23 +320,30 @@ Logs include `cognitiveMode: "agent"` and `usedOperator: true/false` based on ro
 
 #### Emulation Mode (Replicant)
 
-**Purpose:** A secure, read-only personality snapshot for safe demonstrations, testing, or exploration without any risk of side effects.
+**Purpose:** Stable personality snapshot for demos and testing.
 
 **Behavior:**
 - **Routing**: Never uses operator (chat only).
-- **Memory**: Strictly read-only. All API endpoints that create or modify memories, tasks, or persona files are blocked.
-- **Context**: Can access existing memories for conversation but cannot learn from them.
-- **Learning**: All learning, training, and proactive agents are disabled.
-- **Use Case**: Ideal for demos, sharing access on a local network, or testing conversational responses without altering the system's state.
+- **Memory**: Captures interactions with `cognitiveMode: "emulation"` metadata (when authenticated)
+- **Context**: Can access existing memories for conversation
+- **Learning**: All training and proactive agents are disabled
+- **Use Case**: Demos, sharing access, or testing without engaging the full cognitive pipeline
+
+**Authentication Note:**
+- **Anonymous users**: Cannot save memories (read-only)
+- **Authenticated users**: Can save memories even in emulation mode (all modes save when logged in)
 
 **When to Use:**
-- Showing the system to others without any risk of them changing your data.
-- Testing responses without polluting memory.
-- Accessing knowledge without changing state.
-- Providing a safe, interactive "guest mode".
+- Testing chat responses without engaging the operator pipeline
+- Showing the system to others (anonymous users get read-only access)
+- Faster, simpler conversational interactions
+- Providing a safe, interactive "guest mode"
 
 **Enforced Security:**
-The system's new **Unified Security Policy** strictly enforces Emulation Mode's boundaries at the API level. Any attempt to perform a write operation (e.g., creating a task, capturing a memory, changing configuration) will be blocked and return a `403 Forbidden` error. This ensures that this mode is truly a safe, read-only experience.
+The system's **Unified Security Policy** enforces authentication-based boundaries:
+- **Anonymous users**: Read-only access, cannot create memories or tasks (returns `403 Forbidden`)
+- **Authenticated users**: Can save memories (tagged with `cognitiveMode: "emulation"`), but operator and training are disabled
+- **Mode differentiation**: The `cognitiveMode` metadata allows LoRA training to distinguish between different interaction types
 
 **Technical Details:**
 ```json

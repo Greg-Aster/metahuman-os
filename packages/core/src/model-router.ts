@@ -8,7 +8,7 @@
 import { resolveModel, resolveModelForCognitiveMode, type ModelRole, type ResolvedModel, loadModelRegistry } from './model-resolver.js';
 import { audit } from './audit.js';
 import { ollama } from './ollama.js';
-import { loadPersonaCore } from './identity.js';
+import { loadPersonaWithFacet, getActiveFacet } from './identity.js';
 
 // Re-export ModelRole for convenience
 export type { ModelRole } from './model-resolver.js';
@@ -65,7 +65,8 @@ export interface RouterStreamChunk {
  */
 function buildPersonaContext(): string {
   try {
-    const persona = loadPersonaCore();
+    const persona = loadPersonaWithFacet();
+    const activeFacet = getActiveFacet();
 
     // Build a concise summary of identity, values, and goals
     const parts: string[] = [];

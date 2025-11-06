@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { loadPersonaCore, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, pruneHistory, type Message } from '@metahuman/core';
+import { loadPersonaCore, loadPersonaWithFacet, getActiveFacet, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, type RouterMessage, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, pruneHistory, type Message } from '@metahuman/core';
 import { loadCognitiveMode, getModeDefinition, canWriteMemory, canUseOperator } from '@metahuman/core/cognitive-mode';
 import { readFileSync, existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -260,10 +260,13 @@ async function getRelevantContext(
   }
 }
 
-function initializeChat(mode: Mode, reason = false, usingLora = false, includePersonaSummary = true): void {
+/**
+ * Build the system prompt with current persona/facet
+ */
+function buildSystemPrompt(mode: Mode, includePersonaSummary = true): string {
   let systemPrompt = '';
   if (includePersonaSummary) {
-    const persona = loadPersonaCore();
+    const persona = loadPersonaWithFacet();
 
     // Phase 5: Add persona cache context (long-term themes and facts)
     const personaCache = getPersonaContext();
@@ -285,8 +288,25 @@ You are having a ${mode}.
       ? 'You are having an internal dialogue with yourself.'
       : 'You are having a conversation.';
   }
+  return systemPrompt;
+}
 
+function initializeChat(mode: Mode, reason = false, usingLora = false, includePersonaSummary = true): void {
+  const systemPrompt = buildSystemPrompt(mode, includePersonaSummary);
   histories[mode] = [{ role: 'system', content: systemPrompt }];
+}
+
+/**
+ * Update the system prompt with current facet (refreshes persona without clearing history)
+ */
+function refreshSystemPrompt(mode: Mode, includePersonaSummary = true): void {
+  if (histories[mode].length > 0 && histories[mode][0].role === 'system') {
+    // Update existing system prompt
+    histories[mode][0].content = buildSystemPrompt(mode, includePersonaSummary);
+  } else {
+    // No history yet, initialize it
+    initializeChat(mode, false, false, includePersonaSummary);
+  }
 }
 
 export const GET: APIRoute = async (context) => {
@@ -432,13 +452,31 @@ function formatOperatorResult(result: any): string {
 }
 
 async function synthesizeOperatorAnswer(model: string, userMessage: string, operatorReport: string, cognitiveMode = 'dual'): Promise<string> {
-  const instructions = `You are assisting a user after an autonomous operator fetched raw data for them.
-Summarize the findings in a concise, conversational way:
-- Open with the direct answer (1-2 sentences) focused on the user's request.
-- Follow with up to four bullet points highlighting the most relevant facts.
-- If useful links are present, list them under "Links" with descriptive labels.
-- Close with a short suggestion inviting the user to ask follow-up questions.
-Do not mention the operator, internal steps, or unavailable data. If nothing useful was found, say so plainly.`;
+  // Load current persona with active facet
+  const persona = loadPersonaWithFacet();
+  const activeFacet = getActiveFacet();
+
+  console.log(`[synthesizeOperatorAnswer] Using persona facet: ${activeFacet}`);
+
+  // Build persona-aware instructions that incorporate the facet's personality
+  const personaContext = `You are ${persona.identity.name}.
+Your role: ${persona.identity.role}
+Your purpose: ${persona.identity.purpose}
+
+Your communication style: ${persona.personality.communicationStyle.tone.join(', ')}
+Your values: ${persona.values.core.map((v: any) => v.value).join(', ')}`;
+
+  const instructions = `${personaContext}
+
+You are synthesizing the results from an autonomous operator that fetched data for the user.
+Respond in your natural voice and personality - don't sound robotic or generic.
+Present the findings naturally:
+- Open with a direct answer in your characteristic style
+- Share relevant details that matter to the user
+- If useful links are present, weave them into your response naturally
+- Close in a way that invites further exploration
+
+Stay true to your personality. Don't mention "the operator" or technical details. If nothing useful was found, say so in your own way.`;
 
   const prompt = [
     { role: 'system', content: instructions },
@@ -449,11 +487,11 @@ Do not mention the operator, internal steps, or unavailable data. If nothing use
   ];
 
   const summaryResp = await callLLM({
-    role: 'summarizer',
+    role: 'persona', // Changed from 'summarizer' to 'persona' to use persona model
     messages: prompt as RouterMessage[],
     cognitiveMode,
     options: {
-      temperature: 0.35,
+      temperature: 0.7, // Increased from 0.35 to allow more personality
       topP: 0.9,
       repeatPenalty: 1.2,
       maxTokens: 768,
@@ -962,9 +1000,13 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
             });
             assistantResponse = answerResp.content || '';
           } else {
+            // Refresh system prompt with current facet before generating response
+            refreshSystemPrompt(m, includePersonaSummary);
+
             // Resolve and log the persona model being used
             const personaModel = resolveModelForCognitiveMode(cognitiveMode, 'persona' as ModelRole);
-            console.log(`[CHAT_REQUEST] Persona model: ${personaModel.id}`);
+            const activeFacet = getActiveFacet();
+            console.log(`[CHAT_REQUEST] Persona model: ${personaModel.id}, facet: ${activeFacet}`);
 
             let llmResponse: any;
 
@@ -1209,7 +1251,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
           pushMessage(m, { role: 'user', content: message });
           pushMessage(m, { role: 'assistant', content: assistantResponse });
 
-          // Capture event and audit (only if mode allows writes)
+          // Capture event and audit (if user is authenticated)
           // Note: cognitiveMode and allowMemoryWrites are already loaded at function start
           if (allowMemoryWrites) {
             const eventType = m === 'inner' ? 'inner_dialogue' : 'conversation';
@@ -1218,6 +1260,9 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               type: eventType,
               tags: ['chat', m],
               response: responseForMemory,
+              metadata: {
+                cognitiveMode: cognitiveMode,
+              },
             });
             const userRelPath = path.relative(ROOT, userPath);
 
@@ -1229,8 +1274,11 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               actor: 'assistant'
             });
 
+            // Get active facet for color-coding
+            const activeFacet = getActiveFacet();
+
             // Stream the final answer with save confirmation
-            push('answer', { response: assistantResponse, saved: { userRelPath } });
+            push('answer', { response: assistantResponse, saved: { userRelPath }, facet: activeFacet });
           } else {
             // Emulation mode: return response without saving
             audit({
@@ -1241,8 +1289,11 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               actor: 'assistant'
             });
 
+            // Get active facet for color-coding
+            const activeFacet = getActiveFacet();
+
             // Stream the final answer without save confirmation
-            push('answer', { response: assistantResponse });
+            push('answer', { response: assistantResponse, facet: activeFacet });
           }
 
         } catch (error) {
