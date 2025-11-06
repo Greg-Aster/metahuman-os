@@ -304,7 +304,6 @@ let reasoningStages: ReasoningStage[] = [];
 
   onMount(() => {
     loadChatPrefs();
-    void loadOperatorStatus();
 
     const observer = new IntersectionObserver(
       (entries) => {

@@ -5,15 +5,15 @@
 MetaHuman OS now operates under a **Unified Security Policy**, a centralized system that governs all permissions. This policy is the single source of truth for what actions are allowed, making the system safer and more predictable.
 
 **How it Works:**
-The policy considers two main factors to make decisions:
-1.  **Cognitive Mode**: The currently active mode (`Dual Consciousness`, `Agent`, or `Emulation`) is the primary driver of permissions.
-2.  **User Role** (Future): The system is designed for future authentication, where roles like `owner` and `guest` will grant different levels of access.
+The policy evaluates each request using two inputs:
+1.  **Cognitive Mode** – `Dual Consciousness`, `Agent`, or `Emulation` determine whether writes are even eligible.
+2.  **Authenticated User Context** – Every web request runs inside a user context populated by the middleware. It contains the user’s role (`owner`, `guest`, `anonymous`) and their profile paths. Guests are automatically constrained to read-only emulation, while anonymous traffic is prevented from touching profile data altogether.
 
 **Key Implications:**
 
--   **Emulation Mode is a Secure "Read-Only" Mode**: The most significant impact of this policy is that **Emulation Mode** is now strictly read-only. Any attempt to create or modify memories, tasks, or configuration via the API will be blocked with a `403 Forbidden` error. This makes it a safe "guest" or "demo" mode.
--   **Configuration is Protected**: Changing critical settings, such as the cognitive mode or trust level, is now restricted to the `owner` role. While authentication is not yet implemented, all such attempts are logged for security auditing.
--   **Centralized Enforcement**: Instead of scattered checks, all security rules are enforced consistently by middleware that consults the central policy for every relevant API request.
+-   **Emulation Mode is a Secure "Read-Only" Mode**: Any attempt to create or modify memories, tasks, or configuration while in emulation results in `403 Forbidden`. Guest sessions are permanently pinned to this mode.
+-   **Configuration is Protected**: Changing cognitive modes, trust levels, or system settings requires an authenticated owner session. All such attempts are logged for audit.
+-   **Centralized Enforcement**: Instead of scattered checks, all security rules are enforced consistently by middleware that consults the central policy for every relevant API request—including CLI commands that execute via `withUserContext`.
 
 This new architecture provides a robust foundation for current safety and future multi-user capabilities.
 
@@ -60,6 +60,16 @@ adaptive_auto (future)
 - **suggest → supervised_auto**: 80%+ of suggestions approved, no high-risk rejects, consistent alignment
 - **supervised_auto → bounded_auto**: 95%+ success rate, no rollbacks in 30 days, respect for boundaries
 
+### User Roles & Isolation
+
+| Role        | Session Duration | Read Access                                          | Write Access | Notes |
+|-------------|------------------|------------------------------------------------------|--------------|-------|
+| `owner`     | 24 hours         | Own profile (`profiles/<owner>/…`) + shared assets   | Mode-dependent | Can switch modes, manage profiles, change settings. |
+| `guest`     | 1 hour           | Selected public profile (emulation only)             | **Denied**   | Forced into read-only emulation; memory writes blocked. |
+| `anonymous` | 30 minutes       | System health endpoints only                         | **Denied**   | Requests touching user data receive `401/403`. |
+
+Switching users always tears down the existing context. Background agents iterate through the registered users by repeatedly invoking `withUserContext`, ensuring each profile is processed in isolation.
+
 ### Trust Levels and Skill Availability
 
 | Trust Level       | Available Skills | Auto-Execute? | Approval Required? |
@@ -83,36 +93,22 @@ Some skills **always** require approval regardless of trust level:
 
 ### Directory Boundaries
 
-#### Read Permissions (all trust levels)
-Can read from:
-- ✅ `memory/` - All memory types
-- ✅ `persona/` - Identity and configuration
-- ✅ `logs/` - Audit and agent logs
-- ✅ `out/` - Generated outputs
-- ✅ `etc/` - Configuration files
-- ✅ `docs/` - Documentation
+All read/write operations pass through the path proxy, so users only touch their own profile directories unless explicitly working with shared system assets.
 
-Cannot read from:
-- ❌ `brain/` - Code execution risk
-- ❌ `packages/` - Core system code
-- ❌ `apps/` - Application code
-- ❌ `node_modules/` - Dependencies
+#### Read Permissions
+- ✅ Owners: `profiles/<owner>/memory`, `profiles/<owner>/persona`, `profiles/<owner>/logs`, `profiles/<owner>/out`, `profiles/<owner>/etc`
+- ✅ Owners & guests: `out/voices` (shared Piper models), documentation, audit logs that reference their own actions
+- ❌ Guests: other users’ profiles (never exposed), system code directories
+- ❌ Anonymous: any profile or memory path (requests error with `401/403`)
 
-#### Write Permissions (supervised_auto+)
-Can write to:
-- ✅ `memory/episodic/` - New memories
-- ✅ `memory/semantic/` - Knowledge entries
-- ✅ `memory/procedural/` - Workflows
-- ✅ `memory/tasks/` - Task files
-- ✅ `out/` - Generated outputs
-- ✅ `logs/` - Log files
+System code is always read-only:
+- ❌ `brain/`, `packages/`, `apps/`, `bin/`, `node_modules/`
 
-Cannot write to (protected):
-- ❌ `persona/` - Identity kernel protected
-- ❌ `brain/` - Code execution risk
-- ❌ `packages/` - Core system
-- ❌ `apps/` - Application code
-- ❌ `etc/` - Critical configuration
+#### Write Permissions
+- ✅ Owners (appropriate cognitive mode): may write inside `profiles/<owner>/memory`, `profiles/<owner>/out`, `profiles/<owner>/logs`, `profiles/<owner>/etc`
+- ❌ Guests: all write operations blocked (enforced both by mode and policy)
+- ❌ Anonymous: write access blocked
+- ❌ Cross-profile writes: impossible—context resolution never hands out another user’s paths
 
 #### Coder Agent Guardrails
 
@@ -298,4 +294,3 @@ When a skill requires approval:
 ```
 
 ---
-

@@ -14,14 +14,14 @@
     timestamp: number;
     duration: number;
     quality: number;
-    transcript: string;
+    transcript?: string;
   }
 
   let progress: TrainingProgress | null = null;
   let samples: VoiceSample[] = [];
   let loading = true;
   let error: string | null = null;
-  let pollInterval: number | null = null;
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
   let exporting = false;
 
   async function fetchProgress() {
@@ -115,12 +115,13 @@
   onMount(() => {
     loadData();
     // Poll every 30 seconds
-    pollInterval = window.setInterval(loadData, 30000);
+    pollInterval = setInterval(loadData, 30000);
   });
 
   onDestroy(() => {
-    if (pollInterval) {
+    if (pollInterval !== null) {
       clearInterval(pollInterval);
+      pollInterval = null;
     }
   });
 </script>
@@ -190,7 +191,7 @@
                 </span>
               </div>
               <div class="sample-transcript">
-                "{sample.transcript.substring(0, 100)}{sample.transcript.length > 100 ? '...' : ''}"
+                "{(sample.transcript || '').substring(0, 100)}{(sample.transcript || '').length > 100 ? '...' : ''}"
               </div>
               <button class="delete-btn" on:click={() => deleteSample(sample.id)}>
                 Delete

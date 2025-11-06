@@ -3,6 +3,7 @@ import path from 'node:path';
 import { paths, generateId, timestamp } from './paths.js';
 import { appendEventToIndex, getIndexStatus } from './vector-index.js';
 import { auditDataChange } from './audit.js';
+import { getUserContext } from './context.js';
 
 export interface EpisodicEvent {
   id: string;
@@ -14,6 +15,7 @@ export interface EpisodicEvent {
   tags?: string[];
   importance?: number;
   links?: Array<{ type: string; target: string }>;
+  userId?: string; // NEW: Track which user owns this memory
   metadata?: {
     cognitiveMode?: string;
     processed?: boolean;
@@ -32,12 +34,16 @@ export interface Task {
   due?: string;
   tags?: string[];
   dependencies?: string[];
+  userId?: string; // NEW: Track which user owns this task
   created: string;
   updated: string;
   completed?: string;
 }
 
 export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {}): string {
+  // Get current user context (if any)
+  const ctx = getUserContext();
+
   const event: EpisodicEvent = {
     id: generateId('evt'),
     timestamp: timestamp(),
@@ -48,10 +54,12 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
     tags: opts.tags || [],
     importance: opts.importance || 0.5,
     links: opts.links || [],
+    userId: ctx?.userId, // NEW: Track owner (undefined for legacy/anonymous)
     metadata: opts.metadata || {},
   };
 
   const year = new Date().getFullYear().toString();
+  // paths.episodic automatically resolves to user profile if context is set
   const dir = path.join(paths.episodic, year);
   fs.mkdirSync(dir, { recursive: true });
 
@@ -106,6 +114,9 @@ function readTasksFromDirectory(dir: string): Task[] {
 }
 
 export function createTask(title: string, opts: Partial<Task> = {}): string {
+  // Get current user context (if any)
+  const ctx = getUserContext();
+
   const task: Task = {
     id: generateId('task'),
     title,
@@ -115,10 +126,12 @@ export function createTask(title: string, opts: Partial<Task> = {}): string {
     due: opts.due,
     tags: opts.tags || [],
     dependencies: opts.dependencies || [],
+    userId: ctx?.userId, // NEW: Track owner (undefined for legacy/anonymous)
     created: timestamp(),
     updated: timestamp(),
   };
 
+  // paths.tasks automatically resolves to user profile if context is set
   const filepath = path.join(paths.tasks, 'active', `${task.id}.json`);
   fs.mkdirSync(path.dirname(filepath), { recursive: true });
   fs.writeFileSync(filepath, JSON.stringify(task, null, 2));
@@ -127,6 +140,7 @@ export function createTask(title: string, opts: Partial<Task> = {}): string {
 }
 
 export function updateTaskStatus(taskId: string, status: Task['status']): void {
+  // paths.tasks automatically resolves to user profile if context is set
   const activeDir = path.join(paths.tasks, 'active');
   const completedDir = path.join(paths.tasks, 'completed');
 
@@ -171,6 +185,7 @@ export function updateTaskStatus(taskId: string, status: Task['status']): void {
 }
 
 export function deleteTask(taskId: string): string {
+  // paths.tasks automatically resolves to user profile if context is set
   const activeDir = path.join(paths.tasks, 'active');
   const completedDir = path.join(paths.tasks, 'completed');
   const deletedDir = path.join(paths.tasks, 'deleted');

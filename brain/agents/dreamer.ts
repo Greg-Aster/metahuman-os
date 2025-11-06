@@ -7,7 +7,18 @@
  * 4. Writes overnight learnings to procedural memory
  */
 
-import { callLLM, type RouterMessage, captureEvent, paths, acquireLock, isLocked, releaseLock, audit } from '../../packages/core/src/index.js';
+import {
+  callLLM,
+  type RouterMessage,
+  captureEvent,
+  paths,
+  acquireLock,
+  isLocked,
+  audit,
+  listUsers,
+  withUserContext,
+  initGlobalLogger,
+} from '../../packages/core/src/index.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -312,97 +323,168 @@ ${memoryCitations.map(id => `- ${id}`).join('\n')}
 }
 
 /**
- * Main dreaming cycle
+ * Generate dreams and learnings for a single user
+ */
+async function generateUserDreams(username: string): Promise<{
+  dreamsGenerated: number;
+  memoriesCurated: number;
+  preferencesExtracted: number;
+  heuristicsExtracted: number;
+}> {
+  console.log(`[dreamer] Processing user: ${username}`);
+
+  const config = loadSleepConfig();
+
+  if (!config.enabled) {
+    console.log(`[dreamer]   Sleep system disabled for ${username}`);
+    return { dreamsGenerated: 0, memoriesCurated: 0, preferencesExtracted: 0, heuristicsExtracted: 0 };
+  }
+
+  // Step 1: Curate memories (uses user context!)
+  const curatedMemories = await curateMemories(7, 15);
+
+  if (curatedMemories.length < 3) {
+    console.log(`[dreamer]   Not enough memories for ${username} (found ${curatedMemories.length})`);
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'sleep_skipped',
+      details: { reason: 'insufficient_memories', memoriesFound: curatedMemories.length },
+      actor: 'dreamer',
+    });
+    return { dreamsGenerated: 0, memoriesCurated: curatedMemories.length, preferencesExtracted: 0, heuristicsExtracted: 0 };
+  }
+
+  // Step 2: Generate dreams (1-3 per night)
+  const dreamCount = Math.min(config.maxDreamsPerNight, Math.floor(Math.random() * 3) + 1);
+  let dreamsGenerated = 0;
+
+  for (let i = 0; i < dreamCount; i++) {
+    const dreamMemories = curatedMemories.slice(i * 5, (i + 1) * 5);
+    if (dreamMemories.length < 3) break;
+
+    const dream = await generateDream(dreamMemories);
+    if (dream) {
+      const sourceIds = dreamMemories.map(m => m.id);
+      await captureEvent(dream, { type: 'dream', sources: sourceIds, confidence: 0.7 });
+      dreamsGenerated++;
+      console.log(`[dreamer]   Dream ${i + 1}/${dreamCount} generated for ${username}`);
+    }
+  }
+
+  // Step 3: Extract preferences and learnings
+  console.log(`[dreamer]   Extracting preferences and learnings for ${username}...`);
+  const learnings = await extractLearnings(curatedMemories);
+
+  // Step 4: Write overnight learnings
+  const today = new Date().toISOString().split('T')[0];
+  const memoryCitations = curatedMemories.map(m => m.id);
+  const learningsFile = writeOvernightLearnings(today, learnings, memoryCitations);
+
+  console.log(`[dreamer]   Overnight learnings written: ${path.basename(learningsFile)}`);
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'sleep_completed',
+    details: {
+      dreamsGenerated,
+      memoriesCurated: curatedMemories.length,
+      learningsFile: path.basename(learningsFile),
+      preferencesExtracted: learnings.preferences.length,
+      heuristicsExtracted: learnings.heuristics.length,
+    },
+    actor: 'dreamer',
+  });
+
+  console.log(`[dreamer]   Completed ${username} ✅`);
+
+  return {
+    dreamsGenerated,
+    memoriesCurated: curatedMemories.length,
+    preferencesExtracted: learnings.preferences.length,
+    heuristicsExtracted: learnings.heuristics.length,
+  };
+}
+
+/**
+ * Main dreaming cycle (multi-user)
  */
 async function run() {
+  initGlobalLogger('dreamer');
+
   // Single-instance guard
+  let lock;
   try {
     if (isLocked('agent-dreamer')) {
       console.log('[dreamer] Another instance is already running. Exiting.');
       return;
     }
-    acquireLock('agent-dreamer');
+    lock = acquireLock('agent-dreamer');
   } catch {
     console.log('[dreamer] Failed to acquire lock. Exiting.');
     return;
   }
 
   try {
-    console.log('[dreamer] Drifting into a dream...');
+    console.log('[dreamer] Drifting into a dream (multi-user)...');
 
-    const config = loadSleepConfig();
-
-    if (!config.enabled) {
-      console.log('[dreamer] Sleep system is disabled in configuration.');
-      return;
-    }
-
+    // Audit cycle start (system-level)
     audit({
       level: 'info',
       category: 'action',
       event: 'sleep_started',
-      details: { maxDreams: config.maxDreamsPerNight },
+      details: { agent: 'dreamer', mode: 'multi-user' },
       actor: 'dreamer',
     });
 
-    // Step 1: Curate memories
-    const curatedMemories = await curateMemories(7, 15);
+    // Get all users
+    const users = listUsers();
+    console.log(`[dreamer] Found ${users.length} users to process`);
 
-    if (curatedMemories.length < 3) {
-      console.log('[dreamer] Not enough memories to process. Exiting.');
-      audit({
-        level: 'info',
-        category: 'action',
-        event: 'sleep_skipped',
-        details: { reason: 'insufficient_memories', memoriesFound: curatedMemories.length },
-        actor: 'dreamer',
-      });
-      return;
-    }
+    let totalDreams = 0;
+    let totalMemories = 0;
+    let totalPreferences = 0;
+    let totalHeuristics = 0;
 
-    // Step 2: Generate dreams (1-3 per night)
-    const dreamCount = Math.min(config.maxDreamsPerNight, Math.floor(Math.random() * 3) + 1);
-    let dreamsGenerated = 0;
+    // Process each user with isolated context
+    for (const user of users) {
+      try {
+        const stats = await withUserContext(
+          { userId: user.id, username: user.username, role: user.role },
+          async () => {
+            return await generateUserDreams(user.username);
+          }
+        );
 
-    for (let i = 0; i < dreamCount; i++) {
-      const dreamMemories = curatedMemories.slice(i * 5, (i + 1) * 5);
-      if (dreamMemories.length < 3) break;
-
-      const dream = await generateDream(dreamMemories);
-      if (dream) {
-        const sourceIds = dreamMemories.map(m => m.id);
-        await captureEvent(dream, { type: 'dream', sources: sourceIds, confidence: 0.7 });
-        dreamsGenerated++;
-        console.log(`[dreamer] Dream ${i + 1}/${dreamCount} generated.`);
+        totalDreams += stats.dreamsGenerated;
+        totalMemories += stats.memoriesCurated;
+        totalPreferences += stats.preferencesExtracted;
+        totalHeuristics += stats.heuristicsExtracted;
+      } catch (error) {
+        console.error(`[dreamer] Failed to process user ${user.username}:`, (error as Error).message);
+        // Continue with next user
       }
     }
 
-    // Step 3: Extract preferences and learnings
-    console.log('[dreamer] Extracting preferences and learnings...');
-    const learnings = await extractLearnings(curatedMemories);
+    console.log(`[dreamer] Cycle finished. Generated ${totalDreams} dreams across ${users.length} users. ✅`);
 
-    // Step 4: Write overnight learnings
-    const today = new Date().toISOString().split('T')[0];
-    const memoryCitations = curatedMemories.map(m => m.id);
-    const learningsFile = writeOvernightLearnings(today, learnings, memoryCitations);
-
-    console.log(`[dreamer] Overnight learnings written to: ${path.basename(learningsFile)}`);
-
+    // Audit completion (system-level)
     audit({
       level: 'info',
       category: 'action',
-      event: 'sleep_completed',
+      event: 'sleep_cycle_completed',
       details: {
-        dreamsGenerated,
-        memoriesCurated: curatedMemories.length,
-        learningsFile: path.basename(learningsFile),
-        preferencesExtracted: learnings.preferences.length,
-        heuristicsExtracted: learnings.heuristics.length,
+        agent: 'dreamer',
+        mode: 'multi-user',
+        totalDreams,
+        totalMemories,
+        totalPreferences,
+        totalHeuristics,
+        userCount: users.length,
       },
       actor: 'dreamer',
     });
-
-    console.log('[dreamer] Sleep cycle completed successfully.');
   } catch (error) {
     console.error('[dreamer] Error during sleep cycle:', error);
     audit({
@@ -413,7 +495,7 @@ async function run() {
       actor: 'dreamer',
     });
   } finally {
-    releaseLock('agent-dreamer');
+    lock.release();
   }
 }
 

@@ -161,6 +161,19 @@ $: if ($activeView === 'memory') {
   loadEvents();
 }
 
+// Reset sub-tabs when navigating away from parent views
+$: if ($activeView !== 'voice') {
+  voiceTab = 'upload';
+}
+
+$: if ($activeView !== 'training') {
+  trainingTab = 'datasets';
+}
+
+$: if ($activeView !== 'system') {
+  systemTab = 'persona';
+}
+
 async function loadPersonaCore() {
   personaLoading = true;
   personaError = null;
@@ -867,9 +880,9 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
       </div>
       <div class="view-content">
         <div class="tab-group">
-          <button class="tab-button" class:active={voiceTab==='upload'} on:click={() => voiceTab='upload'}>Upload & Transcribe</button>
-          <button class="tab-button" class:active={voiceTab==='training'} on:click={() => voiceTab='training'}>Voice Clone Training</button>
-          <button class="tab-button" class:active={voiceTab==='settings'} on:click={() => voiceTab='settings'}>Voice Settings</button>
+          <button class="tab-button" class:active={voiceTab === 'upload'} on:click={() => voiceTab = 'upload'}>Upload & Transcribe</button>
+          <button class="tab-button" class:active={voiceTab === 'training'} on:click={() => voiceTab = 'training'}>Voice Clone Training</button>
+          <button class="tab-button" class:active={voiceTab === 'settings'} on:click={() => voiceTab = 'settings'}>Voice Settings</button>
         </div>
         {#if voiceTab === 'upload'}
           <div class="audio-grid">
@@ -891,9 +904,9 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
       </div>
       <div class="view-content">
         <div class="tab-group">
-          <button class="tab-button" class:active={trainingTab==='datasets'} on:click={() => trainingTab='datasets'}>Datasets</button>
-          <button class="tab-button" class:active={trainingTab==='monitor'} on:click={() => trainingTab='monitor'}>Training Monitor</button>
-          <button class="tab-button" class:active={trainingTab==='adapters'} on:click={() => trainingTab='adapters'}>Adapters</button>
+          <button class="tab-button" class:active={trainingTab === 'datasets'} on:click={() => trainingTab = 'datasets'}>Datasets</button>
+          <button class="tab-button" class:active={trainingTab === 'monitor'} on:click={() => trainingTab = 'monitor'}>Training Monitor</button>
+          <button class="tab-button" class:active={trainingTab === 'adapters'} on:click={() => trainingTab = 'adapters'}>Adapters</button>
         </div>
         {#if trainingTab === 'datasets'}
           <AdapterDashboard />
@@ -951,19 +964,19 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                   <div class="form-grid">
                     <label class="field">
                       <span>AI Name</span>
-                      <input type="text" bind:value={personaForm.name} placeholder="MetaHuman Greg" />
+                      <input type="text" bind:value={personaForm.name} placeholder="Destroyer of Worlds" />
                     </label>
                     <label class="field">
                       <span>Human Name</span>
-                      <input type="text" bind:value={personaForm.humanName} placeholder="Gregory Aster" />
+                      <input type="text" bind:value={personaForm.humanName} placeholder="MeatPerson" />
                     </label>
                     <label class="field">
                       <span>Email</span>
-                      <input type="email" bind:value={personaForm.email} placeholder="greg@example.com" />
+                      <input type="email" bind:value={personaForm.email} placeholder="Robot@destroy-all-humans.io" />
                     </label>
                     <label class="field">
                       <span>Avatar Path / URL</span>
-                      <input type="text" bind:value={personaForm.avatar} placeholder="/assets/avatar/avatar.png" />
+                      <input type="text" bind:value={personaForm.avatar} placeholder="/profiles/username/avatar.png" />
                     </label>
                     <label class="field">
                       <span>Role</span>
@@ -971,7 +984,7 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                     </label>
                     <label class="field">
                       <span>Aliases (comma separated)</span>
-                      <input type="text" bind:value={personaForm.aliases} placeholder="Greg, MetaHuman Greg" />
+                      <input type="text" bind:value={personaForm.aliases} placeholder="MetaHuman, IwanTthEMeThatIsinsideYOU" />
                     </label>
                   </div>
                   <label class="field">

@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { paths } from '@metahuman/core'
 import { getSecurityPolicy } from '../../../../../packages/core/src/security-policy.js'
+import { withUserContext } from '../../middleware/userContext'
 
 type EpisodicItem = {
   id: string
@@ -103,7 +104,7 @@ function listCurated(): CuratedItem[] {
   return out
 }
 
-export const GET: APIRoute = async (context) => {
+const handler: APIRoute = async (context) => {
   try {
     // Require authentication to access memory data
     const policy = getSecurityPolicy(context);
@@ -131,3 +132,6 @@ export const GET: APIRoute = async (context) => {
     return new Response(JSON.stringify({ error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
 }
+
+// Wrap with user context middleware for automatic profile path resolution
+export const GET = withUserContext(handler)

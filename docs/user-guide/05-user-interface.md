@@ -13,6 +13,16 @@ When you first launch the MetaHuman OS web interface, you will be greeted by a p
 
 The splash screen smoothly fades out once all initialization steps are complete, transitioning you to the main chat interface.
 
+### Authentication Gate & Profile Selection
+
+When the UI is ready the splash screen fades into the **Authentication Gate**. Owners and guests share the same entry point:
+
+1. **Create Account** – Registers a new user directly from the browser. The first account created becomes the `owner` and receives full access.
+2. **Login** – Existing owners or guests authenticate and regain access to their isolated profile.
+3. **Continue as Guest** – Starts a 30‑minute anonymous session. Guests are prompted to choose from the list of **public profiles** before entering the dashboard. Private profiles are hidden, so owners can safely share the instance.
+
+The active profile (owner or guest) is displayed in the header once authenticated. Switching users logs the current session out and returns to the gate.
+
 ### Web UI (Recommended)
 Modern ChatGPT-style interface with real-time updates:
 ```bash
@@ -20,13 +30,10 @@ cd apps/site && pnpm dev
 # Open http://localhost:4321
 ```
 
-Upon starting the UI, you will now be directed to a **Login page**. For local development, you can typically proceed without credentials.
-
-The UI header contains several key interactive elements:
-
-- **Cognitive Mode Selector**: A dropdown menu to switch between `Dual Consciousness`, `Agent`, and `Emulation` modes. This menu is now dynamic; modes may be disabled (grayed out with a lock icon) based on the current system state (e.g., "High Security" or "Wetware Deceased"). Hovering over a disabled mode will show a tooltip explaining why it's unavailable.
-- **User Menu**: A new dropdown menu that provides options for user-related actions like "Logout".
-- **Developer Tools**: The right-sidebar toggle for live audit streams and agent monitoring.
+#### Header Controls
+- **Profile Indicator** – Shows the active account (role, visibility badge). Owners can open the menu to log out or jump into Settings.
+- **Cognitive Mode Selector** – Switch between `Dual Consciousness`, `Agent`, and `Emulation`. Locked modes display tooltips explaining why they are unavailable under the current security posture.
+- **Developer Tools Toggle** – Opens the right sidebar (audit stream, agent monitor, boredom service, model selector).
 
 #### System Status Banners
 The UI will display prominent banners at the top of the screen to inform you of critical system-wide states:
@@ -40,7 +47,7 @@ The UI will display prominent banners at the top of the screen to inform you of 
 - ✓ Tasks - Task management.
 - ✋ Approvals - Skill execution queue.
 - 🧩 Memory - Browse events & insights with inline expansion and modal editor.
-- 🎤 Voice - Audio & voice training.
+- 🎤 Voice - Audio upload, transcription, cloning, and per-user training data.
 - 🧠 AI Training - LoRA adapters and training management.
 - 💻 Terminal - Embedded command line.
 - ⚙️ System - System settings and tools.
@@ -61,6 +68,11 @@ The UI will display prominent banners at the top of the screen to inform you of 
   - Facet name appears in message header (e.g., "MetaHuman · poet")
   - Chat history persists across changes for multi-faceted conversations
 
+**Left Sidebar – Active Profile & Status:**
+- **Profile Visibility Badge**: Owners can mark their persona as `Private` or `Public`. Guests see this badge before selecting a profile.
+- **Trust Level**: Click to cycle through trust progression (observe → suggest → supervised_auto → bounded_auto → adaptive_auto → YOLO).
+- **Persona Facets**: Cycle through facets; chat messages highlight the active facet.
+
 **Developer Tools (Right Sidebar):**
 - Live audit stream (real-time system events)
 - Agent monitor with statistics
@@ -77,7 +89,15 @@ The UI will display prominent banners at the top of the screen to inform you of 
   - All edits are audited to the audit log
 - **Memory Types**: Episodic events, reflections, dreams, tasks, curated files, AI ingestions, and audio transcripts
 
-**Privacy Features:**
+#### Voice Workspace
+The Voice tab now divides responsibilities clearly:
+- **Upload & Transcribe** – Drop in local audio for Whisper transcription.
+- **Voice Clone Training** – Stores per-user samples in `profiles/<username>/out/voice-training`. Progress indicators reflect only the active profile.
+- **Voice Settings** – Choose from shared Piper voices (`out/voices`) while keeping personal preferences (speaking rate, cache) inside `profiles/<username>/etc/voice.json`.
+
+System administrators can install additional `.onnx` models under `out/voices/`; they become available instantly to all users.
+
+#### Privacy Features & Session Controls
 - **Clear Button**: Located in the chat interface header, the Clear button provides complete session cleanup:
   - Clears all chat messages from the UI
   - Clears reasoning stages
@@ -103,4 +123,3 @@ A special UI component for the **Self-Healing Coder Agent** appears directly abo
 3. **Direct File Access** - All data is stored as human-readable JSON files for direct manipulation
 
 ---
-

@@ -9,14 +9,22 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, audit, auditAction, captureEvent, acquireLock, isLocked } from '@metahuman/core';
-
-const INBOX = paths.inbox;
-const ARCHIVE_ROOT = paths.inboxArchive;
+import {
+  paths,
+  audit,
+  auditAction,
+  captureEvent,
+  acquireLock,
+  isLocked,
+  listUsers,
+  withUserContext,
+  initGlobalLogger,
+} from '@metahuman/core';
 
 function ensureDirs() {
-  fs.mkdirSync(INBOX, { recursive: true });
-  fs.mkdirSync(ARCHIVE_ROOT, { recursive: true });
+  // Use context-aware paths
+  fs.mkdirSync(paths.inbox, { recursive: true });
+  fs.mkdirSync(paths.inboxArchive, { recursive: true });
 }
 
 function readFileAsText(filePath: string): string {
@@ -74,7 +82,7 @@ async function ingestFile(filePath: string) {
 
   // Archive file after successful ingestion
   const date = new Date().toISOString().slice(0, 10);
-  const archiveDir = path.join(ARCHIVE_ROOT, date);
+  const archiveDir = path.join(paths.inboxArchive, date);
   fs.mkdirSync(archiveDir, { recursive: true });
   const dest = path.join(archiveDir, fileName);
   fs.renameSync(filePath, dest);
@@ -87,44 +95,32 @@ async function ingestFile(filePath: string) {
   });
 }
 
-async function main() {
-  // Single-instance guard for one-shot ingestor
-  try {
-    if (isLocked('agent-ingestor')) {
-      console.log('[ingestor] Another instance is already running. Exiting.');
-      return;
-    }
-    acquireLock('agent-ingestor');
-  } catch {
-    console.log('[ingestor] Failed to acquire lock. Exiting.');
-    return;
-  }
+/**
+ * Ingest files for a single user
+ */
+async function ingestUserFiles(username: string): Promise<number> {
+  console.log(`[ingestor] Processing user: ${username}`);
+
   ensureDirs();
 
-  audit({
-    level: 'info',
-    category: 'action',
-    event: 'agent_started',
-    details: { agent: 'ingestor' },
-    actor: 'agent',
-  });
-
-  const entries = fs.existsSync(INBOX) ? fs.readdirSync(INBOX, { withFileTypes: true }) : [];
-  const files = entries.filter(e => e.isFile()).map(e => path.join(INBOX, e.name));
+  const entries = fs.existsSync(paths.inbox) ? fs.readdirSync(paths.inbox, { withFileTypes: true }) : [];
+  const files = entries.filter(e => e.isFile()).map(e => path.join(paths.inbox, e.name));
 
   if (files.length === 0) {
-    console.log('Inbox is empty. Place files in memory/inbox to ingest.');
-    return;
+    console.log(`[ingestor]   No files in inbox for ${username}`);
+    return 0;
   }
 
-  console.log(`Found ${files.length} file(s) to ingest.`);
+  console.log(`[ingestor]   Found ${files.length} file(s) to ingest`);
 
+  let processed = 0;
   for (const file of files) {
     try {
       await ingestFile(file);
-      console.log(`✓ Ingested: ${path.basename(file)}`);
+      console.log(`[ingestor]   ✓ Ingested: ${path.basename(file)}`);
+      processed++;
     } catch (e) {
-      console.error(`✗ Failed: ${path.basename(file)} — ${(e as Error).message}`);
+      console.error(`[ingestor]   ✗ Failed: ${path.basename(file)} — ${(e as Error).message}`);
       auditAction({
         skill: 'ingestor:capture',
         inputs: { file: path.basename(file) },
@@ -134,13 +130,88 @@ async function main() {
     }
   }
 
-  audit({
-    level: 'info',
-    category: 'action',
-    event: 'agent_completed',
-    details: { agent: 'ingestor', processed: files.length },
-    actor: 'agent',
-  });
+  console.log(`[ingestor]   Completed ${username} ✅`);
+  return processed;
+}
+
+async function main() {
+  initGlobalLogger('ingestor');
+
+  // Single-instance guard
+  let lock;
+  try {
+    if (isLocked('agent-ingestor')) {
+      console.log('[ingestor] Another instance is already running. Exiting.');
+      return;
+    }
+    lock = acquireLock('agent-ingestor');
+  } catch {
+    console.log('[ingestor] Failed to acquire lock. Exiting.');
+    return;
+  }
+
+  try {
+    console.log('[ingestor] Starting ingestion cycle (multi-user)...');
+
+    // Audit cycle start (system-level)
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'agent_cycle_started',
+      details: { agent: 'ingestor', mode: 'multi-user' },
+      actor: 'agent',
+    });
+
+    // Get all users
+    const users = listUsers();
+    console.log(`[ingestor] Found ${users.length} users to process`);
+
+    let totalProcessed = 0;
+
+    // Process each user with isolated context
+    for (const user of users) {
+      try {
+        const processed = await withUserContext(
+          { userId: user.id, username: user.username, role: user.role },
+          async () => {
+            return await ingestUserFiles(user.username);
+          }
+        );
+
+        totalProcessed += processed;
+      } catch (error) {
+        console.error(`[ingestor] Failed to process user ${user.username}:`, (error as Error).message);
+        // Continue with next user
+      }
+    }
+
+    console.log(`[ingestor] Cycle finished. Processed ${totalProcessed} files across ${users.length} users. ✅`);
+
+    // Audit completion (system-level)
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'agent_cycle_completed',
+      details: {
+        agent: 'ingestor',
+        mode: 'multi-user',
+        totalProcessed,
+        userCount: users.length,
+      },
+      actor: 'agent',
+    });
+  } catch (error) {
+    console.error('[ingestor] Error during cycle:', (error as Error).message);
+    audit({
+      level: 'error',
+      category: 'action',
+      event: 'agent_cycle_failed',
+      details: { agent: 'ingestor', mode: 'multi-user', error: (error as Error).message },
+      actor: 'agent',
+    });
+  } finally {
+    lock.release();
+  }
 }
 
 main().catch(err => {

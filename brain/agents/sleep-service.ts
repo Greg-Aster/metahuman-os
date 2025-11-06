@@ -14,6 +14,10 @@
  *    - Process audio backlog (transcriber + organizer)
  *    - LoRA training pipeline (adapter-builder, auto-approver, trainer, eval, activation)
  * 5. updateActivity() - Record user activity for idle detection
+ *
+ * MULTI-USER: This is a system-level orchestrator service. It triggers
+ * multi-user agents (dreamer, night-processor) which handle per-user
+ * processing with isolated contexts internally.
  */
 
 import fs from 'node:fs';

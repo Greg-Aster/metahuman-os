@@ -4,13 +4,24 @@ import {
   approveSkillExecution,
   rejectSkillExecution,
 } from '@metahuman/core/skills';
+import { getUserContext } from '@metahuman/core/context';
+import { withUserContext } from '../../middleware/userContext';
+import { getSecurityPolicy } from '@metahuman/core/security-policy';
 
 /**
  * GET /api/approvals
  * Returns all pending approval items
  */
-export const GET: APIRoute = async () => {
+const getHandler: APIRoute = async (context) => {
   try {
+    const ctx = getUserContext();
+    if (!ctx || ctx.role === 'anonymous') {
+      return new Response(
+        JSON.stringify({ error: 'Authentication required to view approvals.' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     const pending = getPendingApprovals();
     return new Response(JSON.stringify({ approvals: pending }), {
       status: 200,
@@ -29,9 +40,27 @@ export const GET: APIRoute = async () => {
  * Approve or reject a skill execution
  * Body: { id: string, action: 'approve' | 'reject' }
  */
-export const POST: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async (context) => {
   try {
-    const body = await request.json();
+    const ctx = getUserContext();
+    if (!ctx || ctx.role === 'anonymous') {
+      return new Response(
+        JSON.stringify({ error: 'Authentication required to modify approvals.' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const policy = getSecurityPolicy(context);
+    try {
+      policy.requireOwner();
+    } catch (error) {
+      return new Response(
+        JSON.stringify({ error: 'Owner role required to modify approvals.' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const body = await context.request.json();
     const { id, action } = body;
 
     if (!id || !action) {
@@ -75,3 +104,6 @@ export const POST: APIRoute = async ({ request }) => {
     );
   }
 };
+
+export const GET = withUserContext(getHandler);
+export const POST = withUserContext(postHandler);

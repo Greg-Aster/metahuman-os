@@ -206,13 +206,20 @@ export interface PersonaCache {
   lastUpdated: string;
 }
 
-const PERSONA_CACHE_PATH = path.join(paths.persona, 'cache.json');
+/**
+ * Get the path to the persona cache file for the current user context.
+ * This must be a function call (not a constant) to resolve user context at runtime.
+ */
+function getPersonaCachePath(): string {
+  return path.join(paths.persona, 'cache.json');
+}
 
 /**
  * Load persona cache
  */
 export function loadPersonaCache(): PersonaCache {
-  if (!fs.existsSync(PERSONA_CACHE_PATH)) {
+  const cachePath = getPersonaCachePath();
+  if (!fs.existsSync(cachePath)) {
     // Return default cache
     return {
       catchphrases: [],
@@ -224,7 +231,7 @@ export function loadPersonaCache(): PersonaCache {
   }
 
   try {
-    const content = fs.readFileSync(PERSONA_CACHE_PATH, 'utf-8');
+    const content = fs.readFileSync(cachePath, 'utf-8');
     return JSON.parse(content);
   } catch (error) {
     console.error('[state] Failed to load persona cache:', error);
@@ -245,7 +252,7 @@ export function savePersonaCache(cache: PersonaCache, actor = 'system') {
   cache.lastUpdated = new Date().toISOString();
 
   try {
-    fs.writeFileSync(PERSONA_CACHE_PATH, JSON.stringify(cache, null, 2), 'utf-8');
+    fs.writeFileSync(getPersonaCachePath(), JSON.stringify(cache, null, 2), 'utf-8');
 
     audit({
       level: 'info',

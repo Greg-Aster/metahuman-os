@@ -11,6 +11,7 @@ import { randomUUID } from 'crypto';
 import bcrypt from 'bcrypt';
 import { paths } from './paths.js';
 import { audit } from './audit.js';
+import type { OnboardingState } from './onboarding.js';
 
 const BCRYPT_ROUNDS = 12; // Standard secure rounds for bcrypt
 
@@ -27,6 +28,7 @@ export interface User {
   metadata?: {
     displayName?: string;
     email?: string;
+    onboardingState?: OnboardingState;
   };
 }
 
@@ -42,6 +44,7 @@ export interface SafeUser {
   metadata?: {
     displayName?: string;
     email?: string;
+    onboardingState?: OnboardingState;
   };
 }
 
@@ -53,18 +56,25 @@ interface UserStore {
   version: number;
 }
 
-const USERS_FILE = path.join(paths.persona, 'users.json');
+/**
+ * Get the path to the users database file.
+ * Uses system-level path since users.json is a global database, not user-specific.
+ */
+function getUsersFilePath(): string {
+  return paths.usersDb;
+}
 
 /**
  * Load users from file
  */
 function loadUsers(): UserStore {
-  if (!fs.existsSync(USERS_FILE)) {
+  const usersFile = getUsersFilePath();
+  if (!fs.existsSync(usersFile)) {
     return { users: [], version: 1 };
   }
 
   try {
-    const raw = fs.readFileSync(USERS_FILE, 'utf-8');
+    const raw = fs.readFileSync(usersFile, 'utf-8');
     return JSON.parse(raw) as UserStore;
   } catch (error) {
     console.error('[users] Failed to load users:', error);
@@ -77,7 +87,7 @@ function loadUsers(): UserStore {
  */
 function saveUsers(store: UserStore): void {
   try {
-    fs.writeFileSync(USERS_FILE, JSON.stringify(store, null, 2), 'utf-8');
+    fs.writeFileSync(getUsersFilePath(), JSON.stringify(store, null, 2), 'utf-8');
   } catch (error) {
     console.error('[users] Failed to save users:', error);
     throw error;
@@ -113,7 +123,8 @@ function verifyPassword(password: string, hash: string): boolean {
  * Initialize user system (create empty users file if needed)
  */
 export function initUsers(): void {
-  if (!fs.existsSync(USERS_FILE)) {
+  const usersFile = getUsersFilePath();
+  if (!fs.existsSync(usersFile)) {
     const store: UserStore = {
       users: [],
       version: 1,
@@ -124,7 +135,7 @@ export function initUsers(): void {
       level: 'info',
       category: 'system',
       event: 'users_initialized',
-      details: { file: USERS_FILE },
+      details: { file: usersFile },
       actor: 'system',
     });
   }
@@ -136,6 +147,14 @@ export function initUsers(): void {
 export function hasUsers(): boolean {
   const store = loadUsers();
   return store.users.length > 0;
+}
+
+/**
+ * Get all users
+ */
+export function getUsers(): User[] {
+  const store = loadUsers();
+  return store.users;
 }
 
 /**

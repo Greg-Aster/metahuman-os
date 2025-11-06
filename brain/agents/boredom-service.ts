@@ -11,6 +11,10 @@
  * NOTE: This service is now much simpler - it just updates the scheduler
  * configuration when boredom.json changes. The actual agent scheduling
  * is handled by scheduler-service.ts.
+ *
+ * MULTI-USER: This is a system-level service that configures global agent
+ * scheduling. The reflector agent it configures processes all users
+ * sequentially with isolated contexts.
  */
 
 import fs from 'node:fs';

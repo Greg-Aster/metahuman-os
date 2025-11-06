@@ -35,7 +35,13 @@ interface SessionStore {
   version: number;
 }
 
-const SESSIONS_FILE = path.join(paths.logs, 'run', 'sessions.json');
+/**
+ * Get the path to the sessions file.
+ * Uses system-level path since sessions.json is a global database.
+ */
+function getSessionsFilePath(): string {
+  return paths.sessionsFile;
+}
 
 // Session expiration times
 const OWNER_SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hours
@@ -46,12 +52,12 @@ const ANONYMOUS_SESSION_DURATION = 30 * 60 * 1000; // 30 minutes
  * Load sessions from file
  */
 function loadSessions(): SessionStore {
-  if (!fs.existsSync(SESSIONS_FILE)) {
+  if (!fs.existsSync(getSessionsFilePath())) {
     return { sessions: [], version: 1 };
   }
 
   try {
-    const raw = fs.readFileSync(SESSIONS_FILE, 'utf-8');
+    const raw = fs.readFileSync(getSessionsFilePath(), 'utf-8');
     return JSON.parse(raw) as SessionStore;
   } catch (error) {
     console.error('[sessions] Failed to load sessions:', error);
@@ -65,12 +71,12 @@ function loadSessions(): SessionStore {
 function saveSessions(store: SessionStore): void {
   try {
     // Ensure directory exists
-    const dir = path.dirname(SESSIONS_FILE);
+    const dir = path.dirname(getSessionsFilePath());
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(store, null, 2), 'utf-8');
+    fs.writeFileSync(getSessionsFilePath(), JSON.stringify(store, null, 2), 'utf-8');
   } catch (error) {
     console.error('[sessions] Failed to save sessions:', error);
     throw error;

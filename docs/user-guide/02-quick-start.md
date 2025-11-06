@@ -32,14 +32,15 @@ pnpm install
    ```bash
    ./bin/mh ollama pull phi3:mini
    ```
-3. **Customize your persona:** Edit `persona/core.json` to match your personality, values, and goals
-4. **Start the web UI:**
+3. **Start the web UI and register the owner profile:**
    ```bash
    cd apps/site && pnpm dev
    # Then open http://localhost:4321
    ```
-
-   You will be greeted by a splash screen that provides real-time feedback as the OS initializes, loads your persona, and connects to the local models. This improves the startup experience by showing immediate activity.
+   - On first launch you will be redirected to the **Authentication Gate**.
+   - Click **Create Account** and register the first user. The first user is automatically granted the `owner` role.
+   - Subsequent users can log in directly, or choose **Continue as Guest** to browse public personas in read-only mode.
+4. **(Optional) Migrate existing single-user data:** run `pnpm tsx scripts/migrate-to-profiles.ts --username <owner>` if you are upgrading from a legacy installation with data at the repository root.
+5. **Customize your persona (owner profile):** Edit `profiles/<owner>/persona/core.json` to match your personality, values, and goals.
 
 ---
-

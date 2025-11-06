@@ -39,6 +39,12 @@ import {
   listVoiceSamples,
   deleteVoiceSample,
   exportTrainingDataset,
+  // Multi-user support
+  withUserContext,
+  listUsers,
+  getUserByUsername,
+  getUserContext,
+  type UserContext,
 } from '@metahuman/core';
 import { personaCommand } from './commands/persona.js';
 import { adapterCommand } from './commands/adapter.js';
@@ -225,7 +231,9 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
     }
 
     console.log(`• Starting ${agentName}...`);
-    const child = spawn('tsx', [agentPath, '--quiet'], {
+    // Use bootstrap wrapper to establish user context for agents
+    const bootstrapPath = `${paths.brain}/agents/_bootstrap.ts`;
+    const child = spawn('tsx', [bootstrapPath, agentName], {
       detached: true,
       stdio: 'ignore',
       cwd: paths.root,
@@ -909,11 +917,28 @@ Indexing:
 Guide:
   guide               Show path to the user guide
 
+Multi-User Management:
+  user list           List all registered users
+  user whoami         Show current user context
+  user info <name>    Show detailed info for a user
+
+Multi-User Usage:
+  --user <name>       Run command as specific user (or -u)
+
 Examples:
   mh chat
   mh capture "Met with Sarah about ML project"
   mh agent run organizer
   mh ollama pull phi3:mini
+
+  mh --user alice capture "Had coffee with Bob"
+  mh -u bob task add "Review PR"
+  mh user list
+
+Security:
+  - Admin users (ADMIN_USERS in .env) can modify system files
+  - Regular users can only modify files in their own profile
+  - All data isolated per user in profiles/<username>/
 
 For more information, see DESIGN.md and ARCHITECTURE.md
 `.trim());
@@ -958,7 +983,9 @@ For more information, see DESIGN.md and ARCHITECTURE.md
 
       console.log(`Spawning agent: ${agentName}...`);
 
-      const child = spawn('tsx', [agentPath], {
+      // Use bootstrap wrapper to establish user context for agents
+      const bootstrapPath = `${paths.brain}/agents/_bootstrap.ts`;
+      const child = spawn('tsx', [bootstrapPath, agentName], {
         stdio: 'inherit',
         cwd: paths.root,
         env: {
@@ -1544,11 +1571,178 @@ function voiceCmd(args: string[]): void {
   }
 }
 
-async function main() {
-  const [, , command = 'help', ...args] = process.argv;
+/**
+ * Extract --user flag from arguments
+ * Returns { username, filteredArgs }
+ */
+function extractUserFlag(args: string[]): { username: string | null; filteredArgs: string[] } {
+  const userFlagIndex = args.findIndex(arg => arg === '--user' || arg === '-u');
 
-  try {
-    switch (command) {
+  if (userFlagIndex === -1) {
+    return { username: null, filteredArgs: args };
+  }
+
+  const username = args[userFlagIndex + 1];
+  if (!username || username.startsWith('-')) {
+    console.error('Error: --user flag requires a username');
+    process.exit(1);
+  }
+
+  // Remove --user and username from args
+  const filteredArgs = [
+    ...args.slice(0, userFlagIndex),
+    ...args.slice(userFlagIndex + 2)
+  ];
+
+  return { username, filteredArgs };
+}
+
+/**
+ * User management commands
+ */
+function userCmd(args: string[]): void {
+  const [subcommand, ...subargs] = args;
+
+  switch (subcommand) {
+    case 'list': {
+      const users = listUsers();
+      console.log('\nRegistered Users:');
+      console.log('─'.repeat(50));
+
+      if (users.length === 0) {
+        console.log('No users registered yet.');
+        console.log('\nTo register a new user, use the web UI at http://localhost:4321');
+        return;
+      }
+
+      const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim());
+
+      for (const user of users) {
+        const isAdmin = adminUsers.includes(user.username);
+        const badge = isAdmin ? ' [ADMIN]' : '';
+        const roleColor = user.role === 'owner' ? '\x1b[35m' : '\x1b[36m';  // Purple for owner, cyan for guest
+        const reset = '\x1b[0m';
+
+        console.log(`${roleColor}●${reset} ${user.username}${badge}`);
+        console.log(`  Role: ${user.role}`);
+        console.log(`  ID: ${user.id}`);
+        if (user.lastLogin) {
+          console.log(`  Last Login: ${new Date(user.lastLogin).toLocaleString()}`);
+        }
+        console.log('');
+      }
+      break;
+    }
+
+    case 'whoami': {
+      const ctx = getUserContext();
+      if (!ctx) {
+        console.log('No user context active (running as system/root)');
+        console.log('Use --user <username> to run commands as a specific user');
+        return;
+      }
+
+      console.log('\nCurrent User Context:');
+      console.log('─'.repeat(50));
+      console.log(`Username: ${ctx.username}`);
+      console.log(`User ID: ${ctx.userId}`);
+      console.log(`Role: ${ctx.role}`);
+
+      const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim());
+      if (adminUsers.includes(ctx.username)) {
+        console.log(`Admin: Yes`);
+      }
+      break;
+    }
+
+    case 'info': {
+      const username = subargs[0];
+      if (!username) {
+        console.error('Error: user info requires a username');
+        console.error('Usage: mh user info <username>');
+        process.exit(1);
+      }
+
+      const user = getUserByUsername(username);
+      if (!user) {
+        console.error(`Error: User '${username}' not found`);
+        process.exit(1);
+      }
+
+      const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim());
+      const isAdmin = adminUsers.includes(user.username);
+
+      console.log(`\nUser: ${user.username}`);
+      console.log('─'.repeat(50));
+      console.log(`ID: ${user.id}`);
+      console.log(`Role: ${user.role}`);
+      console.log(`Admin: ${isAdmin ? 'Yes' : 'No'}`);
+      console.log(`Created: ${new Date(user.createdAt).toLocaleString()}`);
+      if (user.lastLogin) {
+        console.log(`Last Login: ${new Date(user.lastLogin).toLocaleString()}`);
+      }
+      if (user.metadata?.displayName) {
+        console.log(`Display Name: ${user.metadata.displayName}`);
+      }
+      if (user.metadata?.email) {
+        console.log(`Email: ${user.metadata.email}`);
+      }
+
+      // Show profile path
+      const profilePath = path.join(paths.root, 'profiles', username);
+      if (fs.existsSync(profilePath)) {
+        console.log(`\nProfile Path: ${profilePath}`);
+      }
+      break;
+    }
+
+    default:
+      console.log('User Management Commands:');
+      console.log('  mh user list          List all registered users');
+      console.log('  mh user whoami        Show current user context');
+      console.log('  mh user info <name>   Show detailed info for a user');
+      console.log('');
+      console.log('Multi-User CLI Usage:');
+      console.log('  mh --user <username> <command>    Run command as specific user');
+      console.log('  mh -u <username> <command>        Short form');
+      console.log('');
+      console.log('Examples:');
+      console.log('  mh --user alice capture "Had coffee with Bob"');
+      console.log('  mh -u bob task add "Review PR"');
+      console.log('  mh --user charlie remember "project"');
+  }
+}
+
+async function main() {
+  // Extract --user flag before parsing command
+  const allArgs = process.argv.slice(2);
+  const { username, filteredArgs } = extractUserFlag(allArgs);
+  const [command = 'help', ...args] = filteredArgs;
+
+  // If --user flag is provided, set up user context
+  let userContext: UserContext | null = null;
+  if (username) {
+    const user = getUserByUsername(username);
+    if (!user) {
+      console.error(`Error: User '${username}' not found`);
+      console.error('\nRun: mh user list  (to see all users)');
+      process.exit(1);
+    }
+
+    userContext = {
+      userId: user.id,
+      username: user.username,
+      role: user.role,
+    };
+
+    // Show context info for clarity
+    console.log(`\x1b[36m→ Running as user: ${username}\x1b[0m\n`);
+  }
+
+  // Execute command (wrap with context if provided)
+  const executeCommand = async () => {
+    try {
+      switch (command) {
       case 'start': {
         const restart = args.includes('--restart') || args.includes('-r') || args.length === 0;
         const force = args.includes('--force') || args.includes('-f');
@@ -1609,6 +1803,9 @@ async function main() {
       case 'voice':
         voiceCmd(args);
         break;
+      case 'user':
+        userCmd(args);
+        break;
       case 'help':
       case '--help':
       case '-h':
@@ -1618,10 +1815,18 @@ async function main() {
         console.error(`Unknown command: ${command}`);
         console.error('Run: mh help');
         process.exit(1);
+      }
+    } catch (error) {
+      console.error('Error:', (error as Error).message);
+      process.exit(1);
     }
-  } catch (error) {
-    console.error('Error:', (error as Error).message);
-    process.exit(1);
+  };
+
+  // Wrap with user context if provided
+  if (userContext) {
+    await withUserContext(userContext, executeCommand);
+  } else {
+    await executeCommand();
   }
 }
 

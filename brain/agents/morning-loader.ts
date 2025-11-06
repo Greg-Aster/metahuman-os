@@ -11,7 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, audit, acquireLock, isLocked, releaseLock, setActiveAdapter, getActiveAdapter } from '../../packages/core/src/index.js';
+import { paths, audit, acquireLock, isLocked, setActiveAdapter, getActiveAdapter } from '../../packages/core/src/index.js';
 import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
 
 interface PersonaCore {
@@ -269,12 +269,13 @@ ADAPTER ${adapterPath}
  */
 async function run() {
   // Single-instance guard
+  let lockHandle;
   try {
     if (isLocked('agent-morning-loader')) {
       console.log('[morning-loader] Another instance is already running. Exiting.');
       return;
     }
-    acquireLock('agent-morning-loader');
+    lockHandle = acquireLock('agent-morning-loader');
   } catch {
     console.log('[morning-loader] Failed to acquire lock. Exiting.');
     return;
@@ -343,7 +344,9 @@ async function run() {
       actor: 'morning-loader',
     });
   } finally {
-    releaseLock('agent-morning-loader');
+    if (lockHandle) {
+      lockHandle.release();
+    }
   }
 }
 

@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { paths } from '@metahuman/core'
 import { getSecurityPolicy } from '../../../../../packages/core/src/security-policy.js'
+import { withUserContext } from '../../middleware/userContext'
 
 type EventItem = {
   id: string
@@ -15,7 +16,7 @@ type EventItem = {
   validation?: { status?: 'correct' | 'incorrect'; by?: string; timestamp?: string }
 }
 
-export const GET: APIRoute = async (context) => {
+const handler: APIRoute = async (context) => {
   try {
     // Require authentication to access memory data
     const policy = getSecurityPolicy(context);
@@ -71,3 +72,6 @@ export const GET: APIRoute = async (context) => {
     })
   }
 }
+
+// Wrap with user context middleware for automatic profile path resolution
+export const GET = withUserContext(handler)

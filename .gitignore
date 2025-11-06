@@ -16,6 +16,12 @@ build/
 # PERSONAL DATA - DO NOT COMMIT
 # ============================================
 
+# MULTI-USER PROFILES - All user data is private
+/profiles/**
+!/profiles/README.md
+!/profiles/.gitkeep
+
+# Legacy root-level personal data (for backward compatibility)
 # Personal persona configuration (keep templates only)
 /persona/core.json
 /persona/relationships.json

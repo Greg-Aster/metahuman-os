@@ -36,7 +36,7 @@
   async function handleLogout() {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
-      window.location.href = '/login';
+      window.location.href = '/';
     } catch (err) {
       console.error('[UserMenu] Logout failed:', err);
     }
@@ -118,7 +118,7 @@
     {/if}
   </div>
 {:else}
-  <a href="/login" class="login-link">Login</a>
+  <a href="/" class="login-link">Login</a>
 {/if}
 
 <style>

@@ -19,9 +19,10 @@
 
 ## Overview
 
-MetaHuman OS is a local-first digital personality extension that acts as a parallel intelligence—not an assistant. It:
-- Stores and processes your memories, tasks, and reflections locally as JSON
-- Learns your patterns and mirrors your judgment
+MetaHuman OS is a local-first digital personality extension that acts as a parallel intelligence—not an assistant. It now ships with a **multi-user architecture** and **guest-safe profile browsing**, allowing households or collaborators to access the OS without sharing memories. MetaHuman OS:
+- Stores and processes each user’s memories, persona, and configuration inside isolated profiles (`profiles/<username>/`)
+- Lets guests browse public personas in read-only emulation mode while keeping private data locked down
+- Learns your patterns and mirrors your judgment through proactive background agents
 - Operates autonomously (with your permission) 24/7
 - Uses local LLMs via Ollama for all AI processing
 - Maintains complete transparency with audit trails
@@ -55,17 +56,14 @@ This vision culminates in a digital entity that transcends its role as an assist
 
 ### Key Features
 
-- **Autonomous by Design**: A progressive trust model and autonomous agents (Organizer, Reflector, Dreamer) that work in the background.
-- **Multi-Model Architecture**: A "dual consciousness" approach using specialized AI models for executive function (Orchestrator) and conversational voice (Persona) for a more responsive and natural experience.
-- **Advanced Memory System**: A rich memory system with episodic, semantic, and procedural memory, browsable through a UI with 7 specialized tabs (Episodic, Reflections, Tasks, Curated, AI Ingestor, Audio, Dreams).
-- **Cognitive Modes**: Switch between three operational modes (`Dual Consciousness`, `Agent`, `Emulation`) to control system behavior, learning, and memory capture.
-- **Self-Healing Coder Agent**: A specialized agent that can write and modify the OS's own source code, with all changes requiring user approval via a dedicated UI.
-- **Local-First & Privacy-Focused**: All data, reasoning, and AI processing (via Ollama) happens on your local infrastructure.
-- **Continuous Learning via LoRA**: A "rolling merge" LoRA adaptation system to continuously learn from your memories and evolve the persona model over time.
-- **Comprehensive CLI & Web UI**: Interact with the system via a powerful CLI or a modern, real-time web interface with a dashboard, chat, task management, and more.
-- **Unified Security Policy**: A centralized security model with trust levels, directory boundaries, and a secure read-only "Emulation" mode.
-- **Audio Ingestion Pipeline**: A fully local pipeline to transcribe and process audio recordings into structured memories using `whisper.cpp`.
-- **Transparent & Auditable**: A complete, human-readable audit trail of all system decisions and actions.
+- **Multi-User Profiles**: Owners and guests receive isolated workspaces under `profiles/<username>/`. Shared Piper voice models live once under `out/voices`, while personal training data stays private.
+- **Guest Persona Browsing**: Visitors can create 30‑minute anonymous sessions, select from public personas, and explore them in emulation mode without risking writes.
+- **Autonomous by Design**: A progressive trust model and autonomous agents (Organizer, Reflector, Dreamer, Ingestor, etc.) that iterate across every registered user.
+- **Advanced Memory System**: Episodic, reflection, task, curated, AI ingestor, audio, and dream streams are all browsable in the web UI—each scoped to the active profile.
+- **Cognitive Modes**: Switch between `Dual Consciousness`, `Agent`, and `Emulation` to control system behaviour, learning, and memory capture. High-security and “wetware deceased” states restrict modes automatically.
+- **Local-First & Privacy-Focused**: All data, reasoning, and AI processing (via Ollama and local STT/TTS pipelines) happens on your infrastructure. Audit logs keep every action accountable.
+- **Voice & Audio Tooling**: Each user may collect training samples while referencing a shared library of Piper voices. Voice settings now live in `profiles/<username>/etc/voice.json`.
+- **Comprehensive CLI & Web UI**: Interact through a powerful CLI (`./bin/mh`) or modern web interface featuring chat, dashboards, memory tools, voice controls, and system configuration.
+- **Unified Security Policy**: Centralized trust enforcement, per-user isolation, and strict anonymous-mode protections ensure guest browsing never leaks private data.
 
 ---
-

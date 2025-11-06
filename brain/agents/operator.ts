@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { callLLM, type RouterMessage, paths, audit, acquireLock, releaseLock, isLocked, loadPersonaCore, captureEvent } from '../../packages/core/src/index';
+import { callLLM, type RouterMessage, paths, audit, acquireLock, isLocked, loadPersonaCore, captureEvent } from '../../packages/core/src/index';
 import { initializeSkills } from '../skills/index';
 import {
   listSkills,

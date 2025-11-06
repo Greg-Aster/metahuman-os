@@ -3,11 +3,11 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { paths } from '@metahuman/core';
 import { requireWriteMode } from '../../middleware/cognitiveModeGuard';
-
-const PERSONA_CORE_PATH = path.join(paths.root, 'persona', 'core.json');
+import { withUserContext } from '../../middleware/userContext';
 
 async function readPersonaCore() {
-  const raw = await fs.readFile(PERSONA_CORE_PATH, 'utf-8');
+  // Use context-aware paths.personaCore which resolves to user profile
+  const raw = await fs.readFile(paths.personaCore, 'utf-8');
   return JSON.parse(raw);
 }
 
@@ -24,7 +24,7 @@ function sanitizeArray(input: any, separator = ',') {
   return [];
 }
 
-export const GET: APIRoute = async () => {
+const getHandler: APIRoute = async () => {
   try {
     const persona = await readPersonaCore();
     return new Response(JSON.stringify({ success: true, persona }), {
@@ -83,7 +83,8 @@ const postHandler: APIRoute = async ({ request }) => {
 
     persona.lastUpdated = new Date().toISOString();
 
-    await fs.writeFile(PERSONA_CORE_PATH, JSON.stringify(persona, null, 2) + '\n', 'utf-8');
+    // Use context-aware paths.personaCore which resolves to user profile
+    await fs.writeFile(paths.personaCore, JSON.stringify(persona, null, 2) + '\n', 'utf-8');
 
     return new Response(JSON.stringify({ success: true, persona }), {
       status: 200,
@@ -98,5 +99,6 @@ const postHandler: APIRoute = async ({ request }) => {
   }
 };
 
-// Wrap with cognitive mode guard
-export const POST = requireWriteMode(postHandler);
+// Wrap with user context middleware and cognitive mode guard
+export const GET = withUserContext(getHandler);
+export const POST = withUserContext(requireWriteMode(postHandler));

@@ -22,7 +22,7 @@ const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, '..', '..');
 
 // Import from core
-import { paths, audit, auditAction, callLLM, type RouterMessage, acquireLock, releaseLock, isLocked, initGlobalLogger } from '@metahuman/core';
+import { paths, audit, auditAction, callLLM, type RouterMessage, acquireLock, isLocked, initGlobalLogger } from '@metahuman/core';
 
 interface EpisodicMemory {
   id: string;
@@ -272,8 +272,9 @@ async function main() {
     process.exit(0);
   }
 
+  let lockHandle;
   try {
-    acquireLock(lockName);
+    lockHandle = acquireLock(lockName);
 
     auditAction({
       event: 'curator_started',
@@ -347,7 +348,9 @@ async function main() {
     });
     process.exit(1);
   } finally {
-    releaseLock(lockName);
+    if (lockHandle) {
+      lockHandle.release();
+    }
   }
 }
 

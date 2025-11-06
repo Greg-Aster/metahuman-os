@@ -5,6 +5,9 @@ import { getSecurityPolicy, getPermissionSummary } from '@metahuman/core/securit
  * Get current security policy for the UI
  *
  * Returns all permission flags so UI can reactively show/hide features
+ *
+ * NOTE: This endpoint is safe for anonymous users - it returns restricted
+ * permissions that block all write operations.
  */
 export const GET: APIRoute = async (context) => {
   try {

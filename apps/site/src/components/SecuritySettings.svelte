@@ -435,7 +435,7 @@
       </svg>
       <h2>Authentication Required</h2>
       <p>Please login to access security settings</p>
-      <a href="/login" class="login-button">Go to Login</a>
+      <a href="/" class="login-button">Go to Login</a>
     </div>
   {:else}
     {#if error}

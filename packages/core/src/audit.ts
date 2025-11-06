@@ -1,6 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { paths, timestamp } from './paths.js';
+import { getUserContext } from './context.js';
+
+/**
+ * Audit Module - Activity Logging
+ *
+ * All audit logs automatically use context-aware paths.
+ * When user context is set, logs go to profiles/{username}/logs/audit/
+ * When no context is set, logs go to root-level logs/audit/ (system logs)
+ */
 
 export interface AuditEntry {
   timestamp: string;
@@ -8,7 +17,8 @@ export interface AuditEntry {
   category: 'system' | 'decision' | 'action' | 'security' | 'data';
   event: string;
   details?: any;
-  actor?: string; // 'human' | 'system' | 'agent' or specific agent/service name
+  actor?: string; // 'human' | 'system' | 'agent' or specific agent/service name or username
+  userId?: string; // NEW: Track which user performed the action
 }
 
 export interface AuditLog {
@@ -22,14 +32,23 @@ export interface AuditLog {
 
 /**
  * Write an audit entry to the audit log
+ *
+ * Automatically includes userId from current context if available.
+ * paths.logs automatically resolves to user profile if context is set.
  */
 export function audit(entry: Omit<AuditEntry, 'timestamp'>): void {
+  // Get current user context (if any)
+  const ctx = getUserContext();
+
   const fullEntry: AuditEntry = {
     timestamp: timestamp(),
     ...entry,
+    // Auto-include userId if not explicitly provided and context exists
+    userId: entry.userId ?? ctx?.userId,
   };
 
   const date = new Date().toISOString().slice(0, 10);
+  // paths.logs automatically resolves to user profile or root based on context
   const logFile = path.join(paths.logs, 'audit', `${date}.ndjson`);
 
   fs.mkdirSync(path.dirname(logFile), { recursive: true });

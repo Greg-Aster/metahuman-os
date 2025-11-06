@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { paths, audit } from '@metahuman/core';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
+import { withUserContext } from '../../middleware/userContext';
 
 function resolvePath(relPath: string): string {
   const absolute = path.resolve(paths.root, relPath);
@@ -12,7 +13,7 @@ function resolvePath(relPath: string): string {
   return absolute;
 }
 
-export const GET: APIRoute = async (context) => {
+const getHandler: APIRoute = async (context) => {
   try {
     const relPath = context.url.searchParams.get('relPath');
     if (!relPath) {
@@ -75,7 +76,7 @@ export const GET: APIRoute = async (context) => {
   }
 };
 
-export const PUT: APIRoute = async (context) => {
+const putHandler: APIRoute = async (context) => {
   try {
     // Check write permissions
     const policy = getSecurityPolicy(context);
@@ -148,3 +149,7 @@ export const PUT: APIRoute = async (context) => {
     );
   }
 };
+
+// Wrap with user context middleware for automatic profile path resolution
+export const GET = withUserContext(getHandler);
+export const PUT = withUserContext(putHandler);

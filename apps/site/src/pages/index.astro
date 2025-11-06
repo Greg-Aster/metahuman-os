@@ -4,7 +4,7 @@ import LeftSidebar from '../components/LeftSidebar.svelte';
 import RightSidebar from '../components/RightSidebar.svelte';
 import CenterContent from '../components/CenterContent.svelte';
 import ThemeToggle from '../components/ThemeToggle.astro';
-import SplashScreen from '../components/SplashScreen.svelte';
+import AuthGate from '../components/AuthGate.svelte';
 import '../styles/tailwind.css';
 ---
 
@@ -35,10 +35,10 @@ import '../styles/tailwind.css';
     </script>
   </head>
   <body>
-    <!-- Welcome Modal (shown on first visit) -->
-    <SplashScreen client:only="svelte" />
+    <!-- Authentication Gate (blocks access until logged in) -->
+    <AuthGate client:only="svelte" />
 
-    <!-- Main Application (show immediately, no blocking) -->
+    <!-- Main Application -->
     <div id="main-app">
       <ChatLayout client:load>
         <ThemeToggle slot="header-actions" />

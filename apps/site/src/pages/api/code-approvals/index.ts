@@ -6,7 +6,9 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
+import { getUserContext } from '@metahuman/core/context';
 import { paths } from '@metahuman/core/paths';
+import { withUserContext } from '../../../middleware/userContext';
 
 interface StagedCodeChange {
   filePath: string;
@@ -21,8 +23,20 @@ interface StagedCodeChange {
   rejectedAt?: string;
 }
 
-export const GET: APIRoute = async () => {
+const handler: APIRoute = async () => {
   try {
+    const ctx = getUserContext();
+
+    if (!ctx || ctx.role === 'anonymous') {
+      return new Response(
+        JSON.stringify({ error: 'Authentication required to view code approvals.' }),
+        {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
     const stagingDir = path.join(paths.out, 'code-drafts');
 
     if (!fs.existsSync(stagingDir)) {
@@ -77,3 +91,5 @@ export const GET: APIRoute = async () => {
     });
   }
 };
+
+export const GET = withUserContext(handler);

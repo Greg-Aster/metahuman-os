@@ -1,5 +1,20 @@
 
-import { callLLM, type RouterMessage, captureEvent, searchMemory, paths, audit, listActiveTasks, loadPersonaCore, ollama, acquireLock, releaseLock, isLocked, initGlobalLogger } from '../../packages/core/src/index';
+import {
+  callLLM,
+  type RouterMessage,
+  captureEvent,
+  searchMemory,
+  paths,
+  audit,
+  listActiveTasks,
+  loadPersonaCore,
+  ollama,
+  acquireLock,
+  isLocked,
+  initGlobalLogger,
+  listUsers,
+  withUserContext,
+} from '../../packages/core/src/index';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -196,29 +211,11 @@ async function getAssociativeMemoryChain(chainLength: number = 3): Promise<any[]
   return chain;
 }
 
-async function run() {
-  initGlobalLogger('reflector');
-  // Single-instance guard for short-run reflector
-  try {
-    if (isLocked('agent-reflector')) {
-      console.log('[reflector] Another instance is already running. Exiting.');
-      return;
-    }
-    acquireLock('agent-reflector');
-  } catch {
-    console.log('[reflector] Failed to acquire lock. Exiting.');
-    return;
-  }
-  console.log('[reflector] Waking up to ponder...');
-
-  // Audit: Starting reflection
-  audit({
-    category: 'action',
-    level: 'info',
-    message: 'Reflector agent starting idle reflection cycle',
-    actor: 'reflector',
-    metadata: { action: 'reflection_start' }
-  });
+/**
+ * Generate reflection for a single user
+ */
+async function generateUserReflection(username: string): Promise<boolean> {
+  console.log(`[reflector] Processing user: ${username}`);
 
   // Use associative train of thought: 3-5 linked memories
   const chainLength = Math.floor(Math.random() * 3) + 3; // 3 to 5 memories
@@ -486,14 +483,109 @@ Compose an extended conclusion (2–3 sentences, <= 120 words) that captures the
       });
     }
   } catch (error) {
-    console.error('[reflector] Error while generating reflection:', error);
+    console.error(`[reflector] Error generating reflection for ${username}:`, error);
     audit({
       category: 'system',
       level: 'error',
-      message: `Reflector agent error: ${(error as Error).message}`,
+      message: `Reflector agent error for ${username}: ${(error as Error).message}`,
       actor: 'reflector',
-      metadata: { error: (error as Error).stack }
+      metadata: { error: (error as Error).stack, username }
     });
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Main entry point (multi-user)
+ */
+async function run() {
+  initGlobalLogger('reflector');
+
+  // Single-instance guard
+  let lock;
+  try {
+    if (isLocked('agent-reflector')) {
+      console.log('[reflector] Another instance is already running. Exiting.');
+      return;
+    }
+    lock = acquireLock('agent-reflector');
+  } catch {
+    console.log('[reflector] Failed to acquire lock. Exiting.');
+    return;
+  }
+
+  console.log('[reflector] Waking up to ponder (multi-user)...');
+
+  // Audit: Starting reflection cycle
+  audit({
+    category: 'action',
+    level: 'info',
+    message: 'Reflector agent starting idle reflection cycle (multi-user)',
+    actor: 'reflector',
+    metadata: { action: 'reflection_start', mode: 'multi-user' }
+  });
+
+  // Preflight: ensure Ollama is available
+  const running = await ollama.isRunning();
+  if (!running) {
+    console.warn('[reflector] Ollama is not running; skipping reflection cycle. Start with: ollama serve');
+    audit({
+      category: 'system',
+      level: 'warn',
+      message: 'Reflector skipped: Ollama not running',
+      actor: 'reflector',
+    });
+    lock.release();
+    return;
+  }
+
+  try {
+    // Get all users
+    const users = listUsers();
+    console.log(`[reflector] Found ${users.length} users to process`);
+
+    let successCount = 0;
+
+    // Process each user with isolated context
+    for (const user of users) {
+      try {
+        // Run with user context for automatic path resolution
+        const success = await withUserContext(
+          { userId: user.id, username: user.username, role: user.role },
+          async () => {
+            return await generateUserReflection(user.username);
+          }
+        );
+        // Context automatically cleaned up - no leakage to next user
+
+        if (success) {
+          successCount++;
+        }
+      } catch (error) {
+        console.error(`[reflector] Failed to process user ${user.username}:`, (error as Error).message);
+        // Continue with next user
+      }
+    }
+
+    console.log(`[reflector] Cycle finished. Generated ${successCount} reflections across ${users.length} users. ✅`);
+
+    // Audit completion
+    audit({
+      category: 'action',
+      level: 'info',
+      message: 'Reflector agent completed idle reflection cycle',
+      actor: 'reflector',
+      metadata: {
+        action: 'reflection_complete',
+        mode: 'multi-user',
+        successCount,
+        userCount: users.length,
+      }
+    });
+  } finally {
+    lock.release();
   }
 }
 

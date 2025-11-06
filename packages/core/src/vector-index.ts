@@ -3,6 +3,14 @@ import path from 'node:path'
 import { paths } from './paths.js'
 import { embedText, cosineSimilarity } from './embeddings.js'
 
+/**
+ * Vector Index Module - Semantic Search
+ *
+ * All index files automatically use context-aware paths.
+ * When user context is set, indexes go to profiles/{username}/memory/index/
+ * When no context is set, indexes go to root-level memory/index/ (backward compatible)
+ */
+
 export interface VectorIndexItem {
   id: string
   path: string

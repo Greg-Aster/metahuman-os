@@ -73,6 +73,12 @@ const CACHE_TTL = 60000; // 1 minute
 
 /**
  * Load and parse the model registry from etc/models.json
+ *
+ * NOTE: Uses context-aware paths.etc which resolves to:
+ * - profiles/{username}/etc/models.json when user context is set
+ * - etc/models.json at root when no context is set
+ *
+ * This allows each user to have their own base models and preferences!
  */
 export function loadModelRegistry(forceFresh = false): ModelRegistry {
   const now = Date.now();
@@ -82,7 +88,8 @@ export function loadModelRegistry(forceFresh = false): ModelRegistry {
     return cachedRegistry;
   }
 
-  const registryPath = path.join(paths.root, 'etc', 'models.json');
+  // paths.etc automatically resolves to user profile or root based on context
+  const registryPath = path.join(paths.etc, 'models.json');
 
   if (!fs.existsSync(registryPath)) {
     throw new Error(`Model registry not found at ${registryPath}`);

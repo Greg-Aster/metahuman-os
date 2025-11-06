@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro'
 import { captureEvent } from '@metahuman/core'
 import { requireWriteMode } from '../../middleware/cognitiveModeGuard'
 import { getSecurityPolicy } from '@metahuman/core/security-policy'
+import { withUserContext } from '../../middleware/userContext'
 
 const handler: APIRoute = async (context) => {
   try {
@@ -29,6 +30,6 @@ const handler: APIRoute = async (context) => {
   }
 }
 
-// Wrap with cognitive mode guard
-export const POST = requireWriteMode(handler)
+// Wrap with user context (sets user profile paths) and cognitive mode guard (checks permissions)
+export const POST = withUserContext(requireWriteMode(handler))
 

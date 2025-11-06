@@ -34,7 +34,7 @@ let config: VoiceTrainingConfig | null = null;
 function loadConfig(): VoiceTrainingConfig {
   // Always read fresh so runtime updates to etc/voice.json take effect immediately
   try {
-    const configPath = path.join(paths.root, 'etc', 'voice.json');
+    const configPath = paths.voiceConfig;
     const voiceConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     config = voiceConfig.training || null;
   } catch {
@@ -56,7 +56,7 @@ function loadConfig(): VoiceTrainingConfig {
  * Get voice training data directory
  */
 function getTrainingDir(): string {
-  const dir = path.join(paths.root, 'out', 'voice-training', 'recordings');
+  const dir = paths.voiceTraining;
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -316,7 +316,7 @@ export function deleteVoiceSample(id: string): boolean {
  */
 export function exportTrainingDataset(): string {
   const trainingDir = getTrainingDir();
-  const exportDir = path.join(paths.root, 'out', 'voice-training', 'dataset');
+  const exportDir = paths.voiceDataset;
 
   if (!fs.existsSync(exportDir)) {
     fs.mkdirSync(exportDir, { recursive: true });

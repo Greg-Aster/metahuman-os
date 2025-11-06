@@ -5,6 +5,7 @@ import { readFileSync, existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { initializeSkills } from '../../../../../brain/skills/index';
 import { getAvailableSkills, executeSkill, type SkillManifest } from '@metahuman/core/skills';
+import { withUserContext } from '../../middleware/userContext';
 
 type Role = 'system' | 'user' | 'assistant';
 type Mode = 'inner' | 'conversation';
@@ -309,7 +310,8 @@ function refreshSystemPrompt(mode: Mode, includePersonaSummary = true): void {
   }
 }
 
-export const GET: APIRoute = async (context) => {
+// Wrap GET and POST with user context middleware for automatic profile path resolution
+export const GET: APIRoute = withUserContext(async (context) => {
   const { request, cookies } = context;
   const url = new URL(request.url);
   const message = url.searchParams.get('message') || '';
@@ -338,13 +340,13 @@ export const GET: APIRoute = async (context) => {
   }
 
   return handleChatRequest({ message, mode, newSession, audience, length, reason, reasoningDepth, llm, forceOperator, yolo, origin: url.origin, cookies });
-};
+});
 
-export const POST: APIRoute = async ({ request, cookies }) => {
+export const POST: APIRoute = withUserContext(async ({ request, cookies }) => {
   const url = new URL(request.url);
   const body = await request.json();
   return handleChatRequest({ ...body, origin: url.origin, cookies });
-};
+});
 
 // DEPRECATED: This function is no longer used.
 // The unified reasoning layer (ReAct operator) now handles ALL requests from authenticated users.

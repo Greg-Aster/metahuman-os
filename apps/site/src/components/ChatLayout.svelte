@@ -207,7 +207,7 @@
   async function handleLogout() {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
-      window.location.href = '/login';
+      window.location.href = '/';
     } catch (err) {
       console.error('[ChatLayout] Logout failed:', err);
     }
@@ -381,7 +381,7 @@
               </button>
             {:else}
               <a
-                href="/login"
+                href="/"
                 class="block px-4 py-3 text-sm text-center text-white bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 transition-all font-semibold no-underline"
               >
                 Login

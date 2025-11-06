@@ -29,7 +29,6 @@ import {
   callLLM,
   type RouterMessage,
   acquireLock,
-  releaseLock,
   isLocked,
   initGlobalLogger,
   loadPersonaCache,
@@ -226,8 +225,9 @@ async function main() {
     process.exit(0);
   }
 
+  let lockHandle;
   try {
-    acquireLock(lockName);
+    lockHandle = acquireLock(lockName);
 
     auditAction({
       event: 'digest_started',
@@ -281,7 +281,9 @@ async function main() {
     });
     process.exit(1);
   } finally {
-    releaseLock(lockName);
+    if (lockHandle) {
+      lockHandle.release();
+    }
   }
 }
 

@@ -24,7 +24,13 @@ export interface CognitiveModeConfig {
   history?: Array<{ mode: CognitiveModeId; changedAt: string; actor?: string }>;
 }
 
-const MODE_CONFIG_PATH = path.join(paths.persona, 'cognitive-mode.json');
+/**
+ * Get the path to the cognitive mode config file for the current user context.
+ * This must be a function call (not a constant) to resolve user context at runtime.
+ */
+function getModeConfigPath(): string {
+  return path.join(paths.persona, 'cognitive-mode.json');
+}
 
 const MODE_DEFINITIONS: Record<CognitiveModeId, CognitiveModeDefinition> = {
   dual: {
@@ -78,18 +84,26 @@ const MODE_DEFINITIONS: Record<CognitiveModeId, CognitiveModeDefinition> = {
 };
 
 function ensureConfig(): CognitiveModeConfig {
-  if (!fs.existsSync(MODE_CONFIG_PATH)) {
+  const configPath = getModeConfigPath();
+  if (!fs.existsSync(configPath)) {
     const fallback: CognitiveModeConfig = {
       currentMode: 'dual',
       lastChanged: new Date().toISOString(),
       history: [{ mode: 'dual', changedAt: new Date().toISOString(), actor: 'system' }],
     };
-    fs.writeFileSync(MODE_CONFIG_PATH, JSON.stringify(fallback, null, 2), 'utf-8');
+
+    // Ensure parent directory exists
+    const dir = path.dirname(configPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    fs.writeFileSync(configPath, JSON.stringify(fallback, null, 2), 'utf-8');
     return fallback;
   }
 
   try {
-    const raw = fs.readFileSync(MODE_CONFIG_PATH, 'utf-8');
+    const raw = fs.readFileSync(configPath, 'utf-8');
     const parsed = JSON.parse(raw) as CognitiveModeConfig;
     if (!parsed.currentMode || !(parsed.currentMode in MODE_DEFINITIONS)) {
       throw new Error('Invalid cognitive mode configuration');
@@ -101,7 +115,7 @@ function ensureConfig(): CognitiveModeConfig {
       lastChanged: new Date().toISOString(),
       history: [{ mode: 'dual', changedAt: new Date().toISOString(), actor: 'system' }],
     };
-    fs.writeFileSync(MODE_CONFIG_PATH, JSON.stringify(fallback, null, 2), 'utf-8');
+    fs.writeFileSync(configPath, JSON.stringify(fallback, null, 2), 'utf-8');
     return fallback;
   }
 }
@@ -134,7 +148,7 @@ export function saveCognitiveMode(nextMode: CognitiveModeId, actor: string = 'sy
     ],
   };
 
-  fs.writeFileSync(MODE_CONFIG_PATH, JSON.stringify(updated, null, 2), 'utf-8');
+  fs.writeFileSync(getModeConfigPath(), JSON.stringify(updated, null, 2), 'utf-8');
 
   audit({
     level: 'info',

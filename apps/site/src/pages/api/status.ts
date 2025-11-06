@@ -7,6 +7,8 @@ import { loadCognitiveMode } from '@metahuman/core/cognitive-mode';
 import { getIndexStatus } from '@metahuman/core/vector-index';
 import { listAvailableAgents, getProcessingStatus } from '@metahuman/core/agent-monitor';
 import { isRunning as isOllamaRunning } from '@metahuman/core/ollama';
+import { withUserContext } from '../../middleware/userContext';
+import { getUserContext } from '@metahuman/core/context';
 import fs from 'node:fs';
 import path from 'node:path';
 import { paths } from '@metahuman/core/paths';
@@ -16,8 +18,16 @@ import { paths } from '@metahuman/core/paths';
 const statusCache = new Map<string, { data: any; timestamp: number }>();
 const CACHE_TTL = 5000; // 5 seconds
 
-export const GET: APIRoute = async ({ cookies }) => {
+const handler: APIRoute = async ({ cookies }) => {
   try {
+    const ctx = getUserContext();
+    if (!ctx || ctx.role === 'anonymous') {
+      return new Response(
+        JSON.stringify({ error: 'Authentication required', authenticated: false }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     const now = Date.now();
 
     // Check authentication to determine effective cognitive mode
@@ -410,3 +420,6 @@ export const GET: APIRoute = async ({ cookies }) => {
     );
   }
 };
+
+// Wrap with user context middleware for automatic profile path resolution
+export const GET = withUserContext(handler);

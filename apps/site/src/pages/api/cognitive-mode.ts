@@ -11,8 +11,18 @@ import { getSecurityPolicy } from '@metahuman/core/security-policy';
 import { loadTrustCoupling, getMappedTrustLevel } from '@metahuman/core';
 import { setTrustLevel } from '@metahuman/core';
 import { auditConfigAccess, requireOwner } from '../../middleware/cognitiveModeGuard';
+import { withUserContext } from '../../middleware/userContext';
+import { getUserContext } from '@metahuman/core/context';
 
-export const GET: APIRoute = async (context) => {
+const getHandler: APIRoute = async (context) => {
+  const ctx = getUserContext();
+  if (!ctx || ctx.role === 'anonymous') {
+    return new Response(
+      JSON.stringify({ error: 'Authentication required to view cognitive mode.' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   const config = loadCognitiveMode();
   const modes = listCognitiveModes();
 
@@ -34,6 +44,14 @@ export const GET: APIRoute = async (context) => {
 
 const postHandler: APIRoute = async (context) => {
   try {
+    const ctx = getUserContext();
+    if (!ctx || ctx.role === 'anonymous') {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Authentication required to modify cognitive mode.' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     const { request } = context;
     const body = await request.json();
     const mode = String(body?.mode ?? '').toLowerCase() as CognitiveModeId;
@@ -104,7 +122,8 @@ const postHandler: APIRoute = async (context) => {
   }
 };
 
-// Wrap with owner-only guard (blocks mode switching for non-owners)
+// Wrap with user context middleware and owner-only guard (blocks mode switching for non-owners)
 // NOTE: Currently everyone is 'anonymous' until auth is implemented
 // Once auth is added, only authenticated owners can switch modes
-export const POST = requireOwner(postHandler);
+export const GET = withUserContext(getHandler);
+export const POST = withUserContext(requireOwner(postHandler));

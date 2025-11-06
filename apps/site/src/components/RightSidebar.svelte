@@ -33,9 +33,6 @@
   let loraToggling = false
   let resettingFactory = false
 
-  // UI preferences
-  let showWelcomeModal = true;
-
   // Logging configuration
   type LogLevel = 'error' | 'warn' | 'info' | 'debug';
   let logLevel: LogLevel = 'info';
@@ -74,23 +71,6 @@
     } catch (e) {
       console.error('Failed to fetch LoRA config:', e);
     }
-  }
-
-  function loadUIPreferences() {
-    try {
-      const hideModal = localStorage.getItem('hideWelcomeModal');
-      showWelcomeModal = hideModal !== 'true';
-    } catch (e) {
-      console.error('Failed to load UI preferences:', e);
-    }
-  }
-
-  function toggleWelcomeModal() {
-    showWelcomeModal = !showWelcomeModal;
-    localStorage.setItem('hideWelcomeModal', showWelcomeModal ? 'false' : 'true');
-
-    // Dispatch event to notify SplashScreen component
-    window.dispatchEvent(new CustomEvent('welcomeModalToggle', { detail: { show: showWelcomeModal } }));
   }
 
   async function fetchLoggingConfig() {
@@ -220,7 +200,6 @@
       if (typeof o.num_ctx === 'number') llmNumCtx = o.num_ctx;
       if (typeof o.num_predict === 'number') llmNumPredict = o.num_predict;
     } catch {}
-    loadUIPreferences();
     fetchModelInfo();
     fetchLoraConfig();
     fetchLoggingConfig();

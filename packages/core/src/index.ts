@@ -37,6 +37,13 @@ export * from './context-builder';
 export * from './cognitive-layers';
 export * from './agent-scheduler';
 
+// Multi-user system (Phase 2)
+export * from './context';
+export * from './config';
+export * from './users';
+export * from './sessions';
+export * from './profile';
+
 // Version
 export const VERSION = '0.1.0';
-export const PHASE = 'Phase 1-2: Intelligence & Autonomy';
+export const PHASE = 'Phase 1-2: Intelligence & Autonomy (Multi-User)';

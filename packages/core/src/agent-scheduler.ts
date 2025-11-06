@@ -94,14 +94,19 @@ export class AgentScheduler extends EventEmitter {
   private static instance: AgentScheduler | null = null;
   private config: SchedulerConfig | null = null;
   private agents: Map<string, AgentState> = new Map();
-  private configPath: string;
   private running: boolean = false;
   private activityTimer?: NodeJS.Timeout;
   private lastActivity: Date = new Date();
 
+  /**
+   * Get config file path (lazy evaluation to allow user context resolution)
+   */
+  private get configPath(): string {
+    return path.join(paths.etc, 'agents.json');
+  }
+
   private constructor() {
     super();
-    this.configPath = path.join(paths.etc, 'agents.json');
   }
 
   /**

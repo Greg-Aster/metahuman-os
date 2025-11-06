@@ -7,11 +7,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { paths } from '@metahuman/core/paths';
 import { audit } from '@metahuman/core/audit';
+import { withUserContext } from '../../middleware/userContext';
 
-const facetsPath = path.join(paths.persona, 'facets.json');
-
-export const GET: APIRoute = async () => {
+const getHandler: APIRoute = async () => {
   try {
+    // Use context-aware paths.personaFacets which resolves to user profile
+    const facetsPath = paths.personaFacets;
     if (!fs.existsSync(facetsPath)) {
       return new Response(
         JSON.stringify({ activeFacet: 'default', facets: {} }),
@@ -37,7 +38,7 @@ export const GET: APIRoute = async () => {
   }
 };
 
-export const POST: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ request }) => {
   try {
     const body = await request.json();
     const { facet } = body;
@@ -49,6 +50,8 @@ export const POST: APIRoute = async ({ request }) => {
       );
     }
 
+    // Use context-aware paths.personaFacets which resolves to user profile
+    const facetsPath = paths.personaFacets;
     // Load current facets config
     if (!fs.existsSync(facetsPath)) {
       return new Response(
@@ -113,3 +116,7 @@ export const POST: APIRoute = async ({ request }) => {
     );
   }
 };
+
+// Wrap with user context middleware for automatic profile path resolution
+export const GET = withUserContext(getHandler);
+export const POST = withUserContext(postHandler);
