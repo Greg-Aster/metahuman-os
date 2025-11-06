@@ -29,6 +29,7 @@ export interface User {
     displayName?: string;
     email?: string;
     onboardingState?: OnboardingState;
+    profileVisibility?: 'private' | 'public';
   };
 }
 
@@ -45,6 +46,7 @@ export interface SafeUser {
     displayName?: string;
     email?: string;
     onboardingState?: OnboardingState;
+    profileVisibility?: 'private' | 'public';
   };
 }
 
@@ -492,4 +494,44 @@ export function updateUserMetadata(
     details: { userId, metadata },
     actor: userId,
   });
+}
+
+/**
+ * List all public profiles (visible to guests)
+ */
+export function listVisibleProfiles(): SafeUser[] {
+  const store = loadUsers();
+  return store.users
+    .filter((u) => u.metadata?.profileVisibility === 'public')
+    .map(stripSensitiveFields);
+}
+
+/**
+ * Update profile visibility for a user
+ */
+export function updateProfileVisibility(
+  userId: string,
+  visibility: 'private' | 'public'
+): boolean {
+  const store = loadUsers();
+  const user = store.users.find((u) => u.id === userId);
+
+  if (!user) {
+    return false;
+  }
+
+  user.metadata = user.metadata || {};
+  user.metadata.profileVisibility = visibility;
+
+  saveUsers(store);
+
+  audit({
+    level: 'info',
+    category: 'security',
+    event: 'profile_visibility_changed',
+    details: { userId, username: user.username, visibility },
+    actor: userId,
+  });
+
+  return true;
 }

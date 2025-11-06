@@ -45,7 +45,50 @@ export const GET: APIRoute = async (context) => {
       );
     }
 
-    // Get user
+    // Handle anonymous sessions
+    if (session.role === 'anonymous') {
+      const activeProfile = session.metadata?.activeProfile;
+      const sourceProfile = session.metadata?.sourceProfile;
+
+      if (activeProfile && sourceProfile) {
+        // Guest has selected a public profile - return virtual user
+        return new Response(
+          JSON.stringify({
+            success: true,
+            user: {
+              id: session.userId,
+              username: 'anonymous',
+              role: 'anonymous',
+              metadata: {
+                displayName: `Guest viewing ${sourceProfile}`,
+                activeProfile: activeProfile,
+                sourceProfile: sourceProfile,
+              },
+            },
+            role: 'anonymous',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      } else {
+        // Anonymous without profile - not authenticated
+        return new Response(
+          JSON.stringify({
+            success: true,
+            user: null,
+            role: 'anonymous',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      }
+    }
+
+    // Get user for authenticated sessions
     const user = getUser(session.userId);
 
     if (!user) {

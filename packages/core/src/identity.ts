@@ -111,6 +111,7 @@ export function setTrustLevel(level: string): void {
  */
 export function loadPersonaWithFacet(): PersonaCore {
   try {
+    // Try to access paths.persona - will throw for anonymous users without profile
     const facetsPath = path.join(paths.persona, 'facets.json');
 
     // If no facets config, use core persona
@@ -157,6 +158,14 @@ export function loadPersonaWithFacet(): PersonaCore {
       },
     };
   } catch (error) {
+    // If error is about anonymous user access, throw it up to be handled silently
+    // Otherwise try to fall back to core persona
+    const errorMsg = (error as Error).message || '';
+    if (errorMsg.includes('Anonymous users cannot access')) {
+      throw error; // Let buildPersonaContext handle this silently
+    }
+
+    // For other errors, try loading core persona
     console.warn('[identity] Error loading faceted persona, using core:', error);
     return loadPersonaCore();
   }

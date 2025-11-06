@@ -51,10 +51,18 @@ export function withUserContext(handler: APIRoute): APIRoute {
         const user = getUser(session.userId);
 
         if (user) {
+          // Check if guest has selected a profile
+          const activeProfile = session.metadata?.activeProfile;
+
           // Run handler with user context using CURRENT role from database
           // This prevents stale privilege escalation
           return await runWithUserContext(
-            { userId: user.id, username: user.username, role: user.role },
+            {
+              userId: user.id,
+              username: user.username,
+              role: user.role,
+              activeProfile: activeProfile, // Pass selected profile for guests
+            },
             () => handler(context)
           );
         }

@@ -132,17 +132,24 @@ export const paths = new Proxy({} as ReturnType<typeof getProfilePaths> & typeof
     }
 
     // SECURITY: Block anonymous users from accessing user data paths
+    // UNLESS they have selected a public profile (guest mode)
     // Anonymous context = web request without login (intentional security block)
-    if (context && context.username === 'anonymous') {
+    if (context && context.username === 'anonymous' && !context.activeProfile) {
+      console.error('[paths] Access denied - context:', {
+        username: context.username,
+        activeProfile: context.activeProfile,
+        role: context.role
+      });
       throw new Error(
         `Access denied: Anonymous users cannot access user data paths. ` +
         `Attempted to access: paths.${prop}. ` +
-        `Please authenticate to access user-specific data.`
+        `Please authenticate or select a public profile to access data.`
       );
     }
 
-    // If we have authenticated user context, return user-specific paths
-    if (context && context.username !== 'anonymous') {
+    // If we have authenticated user context OR anonymous with selected profile,
+    // return user-specific paths
+    if (context && (context.username !== 'anonymous' || context.activeProfile)) {
       return context.profilePaths[prop as keyof typeof context.profilePaths];
     }
 

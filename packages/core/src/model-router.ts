@@ -108,7 +108,11 @@ function buildPersonaContext(): string {
 
     return parts.join('\n');
   } catch (error) {
-    console.warn('[model-router] Failed to load persona context:', error);
+    // Silently handle anonymous user errors (expected for warmup, guest sessions without profile)
+    const errorMsg = (error as Error).message || '';
+    if (!errorMsg.includes('Anonymous users cannot access')) {
+      console.warn('[model-router] Failed to load persona context:', error);
+    }
     return ''; // Fail silently - don't block LLM calls if persona can't be loaded
   }
 }

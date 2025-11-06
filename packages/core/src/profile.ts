@@ -382,6 +382,148 @@ export function profileExists(username: string): boolean {
 }
 
 /**
+ * Initialize guest profile
+ *
+ * Creates a dedicated guest profile at profiles/guest/ with minimal structure.
+ * This profile is used by all anonymous users and is locked to emulation mode.
+ */
+export async function initializeGuestProfile(): Promise<void> {
+  const guestRoot = path.join(paths.root, 'profiles', 'guest');
+
+  // If guest profile already exists, don't reinitialize
+  if (fs.existsSync(guestRoot)) {
+    return;
+  }
+
+  audit({
+    level: 'info',
+    category: 'system',
+    event: 'guest_profile_initialization_started',
+    details: { guestRoot },
+    actor: 'system',
+  });
+
+  try {
+    // Create minimal directory structure (no tasks, no inbox)
+    const dirs = [
+      path.join(guestRoot, 'memory', 'episodic'),
+      path.join(guestRoot, 'persona'),
+      path.join(guestRoot, 'etc'),
+      path.join(guestRoot, 'logs', 'audit'),
+    ];
+
+    for (const dir of dirs) {
+      await fs.ensureDir(dir);
+    }
+
+    // Create default guest persona (will be overwritten when profile is selected)
+    const guestPersona = {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      version: '1.0.0',
+      lastUpdated: new Date().toISOString(),
+      identity: {
+        name: 'Guest',
+        role: 'Temporary guest profile',
+        purpose: 'Explore public profiles in read-only mode',
+      },
+      personality: {
+        communicationStyle: {
+          tone: ['helpful', 'informative'],
+          verbosity: 'balanced',
+        },
+      },
+      values: { core: [] },
+      goals: { shortTerm: [], midTerm: [], longTerm: [] },
+    };
+
+    await fs.writeJson(path.join(guestRoot, 'persona', 'core.json'), guestPersona, { spaces: 2 });
+
+    // Lock cognitive mode to emulation
+    const cognitiveMode = {
+      currentMode: 'emulation' as const,
+      lastChanged: new Date().toISOString(),
+      locked: true, // Prevent mode changes
+      history: [{ mode: 'emulation' as const, changedAt: new Date().toISOString(), actor: 'system' }],
+    };
+
+    await fs.writeJson(path.join(guestRoot, 'persona', 'cognitive-mode.json'), cognitiveMode, { spaces: 2 });
+
+    // Create empty facets config
+    const facets = {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      version: '0.1.0',
+      lastUpdated: new Date().toISOString(),
+      activeFacet: 'default',
+      facets: { default: { name: 'Default', enabled: true, personaFile: 'core.json' } },
+    };
+
+    await fs.writeJson(path.join(guestRoot, 'persona', 'facets.json'), facets, { spaces: 2 });
+
+    audit({
+      level: 'info',
+      category: 'system',
+      event: 'guest_profile_initialized',
+      details: { guestRoot },
+      actor: 'system',
+    });
+  } catch (error) {
+    audit({
+      level: 'error',
+      category: 'system',
+      event: 'guest_profile_initialization_failed',
+      details: { guestRoot, error: (error as Error).message },
+      actor: 'system',
+    });
+    throw error;
+  }
+}
+
+/**
+ * Copy persona data from source profile to guest profile
+ *
+ * @param sourceUsername - Username of the public profile to copy from
+ */
+export async function copyPersonaToGuest(sourceUsername: string): Promise<void> {
+  const sourceRoot = path.join(paths.root, 'profiles', sourceUsername);
+  const guestRoot = path.join(paths.root, 'profiles', 'guest');
+
+  if (!fs.existsSync(sourceRoot)) {
+    throw new Error(`Source profile not found: ${sourceUsername}`);
+  }
+
+  // Ensure guest profile exists
+  await initializeGuestProfile();
+
+  try {
+    // Copy persona core.json
+    const sourceCoreJson = path.join(sourceRoot, 'persona', 'core.json');
+    const guestCoreJson = path.join(guestRoot, 'persona', 'core.json');
+
+    if (fs.existsSync(sourceCoreJson)) {
+      const personaData = await fs.readJson(sourceCoreJson);
+      await fs.writeJson(guestCoreJson, personaData, { spaces: 2 });
+    }
+
+    audit({
+      level: 'info',
+      category: 'system',
+      event: 'persona_copied_to_guest',
+      details: { sourceUsername, from: sourceCoreJson, to: guestCoreJson },
+      actor: 'system',
+    });
+  } catch (error) {
+    audit({
+      level: 'error',
+      category: 'system',
+      event: 'persona_copy_failed',
+      details: { sourceUsername, error: (error as Error).message },
+      actor: 'system',
+    });
+    throw error;
+  }
+}
+
+/**
  * Delete a user's profile (DANGEROUS - requires explicit confirmation)
  */
 export async function deleteProfile(username: string, confirm: boolean = false): Promise<void> {

@@ -12,7 +12,18 @@ import { withUserContext } from '../../middleware/userContext';
 const getHandler: APIRoute = async () => {
   try {
     // Use context-aware paths.personaFacets which resolves to user profile
-    const facetsPath = paths.personaFacets;
+    // For anonymous users without a profile, return default
+    let facetsPath: string;
+    try {
+      facetsPath = paths.personaFacets;
+    } catch (error) {
+      // Anonymous user without profile - return default
+      return new Response(
+        JSON.stringify({ activeFacet: 'default', facets: {} }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     if (!fs.existsSync(facetsPath)) {
       return new Response(
         JSON.stringify({ activeFacet: 'default', facets: {} }),
@@ -51,7 +62,18 @@ const postHandler: APIRoute = async ({ request }) => {
     }
 
     // Use context-aware paths.personaFacets which resolves to user profile
-    const facetsPath = paths.personaFacets;
+    // For anonymous users, deny write access
+    let facetsPath: string;
+    try {
+      facetsPath = paths.personaFacets;
+    } catch (error) {
+      // Anonymous user without profile - deny write
+      return new Response(
+        JSON.stringify({ error: 'Authentication required to change facets' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Load current facets config
     if (!fs.existsSync(facetsPath)) {
       return new Response(

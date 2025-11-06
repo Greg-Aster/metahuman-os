@@ -21,6 +21,7 @@ export interface CognitiveModeDefinition {
 export interface CognitiveModeConfig {
   currentMode: CognitiveModeId;
   lastChanged: string;
+  locked?: boolean; // If true, mode cannot be changed
   history?: Array<{ mode: CognitiveModeId; changedAt: string; actor?: string }>;
 }
 
@@ -134,6 +135,23 @@ export function loadCognitiveMode(): CognitiveModeConfig {
 
 export function saveCognitiveMode(nextMode: CognitiveModeId, actor: string = 'system'): CognitiveModeConfig {
   const config = ensureConfig();
+
+  // Check if mode is locked (e.g., for guest profiles)
+  if (config.locked) {
+    audit({
+      level: 'warn',
+      category: 'security',
+      event: 'cognitive_mode_change_blocked',
+      actor,
+      details: {
+        reason: 'Mode is locked',
+        currentMode: config.currentMode,
+        attemptedMode: nextMode,
+      },
+    });
+    throw new Error(`Cognitive mode is locked to ${config.currentMode} and cannot be changed`);
+  }
+
   if (config.currentMode === nextMode) {
     return config;
   }
@@ -142,6 +160,7 @@ export function saveCognitiveMode(nextMode: CognitiveModeId, actor: string = 'sy
   const updated: CognitiveModeConfig = {
     currentMode: nextMode,
     lastChanged: now,
+    locked: config.locked, // Preserve locked state
     history: [
       ...(config.history ?? []),
       { mode: nextMode, changedAt: now, actor },

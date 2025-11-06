@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './paths.js';
+import { paths, ROOT } from './paths.js';
 
 export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'fallback';
 export type ModelProvider = 'ollama' | 'openai' | 'local';
@@ -89,7 +89,14 @@ export function loadModelRegistry(forceFresh = false): ModelRegistry {
   }
 
   // paths.etc automatically resolves to user profile or root based on context
-  const registryPath = path.join(paths.etc, 'models.json');
+  // For anonymous users without a profile, fall back to system root
+  let registryPath: string;
+  try {
+    registryPath = path.join(paths.etc, 'models.json');
+  } catch (error) {
+    // Anonymous user without profile - use system root
+    registryPath = path.join(ROOT, 'etc', 'models.json');
+  }
 
   if (!fs.existsSync(registryPath)) {
     throw new Error(`Model registry not found at ${registryPath}`);

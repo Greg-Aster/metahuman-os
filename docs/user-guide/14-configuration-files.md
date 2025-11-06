@@ -109,7 +109,13 @@ All cognitive layer operations are fully logged to `logs/audit/YYYY-MM-DD.ndjson
 }
 ```
 
-### `persona/core.json` - Identity Kernel
+---
+
+## Profile Files (`profiles/<username>/…`)
+
+Unless stated otherwise, the following files reside inside the active user’s profile directory. Replace `<username>` with the owner or guest slug (e.g., `profiles/greggles/`).
+
+### `profiles/<username>/persona/core.json` - Identity Kernel
 Your digital personality's core identity:
 - `identity` - Name, role, purpose, avatar
 - `personality` - Communication style, Big Five traits, archetypes
@@ -119,7 +125,7 @@ Your digital personality's core identity:
 
 **Edit this file to customize your digital extension's personality.**
 
-### `persona/decision-rules.json` - Decision Policies
+### `profiles/<username>/persona/decision-rules.json` - Decision Policies
 Autonomy rules and preferences:
 - `trustLevel` - Current autonomy mode
 - `hardRules` - Inviolable constraints (never break these)
@@ -127,7 +133,7 @@ Autonomy rules and preferences:
 - `decisionHeuristics` - Decision frameworks (Eisenhower Matrix, etc.)
 - `riskLevels` - Risk categorization and escalation rules
 
-### `persona/routines.json` - Daily Patterns
+### `profiles/<username>/persona/routines.json` - Daily Patterns
 Sleep schedule and habits:
 ```json
 {
@@ -140,10 +146,10 @@ Sleep schedule and habits:
 }
 ```
 
-### `persona/relationships.json` - Key People
+### `profiles/<username>/persona/relationships.json` - Key People
 Important relationships and interaction patterns.
 
-### `etc/boredom.json` - Reflection Frequency
+### `profiles/<username>/etc/boredom.json` - Reflection Frequency
 Controls how often the reflector agent runs:
 ```json
 {
@@ -158,7 +164,7 @@ Controls how often the reflector agent runs:
 }
 ```
 
-### `etc/agent.json` - Default LLM Model
+### `profiles/<username>/etc/agent.json` - Default LLM Model
 Specifies which Ollama model to use for persona chat:
 ```json
 {
@@ -166,7 +172,7 @@ Specifies which Ollama model to use for persona chat:
 }
 ```
 
-### `etc/models.json` - Multi-Model Configuration
+### `profiles/<username>/etc/models.json` - Multi-Model Configuration
 Defines the roles and model assignments for the "Dual Consciousness" architecture. This file allows you to specify different models for different tasks, such as orchestration, persona conversation, and curation.
 
 ```json
@@ -191,7 +197,7 @@ Defines the roles and model assignments for the "Dual Consciousness" architectur
 }
 ```
 
-### `etc/auto-approval.json` - LoRA Quality Thresholds
+### `profiles/<username>/etc/auto-approval.json` - LoRA Quality Thresholds
 Configures auto-approval behavior for LoRA datasets:
 ```json
 {
@@ -202,10 +208,10 @@ Configures auto-approval behavior for LoRA datasets:
 }
 ```
 
-### `etc/ai-dataset-builder.json` - AI Dataset Builder Configuration
+### `profiles/<username>/etc/ai-dataset-builder.json` - AI Dataset Builder Configuration
 Controls the behavior of the advanced, AI-powered dataset builder. Use this file to adjust `maxMemories`, `chunkSize`, included sources, and word limits.
 
-### `etc/audio.json` - Audio Processing Configuration
+### `profiles/<username>/etc/audio.json` - Audio Processing Configuration
 Configures the audio transcription engine (`whisper.cpp`), including the model, device, and language to use.
 ```json
 {
@@ -218,7 +224,18 @@ Configures the audio transcription engine (`whisper.cpp`), including the model, 
 }
 ```
 
-### `etc/agents.json` - Agent Scheduler Configuration
+### `profiles/<username>/etc/voice.json` - Voice & TTS/STT Configuration
+Defines local text-to-speech (Piper) and speech-to-text (Whisper) defaults for the profile. Important fields:
+
+- `tts.piper.binary` – Path to the Piper executable (auto-normalised to `<repo>/bin/piper/piper` when missing).
+- `tts.piper.model` / `config` – Absolute paths into the shared `out/voices/` directory. When a profile-scoped path is detected, the voice settings API rewrites it to the shared location automatically.
+- `tts.piper.speakingRate` – Preferred speech rate (0.5 – 2.0).
+- `cache.directory` – Profile-specific cache (`profiles/<username>/out/voice-cache`).
+- `training` – Controls per-user voice cloning thresholds and quality filters.
+
+> Drop additional `.onnx` + `.json` voice pairs into `out/voices/` to make them immediately available to all profiles.
+
+### `profiles/<username>/etc/agents.json` - Agent Scheduler Configuration
 Controls the centralized agent scheduler system. This file defines all autonomous agents, their trigger types, and scheduling parameters.
 
 ```json
@@ -280,15 +297,15 @@ Controls the centralized agent scheduler system. This file defines all autonomou
 4. **event** (future): Runs agent when specific system events occur
 
 **Hot-Reloading:**
-The scheduler-service watches `etc/agents.json` for changes and automatically reloads configuration without restart. This allows you to:
+The scheduler-service watches `profiles/<username>/etc/agents.json` for changes and automatically reloads configuration without restart. This allows you to:
 - Enable/disable agents on the fly
 - Adjust intervals and schedules
 - Add new agents without downtime
 
 **Backward Compatibility:**
-The `boredom-service` (`etc/boredom.json`) continues to work and automatically syncs its configuration to the agent scheduler for the `reflector` and `boredom-maintenance` agents.
+The `boredom-service` (`profiles/<username>/etc/boredom.json`) continues to work and automatically syncs its configuration to the agent scheduler for the `reflector` and `boredom-maintenance` agents.
 
-### `etc/sleep.json` - Sleep & Dreaming Configuration
+### `profiles/<username>/etc/sleep.json` - Sleep & Dreaming Configuration
 Controls the nightly sleep window, dreaming system, and model adaptation:
 ```json
 {
@@ -321,4 +338,3 @@ Controls the nightly sleep window, dreaming system, and model adaptation:
 - `adapters.lora`: Enable Tier-2 LoRA training (requires GPU)
 
 ---
-

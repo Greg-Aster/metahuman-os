@@ -24,6 +24,8 @@ export interface Session {
   metadata?: {
     userAgent?: string;
     ip?: string;
+    activeProfile?: string; // Selected profile for guest users
+    [key: string]: any;
   };
 }
 
@@ -319,6 +321,19 @@ export function getSessionStats(): {
     oldest: sorted.length > 0 ? sorted[0].createdAt : null,
     newest: sorted.length > 0 ? sorted[sorted.length - 1].createdAt : null,
   };
+}
+
+/**
+ * Update session (save changes to metadata, etc.)
+ */
+export function updateSession(session: Session): void {
+  const store = loadSessions();
+  const index = store.sessions.findIndex((s) => s.id === session.id);
+
+  if (index !== -1) {
+    store.sessions[index] = session;
+    saveSessions(store);
+  }
 }
 
 /**

@@ -12,6 +12,7 @@
   import VoiceSettings from './VoiceSettings.svelte';
   import AdapterDashboard from './AdapterDashboard.svelte';
   import TrainingMonitor from './TrainingMonitor.svelte';
+  import OnboardingWizard from './OnboardingWizard.svelte';
   import Lifeline from './Lifeline.svelte';
   import OvernightLearnings from './OvernightLearnings.svelte';
   import SystemSettings from './SystemSettings.svelte';
@@ -43,7 +44,7 @@ let loadingEvents = false
 let eventsError: string | null = null
 let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
-let trainingTab: 'datasets' | 'monitor' | 'adapters' = 'datasets'
+let trainingTab: 'setup' | 'datasets' | 'monitor' | 'adapters' = 'datasets'
 let systemTab: 'persona' | 'lifeline' | 'settings' = 'persona'
 
 // Legacy expansion state (no longer used but kept to prevent errors)
@@ -904,11 +905,19 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
       </div>
       <div class="view-content">
         <div class="tab-group">
+          <button class="tab-button" class:active={trainingTab === 'setup'} on:click={() => trainingTab = 'setup'}>🧭 Setup Wizard</button>
           <button class="tab-button" class:active={trainingTab === 'datasets'} on:click={() => trainingTab = 'datasets'}>Datasets</button>
           <button class="tab-button" class:active={trainingTab === 'monitor'} on:click={() => trainingTab = 'monitor'}>Training Monitor</button>
           <button class="tab-button" class:active={trainingTab === 'adapters'} on:click={() => trainingTab = 'adapters'}>Adapters</button>
         </div>
-        {#if trainingTab === 'datasets'}
+        {#if trainingTab === 'setup'}
+          <div class="onboarding-wrapper">
+            <OnboardingWizard onComplete={() => {
+              trainingTab = 'datasets';
+              alert('Onboarding completed! Your data has been saved.');
+            }} />
+          </div>
+        {:else if trainingTab === 'datasets'}
           <AdapterDashboard />
         {:else if trainingTab === 'monitor'}
           <TrainingMonitor />
@@ -1296,6 +1305,11 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
   .event-link {
     @apply text-xs px-1.5 py-0.5 rounded bg-blue-500/10 dark:bg-blue-400/20
            text-blue-600 dark:text-blue-400 font-medium;
+  }
+
+  /* Onboarding Wrapper */
+  .onboarding-wrapper {
+    @apply max-w-4xl mx-auto py-4;
   }
 </style>
 

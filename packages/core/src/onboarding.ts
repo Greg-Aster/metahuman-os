@@ -6,7 +6,7 @@
  */
 
 import fs from 'node:fs';
-import { getUserById, updateUser, type User } from './users.js';
+import { getUser, updateUserMetadataMetadata, type User } from './users.js';
 import { audit } from './audit.js';
 
 export interface OnboardingState {
@@ -59,7 +59,7 @@ export const DEFAULT_ONBOARDING_STATE: OnboardingState = {
  */
 export function getOnboardingState(userId: string): OnboardingState | null {
   try {
-    const user = getUserById(userId);
+    const user = getUser(userId);
     if (!user) {
       return null;
     }
@@ -81,7 +81,7 @@ export function updateOnboardingState(
   actor: string = 'system'
 ): boolean {
   try {
-    const user = getUserById(userId);
+    const user = getUser(userId);
     if (!user) {
       throw new Error(`User not found: ${userId}`);
     }
@@ -99,7 +99,7 @@ export function updateOnboardingState(
       },
     };
 
-    const success = updateUser(updatedUser);
+    const success = updateUserMetadata(updatedUser);
 
     if (success) {
       audit({

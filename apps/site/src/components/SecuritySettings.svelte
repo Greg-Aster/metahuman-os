@@ -37,12 +37,17 @@
   let newEmail = '';
   let profileChanging = false;
 
+  // Profile visibility state
+  let profileVisibility: 'private' | 'public' = 'private';
+  let savingVisibility = false;
+
   onMount(async () => {
     await fetchCurrentUser();
     await loadTrustLevel();
     await loadAgentConfig();
     await loadTrustCoupling();
     await loadCognitiveLayersConfig();
+    await fetchVisibility();
   });
 
   async function fetchCurrentUser() {
@@ -199,6 +204,47 @@
       newEmail = currentUser.metadata?.email || '';
     }
     error = '';
+  }
+
+  // Profile visibility functions
+  async function fetchVisibility() {
+    try {
+      const res = await fetch('/api/profiles/visibility');
+      if (res.ok) {
+        const data = await res.json();
+        profileVisibility = data.visibility || 'private';
+      }
+    } catch (e) {
+      console.error('Failed to fetch visibility:', e);
+    }
+  }
+
+  async function saveVisibility() {
+    if (savingVisibility) return;
+    savingVisibility = true;
+    error = '';
+    success = '';
+
+    try {
+      const res = await fetch('/api/profiles/visibility', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visibility: profileVisibility }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        success = 'Profile visibility updated successfully';
+        setTimeout(() => success = '', 3000);
+      } else {
+        error = data.error || 'Failed to update visibility';
+      }
+    } catch (err) {
+      error = 'Network error. Please try again.';
+      console.error('Failed to save visibility:', err);
+    } finally {
+      savingVisibility = false;
+    }
   }
 
   // Trust Level state
@@ -619,6 +665,45 @@
             </button>
           </div>
         </form>
+      {/if}
+    </div>
+
+    <!-- Profile Visibility -->
+    <div class="card">
+      <h2>🌍 Profile Visibility</h2>
+      <p>Control who can view your profile as a guest user</p>
+
+      <div class="form-group">
+        <select
+          bind:value={profileVisibility}
+          on:change={saveVisibility}
+          disabled={savingVisibility}
+          class="visibility-select"
+        >
+          <option value="private">🔒 Private - Owner only</option>
+          <option value="public">🌍 Public - Anyone (including anonymous)</option>
+        </select>
+      </div>
+
+      {#if profileVisibility === 'public'}
+        <div class="warning-box">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path
+              d="M8 1L1 14h14L8 1z"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linejoin="round"
+            />
+            <path d="M8 6v3M8 11v1" stroke="currentColor" stroke-width="2" />
+          </svg>
+          <div>
+            <strong>Public Profile Warning</strong>
+            <p>
+              Guest users will be able to interact with your persona in read-only
+              emulation mode. They cannot modify your data or access private information.
+            </p>
+          </div>
+        </div>
       {/if}
     </div>
 

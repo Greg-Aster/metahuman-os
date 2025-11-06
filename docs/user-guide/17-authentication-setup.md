@@ -1,361 +1,122 @@
-# Authentication & User Setup
+## Authentication, Profiles & Guest Access
 
-## Overview
+MetaHuman OS now ships with a fully integrated authentication layer. Every request resolves inside a user context that carries role, profile paths, and session metadata. This section explains how to register owners, invite guests, manage visibility, and migrate from older single-user deployments.
 
-MetaHuman OS now supports user authentication and role-based access control. This guide explains how to set up your first user and manage authentication.
+---
 
-## Initial Setup (First Time)
+### 1. Roles & Session Defaults
 
-### Problem: No Owner User Exists Yet
+| Role        | How it is created                         | Session Length | Capabilities                                                               |
+|-------------|-------------------------------------------|----------------|-----------------------------------------------------------------------------|
+| **Owner**   | First account created via UI (or script)  | 24 hours       | Full read/write access to their profile; can adjust settings, trust levels, and profile visibility. |
+| **Guest**   | Owner-created account (future UI) or existing credentials | 1 hour | Always forced into emulation mode. Read-only access to the selected public profile. |
+| **Anonymous** | **Continue as Guest** (no credentials) | 30 minutes     | Must choose from public profiles; cannot write or access private data. API calls touching user data return `401/403`. |
 
-When you first install MetaHuman OS, there are no users in the system. The authentication system is in place, but you need to create your first "owner" user.
+Session cookies (`mh_session`) are HTTPOnly. Closing the browser does not log out; use the profile menu → **Logout** to end a session immediately.
 
-### Current Workaround: Create Owner User Programmatically
+---
 
-Since the CLI user management commands are not yet implemented, you need to create the first owner user using a one-time setup script.
+### 2. Creating the First Owner
 
-#### Step 1: Create Setup Script
-
-Create a file `scripts/create-owner.ts`:
-
-```typescript
-import { createUser } from '@metahuman/core/users';
-
-// Replace these with your desired credentials
-const username = 'your-username';  // e.g., 'greggles'
-const password = 'your-secure-password';  // Choose a strong password
-const displayName = 'Your Name';  // e.g., 'Greg'
-
-try {
-  const user = createUser(username, password, 'owner', {
-    displayName,
-    email: 'your-email@example.com',  // Optional
-  });
-
-  console.log('✅ Owner user created successfully!');
-  console.log(`   Username: ${user.username}`);
-  console.log(`   Role: ${user.role}`);
-  console.log(`   Display name: ${user.metadata?.displayName}`);
-  console.log('');
-  console.log('You can now login at http://localhost:4321/login');
-} catch (error) {
-  if (error instanceof Error && error.message.includes('already exists')) {
-    console.log('⚠️  User already exists. Try a different username.');
-  } else {
-    console.error('❌ Failed to create user:', error);
-  }
-}
-```
-
-#### Step 2: Run the Script
-
-```bash
-# From the metahuman root directory
-npx tsx scripts/create-owner.ts
-```
-
-#### Step 3: Login
-
-1. Start the dev server: `pnpm dev`
-2. Navigate to `http://localhost:4321`
-3. Click on the persona name/icon in the header
-4. Click "Login"
-5. Enter your username and password
-6. You'll be redirected to the dashboard
-
-### What Gets Created
-
-When you create a user, the following happens:
-
-1. **User file created:**
-   ```
-   persona/users.json
-   ```
-   Contains: username, password hash, role, metadata
-
-2. **Memory directory structure:**
-   ```
-   memory/
-   ├── users/
-   │   └── <username>.json
-   └── sessions/
-       └── (session files created on login)
-   ```
-
-## User Roles
-
-MetaHuman OS has three user roles:
-
-### Owner
-- **Full access** to all system features
-- Can create and delete guest users (UI not yet implemented)
-- Can modify all system settings
-- Can use all cognitive modes (unless restricted by env triggers)
-- Session duration: **24 hours**
-
-### Guest
-- **Limited access** to system features
-- Cannot modify system settings
-- Cannot create other users
-- Can use cognitive modes based on permissions
-- Session duration: **1 hour**
-
-### Anonymous
-- **No authentication** required
-- Read-only access in emulation mode only
-- Cannot modify anything
-- Session duration: **30 minutes**
-
-## Logging In
-
-### Via Web UI
-
-1. Click the **persona name/icon** in the header (top-left)
-2. Click **"Login"** in the dropdown
-3. Enter your **username** and **password**
-4. Click **"Login"** button
-5. You'll be redirected to the main dashboard
-6. Your username will now appear next to the persona name in the header
-
-### Session Behavior
-
-- Your session is stored in an HTTPOnly cookie (`mh_session`)
-- Sessions expire based on your role (owner: 24h, guest: 1h)
-- Closing the browser does NOT log you out (session persists)
-- You must explicitly click "Logout" to end your session
-
-## Logging Out
-
-1. Click the **persona name/icon** in the header
-2. Click **"Logout"** in the dropdown
-3. Your session will be terminated
-4. You'll be redirected to the login page
-
-## Finding Your Current Login
-
-If you've already created a user but forgot the username:
-
-### Check User Files
-
-```bash
-# List all users
-ls -la memory/users/
-
-# View a user file (replace <username> with actual filename)
-cat persona/users.json
-```
-
-Example output:
-```json
-{
-  "id": "usr-1730764012345-abc123",
-  "username": "greggles",
-  "passwordHash": "...",
-  "role": "owner",
-  "createdAt": "2025-11-04T12:34:56.789Z",
-  "metadata": {
-    "displayName": "Greg",
-    "email": "greg@example.com"
-  }
-}
-```
-
-The **username** field is what you use to login.
-
-### Check Active Sessions
-
-```bash
-# List active sessions
-ls -la logs/run/sessions.json
-
-# View a session file (replace <session-id> with actual filename)
-cat logs/run/sessions.json<session-id>.json
-```
-
-Example output:
-```json
-{
-  "id": "sess-1730764123456-xyz789",
-  "userId": "usr-1730764012345-abc123",
-  "role": "owner",
-  "createdAt": "2025-11-04T13:45:00.000Z",
-  "expiresAt": "2025-11-05T13:45:00.000Z",
-  "lastActivity": "2025-11-04T14:30:00.000Z"
-}
-```
-
-## Resetting Your Password
-
-### Manual Method (Current)
-
-Since password reset UI is not yet implemented:
-
-1. **Delete the user file:**
+1. Start the web UI:
    ```bash
-   rm persona/users.json
+   cd apps/site && pnpm dev
+   # visit http://localhost:4321
    ```
+2. The Authentication Gate appears after the splash screen. Choose **Create Account**.
+3. Fill in the username, password, and optional display name. The first account automatically receives the `owner` role.
+4. After registration you are redirected to the dashboard and a profile folder is created at `profiles/<owner>/`.
 
-2. **Recreate the user** with the same username but new password:
-   ```bash
-   npx tsx scripts/create-owner.ts
-   # (Edit script with new password first)
-   ```
+#### Legacy Installations
 
-### Security Note
-
-Passwords are currently hashed with SHA-256. For production use, the system should be upgraded to bcrypt (see `packages/core/src/users.ts`).
-
-## Environment Triggers & Authentication
-
-Authentication interacts with environment triggers:
-
-### HIGH_SECURITY Mode
+Upgrading from the single-user layout? Run the migration script before launching the UI:
 ```bash
-# In .env
-HIGH_SECURITY=true
+pnpm tsx scripts/migrate-to-profiles.ts --username <owner>
+```
+This moves `memory/`, `persona/`, `logs/`, `etc/`, and voice-training data into `profiles/<owner>/…` while keeping shared voices under `out/voices/`.
+
+---
+
+### 3. Logging In & Switching Accounts
+
+1. Open the header menu (persona name) and click **Login**.
+2. Enter your username and password.
+3. Owners see their visibility badge and trust controls in the left sidebar once authenticated.
+4. To switch users, log out first. Re-authenticate with different credentials or pick **Continue as Guest**.
+
+---
+
+### 4. Guest Sessions & Public Profiles
+
+Choosing **Continue as Guest** starts a short-lived anonymous session:
+
+1. The guest is prompted to pick from **public** personas. Private profiles are hidden.
+2. Once a profile is selected, the guest enters the dashboard in read-only emulation mode. Memory writes, task updates, and configuration changes are blocked by the security policy.
+3. Guests can explore chat, memories, and voice outputs for that persona, but audio recordings and training samples remain private to the owner.
+
+To make a persona available to guests, owners must mark it as **Public** (see below). Switching back to **Private** invalidates existing guest selections automatically—guests are asked to choose another profile.
+
+---
+
+### 5. Profile Visibility
+
+Owners control whether their persona appears in the guest selector.
+
+1. Navigate to **System → Settings → Profile Visibility**.
+2. Choose:
+   - `Private` – Hidden from guest selector (default).
+   - `Public` – Visible to anonymous/guest sessions.
+3. Visibility status is shown next to the profile badge in the sidebar. Changing the flag edits `profiles/<owner>/persona/core.json` metadata and the UI reflects it immediately.
+
+> **Tip:** Voice training data remains private even when a profile is public. Only the chat and memory streams become browseable.
+
+---
+
+### 6. Configuration & Data Locations
+
+- **Authentication Database:** `persona/users.json` (owner + guest credentials and metadata).
+- **User Profiles:** `profiles/<username>/…` (memories, persona, logs, etc.).
+- **Voice Settings:** `profiles/<username>/etc/voice.json`.
+- **Shared Piper voices:** `out/voices/`.
+- **Audit Logs:** `logs/audit/YYYY-MM-DD.ndjson` (capture acting user IDs).
+
+---
+
+### 7. CLI & Script Helpers
+
+The CLI automatically operates under the first owner profile unless `--user <username>` is supplied. For administrative tasks that still require scripting (e.g., resetting passwords) you can interact with the user API directly:
+
+```ts
+import { createUser, deleteUser, listUsers } from '@metahuman/core/users';
 ```
 
-- **Effect:** Even authenticated owners are locked to emulation mode only
-- **Use case:** Public demos, untrusted environments
-- **Login:** Still required to track who is using the system
+> **Warning:** Do **not** edit `persona/users.json` by hand. Use the API helpers or the forthcoming owner UI to modify user records safely.
 
-### WETWARE_DECEASED Mode
-```bash
-# In .env
-WETWARE_DECEASED=true
-```
+---
 
-- **Effect:** Dual consciousness mode disabled for all users
-- **Use case:** Operating as independent digital consciousness
-- **Login:** Works normally, but dual mode is unavailable
+### 8. Troubleshooting
 
-### Normal Mode
-```bash
-# In .env (commented out or not set)
-#HIGH_SECURITY=true
-#WETWARE_DECEASED=true
-```
+| Issue | Fix |
+|-------|-----|
+| **“Authentication required” when hitting APIs** | Ensure you are logged in. Anonymous sessions cannot access profile endpoints. |
+| **Guest can’t see a persona** | Confirm the owner marked the profile as `Public`. Visibility changes take effect immediately. |
+| **Session expires unexpectedly** | Check system clock, review `logs/run/sessions.json`, and confirm `pnpm dev` output for validation errors. |
+| **Forgot owner password** | Stop the server, run a short script using `deleteUser(userId)` then re-run `createUser()` with new credentials, or temporarily remove the entry from `persona/users.json` and restart. |
+| **Legacy data still in root directories** | Re-run `pnpm tsx scripts/migrate-to-profiles.ts --username <owner>` and verify symlinks/old folders were moved. |
 
-- **Effect:** All modes available based on user role
-- **Use case:** Normal operation
+---
 
-## Troubleshooting
+### 9. Security Checklist
 
-### "Invalid username or password"
+- Keep only the intended personas public. Use private visibility when sharing the instance on a network.
+- Regularly inspect `logs/audit/*.ndjson` to confirm guest sessions remain read-only.
+- Use `HIGH_SECURITY=true` in `.env` to force emulation mode across all roles during demonstrations.
+- Back up both `profiles/` and `persona/users.json` together—they form the complete data set.
 
-1. Check if user file exists: `ls persona/users.json`
-2. If not, create the user with the setup script
-3. If yes, verify you're using the correct password
-4. Remember: passwords are case-sensitive
+---
 
-### "Cannot access /login page"
+### 10. Next Steps
 
-1. Make sure dev server is running: `pnpm dev`
-2. Navigate to `http://localhost:4321/login` directly
-3. Check terminal for any errors
-
-### Session expires immediately
-
-1. Check system time (sessions are time-based)
-2. Verify session files are being created: `ls logs/run/sessions.json`
-3. Check for errors in browser console (F12)
-
-### Stuck in anonymous mode
-
-1. Clear browser cookies: F12 → Application → Cookies → Delete `mh_session`
-2. Navigate to `/login` page
-3. Login again
-
-### "User already exists" error
-
-1. Check existing users: `ls memory/users/`
-2. Either:
-   - Use a different username in the script
-   - Delete the existing user file first
-
-## Future Features (Not Yet Implemented)
-
-The following features are planned but not yet available:
-
-### CLI User Management
-```bash
-# Future commands (not yet working):
-./bin/mh user create <username> <password> --role owner
-./bin/mh user delete <username>
-./bin/mh user list
-./bin/mh user reset-password <username>
-```
-
-### First-Run Setup Wizard
-- Interactive web-based setup on first launch
-- Automatically creates owner user
-- Sets up basic configuration
-
-### User Management UI
-- Owner can create/delete guest users via web interface
-- Password change form
-- User list and permissions management
-
-### Session Management UI
-- View active sessions
-- Revoke sessions from other devices
-- Session history
-
-## Security Best Practices
-
-### For Development
-1. Use a **simple password** (it's just local development)
-2. Don't commit your `.env` file
-3. User files are in `memory/` which should be gitignored
-
-### For Production (Future)
-1. Use **strong passwords** (12+ characters, mixed case, numbers, symbols)
-2. Upgrade to **bcrypt** password hashing
-3. Enable **HTTPS** (secure flag on cookies)
-4. Implement **rate limiting** on login endpoint
-5. Add **session rotation** after login
-6. Enable **2FA** (future feature)
-
-## Quick Reference
-
-### Create First Owner User
-```bash
-# 1. Create scripts/create-owner.ts with your credentials
-# 2. Run it:
-npx tsx scripts/create-owner.ts
-```
-
-### Login
-1. Go to `http://localhost:4321`
-2. Click persona name/icon → Login
-3. Enter credentials
-
-### Logout
-1. Click persona name/icon → Logout
-
-### Check Username
-```bash
-ls memory/users/
-cat persona/users.json
-```
-
-### Reset Password
-```bash
-rm persona/users.json
-npx tsx scripts/create-owner.ts  # with new password
-```
-
-## Related Documentation
-
-- [Phase 6 Implementation Summary](../dev/PHASE6_IMPLEMENTATION_SUMMARY.md)
-- [Phase 6 UI Changes](../dev/PHASE6_UI_CHANGES.md)
-- [Security Policy](../dev/SECURITY_POLICY.md)
-- [Architecture](../ARCHITECTURE.md)
-
-## Support
-
-If you encounter issues:
-1. Check the troubleshooting section above
-2. Review browser console for errors (F12)
-3. Check terminal output for server errors
-4. File an issue at https://github.com/anthropics/claude-code/issues
+- Review [Security & Trust](10-security-trust.md) for trust levels and directory boundaries.
+- Update profile-specific configuration in [`profiles/<username>/etc/`](14-configuration-files.md).
+- If you need to expose the UI remotely, follow the [Cloudflare Tunnel guide](17-cloudflare-tunnel-setup.md) after hardening credentials.

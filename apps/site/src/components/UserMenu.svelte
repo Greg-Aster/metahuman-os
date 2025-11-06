@@ -97,7 +97,6 @@
         <div class="dropdown-header">
           <div class="user-info">
             <div class="username">{user.username}</div>
-            <div class="role role-{user.role}">{user.role}</div>
           </div>
         </div>
 
@@ -221,34 +220,6 @@
     font-weight: 600;
     color: #fff;
     font-size: 0.9rem;
-  }
-
-  .role {
-    display: inline-block;
-    padding: 0.125rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    text-transform: uppercase;
-    width: fit-content;
-  }
-
-  .role-owner {
-    background: rgba(233, 69, 96, 0.2);
-    color: #e94560;
-    border: 1px solid rgba(233, 69, 96, 0.3);
-  }
-
-  .role-guest {
-    background: rgba(139, 92, 246, 0.2);
-    color: #8b5cf6;
-    border: 1px solid rgba(139, 92, 246, 0.3);
-  }
-
-  .role-anonymous {
-    background: rgba(156, 163, 175, 0.2);
-    color: #9ca3af;
-    border: 1px solid rgba(156, 163, 175, 0.3);
   }
 
   .dropdown-divider {

@@ -16,7 +16,10 @@ import { getUserContext } from '@metahuman/core/context';
 
 const getHandler: APIRoute = async (context) => {
   const ctx = getUserContext();
-  if (!ctx || ctx.role === 'anonymous') {
+
+  // Allow anonymous users WITH guest profile to view (read-only)
+  // Block anonymous users WITHOUT guest profile
+  if (!ctx || (ctx.role === 'anonymous' && !ctx.activeProfile)) {
     return new Response(
       JSON.stringify({ error: 'Authentication required to view cognitive mode.' }),
       { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -35,6 +38,7 @@ const getHandler: APIRoute = async (context) => {
       mode: enforcedMode, // Return the enforced mode, not the saved preference
       savedMode: config.currentMode, // Also include what's saved in the file
       lastChanged: config.lastChanged,
+      locked: config.locked ?? false, // Include locked status
       history: config.history ?? [],
       modes,
     }),

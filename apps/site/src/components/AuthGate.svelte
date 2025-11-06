@@ -1,12 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import OnboardingWizard from './OnboardingWizard.svelte';
+  import ProfileSelector from './ProfileSelector.svelte';
 
-  let view: 'splash' | 'login' | 'register' = 'splash';
+  let view: 'splash' | 'login' | 'register' | 'post-register' | 'onboarding' = 'splash';
   let isAuthenticated = false;
   let isCheckingAuth = true;
   let bootData: any = null;
   let error = '';
   let loading = false;
+  let showProfileSelector = false;
+  let guestSessionError = '';
 
   // Form fields
   let username = '';
@@ -103,7 +107,8 @@
 
       if (data.success) {
         isAuthenticated = true;
-        window.location.reload(); // Reload to initialize user context
+        // Show post-registration screen with onboarding option
+        view = 'post-register';
       } else {
         error = data.error || 'Registration failed';
       }
@@ -115,9 +120,53 @@
     }
   }
 
+  // Handle onboarding completion
+  function handleOnboardingComplete() {
+    window.location.reload(); // Reload to initialize full app
+  }
+
+  // Start onboarding wizard
+  function startOnboarding() {
+    view = 'onboarding';
+  }
+
+  // Skip onboarding and go to app
+  function skipOnboarding() {
+    window.location.reload(); // Reload to initialize full app
+  }
+
   // Continue as guest (anonymous access)
-  function continueAsGuest() {
-    isAuthenticated = true;
+  async function continueAsGuest() {
+    try {
+      console.log('[AuthGate] Continue as guest clicked');
+      guestSessionError = '';
+      const res = await fetch('/api/auth/guest', { method: 'POST' });
+      const data = await res.json();
+      console.log('[AuthGate] Guest session response:', data);
+
+      if (data.success) {
+        console.log('[AuthGate] Setting showProfileSelector = true');
+        showProfileSelector = true; // Show profile selector modal
+        console.log('[AuthGate] showProfileSelector is now:', showProfileSelector);
+      } else {
+        guestSessionError = data.error || 'Failed to create guest session';
+      }
+    } catch (err) {
+      console.error('[AuthGate] Guest session error:', err);
+      guestSessionError = 'Network error. Please try again.';
+    }
+  }
+
+  // Handle profile selection
+  function handleProfileSelected(username: string) {
+    console.log('[AuthGate] Profile selected:', username);
+    // Navigation handled by ProfileSelector
+  }
+
+  // Handle profile selector cancel
+  function handleProfileCancel() {
+    showProfileSelector = false;
+    guestSessionError = '';
   }
 
   onMount(() => {
@@ -126,10 +175,58 @@
   });
 </script>
 
-{#if !isAuthenticated}
+{#if !isAuthenticated || view === 'post-register' || view === 'onboarding'}
   <div class="auth-backdrop">
-    <div class="auth-container">
-      {#if view === 'splash'}
+    <div class="auth-container" class:onboarding-container={view === 'onboarding'}>
+      {#if view === 'onboarding'}
+        <!-- Onboarding Wizard -->
+        <OnboardingWizard onComplete={handleOnboardingComplete} />
+      {:else if view === 'post-register'}
+        <!-- Post-Registration Options -->
+        <div class="form-content">
+          <div class="form-header">
+            <div class="success-icon">✓</div>
+            <h2>Account Created Successfully!</h2>
+            <p>Welcome to MetaHuman OS</p>
+          </div>
+
+          <div class="post-register-options">
+            <div class="option-card primary-option">
+              <div class="option-icon">🧭</div>
+              <h3>Setup Wizard (Recommended)</h3>
+              <p>
+                Guide me through setting up my digital consciousness with personalized questions,
+                document import, and goal setting. Takes about 10-15 minutes.
+              </p>
+              <button class="btn btn-primary btn-block" on:click={startOnboarding}>
+                Start Setup Wizard →
+              </button>
+            </div>
+
+            <div class="option-card">
+              <div class="option-icon">🚀</div>
+              <h3>Skip and Explore</h3>
+              <p>
+                I'll add my data later through Memory Capture, Chat, File Ingestion,
+                or other utilities. Let me explore the system first.
+              </p>
+              <button class="btn btn-secondary btn-block" on:click={skipOnboarding}>
+                Continue to App
+              </button>
+            </div>
+          </div>
+
+          <div class="wizard-info">
+            <p><strong>What the wizard does:</strong></p>
+            <ul>
+              <li>Captures your identity, personality, and communication style</li>
+              <li>Imports documents and journals for context</li>
+              <li>Sets up your goals and tasks</li>
+              <li>All data stays 100% local on your machine</li>
+            </ul>
+          </div>
+        </div>
+      {:else if view === 'splash'}
         <!-- Splash Screen / Welcome -->
         <div class="splash-content">
           <div class="logo-section">
@@ -137,7 +234,7 @@
               {#if bootData?.persona?.identity?.icon}
                 <img src={bootData.persona.identity.icon} alt="Logo" class="logo-img" />
               {:else}
-                <span class="logo-letter">M</span>
+                <span class="logo-letter">🧠💻</span>
               {/if}
             </div>
             <h1 class="app-title">MetaHuman OS</h1>
@@ -347,6 +444,14 @@
       {/if}
     </div>
   </div>
+
+  <!-- Profile Selector Modal (for guest access) -->
+  {#if showProfileSelector}
+    <ProfileSelector
+      onSelect={handleProfileSelected}
+      onCancel={handleProfileCancel}
+    />
+  {/if}
 {/if}
 
 <style>
@@ -377,6 +482,13 @@
     width: 100%;
     padding: 3rem 2.5rem;
     animation: slideIn 0.3s ease-out;
+  }
+
+  .onboarding-container {
+    max-width: 1000px;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 2rem;
   }
 
   @keyframes slideIn {
@@ -799,6 +911,106 @@
 
   .btn-block {
     width: 100%;
+  }
+
+  /* Post-Registration Styles */
+  .success-icon {
+    width: 60px;
+    height: 60px;
+    margin: 0 auto 1rem;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    color: white;
+  }
+
+  .post-register-options {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin: 2rem 0;
+  }
+
+  .option-card {
+    padding: 1.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    transition: all 0.2s;
+  }
+
+  :global(html:not(.dark)) .option-card {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.1);
+  }
+
+  .option-card.primary-option {
+    border-color: #60a5fa;
+    background: linear-gradient(135deg, rgba(96, 165, 250, 0.1) 0%, rgba(167, 139, 250, 0.1) 100%);
+  }
+
+  .option-icon {
+    font-size: 2rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .option-card h3 {
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin: 0 0 0.5rem 0;
+    color: white;
+  }
+
+  :global(html:not(.dark)) .option-card h3 {
+    color: rgb(17, 24, 39);
+  }
+
+  .option-card p {
+    margin: 0 0 1rem 0;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  :global(html:not(.dark)) .option-card p {
+    color: rgba(0, 0, 0, 0.7);
+  }
+
+  .wizard-info {
+    margin-top: 1.5rem;
+    padding: 1rem 1.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-left: 4px solid #60a5fa;
+    border-radius: 4px;
+  }
+
+  :global(html:not(.dark)) .wizard-info {
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  .wizard-info p {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.8);
+  }
+
+  :global(html:not(.dark)) .wizard-info p {
+    color: rgba(0, 0, 0, 0.8);
+  }
+
+  .wizard-info ul {
+    margin: 0;
+    padding-left: 1.5rem;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  :global(html:not(.dark)) .wizard-info ul {
+    color: rgba(0, 0, 0, 0.7);
   }
 
   /* Responsive */

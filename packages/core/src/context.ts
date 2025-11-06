@@ -14,6 +14,7 @@ export interface UserContext {
   role: 'owner' | 'guest' | 'anonymous';
   profilePaths: ReturnType<typeof getProfilePaths>;
   systemPaths: typeof systemPaths;
+  activeProfile?: string; // Selected profile for guest users
 }
 
 const contextStorage = new AsyncLocalStorage<UserContext>();
@@ -41,16 +42,22 @@ const contextStorage = new AsyncLocalStorage<UserContext>();
  * ```
  */
 export function withUserContext<T>(
-  user: { userId: string; username: string; role: string },
+  user: { userId: string; username: string; role: string; activeProfile?: string },
   fn: () => T | Promise<T>
 ): Promise<T> {
-  const profilePaths = getProfilePaths(user.username);
+  // For guests with an active profile, use that profile's paths
+  // Otherwise use the user's own username
+  const profileUser =
+    user.activeProfile && user.role !== 'owner' ? user.activeProfile : user.username;
+
+  const profilePaths = getProfilePaths(profileUser);
   const context: UserContext = {
     userId: user.userId,
     username: user.username,
     role: user.role as 'owner' | 'guest' | 'anonymous',
     profilePaths,
     systemPaths,
+    activeProfile: user.activeProfile,
   };
 
   return contextStorage.run(context, async () => {
