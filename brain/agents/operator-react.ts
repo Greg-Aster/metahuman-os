@@ -26,6 +26,7 @@ export interface OperatorTask {
   id: string;
   goal: string;
   audience?: string;
+  context?: string;
   status: 'in_progress' | 'completed' | 'failed';
   created: string;
 }
@@ -174,7 +175,7 @@ export async function runReActLoop(
     try {
       const result = await coreExecuteSkill(
         'conversational_response',
-        { message: task.goal, context: '' },
+        { message: task.goal, context: task.context || '' },
         'bounded_auto',
         true
       );

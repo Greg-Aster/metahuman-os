@@ -57,15 +57,13 @@ export async function execute(inputs: any): Promise<any> {
   });
 
   try {
-    // Build the conversation prompt
+    // Simple grounding prompt - don't over-constrain the AI
+    // Let memories provide context, let persona provide identity, let AI adapt naturally
     const systemPrompt = context
-      ? `You are MetaHuman Greg, having a conversation with the user.
+      ? `${context}
 
-Context from previous actions:
-${context}
-
-Respond naturally and conversationally to the user's message.`
-      : `You are MetaHuman Greg, having a conversation with the user. Respond naturally and conversationally.`;
+Respond naturally using the memories and context above. Speak as yourself in first person.`
+      : `Respond naturally as yourself.`;
 
     const response = await callLLM({
       role: 'persona',
@@ -75,7 +73,6 @@ Respond naturally and conversationally to the user's message.`
       ],
       options: {
         temperature: 0.7,
-        maxTokens: 500,
       },
     });
 

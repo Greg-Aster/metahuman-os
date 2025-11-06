@@ -232,12 +232,18 @@ export function getSecurityPolicy(context?: any): SecurityPolicy {
     return REQUEST_POLICY_CACHE.get(context)!;
   }
 
-  // Load current cognitive mode
-  const cogModeConfig = loadCognitiveMode();
-  const mode = cogModeConfig.currentMode;
-
   // Extract session (if available)
   const session = extractSession(context);
+
+  // Load current cognitive mode from file system
+  const cogModeConfig = loadCognitiveMode();
+  let mode = cogModeConfig.currentMode;
+
+  // SECURITY: Override to emulation mode for anonymous users
+  // Anonymous users should never have access to dual or agent modes
+  if (session?.role === 'anonymous') {
+    mode = 'emulation';
+  }
 
   // Compute policy
   const policy = computeSecurityPolicy(mode, session);

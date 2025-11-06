@@ -74,10 +74,10 @@ const postHandler: APIRoute = async (context) => {
 
     if (stream) {
       // Return streaming response
-      return streamReActTask(goal, audience, reasoningDepth);
+      return streamReActTask(goal, audience, taskContext, reasoningDepth);
     } else {
       // Return complete response after execution
-      return runCompleteReActTask(goal, audience, reasoningDepth);
+      return runCompleteReActTask(goal, audience, taskContext, reasoningDepth);
     }
 
   } catch (error) {
@@ -104,11 +104,12 @@ const postHandler: APIRoute = async (context) => {
 /**
  * Run a ReAct task and return complete response
  */
-async function runCompleteReActTask(goal: string, audience?: string, reasoningDepth?: number): Promise<Response> {
+async function runCompleteReActTask(goal: string, audience?: string, context?: string, reasoningDepth?: number): Promise<Response> {
   const task: OperatorTask = {
     id: `task-${Date.now()}`,
     goal,
     audience,
+    context,
     status: 'in_progress',
     created: new Date().toISOString(),
   };
@@ -163,11 +164,12 @@ async function runCompleteReActTask(goal: string, audience?: string, reasoningDe
 /**
  * Stream ReAct task progress using Server-Sent Events
  */
-function streamReActTask(goal: string, audience?: string, reasoningDepth?: number): Response {
+function streamReActTask(goal: string, audience?: string, context?: string, reasoningDepth?: number): Response {
   const task: OperatorTask = {
     id: `task-${Date.now()}`,
     goal,
     audience,
+    context,
     status: 'in_progress',
     created: new Date().toISOString(),
   };

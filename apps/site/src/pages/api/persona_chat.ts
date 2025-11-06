@@ -201,12 +201,23 @@ async function getRelevantContext(
     // Dreams often have abstract/poetic language that doesn't match literal queries well
     const threshold = (askingAboutDreams || askingAboutReflections) ? 0.55 : 0.62;
 
+    // HYBRID SEARCH: When asking about dreams/reflections, add metadata filter
+    // This ensures we get the right type of memories, not just semantically similar chat messages
+    const metadataFilters = (askingAboutDreams || askingAboutReflections) ? {
+      type: askingAboutDreams ? ['dream'] : ['reflection', 'reflection_summary']
+    } : undefined;
+
+    // When using metadata filters, lower threshold significantly since we're filtering by type
+    // The filter ensures correctness, semantic search just ranks within that type
+    const effectiveThreshold = metadataFilters ? 0.0 : threshold;
+
     // Build context package using context builder
     const contextPackage = await buildContextPackage(userMessage, cognitiveMode, {
       searchDepth: 'normal',          // 8 results (matching old topK: 8)
-      similarityThreshold: threshold,  // Lower threshold for dream/reflection queries
+      similarityThreshold: effectiveThreshold,  // Skip threshold when filtering by metadata
       maxMemories: 2,                 // Matching old limit
       maxContextChars: 900,           // Matching old character limit
+      metadataFilters,                // Hybrid search: filter by type when user explicitly asks
       filterInnerDialogue: true,      // Matching old filtering
       filterReflections: shouldFilterReflections,  // Smart filter: allow dreams/reflections when user asks for them
       includeShortTermState: true,    // Include orchestrator state
@@ -620,6 +631,14 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
           if (routingContext) {
             operatorContext += `# Routing Context\n${routingContext}\n`;
           }
+
+          // RESPONSE LENGTH PREFERENCE: Light hint only - let AI adapt naturally
+          if (length === 'concise') {
+            operatorContext += `# User Preference\nConcise responses preferred.\n\n`;
+          } else if (length === 'detailed') {
+            operatorContext += `# User Preference\nDetailed responses preferred.\n\n`;
+          }
+          // 'auto' = no hint, let the AI decide based on context
 
           // Use ReAct operator for dynamic observation-based execution
           const operatorUrl = origin ? new URL('/api/operator/react', origin).toString() : '/api/operator/react';

@@ -147,7 +147,16 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: nextMode, actor: 'web_ui' }),
       });
-      if (!res.ok) throw new Error(`Failed to update cognitive mode (status ${res.status})`);
+
+      if (!res.ok) {
+        // Handle specific error cases with user-friendly messages
+        if (res.status === 403) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error('Please log in to change cognitive modes. Only authenticated users can switch between modes.');
+        }
+        throw new Error(`Failed to update cognitive mode (status ${res.status})`);
+      }
+
       await loadCognitiveModeState();
 
       // Refresh security policy to update UI controls (operator/yolo toggles, etc.)

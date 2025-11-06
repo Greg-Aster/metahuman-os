@@ -102,13 +102,8 @@ function buildPersonaContext(): string {
       }
     }
 
-    // Communication style hints (personality is typed as 'any' so we can access it)
-    if (persona.personality?.communicationStyle?.tone) {
-      const tone = Array.isArray(persona.personality.communicationStyle.tone)
-        ? persona.personality.communicationStyle.tone.join(', ')
-        : persona.personality.communicationStyle.tone;
-      parts.push(`\nCommunication style: ${tone}.`);
-    }
+    // Don't inject communication style - let the AI adapt naturally based on context and memories
+    // Hardcoding "concise" or "detailed" limits versatility
 
     return parts.join('\n');
   } catch (error) {

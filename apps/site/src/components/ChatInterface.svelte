@@ -839,7 +839,7 @@ let reasoningStages: ReasoningStage[] = [];
   <div class="messages-container" bind:this={messagesContainer}>
     {#if messages.length === 0}
       <div class="welcome-screen">
-        <div class="welcome-icon">🧠</div>
+        <div class="welcome-icon">🧠=>💻</div>
         <h2 class="welcome-title">MetaHuman OS</h2>
         <p class="welcome-subtitle">
           {#if mode === 'conversation'}

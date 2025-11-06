@@ -7,16 +7,23 @@ import {
   type CognitiveModeId,
 } from '@metahuman/core/cognitive-mode';
 import { audit } from '@metahuman/core';
+import { getSecurityPolicy } from '@metahuman/core/security-policy';
 import { loadTrustCoupling, getMappedTrustLevel } from '@metahuman/core';
 import { setTrustLevel } from '@metahuman/core';
 import { auditConfigAccess, requireOwner } from '../../middleware/cognitiveModeGuard';
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async (context) => {
   const config = loadCognitiveMode();
   const modes = listCognitiveModes();
+
+  // Get the actual enforced mode (may differ from saved mode for anonymous users)
+  const policy = getSecurityPolicy(context);
+  const enforcedMode = policy.mode;
+
   return new Response(
     JSON.stringify({
-      mode: config.currentMode,
+      mode: enforcedMode, // Return the enforced mode, not the saved preference
+      savedMode: config.currentMode, // Also include what's saved in the file
       lastChanged: config.lastChanged,
       history: config.history ?? [],
       modes,

@@ -45,10 +45,8 @@ let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'datasets' | 'monitor' | 'adapters' = 'datasets'
 let systemTab: 'persona' | 'lifeline' | 'settings' = 'persona'
 let expanded: Record<string, boolean> = {}
-let expandedVersion = 0  // Increment this to force UI updates
 type MemoryContentState = { status: 'idle' | 'loading' | 'ready' | 'error'; content?: string; error?: string }
 let memoryContent: Record<string, MemoryContentState> = {}
-let memoryContentVersion = 0  // Increment this to force UI updates
 
 type PersonaForm = {
   name: string
@@ -246,20 +244,14 @@ function getEventKey(item: { relPath?: string; id?: string; name?: string }): st
   return null;
 }
 
-function isExpanded(item: { relPath?: string; id?: string; name?: string }): boolean {
-  expandedVersion;  // Access to create dependency
-  const key = getEventKey(item);
-  return key ? !!expanded[key] : false;
-}
-
 function toggleExpanded(item: { relPath?: string; id?: string; name?: string }) {
   const key = getEventKey(item);
   console.log('[toggleExpanded]', { key, item, currentlyExpanded: expanded[key || ''] });
   if (!key) return;
   const next = !expanded[key];
-  expanded[key] = next;
-  expandedVersion++;  // Force reactivity update
-  console.log('[toggleExpanded] Updated expanded state:', { key, next, hasRelPath: !!item.relPath, version: expandedVersion });
+  // REASSIGN to trigger Svelte reactivity
+  expanded = { ...expanded, [key]: next };
+  console.log('[toggleExpanded] Updated expanded state:', { key, next, hasRelPath: !!item.relPath });
   if (next && item.relPath) {
     console.log('[toggleExpanded] Loading memory content for:', item.relPath);
     loadMemoryContent(item.relPath);
@@ -272,31 +264,35 @@ function getPreview(content = '', limit = 160): string {
 }
 
 async function loadMemoryContent(relPath: string) {
-  const current = memoryContent[relPath];
+  let current = memoryContent[relPath];
   if (current && (current.status === 'loading' || current.status === 'ready')) return;
 
-  memoryContent[relPath] = { status: 'loading' };
-  memoryContentVersion++;  // Force reactivity update
+  if (!current) {
+    current = { status: 'loading' };
+    memoryContent = { ...memoryContent, [relPath]: current };
+  } else {
+    current.status = 'loading';
+    delete current.error;
+    delete current.content;
+    memoryContent = { ...memoryContent };
+  }
+
   try {
     const res = await fetch(`/api/memory-content?relPath=${encodeURIComponent(relPath)}`);
     const data = await res.json();
     if (!res.ok || !data.success) {
       throw new Error(data?.error || 'Failed to load memory content');
     }
-    memoryContent[relPath] = { status: 'ready', content: data.content };
-    memoryContentVersion++;  // Force reactivity update
-  } catch (error) {
-    memoryContent[relPath] = { status: 'error', error: (error as Error).message };
-    memoryContentVersion++;  // Force reactivity update
-  }
-}
 
-function getMemoryContent(item: { relPath?: string; content?: string }): MemoryContentState {
-  memoryContentVersion;  // Access to create dependency
-  if (!item.relPath) {
-    return { status: 'ready', content: item.content ?? '' };
+    current.status = 'ready';
+    current.content = data.content;
+    memoryContent = { ...memoryContent };
+  } catch (error) {
+    current.status = 'error';
+    current.error = (error as Error).message;
+    delete current.content;
+    memoryContent = { ...memoryContent };
   }
-  return memoryContent[item.relPath] ?? { status: 'idle', content: item.content ?? '' };
 }
 
 $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && !personaLoading) {
@@ -424,17 +420,19 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
         {:else if memoryTab==='episodic'}
           <div class="events-list">
             {#each events as event}
+              {@const key = getEventKey(event)}
+              {@const isOpen = key ? !!expanded[key] : false}
               <div class="event-card">
                 <div class="event-card-header">
                   <button
                     class="event-title-button"
                     type="button"
                     on:click={() => toggleExpanded(event)}
-                    aria-expanded={isExpanded(event)}
+                    aria-expanded={isOpen}
                   >
                     <span class="event-card-title">{getPreview(event.content)}</span>
-                    <span class="event-toggle-icon" aria-hidden="true">{isExpanded(event) ? '▲' : '▼'}</span>
-                    <span class="sr-only">{isExpanded(event) ? 'Collapse memory' : 'Expand memory'}</span>
+                    <span class="event-toggle-icon" aria-hidden="true">{isOpen ? '▲' : '▼'}</span>
+                    <span class="sr-only">{isOpen ? 'Collapse memory' : 'Expand memory'}</span>
                   </button>
                   <div class="validation-controls">
                     <button class="val-btn good" title="Mark as correct" on:click={() => setValidation(event, 'correct')} disabled={saving[event.relPath] || event.validation?.status === 'correct'}>+
@@ -443,15 +441,20 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                     </button>
                   </div>
                 </div>
-                {#if isExpanded(event)}
-                  {@const state = getMemoryContent(event)}
-                  {#if state.status === 'loading'}
-                    <div class="event-body loading">Loading full memory…</div>
-                  {:else if state.status === 'error'}
-                    <div class="event-body error">Failed to load memory: {state.error}</div>
+                {#if isOpen}
+                  {#if event.relPath}
+                    {#if memoryContent[event.relPath]?.status === 'loading'}
+                      <div class="event-body loading">Loading full memory…</div>
+                    {:else if memoryContent[event.relPath]?.status === 'error'}
+                      <div class="event-body error">Failed to load memory: {memoryContent[event.relPath]?.error}</div>
+                    {:else}
+                      <div class="event-body">
+                        <pre>{memoryContent[event.relPath]?.content ?? event.content}</pre>
+                      </div>
+                    {/if}
                   {:else}
                     <div class="event-body">
-                      <pre>{state.content ?? event.content}</pre>
+                      <pre>{event.content}</pre>
                     </div>
                   {/if}
                 {/if}
@@ -476,17 +479,19 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
               </div>
             {:else}
               {#each reflectionMemories as event}
+                {@const key = getEventKey(event)}
+                {@const isOpen = key ? !!expanded[key] : false}
                 <div class="event-card">
                   <div class="event-card-header">
                     <button
                       class="event-title-button"
                       type="button"
                       on:click={() => toggleExpanded(event)}
-                      aria-expanded={isExpanded(event)}
+                      aria-expanded={isOpen}
                     >
                       <span class="event-card-title">{getPreview(event.content)}</span>
-                      <span class="event-toggle-icon" aria-hidden="true">{isExpanded(event) ? '▲' : '▼'}</span>
-                      <span class="sr-only">{isExpanded(event) ? 'Collapse memory' : 'Expand memory'}</span>
+                      <span class="event-toggle-icon" aria-hidden="true">{isOpen ? '▲' : '▼'}</span>
+                      <span class="sr-only">{isOpen ? 'Collapse memory' : 'Expand memory'}</span>
                     </button>
                     <div class="validation-controls">
                       <button class="val-btn good" title="Mark as correct" on:click={() => setValidation(event, 'correct')} disabled={saving[event.relPath] || event.validation?.status === 'correct'}>+
@@ -495,15 +500,20 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                       </button>
                     </div>
                   </div>
-                  {#if isExpanded(event)}
-                    {@const state = getMemoryContent(event)}
-                    {#if state.status === 'loading'}
-                      <div class="event-body loading">Loading reflection…</div>
-                    {:else if state.status === 'error'}
-                      <div class="event-body error">Failed to load reflection: {state.error}</div>
+                  {#if isOpen}
+                    {#if event.relPath}
+                      {#if memoryContent[event.relPath]?.status === 'loading'}
+                        <div class="event-body loading">Loading reflection…</div>
+                      {:else if memoryContent[event.relPath]?.status === 'error'}
+                        <div class="event-body error">Failed to load reflection: {memoryContent[event.relPath]?.error}</div>
+                      {:else}
+                        <div class="event-body">
+                          <pre>{memoryContent[event.relPath]?.content ?? event.content}</pre>
+                        </div>
+                      {/if}
                     {:else}
                       <div class="event-body">
-                        <pre>{state.content ?? event.content}</pre>
+                        <pre>{event.content}</pre>
                       </div>
                     {/if}
                   {/if}
@@ -520,28 +530,35 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
         {:else if memoryTab==='tasks'}
           <div class="events-list">
             {#each tasksTab as t}
+              {@const key = getEventKey(t)}
+              {@const isOpen = key ? !!expanded[key] : false}
               <div class="event-card">
                 <div class="event-card-header">
                   <button
                     class="event-title-button"
                     type="button"
                     on:click={() => toggleExpanded(t)}
-                    aria-expanded={isExpanded(t)}
+                    aria-expanded={isOpen}
                   >
                     <span class="event-card-title">{getPreview(t.title, 200)}</span>
-                    <span class="event-toggle-icon" aria-hidden="true">{isExpanded(t) ? '▲' : '▼'}</span>
-                    <span class="sr-only">{isExpanded(t) ? 'Collapse memory' : 'Expand memory'}</span>
+                    <span class="event-toggle-icon" aria-hidden="true">{isOpen ? '▲' : '▼'}</span>
+                    <span class="sr-only">{isOpen ? 'Collapse memory' : 'Expand memory'}</span>
                   </button>
                 </div>
-                {#if isExpanded(t)}
-                  {@const state = getMemoryContent(t)}
-                  {#if state.status === 'loading'}
-                    <div class="event-body loading">Loading task content…</div>
-                  {:else if state.status === 'error'}
-                    <div class="event-body error">Failed to load task: {state.error}</div>
+                {#if isOpen}
+                  {#if t.relPath}
+                    {#if memoryContent[t.relPath]?.status === 'loading'}
+                      <div class="event-body loading">Loading task content…</div>
+                    {:else if memoryContent[t.relPath]?.status === 'error'}
+                      <div class="event-body error">Failed to load task: {memoryContent[t.relPath]?.error}</div>
+                    {:else}
+                      <div class="event-body">
+                        <pre>{memoryContent[t.relPath]?.content ?? JSON.stringify(t, null, 2)}</pre>
+                      </div>
+                    {/if}
                   {:else}
                     <div class="event-body">
-                      <pre>{state.content ?? JSON.stringify(t, null, 2)}</pre>
+                      <pre>{JSON.stringify(t, null, 2)}</pre>
                     </div>
                   {/if}
                 {/if}
@@ -558,28 +575,35 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
         {:else if memoryTab==='curated'}
           <div class="events-list">
             {#each curatedTab as c}
+              {@const key = getEventKey(c)}
+              {@const isOpen = key ? !!expanded[key] : false}
               <div class="event-card">
                 <div class="event-card-header">
                   <button
                     class="event-title-button"
                     type="button"
                     on:click={() => toggleExpanded(c)}
-                    aria-expanded={isExpanded(c)}
+                    aria-expanded={isOpen}
                   >
                     <span class="event-card-title">{c.name}</span>
-                    <span class="event-toggle-icon" aria-hidden="true">{isExpanded(c) ? '▲' : '▼'}</span>
-                    <span class="sr-only">{isExpanded(c) ? 'Collapse memory' : 'Expand memory'}</span>
+                    <span class="event-toggle-icon" aria-hidden="true">{isOpen ? '▲' : '▼'}</span>
+                    <span class="sr-only">{isOpen ? 'Collapse memory' : 'Expand memory'}</span>
                   </button>
                 </div>
-                {#if isExpanded(c)}
-                  {@const state = getMemoryContent(c)}
-                  {#if state.status === 'loading'}
-                    <div class="event-body loading">Loading curated content…</div>
-                  {:else if state.status === 'error'}
-                    <div class="event-body error">Failed to load file: {state.error}</div>
+                {#if isOpen}
+                  {#if c.relPath}
+                    {#if memoryContent[c.relPath]?.status === 'loading'}
+                      <div class="event-body loading">Loading curated content…</div>
+                    {:else if memoryContent[c.relPath]?.status === 'error'}
+                      <div class="event-body error">Failed to load file: {memoryContent[c.relPath]?.error}</div>
+                    {:else}
+                      <div class="event-body">
+                        <pre>{memoryContent[c.relPath]?.content ?? ''}</pre>
+                      </div>
+                    {/if}
                   {:else}
                     <div class="event-body">
-                      <pre>{state.content ?? ''}</pre>
+                      <pre>No file path available for this entry.</pre>
                     </div>
                   {/if}
                 {/if}
@@ -605,17 +629,19 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
               </div>
             {:else}
               {#each aiIngestorMemories as event}
+                {@const key = getEventKey(event)}
+                {@const isOpen = key ? !!expanded[key] : false}
                 <div class="event-card ai-ingestor-card">
                   <div class="event-card-header">
                     <button
                       class="event-title-button"
                       type="button"
                       on:click={() => toggleExpanded(event)}
-                      aria-expanded={isExpanded(event)}
+                      aria-expanded={isOpen}
                     >
                       <span class="event-card-title">{getPreview(event.content)}</span>
-                      <span class="event-toggle-icon" aria-hidden="true">{isExpanded(event) ? '▲' : '▼'}</span>
-                      <span class="sr-only">{isExpanded(event) ? 'Collapse memory' : 'Expand memory'}</span>
+                      <span class="event-toggle-icon" aria-hidden="true">{isOpen ? '▲' : '▼'}</span>
+                      <span class="sr-only">{isOpen ? 'Collapse memory' : 'Expand memory'}</span>
                     </button>
                     <div class="validation-controls">
                       <button class="val-btn good" title="Mark as correct" on:click={() => setValidation(event, 'correct')} disabled={saving[event.relPath] || event.validation?.status === 'correct'}>+
@@ -624,15 +650,20 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                       </button>
                     </div>
                   </div>
-                  {#if isExpanded(event)}
-                    {@const state = getMemoryContent(event)}
-                    {#if state.status === 'loading'}
-                      <div class="event-body loading">Loading AI ingestor memory…</div>
-                    {:else if state.status === 'error'}
-                      <div class="event-body error">Failed to load memory: {state.error}</div>
+                  {#if isOpen}
+                    {#if event.relPath}
+                      {#if memoryContent[event.relPath]?.status === 'loading'}
+                        <div class="event-body loading">Loading AI ingestor memory…</div>
+                      {:else if memoryContent[event.relPath]?.status === 'error'}
+                        <div class="event-body error">Failed to load memory: {memoryContent[event.relPath]?.error}</div>
+                      {:else}
+                        <div class="event-body">
+                          <pre>{memoryContent[event.relPath]?.content ?? event.content}</pre>
+                        </div>
+                      {/if}
                     {:else}
                       <div class="event-body">
-                        <pre>{state.content ?? event.content}</pre>
+                        <pre>{event.content}</pre>
                       </div>
                     {/if}
                   {/if}
@@ -673,17 +704,19 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
               </div>
             {:else}
               {#each audioTranscriptMemories as event}
+                {@const key = getEventKey(event)}
+                {@const isOpen = key ? !!expanded[key] : false}
                 <div class="event-card audio-transcript-card">
                   <div class="event-card-header">
                     <button
                       class="event-title-button"
                       type="button"
                       on:click={() => toggleExpanded(event)}
-                      aria-expanded={isExpanded(event)}
+                      aria-expanded={isOpen}
                     >
                       <span class="event-card-title">{getPreview(event.content)}</span>
-                      <span class="event-toggle-icon" aria-hidden="true">{isExpanded(event) ? '▲' : '▼'}</span>
-                      <span class="sr-only">{isExpanded(event) ? 'Collapse memory' : 'Expand memory'}</span>
+                      <span class="event-toggle-icon" aria-hidden="true">{isOpen ? '▲' : '▼'}</span>
+                      <span class="sr-only">{isOpen ? 'Collapse memory' : 'Expand memory'}</span>
                     </button>
                     <div class="validation-controls">
                       <button class="val-btn good" title="Mark as correct" on:click={() => setValidation(event, 'correct')} disabled={saving[event.relPath] || event.validation?.status === 'correct'}>+
@@ -692,15 +725,20 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
                       </button>
                     </div>
                   </div>
-                  {#if isExpanded(event)}
-                    {@const state = getMemoryContent(event)}
-                    {#if state.status === 'loading'}
-                      <div class="event-body loading">Loading audio transcript…</div>
-                    {:else if state.status === 'error'}
-                      <div class="event-body error">Failed to load transcript: {state.error}</div>
+                  {#if isOpen}
+                    {#if event.relPath}
+                      {#if memoryContent[event.relPath]?.status === 'loading'}
+                        <div class="event-body loading">Loading audio transcript…</div>
+                      {:else if memoryContent[event.relPath]?.status === 'error'}
+                        <div class="event-body error">Failed to load transcript: {memoryContent[event.relPath]?.error}</div>
+                      {:else}
+                        <div class="event-body">
+                          <pre>{memoryContent[event.relPath]?.content ?? event.content}</pre>
+                        </div>
+                      {/if}
                     {:else}
                       <div class="event-body">
-                        <pre>{state.content ?? event.content}</pre>
+                        <pre>{event.content}</pre>
                       </div>
                     {/if}
                   {/if}
@@ -731,30 +769,37 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
         {:else if memoryTab === 'dreams'}
         <div class="events-list"> 
 
-          {#if dreamMemories.length > 0}
-            {#each dreamMemories as event (event.id)}
-              <div class="event-card dream-card">
-                <div class="event-card-header">
-                  <button
-                    class="event-title-button"
-                    type="button"
-                    on:click={() => toggleExpanded(event)}
-                    aria-expanded={isExpanded(event)}
-                  >
-                    <span class="event-card-title">{getPreview(event.content)}</span>
-                    <span class="event-toggle-icon" aria-hidden="true">{isExpanded(event) ? '▲' : '▼'}</span>
-                    <span class="sr-only">{isExpanded(event) ? 'Collapse memory' : 'Expand memory'}</span>
-                  </button>
-                </div>
-                {#if isExpanded(event)}
-                  {@const state = getMemoryContent(event)}
-                  {#if state.status === 'loading'}
-                    <div class="event-body loading">Loading dream memory…</div>
-                  {:else if state.status === 'error'}
-                    <div class="event-body error">Failed to load dream: {state.error}</div>
+            {#if dreamMemories.length > 0}
+              {#each dreamMemories as event (event.id)}
+                {@const key = getEventKey(event)}
+                {@const isOpen = key ? !!expanded[key] : false}
+                <div class="event-card dream-card">
+                  <div class="event-card-header">
+                    <button
+                      class="event-title-button"
+                      type="button"
+                      on:click={() => toggleExpanded(event)}
+                      aria-expanded={isOpen}
+                    >
+                      <span class="event-card-title">{getPreview(event.content)}</span>
+                      <span class="event-toggle-icon" aria-hidden="true">{isOpen ? '▲' : '▼'}</span>
+                      <span class="sr-only">{isOpen ? 'Collapse memory' : 'Expand memory'}</span>
+                    </button>
+                  </div>
+                  {#if isOpen}
+                    {#if event.relPath}
+                      {#if memoryContent[event.relPath]?.status === 'loading'}
+                        <div class="event-body loading">Loading dream memory…</div>
+                    {:else if memoryContent[event.relPath]?.status === 'error'}
+                      <div class="event-body error">Failed to load dream: {memoryContent[event.relPath]?.error}</div>
+                    {:else}
+                      <div class="event-body">
+                        <pre>{memoryContent[event.relPath]?.content ?? event.content}</pre>
+                      </div>
+                    {/if}
                   {:else}
                     <div class="event-body">
-                      <pre>{state.content ?? event.content}</pre>
+                      <pre>{event.content}</pre>
                     </div>
                   {/if}
                 {/if}

@@ -190,6 +190,13 @@ export interface ContextBuilderOptions {
   // Pattern recognition (future)
   detectPatterns?: boolean; // Default: false (not implemented yet)
 
+  // Hybrid search (keyword + semantic)
+  metadataFilters?: {
+    type?: string | string[];  // Filter by memory type (e.g., 'dream', 'reflection')
+    tags?: string[];            // Filter by tags
+    entities?: string[];        // Filter by entities
+  };
+
   // Mode-specific overrides
   forceSemanticSearch?: boolean; // Dual mode: always try semantic search
   usingLoRA?: boolean; // Skip persona context when using LoRA (default: false)
@@ -247,6 +254,7 @@ export async function buildContextPackage(
     includePersonaCache = true,
     includeTaskContext = false,
     detectPatterns = false,
+    metadataFilters,
     forceSemanticSearch = mode === 'dual',
     usingLoRA = false
   } = options;
@@ -267,7 +275,53 @@ export async function buildContextPackage(
 
     if (idx.exists) {
       // Semantic search available
-      const hits = await queryIndex(userMessage, { topK });
+      let hits = await queryIndex(userMessage, { topK });
+
+      // HYBRID SEARCH: Apply metadata filters if provided
+      // This implements proper keyword + semantic search combination
+      if (metadataFilters) {
+        hits = hits.filter((hit: any) => {
+          try {
+            const raw = readFileSync(hit.item.path, 'utf-8');
+            const obj = JSON.parse(raw);
+            const type = obj?.type ? String(obj.type) : '';
+            const tags: string[] = Array.isArray(obj?.tags) ? obj.tags.map((x: any) => String(x)) : [];
+            const entities: string[] = Array.isArray(obj?.entities) ? obj.entities.map((x: any) => String(x)) : [];
+
+            // Store metadata on hit for later use
+            hit._metadata = { type, tags, entities };
+
+            // Check type filter (OR logic - matches any of the specified types)
+            if (metadataFilters.type) {
+              const types = Array.isArray(metadataFilters.type) ? metadataFilters.type : [metadataFilters.type];
+              if (!types.includes(type)) {
+                return false;
+              }
+            }
+
+            // Check tags filter (OR logic - has at least one of the specified tags)
+            if (metadataFilters.tags && metadataFilters.tags.length > 0) {
+              const hasAnyTag = metadataFilters.tags.some(tag => tags.includes(tag));
+              if (!hasAnyTag) {
+                return false;
+              }
+            }
+
+            // Check entities filter (OR logic - has at least one of the specified entities)
+            if (metadataFilters.entities && metadataFilters.entities.length > 0) {
+              const hasAnyEntity = metadataFilters.entities.some(entity => entities.includes(entity));
+              if (!hasAnyEntity) {
+                return false;
+              }
+            }
+
+            return true;
+          } catch {
+            // If file can't be read, exclude it when filters are active
+            return false;
+          }
+        });
+      }
 
       // Filter by similarity threshold
       let filtered = hits.filter((hit: any) => hit.score >= similarityThreshold);
