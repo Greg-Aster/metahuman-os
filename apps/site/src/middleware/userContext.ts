@@ -46,14 +46,26 @@ export function withUserContext(handler: APIRoute): APIRoute {
       const session = validateSession(sessionCookie.value);
 
       if (session) {
+        // Handle anonymous sessions (guest users)
+        if (session.role === 'anonymous') {
+          const activeProfile = session.metadata?.activeProfile;
+
+          return await runWithUserContext(
+            {
+              userId: 'anonymous',
+              username: 'anonymous',
+              role: 'anonymous',
+              activeProfile, // May be undefined or 'guest'
+            },
+            () => handler(context)
+          );
+        }
+
         // Get CURRENT user details from database (not cached in session)
         // This ensures role changes are immediately reflected
         const user = getUser(session.userId);
 
         if (user) {
-          // Check if guest has selected a profile
-          const activeProfile = session.metadata?.activeProfile;
-
           // Run handler with user context using CURRENT role from database
           // This prevents stale privilege escalation
           return await runWithUserContext(
@@ -61,7 +73,6 @@ export function withUserContext(handler: APIRoute): APIRoute {
               userId: user.id,
               username: user.username,
               role: user.role,
-              activeProfile: activeProfile, // Pass selected profile for guests
             },
             () => handler(context)
           );

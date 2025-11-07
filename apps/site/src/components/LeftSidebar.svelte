@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { activeView, statusStore, statusRefreshTrigger, yoloModeStore } from '../stores/navigation';
-  import { currentMode } from '../stores/security-policy';
+  import { currentMode, isOwner } from '../stores/security-policy';
 
   interface MenuItem {
     id: string;
@@ -84,7 +85,6 @@
   // Persona facet state
   let activeFacet: string = 'default';
   let facets: Record<string, any> = {};
-  const facetOrder = ['inactive', 'default', 'poet', 'thinker', 'friend', 'antagonist'];
 
   // Subscribe to the shared status store
   let statusSubscription = null;
@@ -111,6 +111,10 @@
   }
 
   async function loadPendingApprovals() {
+    if (!get(isOwner)) {
+      pendingApprovals = 0;
+      return;
+    }
     try {
       const res = await fetch('/api/approvals');
       if (res.ok) {
@@ -129,6 +133,13 @@
       if (res.ok) {
         trustOptions = Array.isArray(data.available) ? data.available : [];
         if (identity) identity.trustLevel = data.level;
+
+        // Sync YOLO mode with trust level
+        // YOLO mode is only valid when trust level is at maximum (adaptive_auto)
+        if (data.level !== 'adaptive_auto') {
+          yoloModeStore.set(false);
+          saveChatPrefs();
+        }
       }
     } catch (e) {
       console.error('Failed to load trust options:', e);
@@ -285,52 +296,26 @@
 
   /**
    * Cycle to next persona facet
-   * Order: inactive → default → poet → thinker → friend → antagonist → inactive
+   * Dynamically builds facet list from loaded facets (enabled only)
    */
   async function cyclePersonaFacet() {
-    const currentIndex = facetOrder.indexOf(activeFacet);
-    const nextIndex = (currentIndex + 1) % facetOrder.length;
-    const nextFacet = facetOrder[nextIndex];
+    // Build dynamic facet list from loaded facets (enabled only)
+    const availableFacets = Object.keys(facets).filter(
+      key => facets[key]?.enabled !== false
+    );
 
-    // Handle "inactive" - turn off persona
-    if (nextFacet === 'inactive') {
-      // Disable persona context
-      try {
-        const response = await fetch('/api/persona-toggle', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: false }),
-        });
-        const result = await response.json();
-        if (result.success) {
-          activeFacet = 'inactive';
-          setTimeout(() => statusRefreshTrigger.update(n => n + 1), 100);
-        }
-      } catch (error) {
-        console.error('Error disabling persona:', error);
-      }
+    // If no facets available, bail out
+    if (availableFacets.length === 0) {
+      console.warn('No enabled facets available');
       return;
     }
 
-    // Handle switching from inactive to active facet
-    if (activeFacet === 'inactive') {
-      // Enable persona context first
-      try {
-        const response = await fetch('/api/persona-toggle', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: true }),
-        });
-        const result = await response.json();
-        if (!result.success) {
-          console.error('Failed to enable persona');
-          return;
-        }
-      } catch (error) {
-        console.error('Error enabling persona:', error);
-        return;
-      }
-    }
+    // Find current facet index
+    const currentIndex = availableFacets.indexOf(activeFacet);
+
+    // Calculate next index (wraps around to 0 after last facet)
+    const nextIndex = (currentIndex + 1) % availableFacets.length;
+    const nextFacet = availableFacets[nextIndex];
 
     // Switch to the next facet
     try {
@@ -406,15 +391,35 @@
     }
   }
 
+  let approvalsInterval: ReturnType<typeof setInterval> | null = null;
+
+  function stopApprovalsPolling() {
+    if (approvalsInterval) {
+      clearInterval(approvalsInterval);
+      approvalsInterval = null;
+    }
+  }
+
+  function startApprovalsPolling() {
+    stopApprovalsPolling();
+    if (!get(isOwner)) {
+      pendingApprovals = 0;
+      return;
+    }
+    loadPendingApprovals();
+    approvalsInterval = setInterval(loadPendingApprovals, 5000);
+  }
+
   onMount(() => {
     void fetchCurrentUser();
     // Don't auto-connect initially
     loadStatus();
-    loadPendingApprovals();
     loadFacets();
-
-    // Refresh approvals every 5 seconds (no need to refresh status as we're using the shared store)
-    const approvalsInterval = setInterval(loadPendingApprovals, 5000);
+    loadTrustOptions(); // Load trust level on mount
+    startApprovalsPolling();
+    const ownerUnsubscribe = isOwner.subscribe(() => {
+      startApprovalsPolling();
+    });
 
     // Set up visibility change handling to connect/disconnect EventSource
     const handleVisibilityChange = () => {
@@ -431,7 +436,8 @@
     setTimeout(connectActivityStream, 1000);
 
     return () => {
-      clearInterval(approvalsInterval);
+      stopApprovalsPolling();
+      ownerUnsubscribe();
       if (statusSubscription) {
         statusSubscription();
       }
@@ -456,14 +462,14 @@
   <nav class="menu">
     {#each menuItems as item}
       {@const isSecurityTab = item.id === 'security'}
-      {@const isDisabled = isSecurityTab && !currentUser}
+      {@const isDisabled = isSecurityTab && (!currentUser || currentUser.role !== 'owner')}
       <button
         class="menu-item"
         class:active={$activeView === item.id}
         class:disabled={isDisabled}
         on:click={() => !isDisabled && selectView(item.id)}
         disabled={isDisabled}
-        title={isDisabled ? 'Login required to access security settings' : item.description}
+        title={isDisabled ? 'Owner access required for security settings' : item.description}
       >
         <span class="menu-icon">{item.icon}</span>
         <div class="menu-text">

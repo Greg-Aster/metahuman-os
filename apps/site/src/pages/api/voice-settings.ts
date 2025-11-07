@@ -234,12 +234,15 @@ function ensureVoiceConfig(
 const getHandler: APIRoute = async () => {
   try {
     const context = getUserContext();
-    if (!context || context.username === 'anonymous') {
+    if (!context) {
       return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Context not available' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
       );
     }
+
+    // Allow anonymous/guest users to view voice settings (read-only)
+    // They just can't change them via POST
 
     const voiceConfigPath = context.profilePaths.voiceConfig;
     const voicesDir = context.systemPaths.voiceModels;

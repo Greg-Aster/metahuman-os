@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
+  import { isOwner } from '../stores/security-policy';
 
   interface ApprovalItem {
     id: string;
@@ -20,6 +22,11 @@
   let processingId: string | null = null;
 
   async function loadApprovals() {
+    if (!get(isOwner)) {
+      approvals = [];
+      loading = false;
+      return;
+    }
     try {
       const res = await fetch('/api/approvals');
       if (!res.ok) throw new Error('Failed to load approval queue');
@@ -102,14 +109,42 @@
     return `${diffDays}d ago`;
   }
 
-  onMount(() => {
+  let approvalsInterval: ReturnType<typeof setInterval> | null = null;
+
+  function stopApprovalsInterval() {
+    if (approvalsInterval) {
+      clearInterval(approvalsInterval);
+      approvalsInterval = null;
+    }
+  }
+
+  function startApprovalsInterval() {
+    stopApprovalsInterval();
+    if (!get(isOwner)) {
+      approvals = [];
+      loading = false;
+      return;
+    }
     loadApprovals();
-    // Refresh every 5 seconds
-    const interval = setInterval(loadApprovals, 5000);
-    return () => clearInterval(interval);
+    approvalsInterval = setInterval(loadApprovals, 5000);
+  }
+
+  onMount(() => {
+    startApprovalsInterval();
+    const unsubscribe = isOwner.subscribe(() => startApprovalsInterval());
+    return () => {
+      stopApprovalsInterval();
+      unsubscribe();
+    };
   });
 </script>
 
+{#if !$isOwner}
+  <div class="card p-6 text-center space-y-2">
+    <h2 class="text-lg font-semibold">Approvals Restricted</h2>
+    <p class="muted text-sm">Log in as the owner to review and approve skill executions.</p>
+  </div>
+{:else}
 <div class="space-y-4">
   <!-- Header -->
   <div class="flex items-center justify-between">
@@ -203,6 +238,7 @@
     </div>
   {/if}
 </div>
+{/if}
 
 <style>
   .card {

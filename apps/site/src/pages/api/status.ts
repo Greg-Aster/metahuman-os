@@ -21,7 +21,9 @@ const CACHE_TTL = 5000; // 5 seconds
 const handler: APIRoute = async ({ cookies }) => {
   try {
     const ctx = getUserContext();
-    if (!ctx || ctx.role === 'anonymous') {
+    // Allow anonymous users WITH guest profile to view (read-only)
+    // Block anonymous users WITHOUT guest profile
+    if (!ctx || (ctx.role === 'anonymous' && !ctx.activeProfile)) {
       return new Response(
         JSON.stringify({ error: 'Authentication required', authenticated: false }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -409,8 +411,9 @@ const handler: APIRoute = async ({ cookies }) => {
       }
     );
   } catch (error) {
+    console.error('[status] Error:', error);
     return new Response(
-      JSON.stringify({ error: 'System not initialized' }),
+      JSON.stringify({ error: 'System not initialized', details: (error as Error).message }),
       {
         status: 500,
         headers: {

@@ -10,7 +10,10 @@ import { audit } from '@metahuman/core/audit';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
 import { paths } from '@metahuman/core';
 
-const MODELS_CONFIG_PATH = join(paths.root, 'etc/models.json');
+// Use paths.etc for user-specific config (context-aware)
+function getModelsConfigPath(): string {
+  return join(paths.etc, 'models.json');
+}
 
 interface ModelsConfig {
   globalSettings: {
@@ -26,7 +29,8 @@ interface ModelsConfig {
  */
 export const GET: APIRoute = async (context) => {
   try {
-    const config: ModelsConfig = JSON.parse(readFileSync(MODELS_CONFIG_PATH, 'utf-8'));
+    const configPath = getModelsConfigPath();
+    const config: ModelsConfig = JSON.parse(readFileSync(configPath, 'utf-8'));
 
     return new Response(
       JSON.stringify({
@@ -83,13 +87,14 @@ export const POST: APIRoute = async (context) => {
     }
 
     // Read current config
-    const config: ModelsConfig = JSON.parse(readFileSync(MODELS_CONFIG_PATH, 'utf-8'));
+    const configPath = getModelsConfigPath();
+    const config: ModelsConfig = JSON.parse(readFileSync(configPath, 'utf-8'));
 
     // Update setting
     config.globalSettings.includePersonaSummary = enabled;
 
     // Write back to file
-    writeFileSync(MODELS_CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+    writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 
     // Audit the change
     audit({

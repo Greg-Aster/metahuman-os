@@ -33,7 +33,7 @@ let config: VoiceConfig | null = null;
 function loadConfig(): VoiceConfig {
   if (config) return config;
 
-  const configPath = path.join(paths.root, 'etc', 'voice.json');
+  const configPath = path.join(paths.etc, 'voice.json');
   if (!fs.existsSync(configPath)) {
     throw new Error('Voice configuration not found at etc/voice.json');
   }

@@ -161,11 +161,33 @@ let reasoningStages: ReasoningStage[] = [];
     currentTtsAbort = controller;
 
     try {
+      // Fetch voice models for current session/profile
+      console.log('[chat-tts] Fetching voice models...');
+      const voiceModelsRes = await fetch('/api/voice-models');
+      let voiceModels: string[] | undefined = undefined;
+      let multiVoice = false;
+
+      if (voiceModelsRes.ok) {
+        const voiceData = await voiceModelsRes.json();
+        if (voiceData.multiVoice && voiceData.models && voiceData.models.length > 1) {
+          voiceModels = voiceData.models;
+          multiVoice = true;
+          console.log(`[chat-tts] Multi-voice mode active with ${voiceModels.length} voices:`, voiceData.mergedProfiles);
+        }
+      }
+
       console.log('[chat-tts] Fetching TTS from /api/tts...');
+      const ttsBody: any = { text: speechText };
+
+      // If multi-voice, use models array; otherwise use default single voice
+      if (multiVoice && voiceModels) {
+        ttsBody.models = voiceModels;
+      }
+
       const ttsRes = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: speechText }),
+        body: JSON.stringify(ttsBody),
         signal: controller.signal
       });
 

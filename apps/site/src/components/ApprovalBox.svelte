@@ -5,8 +5,10 @@
    * Similar to Claude Code, Cursor, Windsurf approval UIs
    */
 
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { codeToHtml } from 'shiki';
+  import { isOwner } from '../stores/security-policy';
 
   interface CodeApproval {
     id: string;
@@ -25,7 +27,7 @@
   let currentIndex = 0;
   let isExpanded = false;
   let isApproving = false;
-  let pollInterval: number;
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
   let highlightedCode: string = '';
   let isEditing = false;
   let editedCode: string = '';
@@ -42,6 +44,11 @@
 
   // Fetch pending approvals
   async function fetchApprovals() {
+    if (!get(isOwner)) {
+      approvals = [];
+      isExpanded = false;
+      return;
+    }
     try {
       const res = await fetch('/api/code-approvals');
       const data = await res.json();
@@ -58,6 +65,7 @@
 
   // Approve code change
   async function approve() {
+    if (!get(isOwner)) return;
     if (!currentApproval || isApproving) return;
 
     isApproving = true;
@@ -90,6 +98,7 @@
 
   // Reject code change
   async function reject() {
+    if (!get(isOwner)) return;
     if (!currentApproval || isApproving) return;
 
     isApproving = true;
@@ -218,14 +227,9 @@
     pollInterval = setInterval(fetchApprovals, 5000) as unknown as number;
   });
 
-  onDestroy(() => {
-    if (pollInterval) {
-      clearInterval(pollInterval);
-    }
-  });
 </script>
 
-{#if hasApprovals}
+{#if $isOwner && hasApprovals}
   <div class="approval-box" class:expanded={isExpanded}>
     <!-- Collapsed header -->
     {#if !isExpanded}

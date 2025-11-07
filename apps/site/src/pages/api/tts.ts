@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { generateSpeech } from '@metahuman/core';
+import { generateSpeech, generateMultiVoiceSpeech } from '@metahuman/core';
 
 /**
  * POST /api/tts
@@ -7,15 +7,16 @@ import { generateSpeech } from '@metahuman/core';
  *
  * Body: {
  *   text: string,
- *   model?: string,        // Optional: override voice model path
- *   config?: string,       // Optional: override voice config path
- *   speakingRate?: number  // Optional: override speaking rate (0.5 - 2.0)
+ *   model?: string,           // Optional: override voice model path
+ *   models?: string[],        // Optional: array of voice models for multi-voice (mutant mode)
+ *   config?: string,          // Optional: override voice config path
+ *   speakingRate?: number     // Optional: override speaking rate (0.5 - 2.0)
  * }
  * Returns: audio/wav stream
  */
 export const POST: APIRoute = async ({ request }) => {
   try {
-    const { text, model, config, speakingRate } = await request.json();
+    const { text, model, models, config, speakingRate } = await request.json();
 
     if (!text || typeof text !== 'string') {
       return new Response(JSON.stringify({ error: 'Text is required' }), {
@@ -24,13 +25,24 @@ export const POST: APIRoute = async ({ request }) => {
       });
     }
 
-    // Generate speech audio with optional overrides
-    const audioBuffer = await generateSpeech(text, {
-      signal: request.signal,
-      model,
-      config,
-      speakingRate,
-    });
+    let audioBuffer: Buffer;
+
+    // Check if multi-voice mode is requested (for Mutant Super Intelligence)
+    if (models && Array.isArray(models) && models.length > 0) {
+      // Generate speech with multiple voices mixed together
+      audioBuffer = await generateMultiVoiceSpeech(text, models, {
+        signal: request.signal,
+        speakingRate,
+      });
+    } else {
+      // Generate speech audio with optional overrides (single voice)
+      audioBuffer = await generateSpeech(text, {
+        signal: request.signal,
+        model,
+        config,
+        speakingRate,
+      });
+    }
 
     // Return audio as WAV stream
     return new Response(audioBuffer, {

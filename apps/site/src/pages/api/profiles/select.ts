@@ -47,13 +47,18 @@ export const POST: APIRoute = async (context) => {
         );
       }
 
+      // Create a special merged persona for mutant-super-intelligence
+      const { createMutantSuperIntelligence } = await import('@metahuman/core/profile');
+      await createMutantSuperIntelligence(publicProfiles.map(p => p.username));
+
       // Store all public profile usernames in session for memory merging
       const sessionCookie = context.cookies.get('mh_session');
       if (sessionCookie) {
         const session = getSession(sessionCookie.value);
         if (session) {
           session.metadata = session.metadata || {};
-          session.metadata.activeProfile = 'mutant-super-intelligence';
+          session.metadata.activeProfile = 'guest';
+          session.metadata.sourceProfile = 'mutant-super-intelligence';
           session.metadata.mergedProfiles = publicProfiles.map(p => p.username);
           updateSession(session);
         }
@@ -70,7 +75,8 @@ export const POST: APIRoute = async (context) => {
       return new Response(
         JSON.stringify({
           success: true,
-          profile: 'mutant-super-intelligence',
+          profile: 'guest',
+          sourceProfile: 'mutant-super-intelligence',
           merged: true,
           profiles: publicProfiles.map(p => p.username)
         }),

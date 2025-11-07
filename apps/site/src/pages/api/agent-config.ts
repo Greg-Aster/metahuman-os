@@ -4,7 +4,10 @@ import path from 'node:path';
 import { paths, audit, loadModelRegistry } from '@metahuman/core';
 import { requireOwner } from '../../middleware/cognitiveModeGuard';
 
-const MODELS_CONFIG_PATH = path.join(paths.root, 'etc', 'models.json');
+// Use paths.etc for user-specific config (context-aware)
+function getModelsConfigPath(): string {
+  return path.join(paths.etc, 'models.json');
+}
 
 /**
  * GET /api/agent-config
@@ -42,7 +45,8 @@ const postHandler: APIRoute = async ({ request }) => {
     const body = await request.json();
 
     // Read current registry
-    const registry = JSON.parse(fs.readFileSync(MODELS_CONFIG_PATH, 'utf-8'));
+    const configPath = getModelsConfigPath();
+    const registry = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
     // Ensure globalSettings exists
     if (!registry.globalSettings) {
@@ -63,7 +67,7 @@ const postHandler: APIRoute = async ({ request }) => {
     }
 
     // Write updated registry
-    fs.writeFileSync(MODELS_CONFIG_PATH, JSON.stringify(registry, null, 2));
+    fs.writeFileSync(configPath, JSON.stringify(registry, null, 2));
 
     // Audit the change
     audit({

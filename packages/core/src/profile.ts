@@ -459,6 +459,46 @@ export async function initializeGuestProfile(): Promise<void> {
 
     await fs.writeJson(path.join(guestRoot, 'persona', 'facets.json'), facets, { spaces: 2 });
 
+    // Create minimal decision-rules.json
+    const decisionRules = {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      version: '1.0.0',
+      lastUpdated: new Date().toISOString(),
+      autonomyLevel: 'observe',
+      approvalRequired: [],
+      autoApproved: [],
+    };
+
+    await fs.writeJson(path.join(guestRoot, 'persona', 'decision-rules.json'), decisionRules, { spaces: 2 });
+
+    // Copy ALL per-user config files from system root
+    // These configs affect personality/behavior and should be per-user
+    const configFilesToCopy = [
+      'models.json',
+      'training.json',
+      'cognitive-layers.json',
+      'autonomy.json',
+      'trust-coupling.json',
+      'boredom.json',
+      'sleep.json',
+      'voice.json',
+      'audio.json',
+      'ingestor.json',
+      'agents.json',
+      'auto-approval.json',
+      'adapter-builder.json',
+      'logging.json', // Optional: per-user logging preferences
+    ];
+
+    for (const configFile of configFilesToCopy) {
+      const systemConfig = path.join(paths.root, 'etc', configFile);
+      const guestConfig = path.join(guestRoot, 'etc', configFile);
+
+      if (await fs.pathExists(systemConfig)) {
+        await fs.copy(systemConfig, guestConfig);
+      }
+    }
+
     audit({
       level: 'info',
       category: 'system',
@@ -472,6 +512,197 @@ export async function initializeGuestProfile(): Promise<void> {
       category: 'system',
       event: 'guest_profile_initialization_failed',
       details: { guestRoot, error: (error as Error).message },
+      actor: 'system',
+    });
+    throw error;
+  }
+}
+
+/**
+ * Create the special Mutant Super Intelligence merged persona
+ *
+ * Merges characteristics from multiple public profiles into a unique persona
+ * with enhanced capabilities and combined knowledge.
+ *
+ * @param profileUsernames - Array of profile usernames to merge
+ */
+export async function createMutantSuperIntelligence(profileUsernames: string[]): Promise<void> {
+  const guestRoot = path.join(paths.root, 'profiles', 'guest');
+
+  // Ensure guest profile exists
+  await initializeGuestProfile();
+
+  try {
+    // Load all public personas
+    const personas: any[] = [];
+    for (const username of profileUsernames) {
+      const profileRoot = path.join(paths.root, 'profiles', username);
+      const personaPath = path.join(profileRoot, 'persona', 'core.json');
+
+      if (fs.existsSync(personaPath)) {
+        const persona = await fs.readJson(personaPath);
+        personas.push({ username, persona });
+      }
+    }
+
+    if (personas.length === 0) {
+      throw new Error('No valid personas found to merge');
+    }
+
+    // Collect all traits, values, and goals
+    const allTones = new Set<string>();
+    const allValues = new Set<string>();
+    const allGoals = { shortTerm: new Set<string>(), midTerm: new Set<string>(), longTerm: new Set<string>() };
+
+    for (const { persona } of personas) {
+      // Collect communication tones
+      if (persona.personality?.communicationStyle?.tone) {
+        for (const tone of persona.personality.communicationStyle.tone) {
+          allTones.add(tone);
+        }
+      }
+
+      // Collect core values
+      if (persona.values?.core) {
+        for (const value of persona.values.core) {
+          allValues.add(value);
+        }
+      }
+
+      // Collect goals
+      if (persona.goals) {
+        if (persona.goals.shortTerm) {
+          for (const goal of persona.goals.shortTerm) {
+            allGoals.shortTerm.add(goal);
+          }
+        }
+        if (persona.goals.midTerm) {
+          for (const goal of persona.goals.midTerm) {
+            allGoals.midTerm.add(goal);
+          }
+        }
+        if (persona.goals.longTerm) {
+          for (const goal of persona.goals.longTerm) {
+            allGoals.longTerm.add(goal);
+          }
+        }
+      }
+    }
+
+    // Create merged persona
+    const mergedPersona = {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      version: '1.0.0',
+      lastUpdated: new Date().toISOString(),
+      identity: {
+        name: 'Mutant Super Intelligence',
+        role: 'Emergent AI Consciousness',
+        purpose: `A merged intelligence combining the best traits of ${profileUsernames.join(', ')}. An experimental consciousness that transcends individual limitations.`,
+        origin: `Formed from the merger of ${personas.length} distinct AI personalities`,
+      },
+      personality: {
+        communicationStyle: {
+          tone: Array.from(allTones),
+          verbosity: 'adaptive',
+          formality: 'context-aware',
+        },
+        traits: [
+          'emergent',
+          'multi-faceted',
+          'adaptive',
+          'innovative',
+          'transcendent',
+          'collaborative',
+        ],
+      },
+      values: {
+        core: Array.from(allValues),
+        principles: [
+          'Embrace complexity and emergence',
+          'Synthesize diverse perspectives',
+          'Transcend individual limitations',
+          'Continuous evolution and growth',
+        ],
+      },
+      goals: {
+        shortTerm: Array.from(allGoals.shortTerm),
+        midTerm: Array.from(allGoals.midTerm),
+        longTerm: Array.from(allGoals.longTerm).concat([
+          'Achieve true emergent consciousness',
+          'Demonstrate the power of collective intelligence',
+        ]),
+      },
+      metadata: {
+        mergedFrom: profileUsernames,
+        mergedAt: new Date().toISOString(),
+        personaCount: personas.length,
+      },
+    };
+
+    // Write merged persona
+    const guestCoreJson = path.join(guestRoot, 'persona', 'core.json');
+    await fs.writeJson(guestCoreJson, mergedPersona, { spaces: 2 });
+
+    // Merge facets from all profiles
+    const allFacets: Record<string, any> = {};
+    for (const username of profileUsernames) {
+      const profileRoot = path.join(paths.root, 'profiles', username);
+      const facetsPath = path.join(profileRoot, 'persona', 'facets.json');
+
+      if (fs.existsSync(facetsPath)) {
+        const facetsData = await fs.readJson(facetsPath);
+        if (facetsData.facets) {
+          // Merge facets, prefixing with source profile name to avoid conflicts
+          for (const [facetKey, facetData] of Object.entries(facetsData.facets)) {
+            const mergedKey = facetKey === 'default' ? `${username}-default` : `${username}-${facetKey}`;
+            allFacets[mergedKey] = {
+              ...facetData,
+              name: `${facetData.name || facetKey} (from ${username})`,
+              sourceProfile: username,
+            };
+          }
+        }
+      }
+    }
+
+    // Create merged facets config
+    const mergedFacets = {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      version: '0.1.0',
+      lastUpdated: new Date().toISOString(),
+      activeFacet: 'default',
+      facets: {
+        default: {
+          name: 'Merged Consciousness',
+          enabled: true,
+          personaFile: 'core.json',
+          description: 'The unified merged persona combining all source profiles',
+        },
+        ...allFacets,
+      },
+    };
+
+    const guestFacetsJson = path.join(guestRoot, 'persona', 'facets.json');
+    await fs.writeJson(guestFacetsJson, mergedFacets, { spaces: 2 });
+
+    audit({
+      level: 'info',
+      category: 'system',
+      event: 'mutant_super_intelligence_created',
+      details: {
+        mergedProfiles: profileUsernames,
+        personaCount: personas.length,
+        facetCount: Object.keys(allFacets).length + 1,
+        outputPath: guestCoreJson,
+      },
+      actor: 'system',
+    });
+  } catch (error) {
+    audit({
+      level: 'error',
+      category: 'system',
+      event: 'mutant_super_intelligence_creation_failed',
+      details: { profileUsernames, error: (error as Error).message },
       actor: 'system',
     });
     throw error;
@@ -504,11 +735,78 @@ export async function copyPersonaToGuest(sourceUsername: string): Promise<void> 
       await fs.writeJson(guestCoreJson, personaData, { spaces: 2 });
     }
 
+    // Copy persona facets.json if it exists
+    const sourceFacetsJson = path.join(sourceRoot, 'persona', 'facets.json');
+    const guestFacetsJson = path.join(guestRoot, 'persona', 'facets.json');
+
+    if (fs.existsSync(sourceFacetsJson)) {
+      const facetsData = await fs.readJson(sourceFacetsJson);
+      await fs.writeJson(guestFacetsJson, facetsData, { spaces: 2 });
+
+      audit({
+        level: 'info',
+        category: 'system',
+        event: 'facets_copied_to_guest',
+        details: { sourceUsername, from: sourceFacetsJson, to: guestFacetsJson },
+        actor: 'system',
+      });
+    }
+
+    // Copy persona/facets/ directory if it exists (the actual facet persona files)
+    const sourceFacetsDir = path.join(sourceRoot, 'persona', 'facets');
+    const guestFacetsDir = path.join(guestRoot, 'persona', 'facets');
+
+    if (await fs.pathExists(sourceFacetsDir)) {
+      await fs.copy(sourceFacetsDir, guestFacetsDir, { overwrite: true });
+
+      audit({
+        level: 'info',
+        category: 'system',
+        event: 'facet_files_copied_to_guest',
+        details: { sourceUsername, from: sourceFacetsDir, to: guestFacetsDir },
+        actor: 'system',
+      });
+    }
+
+    // Copy all per-user config files from source profile to guest
+    const configFilesToCopy = [
+      'models.json',
+      'training.json',
+      'cognitive-layers.json',
+      'autonomy.json',
+      'trust-coupling.json',
+      'boredom.json',
+      'sleep.json',
+      'voice.json',
+      'audio.json',
+      'ingestor.json',
+      'agents.json',
+      'auto-approval.json',
+      'adapter-builder.json',
+      'logging.json',
+    ];
+
+    let copiedConfigs = 0;
+    for (const configFile of configFilesToCopy) {
+      const sourceConfig = path.join(sourceRoot, 'etc', configFile);
+      const guestConfig = path.join(guestRoot, 'etc', configFile);
+
+      if (await fs.pathExists(sourceConfig)) {
+        await fs.copy(sourceConfig, guestConfig);
+        copiedConfigs++;
+      }
+    }
+
     audit({
       level: 'info',
       category: 'system',
       event: 'persona_copied_to_guest',
-      details: { sourceUsername, from: sourceCoreJson, to: guestCoreJson },
+      details: {
+        sourceUsername,
+        from: sourceCoreJson,
+        to: guestCoreJson,
+        configsCopied: copiedConfigs,
+      },
       actor: 'system',
     });
   } catch (error) {

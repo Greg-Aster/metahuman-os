@@ -24,7 +24,7 @@ const DEFAULT_CONFIG: AutonomyConfig = {
 
 export function readAutonomyConfig(): AutonomyConfig {
   try {
-    const p = path.join(paths.root, 'etc', 'autonomy.json')
+    const p = path.join(paths.etc, 'autonomy.json')
     const raw = fs.readFileSync(p, 'utf-8')
     const cfg = JSON.parse(raw)
     return { ...DEFAULT_CONFIG, ...cfg }

@@ -18,7 +18,10 @@ interface CognitiveLayersConfig {
   enableBlockingMode: boolean;
 }
 
-const CONFIG_PATH = `${paths.root}/etc/cognitive-layers.json`;
+// Use paths.etc for user-specific config (context-aware)
+function getConfigPath(): string {
+  return `${paths.etc}/cognitive-layers.json`;
+}
 
 // Default configuration
 const DEFAULT_CONFIG: CognitiveLayersConfig = {
@@ -30,8 +33,9 @@ const DEFAULT_CONFIG: CognitiveLayersConfig = {
 
 function loadConfig(): CognitiveLayersConfig {
   try {
-    if (existsSync(CONFIG_PATH)) {
-      const data = readFileSync(CONFIG_PATH, 'utf-8');
+    const configPath = getConfigPath();
+    if (existsSync(configPath)) {
+      const data = readFileSync(configPath, 'utf-8');
       return { ...DEFAULT_CONFIG, ...JSON.parse(data) };
     }
   } catch (error) {
@@ -42,13 +46,14 @@ function loadConfig(): CognitiveLayersConfig {
 
 function saveConfig(config: CognitiveLayersConfig): boolean {
   try {
+    const configPath = getConfigPath();
     // Ensure etc/ directory exists
-    const dir = dirname(CONFIG_PATH);
+    const dir = dirname(configPath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
 
-    writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+    writeFileSync(configPath, JSON.stringify(config, null, 2));
     return true;
   } catch (error) {
     console.error('[COGNITIVE_LAYERS_CONFIG] Failed to save config:', error);

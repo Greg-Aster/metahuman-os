@@ -13,12 +13,16 @@ export interface TrustCouplingConfig {
   description_text: Record<CognitiveModeId, string>;
 }
 
-const COUPLING_CONFIG_PATH = path.join(paths.root, 'etc', 'trust-coupling.json');
+// Use paths.etc for user-specific config (context-aware)
+function getCouplingConfigPath(): string {
+  return path.join(paths.etc, 'trust-coupling.json');
+}
 
 /**
  * Load trust coupling configuration
  */
 export function loadTrustCoupling(): TrustCouplingConfig {
+  const COUPLING_CONFIG_PATH = getCouplingConfigPath();
   if (!fs.existsSync(COUPLING_CONFIG_PATH)) {
     const fallback: TrustCouplingConfig = {
       version: '1.0.0',
@@ -68,6 +72,7 @@ export function loadTrustCoupling(): TrustCouplingConfig {
  * Save trust coupling configuration
  */
 export function saveTrustCoupling(config: TrustCouplingConfig, actor: string = 'system'): void {
+  const COUPLING_CONFIG_PATH = getCouplingConfigPath();
   fs.writeFileSync(COUPLING_CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
 
   audit({

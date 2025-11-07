@@ -8,7 +8,7 @@ export const POST: APIRoute = async ({ request }) => {
     const body = await request.json();
     const enabled = body.enabled ?? false;
 
-    const modelsPath = path.join(paths.root, 'etc', 'models.json');
+    const modelsPath = path.join(paths.etc, 'models.json');
     const registry = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
 
     // Ensure globalSettings exists
