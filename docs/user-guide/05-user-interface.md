@@ -56,7 +56,7 @@ The UI will display prominent banners at the top of the screen to inform you of 
 
 **Left Sidebar - Status Widget:**
 - **Trust Level**: Click to cycle through trust progression (observe → suggest → supervised_auto → bounded_auto → adaptive_auto → YOLO)
-- **Persona Facets**: Click to cycle through personality facets
+- **Persona Facets**: Click to cycle through personality facets (see [Persona Facets](11-special-features.md#persona-facets) for details)
   - **inactive** (Gray) - Persona disabled
   - **default** (Purple) - Balanced, authentic self
   - **poet** (Indigo) - Creative, metaphorical, expressive
@@ -70,6 +70,9 @@ The UI will display prominent banners at the top of the screen to inform you of 
 
 **Left Sidebar – Active Profile & Status:**
 - **Profile Visibility Badge**: Owners can mark their persona as `Private` or `Public`. Guests see this badge before selecting a profile.
+  - **Public Profiles**: Visible to all guests; can be selected for guest sessions
+  - **Private Profiles**: Hidden from guest selection; owner-only access
+  - **Special Profile**: When 2+ public profiles exist, the [Mutant Super Intelligence](11-special-features.md#mutant-super-intelligence-easter-egg) easter egg appears
 - **Trust Level**: Click to cycle through trust progression (observe → suggest → supervised_auto → bounded_auto → adaptive_auto → YOLO).
 - **Persona Facets**: Cycle through facets; chat messages highlight the active facet.
 
@@ -94,6 +97,7 @@ The Voice tab now divides responsibilities clearly:
 - **Upload & Transcribe** – Drop in local audio for Whisper transcription.
 - **Voice Clone Training** – Stores per-user samples in `profiles/<username>/out/voice-training`. Progress indicators reflect only the active profile.
 - **Voice Settings** – Choose from shared Piper voices (`out/voices`) while keeping personal preferences (speaking rate, cache) inside `profiles/<username>/etc/voice.json`.
+- **Special TTS Effects** – The [Mutant Super Intelligence](11-special-features.md#mutant-super-intelligence-easter-egg) profile automatically uses a dual-voice effect with pitch-shifted audio mixing for a unique sound.
 
 System administrators can install additional `.onnx` models under `out/voices/`; they become available instantly to all users.
 

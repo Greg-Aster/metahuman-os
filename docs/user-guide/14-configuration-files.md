@@ -1,5 +1,43 @@
 ## Configuration Files
 
+MetaHuman OS uses a dual-tier configuration architecture to support multi-user isolation while sharing infrastructure settings.
+
+### Configuration Architecture
+
+**Per-User Configs** (`profiles/<username>/etc/`):
+Each user has their own isolated configuration files that affect personality, behavior, and user-specific settings. These are copied when guests select profiles:
+
+- `models.json` - LLM model settings and persona inclusion
+- `training.json` - LoRA adapter training parameters
+- `cognitive-layers.json` - Cognitive mode settings
+- `autonomy.json` - Autonomy level configuration
+- `trust-coupling.json` - Trust level mappings
+- `boredom.json` - Boredom service schedule
+- `sleep.json` - Sleep/dream time windows
+- `voice.json` - TTS/STT settings (with template variables)
+- `audio.json` - Audio processing configuration
+- `ingestor.json` - Inbox file processing settings
+- `agents.json` - Agent execution schedules
+- `auto-approval.json` - Auto-approval rules
+- `adapter-builder.json` - Adapter building settings
+- `logging.json` - Logging preferences
+
+**Global Configs** (`etc/`):
+System-wide infrastructure settings shared across all users:
+
+- `cloudflare.json` - Tunnel configuration
+- `network.json` - Network settings
+- `lifeline.json` - System service configuration
+
+**Path Resolution**: The `paths` proxy in `@metahuman/core` automatically resolves to the correct user-specific directory based on session context. For example, `paths.etc` resolves to `profiles/greggles/etc/` for owner "greggles" or `profiles/guest/etc/` for guest sessions.
+
+**Template Variables**: Some config files (like `voice.json`) support template variables for portability:
+- `{METAHUMAN_ROOT}` - Replaced with the MetaHuman OS root directory path
+
+For detailed information on multi-user profiles and guest access, see [Multi-User Profiles & Guest Mode](19-multi-user-profiles.md).
+
+---
+
 ### `.env` - Environment Configuration
 This file in the project root allows you to configure system behavior and activate special states.
 

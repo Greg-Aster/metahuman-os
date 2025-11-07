@@ -56,3 +56,6 @@ Welcome to the MetaHuman OS User Guide. This guide is organized into the followi
 
 18. **[Special States & Protocols](18-special-states.md)**
     *   **Easter Eggs & Emergency Features**: Learn about special modes like "Wetware Deceased", "Lifeline Protocol", and the "Kill Switch".
+
+19. **[Multi-User Profiles & Guest Mode](19-multi-user-profiles.md)**
+    *   **Independent User Configurations**: Understand how MetaHuman OS supports multiple users with isolated profiles, guest access to public personas, persona facets, and the special "Mutant Super Intelligence" merged consciousness feature.

@@ -117,6 +117,7 @@ import { createUser, deleteUser, listUsers } from '@metahuman/core/users';
 
 ### 10. Next Steps
 
+- Learn about [Multi-User Profiles & Guest Mode](19-multi-user-profiles.md) for detailed information on persona facets, profile switching, and the special "Mutant Super Intelligence" feature.
 - Review [Security & Trust](10-security-trust.md) for trust levels and directory boundaries.
 - Update profile-specific configuration in [`profiles/<username>/etc/`](14-configuration-files.md).
 - If you need to expose the UI remotely, follow the [Cloudflare Tunnel guide](17-cloudflare-tunnel-setup.md) after hardening credentials.

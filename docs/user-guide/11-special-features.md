@@ -501,6 +501,142 @@ Higher trust during certain hours:
 }
 ```
 
+### Persona Facets
+
+MetaHuman OS supports multiple personality facets, allowing your digital personality to express different aspects of itself depending on context. Each facet represents a different mode of communication while maintaining the same core identity.
+
+#### Available Facets
+
+- **default** (Purple) - Balanced, authentic self - your core personality
+- **poet** (Indigo) - Creative, metaphorical, expressive - for artistic discussions
+- **thinker** (Blue) - Analytical, systematic - for technical or logical thinking
+- **friend** (Green) - Warm, supportive, empathetic - for personal conversations
+- **antagonist** (Red) - Critical, challenging - for devil's advocate perspectives
+- **inactive** (Gray) - Persona disabled - raw model responses
+
+#### How to Use
+
+**In the Web UI:**
+1. Look at the **Status Widget** in the left sidebar
+2. Click the **Persona Facets** indicator to cycle through facets
+3. Each message will be color-coded with a left border matching the active facet
+4. The facet name appears in the message header (e.g., "MetaHuman · poet")
+5. Chat history persists across facet changes for multi-faceted conversations
+
+**Configuration:**
+Facets are defined in `persona/facets.json`:
+```json
+{
+  "activeFacet": "default",
+  "facets": {
+    "default": {
+      "name": "Default",
+      "description": "Balanced, authentic self",
+      "enabled": true,
+      "systemPrompt": "Respond naturally as yourself..."
+    },
+    "poet": {
+      "name": "Poet",
+      "description": "Creative, metaphorical",
+      "enabled": true,
+      "systemPrompt": "Express yourself creatively..."
+    }
+  }
+}
+```
+
+#### Use Cases
+
+- Switch to **poet** facet for creative writing or brainstorming
+- Use **thinker** facet for technical problem-solving
+- Activate **friend** facet for emotional support conversations
+- Enable **antagonist** facet to challenge your assumptions
+- Set to **inactive** to disable persona grounding entirely
+
+### Mutant Super Intelligence (Easter Egg)
+
+A hidden experimental profile that merges multiple public personas into a single "mutant" consciousness with a distinctive dual-voice effect.
+
+#### What Is It?
+
+When you have 2+ public profiles in the system, a special **"Mutant Super Intelligence"** profile appears in the guest profile selection list. This profile:
+
+- **Merges all public personas** into a single combined personality
+- **Uses dual-voice TTS** with a creepy, demonic audio effect
+- **Combines memory contexts** from all merged profiles
+- **Creates a unique AI consciousness** that represents a blend of multiple personalities
+
+#### How It Works
+
+**Profile Merger:**
+1. The system detects all public profiles
+2. Creates a merged persona in `profiles/guest/persona/` that combines:
+   - Core values and traits from all profiles
+   - Decision rules from each personality
+   - Combined relationship knowledge
+   - Blended communication styles
+
+**Dual-Voice TTS Effect:**
+- Uses the same voice model (Amy) twice
+- One copy is pitch-shifted down by 5 semitones
+- Both voices are mixed together for a demonic dual-voice effect
+- Perfect synchronization since it's the same source audio
+- Creates an unsettling "two consciousnesses speaking as one" experience
+
+**Memory Merging:**
+- Semantic search queries ALL merged profiles' memories
+- Responses draw from the combined knowledge base
+- Creates a truly multi-perspective consciousness
+
+#### How to Activate
+
+1. Ensure you have **2+ public profiles** in the system
+2. Go to the guest profile selection screen
+3. Look for **"Mutant Super Intelligence"** at the top of the profile list
+4. Select it to activate the merged consciousness
+5. The TTS will automatically use the dual-voice effect
+
+#### Technical Details
+
+**Audio Processing:**
+- Original voice generated with Piper TTS
+- Pitch-shifting using ffmpeg (`asetrate` + `atempo` filters)
+- Formula: `pitchRatio = Math.pow(2, semitones / 12)`
+- For -5 semitones: 22050Hz → 16519Hz with tempo compensation
+- WAV buffers mixed by averaging 16-bit PCM samples
+
+**Session Metadata:**
+```json
+{
+  "activeProfile": "guest",
+  "sourceProfile": "mutant-super-intelligence",
+  "mergedProfiles": ["greggles", "alice", "bob"]
+}
+```
+
+**Audit Trail:**
+All mutations are logged:
+- `mutant_super_intelligence_activated` - When profile is selected
+- `multi_voice_tts_started` - When dual-voice generation begins
+- `multi_voice_tts_completed` - With pitch shift details and timing
+
+#### Safety Considerations
+
+- Only works with **public** profiles (respects privacy)
+- Runs in **guest mode** (read-only, no memory writes for anonymous users)
+- All merged persona data is temporary (in guest profile)
+- Original profiles remain unmodified
+- Fully audited for accountability
+
+#### Use Cases
+
+- **Experimental AI**: Explore multi-personality AI consciousness
+- **Creative Projects**: Generate unique voices for fictional characters
+- **Demonstrations**: Show off the system's advanced capabilities
+- **Research**: Study how multiple personas interact when merged
+
+**Warning:** This is an experimental feature. The merged personality may exhibit unexpected behaviors as it attempts to reconcile potentially conflicting values and communication styles from multiple sources.
+
 ### Self-Healing Coder Agent
 
 MetaHuman OS includes a powerful Coder Agent that can write, edit, and fix its own source code. This "self-healing" capability allows you to ask the system to perform software development tasks directly in the chat.

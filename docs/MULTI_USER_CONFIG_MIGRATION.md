@@ -166,11 +166,15 @@ Template variables make voice configs work across different installations.
 - [x] Verify `paths.etc` resolves to user profile when context active
 - [x] Verify `paths.etc` falls back to root when no context
 - [x] TypeScript compilation passes with no errors
-- [ ] Guest persona toggle doesn't modify owner's config
-- [ ] Facet switching works independently per profile
-- [ ] Voice config paths resolve correctly with templates
-- [ ] Training config is user-specific
-- [ ] Multiple users can have different cognitive modes simultaneously
+- [x] Guest persona toggle doesn't modify owner's config
+- [x] Facet switching works independently per profile
+- [x] Voice config paths resolve correctly with templates
+- [x] Training config is user-specific
+- [x] Multiple users can have different cognitive modes simultaneously
+- [x] Trust level syncs correctly on page load
+- [x] Persona facet files copied to guest profile
+- [x] Mutant Super Intelligence merges correctly
+- [x] Documentation updated and cross-referenced
 
 ---
 
@@ -220,7 +224,10 @@ Template variables make voice configs work across different installations.
 
 ## Related Documentation
 
+- [Multi-User Profiles & Guest Mode](user-guide/19-multi-user-profiles.md) - Complete user guide for guests and owners
 - [MULTI_USER_PLAN.md](MULTI_USER_PLAN.md) - Original multi-user architecture plan
 - [SECURITY_FIXES_2025-11-06.md](SECURITY_FIXES_2025-11-06.md) - Security enhancements
+- [Authentication Setup](user-guide/17-authentication-setup.md) - Becoming an owner
+- [Configuration Files](user-guide/14-configuration-files.md) - Config file reference
 - [packages/core/src/paths.ts](../packages/core/src/paths.ts) - Path resolution logic
 - [packages/core/src/profile.ts](../packages/core/src/profile.ts) - Profile initialization

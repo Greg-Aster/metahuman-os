@@ -816,7 +816,10 @@ let reasoningStages: ReasoningStage[] = [];
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 5V5L7 10H3zM16.5 12a4.5 4.5 0 00-1.5-3.356V15.356A4.5 4.5 0 0016.5 12z"></path></svg>
         {#if ttsEnabled}<span class="badge">On</span>{/if}
       </button>
-      <button class="icon-btn" title={showMiniVoice ? 'Hide mic' : 'Show mic'} on:click={() => showMiniVoice = !showMiniVoice}>
+
+      <button class="icon-btn" title={showMiniVoice ? 'Hide mic' : 'Show mic'} on:click={() => {
+        showMiniVoice = !showMiniVoice;
+      }}>
         <!-- Mic icon -->
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
         {#if showMiniVoice}<span class="badge">On</span>{/if}
@@ -915,6 +918,12 @@ let reasoningStages: ReasoningStage[] = [];
                 </div>
                 <div class="message-content">
                   {message.content}
+                  <!-- TTS replay button inside bubble at bottom right -->
+                  <button class="msg-mic-btn" title="Listen to this message" on:click={() => speakText(message.content)}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/>
+                    </svg>
+                  </button>
                 </div>
               </div>
             {/if}
@@ -984,6 +993,21 @@ let reasoningStages: ReasoningStage[] = [];
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M13 2L3 14h7l-1 8 10-12h-7z" />
+              </svg>
+            </button>
+          {/if}
+          <!-- Stop button - only visible when audio is playing -->
+          {#if currentAudio}
+            <button
+              class="input-stop-btn"
+              title="Stop speaking"
+              on:click={() => {
+                stopActiveAudio();
+                cancelInFlightTts();
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="2"/>
               </svg>
             </button>
           {/if}
@@ -1559,6 +1583,53 @@ let reasoningStages: ReasoningStage[] = [];
   .msg-btn.good { border-color: rgba(34,197,94,0.5); }
   .msg-btn.bad { border-color: rgba(239,68,68,0.5); }
 
+  .msg-mic-btn {
+    position: absolute;
+    bottom: 0.5rem;
+    right: 0.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0.375rem;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.08);
+    color: rgba(0,0,0,0.4);
+    cursor: pointer;
+    transition: all 0.2s;
+    opacity: 0.5;
+  }
+
+  .msg-mic-btn:hover {
+    background: rgba(0,0,0,0.15);
+    color: rgba(0,0,0,0.9);
+    opacity: 1;
+    transform: scale(1.15);
+  }
+
+  :global(.dark) .msg-mic-btn {
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.4);
+  }
+
+  :global(.dark) .msg-mic-btn:hover {
+    background: rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.95);
+  }
+
+  /* For user messages (purple background), make mic button more visible */
+  .message-user .msg-mic-btn {
+    background: rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.7);
+  }
+
+  .message-user .msg-mic-btn:hover {
+    background: rgba(255,255,255,0.35);
+    color: rgba(255,255,255,1);
+  }
+
   .message {
     display: flex;
     flex-direction: column;
@@ -1601,7 +1672,9 @@ let reasoningStages: ReasoningStage[] = [];
   }
 
   .message-content {
+    position: relative;
     padding: 1rem;
+    padding-bottom: 2.5rem; /* Extra space for mic button */
     border-radius: 0.75rem;
     font-size: 0.9375rem;
     line-height: 1.6;
@@ -1884,6 +1957,37 @@ let reasoningStages: ReasoningStage[] = [];
     0% { transform: scale(0.9); opacity: 0.6 }
     80% { transform: scale(1.15); opacity: 0 }
     100% { transform: scale(1.2); opacity: 0 }
+  }
+
+  /* Input stop button - matches mic/send button styling but with red theme */
+  .input-stop-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.55rem 0.6rem;
+    border: 1px solid rgba(220, 38, 38, 0.3);
+    border-radius: 0.75rem;
+    background: rgba(220, 38, 38, 0.1);
+    color: rgb(220, 38, 38);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .input-stop-btn:hover {
+    background: rgba(220, 38, 38, 0.2);
+    border-color: rgb(220, 38, 38);
+    transform: scale(1.05);
+  }
+
+  :global(.dark) .input-stop-btn {
+    background: rgba(252, 165, 165, 0.1);
+    border-color: rgba(252, 165, 165, 0.2);
+    color: rgb(252, 165, 165);
+  }
+
+  :global(.dark) .input-stop-btn:hover {
+    background: rgba(252, 165, 165, 0.2);
+    border-color: rgb(252, 165, 165);
   }
 
   /* Scrollbar */
