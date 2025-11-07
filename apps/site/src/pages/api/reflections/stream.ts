@@ -62,7 +62,7 @@ export const GET: APIRoute = ({ request }) => {
                 try {
                   const entry = JSON.parse(line);
 
-                  // Only send reflection events
+                  // Send reflection events
                   if (
                     entry.actor === 'reflector' &&
                     entry.category === 'decision' &&
@@ -72,6 +72,20 @@ export const GET: APIRoute = ({ request }) => {
                     sendEvent({
                       type: 'reflection',
                       reflection: entry.metadata.reflection,
+                      timestamp: entry.timestamp,
+                    });
+                  }
+
+                  // Send dream events
+                  if (
+                    entry.actor === 'dreamer' &&
+                    entry.category === 'decision' &&
+                    entry.message === 'Dreamer generated new dream' &&
+                    entry.metadata?.dream
+                  ) {
+                    sendEvent({
+                      type: 'dream',
+                      dream: entry.metadata.dream,
                       timestamp: entry.timestamp,
                     });
                   }

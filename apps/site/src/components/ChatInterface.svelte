@@ -7,7 +7,7 @@
   import { triggerClearAuditStream, clearChatTrigger } from '../stores/clear-events';
   import { yoloModeStore } from '../stores/navigation';
 
-type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'reasoning';
+type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'dream' | 'reasoning';
 
 interface ChatMessage {
   role: MessageRole;
@@ -344,6 +344,8 @@ let reasoningStages: ReasoningStage[] = [];
     reflectionStream.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+
+        // Handle reflections
         if (data.type === 'reflection' && data.reflection) {
           messages = [
             ...messages,
@@ -353,14 +355,31 @@ let reasoningStages: ReasoningStage[] = [];
               timestamp: new Date(data.timestamp).getTime(),
             },
           ];
-          
+
           // Add voice support for inner dialog if enabled
           if (boredomTtsEnabled && mode === 'inner' && data.reflection) {
             void speakText(data.reflection);
           }
         }
+
+        // Handle dreams
+        if (data.type === 'dream' && data.dream) {
+          messages = [
+            ...messages,
+            {
+              role: 'dream',
+              content: data.dream,
+              timestamp: new Date(data.timestamp).getTime(),
+            },
+          ];
+
+          // Add voice support for dreams if enabled
+          if (boredomTtsEnabled && mode === 'inner' && data.dream) {
+            void speakText(data.dream);
+          }
+        }
       } catch (e) {
-        console.error('Failed to parse reflection event:', e);
+        console.error('Failed to parse reflection/dream event:', e);
       }
     };
 
@@ -504,10 +523,14 @@ let reasoningStages: ReasoningStage[] = [];
             }
           } else if (type === 'answer') {
             if (reasoningStages.length > 0) {
-              reasoningStages.forEach(stage => {
-                const label = `${formatReasoningLabel(stage)} · ${formatTime(stage.timestamp)}`;
-                pushMessage('reasoning', stage.content, undefined, { stage, label });
-              });
+              // Only persist reasoning to messages in inner dialogue mode
+              // In conversation mode, reasoning is shown live then disappears
+              if (mode === 'inner') {
+                reasoningStages.forEach(stage => {
+                  const label = `${formatReasoningLabel(stage)} · ${formatTime(stage.timestamp)}`;
+                  pushMessage('reasoning', stage.content, undefined, { stage, label });
+                });
+              }
               reasoningStages = [];
             }
             if (!data.duplicate) {
@@ -886,7 +909,9 @@ let reasoningStages: ReasoningStage[] = [];
     {:else}
       <div class="messages-list">
         {#each messages as message}
-          {#if mode === 'inner' || message.role !== 'reflection'}
+          {#if mode === 'inner'
+            ? (message.role === 'reflection' || message.role === 'dream' || message.role === 'reasoning')
+            : (message.role !== 'reflection' && message.role !== 'dream')}
             {#if message.role === 'reasoning'}
               <Thinking
                 steps={message.content}
@@ -903,6 +928,8 @@ let reasoningStages: ReasoningStage[] = [];
                       MetaHuman{#if message.meta?.facet && message.meta.facet !== 'default'}<span class="facet-indicator" title="Speaking as {message.meta.facet} facet"> · {message.meta.facet}</span>{/if}
                     {:else if message.role === 'reflection'}
                       💭 Idle Thought
+                    {:else if message.role === 'dream'}
+                      🌙 Dream
                     {:else}
                       System
                     {/if}
@@ -2022,14 +2049,31 @@ let reasoningStages: ReasoningStage[] = [];
     .small-toggle,
     .mic-btn { display: none; }
 
-    .input-row { flex-direction: column; align-items: stretch; gap: 0.5rem; }
-    .input-actions { justify-content: space-between; }
+    /* Hide YOLO button on mobile - now in status widget */
+    .operator-icon-btn.yolo { display: none; }
 
-    /* Show compact operator icon */
-    .operator-icon-btn { display: inline-flex; }
+    /* Keep input row horizontal (textarea + buttons on same line) */
+    .input-row {
+      display: flex;
+      flex-direction: row;
+      align-items: flex-end;
+      gap: 0.5rem;
+    }
+
+    .input-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
 
     /* Tighten spacing to give input more room */
     .input-wrapper { gap: 0.5rem; }
     .chat-input { font-size: 0.95rem; padding: 0.65rem 0.8rem; }
+
+    /* Make buttons more compact on mobile */
+    .input-stop-btn,
+    .send-btn {
+      padding: 0.6rem;
+    }
   }
 </style>

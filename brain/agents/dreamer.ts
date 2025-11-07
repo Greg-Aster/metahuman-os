@@ -369,6 +369,17 @@ async function generateUserDreams(username: string): Promise<{
       await captureEvent(dream, { type: 'dream', sources: sourceIds, confidence: 0.7 });
       dreamsGenerated++;
       console.log(`[dreamer]   Dream ${i + 1}/${dreamCount} generated for ${username}`);
+
+      // Log dream to audit stream for inner dialogue display
+      audit({
+        level: 'info',
+        category: 'decision',
+        event: 'dream_generated',
+        message: 'Dreamer generated new dream',
+        details: { dream, sourceCount: sourceIds.length },
+        metadata: { dream },
+        actor: 'dreamer',
+      });
     }
   }
 
