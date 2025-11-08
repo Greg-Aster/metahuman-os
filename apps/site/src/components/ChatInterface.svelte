@@ -57,6 +57,14 @@ let reasoningStages: ReasoningStage[] = [];
   let controlsExpanded = true;
   let yoloMode = false;
 
+  // Thinking trace sourced from live audit events
+  const THINKING_TRACE_LIMIT = 40;
+  let thinkingTrace: string[] = [];
+  let thinkingStatusLabel = '🤔 Thinking…';
+  let thinkingActive = false;
+  let thinkingPlaceholderActive = false;
+  let auditStream: EventSource | null = null;
+
   // Subscribe to shared YOLO mode store
   yoloModeStore.subscribe(value => {
     yoloMode = value;
@@ -95,6 +103,126 @@ let reasoningStages: ReasoningStage[] = [];
   }
 
   // Operator status functions removed - functionality moved to left sidebar status widget
+
+  interface AuditStreamEvent {
+    timestamp: string;
+    level: 'info' | 'warn' | 'error' | 'critical' | string;
+    category: string;
+    event: string;
+    actor: string;
+    details?: Record<string, any>;
+  }
+
+  function ensureAuditStream() {
+    if (auditStream) return;
+    auditStream = new EventSource('/api/stream');
+    auditStream.onmessage = (event) => {
+      try {
+        const parsed = JSON.parse(event.data) as AuditStreamEvent;
+        handleAuditTrace(parsed);
+      } catch (err) {
+        console.warn('[chat] Failed to parse audit event', err);
+      }
+    };
+    auditStream.onerror = (err) => {
+      console.warn('[chat] Audit stream disconnected', err);
+    };
+  }
+
+  function handleAuditTrace(event: AuditStreamEvent) {
+    if (!thinkingActive) return;
+    const sessionMatches =
+      event.details?.sessionId === conversationSessionId ||
+      event.details?.conversationId === conversationSessionId ||
+      event.details?.taskId === conversationSessionId;
+    if (!sessionMatches) return;
+
+    const formatted = formatAuditTrace(event);
+    const base = thinkingPlaceholderActive ? [] : thinkingTrace;
+    thinkingPlaceholderActive = false;
+    thinkingTrace = [...base, formatted].slice(-THINKING_TRACE_LIMIT);
+  }
+
+  function formatAuditTrace(event: AuditStreamEvent): string {
+    const eventLabel = humanizeEventName(event.event);
+    const detailsText = summarizeDetails(event.details);
+    return detailsText ? `${eventLabel} ${detailsText}` : eventLabel;
+  }
+
+  function humanizeEventName(name: string): string {
+    return name
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, l => l.toUpperCase());
+  }
+
+  function summarizeDetails(details: Record<string, any>): string {
+    const preferredKeys = [
+      'goal',
+      'action',
+      'skill',
+      'iteration',
+      'reason',
+      'summary',
+      'model',
+      'modelId',
+      'provider',
+      'latencyMs',
+      'tokens',
+      'path',
+      'inputs',
+      'outputs',
+      'message',
+      'status',
+    ];
+
+    const lines: string[] = [];
+
+    for (const key of preferredKeys) {
+      if (!(key in details)) continue;
+      const value = details[key];
+      if (value == null) continue;
+      if (typeof value === 'object') {
+        const compact = JSON.stringify(value, null, 2);
+        lines.push(`${key}: ${truncateText(compact)}`);
+      } else {
+        lines.push(`${key}: ${truncateText(String(value))}`);
+      }
+    }
+
+    // Fallback: if nothing matched, stringify small scalar entries
+    if (lines.length === 0) {
+      const fallback = Object.entries(details)
+        .filter(([, value]) => typeof value !== 'object' || value === null)
+        .map(([key, value]) => `${key}: ${truncateText(String(value ?? ''))}`);
+      lines.push(...fallback);
+    }
+
+    return lines.join(' · ');
+  }
+
+  function truncateText(value: string, limit = 320): string {
+    if (value.length <= limit) return value;
+    return `${value.slice(0, limit)}…`;
+  }
+
+  function startThinkingTrace() {
+    thinkingStatusLabel = reasoningDepth > 0 ? '🧠 Operator planning…' : '🤔 Thinking…';
+    thinkingActive = true;
+    thinkingPlaceholderActive = true;
+    thinkingTrace = ['Awaiting operator telemetry…'];
+    ensureAuditStream();
+  }
+
+  function stopThinkingTrace() {
+    thinkingActive = false;
+    thinkingPlaceholderActive = false;
+    thinkingTrace = [];
+  }
+
+  let thinkingSteps = '';
+  let showThinkingIndicator = false;
+  $: thinkingSteps = thinkingTrace.join('\n\n');
+  $: showThinkingIndicator = thinkingActive && reasoningStages.length === 0 && thinkingTrace.length > 0;
 
   function setYoloMode(value: boolean, persist = true, suppressWarn = false) {
     const changed = yoloMode !== value;
@@ -450,6 +578,9 @@ let reasoningStages: ReasoningStage[] = [];
     }
     cancelInFlightTts();
     stopActiveAudio();
+    stopThinkingTrace();
+    auditStream?.close();
+    auditStream = null;
     if (audioCtx) {
       try { audioCtx.close(); } catch {}
       audioCtx = null;
@@ -491,6 +622,7 @@ let reasoningStages: ReasoningStage[] = [];
 
     loading = true;
     reasoningStages = [];
+    startThinkingTrace();
 
     try {
       let llm_opts = {};
@@ -520,6 +652,7 @@ let reasoningStages: ReasoningStage[] = [];
           const { type, data } = JSON.parse(event.data);
 
           if (type === 'reasoning') {
+            stopThinkingTrace();
             if (typeof data === 'string') {
               reasoningStages = [
                 {
@@ -539,6 +672,7 @@ let reasoningStages: ReasoningStage[] = [];
               reasoningStages = [...reasoningStages, stageObj];
             }
           } else if (type === 'answer') {
+            stopThinkingTrace();
             if (reasoningStages.length > 0) {
               // Only persist reasoning to messages in inner dialogue mode
               // In conversation mode, reasoning is shown live then disappears
@@ -570,6 +704,7 @@ let reasoningStages: ReasoningStage[] = [];
         } catch (err) {
           console.error('Chat stream error:', err);
           pushMessage('system', 'Error: Failed to process server response.');
+          stopThinkingTrace();
           loading = false;
           reasoningStages = [];
           chatResponseStream?.close();
@@ -579,6 +714,7 @@ let reasoningStages: ReasoningStage[] = [];
       chatResponseStream.onerror = (err) => {
         console.error('EventSource failed:', err);
         pushMessage('system', 'Error: Connection to the server was lost.');
+        stopThinkingTrace();
         loading = false;
         reasoningStages = [];
         chatResponseStream?.close();
@@ -587,6 +723,7 @@ let reasoningStages: ReasoningStage[] = [];
     } catch (err) {
       console.error('Chat setup error:', err);
       pushMessage('system', 'Error: Could not send message.');
+      stopThinkingTrace();
       loading = false;
       reasoningStages = [];
     }
@@ -654,6 +791,7 @@ let reasoningStages: ReasoningStage[] = [];
   async function clearChat() {
     messages = [];
     reasoningStages = [];
+    stopThinkingTrace();
     // Clear localStorage session cache
     try {
       localStorage.removeItem(sessionKey());
@@ -991,6 +1129,14 @@ let reasoningStages: ReasoningStage[] = [];
               initiallyOpen={true}
             />
           {/each}
+        {/if}
+
+        {#if showThinkingIndicator}
+          <Thinking
+            steps={thinkingSteps}
+            label={thinkingStatusLabel}
+            initiallyOpen={true}
+          />
         {/if}
 
         {#if loading && reasoningStages.length === 0}
