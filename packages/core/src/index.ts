@@ -27,6 +27,7 @@ export * from './stt';
 export * from './voice-training';
 export * from './autonomy';
 export * from './cognitive-mode';
+export * from './memory-policy';
 export * from './trust-coupling';
 export * from './path-resolver';
 export * from './context-window';

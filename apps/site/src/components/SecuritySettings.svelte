@@ -41,6 +41,18 @@
   let profileVisibility: 'private' | 'public' = 'private';
   let savingVisibility = false;
 
+  interface TunnelStatus {
+    installed: boolean;
+    running: boolean;
+    enabled: boolean;
+    hostname: string;
+    pid?: number;
+  }
+
+  let tunnelStatus: TunnelStatus | null = null;
+  let tunnelStatusLoading = false;
+  let tunnelActionPending = false;
+
   onMount(async () => {
     await fetchCurrentUser();
     await loadTrustLevel();
@@ -48,6 +60,7 @@
     await loadTrustCoupling();
     await loadCognitiveLayersConfig();
     await fetchVisibility();
+    await loadTunnelStatus();
   });
 
   async function fetchCurrentUser() {
@@ -244,6 +257,51 @@
       console.error('Failed to save visibility:', err);
     } finally {
       savingVisibility = false;
+    }
+  }
+
+  async function loadTunnelStatus() {
+    tunnelStatusLoading = true;
+    try {
+      const res = await fetch('/api/cloudflare/status');
+      if (res.ok) {
+        tunnelStatus = await res.json();
+      } else {
+        console.warn('Failed to load tunnel status');
+      }
+    } catch (err) {
+      console.error('Failed to load tunnel status:', err);
+    } finally {
+      tunnelStatusLoading = false;
+    }
+  }
+
+  async function setTunnelEnabled(enable: boolean) {
+    if (tunnelActionPending) return;
+
+    tunnelActionPending = true;
+    error = '';
+    success = '';
+
+    try {
+      const res = await fetch('/api/cloudflare/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: enable }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        success = enable ? 'Cloudflare tunnel enabled' : 'Cloudflare tunnel disabled';
+        await loadTunnelStatus();
+      } else {
+        error = data.error || 'Failed to update Cloudflare tunnel';
+      }
+    } catch (err) {
+      error = 'Network error. Please try again.';
+      console.error('Failed to toggle tunnel:', err);
+    } finally {
+      tunnelActionPending = false;
     }
   }
 
@@ -707,6 +765,70 @@
       {/if}
     </div>
 
+    <!-- Remote Access Controls -->
+    <div class="card">
+      <h2>🌐 Remote Access</h2>
+      <p>Enable the Cloudflare tunnel to allow secure remote connections back to your MetaHuman node.</p>
+
+      {#if tunnelStatusLoading && !tunnelStatus}
+        <p class="loading-text">Checking tunnel status...</p>
+      {:else if tunnelStatus}
+        <div class="tunnel-status-grid">
+          <div class="tunnel-status-row">
+            <span class="label">cloudflared</span>
+            <span class="status-pill" class:status-pill-ok={tunnelStatus.installed} class:status-pill-bad={!tunnelStatus.installed}>
+              {tunnelStatus.installed ? 'Installed' : 'Missing'}
+            </span>
+          </div>
+          <div class="tunnel-status-row">
+            <span class="label">Remote access</span>
+            <span class="status-pill" class:status-pill-ok={tunnelStatus.enabled} class:status-pill-bad={!tunnelStatus.enabled}>
+              {tunnelStatus.enabled ? 'Enabled' : 'Disabled'}
+            </span>
+          </div>
+          <div class="tunnel-status-row">
+            <span class="label">Runtime</span>
+            <span class="status-pill" class:status-pill-ok={tunnelStatus.running} class:status-pill-bad={!tunnelStatus.running}>
+              {tunnelStatus.running ? 'Running' : 'Stopped'}
+            </span>
+          </div>
+        </div>
+      {:else}
+        <p class="muted-text">Tunnel status is currently unavailable. Try refreshing.</p>
+      {/if}
+
+      <div class="remote-actions">
+        <button
+          type="button"
+          class="btn btn-primary"
+          on:click={() => setTunnelEnabled(true)}
+          disabled={tunnelActionPending || tunnelStatusLoading || !tunnelStatus || tunnelStatus.enabled || !tunnelStatus.installed}
+        >
+          {tunnelActionPending ? 'Working...' : 'Enable Tunnel'}
+        </button>
+        <button
+          type="button"
+          class="btn btn-secondary"
+          on:click={() => setTunnelEnabled(false)}
+          disabled={tunnelActionPending || tunnelStatusLoading || !tunnelStatus || !tunnelStatus.enabled}
+        >
+          {tunnelActionPending ? 'Working...' : 'Disable Tunnel'}
+        </button>
+        <button
+          type="button"
+          class="btn btn-secondary btn-ghost"
+          on:click={loadTunnelStatus}
+          disabled={tunnelStatusLoading || tunnelActionPending}
+        >
+          Refresh Status
+        </button>
+      </div>
+
+      <p class="helper-text">
+        Need to start or stop the process? Use the Network tab for full Cloudflare controls.
+      </p>
+    </div>
+
     <!-- Trust Coupling (Owner Only) -->
     {#if currentUser.role === 'owner'}
       <div class="card">
@@ -1150,6 +1272,83 @@
     color: rgb(156 163 175);
   }
 
+  .tunnel-status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .tunnel-status-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    padding: 0.35rem 0.85rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    background: rgb(229 231 235);
+    color: rgb(55 65 81);
+  }
+
+  :global(.dark) .status-pill {
+    background: rgb(31 41 55);
+    color: rgb(229 231 235);
+  }
+
+  .status-pill-ok {
+    background: rgb(209 250 229);
+    color: rgb(22 101 52);
+  }
+
+  :global(.dark) .status-pill-ok {
+    background: rgb(20 83 45);
+    color: rgb(187 247 208);
+  }
+
+  .status-pill-bad {
+    background: rgb(254 226 226);
+    color: rgb(153 27 27);
+  }
+
+  :global(.dark) .status-pill-bad {
+    background: rgb(127 29 29);
+    color: rgb(254 226 226);
+  }
+
+  .remote-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+    margin-top: 0.5rem;
+  }
+
+  .muted-text {
+    color: rgb(107 114 128);
+    font-size: 0.9rem;
+  }
+
+  :global(.dark) .muted-text {
+    color: rgb(156 163 175);
+  }
+
+  .helper-text {
+    color: rgb(107 114 128);
+    font-size: 0.9rem;
+    margin-top: 1rem;
+  }
+
+  :global(.dark) .helper-text {
+    color: rgb(156 163 175);
+  }
+
   .user-info-grid {
     display: flex;
     flex-direction: column;
@@ -1318,6 +1517,26 @@
 
   :global(.dark) .btn-secondary:hover:not(:disabled) {
     background: rgb(75 85 99);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    border: 1px dashed rgb(209 213 219);
+    color: rgb(107 114 128);
+  }
+
+  :global(.dark) .btn-ghost {
+    border-color: rgb(75 85 99);
+    color: rgb(209 213 219);
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    border-style: solid;
+    color: rgb(31 41 55);
+  }
+
+  :global(.dark) .btn-ghost:hover:not(:disabled) {
+    color: rgb(243 244 246);
   }
 
   .info-card ul {

@@ -239,3 +239,16 @@ export function resolvePathWithContext(userPath: string, workingDir: string = pa
     message,
   };
 }
+
+/**
+ * Resolves a path with fuzzy fallback - returns both exact match and suggestions
+ * This is the primary function for the ReAct operator to use before filesystem operations
+ *
+ * Example:
+ *   Input: "sadsnak"
+ *   Output: { resolved: null, suggestions: ["sadsnax", "./docs/sadsnax.md"] }
+ */
+export function resolvePathWithFuzzyFallback(userPath: string, options: { cwd?: string } = {}): PathResolution {
+  const workingDir = options.cwd || paths.root;
+  return resolvePath(userPath, workingDir);
+}

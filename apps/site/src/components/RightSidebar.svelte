@@ -1,12 +1,31 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import LogStream from './LogStream.svelte';
+  import AuditStreamEnhanced from './AuditStreamEnhanced.svelte';
   import ModelSelector from './ModelSelector.svelte';
   import BoredomControl from './BoredomControl.svelte';
   import AgentMonitor from './AgentMonitor.svelte';
   import SleepStatusIndicator from './SleepStatusIndicator.svelte';
 
   let activeTab = 'audit';
+  let useEnhancedAudit = false; // Toggle between old and new audit stream
+
+  // Load preference from localStorage
+  onMount(() => {
+    try {
+      const saved = localStorage.getItem('mh_use_enhanced_audit');
+      if (saved !== null) {
+        useEnhancedAudit = saved === 'true';
+      }
+    } catch {}
+  });
+
+  // Save preference to localStorage
+  $: if (typeof useEnhancedAudit !== 'undefined') {
+    try {
+      localStorage.setItem('mh_use_enhanced_audit', String(useEnhancedAudit));
+    } catch {}
+  }
 
   interface Tab {
     id: string;
@@ -225,7 +244,28 @@
   <div class="tab-content">
     {#if activeTab === 'audit'}
       <div class="audit-container">
-        <LogStream />
+        <!-- Toggle Button -->
+        <div class="p-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-800">
+          <span class="text-xs text-gray-600 dark:text-gray-400">View Mode:</span>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <span class="text-xs text-gray-600 dark:text-gray-400">Terminal</span>
+            <input
+              type="checkbox"
+              bind:checked={useEnhancedAudit}
+              class="toggle-checkbox"
+            />
+            <span class="text-xs text-gray-600 dark:text-gray-400">Grouped</span>
+          </label>
+        </div>
+
+        <!-- Stream Component -->
+        <div class="flex-1 min-h-0">
+          {#if useEnhancedAudit}
+            <AuditStreamEnhanced />
+          {:else}
+            <LogStream />
+          {/if}
+        </div>
       </div>
     {:else if activeTab === 'monitor'}
       <div class="monitor-container">
@@ -731,5 +771,45 @@
   .save-logging-button:disabled {
     opacity: 0.7;
     cursor: wait;
+  }
+
+  /* Toggle Checkbox */
+  .toggle-checkbox {
+    appearance: none;
+    width: 2.5rem;
+    height: 1.25rem;
+    background-color: rgb(209 213 219);
+    border-radius: 9999px;
+    position: relative;
+    cursor: pointer;
+    transition: background-color 0.2s;
+  }
+
+  :global(.dark) .toggle-checkbox {
+    background-color: rgb(75 85 99);
+  }
+
+  .toggle-checkbox::after {
+    content: '';
+    position: absolute;
+    top: 0.125rem;
+    left: 0.125rem;
+    width: 1rem;
+    height: 1rem;
+    background-color: white;
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+
+  .toggle-checkbox:checked {
+    background-color: rgb(124 58 237);
+  }
+
+  :global(.dark) .toggle-checkbox:checked {
+    background-color: rgb(167 139 250);
+  }
+
+  .toggle-checkbox:checked::after {
+    transform: translateX(1.25rem);
   }
 </style>

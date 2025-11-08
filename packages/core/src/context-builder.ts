@@ -12,8 +12,17 @@ import { queryIndex, getIndexStatus } from './vector-index.js';
 import { loadPersonaCore } from './identity.js';
 import { loadShortTermState, loadPersonaCache } from './state.js';
 import { audit } from './audit.js';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync, readdirSync } from 'fs';
+import path from 'path';
 import type { CognitiveModeId } from './cognitive-mode.js';
+import { getUserContext } from './context.js';
+import {
+  getToolHistoryLimit,
+  redactSensitiveData,
+  filterToolOutputs,
+  canViewMemoryType,
+  getMaxMemoriesForRole
+} from './memory-policy.js';
 
 // ============================================================================
 // Context Package Cache (5min TTL)
@@ -119,6 +128,165 @@ function analyzeMemoryPatterns(memories: RelevantMemory[]): DetectedPattern[] {
   return patterns.slice(0, 5);
 }
 
+/**
+ * Query conversation summary for a specific session
+ *
+ * Phase 3: Memory Continuity - retrieves existing conversation summary
+ *
+ * @param conversationId - Session ID to find summary for
+ * @returns Conversation summary or null if not found
+ */
+async function queryConversationSummary(conversationId?: string): Promise<string | null> {
+  if (!conversationId) return null;
+
+  try {
+    const ctx = getUserContext();
+    if (!ctx) return null;
+
+    const episodicDir = ctx.profilePaths.episodic;
+    if (!existsSync(episodicDir)) return null;
+
+    // Look back 7 days for summaries
+    const today = new Date();
+    const lookbackDays = 7;
+
+    for (let i = 0; i < lookbackDays; i++) {
+      const date = new Date(today);
+      date.setDate(today.getDate() - i);
+      const year = date.getFullYear().toString();
+      const yearDir = path.join(episodicDir, year);
+
+      if (!existsSync(yearDir)) continue;
+
+      const files = readdirSync(yearDir)
+        .filter(f => f.endsWith('.json'))
+        .sort()
+        .reverse();
+
+      for (const file of files) {
+        const filepath = path.join(yearDir, file);
+        try {
+          const content = readFileSync(filepath, 'utf-8');
+          const event = JSON.parse(content);
+
+          // Look for summary events with matching conversation ID
+          if (event.type === 'summary' && event.metadata) {
+            const summarySessionId = event.metadata.conversationId || event.metadata.sessionId;
+            if (summarySessionId === conversationId) {
+              // Return the full summary from metadata
+              return event.metadata.fullSummary || event.content || null;
+            }
+          }
+        } catch (error) {
+          continue;
+        }
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error('[context-builder] Error querying conversation summary:', error);
+    return null;
+  }
+}
+
+/**
+ * Query recent tool invocations for the current conversation
+ *
+ * Phase 2: Memory Continuity - retrieves tool usage history from episodic memories
+ *
+ * @param conversationId - Session ID to filter by
+ * @param mode - Cognitive mode (affects limit via memory policy)
+ * @param options - Query options
+ * @returns Array of recent tool invocations
+ */
+async function queryRecentToolInvocations(
+  conversationId?: string,
+  mode: CognitiveModeId = 'dual',
+  options: { limit?: number } = {}
+): Promise<ToolInvocation[]> {
+  try {
+    const ctx = getUserContext();
+    if (!ctx) return [];
+
+    // Get mode-aware limit (dual=10, agent=5, emulation=0)
+    const maxLimit = getToolHistoryLimit(mode, ctx.role);
+    if (maxLimit === 0) return []; // Emulation mode or guests
+
+    const limit = Math.min(options.limit || maxLimit, maxLimit);
+    const tools: ToolInvocation[] = [];
+
+    const episodicDir = ctx.profilePaths.episodic;
+    if (!existsSync(episodicDir)) return [];
+
+    // Look back 3 days for tool invocations
+    const today = new Date();
+    const lookbackDays = 3;
+
+    for (let i = 0; i < lookbackDays; i++) {
+      if (tools.length >= limit) break;
+
+      const date = new Date(today);
+      date.setDate(today.getDate() - i);
+      const year = date.getFullYear().toString();
+      const yearDir = path.join(episodicDir, year);
+
+      if (!existsSync(yearDir)) continue;
+
+      const files = readdirSync(yearDir)
+        .filter(f => f.endsWith('.json'))
+        .sort()
+        .reverse(); // Most recent first
+
+      for (const file of files) {
+        if (tools.length >= limit) break;
+
+        const filepath = path.join(yearDir, file);
+        try {
+          const content = readFileSync(filepath, 'utf-8');
+          const event = JSON.parse(content);
+
+          // Filter for tool invocations
+          if (event.type === 'tool_invocation' && event.metadata) {
+            // If conversationId specified, filter by it
+            if (conversationId && event.metadata.conversationId !== conversationId) {
+              continue;
+            }
+
+            // Phase 4: Apply role-based filtering to tool outputs
+            const rawOutputs = event.metadata.toolOutputs || {};
+            const filteredOutputs = filterToolOutputs(
+              rawOutputs,
+              ctx.role,
+              event.metadata.toolName || 'unknown'
+            );
+
+            tools.push({
+              id: event.id,
+              toolName: event.metadata.toolName || 'unknown',
+              timestamp: event.timestamp,
+              inputs: event.metadata.toolInputs || {},
+              outputs: filteredOutputs, // Filtered based on role
+              success: event.metadata.success !== false,
+              error: event.metadata.error,
+              executionTimeMs: event.metadata.executionTimeMs
+            });
+          }
+        } catch (error) {
+          // Skip malformed files
+          continue;
+        }
+      }
+    }
+
+    // Return in chronological order (oldest first)
+    return tools.reverse();
+  } catch (error) {
+    console.error('[context-builder] Error querying tool invocations:', error);
+    return [];
+  }
+}
+
 // ============================================================================
 // Types & Interfaces
 // ============================================================================
@@ -141,10 +309,25 @@ export interface PersonaSummary {
 }
 
 export interface DetectedPattern {
-  type: 'theme' | 'person' | 'project' | 'behavior';
+  type: 'theme' | 'person' | 'project' | 'behavior' | 'entity';
   pattern: string;
   frequency: number;
   lastSeen: string;
+}
+
+/**
+ * Tool invocation record for context package
+ * Extracted from episodic memories to show recent tool usage
+ */
+export interface ToolInvocation {
+  id: string;
+  toolName: string;
+  timestamp: string;
+  inputs: Record<string, any>;
+  outputs: Record<string, any>;
+  success: boolean;
+  error?: string;
+  executionTimeMs?: number;
 }
 
 export interface ContextPackage {
@@ -164,11 +347,18 @@ export interface ContextPackage {
   // Patterns (future: from digest agent)
   patterns: DetectedPattern[];
 
+  // Tool history (Phase 2: Memory Continuity)
+  recentTools: ToolInvocation[];
+
+  // Conversation summary (Phase 3: Future)
+  conversationSummary?: string;
+
   // Metadata
   mode: CognitiveModeId;
   retrievalTime: number;
   timestamp: string;
   indexStatus: 'available' | 'missing' | 'error';
+  maxContextChars?: number;
 }
 
 export interface ContextBuilderOptions {
@@ -200,6 +390,9 @@ export interface ContextBuilderOptions {
   // Mode-specific overrides
   forceSemanticSearch?: boolean; // Dual mode: always try semantic search
   usingLoRA?: boolean; // Skip persona context when using LoRA (default: false)
+
+  // Conversation tracking (Phase 2: Memory Continuity)
+  conversationId?: string; // Session ID for filtering tool invocations
 }
 
 // ============================================================================
@@ -363,22 +556,42 @@ export async function buildContextPackage(
         });
       }
 
+      // Phase 4: Apply role-based memory limits
+      const ctx = getUserContext();
+      const roleMaxMemories = ctx ? getMaxMemoriesForRole(ctx.role) : maxMemories;
+      const effectiveLimit = Math.min(maxMemories, roleMaxMemories);
+
       // Limit to maxMemories (default: 2 for parity with old code)
       // Note: persona_chat.ts selects 2 "novel" memories (not recently used)
       // For now, we just take the top N by score
-      filtered = filtered.slice(0, maxMemories);
+      filtered = filtered.slice(0, effectiveLimit);
 
-      // Map to RelevantMemory interface
+      // Map to RelevantMemory interface with role-based privacy filtering
       // Note: queryIndex returns { item: VectorIndexItem, score: number }
       // where VectorIndexItem has: id, path, type, timestamp, text, vector
-      memories = filtered.map((hit: any) => ({
-        id: hit.item?.id || hit.id,
-        content: hit.item?.text || hit.content,  // Index stores 'text', not 'content'
-        timestamp: hit.item?.timestamp || hit.timestamp,
-        score: hit.score,
-        type: hit._metadata?.type || hit.item?.type || hit.type,  // Use enriched metadata if available
-        tags: hit._metadata?.tags || hit.item?.tags || hit.tags || []  // Use enriched tags
-      }));
+      memories = filtered
+        .filter((hit: any) => {
+          // Phase 4: Filter by memory type visibility
+          const type = hit._metadata?.type || hit.item?.type || hit.type || 'unknown';
+          if (ctx && !canViewMemoryType(type, ctx.role)) {
+            return false;
+          }
+          return true;
+        })
+        .map((hit: any) => {
+          const content = hit.item?.text || hit.content || '';
+          // Phase 4: Redact sensitive data based on role
+          const redactedContent = ctx ? redactSensitiveData(content, ctx.role) : content;
+
+          return {
+            id: hit.item?.id || hit.id,
+            content: redactedContent,  // Redacted based on role
+            timestamp: hit.item?.timestamp || hit.timestamp,
+            score: hit.score,
+            type: hit._metadata?.type || hit.item?.type || hit.type,  // Use enriched metadata if available
+            tags: hit._metadata?.tags || hit.item?.tags || hit.tags || []  // Use enriched tags
+          };
+        });
 
       indexStatus = 'available';
     } else {
@@ -487,7 +700,44 @@ export async function buildContextPackage(
   }
 
   // ========================================================================
-  // Step 5: Build Context Package
+  // Step 5: Query Recent Tool Invocations (Phase 2: Memory Continuity)
+  // ========================================================================
+
+  let recentTools: ToolInvocation[] = [];
+
+  if (options.conversationId) {
+    try {
+      recentTools = await queryRecentToolInvocations(
+        options.conversationId,
+        mode,
+        { limit: getToolHistoryLimit(mode, getUserContext()?.role || 'owner') }
+      );
+    } catch (error) {
+      console.error('[context-builder] Error querying recent tools:', error);
+      // Continue without tool history
+    }
+  }
+
+  // ========================================================================
+  // Step 6: Query Conversation Summary (Phase 3: Memory Continuity)
+  // ========================================================================
+
+  let conversationSummary: string | undefined;
+
+  if (options.conversationId) {
+    try {
+      const summary = await queryConversationSummary(options.conversationId);
+      if (summary) {
+        conversationSummary = summary;
+      }
+    } catch (error) {
+      console.error('[context-builder] Error querying conversation summary:', error);
+      // Continue without summary
+    }
+  }
+
+  // ========================================================================
+  // Step 7: Build Context Package
   // ========================================================================
 
   const retrievalTime = Date.now() - startTime;
@@ -501,19 +751,27 @@ export async function buildContextPackage(
     activeTasks,
     recentTopics,
     patterns,
+    recentTools,
+    conversationSummary,
     mode,
     retrievalTime,
     timestamp: new Date().toISOString(),
-    indexStatus
+    indexStatus,
+    maxContextChars
   };
 
   // ========================================================================
   // Step 6: Audit Logging
   // ========================================================================
 
+  // Phase 4: Track privacy filtering for audit
+  const auditCtx = getUserContext();
+  const privacyFiltered = auditCtx && (auditCtx.role === 'guest' || auditCtx.role === 'anonymous');
+  const effectiveMemoryLimit = auditCtx ? getMaxMemoriesForRole(auditCtx.role) : maxMemories;
+
   audit({
     level: 'info',
-    category: 'action',
+    category: privacyFiltered ? 'security' : 'action',
     event: 'context_package_built',
     details: {
       mode,
@@ -523,7 +781,12 @@ export async function buildContextPackage(
       fallbackUsed,
       searchDepth,
       activeTasks: activeTasks.length,
-      patternsDetected: patterns.length
+      patternsDetected: patterns.length,
+      recentTools: recentTools.length,
+      hasSummary: !!conversationSummary,
+      userRole: auditCtx?.role || 'unknown',
+      privacyFiltered,
+      effectiveMemoryLimit
     },
     actor: 'context_builder'
   });
@@ -539,6 +802,84 @@ export async function buildContextPackage(
 // ============================================================================
 
 /**
+ * Format tool invocations into a readable summary for prompts
+ *
+ * @param tools - Array of tool invocations
+ * @param maxChars - Character limit for tool section
+ * @returns Formatted tool history string
+ */
+function formatToolsForPrompt(tools: ToolInvocation[], maxChars: number = 800): string {
+  if (tools.length === 0) return '';
+
+  const lines: string[] = [];
+  lines.push('\n## Recent Tool Uses:');
+
+  let charCount = lines[0].length;
+
+  for (const tool of tools) {
+    const status = tool.success ? '✓' : '✗';
+    const timeAgo = formatTimeAgo(tool.timestamp);
+
+    let line = `- ${status} ${tool.toolName} (${timeAgo})`;
+
+    // Add key outputs if available and within budget
+    if (tool.outputs && Object.keys(tool.outputs).length > 0) {
+      const outputSummary = summarizeOutputs(tool.outputs);
+      if (charCount + outputSummary.length < maxChars) {
+        line += `: ${outputSummary}`;
+      }
+    }
+
+    if (charCount + line.length > maxChars) break;
+
+    lines.push(line);
+    charCount += line.length;
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Summarize tool outputs for prompt inclusion
+ */
+function summarizeOutputs(outputs: Record<string, any>): string {
+  const keys = Object.keys(outputs);
+  if (keys.length === 0) return '';
+
+  const summaryParts: string[] = [];
+
+  for (const key of keys.slice(0, 3)) { // Max 3 keys
+    const value = outputs[key];
+    if (typeof value === 'string') {
+      summaryParts.push(`${key}: ${value.substring(0, 50)}`);
+    } else if (typeof value === 'number') {
+      summaryParts.push(`${key}: ${value}`);
+    } else if (Array.isArray(value)) {
+      summaryParts.push(`${key}: [${value.length} items]`);
+    }
+  }
+
+  return summaryParts.join(', ');
+}
+
+/**
+ * Format timestamp as relative time
+ */
+function formatTimeAgo(timestamp: string): string {
+  const now = new Date();
+  const then = new Date(timestamp);
+  const diffMs = now.getTime() - then.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ago`;
+}
+
+/**
  * Format a context package into a string for LLM prompts
  *
  * Usage in persona_chat.ts:
@@ -548,9 +889,10 @@ export async function buildContextPackage(
  */
 export function formatContextForPrompt(
   context: ContextPackage,
-  options: { maxChars?: number; includePersona?: boolean } = {}
+  options: { maxChars?: number; includePersona?: boolean; includeTools?: boolean } = {}
 ): string {
-  const { maxChars = 900, includePersona = true } = options;
+  const resolvedMaxChars = options.maxChars ?? context.maxContextChars ?? 900;
+  const { includePersona = true, includeTools = true } = options;
   const sections: string[] = [];
 
   // Persona identity (skip if using LoRA)
@@ -582,6 +924,17 @@ export function formatContextForPrompt(
     sections.push(`Recent topics: ${context.recentTopics.join(', ')}.`);
   }
 
+  // Conversation summary (Phase 3: Memory Continuity)
+  if (context.conversationSummary) {
+    sections.push(`\n## Conversation Summary:\n${context.conversationSummary}`);
+  }
+
+  // Recent tool invocations (Phase 2: Memory Continuity)
+  if (includeTools && context.recentTools.length > 0) {
+    const toolSection = formatToolsForPrompt(context.recentTools, 800);
+    sections.push(toolSection);
+  }
+
   // Relevant memories (with character limit matching persona_chat.ts)
   if (context.memories.length > 0) {
     sections.push(`\n## Relevant Context (${context.memories.length} memories):`);
@@ -592,7 +945,7 @@ export function formatContextForPrompt(
       const chunk = `${idx + 1}. ${mem.content}`;
 
       // Respect character limit (matching persona_chat.ts behavior)
-      if (used + chunk.length > maxChars) {
+      if (used + chunk.length > resolvedMaxChars) {
         break;
       }
 

@@ -9,6 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { paths } from './paths';
 import { audit } from './audit';
+import { getUserContext } from './context.js';
+import { filterToolOutputs } from './memory-policy.js';
 
 // ============================================================================
 // Types and Interfaces
@@ -599,6 +601,10 @@ export async function executeSkill(
 
   try {
     const result = await implementation(inputs);
+    const ctx = getUserContext();
+    if (ctx && result.outputs) {
+      result.outputs = filterToolOutputs(result.outputs, ctx.role, manifest.id);
+    }
     const durationMs = Date.now() - startTime;
 
     audit({

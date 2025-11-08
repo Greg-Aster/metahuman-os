@@ -9,6 +9,7 @@ import { initializeSkills } from '../../../../../../brain/skills/index';
 import { runReActLoop, type ReActStep, type ReActContext, type OperatorTask } from '../../../../../../brain/agents/operator-react';
 import { audit } from '@metahuman/core/audit';
 import { requireOperatorMode } from '../../../middleware/cognitiveModeGuard';
+import { withUserContext } from '../../../middleware/userContext';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
 
 // Initialize skills when module loads
@@ -19,6 +20,8 @@ interface ReactOperatorRequest {
   audience?: string;
   context?: string;
   reasoningDepth?: number;  // 0-3 from UI slider
+  sessionId?: string;
+  userEventId?: string;
 }
 
 interface ReactOperatorResponse {
@@ -38,7 +41,7 @@ const postHandler: APIRoute = async (context) => {
   try {
     const { request } = context;
     const body: ReactOperatorRequest = await request.json();
-    const { goal, audience, context: taskContext, reasoningDepth } = body;
+    const { goal, audience, context: taskContext, reasoningDepth, sessionId, userEventId } = body;
 
     if (!goal) {
       return new Response(
@@ -74,10 +77,10 @@ const postHandler: APIRoute = async (context) => {
 
     if (stream) {
       // Return streaming response
-      return streamReActTask(goal, audience, taskContext, reasoningDepth);
+      return streamReActTask(goal, audience, taskContext, reasoningDepth, sessionId, userEventId);
     } else {
       // Return complete response after execution
-      return runCompleteReActTask(goal, audience, taskContext, reasoningDepth);
+      return runCompleteReActTask(goal, audience, taskContext, reasoningDepth, sessionId, userEventId);
     }
 
   } catch (error) {
@@ -104,7 +107,7 @@ const postHandler: APIRoute = async (context) => {
 /**
  * Run a ReAct task and return complete response
  */
-async function runCompleteReActTask(goal: string, audience?: string, context?: string, reasoningDepth?: number): Promise<Response> {
+async function runCompleteReActTask(goal: string, audience?: string, context?: string, reasoningDepth?: number, sessionId?: string, userEventId?: string): Promise<Response> {
   const task: OperatorTask = {
     id: `task-${Date.now()}`,
     goal,
@@ -115,7 +118,7 @@ async function runCompleteReActTask(goal: string, audience?: string, context?: s
   };
 
   try {
-    const reactContext: ReActContext = await runReActLoop(task, undefined, reasoningDepth);
+    const reactContext: ReActContext = await runReActLoop(task, undefined, reasoningDepth, sessionId, userEventId);
 
     const response: ReactOperatorResponse = {
       success: reactContext.completed && !reactContext.error,
@@ -164,7 +167,7 @@ async function runCompleteReActTask(goal: string, audience?: string, context?: s
 /**
  * Stream ReAct task progress using Server-Sent Events
  */
-function streamReActTask(goal: string, audience?: string, context?: string, reasoningDepth?: number): Response {
+function streamReActTask(goal: string, audience?: string, context?: string, reasoningDepth?: number, sessionId?: string, userEventId?: string): Response {
   const task: OperatorTask = {
     id: `task-${Date.now()}`,
     goal,
@@ -202,7 +205,7 @@ function streamReActTask(goal: string, audience?: string, context?: string, reas
               content: `**Thought:** ${step.thought}\n\n**Action:** ${step.action}\n\n**Observation:** ${step.observation}${step.reasoning ? `\n\n**Deep Reasoning:** ${step.reasoning}` : ''}`,
             });
           }
-        }, reasoningDepth);
+        }, reasoningDepth, sessionId, userEventId);
 
         // Send completion event
         sendEvent('complete', {
@@ -259,7 +262,7 @@ function streamReActTask(goal: string, audience?: string, context?: string, reas
 }
 
 // Wrap POST with operator mode guard (blocks in emulation mode and for non-owners)
-export const POST = requireOperatorMode(postHandler);
+export const POST = withUserContext(requireOperatorMode(postHandler));
 
 /**
  * GET handler - Status and diagnostics

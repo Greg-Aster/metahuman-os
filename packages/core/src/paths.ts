@@ -43,6 +43,7 @@ export function getProfilePaths(username: string) {
     inboxArchive: path.join(profileRoot, 'memory', 'inbox', '_archive'),
     logs: path.join(profileRoot, 'logs'),
     out: path.join(profileRoot, 'out'),
+    state: path.join(profileRoot, 'state'),
 
     // Persona files
     personaCore: path.join(profileRoot, 'persona', 'core.json'),
@@ -162,6 +163,7 @@ export const paths = new Proxy({} as ReturnType<typeof getProfilePaths> & typeof
       inboxArchive: path.join(ROOT, 'memory', 'inbox', '_archive'),
       logs: path.join(ROOT, 'logs'),
       out: path.join(ROOT, 'out'),
+      state: path.join(ROOT, 'state'),
 
       // Persona files
       personaCore: path.join(ROOT, 'persona', 'core.json'),

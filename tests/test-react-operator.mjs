@@ -34,7 +34,7 @@ try {
     console.log(`Thought: ${step.thought}`);
     console.log(`Action: ${step.action}(${JSON.stringify(step.actionInput)})`);
     console.log(`Observation: ${step.observation.substring(0, 300)}${step.observation.length > 300 ? '...' : ''}`);
-  });
+  }, undefined, undefined, undefined);
 
   console.log('\n\n=== FINAL RESULT ===');
   console.log(`Completed: ${context.completed}`);

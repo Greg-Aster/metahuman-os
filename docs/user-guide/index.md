@@ -27,7 +27,10 @@ Welcome to the MetaHuman OS User Guide. This guide is organized into the followi
 8.  **[Autonomous Agents](08-autonomous-agents.md)**
     *   **Background Processes and Automation**: Learn about the autonomous agents that operate continuously to augment your cognitive abilities. This section covers how these agents function in the background to manage tasks, process information, and drive the system's proactive behavior.
 
-9.  **[Skills System](09-skills-system.md)**
+9.  **[Audit Stream Enhancements](05-user-interface.md#developer-sidebar-audit-stream-enhanced)**
+    *   **Grouped Live Auditing**: Understand the new grouped + expandable audit stream UI for reviewing system activity at a glance.
+
+10.  **[Skills System](09-skills-system.md)**
     *   **Executable Capabilities**: Explore the skills system, which defines the executable capabilities of MetaHuman OS. Understand how the system plans and executes these skills to ingest, organize, and act within defined trust boundaries.
 
 10. **[Security & Trust Model](10-security-trust.md)**

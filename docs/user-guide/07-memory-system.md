@@ -1,5 +1,8 @@
 ## Memory System
 
+> **Memory Continuity Roadmap (Phases 1‑5)**  
+> MetaHuman OS now follows the same layered memory guarantees described in the [Memory Continuity plan](../implementation-plans/memory-continuity-plan.md): every tool/file/action is captured (Phase 1), prompts always assemble the right context (Phase 2), long conversations are summarized and indexed (Phase 3), per-profile/role metadata flows into every call (Phase 4), and observability keeps the pipeline honest (Phase 5). The sections below explain how that shows up in day‑to‑day usage.
+
 ### Types of Memory
 
 #### Episodic Memory (`memory/episodic/YYYY/*.json`)
@@ -77,6 +80,13 @@ Events for the calendar system:
   "linkedTasks": ["task-20251019143000"]
 }
 ```
+
+### Conversation Continuity & Summaries
+
+- **Session IDs** – Every chat session gets a stable `conversationId` that is stamped onto each memory/event so tool runs, approvals, and summaries stay linked even after restarts.
+- **Rolling Buffers + Persistence** – The last ~20 turns live in memory for fast prompting, while the on-disk buffer (`profiles/<user>/state/conversation-buffer-*.json`) keeps history intact across restarts.
+- **Vector Index Queue** – New memories go into a per-user queue that batches embedding writes. Capture stays snappy while the background worker feeds the semantic index.
+- **Conversation Summaries** – When the buffer overflows, the summarizer agent condenses older turns into `type: "summary"` episodic files. Those summaries automatically appear in prompts and in the Memory tab (watch for the summary badge).
 
 ### Memory Browser (Web UI)
 
@@ -197,13 +207,15 @@ cp my-notes.txt memory/inbox/
 
 ### Searching Memory
 
+> **Tip:** The system automatically propagates conversation summaries and recent tool runs into each query via the context builder, so you can reference past sessions even after the rolling buffer resets.
+
 **CLI:**
 ```bash
 ./bin/mh remember "design team"
 ```
 
 This performs:
-1. **Semantic search** (if vector index exists) - finds conceptually similar memories
+1. **Semantic search** (if vector index exists) - finds conceptually similar memories (fed by the deferred vector-index queue, so new memories appear after background batching)
 2. **Keyword search** (fallback) - simple text matching
 
 **Web UI:**
@@ -233,4 +245,3 @@ Returns memories ranked by semantic similarity (cosine similarity score).
 **Note:** The `mh remember` command automatically uses semantic search if an index exists.
 
 ---
-

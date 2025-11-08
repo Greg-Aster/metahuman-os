@@ -1,7 +1,8 @@
 import type { APIRoute } from 'astro';
-import { loadPersonaCore, loadPersonaWithFacet, getActiveFacet, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, type RouterMessage, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, pruneHistory, type Message } from '@metahuman/core';
-import { loadCognitiveMode, getModeDefinition, canWriteMemory, canUseOperator } from '@metahuman/core/cognitive-mode';
-import { readFileSync, existsSync, promises as fs } from 'node:fs';
+import { loadPersonaCore, loadPersonaWithFacet, getActiveFacet, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, type RouterMessage, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, pruneHistory, type Message, getUserContext } from '@metahuman/core';
+import { loadCognitiveMode, getModeDefinition, canWriteMemory as modeAllowsMemoryWrites, canUseOperator } from '@metahuman/core/cognitive-mode';
+import { canWriteMemory as policyCanWriteMemory } from '@metahuman/core/memory-policy';
+import { readFileSync, existsSync, appendFileSync, writeFileSync, mkdirSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { initializeSkills } from '../../../../../brain/skills/index';
 import { getAvailableSkills, executeSkill, type SkillManifest } from '@metahuman/core/skills';
@@ -38,10 +39,76 @@ const histories: Record<Mode, Array<{ role: Role; content: string; meta?: any }>
   conversation: [],
 };
 
+const historyLoadedForUser: Record<Mode, string | null> = {
+  inner: null,
+  conversation: null,
+};
+
+function getBufferPath(mode: Mode): string | null {
+  try {
+    const ctx = getUserContext();
+    if (!ctx?.profilePaths?.state) return null;
+    const bufferDir = ctx.profilePaths.state;
+    mkdirSync(bufferDir, { recursive: true });
+    return path.join(bufferDir, `conversation-buffer-${mode}.json`);
+  } catch (error) {
+    console.warn('[persona_chat] Failed to determine buffer path:', error);
+    return null;
+  }
+}
+
+function loadPersistedBuffer(mode: Mode): Array<{ role: Role; content: string; meta?: any }> {
+  const bufferPath = getBufferPath(mode);
+  if (!bufferPath || !existsSync(bufferPath)) return [];
+
+  try {
+    const raw = readFileSync(bufferPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed.messages)) {
+      return parsed.messages;
+    }
+  } catch (error) {
+    console.warn('[persona_chat] Failed to load conversation buffer:', error);
+  }
+
+  return [];
+}
+
+function persistBuffer(mode: Mode): void {
+  const bufferPath = getBufferPath(mode);
+  if (!bufferPath) return;
+
+  try {
+    const payload = JSON.stringify(
+      {
+        messages: histories[mode],
+        lastUpdated: new Date().toISOString(),
+      },
+      null,
+      2
+    );
+    writeFileSync(bufferPath, payload);
+  } catch (error) {
+    console.warn('[persona_chat] Failed to persist conversation buffer:', error);
+  }
+}
+
+function ensureHistoryLoaded(mode: Mode): void {
+  const ctx = getUserContext();
+  const userId = ctx?.userId || 'anonymous';
+  if (historyLoadedForUser[mode] === userId && histories[mode].length > 0) {
+    return;
+  }
+
+  histories[mode] = loadPersistedBuffer(mode);
+  historyLoadedForUser[mode] = userId;
+}
+
 /**
  * Add message to history and automatically prune to stay within limits
+ * Triggers auto-summarization when pruning occurs (Phase 3: Memory Continuity)
  */
-function pushMessage(mode: Mode, message: { role: Role; content: string; meta?: any }): void {
+function pushMessage(mode: Mode, message: { role: Role; content: string; meta?: any }, sessionId?: string): void {
   const beforeCount = histories[mode].length;
   histories[mode].push(message);
 
@@ -55,6 +122,37 @@ function pushMessage(mode: Mode, message: { role: Role; content: string; meta?: 
   const afterCount = histories[mode].length;
   if (beforeCount + 1 !== afterCount) {
     console.log(`[context-window] Pruned ${mode} history: ${beforeCount + 1} → ${afterCount} messages`);
+
+    // Trigger async summarization when buffer overflow occurs (Phase 3)
+    if (sessionId) {
+      triggerAutoSummarization(sessionId).catch(error => {
+        console.error('[auto-summarization] Failed to trigger summarization:', error);
+      });
+    }
+  }
+
+  persistBuffer(mode);
+}
+
+/**
+ * Trigger background summarization for a conversation session
+ * Phase 3: Memory Continuity - auto-summarize when buffer overflows
+ */
+async function triggerAutoSummarization(sessionId: string): Promise<void> {
+  try {
+    // Import summarizer dynamically to avoid circular dependencies
+    const { summarizeSession } = await import('../../../../../brain/agents/summarizer.js');
+
+    console.log(`[auto-summarization] Triggering summarization for session: ${sessionId}`);
+
+    // Run summarization in background (don't await - let it run async)
+    void summarizeSession(sessionId).then(() => {
+      console.log(`[auto-summarization] Successfully summarized session: ${sessionId}`);
+    }).catch(error => {
+      console.error(`[auto-summarization] Summarization failed for session ${sessionId}:`, error);
+    });
+  } catch (error) {
+    console.error('[auto-summarization] Failed to import summarizer:', error);
   }
 }
 
@@ -63,6 +161,32 @@ const lastUserTurn: Record<Mode, { text: string; ts: number } | null> = { inner:
 const lastAssistantReplies: Record<Mode, string[]> = { inner: [], conversation: [] };
 // Track recently used memory IDs to avoid repeating the same snippets turn after turn
 const recentMemoryIds: Record<Mode, string[]> = { inner: [], conversation: [] };
+
+function extractEventIdFromFile(filePath: string): string | undefined {
+  try {
+    const raw = readFileSync(filePath, 'utf-8');
+    const data = JSON.parse(raw);
+    return typeof data.id === 'string' ? data.id : undefined;
+  } catch (error) {
+    console.warn('[persona_chat] Failed to extract event id:', error);
+    return undefined;
+  }
+}
+
+async function appendResponseToEvent(filePath: string, response: string): Promise<void> {
+  try {
+    const raw = readFileSync(filePath, 'utf-8');
+    const data = JSON.parse(raw);
+    data.response = response;
+    data.metadata = {
+      ...(data.metadata || {}),
+      timestamp: data.metadata?.timestamp || new Date().toISOString(),
+    };
+    await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+  } catch (error) {
+    console.warn('[persona_chat] Failed to append response to memory event:', error);
+  }
+}
 
 /**
  * Helper to load cognitive mode context and compute derived flags.
@@ -79,7 +203,7 @@ function getCognitiveModeContext() {
     config: cognitiveConfig,
     definition: modeDefinition,
     defaults,
-    allowMemoryWrites: canWriteMemory(mode),
+    allowMemoryWrites: modeAllowsMemoryWrites(mode),
     allowOperator: canUseOperator(mode),
   };
 }
@@ -183,6 +307,7 @@ function stripChainOfThought(raw: string): string {
 async function getRelevantContext(
   userMessage: string,
   mode: Mode,
+  sessionId: string,
   opts?: { usingLora?: boolean; includePersonaSummary?: boolean }
 ): Promise<{ context: string; usedSemantic: boolean; contextPackage: any }> {
   try {
@@ -216,7 +341,8 @@ async function getRelevantContext(
     const contextPackage = await buildContextPackage(userMessage, cognitiveMode, {
       searchDepth: 'normal',          // 8 results (matching old topK: 8)
       similarityThreshold: effectiveThreshold,  // Skip threshold when filtering by metadata
-      maxMemories: 2,                 // Matching old limit
+      // Let memory-policy enforce per-role caps instead of pinning to 2
+      maxMemories: undefined,
       maxContextChars: 900,           // Matching old character limit
       metadataFilters,                // Hybrid search: filter by type when user explicitly asks
       filterInnerDialogue: true,      // Matching old filtering
@@ -226,12 +352,13 @@ async function getRelevantContext(
       includeTaskContext: wantsTasks, // Only include tasks if mentioned
       detectPatterns: false,          // Skip pattern detection for now
       forceSemanticSearch: cognitiveMode === 'dual', // Dual mode requires semantic
-      usingLoRA: opts?.usingLora || false
+      usingLoRA: opts?.usingLora || false,
+      conversationId: sessionId
     });
 
     // Format context for prompt
     const context = formatContextForPrompt(contextPackage, {
-      maxChars: 900,
+      maxChars: contextPackage.maxContextChars,
       includePersona: opts?.includePersonaSummary !== false && !opts?.usingLora
     });
 
@@ -295,6 +422,7 @@ You are having a ${mode}.
 function initializeChat(mode: Mode, reason = false, usingLora = false, includePersonaSummary = true): void {
   const systemPrompt = buildSystemPrompt(mode, includePersonaSummary);
   histories[mode] = [{ role: 'system', content: systemPrompt }];
+  persistBuffer(mode);
 }
 
 /**
@@ -308,6 +436,7 @@ function refreshSystemPrompt(mode: Mode, includePersonaSummary = true): void {
     // No history yet, initialize it
     initializeChat(mode, false, false, includePersonaSummary);
   }
+  persistBuffer(mode);
 }
 
 // Wrap GET and POST with user context middleware for automatic profile path resolution
@@ -329,6 +458,12 @@ export const GET: APIRoute = withUserContext(async (context) => {
   const llmRaw = url.searchParams.get('llm');
   const forceOperator = url.searchParams.get('forceOperator') === 'true' || url.searchParams.get('operator') === 'true';
   const yolo = url.searchParams.get('yolo') === 'true';
+  // Extract conversation session ID for memory continuity
+  let sessionId = url.searchParams.get('sessionId') || url.searchParams.get('conversationId') || '';
+  if (!sessionId) {
+    // Generate session ID if not provided
+    sessionId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
   let llm = {};
   if (llmRaw) {
     try {
@@ -339,7 +474,7 @@ export const GET: APIRoute = withUserContext(async (context) => {
     }
   }
 
-  return handleChatRequest({ message, mode, newSession, audience, length, reason, reasoningDepth, llm, forceOperator, yolo, origin: url.origin, cookies });
+  return handleChatRequest({ message, mode, newSession, audience, length, reason, reasoningDepth, llm, forceOperator, yolo, sessionId, origin: url.origin, cookies });
 });
 
 export const POST: APIRoute = withUserContext(async ({ request, cookies }) => {
@@ -504,9 +639,10 @@ Stay true to your personality. Don't mention "the operator" or technical details
   return text || operatorReport;
 }
 
-async function handleChatRequest({ message, mode = 'inner', newSession = false, audience, length, reason, reasoningDepth, llm, forceOperator = false, yolo = false, origin, cookies }: { message: string; mode?: string; newSession?: boolean; audience?: string; length?: string; reason?: boolean; reasoningDepth?: number; llm?: any; forceOperator?: boolean; yolo?: boolean; origin?: string; cookies?: any }) {
+async function handleChatRequest({ message, mode = 'inner', newSession = false, audience, length, reason, reasoningDepth, llm, forceOperator = false, yolo = false, sessionId, origin, cookies }: { message: string; mode?: string; newSession?: boolean; audience?: string; length?: string; reason?: boolean; reasoningDepth?: number; llm?: any; forceOperator?: boolean; yolo?: boolean; sessionId?: string; origin?: string; cookies?: any }) {
   console.log(`\n[CHAT_REQUEST] Received: "${message}"`);
   const m: Mode = mode === 'conversation' ? 'conversation' : 'inner';
+  ensureHistoryLoaded(m);
 
   let model;
   let usingLora = false;
@@ -582,8 +718,30 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
   // Get relevant context (memories + tasks) BEFORE routing decision
   // This context will be used by both operator and chat paths
-  const { context: contextInfo, usedSemantic, contextPackage } = await getRelevantContext(message, m, { usingLora, includePersonaSummary });
+  const { context: contextInfo, usedSemantic, contextPackage } = await getRelevantContext(message, m, sessionId, { usingLora, includePersonaSummary });
   console.log(`[CHAT_REQUEST] Context retrieved. Length: ${contextInfo.length}, Semantic Search: ${usedSemantic}, Memories: ${contextPackage?.memoryCount || 0}`);
+
+  const currentCtx = getUserContext();
+
+  // Phase 5: Memory Miss Detection - Log when no memories found for non-trivial queries
+  if (contextPackage && contextPackage.memoryCount === 0 && message.length > 20) {
+    const missLogPath = path.join(ROOT, 'logs', 'memory-misses.ndjson');
+
+    try {
+      const missEntry = JSON.stringify({
+        timestamp: new Date().toISOString(),
+        query: message.substring(0, 200),
+        mode: cognitiveMode,
+        indexStatus: contextPackage.indexStatus || 'unknown',
+        username: currentCtx?.username || 'anonymous',
+        sessionId: sessionId || 'unknown'
+      });
+
+      appendFileSync(missLogPath, missEntry + '\n', 'utf-8');
+    } catch (error) {
+      console.warn('[persona_chat] Failed to log memory miss:', error);
+    }
+  }
 
   // Log when operator is blocked due to lack of authentication
   if (!isAuthenticated) {
@@ -596,6 +754,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
       role: 'system',
       content: authWarning
     });
+    persistBuffer(m);
   }
 
   if (useOperator) {
@@ -617,9 +776,34 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
           }
         };
 
+        const eventType = m === 'inner' ? 'inner_dialogue' : 'conversation';
+        const canCaptureConversation = policyCanWriteMemory(cognitiveMode, eventType);
+        let userEventPath: string | null = null;
+        let userEventId: string | undefined;
+
+        if (canCaptureConversation) {
+          try {
+            userEventPath = captureEvent(`Me: "${message}"`, {
+              type: eventType,
+              tags: ['chat', m],
+              metadata: {
+                cognitiveMode,
+                conversationId: sessionId || undefined,
+                timestamp: new Date().toISOString(),
+                usedOperator: true,
+              },
+            });
+            userEventId = userEventPath ? extractEventIdFromFile(userEventPath) : undefined;
+          } catch (error) {
+            console.warn('[persona_chat] Failed to capture user message before operator run:', error);
+            userEventPath = null;
+            userEventId = undefined;
+          }
+        }
+
         try {
           lastUserTurn[m] = { text: trimmedMessage, ts: Date.now() };
-          pushMessage(m, { role: 'user', content: message });
+          pushMessage(m, { role: 'user', content: message }, sessionId);
 
           // Build operator context with recent conversation history AND memory context
           let operatorContext = '';
@@ -705,6 +889,8 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               profile: (typeof audience === 'string' && ['files','git','web'].includes(audience) ? audience : undefined),
               yolo,
               allowMemoryWrites, // Pass cognitive mode memory write permission to operator
+              sessionId,
+              userEventId,
             }),
           });
 
@@ -716,7 +902,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
           const formattedResult = formatOperatorResult(result);
 
           // Preserve the raw operator data in history for follow-up questions
-          pushMessage(m, { role: 'system', content: `## Operator Findings\n${formattedResult}` });
+          pushMessage(m, { role: 'system', content: `## Operator Findings\n${formattedResult}` }, sessionId);
 
           let synthesized = formattedResult;
           try {
@@ -734,9 +920,13 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
             actor: 'assistant'
           });
 
+          if (userEventPath) {
+            await appendResponseToEvent(userEventPath, synthesized);
+          }
+
           push('answer', { response: synthesized });
 
-          pushMessage(m, { role: 'assistant', content: synthesized });
+          pushMessage(m, { role: 'assistant', content: synthesized }, sessionId);
           lastAssistantReplies[m].push(synthesized);
         } catch (error) {
           console.error('[persona_chat] Operator error:', error);
@@ -793,7 +983,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   lastUserTurn[m] = { text: trimmedMessage, ts: nowTs };
 
   if (m === 'conversation' && audience && forceOperator) {
-    pushMessage(m, { role: 'system', content: `Audience/context: ${audience}` });
+    pushMessage(m, { role: 'system', content: `Audience/context: ${audience}` }, sessionId);
   }
 
   // Note: Context already retrieved earlier (line 525) and available as contextInfo, usedSemantic, contextPackage
@@ -802,9 +992,9 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   // NOTE: The context is added as a separate system message to make it clear to the model what is the user's message and what is context.
   // Appending the context to the user's message can confuse the model and cause it to repeat the context.
   if (contextInfo) {
-    pushMessage(m, { role: 'system', content: `## Context\n${contextInfo}` });
+    pushMessage(m, { role: 'system', content: `## Context\n${contextInfo}` }, sessionId);
   }
-  pushMessage(m, { role: 'user', content: message });
+  pushMessage(m, { role: 'user', content: message }, sessionId);
 
   try {
     const temperature = m === 'inner' ? 0.5 : 0.6;
@@ -1250,20 +1440,25 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
           // Store history
           histories[m].pop();
-          pushMessage(m, { role: 'user', content: message });
-          pushMessage(m, { role: 'assistant', content: assistantResponse });
+          pushMessage(m, { role: 'user', content: message }, sessionId);
+          pushMessage(m, { role: 'assistant', content: assistantResponse }, sessionId);
 
           // Capture event and audit (if user is authenticated)
           // Note: cognitiveMode and allowMemoryWrites are already loaded at function start
-          if (allowMemoryWrites) {
-            const eventType = m === 'inner' ? 'inner_dialogue' : 'conversation';
-            const responseForMemory = assistantResponse && assistantResponse.trim().length > 0 ? assistantResponse.trim() : undefined;
+          const eventType = m === 'inner' ? 'inner_dialogue' : 'conversation';
+          const canPersistConversation = policyCanWriteMemory(cognitiveMode, eventType);
+          const responseForMemory = assistantResponse && assistantResponse.trim().length > 0 ? assistantResponse.trim() : undefined;
+
+          if (canPersistConversation) {
             const userPath = captureEvent(`Me: "${message}"`, {
               type: eventType,
               tags: ['chat', m],
               response: responseForMemory,
               metadata: {
                 cognitiveMode: cognitiveMode,
+                conversationId: sessionId || undefined,
+                timestamp: new Date().toISOString(),
+                usedOperator: false,
               },
             });
             const userRelPath = path.relative(ROOT, userPath);
@@ -1282,11 +1477,11 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
             // Stream the final answer with save confirmation
             push('answer', { response: assistantResponse, saved: { userRelPath }, facet: activeFacet });
           } else {
-            // Emulation mode: return response without saving
+            const auditEvent = allowMemoryWrites ? 'chat_assistant_ephemeral' : 'chat_assistant_readonly';
             audit({
               level: 'info',
               category: 'action',
-              event: 'chat_assistant_readonly',
+              event: auditEvent,
               details: { mode: m, content: assistantResponse, cognitiveMode, usedOperator: false },
               actor: 'assistant'
             });
@@ -1328,6 +1523,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     });
   } catch (error) {
     histories[m].pop();
+    persistBuffer(m);
     console.error('Persona chat API error:', error);
     audit({
       level: 'error',

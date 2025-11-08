@@ -4,6 +4,56 @@ import { paths, generateId, timestamp } from './paths.js';
 import { appendEventToIndex, getIndexStatus } from './vector-index.js';
 import { auditDataChange } from './audit.js';
 import { getUserContext } from './context.js';
+import type { CognitiveModeId } from './cognitive-mode.js';
+import { scheduleIndexUpdate } from './vector-index-queue.js';
+
+/**
+ * Enhanced metadata schema for episodic events
+ * Supports memory continuity features and mode-aware capture
+ */
+export interface EpisodicEventMetadata {
+  // Conversation tracking
+  conversationId?: string;      // Session ID for linking related messages
+  sessionId?: string;            // Alias for conversationId
+  parentEventId?: string;        // Link to triggering event (e.g., user message that caused tool invocation)
+
+  // Tool invocation fields
+  toolName?: string;             // Name of skill/tool executed
+  toolInputs?: Record<string, any>;    // Tool input parameters
+  toolOutputs?: Record<string, any>;   // Tool output results
+  success?: boolean;             // Tool execution success status
+  error?: string;                // Error message if failed
+  executionTimeMs?: number;      // Performance tracking
+
+  // File operation fields
+  filePath?: string;             // File path for read/write operations
+  fileSize?: number;             // File size in bytes
+  snippet?: string;              // Content preview (first 300 chars)
+  overwrite?: boolean;           // Whether file was overwritten
+
+  // Code approval fields
+  approvalId?: string;           // Unique approval ID
+  skillId?: string;              // Skill being approved/rejected
+  skillInputs?: Record<string, any>;   // Skill parameters
+  decision?: 'approved' | 'rejected';  // Approval decision
+
+  // Cognitive context
+  cognitiveMode?: 'dual' | 'agent' | 'emulation';  // Active cognitive mode
+  usedOperator?: boolean;        // Whether operator pipeline was used
+  trustLevel?: string;           // Trust level at time of event
+  facet?: string;                // Active persona facet
+
+  // Legacy fields (maintain backward compatibility)
+  processed?: boolean;           // Organizer agent processed flag
+  processedAt?: string;          // When organizer processed
+  model?: string;                // Model used for generation
+
+  // General timestamp
+  timestamp?: string;            // ISO 8601 timestamp
+
+  // Allow additional custom fields
+  [key: string]: any;
+}
 
 export interface EpisodicEvent {
   id: string;
@@ -16,13 +66,7 @@ export interface EpisodicEvent {
   importance?: number;
   links?: Array<{ type: string; target: string }>;
   userId?: string; // NEW: Track which user owns this memory
-  metadata?: {
-    cognitiveMode?: string;
-    processed?: boolean;
-    processedAt?: string;
-    model?: string;
-    [key: string]: any;
-  };
+  metadata?: EpisodicEventMetadata; // Enhanced typed metadata
 }
 
 export interface Task {
@@ -76,20 +120,39 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
   // Also log to sync
   logSync('capture', { event });
 
-  // Try to append to embeddings index if it exists
-  try {
-    const status = getIndexStatus();
-    if ((status as any).exists) {
-      void appendEventToIndex({
+  const cognitiveMode = (event.metadata?.cognitiveMode as CognitiveModeId) || 'dual';
+
+  if (ctx?.userId && ctx.profilePaths?.state) {
+    scheduleIndexUpdate(
+      ctx.userId,
+      cognitiveMode,
+      {
         id: event.id,
         timestamp: event.timestamp,
         content: event.content,
         tags: event.tags,
         entities: event.entities,
         path: filepath,
-      }).catch(() => {});
-    }
-  } catch {}
+        type: event.type || 'observation'
+      },
+      { statePath: ctx.profilePaths.state }
+    );
+  } else {
+    // Fallback to immediate append when no user context is available
+    try {
+      const status = getIndexStatus();
+      if ((status as any).exists) {
+        void appendEventToIndex({
+          id: event.id,
+          timestamp: event.timestamp,
+          content: event.content,
+          tags: event.tags,
+          entities: event.entities,
+          path: filepath,
+        }).catch(() => {});
+      }
+    } catch {}
+  }
 
   return filepath;
 }

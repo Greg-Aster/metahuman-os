@@ -145,6 +145,9 @@ MetaHuman OS requires a Python virtual environment for its extensive ML/AI depen
 - **Unified Security Policy**: A centralized security model with trust levels, directory boundaries, and a secure read-only "Emulation" mode.
 - **Audio Ingestion Pipeline**: A fully local pipeline to transcribe and process audio recordings into structured memories using `whisper.cpp`.
 - **Transparent & Auditable**: A complete, human-readable audit trail of all system decisions and actions.
+- **Memory Continuity Enhancements**: Context-aware session IDs, conversation buffer persistence, automatic summarization, and per-role memory policies keep long-running chats coherent without overwhelming the LLM context window.
+- **Deferred Vector Indexing**: A per-user queue batches new memory embeddings so capture stays responsive even during heavy tool usage.
+- **Audit Stream Redesign (in progress)**: Live audits are being grouped by task with expandable details, reducing noise while preserving full JSON traces.
 - **Special States & Protocols**: Includes long-term operational modes like "Wetware Deceased" and emergency features like the "Lifeline Protocol" and "Kill Switch".
 
 ## Project Structure

@@ -11,9 +11,13 @@
  * planning all steps upfront without seeing intermediate results.
  */
 
-import { audit, executeSkill as coreExecuteSkill, listSkills } from '@metahuman/core';
+import { audit, executeSkill as coreExecuteSkill, listSkills, captureEvent } from '@metahuman/core';
 import { callLLM, type RouterMessage } from '../../packages/core/src/model-router.js';
 import type { SkillResult } from '../../packages/core/src/skills.js';
+import { canWriteMemory, shouldCaptureTool } from '@metahuman/core/memory-policy';
+import { loadCognitiveMode } from '@metahuman/core/cognitive-mode';
+import { getUserContext } from '@metahuman/core/context';
+import { resolvePathWithFuzzyFallback, type PathResolution } from '@metahuman/core/path-resolver';
 
 // ============================================================================
 // Types
@@ -142,7 +146,9 @@ function isPureChatRequest(goal: string): boolean {
 export async function runReActLoop(
   task: OperatorTask,
   onProgress?: (step: ReActStep) => void,
-  reasoningDepth?: number
+  reasoningDepth?: number,
+  sessionId?: string,
+  parentEventId?: string
 ): Promise<ReActContext> {
   const config = loadConfig();
 
@@ -269,7 +275,7 @@ export async function runReActLoop(
       const thought = await planNextStep(context, config);
 
       // 2. ACT: Execute one skill
-      const result = await executeSkill(thought.action, thought.actionInput);
+      const result = await executeSkill(thought.action, thought.actionInput, sessionId, parentEventId);
 
       // 3. OBSERVE: Record what happened
       const observation = formatObservation(result, config);
@@ -504,20 +510,92 @@ JSON Format:
 }
 
 /**
+ * Resolve filesystem paths with fuzzy fallback before skill execution.
+ * This prevents "file not found" errors when users slightly misspell filenames.
+ *
+ * @param skillName - Name of the skill being executed
+ * @param input - Skill input parameters
+ * @returns Modified input with resolved paths, or null if resolution failed with no suggestions
+ */
+function resolveFilesystemPaths(skillName: string, input: any): { input: any; suggestions?: string[]; originalPath?: string } {
+  // List of filesystem skills that require path resolution
+  const fsSkills = ['fs_read', 'fs_write', 'fs_list', 'fs_delete', 'fs_move', 'fs_copy'];
+
+  if (!fsSkills.includes(skillName)) {
+    return { input }; // Not a filesystem skill, no resolution needed
+  }
+
+  // Extract path from various possible fields
+  const pathField = input.path || input.filePath || input.file || input.pattern;
+
+  if (!pathField || typeof pathField !== 'string') {
+    return { input }; // No path to resolve
+  }
+
+  // Resolve the path with fuzzy fallback
+  const resolution: PathResolution = resolvePathWithFuzzyFallback(pathField);
+
+  // If exact match found, use it
+  if (resolution.exists && resolution.resolved) {
+    const resolvedInput = { ...input };
+    if (input.path) resolvedInput.path = resolution.resolved;
+    if (input.filePath) resolvedInput.filePath = resolution.resolved;
+    if (input.file) resolvedInput.file = resolution.resolved;
+    if (input.pattern) resolvedInput.pattern = resolution.resolved;
+
+    return { input: resolvedInput };
+  }
+
+  // No exact match - return suggestions if available
+  if (resolution.suggestions.length > 0) {
+    return {
+      input,
+      suggestions: resolution.suggestions,
+      originalPath: pathField
+    };
+  }
+
+  // No match and no suggestions
+  return { input };
+}
+
+/**
  * Execute a skill with the given input.
  *
  * @param skillName - Name of the skill to execute
  * @param input - Input parameters for the skill
  * @returns The skill execution result
  */
-async function executeSkill(skillName: string, input: any): Promise<SkillResult> {
+async function executeSkill(skillName: string, input: any, sessionId?: string, parentEventId?: string): Promise<SkillResult> {
+  const startTime = Date.now();
+
+  // Phase 6: Fuzzy path resolution before filesystem operations
+  const pathResolution = resolveFilesystemPaths(skillName, input);
+
+  // If we have suggestions but no exact match, return helpful error
+  if (pathResolution.suggestions && pathResolution.suggestions.length > 0) {
+    const suggestionsText = pathResolution.suggestions
+      .slice(0, 5)
+      .map((s, i) => `  ${i + 1}. ${s}`)
+      .join('\n');
+
+    return {
+      success: false,
+      error: `Path not found: "${pathResolution.originalPath}"\n\nDid you mean one of these?\n${suggestionsText}\n\nTip: Use fs_list with a fuzzy pattern like "**/*${pathResolution.originalPath}*" to search.`
+    };
+  }
+
+  // Use resolved input (may be same as original if no resolution was needed)
+  const resolvedInput = pathResolution.input;
+
   audit({
     level: 'info',
     category: 'action',
     event: 'react_executing_skill',
     details: {
       skill: skillName,
-      input,
+      input: resolvedInput,
+      sessionId,
     },
     actor: 'operator-react',
   });
@@ -527,10 +605,12 @@ async function executeSkill(skillName: string, input: any): Promise<SkillResult>
     // This allows automatic execution without approval for most skills
     const result = await coreExecuteSkill(
       skillName,
-      input,
+      resolvedInput,
       'bounded_auto',
       true // autoApprove = true for ReAct loop
     );
+
+    const executionTime = Date.now() - startTime;
 
     audit({
       level: result.success ? 'info' : 'warn',
@@ -540,12 +620,46 @@ async function executeSkill(skillName: string, input: any): Promise<SkillResult>
         skill: skillName,
         success: result.success,
         error: result.error,
+        executionTimeMs: executionTime,
       },
       actor: 'operator-react',
     });
 
+    // Capture tool invocation as memory event (mode-aware)
+    try {
+      const ctx = getUserContext();
+      const cognitiveConfig = loadCognitiveMode();
+      const cognitiveMode = cognitiveConfig.currentMode;
+
+      // Check if we should capture this tool invocation
+      if (ctx && shouldCaptureTool(cognitiveMode, skillName) && canWriteMemory(cognitiveMode, 'tool_invocation')) {
+        captureEvent(`Tool: ${skillName}`, {
+          type: 'tool_invocation',
+          tags: ['tool', skillName, 'operator', 'react'],
+          importance: result.success ? 0.6 : 0.8, // Failures more important
+          metadata: {
+            conversationId: sessionId,
+            toolName: skillName,
+            toolInputs: resolvedInput, // Use resolved input (may have fuzzy-matched paths)
+            toolOutputs: result.outputs || {},
+            success: result.success,
+            error: result.error || undefined,
+            executionTimeMs: executionTime,
+            cognitiveMode,
+            timestamp: new Date().toISOString(),
+            parentEventId,
+          },
+        });
+      }
+    } catch (captureError) {
+      // Don't fail the skill execution if memory capture fails
+      console.warn('[operator-react] Failed to capture tool invocation:', captureError);
+    }
+
     return result;
   } catch (error) {
+    const executionTime = Date.now() - startTime;
+
     audit({
       level: 'error',
       category: 'action',
@@ -553,9 +667,38 @@ async function executeSkill(skillName: string, input: any): Promise<SkillResult>
       details: {
         skill: skillName,
         error: (error as Error).message,
+        executionTimeMs: executionTime,
       },
       actor: 'operator-react',
     });
+
+    // Capture failed tool invocation
+    try {
+      const ctx = getUserContext();
+      const cognitiveConfig = loadCognitiveMode();
+      const cognitiveMode = cognitiveConfig.currentMode;
+
+      if (ctx && shouldCaptureTool(cognitiveMode, skillName) && canWriteMemory(cognitiveMode, 'tool_invocation')) {
+        captureEvent(`Tool failed: ${skillName}`, {
+          type: 'tool_invocation',
+          tags: ['tool', skillName, 'operator', 'error'],
+          importance: 0.9, // High importance for errors
+          metadata: {
+            conversationId: sessionId,
+            toolName: skillName,
+            toolInputs: resolvedInput, // Use resolved input
+            success: false,
+            error: (error as Error).message,
+            executionTimeMs: executionTime,
+            cognitiveMode,
+            timestamp: new Date().toISOString(),
+            parentEventId,
+          },
+        });
+      }
+    } catch (captureError) {
+      console.warn('[operator-react] Failed to capture tool error:', captureError);
+    }
 
     return {
       success: false,

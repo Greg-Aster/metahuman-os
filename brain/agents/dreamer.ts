@@ -56,10 +56,12 @@ function loadSleepConfig(): SleepConfig {
 }
 
 /**
- * Get a weighted random sample of memories from the last N days
- * Newer memories get higher weight, diverse topics preferred
+ * Get a weighted random sample of memories from entire lifetime
+ * Exponential decay favors recent memories but allows ancient memories to surface
+ * More reflective weighting: 1-year-old memories retain ~20% probability
+ * Like the human mind: childhood memories can appear in dreams with meaningful frequency
  */
-async function curateMemories(days: number = 7, sampleSize: number = 15): Promise<Memory[]> {
+async function curateMemories(sampleSize: number = 15, decayDays: number = 227): Promise<Memory[]> {
   const memories: Array<Memory & { weight: number; age: number }> = [];
   const now = new Date();
 
@@ -67,45 +69,73 @@ async function curateMemories(days: number = 7, sampleSize: number = 15): Promis
     level: 'info',
     category: 'action',
     event: 'dream_curation_started',
-    details: { days, sampleSize },
+    details: { sampleSize, decayDays, scope: 'lifetime' },
     actor: 'dreamer',
   });
 
-  for (let i = 0; i < days; i++) {
-    const date = new Date(now);
-    date.setDate(now.getDate() - i);
-    const year = date.getFullYear().toString();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const datePrefix = `${year}-${month}-${day}`;
+  // Scan ALL years in episodic memory (no time limit)
+  const episodicDir = paths.episodic;
 
-    const episodicDirForYear = path.join(paths.episodic, year);
+  try {
+    if (!fs.existsSync(episodicDir)) {
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'dream_curation_completed',
+        details: { memoriesFound: 0, curated: 0 },
+        actor: 'dreamer',
+      });
+      return [];
+    }
 
-    try {
-      if (!fs.existsSync(episodicDirForYear)) continue;
+    const yearDirs = fs.readdirSync(episodicDir);
 
-      const files = fs.readdirSync(episodicDirForYear);
+    for (const year of yearDirs) {
+      const yearPath = path.join(episodicDir, year);
+      const stats = fs.statSync(yearPath);
+
+      if (!stats.isDirectory()) continue;
+
+      const files = fs.readdirSync(yearPath);
+
       for (const file of files) {
-        if (file.startsWith(`evt-${year}${month}${day}`) || file.startsWith(datePrefix)) {
-          const filepath = path.join(episodicDirForYear, file);
+        if (!file.endsWith('.json')) continue;
+
+        const filepath = path.join(yearPath, file);
+
+        try {
           const content = fs.readFileSync(filepath, 'utf-8');
           const memory = JSON.parse(content) as Memory;
 
-          // Skip dreams and low-confidence memories
+          // Skip dreams, reflections, and low-confidence memories
           if (memory.metadata?.type === 'dream') continue;
+          if (memory.metadata?.type === 'reflection') continue;
 
-          // Weight: newer = higher, decay over time
-          const ageInDays = i;
-          const weight = Math.max(0.1, 1.0 - (ageInDays / days) * 0.7);
+          // Calculate age in days
+          const memoryDate = new Date(memory.timestamp);
+          const ageInMs = now.getTime() - memoryDate.getTime();
+          const ageInDays = Math.floor(ageInMs / (1000 * 60 * 60 * 24));
+
+          // Exponential decay: recent memories favored, but old memories surface meaningfully
+          // Formula: weight = exp(-age / decayConstant)
+          // decayDays=227 means 1-year-old memories retain ~20% weight (more reflective)
+          // This allows older memories to surface frequently, like a contemplative mind
+          const weight = Math.exp(-ageInDays / decayDays);
 
           memories.push({ ...memory, weight, age: ageInDays });
+        } catch (error) {
+          // Skip malformed files
+          const err = error as Error;
+          if (!err.message.includes('Unexpected token')) {
+            console.warn(`[dreamer] Could not parse ${file}:`, err.message);
+          }
         }
       }
-    } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err.code !== 'ENOENT') {
-        console.error(`[dreamer] Error reading memories for ${datePrefix}:`, error);
-      }
+    }
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== 'ENOENT') {
+      console.error('[dreamer] Error scanning episodic memory:', error);
     }
   }
 
@@ -120,7 +150,7 @@ async function curateMemories(days: number = 7, sampleSize: number = 15): Promis
     return [];
   }
 
-  // Weighted random sampling
+  // Weighted random sampling (same algorithm, now with exponential weights)
   const curated: Memory[] = [];
   const tempMemories = [...memories];
 
@@ -139,13 +169,30 @@ async function curateMemories(days: number = 7, sampleSize: number = 15): Promis
     }
   }
 
+  // Calculate stats about memory ages selected
+  const ages = curated.map(m => {
+    const memDate = new Date((m as any).timestamp);
+    const ageMs = now.getTime() - memDate.getTime();
+    return Math.floor(ageMs / (1000 * 60 * 60 * 24));
+  });
+  const avgAge = ages.length > 0 ? Math.floor(ages.reduce((a, b) => a + b, 0) / ages.length) : 0;
+  const oldestAge = ages.length > 0 ? Math.max(...ages) : 0;
+
   audit({
     level: 'info',
     category: 'action',
     event: 'dream_curation_completed',
-    details: { memoriesFound: memories.length, curated: curated.length },
+    details: {
+      memoriesFound: memories.length,
+      curated: curated.length,
+      avgAgeDays: avgAge,
+      oldestAgeDays: oldestAge,
+      scope: 'lifetime'
+    },
     actor: 'dreamer',
   });
+
+  console.log(`[dreamer] Curated ${curated.length} memories (avg age: ${avgAge} days, oldest: ${oldestAge} days)`);
 
   return curated;
 }
@@ -340,8 +387,8 @@ async function generateUserDreams(username: string): Promise<{
     return { dreamsGenerated: 0, memoriesCurated: 0, preferencesExtracted: 0, heuristicsExtracted: 0 };
   }
 
-  // Step 1: Curate memories (uses user context!)
-  const curatedMemories = await curateMemories(7, 15);
+  // Step 1: Curate memories from entire lifetime (uses user context!)
+  const curatedMemories = await curateMemories(15, 227);
 
   if (curatedMemories.length < 3) {
     console.log(`[dreamer]   Not enough memories for ${username} (found ${curatedMemories.length})`);

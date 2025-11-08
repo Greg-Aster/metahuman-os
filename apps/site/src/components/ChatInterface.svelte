@@ -39,6 +39,8 @@ let reasoningStages: ReasoningStage[] = [];
   let messagesContainer: HTMLDivElement;
   let shouldAutoScroll = true;
   let reflectionStream: EventSource | null = null;
+  // Session ID for conversation continuity
+  let conversationSessionId: string = '';
   // Convenience toggles
   let ttsEnabled = false;
   // forceOperator removed - unified reasoning always uses operator for authenticated users
@@ -327,6 +329,20 @@ let reasoningStages: ReasoningStage[] = [];
   onMount(() => {
     loadChatPrefs();
 
+    // Initialize or restore conversation session ID
+    try {
+      const storedSessionId = localStorage.getItem('mh_conversation_session_id');
+      if (storedSessionId) {
+        conversationSessionId = storedSessionId;
+      } else {
+        conversationSessionId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        localStorage.setItem('mh_conversation_session_id', conversationSessionId);
+      }
+    } catch (e) {
+      // Fallback if localStorage unavailable
+      conversationSessionId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+
     const observer = new IntersectionObserver(
       (entries) => {
         shouldAutoScroll = entries[0].isIntersecting;
@@ -490,6 +506,7 @@ let reasoningStages: ReasoningStage[] = [];
         reason: String(reasoningDepth > 0),
         reasoningDepth: String(reasoningDepth),
         llm: JSON.stringify(llm_opts),
+        sessionId: conversationSessionId,
         // forceOperator removed - no longer used
       });
       params.set('yolo', String(yoloMode));
@@ -641,6 +658,15 @@ let reasoningStages: ReasoningStage[] = [];
     try {
       localStorage.removeItem(sessionKey());
     } catch {}
+
+    // Generate new conversation session ID
+    try {
+      conversationSessionId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem('mh_conversation_session_id', conversationSessionId);
+    } catch (e) {
+      conversationSessionId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+
     // Clear the audit stream display in the right sidebar
     triggerClearAuditStream();
 
