@@ -16,7 +16,22 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-"$REPO_ROOT/bin/mh" start --restart
+# Check headless mode before starting agents
+RUNTIME_CONFIG="$REPO_ROOT/etc/runtime.json"
+if [ -f "$RUNTIME_CONFIG" ]; then
+  HEADLESS=$(grep -o '"headless"[[:space:]]*:[[:space:]]*true' "$RUNTIME_CONFIG" || echo "")
+  if [ -n "$HEADLESS" ]; then
+    echo "⚠️  Headless mode active - skipping agent startup"
+    echo "   Tunnel and web server will run, but local agents are paused"
+    # Skip agent start, but continue to start tunnel and web server
+  else
+    "$REPO_ROOT/bin/mh" start --restart
+  fi
+else
+  # No runtime config yet, start normally
+  "$REPO_ROOT/bin/mh" start --restart
+fi
+
 # Auto-start Cloudflare tunnel if enabled
 "$REPO_ROOT/bin/start-cloudflare" 2>/dev/null || true
 

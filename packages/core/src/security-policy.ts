@@ -9,8 +9,13 @@ import { getUser } from './users.js';
 
 /**
  * User role types for access control
+ *
+ * - owner: Full system access (legacy role, maps to admin)
+ * - standard: Full access to own profile, read-only docs
+ * - guest: Read-only access to docs and shared content
+ * - anonymous: Unauthenticated users (read-only, emulation mode only)
  */
-export type UserRole = 'owner' | 'guest' | 'anonymous';
+export type UserRole = 'owner' | 'standard' | 'guest' | 'anonymous';
 
 /**
  * Check if a username is in the administrator list
@@ -83,6 +88,13 @@ export interface SecurityPolicy {
   canAccessAllProfiles: boolean;
   canEditOwnProfile: boolean;
 
+  // Path-based permissions (new tier system)
+  canReadDocs: boolean;
+  canWriteDocs: boolean;
+  canReadProfile(username: string): boolean;
+  canWriteProfile(username: string): boolean;
+  canAccessSystemConfigs: boolean;
+
   // Context
   role: UserRole;
   mode: CognitiveModeId;
@@ -97,6 +109,8 @@ export interface SecurityPolicy {
   requireConfig(): void;
   requireAdmin(): void;
   requireFileAccess(filePath: string): void;
+  requireProfileRead(targetUsername: string): void;
+  requireProfileWrite(targetUsername: string): void;
 }
 
 /**
@@ -146,6 +160,28 @@ function computeSecurityPolicy(
 
     // Edit own profile: any authenticated user (not anonymous or guest)
     canEditOwnProfile: role !== 'anonymous' && role !== 'guest',
+
+    // Path-based permissions (new tier system)
+    // Docs: everyone can read, only admins can write
+    canReadDocs: true, // All users (including anonymous) can read docs
+    canWriteDocs: isAdmin,
+
+    // Profile access: function-based checks
+    canReadProfile: (targetUsername: string) => {
+      if (isAdmin) return true; // Admins can read all profiles
+      if (role === 'anonymous' || role === 'guest') return false; // Guests/anonymous cannot read profiles
+      return targetUsername === username; // Standard users can read own profile
+    },
+
+    canWriteProfile: (targetUsername: string) => {
+      if (isAdmin) return true; // Admins can write all profiles
+      if (role === 'anonymous' || role === 'guest') return false; // Guests/anonymous cannot write
+      if (role === 'standard') return targetUsername === username; // Standard users can write own profile
+      return targetUsername === username; // Owners can write own profile
+    },
+
+    // System configs: admin or owner only
+    canAccessSystemConfigs: isAdmin || role === 'owner',
 
     // Context
     role,
@@ -272,6 +308,20 @@ function computeSecurityPolicy(
         }
       }
 
+      // Docs directory - check canWriteDocs
+      if (normalizedPath.includes('/docs/') || normalizedPath.endsWith('/docs')) {
+        if (!this.canWriteDocs) {
+          throw new SecurityError('Cannot edit documentation', {
+            reason: 'docs_readonly',
+            role,
+            username,
+            filePath: normalizedPath,
+            required: 'admin privileges',
+          });
+        }
+        return; // Admin can edit docs
+      }
+
       // Root-level files - admin only for safety
       if (!this.canEditSystemCode) {
         throw new SecurityError('Cannot edit root-level files', {
@@ -280,6 +330,30 @@ function computeSecurityPolicy(
           username,
           filePath: normalizedPath,
           required: 'admin privileges (set in ADMIN_USERS env var)',
+        });
+      }
+    },
+
+    requireProfileRead(targetUsername: string) {
+      if (!this.canReadProfile(targetUsername)) {
+        throw new SecurityError('Cannot read profile', {
+          reason: 'insufficient_permissions',
+          role,
+          username,
+          targetUsername,
+          required: role === 'anonymous' ? 'authentication' : 'profile ownership or admin',
+        });
+      }
+    },
+
+    requireProfileWrite(targetUsername: string) {
+      if (!this.canWriteProfile(targetUsername)) {
+        throw new SecurityError('Cannot write to profile', {
+          reason: 'insufficient_permissions',
+          role,
+          username,
+          targetUsername,
+          required: role === 'anonymous' ? 'authentication' : role === 'guest' ? 'standard user role' : 'profile ownership or admin',
         });
       }
     },

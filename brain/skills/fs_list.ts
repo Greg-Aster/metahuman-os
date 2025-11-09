@@ -1,12 +1,13 @@
 /**
  * fs_list Skill
- * List files/directories using glob patterns under allowed roots
+ * List files/directories using glob patterns under allowed roots with role-based access control
  */
 
 import path from 'node:path'
 import { paths } from '../../packages/core/src/paths'
 import { SkillManifest, SkillResult, isPathAllowed } from '../../packages/core/src/skills'
 import { listGlob } from '../../packages/core/src/fs-glob'
+import { getSecurityPolicy } from '../../packages/core/src/security-policy'
 
 export const manifest: SkillManifest = {
   id: 'fs_list',
@@ -43,6 +44,26 @@ export async function execute(inputs: {
   if (!isPathAllowed(base, manifest.allowedDirectories!)) {
     return { success: false, error: `Base path not allowed: ${base}` }
   }
+
+  // Check role-based permissions for the base directory
+  try {
+    const policy = getSecurityPolicy()
+    const normalizedBase = base.replace(/\\/g, '/')
+
+    // Check if listing a profile directory
+    const profileMatch = normalizedBase.match(/profiles\/([^/]+)/)
+    if (profileMatch) {
+      const targetUsername = profileMatch[1]
+      policy.requireProfileRead(targetUsername)
+    }
+    // Docs and other allowed directories are readable by everyone
+  } catch (securityError: any) {
+    return {
+      success: false,
+      error: `Security check failed: ${securityError.message}`,
+    }
+  }
+
   const onlyFiles = inputs.onlyFiles ?? true
   const maxResults = Math.max(1, Math.min(inputs.maxResults ?? 200, 2000))
   const pattern = inputs.pattern || '**/*'

@@ -10,11 +10,34 @@
 
 ## Overview
 
-### User Types
+### User Roles & Permission Tiers
 
-1. **Owner** - Full access to system, can modify all settings
-2. **Guest** - Can select public profiles, read-only for system settings
-3. **Anonymous** - No profile selected, limited access
+MetaHuman OS implements a three-tier permission system to ensure security and data isolation:
+
+1. **Owner (Admin)** - Full system access
+   - Can create, edit, and delete any user profile
+   - Can modify system code and configurations
+   - Can access all profiles and their data
+   - Can edit documentation
+   - Full operator and training access
+
+2. **Standard User** - Own profile access
+   - Full read/write access to own profile directory (`profiles/{username}/`)
+   - Read-only access to documentation (`docs/`)
+   - Cannot access other users' profiles
+   - Cannot modify system configurations
+   - Can use operator and training features for own profile
+
+3. **Guest** - Read-only access
+   - Can read documentation (`docs/`)
+   - Can view public profiles (read-only)
+   - Cannot write memories or modify any data
+   - No operator or training access
+
+4. **Anonymous** - Unauthenticated users
+   - Read-only access (emulation mode only)
+   - Can chat with public profiles
+   - Cannot save memories or modify data
 
 ### Profile Architecture
 
@@ -380,6 +403,217 @@ paths.persona → ERROR (access denied)
 3. **Document persona** - Clear descriptions help guests
 4. **Test guest experience** - Try your own profile as guest
 5. **Monitor audit logs** - See how guests interact
+
+---
+
+## Deleting a Profile
+
+### ⚠️ Owner-Only Operation
+
+Only the **owner** can delete user profiles. This is a destructive operation that permanently removes all data associated with a profile.
+
+### How to Delete a Profile
+
+1. **Navigate to Security Settings**
+   - Click the hamburger menu (☰)
+   - Select "Security"
+   - Scroll to the **Danger Zone** section
+
+2. **Review Profile List**
+   - A table shows all profiles in the system
+   - Protected profiles (owner, guest, yourself) have disabled delete buttons
+
+3. **Click "Delete Profile"**
+   - A confirmation modal will appear
+
+4. **Confirm Deletion**
+   - Type the username exactly to confirm
+   - Review the list of what will be deleted
+   - Click "Delete Profile" to proceed
+
+### What Gets Deleted
+
+When you delete a profile, the following happens in order:
+
+1. **Sessions Terminated** - All active sessions for that user are immediately invalidated
+2. **User Record Removed** - The user entry is removed from `persona/users.json`
+3. **Profile Directory Deleted** - The entire `profiles/<username>/` directory is recursively deleted, including:
+   - All memories (`memory/episodic/`)
+   - Tasks (`memory/tasks/`)
+   - Persona data (`persona/`)
+   - Configurations (`etc/`)
+   - Logs (`logs/`)
+   - LoRA adapters (`out/adapters/`)
+   - All other profile-specific data
+
+### Safety Protections
+
+The deletion system includes several safety checks:
+
+- ❌ **Cannot delete the owner account** - System requires at least one owner
+- ❌ **Cannot delete yourself** - Prevents accidental self-deletion while logged in
+- ❌ **Cannot delete the guest profile** - Guest profile is system-critical
+- ✅ **Requires exact username confirmation** - Prevents accidental deletion
+- ✅ **Fully audited** - All deletions logged to `logs/audit/YYYY-MM-DD.ndjson`
+
+### Audit Trail
+
+Every profile deletion creates multiple audit log entries:
+
+```json
+{
+  "category": "security",
+  "level": "warn",
+  "event": "profile_deletion_initiated",
+  "details": {
+    "targetUsername": "john-doe",
+    "targetUserId": "uuid-123",
+    "requestingUserId": "uuid-456",
+    "profileExists": true
+  },
+  "actor": "owner-user (owner)",
+  "timestamp": "2025-11-08T12:00:00.000Z"
+}
+```
+
+### Example: Complete Deletion Flow
+
+```bash
+# View audit log after deletion
+cat logs/audit/2025-11-08.ndjson | grep profile_deletion
+
+# Verify profile directory is gone
+ls -la profiles/john-doe  # Error: No such file or directory
+
+# Confirm user record removed
+cat persona/users.json  # "john-doe" no longer listed
+```
+
+---
+
+## Permission Enforcement
+
+### Path-Based Access Control
+
+MetaHuman OS enforces permissions at multiple levels to ensure data isolation and security:
+
+#### 1. Profile Directory Access
+
+**Standard Users:**
+- ✅ **Can access:** `profiles/{own-username}/`
+  - Read/write memories: `profiles/{username}/memory/`
+  - Edit persona: `profiles/{username}/persona/`
+  - Modify configs: `profiles/{username}/etc/`
+  - View logs: `profiles/{username}/logs/`
+- ❌ **Cannot access:** `profiles/{other-username}/`
+  - Attempts blocked with: "Cannot access other user profiles"
+
+**Example:**
+```bash
+# User "alice" can access her own profile
+./bin/mh capture "Meeting notes"  # ✅ Writes to profiles/alice/memory/
+
+# But cannot read Bob's profile
+cat profiles/bob/persona/core.json  # ❌ Permission denied
+```
+
+#### 2. Documentation Access
+
+**All users (including guests and anonymous):**
+- ✅ **Can read:** `docs/` directory
+  - User guides: `docs/user-guide/*.md`
+  - Implementation plans: `docs/implementation-plans/*.md`
+  - Architecture docs: `docs/*.md`
+
+**Only admins/owners:**
+- ✅ **Can write:** `docs/` directory
+  - Edit documentation
+  - Add new guides
+
+**Standard users and guests:**
+- ❌ **Cannot write:** Documentation is read-only
+  - Attempts blocked with: "Cannot edit documentation"
+
+#### 3. System Configuration Access
+
+**Admins/Owners only:**
+- ✅ **Can access:** Root-level configs
+  - `etc/models.json` - System-wide model registry
+  - `etc/training.json` - Global training settings
+  - `bin/`, `brain/`, `packages/`, `apps/` - System code
+
+**Standard users and guests:**
+- ❌ **Cannot access:** System configurations
+  - Attempts blocked with: "Cannot edit root-level files" or "Cannot edit system code"
+  - Can only modify configs within their own profile directory
+
+#### 4. Operator & Skills Access
+
+Permission enforcement extends to the operator's filesystem skills:
+
+**fs_read skill:**
+- Checks profile ownership before reading profile files
+- Allows docs access for all users
+- Blocks system file reads for non-admins
+
+**fs_write skill:**
+- Enforces profile ownership for writes
+- Blocks documentation writes for non-admins
+- Validates system config access
+
+**fs_list skill:**
+- Filters directory listings by permissions
+- Hides inaccessible profiles from standard users
+
+### Administrator Privileges
+
+**Setting Admin Users:**
+
+Admins are configured via the `ADMIN_USERS` environment variable:
+
+```bash
+# Single admin
+export ADMIN_USERS="greggles"
+
+# Multiple admins (comma-separated)
+export ADMIN_USERS="greggles,alice,bob"
+```
+
+**Admin capabilities:**
+- Full filesystem access (all profiles, system code)
+- Can edit system-level configurations
+- Can modify documentation
+- Can create/delete any profile
+- Bypasses all path-based restrictions
+
+**Important:** Admin status is separate from user role. A "standard" user can be an admin if listed in `ADMIN_USERS`.
+
+### Security Errors
+
+When a user attempts an unauthorized action, they receive descriptive error messages:
+
+**Profile access violations:**
+```
+Security check failed: Cannot access other user profiles
+```
+
+**Documentation write attempts:**
+```
+Security check failed: Cannot edit documentation
+```
+
+**System file access:**
+```
+Security check failed: Cannot edit system code
+```
+
+**Role requirements:**
+```
+Owner role required
+Administrator privileges required
+```
+
+These errors are logged to the audit trail for security monitoring.
 
 ---
 

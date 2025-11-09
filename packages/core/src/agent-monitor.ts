@@ -456,6 +456,35 @@ export function stopAgent(name: string, force = false): { success: boolean; mess
 }
 
 /**
+ * Stop all running agents
+ * Returns summary of stopped agents
+ */
+export function stopAllAgents(force = false): {
+  stopped: string[];
+  failed: string[];
+  total: number;
+} {
+  const running = getRunningAgents();
+  const stopped: string[] = [];
+  const failed: string[] = [];
+
+  for (const agent of running) {
+    const result = stopAgent(agent.name, force);
+    if (result.success) {
+      stopped.push(agent.name);
+    } else {
+      failed.push(agent.name);
+    }
+  }
+
+  return {
+    stopped,
+    failed,
+    total: running.length,
+  };
+}
+
+/**
  * Get enhanced agent metrics with time windows
  */
 export function getAgentMetrics(agentName: string): AgentRunMetrics {

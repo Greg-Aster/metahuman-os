@@ -18,6 +18,12 @@ import { canWriteMemory, shouldCaptureTool } from '@metahuman/core/memory-policy
 import { loadCognitiveMode } from '@metahuman/core/cognitive-mode';
 import { getUserContext } from '@metahuman/core/context';
 import { resolvePathWithFuzzyFallback, type PathResolution } from '@metahuman/core/path-resolver';
+import { initializeSkills } from '../skills/index';
+
+// Ensure the skills registry is populated before any ReAct loop runs.
+// initializeSkills() is idempotent, so calling on module load avoids missing-skill failures
+// when this module is imported outside of the web operator route.
+initializeSkills();
 
 // ============================================================================
 // Types

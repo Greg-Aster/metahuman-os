@@ -271,7 +271,7 @@
               <strong>CC BY-NC</strong> — Attribution - Non-Commercial
             </p>
             <p class="license-notice">
-              The maker of this program lives in extreme poverty — do not abuse the poor. This project exists for the benefit of humanity.
+              The maker of this program lives in extreme poverty. Do not use the code of this project for profit. Do not abuse the poor. This project exists for the benefit of everyone.
             </p>
 
             <div class="footer-links">

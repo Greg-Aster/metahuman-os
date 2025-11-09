@@ -22,7 +22,7 @@ export interface User {
   id: string;
   username: string;
   passwordHash: string;
-  role: 'owner' | 'guest';
+  role: 'owner' | 'standard' | 'guest';
   createdAt: string;
   lastLogin?: string;
   metadata?: {
@@ -39,7 +39,7 @@ export interface User {
 export interface SafeUser {
   id: string;
   username: string;
-  role: 'owner' | 'guest';
+  role: 'owner' | 'standard' | 'guest';
   createdAt: string;
   lastLogin?: string;
   metadata?: {
@@ -173,7 +173,7 @@ export function hasOwner(): boolean {
 export function createUser(
   username: string,
   password: string,
-  role: 'owner' | 'guest',
+  role: 'owner' | 'standard' | 'guest',
   metadata?: { displayName?: string; email?: string }
 ): SafeUser {
   const store = loadUsers();
@@ -467,11 +467,11 @@ export function updateUsername(userId: string, newUsername: string): void {
 }
 
 /**
- * Update user metadata (display name, email)
+ * Update arbitrary user metadata fields (display name, email, onboarding state, etc.)
  */
 export function updateUserMetadata(
   userId: string,
-  metadata: { displayName?: string; email?: string }
+  metadata: Record<string, any>
 ): void {
   const store = loadUsers();
   const user = store.users.find((u) => u.id === userId);

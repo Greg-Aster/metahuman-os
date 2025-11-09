@@ -10,7 +10,8 @@
  *   2. Run: npx tsx scripts/create-guest.ts
  */
 
-import { createUser } from '../packages/core/src/users.js';
+import { createUser, deleteUser } from '../packages/core/src/users.js';
+import { initializeProfile } from '../packages/core/src/profile.js';
 
 // =============================================================================
 // CONFIGURATION - EDIT THESE VALUES
@@ -65,6 +66,13 @@ async function main() {
       displayName: displayName || undefined,
       email: email || undefined,
     });
+
+    try {
+      await initializeProfile(username);
+    } catch (profileError) {
+      deleteUser(user.id);
+      throw new Error(`Profile initialization failed: ${(profileError as Error).message}`);
+    }
 
     console.log('✅ Guest user created successfully!');
     console.log('');

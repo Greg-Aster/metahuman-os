@@ -1,12 +1,13 @@
 /**
  * fs_write Skill
- * Safely write files to allowed directories
+ * Safely write files to allowed directories with role-based access control
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { paths } from '../../packages/core/src/paths';
 import { SkillManifest, SkillResult, isWriteAllowed } from '../../packages/core/src/skills';
+import { getSecurityPolicy } from '../../packages/core/src/security-policy';
 
 export const manifest: SkillManifest = {
   id: 'fs_write',
@@ -56,11 +57,22 @@ export async function execute(inputs: {
       : path.resolve(paths.root, inputs.path);
     const overwrite = inputs.overwrite ?? false;
 
-    // Double-check write permission
+    // Double-check write permission (directory-based)
     if (!isWriteAllowed(filepath)) {
       return {
         success: false,
         error: `Write not allowed to path: ${filepath}`,
+      };
+    }
+
+    // Check role-based permissions
+    try {
+      const policy = getSecurityPolicy();
+      policy.requireFileAccess(filepath);
+    } catch (securityError: any) {
+      return {
+        success: false,
+        error: `Security check failed: ${securityError.message}`,
       };
     }
 

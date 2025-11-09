@@ -45,6 +45,8 @@ import {
   getUserByUsername,
   getUserContext,
   type UserContext,
+  // Runtime mode
+  isHeadless,
 } from '@metahuman/core';
 import { personaCommand } from './commands/persona.js';
 import { adapterCommand } from './commands/adapter.js';
@@ -191,8 +193,22 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
   const restart = options.restart !== undefined ? options.restart : true;
   const force = options.force ?? false;
   ensureInitialized();
-  // New agent scheduler system - replaces individual timers
-  const defaults = ['scheduler-service', 'boredom-service', 'sleep-service'];
+
+  // Always start headless-watcher (it manages other agents based on mode)
+  const alwaysStart = ['headless-watcher'];
+
+  // Only start these agents if NOT in headless mode
+  const conditionalAgents = ['scheduler-service', 'boredom-service', 'sleep-service'];
+
+  // Check headless mode for conditional agents
+  const defaults = isHeadless()
+    ? alwaysStart
+    : [...alwaysStart, ...conditionalAgents];
+
+  if (isHeadless()) {
+    console.log('⚠️  Headless mode active - starting watcher only');
+    console.log('   Other agents will resume when headless mode is disabled');
+  }
 
   const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 

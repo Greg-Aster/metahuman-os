@@ -7,6 +7,7 @@ import { loadCognitiveMode } from '@metahuman/core/cognitive-mode';
 import { getIndexStatus } from '@metahuman/core/vector-index';
 import { listAvailableAgents, getProcessingStatus } from '@metahuman/core/agent-monitor';
 import { isRunning as isOllamaRunning } from '@metahuman/core/ollama';
+import { getRuntimeMode } from '@metahuman/core/runtime-mode';
 import { withUserContext } from '../../middleware/userContext';
 import { getUserContext } from '@metahuman/core/context';
 import fs from 'node:fs';
@@ -357,6 +358,9 @@ const handler: APIRoute = async ({ cookies }) => {
       }).filter(Boolean);
     } catch {}
 
+    // RUNTIME MODE STATUS
+    const runtimeMode = getRuntimeMode();
+
     // Cache the response
     const responseData = {
       identity: {
@@ -395,6 +399,12 @@ const handler: APIRoute = async ({ cookies }) => {
       agentActivity,
       systemHealth,
       recentActivity,
+      // Runtime mode (headless state)
+      runtime: {
+        headless: runtimeMode.headless,
+        lastChangedBy: runtimeMode.lastChangedBy,
+        changedAt: runtimeMode.changedAt,
+      },
     };
 
     // Cache the response with cognitive-mode-specific key

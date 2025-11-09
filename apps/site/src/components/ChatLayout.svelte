@@ -4,6 +4,7 @@
   import { statusStore, statusRefreshTrigger } from '../stores/navigation';
   import { startPolicyPolling, fetchSecurityPolicy, policyStore, isReadOnly } from '../stores/security-policy';
   import UserMenu from './UserMenu.svelte';
+  import HeadlessClaimBanner from './HeadlessClaimBanner.svelte';
 
   // Sidebar visibility state - mobile-first defaults
   let leftSidebarOpen = false;
@@ -459,6 +460,9 @@
       <slot name="header-actions" />
     </div>
   </header>
+
+  <!-- Headless Mode Claim Banner -->
+  <HeadlessClaimBanner />
 
   {#if modeError}
     <div class="px-4 py-2 text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/40 border-b border-red-200 dark:border-red-900/60">

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { statusRefreshTrigger } from '../stores/navigation';
+  import ProfileDangerZone from './ProfileDangerZone.svelte';
+  import ProfileCreation from './ProfileCreation.svelte';
 
   interface User {
     id: string;
@@ -52,6 +54,9 @@
   let tunnelStatus: TunnelStatus | null = null;
   let tunnelStatusLoading = false;
   let tunnelActionPending = false;
+
+  // Reference to ProfileDangerZone component for refreshing
+  let profileDangerZone: any;
 
   onMount(async () => {
     await fetchCurrentUser();
@@ -1065,6 +1070,16 @@
           </div>
         {/if}
       </div>
+    {/if}
+
+    <!-- Profile Creation (Owner Only) -->
+    {#if currentUser.role === 'owner'}
+      <ProfileCreation onProfileCreated={() => profileDangerZone?.refreshProfiles()} />
+    {/if}
+
+    <!-- Profile Deletion (Owner Only) -->
+    {#if currentUser.role === 'owner'}
+      <ProfileDangerZone bind:this={profileDangerZone} />
     {/if}
 
     <!-- Security Information -->

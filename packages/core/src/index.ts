@@ -18,6 +18,7 @@ export * from './vector-index';
 export * from './embeddings';
 export * from './locks';
 export * from './logging';
+export * from './runtime-mode';
 export * from './transcription';
 export * from './adapters';
 export * from './skills';

@@ -11,6 +11,9 @@ import { withUserContext } from '../../middleware/userContext';
 type Role = 'system' | 'user' | 'assistant';
 type Mode = 'inner' | 'conversation';
 
+// Ensure skill registry is ready for any inline tool invocations from persona_chat.
+initializeSkills();
+
 // Feature flag: Use cognitive pipeline Layer 2 wrapper (Phase 4.1a)
 // Set to true to enable PersonalityCoreLayer wrapper around LLM calls
 const USE_COGNITIVE_PIPELINE = process.env.USE_COGNITIVE_PIPELINE === 'true';

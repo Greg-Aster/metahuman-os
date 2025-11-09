@@ -9,7 +9,15 @@
     pid?: number;
   }
 
+  interface RuntimeMode {
+    headless: boolean;
+    lastChangedBy: 'local' | 'remote';
+    changedAt: string;
+    claimedBy: string | null;
+  }
+
   let tunnelStatus: TunnelStatus | null = null;
+  let runtimeMode: RuntimeMode | null = null;
   let loading = true;
   let error: string | null = null;
   let successMessage: string | null = null;
@@ -95,10 +103,54 @@
     }
   }
 
+  async function loadRuntimeMode() {
+    try {
+      const res = await fetch('/api/runtime/mode');
+      if (res.ok) {
+        runtimeMode = await res.json();
+      }
+    } catch (err) {
+      console.error('Failed to load runtime mode:', err);
+    }
+  }
+
+  async function toggleHeadlessMode(enable: boolean) {
+    error = null;
+    successMessage = null;
+    loading = true;
+
+    try {
+      const res = await fetch('/api/runtime/mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ headless: enable }),
+      });
+
+      if (res.ok) {
+        successMessage = enable
+          ? 'Headless mode enabled! Local agents will pause.'
+          : 'Headless mode disabled! Local agents will resume.';
+        await loadRuntimeMode();
+      } else {
+        const data = await res.json();
+        error = data.error || 'Failed to toggle headless mode';
+      }
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to toggle headless mode';
+    } finally {
+      loading = false;
+    }
+  }
+
   onMount(() => {
     loadTunnelStatus();
-    const interval = setInterval(loadTunnelStatus, 10000); // Refresh every 10s
-    return () => clearInterval(interval);
+    loadRuntimeMode();
+    const tunnelInterval = setInterval(loadTunnelStatus, 10000); // Refresh every 10s
+    const runtimeInterval = setInterval(loadRuntimeMode, 10000); // Refresh every 10s
+    return () => {
+      clearInterval(tunnelInterval);
+      clearInterval(runtimeInterval);
+    };
   });
 </script>
 
@@ -188,6 +240,55 @@
         </div>
       {/if}
     </div>
+
+    <!-- Headless Mode Section -->
+    {#if runtimeMode}
+      <div class="tunnel-section">
+        <h2>🖥️ Headless Runtime Mode</h2>
+
+        <div class="status-box" class:status-headless={runtimeMode.headless}>
+          <div class="status-indicator">
+            <span class="status-dot" class:dot-headless={runtimeMode.headless} class:dot-active={!runtimeMode.headless}></span>
+            <strong>{runtimeMode.headless ? '🟡 Headless Mode Active' : '🟢 Normal Mode'}</strong>
+          </div>
+
+          {#if runtimeMode.headless}
+            <div class="info-banner">
+              <p><strong>ℹ️ Local agents are paused.</strong></p>
+              <p>The tunnel and web server stay online, but background services (boredom, sleep, organizer, etc.) are stopped. Remote users can claim full system resources without conflicts.</p>
+            </div>
+          {/if}
+
+          <div class="tunnel-controls">
+            <label class="toggle-label">
+              <input
+                type="checkbox"
+                checked={runtimeMode.headless}
+                on:change={(e) => toggleHeadlessMode(e.currentTarget.checked)}
+                disabled={loading}
+              />
+              <span>Enable Headless Mode</span>
+            </label>
+
+            <div class="metadata">
+              <small>Last changed: {new Date(runtimeMode.changedAt).toLocaleString()} ({runtimeMode.lastChangedBy})</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="info-box">
+          <h3>ℹ️ What is Headless Mode?</h3>
+          <ul>
+            <li><strong>Tunnel + Web Server:</strong> Stay running and accessible</li>
+            <li><strong>Local Agents:</strong> Paused (boredom, sleep, organizer, reflector, etc.)</li>
+            <li><strong>Remote Access:</strong> Full system resources available to remote sessions</li>
+            <li><strong>No Conflicts:</strong> Prevents double-execution of background tasks</li>
+            <li><strong>Process Keepalive:</strong> Watcher stays running to monitor mode changes</li>
+            <li><strong>OS Sleep:</strong> Configure power settings to prevent system sleep (Linux: mask sleep.target, macOS: caffeinate, Windows: power settings)</li>
+          </ul>
+        </div>
+      </div>
+    {/if}
 
     {#if error}
       <div class="error-message">{error}</div>
@@ -516,5 +617,63 @@
     text-align: center;
     padding: 2rem;
     color: #6b7280;
+  }
+
+  /* Headless Mode Styles */
+  .status-box.status-headless {
+    border-color: #f59e0b;
+    background: #fffbeb;
+  }
+
+  :global(.dark) .status-box.status-headless {
+    background: #78350f;
+    border-color: #f59e0b;
+  }
+
+  .dot-headless {
+    background: #f59e0b;
+    box-shadow: 0 0 8px #f59e0b;
+  }
+
+  .dot-active {
+    background: #10b981;
+    box-shadow: 0 0 8px #10b981;
+  }
+
+  .info-banner {
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+    border-radius: 4px;
+  }
+
+  :global(.dark) .info-banner {
+    background: #92400e;
+    border-color: #f59e0b;
+  }
+
+  .info-banner p {
+    margin: 0.25rem 0;
+    font-size: 0.875rem;
+  }
+
+  .metadata {
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  :global(.dark) .metadata {
+    border-color: #4b5563;
+  }
+
+  .metadata small {
+    color: #6b7280;
+    font-size: 0.75rem;
+  }
+
+  :global(.dark) .metadata small {
+    color: #9ca3af;
   }
 </style>

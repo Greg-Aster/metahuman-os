@@ -62,3 +62,6 @@ Welcome to the MetaHuman OS User Guide. This guide is organized into the followi
 
 19. **[Multi-User Profiles & Guest Mode](19-multi-user-profiles.md)**
     *   **Independent User Configurations**: Understand how MetaHuman OS supports multiple users with isolated profiles, guest access to public personas, persona facets, and the special "Mutant Super Intelligence" merged consciousness feature.
+
+20. **[Headless Runtime Mode](20-headless-runtime-mode.md)**
+    *   **Remote Access Without Conflicts**: Learn how to enable headless mode to pause local agents while keeping the web server and tunnel running. Perfect for dedicated remote access from mobile devices or multiple locations without resource conflicts.

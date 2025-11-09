@@ -28,7 +28,8 @@
     "./env-config": "./src/env-config.ts",
     "./cloudflare-tunnel": "./src/cloudflare-tunnel.ts",
     "./vector-index": "./src/vector-index.ts",
-    "./onboarding": "./src/onboarding.ts"
+    "./onboarding": "./src/onboarding.ts",
+    "./runtime-mode": "./src/runtime-mode.ts"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

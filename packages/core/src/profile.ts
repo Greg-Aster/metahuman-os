@@ -28,35 +28,7 @@ export async function initializeProfile(username: string): Promise<void> {
   });
 
   try {
-    // Create directory structure
-    const dirs = [
-      // Memory directories
-      path.join(profileRoot, 'memory', 'episodic'),
-      path.join(profileRoot, 'memory', 'tasks', 'active'),
-      path.join(profileRoot, 'memory', 'tasks', 'completed'),
-      path.join(profileRoot, 'memory', 'tasks', 'projects'),
-      path.join(profileRoot, 'memory', 'inbox'),
-      path.join(profileRoot, 'memory', 'inbox', '_archive'),
-      path.join(profileRoot, 'memory', 'index'),
-      path.join(profileRoot, 'memory', 'calendar'),
-      // Persona directories
-      path.join(profileRoot, 'persona'),
-      path.join(profileRoot, 'persona', 'facets'),
-      // Output directories
-      path.join(profileRoot, 'out', 'adapters'),
-      path.join(profileRoot, 'out', 'datasets'),
-      path.join(profileRoot, 'out', 'state'),
-      // Log directories
-      path.join(profileRoot, 'logs', 'audit'),
-      path.join(profileRoot, 'logs', 'decisions'),
-      path.join(profileRoot, 'logs', 'actions'),
-      // Config directory
-      path.join(profileRoot, 'etc'),
-    ];
-
-    for (const dir of dirs) {
-      await fs.ensureDir(dir);
-    }
+    await ensureProfileDirectories(profileRoot);
 
     // Create default persona files
     await createDefaultPersona(profileRoot, username);
@@ -137,7 +109,7 @@ async function createDefaultPersona(profileRoot: string, username: string): Prom
     },
   };
 
-  await fs.writeJson(path.join(personaDir, 'core.json'), corePersona, { spaces: 2 });
+  await writeJsonIfMissing(path.join(personaDir, 'core.json'), corePersona);
 
   // facets.json - Personality facets configuration
   const facets = {
@@ -158,7 +130,7 @@ async function createDefaultPersona(profileRoot: string, username: string): Prom
     notes: 'Additional facets can be created to emphasize different personality aspects',
   };
 
-  await fs.writeJson(path.join(personaDir, 'facets.json'), facets, { spaces: 2 });
+  await writeJsonIfMissing(path.join(personaDir, 'facets.json'), facets);
 
   // relationships.json - Empty relationships file
   const relationships = {
@@ -166,7 +138,7 @@ async function createDefaultPersona(profileRoot: string, username: string): Prom
     relationships: [],
   };
 
-  await fs.writeJson(path.join(personaDir, 'relationships.json'), relationships, { spaces: 2 });
+  await writeJsonIfMissing(path.join(personaDir, 'relationships.json'), relationships);
 
   // routines.json - Empty routines file
   const routines = {
@@ -174,7 +146,7 @@ async function createDefaultPersona(profileRoot: string, username: string): Prom
     routines: [],
   };
 
-  await fs.writeJson(path.join(personaDir, 'routines.json'), routines, { spaces: 2 });
+  await writeJsonIfMissing(path.join(personaDir, 'routines.json'), routines);
 
   // decision-rules.json - Default decision rules
   const decisionRules = {
@@ -235,7 +207,7 @@ async function createDefaultPersona(profileRoot: string, username: string): Prom
     rules: [],
   };
 
-  await fs.writeJson(path.join(personaDir, 'decision-rules.json'), decisionRules, { spaces: 2 });
+  await writeJsonIfMissing(path.join(personaDir, 'decision-rules.json'), decisionRules);
 }
 
 /**
@@ -252,18 +224,13 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
     history: [{ mode: 'dual' as const, changedAt: new Date().toISOString(), actor: 'system' }],
   };
 
-  await fs.writeJson(path.join(personaDir, 'cognitive-mode.json'), cognitiveMode, { spaces: 2 });
+  await writeJsonIfMissing(path.join(personaDir, 'cognitive-mode.json'), cognitiveMode);
 
-  // models.json - Model preferences (use system defaults initially)
-  const models = {
-    $schema: 'https://json-schema.org/draft/2020-12/schema',
-    version: '1.0.0',
-    baseModel: null, // null means use system default
-    activeAdapter: null,
-    roles: {}, // Empty means inherit system defaults
-  };
+  // models.json - Copy system-level registry so updates can be managed centrally
+  const systemModelsPath = path.join(paths.root, 'etc', 'models.json');
+  const profileModelsPath = path.join(etcDir, 'models.json');
 
-  await fs.writeJson(path.join(etcDir, 'models.json'), models, { spaces: 2 });
+  await ensureModelsRegistry(profileModelsPath, systemModelsPath);
 
   // training.json - Training configuration
   const training = {
@@ -278,7 +245,7 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
     dtype: 'bfloat16',
   };
 
-  await fs.writeJson(path.join(etcDir, 'training.json'), training, { spaces: 2 });
+  await writeJsonIfMissing(path.join(etcDir, 'training.json'), training);
 
   // boredom.json - Reflection trigger configuration
   const boredom = {
@@ -286,7 +253,7 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
     enabled: true,
   };
 
-  await fs.writeJson(path.join(etcDir, 'boredom.json'), boredom, { spaces: 2 });
+  await writeJsonIfMissing(path.join(etcDir, 'boredom.json'), boredom);
 
   // sleep.json - Sleep schedule configuration
   const sleep = {
@@ -296,7 +263,7 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
     enabled: true,
   };
 
-  await fs.writeJson(path.join(etcDir, 'sleep.json'), sleep, { spaces: 2 });
+  await writeJsonIfMissing(path.join(etcDir, 'sleep.json'), sleep);
 
   // audio.json - Audio processing configuration
   const audio = {
@@ -305,7 +272,7 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
     voice: 'en_US-lessac-medium',
   };
 
-  await fs.writeJson(path.join(etcDir, 'audio.json'), audio, { spaces: 2 });
+  await writeJsonIfMissing(path.join(etcDir, 'audio.json'), audio);
 
   // ingestor.json - File ingestion configuration
   const ingestor = {
@@ -314,7 +281,7 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
     supportedFormats: ['.txt', '.md', '.json', '.pdf', '.docx'],
   };
 
-  await fs.writeJson(path.join(etcDir, 'ingestor.json'), ingestor, { spaces: 2 });
+  await writeJsonIfMissing(path.join(etcDir, 'ingestor.json'), ingestor);
 
   // autonomy.json - Autonomy settings
   const autonomy = {
@@ -323,7 +290,7 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
     requireApproval: ['edit_persona', 'delete_data', 'external_api_calls'],
   };
 
-  await fs.writeJson(path.join(etcDir, 'autonomy.json'), autonomy, { spaces: 2 });
+  await writeJsonIfMissing(path.join(etcDir, 'autonomy.json'), autonomy);
 
   // voice.json - Voice and audio configuration
   // Note: Voice models are system-wide shared resources (not profile-specific)
@@ -370,7 +337,7 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
     },
   };
 
-  await fs.writeJson(path.join(etcDir, 'voice.json'), voice, { spaces: 2 });
+  await writeJsonIfMissing(path.join(etcDir, 'voice.json'), voice);
 }
 
 /**
@@ -379,6 +346,80 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
 export function profileExists(username: string): boolean {
   const profileRoot = path.join(paths.root, 'profiles', username);
   return fs.existsSync(profileRoot);
+}
+
+/**
+ * Ensure an existing profile has all required directories/configs.
+ * Safe to run multiple times; only creates missing pieces.
+ */
+export async function ensureProfileIntegrity(username: string): Promise<void> {
+  const profileRoot = path.join(paths.root, 'profiles', username);
+  if (!(await fs.pathExists(profileRoot))) {
+    throw new Error(`Profile directory not found: ${profileRoot}`);
+  }
+
+  await ensureProfileDirectories(profileRoot);
+  await createDefaultPersona(profileRoot, username);
+  await createDefaultConfigs(profileRoot, username);
+}
+
+async function ensureProfileDirectories(profileRoot: string): Promise<void> {
+  const dirs = [
+    path.join(profileRoot, 'memory', 'episodic'),
+    path.join(profileRoot, 'memory', 'tasks', 'active'),
+    path.join(profileRoot, 'memory', 'tasks', 'completed'),
+    path.join(profileRoot, 'memory', 'tasks', 'projects'),
+    path.join(profileRoot, 'memory', 'inbox'),
+    path.join(profileRoot, 'memory', 'inbox', '_archive'),
+    path.join(profileRoot, 'memory', 'index'),
+    path.join(profileRoot, 'memory', 'calendar'),
+    path.join(profileRoot, 'persona'),
+    path.join(profileRoot, 'persona', 'facets'),
+    path.join(profileRoot, 'out', 'adapters'),
+    path.join(profileRoot, 'out', 'datasets'),
+    path.join(profileRoot, 'out', 'state'),
+    path.join(profileRoot, 'logs', 'audit'),
+    path.join(profileRoot, 'logs', 'decisions'),
+    path.join(profileRoot, 'logs', 'actions'),
+    path.join(profileRoot, 'etc'),
+  ];
+
+  for (const dir of dirs) {
+    await fs.ensureDir(dir);
+  }
+}
+
+async function writeJsonIfMissing(filePath: string, data: any): Promise<void> {
+  if (await fs.pathExists(filePath)) return;
+  await fs.writeJson(filePath, data, { spaces: 2 });
+}
+
+async function ensureModelsRegistry(profileModelsPath: string, systemModelsPath: string): Promise<void> {
+  const hasValidRegistry = await (async () => {
+    if (!(await fs.pathExists(profileModelsPath))) return false;
+    try {
+      const data = await fs.readJson(profileModelsPath);
+      return Boolean(data?.defaults && data?.models);
+    } catch {
+      return false;
+    }
+  })();
+
+  if (hasValidRegistry) return;
+
+  if (await fs.pathExists(systemModelsPath)) {
+    await fs.copy(systemModelsPath, profileModelsPath);
+    return;
+  }
+
+  const fallback = {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    version: '1.0.0',
+    baseModel: null,
+    activeAdapter: null,
+    roles: {},
+  };
+  await fs.writeJson(profileModelsPath, fallback, { spaces: 2 });
 }
 
 /**
@@ -852,4 +893,168 @@ export async function deleteProfile(username: string, confirm: boolean = false):
     details: { username, profileRoot },
     actor: 'system',
   });
+}
+
+/**
+ * Complete profile deletion with full cascading cleanup
+ *
+ * Deletes:
+ * 1. All active sessions for the user
+ * 2. User record from persona/users.json
+ * 3. Profile directory (profiles/<username>/)
+ *
+ * @param username - Username to delete
+ * @param requestingUserId - ID of user requesting deletion (for security checks)
+ * @param actor - Actor name for audit trail
+ * @returns Deletion result with details
+ */
+export async function deleteProfileComplete(
+  username: string,
+  requestingUserId: string,
+  actor: string
+): Promise<{
+  success: boolean;
+  username: string;
+  sessionsDeleted: number;
+  userDeleted: boolean;
+  profileDeleted: boolean;
+  error?: string;
+}> {
+  try {
+    // Import user/session functions dynamically to avoid circular dependency
+    const { getUserByUsername, deleteUser } = await import('./users.js');
+    const { deleteUserSessions } = await import('./sessions.js');
+
+    // Step 1: Validate target user exists
+    const targetUser = getUserByUsername(username);
+    if (!targetUser) {
+      return {
+        success: false,
+        username,
+        sessionsDeleted: 0,
+        userDeleted: false,
+        profileDeleted: false,
+        error: `User '${username}' not found`,
+      };
+    }
+
+    // Step 2: Security checks
+
+    // Prevent owner deletion
+    if (targetUser.role === 'owner') {
+      return {
+        success: false,
+        username,
+        sessionsDeleted: 0,
+        userDeleted: false,
+        profileDeleted: false,
+        error: 'Cannot delete owner account',
+      };
+    }
+
+    // Prevent self-deletion
+    if (targetUser.id === requestingUserId) {
+      return {
+        success: false,
+        username,
+        sessionsDeleted: 0,
+        userDeleted: false,
+        profileDeleted: false,
+        error: 'Cannot delete your own account while logged in',
+      };
+    }
+
+    // Prevent guest profile deletion (it's special)
+    if (username === 'guest') {
+      return {
+        success: false,
+        username,
+        sessionsDeleted: 0,
+        userDeleted: false,
+        profileDeleted: false,
+        error: 'Cannot delete the guest profile',
+      };
+    }
+
+    // Step 3: Check if profile directory exists
+    const profileRoot = path.join(paths.root, 'profiles', username);
+    const profileExists = await fs.pathExists(profileRoot);
+
+    audit({
+      level: 'warn',
+      category: 'security',
+      event: 'profile_deletion_initiated',
+      details: {
+        targetUsername: username,
+        targetUserId: targetUser.id,
+        requestingUserId,
+        profileExists,
+      },
+      actor,
+    });
+
+    // Step 4: Delete all active sessions
+    const sessionsDeleted = deleteUserSessions(targetUser.id);
+
+    // Step 5: Delete user record
+    const userDeleted = deleteUser(targetUser.id);
+
+    // Step 6: Delete profile directory
+    let profileDeleted = false;
+    if (profileExists) {
+      await fs.remove(profileRoot);
+      profileDeleted = true;
+
+      audit({
+        level: 'warn',
+        category: 'data_change',
+        event: 'profile_directory_deleted',
+        details: { username, profileRoot },
+        actor,
+      });
+    }
+
+    // Final audit log
+    audit({
+      level: 'warn',
+      category: 'security',
+      event: 'profile_deletion_completed',
+      details: {
+        username,
+        userId: targetUser.id,
+        sessionsDeleted,
+        userDeleted,
+        profileDeleted,
+      },
+      actor,
+    });
+
+    return {
+      success: true,
+      username,
+      sessionsDeleted,
+      userDeleted,
+      profileDeleted,
+    };
+  } catch (error) {
+    audit({
+      level: 'error',
+      category: 'security',
+      event: 'profile_deletion_failed',
+      details: {
+        username,
+        error: (error as Error).message,
+      },
+      actor,
+    });
+
+    return {
+      success: false,
+      username,
+      sessionsDeleted: 0,
+      userDeleted: false,
+      profileDeleted: false,
+      error: (error as Error).message,
+    };
+  }
 }

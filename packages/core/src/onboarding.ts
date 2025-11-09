@@ -6,7 +6,7 @@
  */
 
 import fs from 'node:fs';
-import { getUser, updateUserMetadataMetadata, type User } from './users.js';
+import { getUser, updateUserMetadata } from './users.js';
 import { audit } from './audit.js';
 
 export interface OnboardingState {
@@ -90,33 +90,25 @@ export function updateOnboardingState(
     const currentState = user.metadata?.onboardingState || { ...DEFAULT_ONBOARDING_STATE };
     const newState: OnboardingState = { ...currentState, ...updates };
 
-    // Update user metadata
-    const updatedUser: User = {
-      ...user,
-      metadata: {
-        ...user.metadata,
-        onboardingState: newState,
+    // Persist onboarding state in user metadata
+    updateUserMetadata(userId, {
+      onboardingState: newState,
+    });
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'onboarding_state_updated',
+      details: {
+        userId,
+        currentStep: newState.currentStep,
+        stepsCompleted: newState.stepsCompleted,
+        dataCollected: newState.dataCollected,
       },
-    };
+      actor,
+    });
 
-    const success = updateUserMetadata(updatedUser);
-
-    if (success) {
-      audit({
-        level: 'info',
-        category: 'action',
-        event: 'onboarding_state_updated',
-        details: {
-          userId,
-          currentStep: newState.currentStep,
-          stepsCompleted: newState.stepsCompleted,
-          dataCollected: newState.dataCollected,
-        },
-        actor,
-      });
-    }
-
-    return success;
+    return true;
   } catch (error) {
     console.error('[onboarding] Failed to update onboarding state:', error);
     audit({

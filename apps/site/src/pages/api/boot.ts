@@ -8,19 +8,27 @@ import {
   unregisterAgent,
   audit,
   loadPersonaCore,
+  isHeadless,
 } from '@metahuman/core'
 import { loadCognitiveMode } from '@metahuman/core/cognitive-mode'
 
 // Minimal, idempotent agent boot endpoint used by the UI to ensure
 // core autonomous services are running. Safe to call multiple times.
 
-// UI-only boot: start boredom-service and audio-organizer from the web app
-const DEFAULT_AGENTS = ['boredom-service', 'audio-organizer'] as const
+// Always start headless-watcher, conditionally start others
+const ALWAYS_AGENTS = ['headless-watcher'] as const
+const CONDITIONAL_AGENTS = ['boredom-service', 'audio-organizer'] as const
 
 export const GET: APIRoute = async ({ cookies }) => {
   const started: string[] = []
   const already: string[] = []
   const missing: string[] = []
+  let headlessMode = false
+
+  // Check headless mode
+  if (isHeadless()) {
+    headlessMode = true
+  }
 
   // Check authentication and determine effective cognitive mode
   const sessionCookie = cookies?.get('mh_session');
@@ -29,7 +37,12 @@ export const GET: APIRoute = async ({ cookies }) => {
   // Prefer a deterministic tsx path under the site app to avoid PATH issues
   const tsxPath = path.join(paths.root, 'apps', 'site', 'node_modules', '.bin', 'tsx')
 
-  for (const agentName of DEFAULT_AGENTS) {
+  // Determine which agents to start based on headless mode
+  const agentsToStart = headlessMode
+    ? [...ALWAYS_AGENTS]
+    : [...ALWAYS_AGENTS, ...CONDITIONAL_AGENTS]
+
+  for (const agentName of agentsToStart) {
     try {
       const agentPath = path.join(paths.brain, 'agents', `${agentName}.ts`)
 
@@ -137,7 +150,8 @@ export const GET: APIRoute = async ({ cookies }) => {
       version,
       modelInfo,
       cognitiveMode,
-      isAuthenticated
+      isAuthenticated,
+      headlessMode
     }),
     { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }
   )
