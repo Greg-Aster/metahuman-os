@@ -65,3 +65,9 @@ Welcome to the MetaHuman OS User Guide. This guide is organized into the followi
 
 20. **[Headless Runtime Mode](20-headless-runtime-mode.md)**
     *   **Remote Access Without Conflicts**: Learn how to enable headless mode to pause local agents while keeping the web server and tunnel running. Perfect for dedicated remote access from mobile devices or multiple locations without resource conflicts.
+
+21. **[Terms of Service](21-terms-of-service.md)**
+    *   **Privacy Commitment & Liability**: Understand the privacy-first approach of MetaHuman OS, including data security responsibilities, local-first infrastructure, and limitation of liability. Learn about your responsibilities when using the system.
+
+22. **[Ethical Use Policy](22-ethical-use-policy.md)**
+    *   **Responsible AI Usage Guidelines**: Learn about prohibited uses (impersonation without consent, malicious AI systems), ethical principles (authenticity, consent, autonomy), and your commitment to responsible use of MetaHuman OS. Remember: Don't make Skynet!

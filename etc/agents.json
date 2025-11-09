@@ -18,7 +18,7 @@
       "type": "interval",
       "priority": "normal",
       "agentPath": "reflector.ts",
-      "interval": 300,
+      "interval": 900,
       "runOnBoot": false,
       "autoRestart": true,
       "maxRetries": 3,
@@ -53,7 +53,7 @@
       "type": "activity",
       "priority": "low",
       "agentPath": "reflector.ts",
-      "inactivityThreshold": 300,
+      "inactivityThreshold": 900,
       "runOnBoot": false,
       "autoRestart": false,
       "maxRetries": 1

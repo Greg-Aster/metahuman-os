@@ -19,6 +19,10 @@
   let displayName = '';
   let email = '';
 
+  // Agreement checkboxes
+  let agreeToTerms = false;
+  let agreeToEthicalUse = false;
+
   // Check if user is already authenticated
   async function checkAuth() {
     try {
@@ -86,6 +90,17 @@
     // Validate password confirmation
     if (password !== confirmPassword) {
       error = 'Passwords do not match';
+      return;
+    }
+
+    // Validate agreements
+    if (!agreeToTerms) {
+      error = 'You must agree to the Terms of Service to create an account';
+      return;
+    }
+
+    if (!agreeToEthicalUse) {
+      error = 'You must agree to the Ethical Use Policy to create an account';
       return;
     }
 
@@ -429,7 +444,40 @@
               <div class="error-message">{error}</div>
             {/if}
 
-            <button type="submit" class="btn btn-primary btn-block" disabled={loading}>
+            <!-- Terms of Service Agreement -->
+            <div class="form-group checkbox-group">
+              <label class="checkbox-label">
+                <input
+                  type="checkbox"
+                  bind:checked={agreeToTerms}
+                  disabled={loading}
+                  required
+                />
+                <span>
+                  I agree to the <a href="/user-guide#21-terms-of-service" target="_blank" rel="noopener noreferrer" class="tos-link">Terms of Service</a>
+                </span>
+              </label>
+            </div>
+
+            <!-- Ethical Use Policy Agreement -->
+            <div class="form-group checkbox-group">
+              <label class="checkbox-label">
+                <input
+                  type="checkbox"
+                  bind:checked={agreeToEthicalUse}
+                  disabled={loading}
+                  required
+                />
+                <span class="ethical-use-text">
+                  I will NOT impersonate any individual without their express consent,
+                  I will NOT use this program to create malicious AI designed to harm others,
+                  and I will NOT make Skynet.
+                  <a href="/user-guide#22-ethical-use-policy" target="_blank" rel="noopener noreferrer" class="tos-link">Full Ethical Use Policy</a>
+                </span>
+              </label>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block" disabled={loading || !agreeToTerms || !agreeToEthicalUse}>
               {loading ? 'Creating account...' : 'Create Account'}
             </button>
           </form>
@@ -793,6 +841,69 @@
   :global(html:not(.dark)) .form-group input:focus {
     background: rgba(0, 0, 0, 0.05);
     border-color: #2563eb;
+  }
+
+  /* Checkbox group styles */
+  .checkbox-group {
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background: rgba(59, 130, 246, 0.05);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 8px;
+  }
+
+  :global(html:not(.dark)) .checkbox-group {
+    background: rgba(37, 99, 235, 0.05);
+    border-color: rgba(37, 99, 235, 0.2);
+  }
+
+  .checkbox-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  :global(html:not(.dark)) .checkbox-label {
+    color: rgba(0, 0, 0, 0.8);
+  }
+
+  .checkbox-label input[type="checkbox"] {
+    width: auto;
+    margin-top: 0.25rem;
+    cursor: pointer;
+    flex-shrink: 0;
+    accent-color: #3b82f6;
+  }
+
+  .checkbox-label span {
+    flex: 1;
+  }
+
+  .ethical-use-text {
+    font-size: 0.8rem;
+    line-height: 1.6;
+  }
+
+  .tos-link {
+    color: #60a5fa;
+    text-decoration: underline;
+    font-weight: 500;
+  }
+
+  .tos-link:hover {
+    color: #93c5fd;
+  }
+
+  :global(html:not(.dark)) .tos-link {
+    color: #2563eb;
+  }
+
+  :global(html:not(.dark)) .tos-link:hover {
+    color: #1d4ed8;
   }
 
   .error-message {
