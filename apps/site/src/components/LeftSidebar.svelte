@@ -339,6 +339,116 @@
     }
   }
 
+  /**
+   * Model registry management
+   */
+  interface AvailableModel {
+    id: string;
+    model: string;
+    provider: string;
+    roles?: string[];
+    description: string;
+    adapters: string[];
+  }
+
+  let availableModels: AvailableModel[] = [];
+  let roleAssignments: Record<string, string> = {};
+  let modelDropdownOpen: Record<string, boolean> = {};
+  let loadingModelRegistry = false;
+
+  async function loadModelRegistry() {
+    if (loadingModelRegistry) return;
+    loadingModelRegistry = true;
+
+    try {
+      const response = await fetch('/api/model-registry');
+      const data = await response.json();
+
+      if (data.success) {
+        availableModels = data.availableModels || [];
+        roleAssignments = data.roleAssignments || {};
+      } else {
+        console.error('Failed to load model registry:', data.error);
+      }
+    } catch (error) {
+      console.error('Error loading model registry:', error);
+    } finally {
+      loadingModelRegistry = false;
+    }
+  }
+
+  async function assignModelToRole(role: string, modelId: string) {
+    try {
+      const response = await fetch('/api/model-registry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role, modelId }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        roleAssignments[role] = modelId;
+        modelDropdownOpen[role] = false;
+
+        // Warm up the model in the background (non-blocking)
+        // This preloads it into Ollama memory to avoid cold-start on first use
+        warmupModel(role).catch(err => {
+          console.warn(`Failed to warm up model for role ${role}:`, err);
+        });
+
+        // Refresh status to show updated model assignments
+        setTimeout(() => {
+          statusRefreshTrigger.update(n => n + 1);
+        }, 200);
+      } else {
+        alert('Failed to assign model: ' + (result.error || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Error assigning model:', error);
+      alert('Failed to assign model: ' + (error as Error).message);
+    }
+  }
+
+  async function warmupModel(role: string): Promise<void> {
+    try {
+      const response = await fetch('/api/warmup-model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        console.log(`[warmup] Model for ${role} loaded in ${result.duration}ms`);
+      } else {
+        console.warn(`[warmup] Failed to warm up ${role}:`, result.error);
+      }
+    } catch (error) {
+      console.error(`[warmup] Error warming up ${role}:`, error);
+      throw error;
+    }
+  }
+
+  function toggleModelDropdown(role: string) {
+    modelDropdownOpen[role] = !modelDropdownOpen[role];
+    // Force reactive update
+    modelDropdownOpen = { ...modelDropdownOpen };
+  }
+
+  function closeAllModelDropdowns() {
+    modelDropdownOpen = {};
+  }
+
+  // Close dropdowns when clicking outside
+  function handleDocumentClick(event: MouseEvent) {
+    const target = event.target as HTMLElement;
+    if (!target.closest('.model-role-row')) {
+      closeAllModelDropdowns();
+    }
+  }
+
   function connectActivityStream() {
     if (eventSource) return;
     eventSource = new EventSource('/api/llm-activity');
@@ -416,10 +526,14 @@
     loadStatus();
     loadFacets();
     loadTrustOptions(); // Load trust level on mount
+    loadModelRegistry(); // Load model registry for switching
     startApprovalsPolling();
     const ownerUnsubscribe = isOwner.subscribe(() => {
       startApprovalsPolling();
     });
+
+    // Set up document click handler for closing dropdowns
+    document.addEventListener('click', handleDocumentClick);
 
     // Set up visibility change handling to connect/disconnect EventSource
     const handleVisibilityChange = () => {
@@ -442,19 +556,13 @@
         statusSubscription();
       }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('click', handleDocumentClick);
       disconnectActivityStream();
     };
   });
 
   $: taskCount = taskTotals.active;
   $: inProgressCount = taskTotals.inProgress;
-
-  const adapterModeLabels: Record<string, string> = {
-    none: 'none',
-    adapter: 'adapter',
-    merged: 'merged',
-    dual: 'dual',
-  };
 </script>
 
 <div class="left-sidebar-container">
@@ -501,10 +609,7 @@
       <div class="status-info">
 
         {#if hasModelRegistry}
-          <!-- Multi-model registry view -->
-<!--           <div class="status-row">
-            <span class="status-label">LLM Roles:</span>
-          </div> -->
+          <!-- Multi-model registry view with interactive switching -->
           {#each Object.entries(modelRoles) as [role, info]}
             <div class="model-role-row" class:active={activeRoles.has(role)}>
               <span class="activity-indicator">
@@ -515,33 +620,41 @@
               {#if info.error}
                 <span class="role-model error" title={info.error}>error</span>
               {:else}
-                <span class="role-model" title="{info.model}{info.adapters && info.adapters.length > 0 ? ' + adapter' : ''}">
+                <button
+                  class="role-model clickable"
+                  title="Click to change model for {role}\nCurrent: {info.model}{info.adapters && info.adapters.length > 0 ? ' + adapter' : ''}"
+                  on:click|stopPropagation={() => toggleModelDropdown(role)}
+                >
                   {info.model?.replace(/:.+$/, '') || '—'}
                   {#if info.adapters && info.adapters.length > 0}
                     <span class="adapter-indicator">+LoRA</span>
                   {/if}
-                </span>
+                  <span class="dropdown-arrow">▼</span>
+                </button>
+
+                {#if modelDropdownOpen[role]}
+                  <div class="model-dropdown">
+                    <div class="dropdown-header">Select model for {role}</div>
+                    {#each availableModels.filter(m => !m.roles || m.roles.includes(role)) as model}
+                      <button
+                        class="dropdown-item"
+                        class:selected={roleAssignments[role] === model.id}
+                        on:click|stopPropagation={() => assignModelToRole(role, model.id)}
+                      >
+                        <span class="model-name">{model.model.replace(/:.+$/, '')}</span>
+                        {#if model.adapters && model.adapters.length > 0}
+                          <span class="adapter-indicator-small">+LoRA</span>
+                        {/if}
+                        {#if model.description}
+                          <span class="model-desc">{model.description}</span>
+                        {/if}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
               {/if}
             </div>
           {/each}
-        {:else}
-          <!-- Legacy single-model view -->
-          <div class="status-row">
-            <span class="status-label">Model:</span>
-            <span class="status-value mono">{modelInfo?.current || '—'}</span>
-          </div>
-          <div class="status-row">
-            <span class="status-label">Adapter:</span>
-            <span class="status-value">
-              {#if modelInfo?.adapter?.isDualAdapter}
-                <span class="adapter-mode-badge mode-dual">dual</span>
-              {:else if modelInfo?.adapterMode === 'adapter'}
-                <span class="adapter-mode-badge mode-adapter">single</span>
-              {:else}
-                <span class="adapter-mode-badge mode-none">none</span>
-              {/if}
-            </span>
-          </div>
         {/if}
 
         <!-- Unified Trust Level (includes YOLO as max level) -->
@@ -629,57 +742,6 @@
     font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
     font-size: 0.78rem;
     font-weight: 500;
-  }
-
-  /* Adapter mode badges - LeftSidebar-specific variants */
-  .adapter-mode-badge {
-    padding: 0.125rem 0.4rem;
-    border-radius: 9999px;
-    font-size: 0.7rem;
-    text-transform: lowercase;
-    margin-right: 0.5rem;
-    background: rgba(107,114,128,0.16);
-    color: rgb(75 85 99);
-  }
-
-  .adapter-mode-badge.mode-none {
-    background: rgba(107,114,128,0.16);
-    color: rgb(107 114 128);
-  }
-
-  .adapter-mode-badge.mode-adapter {
-    background: rgba(14,165,233,0.18);
-    color: rgb(3 105 161);
-  }
-
-  .adapter-mode-badge.mode-merged {
-    background: rgba(129,140,248,0.18);
-    color: rgb(79 70 229);
-  }
-
-  .adapter-mode-badge.mode-dual {
-    background: rgba(236,72,153,0.18);
-    color: rgb(190 24 93);
-  }
-
-  :global(.dark) .adapter-mode-badge {
-    background: rgba(148,163,184,0.16);
-    color: rgb(226 232 240);
-  }
-
-  :global(.dark) .adapter-mode-badge.mode-adapter {
-    background: rgba(56,189,248,0.18);
-    color: rgb(125 211 252);
-  }
-
-  :global(.dark) .adapter-mode-badge.mode-merged {
-    background: rgba(99,102,241,0.18);
-    color: rgb(165 180 252);
-  }
-
-  :global(.dark) .adapter-mode-badge.mode-dual {
-    background: rgba(244,114,182,0.18);
-    color: rgb(251 207 232);
   }
 
   .adapter-flag {
@@ -825,7 +887,7 @@
     align-items: center;
     font-size: 0.8rem;
     gap: 0.375rem;
-    padding: 0.25rem 0 0.25rem 0.25rem;
+    padding: 0.2rem 0 0.2rem 0.25rem;
     border-radius: 0.375rem;
     transition: all 0.3s ease;
     position: relative;
@@ -903,13 +965,16 @@
   .role-model {
     color: rgb(17 24 39);
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     font-weight: 500;
     display: flex;
     align-items: center;
     gap: 0.25rem;
     flex: 1;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   :global(.dark) .role-model {
@@ -939,6 +1004,167 @@
   :global(.dark) .adapter-indicator {
     background: rgba(167, 139, 250, 0.25);
     color: rgb(196 181 253);
+  }
+
+  /* Model switching dropdown styles */
+  .role-model.clickable {
+    background: transparent;
+    border: 1px solid rgba(107, 114, 128, 0.2);
+    border-radius: 0.375rem;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .role-model.clickable:hover {
+    background: rgba(107, 114, 128, 0.08);
+    border-color: rgba(107, 114, 128, 0.4);
+  }
+
+  :global(.dark) .role-model.clickable {
+    border-color: rgba(156, 163, 175, 0.2);
+  }
+
+  :global(.dark) .role-model.clickable:hover {
+    background: rgba(156, 163, 175, 0.12);
+    border-color: rgba(156, 163, 175, 0.4);
+  }
+
+  .dropdown-arrow {
+    font-size: 0.6rem;
+    margin-left: auto;
+    color: rgb(107 114 128);
+  }
+
+  :global(.dark) .dropdown-arrow {
+    color: rgb(156 163 175);
+  }
+
+  .model-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 0.25rem;
+    background: white;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 0.5rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    max-height: 300px;
+    overflow-y: auto;
+    animation: dropdownSlideIn 0.15s ease-out;
+  }
+
+  :global(.dark) .model-dropdown {
+    background: rgb(31 41 55);
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  }
+
+  @keyframes dropdownSlideIn {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .dropdown-header {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: rgb(107 114 128);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  :global(.dark) .dropdown-header {
+    color: rgb(156 163 175);
+    border-bottom-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .dropdown-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+    padding: 0.5rem 0.75rem;
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .dropdown-item:last-child {
+    border-bottom: none;
+  }
+
+  .dropdown-item:hover {
+    background: rgba(124, 58, 237, 0.08);
+  }
+
+  .dropdown-item.selected {
+    background: rgba(124, 58, 237, 0.12);
+  }
+
+  :global(.dark) .dropdown-item {
+    border-bottom-color: rgba(255, 255, 255, 0.05);
+  }
+
+  :global(.dark) .dropdown-item:hover {
+    background: rgba(167, 139, 250, 0.12);
+  }
+
+  :global(.dark) .dropdown-item.selected {
+    background: rgba(167, 139, 250, 0.18);
+  }
+
+  .model-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: rgb(17 24 39);
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+
+  :global(.dark) .model-name {
+    color: rgb(243 244 246);
+  }
+
+  .adapter-indicator-small {
+    padding: 0.05rem 0.25rem;
+    border-radius: 0.2rem;
+    font-size: 0.6rem;
+    font-weight: 600;
+    background: rgba(167, 139, 250, 0.18);
+    color: rgb(109 40 217);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  :global(.dark) .adapter-indicator-small {
+    background: rgba(167, 139, 250, 0.25);
+    color: rgb(196 181 253);
+  }
+
+  .model-desc {
+    font-size: 0.65rem;
+    color: rgb(107 114 128);
+    line-height: 1.3;
+  }
+
+  :global(.dark) .model-desc {
+    color: rgb(156 163 175);
   }
 
   /* Unified trust level badge (cycles through levels + YOLO) */

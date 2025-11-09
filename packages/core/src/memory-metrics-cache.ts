@@ -10,10 +10,12 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
-import { paths } from './paths.js';
+import { paths, getProfilePaths } from './paths.js';
 import { audit } from './audit.js';
 import { readdirSync, existsSync, readFileSync, statSync } from 'fs';
 import { getIndexStatus } from './vector-index.js';
+
+type ProfilePaths = ReturnType<typeof getProfilePaths>;
 
 export interface MemoryMetrics {
   totalMemories: number;
@@ -31,22 +33,31 @@ export interface MemoryMetrics {
 const CACHE_FILE_NAME = 'memory-metrics.json';
 const CACHE_UPDATE_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
+export interface MemoryMetricsOptions {
+  forceFresh?: boolean;
+  profilePaths?: ProfilePaths;
+  profileName?: string;
+}
+
 /**
  * Get the cache file path for a user profile
  */
-function getCacheFilePath(username: string): string {
-  return path.join(paths.root, 'profiles', username, 'state', CACHE_FILE_NAME);
+function getCacheFilePath(profilePaths: ProfilePaths): string {
+  return path.join(profilePaths.state, CACHE_FILE_NAME);
 }
 
 /**
  * B1: Compute memory metrics for a user profile
  * Walks filesystem to count events by type and calculate coverage metrics
  */
-export async function computeMemoryMetrics(username: string): Promise<MemoryMetrics> {
+export async function computeMemoryMetrics(
+  profilePaths: ProfilePaths,
+  profileName: string
+): Promise<MemoryMetrics> {
   const startTime = Date.now();
 
-  const profilePath = path.join(paths.root, 'profiles', username);
-  const episodicPath = path.join(profilePath, 'memory', 'episodic');
+  const profilePath = profilePaths.root;
+  const episodicPath = profilePaths.episodic;
   const indexStatus = getIndexStatus();
 
   let totalMemories = 0;
@@ -118,7 +129,7 @@ export async function computeMemoryMetrics(username: string): Promise<MemoryMetr
         level: 'warn',
         category: 'system',
         event: 'memory_metrics_episodic_scan_failed',
-        details: { username, error: (error as Error).message },
+        details: { profile: profileName, error: (error as Error).message },
         actor: 'system',
       });
     }
@@ -162,9 +173,13 @@ export async function computeMemoryMetrics(username: string): Promise<MemoryMetr
 /**
  * B2: Write metrics to cache file (async, non-blocking)
  */
-export async function writeMetricsToCache(username: string, metrics: MemoryMetrics): Promise<void> {
+export async function writeMetricsToCache(
+  profilePaths: ProfilePaths,
+  profileName: string,
+  metrics: MemoryMetrics
+): Promise<void> {
   try {
-    const cacheFile = getCacheFilePath(username);
+    const cacheFile = getCacheFilePath(profilePaths);
     const cacheDir = path.dirname(cacheFile);
 
     // Ensure state directory exists
@@ -178,7 +193,7 @@ export async function writeMetricsToCache(username: string, metrics: MemoryMetri
       category: 'system',
       event: 'memory_metrics_cache_updated',
       details: {
-        username,
+        profile: profileName,
         metrics,
       },
       actor: 'system',
@@ -189,7 +204,7 @@ export async function writeMetricsToCache(username: string, metrics: MemoryMetri
       category: 'system',
       event: 'memory_metrics_cache_write_failed',
       details: {
-        username,
+        profile: profileName,
         error: (error as Error).message,
       },
       actor: 'system',
@@ -201,8 +216,11 @@ export async function writeMetricsToCache(username: string, metrics: MemoryMetri
  * B3: Read metrics from cache (stale-but-fast)
  * Returns cached metrics if available, otherwise computes fresh metrics
  */
-export async function readMetricsFromCache(username: string): Promise<MemoryMetrics | null> {
-  const cacheFile = getCacheFilePath(username);
+export async function readMetricsFromCache(
+  profilePaths: ProfilePaths,
+  profileName: string
+): Promise<MemoryMetrics | null> {
+  const cacheFile = getCacheFilePath(profilePaths);
 
   try {
     const exists = fsSync.existsSync(cacheFile);
@@ -212,7 +230,7 @@ export async function readMetricsFromCache(username: string): Promise<MemoryMetr
         level: 'info',
         category: 'system',
         event: 'memory_metrics_cache_miss',
-        details: { username, reason: 'cache_file_not_found' },
+        details: { profile: profileName, reason: 'cache_file_not_found' },
         actor: 'system',
       });
       return null;
@@ -228,7 +246,7 @@ export async function readMetricsFromCache(username: string): Promise<MemoryMetr
       category: 'system',
       event: 'memory_metrics_cache_read_failed',
       details: {
-        username,
+        profile: profileName,
         error: (error as Error).message,
       },
       actor: 'system',
@@ -241,17 +259,22 @@ export async function readMetricsFromCache(username: string): Promise<MemoryMetr
  * B2: Update cache in background for a user
  * (Can be called from a background service or cron job)
  */
-export async function updateMetricsCache(username: string): Promise<void> {
+export async function updateMetricsCache(
+  username: string,
+  options: { profilePaths?: ProfilePaths; profileName?: string } = {}
+): Promise<void> {
   try {
-    const metrics = await computeMemoryMetrics(username);
-    await writeMetricsToCache(username, metrics);
+    const profilePaths = options.profilePaths ?? getProfilePaths(username);
+    const profileName = options.profileName ?? path.basename(profilePaths.root);
+    const metrics = await computeMemoryMetrics(profilePaths, profileName);
+    await writeMetricsToCache(profilePaths, profileName, metrics);
   } catch (error) {
     audit({
       level: 'error',
       category: 'system',
       event: 'memory_metrics_cache_update_failed',
       details: {
-        username,
+        profile: options.profileName ?? username,
         error: (error as Error).message,
       },
       actor: 'system',
@@ -265,11 +288,14 @@ export async function updateMetricsCache(username: string): Promise<void> {
  */
 export async function getMemoryMetrics(
   username: string,
-  options: { forceFresh?: boolean } = {}
+  options: MemoryMetricsOptions = {}
 ): Promise<MemoryMetrics> {
+  const profilePaths = options.profilePaths ?? getProfilePaths(username);
+  const profileName = options.profileName ?? path.basename(profilePaths.root);
+
   // Check cache first (unless forceFresh)
   if (!options.forceFresh) {
-    const cached = await readMetricsFromCache(username);
+    const cached = await readMetricsFromCache(profilePaths, profileName);
     if (cached) {
       const cacheAge = Date.now() - new Date(cached.lastUpdated).getTime();
 
@@ -281,10 +307,10 @@ export async function getMemoryMetrics(
   }
 
   // Cache miss or stale - compute fresh metrics
-  const metrics = await computeMemoryMetrics(username);
+  const metrics = await computeMemoryMetrics(profilePaths, profileName);
 
   // Update cache in background (fire-and-forget)
-  void writeMetricsToCache(username, metrics).catch(() => {});
+  void writeMetricsToCache(profilePaths, profileName, metrics).catch(() => {});
 
   return metrics;
 }
@@ -293,8 +319,11 @@ export async function getMemoryMetrics(
  * Invalidate metrics cache for a user
  * (Call when memory changes significantly, e.g., bulk delete)
  */
-export async function invalidateMetricsCache(username: string): Promise<void> {
-  const cacheFile = getCacheFilePath(username);
+export async function invalidateMetricsCache(
+  profilePaths: ProfilePaths,
+  profileName: string
+): Promise<void> {
+  const cacheFile = getCacheFilePath(profilePaths);
 
   try {
     await fs.unlink(cacheFile);
@@ -303,7 +332,7 @@ export async function invalidateMetricsCache(username: string): Promise<void> {
       level: 'info',
       category: 'system',
       event: 'memory_metrics_cache_invalidated',
-      details: { username },
+      details: { profile: profileName },
       actor: 'system',
     });
   } catch (error) {
@@ -314,7 +343,7 @@ export async function invalidateMetricsCache(username: string): Promise<void> {
         category: 'system',
         event: 'memory_metrics_cache_invalidation_failed',
         details: {
-          username,
+          profile: profileName,
           error: (error as Error).message,
         },
         actor: 'system',

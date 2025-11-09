@@ -117,7 +117,7 @@
     },
     "default.coder": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3-coder:30b",
       "adapters": [],
       "roles": [
         "coder",
@@ -142,7 +142,7 @@
     },
     "default.planner": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3-coder:30b",
       "adapters": [],
       "roles": [
         "planner",

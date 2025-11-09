@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { paths, ROOT } from './paths.js';
 
-export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'fallback';
+export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'fallback';
 export type ModelProvider = 'ollama' | 'openai' | 'local';
 
 export interface ModelDefinition {
@@ -67,9 +67,16 @@ export interface ResolvedModel {
   metadata: Record<string, any>;
 }
 
-let cachedRegistry: ModelRegistry | null = null;
-let lastLoadTime = 0;
 const CACHE_TTL = 60000; // 1 minute
+const registryCache = new Map<string, { registry: ModelRegistry; timestamp: number }>();
+
+/**
+ * Invalidate the model registry cache
+ * Call this after updating the registry to force a reload
+ */
+export function invalidateModelCache(): void {
+  registryCache.clear();
+}
 
 /**
  * Load and parse the model registry from etc/models.json
@@ -83,19 +90,13 @@ const CACHE_TTL = 60000; // 1 minute
 export function loadModelRegistry(forceFresh = false): ModelRegistry {
   const now = Date.now();
 
-  // Return cached registry if still valid
-  if (!forceFresh && cachedRegistry && (now - lastLoadTime) < CACHE_TTL) {
-    return cachedRegistry;
-  }
+  const registryPath = resolveRegistryPath();
 
-  // paths.etc automatically resolves to user profile or root based on context
-  // For anonymous users without a profile, fall back to system root
-  let registryPath: string;
-  try {
-    registryPath = path.join(paths.etc, 'models.json');
-  } catch (error) {
-    // Anonymous user without profile - use system root
-    registryPath = path.join(ROOT, 'etc', 'models.json');
+  if (!forceFresh) {
+    const cached = registryCache.get(registryPath);
+    if (cached && (now - cached.timestamp) < CACHE_TTL) {
+      return cached.registry;
+    }
   }
 
   if (!fs.existsSync(registryPath)) {
@@ -111,12 +112,22 @@ export function loadModelRegistry(forceFresh = false): ModelRegistry {
       throw new Error('Invalid model registry: missing required fields (defaults, models)');
     }
 
-    cachedRegistry = registry;
-    lastLoadTime = now;
+    registryCache.set(registryPath, { registry, timestamp: now });
 
     return registry;
   } catch (error) {
     throw new Error(`Failed to load model registry: ${(error as Error).message}`);
+  }
+}
+
+function resolveRegistryPath(): string {
+  // paths.etc automatically resolves to user profile or root based on context
+  // For anonymous users without a profile, fall back to system root
+  try {
+    return path.join(paths.etc, 'models.json');
+  } catch (error) {
+    // Anonymous user without profile - use system root
+    return path.join(ROOT, 'etc', 'models.json');
   }
 }
 
@@ -338,8 +349,8 @@ export function getProviderConfig(provider: ModelProvider): {
 
 /**
  * Clear the registry cache (useful for hot-reload)
+ * @deprecated Use invalidateModelCache() instead
  */
 export function clearRegistryCache(): void {
-  cachedRegistry = null;
-  lastLoadTime = 0;
+  invalidateModelCache();
 }

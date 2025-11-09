@@ -35,6 +35,7 @@ import {
   markSummaryCompleted,
   clearSummaryMarker,
   isSummarizing,
+  getConversationBufferPath,
 } from '../../packages/core/src/index';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -420,10 +421,64 @@ async function saveSummary(summary: ConversationSummary): Promise<string> {
   return filepath;
 }
 
+async function updateConversationBufferSummary(
+  summary: ConversationSummary,
+  mode: 'conversation' | 'inner' = 'conversation'
+): Promise<void> {
+  const bufferPath = getConversationBufferPath(mode);
+  if (!bufferPath) return;
+
+  try {
+    let data: any = {};
+    try {
+      const raw = await fs.readFile(bufferPath, 'utf-8');
+      data = JSON.parse(raw);
+    } catch {
+      data = {};
+    }
+
+    const existingMessages: any[] = Array.isArray(data.messages) ? data.messages : [];
+    const existingMarkers: any[] = Array.isArray(data.summaryMarkers) ? data.summaryMarkers : [];
+
+    const sanitizedMessages = existingMessages.filter(msg => !msg?.meta?.summaryMarker);
+    const sanitizedMarkers = existingMarkers.filter(
+      marker => !(marker?.meta?.summaryMarker && marker.meta.sessionId === summary.sessionId)
+    );
+
+    const rangeEnd = Math.max(summary.messageCount - 1, 0);
+    sanitizedMarkers.push({
+      role: 'system',
+      content: `Conversation summary (messages 0-${rangeEnd}): ${summary.summary}`,
+      meta: {
+        summaryMarker: true,
+        sessionId: summary.sessionId,
+        createdAt: new Date().toISOString(),
+        range: { start: 0, end: rangeEnd },
+        summaryCount: summary.messageCount
+      }
+    });
+
+    const payload = {
+      ...data,
+      summaryMarkers: sanitizedMarkers,
+      messages: sanitizedMessages,
+      lastSummarizedIndex: summary.messageCount,
+      lastUpdated: new Date().toISOString()
+    };
+
+    await fs.writeFile(bufferPath, JSON.stringify(payload, null, 2));
+  } catch (error) {
+    console.warn('[summarizer] Failed to update conversation buffer with summary:', error);
+  }
+}
+
 /**
  * Main summarization function
  */
-async function summarizeSession(sessionId: string): Promise<ConversationSummary | null> {
+async function summarizeSession(
+  sessionId: string,
+  options: { bufferMode?: 'conversation' | 'inner' } = {}
+): Promise<ConversationSummary | null> {
   const ctx = getUserContext();
   const userId = ctx?.userId;
   const username = ctx?.username || 'anonymous';
@@ -464,6 +519,8 @@ async function summarizeSession(sessionId: string): Promise<ConversationSummary 
 
     // C2: Mark as completed after successful save
     await markSummaryCompleted(username, sessionId);
+
+    await updateConversationBufferSummary(summary, options.bufferMode || 'conversation');
 
     if (filepath) {
       console.log(`[summarizer] Summary saved: ${filepath}`);

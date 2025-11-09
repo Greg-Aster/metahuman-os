@@ -38,16 +38,29 @@ interface CacheEntry {
 const contextCache = new Map<string, CacheEntry>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-function getCacheKey(userMessage: string, mode: CognitiveModeId, options: ContextBuilderOptions): string {
+interface CacheKeyContext {
+  userKey?: string;
+  conversationKey?: string;
+}
+
+function getCacheKey(
+  userMessage: string,
+  mode: CognitiveModeId,
+  options: ContextBuilderOptions,
+  context: CacheKeyContext = {}
+): string {
   // Create cache key from message + mode + critical options
   const optionsKey = JSON.stringify({
     searchDepth: options.searchDepth,
     maxMemories: options.maxMemories,
     filterInnerDialogue: options.filterInnerDialogue,
     filterReflections: options.filterReflections,
-    usingLoRA: options.usingLoRA
+    usingLoRA: options.usingLoRA,
+    conversationId: options.conversationId ?? null
   });
-  return `${mode}:${userMessage.substring(0, 100)}:${optionsKey}`;
+  const userKey = context.userKey || 'anonymous';
+  const conversationKey = context.conversationKey || 'global';
+  return `${userKey}:${mode}:${conversationKey}:${userMessage.substring(0, 100)}:${optionsKey}`;
 }
 
 function getCachedContext(key: string): ContextPackage | null {
@@ -234,7 +247,7 @@ async function queryRecentToolInvocations(
 
     // A3: Try cache first (O(records) instead of O(files))
     if (conversationId) {
-      const cachedTools = await readRecentToolsFromCache(ctx.username, conversationId, limit);
+      const cachedTools = await readRecentToolsFromCache(ctx.profilePaths, conversationId, limit);
 
       if (cachedTools.length > 0) {
         // Cache hit - transform to ToolInvocation format
@@ -474,9 +487,17 @@ export async function buildContextPackage(
   options: ContextBuilderOptions = {}
 ): Promise<ContextPackage> {
   const startTime = Date.now();
+  const ctx = getUserContext();
+  const userKey = ctx?.profilePaths
+    ? path.basename(ctx.profilePaths.root)
+    : ctx?.username || 'anonymous';
+  const conversationKey = options.conversationId || 'global';
 
   // Check cache first
-  const cacheKey = getCacheKey(userMessage, mode, options);
+  const cacheKey = getCacheKey(userMessage, mode, options, {
+    userKey,
+    conversationKey
+  });
   const cached = getCachedContext(cacheKey);
   if (cached) {
     audit({
@@ -615,7 +636,6 @@ export async function buildContextPackage(
       }
 
       // Phase 4: Apply role-based memory limits
-      const ctx = getUserContext();
       const roleMaxMemories = ctx ? getMaxMemoriesForRole(ctx.role) : maxMemories;
       const effectiveLimit = Math.min(maxMemories, roleMaxMemories);
 

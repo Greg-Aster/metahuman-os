@@ -18,10 +18,11 @@
       "type": "interval",
       "priority": "normal",
       "agentPath": "reflector.ts",
-      "interval": 900,
+      "interval": 300,
       "runOnBoot": false,
       "autoRestart": true,
-      "maxRetries": 3
+      "maxRetries": 3,
+      "comment": "Disabled in favor of activity-based reflection via boredom-maintenance"
     },
     "organizer": {
       "id": "organizer",
@@ -51,13 +52,23 @@
       "enabled": true,
       "type": "activity",
       "priority": "low",
-      "inactivityThreshold": 900,
+      "agentPath": "reflector.ts",
+      "inactivityThreshold": 300,
       "runOnBoot": false,
-      "task": {
-        "goal": "Summarize docs/README.md and save the summary to out/summaries/README-summary.md",
-        "autoApprove": true,
-        "profile": "files"
-      }
+      "autoRestart": false,
+      "maxRetries": 1
+    },
+    "memory-metrics-cache": {
+      "id": "memory-metrics-cache",
+      "enabled": true,
+      "type": "interval",
+      "priority": "low",
+      "agentPath": "memory-metrics-cache.ts",
+      "interval": 300,
+      "runOnBoot": false,
+      "autoRestart": true,
+      "maxRetries": 2,
+      "comment": "Refreshes memory metrics cache every 5 minutes and cleans up orphaned tool outputs"
     }
   }
 }

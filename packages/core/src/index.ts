@@ -35,6 +35,7 @@ export * from './memory-policy';
 export * from './trust-coupling';
 export * from './path-resolver';
 export * from './context-window';
+export * from './conversation-buffer';
 export * from './fs-glob';
 export * from './progress-tracker';
 export * from './state';

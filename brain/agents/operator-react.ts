@@ -12,7 +12,7 @@
  */
 
 import { audit, executeSkill as coreExecuteSkill, listSkills, captureEvent } from '@metahuman/core';
-import { callLLM, type RouterMessage } from '../../packages/core/src/model-router.js';
+import { callLLM, type RouterMessage, type RouterResponse } from '../../packages/core/src/model-router.js';
 import type { SkillResult } from '../../packages/core/src/skills.js';
 import { canWriteMemory, shouldCaptureTool } from '@metahuman/core/memory-policy';
 import { loadCognitiveMode } from '@metahuman/core/cognitive-mode';
@@ -463,23 +463,13 @@ JSON Format:
   "reasoning": "Optional deeper reasoning if needed"
 }`;
 
-  const messages: RouterMessage[] = [
+  const baseMessages: RouterMessage[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: 'Return ONLY JSON. No other text.' },
   ];
 
   try {
-    const response = await callLLM({
-      role: 'orchestrator',
-      messages,
-      options: {
-        temperature: 0.3, // Lower temperature for more focused planning
-        maxTokens: 1000,
-      },
-    });
-
-    // Parse JSON response
-    const parsed = JSON.parse(response.content);
+    const { parsed, response } = await requestPlannerJson(baseMessages, context);
 
     audit({
       level: 'info',
@@ -513,6 +503,79 @@ JSON Format:
     });
     throw new Error(`Planning failed: ${(error as Error).message}`);
   }
+}
+
+interface PlannerJsonResult {
+  parsed: any;
+  response: RouterResponse;
+}
+
+async function requestPlannerJson(
+  baseMessages: RouterMessage[],
+  context: ReActContext,
+  maxAttempts = 2
+): Promise<PlannerJsonResult> {
+  let messages = baseMessages;
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await callLLM({
+        role: 'orchestrator',
+        messages,
+        options: {
+          temperature: 0.3,
+          maxTokens: 1000,
+        },
+      });
+
+      const parsed = JSON.parse(extractJsonBlock(response.content));
+      return { parsed, response };
+    } catch (error) {
+      lastError = error as Error;
+
+      audit({
+        level: 'warn',
+        category: 'action',
+        event: 'react_planning_parse_retry',
+        details: {
+          iteration: context.steps.length + 1,
+          attempt,
+          error: (error as Error).message,
+        },
+        actor: 'operator-react',
+      });
+
+      if (attempt === maxAttempts) {
+        break;
+      }
+
+      messages = [
+        ...baseMessages,
+        {
+          role: 'user',
+          content: `Your previous reply was not valid JSON (error: ${(error as Error).message}). Respond again with ONLY the JSON object specified in the schema.`,
+        },
+      ];
+    }
+  }
+
+  throw lastError ?? new Error('Planner failed to return valid JSON');
+}
+
+function extractJsonBlock(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    return trimmed;
+  }
+
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) {
+    return trimmed.slice(start, end + 1);
+  }
+
+  return trimmed;
 }
 
 /**

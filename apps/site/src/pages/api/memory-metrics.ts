@@ -34,6 +34,7 @@
  */
 
 import type { APIRoute } from 'astro';
+import path from 'node:path';
 import { getUserContext, withUserContext, getMemoryMetrics } from '@metahuman/core';
 
 /**
@@ -50,7 +51,12 @@ const handler: APIRoute = async (context) => {
     // B3: Get metrics from cache (stale-but-fast)
     // Falls back to fresh computation if cache miss
     const forceFresh = context.url.searchParams.get('fresh') === 'true';
-    const metrics = await getMemoryMetrics(ctx.username, { forceFresh });
+    const profileName = ctx.profilePaths ? path.basename(ctx.profilePaths.root) : ctx.username;
+    const metrics = await getMemoryMetrics(ctx.username, {
+      forceFresh,
+      profilePaths: ctx.profilePaths,
+      profileName
+    });
 
     return new Response(
       JSON.stringify(metrics, null, 2),

@@ -124,14 +124,14 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
   const cognitiveMode = (event.metadata?.cognitiveMode as CognitiveModeId) || 'dual';
 
   // A1: Write to recent tool cache for tool_invocation events (async, non-blocking)
-  if (event.type === 'tool_invocation' && ctx?.username && event.metadata?.conversationId) {
+  if (event.type === 'tool_invocation' && ctx?.profilePaths && event.metadata?.conversationId) {
     const toolName = event.metadata.toolName || 'unknown';
     const success = event.metadata.success !== false;
     const output = JSON.stringify(event.metadata.toolOutputs || {});
 
     // Fire-and-forget cache write (errors logged internally)
     void appendToolToCache(
-      ctx.username,
+      ctx.profilePaths,
       event.metadata.conversationId,
       event.id,
       toolName,

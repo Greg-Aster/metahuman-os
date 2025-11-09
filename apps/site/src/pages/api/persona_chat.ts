@@ -1,8 +1,8 @@
 import type { APIRoute } from 'astro';
-import { loadPersonaCore, loadPersonaWithFacet, getActiveFacet, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, type RouterMessage, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, pruneHistory, type Message, getUserContext } from '@metahuman/core';
+import { loadPersonaCore, loadPersonaWithFacet, getActiveFacet, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, type RouterMessage, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, pruneHistory, type Message, getUserContext, getConversationBufferPath } from '@metahuman/core';
 import { loadCognitiveMode, getModeDefinition, canWriteMemory as modeAllowsMemoryWrites, canUseOperator } from '@metahuman/core/cognitive-mode';
 import { canWriteMemory as policyCanWriteMemory } from '@metahuman/core/memory-policy';
-import { readFileSync, existsSync, appendFileSync, writeFileSync, mkdirSync, promises as fs } from 'node:fs';
+import { readFileSync, existsSync, appendFileSync, writeFileSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { initializeSkills } from '../../../../../brain/skills/index';
 import { getAvailableSkills, executeSkill, type SkillManifest } from '@metahuman/core/skills';
@@ -47,13 +47,14 @@ const historyLoadedForUser: Record<Mode, string | null> = {
   conversation: null,
 };
 
+const bufferMeta: Record<Mode, { lastSummarizedIndex: number | null }> = {
+  inner: { lastSummarizedIndex: null },
+  conversation: { lastSummarizedIndex: null }
+};
+
 function getBufferPath(mode: Mode): string | null {
   try {
-    const ctx = getUserContext();
-    if (!ctx?.profilePaths?.state) return null;
-    const bufferDir = ctx.profilePaths.state;
-    mkdirSync(bufferDir, { recursive: true });
-    return path.join(bufferDir, `conversation-buffer-${mode}.json`);
+    return getConversationBufferPath(mode);
   } catch (error) {
     console.warn('[persona_chat] Failed to determine buffer path:', error);
     return null;
@@ -67,13 +68,46 @@ function loadPersistedBuffer(mode: Mode): Array<{ role: Role; content: string; m
   try {
     const raw = readFileSync(bufferPath, 'utf-8');
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed.messages)) {
-      return parsed.messages;
+    const persistedMessages: Array<{ role: Role; content: string; meta?: any }> = Array.isArray(parsed.messages)
+      ? parsed.messages
+      : [];
+    const persistedSummaryMarkers: Array<{ role: Role; content: string; meta?: any }> = Array.isArray(parsed.summaryMarkers)
+      ? parsed.summaryMarkers
+      : persistedMessages.filter(msg => msg.meta?.summaryMarker);
+
+    // Remove any summary markers from the main messages array to avoid duplication
+    const conversationMessages = persistedMessages.filter(msg => !msg.meta?.summaryMarker);
+
+    const combined = [...conversationMessages];
+    if (persistedSummaryMarkers.length > 0) {
+      if (
+        combined.length > 0 &&
+        combined[0].role === 'system' &&
+        !combined[0].meta?.summaryMarker
+      ) {
+        combined.splice(1, 0, ...persistedSummaryMarkers);
+      } else {
+        combined.unshift(...persistedSummaryMarkers);
+      }
     }
+
+    const derivedLastSummarized =
+      typeof parsed.lastSummarizedIndex === 'number'
+        ? parsed.lastSummarizedIndex
+        : (persistedSummaryMarkers.length > 0
+            ? persistedSummaryMarkers.reduce((max, marker) => {
+                const count = marker.meta?.summaryCount;
+                return typeof count === 'number' && count > max ? count : max;
+              }, 0)
+            : null);
+
+    bufferMeta[mode].lastSummarizedIndex = derivedLastSummarized ?? null;
+    return combined;
   } catch (error) {
     console.warn('[persona_chat] Failed to load conversation buffer:', error);
   }
 
+  bufferMeta[mode].lastSummarizedIndex = null;
   return [];
 }
 
@@ -82,9 +116,13 @@ function persistBuffer(mode: Mode): void {
   if (!bufferPath) return;
 
   try {
+    const summaryMarkers = histories[mode].filter(msg => msg.meta?.summaryMarker);
+    const conversationMessages = histories[mode].filter(msg => !msg.meta?.summaryMarker);
     const payload = JSON.stringify(
       {
-        messages: histories[mode],
+        summaryMarkers,
+        messages: conversationMessages,
+        lastSummarizedIndex: bufferMeta[mode].lastSummarizedIndex,
         lastUpdated: new Date().toISOString(),
       },
       null,
@@ -105,6 +143,42 @@ function ensureHistoryLoaded(mode: Mode): void {
 
   histories[mode] = loadPersistedBuffer(mode);
   historyLoadedForUser[mode] = userId;
+}
+
+function upsertSummaryMarker(
+  mode: Mode,
+  summary: { sessionId: string; summary: string; messageCount: number }
+): void {
+  if (!summary.summary) return;
+
+  const rangeEnd = Math.max(summary.messageCount - 1, 0);
+  const createdAt = new Date().toISOString();
+  const marker = {
+    role: 'system' as Role,
+    content: `Conversation summary (messages 0-${rangeEnd}): ${summary.summary}`,
+    meta: {
+      summaryMarker: true,
+      sessionId: summary.sessionId,
+      createdAt,
+      range: { start: 0, end: rangeEnd },
+      summaryCount: summary.messageCount
+    }
+  };
+
+  histories[mode] = histories[mode].filter(
+    msg => !(msg.meta?.summaryMarker && msg.meta.sessionId === summary.sessionId)
+  );
+
+  const insertionIndex =
+    histories[mode].length > 0 &&
+    histories[mode][0].role === 'system' &&
+    !histories[mode][0].meta?.summaryMarker
+      ? 1
+      : 0;
+
+  histories[mode].splice(insertionIndex, 0, marker);
+  bufferMeta[mode].lastSummarizedIndex = summary.messageCount;
+  persistBuffer(mode);
 }
 
 /**
@@ -128,7 +202,7 @@ function pushMessage(mode: Mode, message: { role: Role; content: string; meta?: 
 
     // Trigger async summarization when buffer overflow occurs (Phase 3)
     if (sessionId) {
-      triggerAutoSummarization(sessionId).catch(error => {
+      triggerAutoSummarization(sessionId, mode).catch(error => {
         console.error('[auto-summarization] Failed to trigger summarization:', error);
       });
     }
@@ -141,7 +215,7 @@ function pushMessage(mode: Mode, message: { role: Role; content: string; meta?: 
  * Trigger background summarization for a conversation session
  * Phase 3: Memory Continuity - auto-summarize when buffer overflows
  */
-async function triggerAutoSummarization(sessionId: string): Promise<void> {
+async function triggerAutoSummarization(sessionId: string, mode: Mode): Promise<void> {
   try {
     // Import summarizer dynamically to avoid circular dependencies
     const { summarizeSession } = await import('../../../../../brain/agents/summarizer.js');
@@ -149,11 +223,16 @@ async function triggerAutoSummarization(sessionId: string): Promise<void> {
     console.log(`[auto-summarization] Triggering summarization for session: ${sessionId}`);
 
     // Run summarization in background (don't await - let it run async)
-    void summarizeSession(sessionId).then(() => {
-      console.log(`[auto-summarization] Successfully summarized session: ${sessionId}`);
-    }).catch(error => {
-      console.error(`[auto-summarization] Summarization failed for session ${sessionId}:`, error);
-    });
+    void summarizeSession(sessionId, { bufferMode: mode })
+      .then(summary => {
+        if (summary) {
+          upsertSummaryMarker(mode, summary);
+        }
+        console.log(`[auto-summarization] Successfully summarized session: ${sessionId}`);
+      })
+      .catch(error => {
+        console.error(`[auto-summarization] Summarization failed for session ${sessionId}:`, error);
+      });
   } catch (error) {
     console.error('[auto-summarization] Failed to import summarizer:', error);
   }
@@ -425,6 +504,7 @@ You are having a ${mode}.
 function initializeChat(mode: Mode, reason = false, usingLora = false, includePersonaSummary = true): void {
   const systemPrompt = buildSystemPrompt(mode, includePersonaSummary);
   histories[mode] = [{ role: 'system', content: systemPrompt }];
+  bufferMeta[mode].lastSummarizedIndex = null;
   persistBuffer(mode);
 }
 
