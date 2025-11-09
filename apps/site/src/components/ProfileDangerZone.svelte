@@ -5,7 +5,7 @@
     username: string;
     displayName: string;
     visibility: 'private' | 'public';
-    role: 'owner' | 'guest';
+    role: 'owner' | 'standard' | 'guest';
   }
 
   interface CurrentUser {
@@ -61,9 +61,18 @@
 
       if (data.success) {
         // Filter out special profiles (mutant-super-intelligence)
-        profiles = data.profiles.filter(
+        let fetchedProfiles: Profile[] = data.profiles.filter(
           (p: Profile) => p.username !== 'mutant-super-intelligence'
         );
+
+        // Standard users should only ever see their own account
+        if (currentUser?.role === 'standard' && currentUser.username) {
+          fetchedProfiles = fetchedProfiles.filter(
+            (p) => p.username === currentUser?.username
+          );
+        }
+
+        profiles = fetchedProfiles;
       } else {
         error = data.error || 'Failed to load profiles';
       }
@@ -115,8 +124,21 @@
 
       if (data.success) {
         success = `Profile '${profileToDelete.username}' has been deleted successfully. ${data.details.sessionsDeleted} session(s) terminated.`;
+
+        // If user deleted their own account, log them out after a brief delay
+        const deletedSelf = profileToDelete.username === currentUser?.username;
+
         closeDeleteModal();
-        await loadProfiles(); // Refresh list
+
+        if (deletedSelf) {
+          // Show success message briefly, then redirect to splash/login
+          setTimeout(() => {
+            window.location.href = '/';
+          }, 2000);
+        } else {
+          // Refresh profile list for admin users
+          await loadProfiles();
+        }
       } else {
         error = data.error || 'Failed to delete profile';
       }
@@ -130,24 +152,53 @@
 
   function canDeleteProfile(profile: Profile): boolean {
     if (!currentUser) return false;
-    if (profile.role === 'owner') return false;
-    if (profile.username === currentUser.username) return false;
-    if (profile.username === 'guest') return false;
-    return true;
+
+    // Owner/admin can delete any non-owner, non-guest profiles (except their own)
+    if (currentUser.role === 'owner') {
+      if (profile.role === 'owner') return false;
+      if (profile.username === currentUser.username) return false;
+      if (profile.username === 'guest') return false;
+      return true;
+    }
+
+    // Standard users can ONLY delete their own account
+    if (currentUser.role === 'standard') {
+      return profile.username === currentUser.username;
+    }
+
+    // Guests and anonymous cannot delete anything
+    return false;
   }
 
   function getDeleteDisabledReason(profile: Profile): string {
-    if (profile.role === 'owner') return 'Cannot delete owner account';
-    if (profile.username === currentUser?.username) return 'Cannot delete your own account';
-    if (profile.username === 'guest') return 'Cannot delete guest profile';
-    return '';
+    if (!currentUser) return 'Not authenticated';
+
+    if (currentUser.role === 'owner') {
+      if (profile.role === 'owner') return 'Cannot delete owner account';
+      if (profile.username === currentUser.username) return 'Cannot delete your own account as owner';
+      if (profile.username === 'guest') return 'Cannot delete guest profile';
+    }
+
+    if (currentUser.role === 'standard') {
+      if (profile.username !== currentUser.username) return 'Can only delete your own account';
+    }
+
+    if (currentUser.role === 'guest') {
+      return 'Guests cannot delete profiles';
+    }
+
+    return 'Not authorized';
   }
 </script>
 
 <div class="danger-zone">
   <h2>⚠️ Danger Zone</h2>
   <p class="warning-text">
-    Actions in this section are irreversible and permanently delete user data.
+    {#if currentUser?.role === 'standard'}
+      Delete your account and all associated data. This action is irreversible.
+    {:else}
+      Actions in this section are irreversible and permanently delete user data.
+    {/if}
   </p>
 
   {#if loading}
@@ -193,7 +244,7 @@
                     class="delete-btn"
                     on:click={() => openDeleteModal(profile)}
                   >
-                    Delete Profile
+                    {profile.username === currentUser?.username ? 'Delete My Account' : 'Delete Profile'}
                   </button>
                 {:else}
                   <button
@@ -201,7 +252,7 @@
                     disabled
                     title={getDeleteDisabledReason(profile)}
                   >
-                    Delete Profile
+                    {profile.username === currentUser?.username ? 'Delete My Account' : 'Delete Profile'}
                   </button>
                 {/if}
               </td>

@@ -4,7 +4,15 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getTrainingProgress, listVoiceSamples, deleteVoiceSample, exportTrainingDataset } from '@metahuman/core';
+import {
+  getTrainingProgress,
+  listVoiceSamples,
+  deleteVoiceSample,
+  exportTrainingDataset,
+  getVoiceTrainingStatus,
+  setVoiceTrainingEnabled,
+  purgeVoiceTrainingData,
+} from '@metahuman/core';
 
 export const GET: APIRoute = async ({ request }) => {
   const url = new URL(request.url);
@@ -29,6 +37,14 @@ export const GET: APIRoute = async ({ request }) => {
         });
       }
 
+      case 'status': {
+        const status = getVoiceTrainingStatus();
+        return new Response(JSON.stringify(status), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       default:
         return new Response(JSON.stringify({ error: 'Invalid action' }), {
           status: 400,
@@ -47,7 +63,7 @@ export const GET: APIRoute = async ({ request }) => {
 export const POST: APIRoute = async ({ request }) => {
   try {
     const body = await request.json();
-    const { action, sampleId } = body;
+    const { action, sampleId, enabled } = body;
 
     switch (action) {
       case 'delete': {
@@ -68,6 +84,22 @@ export const POST: APIRoute = async ({ request }) => {
       case 'export': {
         const exportPath = exportTrainingDataset();
         return new Response(JSON.stringify({ exportPath }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      case 'toggle': {
+        const result = setVoiceTrainingEnabled(enabled || false);
+        return new Response(JSON.stringify({ success: true, enabled: result.enabled }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      case 'purge': {
+        const result = purgeVoiceTrainingData();
+        return new Response(JSON.stringify({ success: true, deletedCount: result.deletedCount }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' }
         });

@@ -7,7 +7,7 @@
   interface User {
     id: string;
     username: string;
-    role: 'owner' | 'guest' | 'anonymous';
+    role: 'owner' | 'standard' | 'guest' | 'anonymous';
     metadata?: {
       displayName?: string;
       email?: string;
@@ -1077,9 +1077,11 @@
       <ProfileCreation onProfileCreated={() => profileDangerZone?.refreshProfiles()} />
     {/if}
 
-    <!-- Profile Deletion (Owner Only) -->
+    <!-- Profile Deletion / Account Removal -->
     {#if currentUser.role === 'owner'}
       <ProfileDangerZone bind:this={profileDangerZone} />
+    {:else if currentUser.role === 'standard'}
+      <ProfileDangerZone />
     {/if}
 
     <!-- Security Information -->

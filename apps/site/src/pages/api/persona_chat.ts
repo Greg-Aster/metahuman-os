@@ -689,6 +689,11 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   const sessionCookie = cookies?.get('mh_session');
   const isAuthenticated = !!sessionCookie;
 
+  // Resolve user context up front so downstream routing can respect role-based restrictions
+  const currentCtx = getUserContext();
+  const userRole = currentCtx?.role ?? 'anonymous';
+  const operatorRoleAllowed = userRole === 'owner' || userRole === 'standard';
+
   // Load cognitive mode context once for consistent routing and memory policies
   // For unauthenticated users, force emulation mode (read-only, safe for guests)
   const cognitiveContext = getCognitiveModeContext();
@@ -710,10 +715,9 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     ? [recentDialogue, `User: ${trimmedMessage}`].filter(Boolean).join('\n')
     : recentDialogue;
 
-  // UNIFIED REASONING: Always use ReAct operator for authenticated users
-  // The operator will decide whether to use skills or conversational_response
-  // Emulation mode users get chat-only (no operator access)
-  const useOperator = isAuthenticated && cognitiveMode !== 'emulation';
+  // UNIFIED REASONING: Only use ReAct operator when user + mode permit it
+  // Emulation mode users or restricted roles (guest/anonymous) get chat-only
+  const useOperator = isAuthenticated && cognitiveMode !== 'emulation' && operatorRoleAllowed;
 
   console.log(`[CHAT_REQUEST] Cognitive Mode: ${cognitiveMode}`);
   console.log(`[CHAT_REQUEST] Authenticated: ${isAuthenticated}`);
@@ -724,7 +728,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   const { context: contextInfo, usedSemantic, contextPackage } = await getRelevantContext(message, m, sessionId, { usingLora, includePersonaSummary });
   console.log(`[CHAT_REQUEST] Context retrieved. Length: ${contextInfo.length}, Semantic Search: ${usedSemantic}, Memories: ${contextPackage?.memoryCount || 0}`);
 
-  const currentCtx = getUserContext();
+  // currentCtx resolved earlier for routing and logging
 
   // Phase 5: Memory Miss Detection - Log when no memories found for non-trivial queries
   if (contextPackage && contextPackage.memoryCount === 0 && message.length > 20) {

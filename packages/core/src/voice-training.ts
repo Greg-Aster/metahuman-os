@@ -249,7 +249,7 @@ export function getTrainingProgress(): {
 /**
  * List all voice samples
  */
-export function listVoiceSamples(): VoiceSample[] {
+export function listVoiceSamples(limit?: number): VoiceSample[] {
   const trainingDir = getTrainingDir();
 
   if (!fs.existsSync(trainingDir)) {
@@ -271,6 +271,11 @@ export function listVoiceSamples(): VoiceSample[] {
 
   // Sort by timestamp (newest first)
   samples.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  // Apply limit if specified
+  if (limit && limit > 0) {
+    return samples.slice(0, limit);
+  }
 
   return samples;
 }
@@ -350,4 +355,115 @@ export function exportTrainingDataset(): string {
   });
 
   return exportDir;
+}
+
+/**
+ * Get voice training status (enabled/disabled)
+ */
+export function getVoiceTrainingStatus(): { enabled: boolean } {
+  const cfg = loadConfig();
+  return { enabled: cfg.enabled };
+}
+
+/**
+ * Set voice training enabled state
+ */
+export function setVoiceTrainingEnabled(enabled: boolean): { enabled: boolean } {
+  const configPath = paths.voiceConfig;
+
+  try {
+    let voiceConfig: any = {};
+    if (fs.existsSync(configPath)) {
+      voiceConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    }
+
+    if (!voiceConfig.training) {
+      voiceConfig.training = {
+        enabled: false,
+        minDuration: 2,
+        maxDuration: 120,
+        minQuality: 0.6,
+        targetHours: 3,
+      };
+    }
+
+    voiceConfig.training.enabled = enabled;
+    fs.writeFileSync(configPath, JSON.stringify(voiceConfig, null, 2), 'utf-8');
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'voice_training_toggled',
+      details: { enabled },
+      actor: 'system',
+    });
+
+    return { enabled };
+  } catch (error) {
+    audit({
+      level: 'error',
+      category: 'action',
+      event: 'voice_training_toggle_failed',
+      details: { error: (error as Error).message },
+      actor: 'system',
+    });
+    throw error;
+  }
+}
+
+/**
+ * Purge all voice training data
+ */
+export function purgeVoiceTrainingData(): { deletedCount: number } {
+  const trainingDir = getTrainingDir();
+  let deletedCount = 0;
+
+  try {
+    if (fs.existsSync(trainingDir)) {
+      const files = fs.readdirSync(trainingDir);
+
+      for (const file of files) {
+        try {
+          const filePath = path.join(trainingDir, file);
+          fs.unlinkSync(filePath);
+          deletedCount++;
+        } catch (error) {
+          console.error(`Failed to delete ${file}:`, error);
+        }
+      }
+    }
+
+    // Also clean up exported datasets
+    const exportDir = paths.voiceDataset;
+    if (fs.existsSync(exportDir)) {
+      const files = fs.readdirSync(exportDir);
+      for (const file of files) {
+        try {
+          const filePath = path.join(exportDir, file);
+          fs.unlinkSync(filePath);
+        } catch (error) {
+          console.error(`Failed to delete export ${file}:`, error);
+        }
+      }
+    }
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'voice_training_data_purged',
+      details: { deletedCount },
+      actor: 'system',
+    });
+
+    return { deletedCount };
+  } catch (error) {
+    audit({
+      level: 'error',
+      category: 'action',
+      event: 'voice_training_purge_failed',
+      details: { error: (error as Error).message },
+      actor: 'system',
+    });
+    throw error;
+  }
 }

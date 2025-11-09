@@ -25,6 +25,7 @@
 import type { APIRoute } from 'astro';
 import { validateSession } from '@metahuman/core/sessions';
 import { deleteProfileComplete } from '@metahuman/core/profile';
+import { getUser } from '@metahuman/core/users';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   try {
@@ -51,12 +52,31 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       );
     }
 
-    // Step 2: Owner-only operation
-    if (session.role !== 'owner') {
+    const sessionUser = getUser(session.userId);
+    if (!sessionUser) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'User not found' }),
+        {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
+    const isOwner = session.role === 'owner';
+
+    // Step 2: Permission check (owners can delete anyone; standard users can delete themselves)
+    const body = await request.json();
+    const { username, confirmUsername } = body;
+
+    const isSelfDelete =
+      session.role === 'standard' && sessionUser.username === username;
+
+    if (!isOwner && !isSelfDelete) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: 'Owner permission required to delete profiles',
+          error: 'Owner permission required to delete other profiles',
         }),
         {
           status: 403,
@@ -65,9 +85,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       );
     }
 
-    // Step 3: Parse request body
-    const body = await request.json();
-    const { username, confirmUsername } = body;
+    // Step 3: Parse request body (already read above)
 
     // Step 4: Validate request parameters
     if (!username || typeof username !== 'string') {
@@ -97,7 +115,9 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     }
 
     // Step 5: Perform deletion with full cascading cleanup
-    const actor = `${session.userId} (owner)`;
+    const actor = isOwner
+      ? `${session.userId} (owner)`
+      : `${session.userId} (self-delete)`;
     const result = await deleteProfileComplete(username, session.userId, actor);
 
     // Step 6: Return result

@@ -16,7 +16,16 @@ export const GET: APIRoute = async (context) => {
     const canSeeAll = userContext?.role === 'owner';
 
     // Get appropriate profile list
-    const users = canSeeAll ? listUsers() : listVisibleProfiles();
+    let users = canSeeAll ? listUsers() : listVisibleProfiles();
+
+    // Standard users can see their own profile in the list
+    if (userContext?.role === 'standard' && userContext?.username) {
+      const allUsers = listUsers();
+      const ownProfile = allUsers.find(u => u.username === userContext.username);
+      if (ownProfile && !users.find(u => u.username === ownProfile.username)) {
+        users = [...users, ownProfile];
+      }
+    }
 
     // Format for API response
     const profiles = users.map((u) => ({

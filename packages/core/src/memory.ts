@@ -6,6 +6,7 @@ import { auditDataChange } from './audit.js';
 import { getUserContext } from './context.js';
 import type { CognitiveModeId } from './cognitive-mode.js';
 import { scheduleIndexUpdate } from './vector-index-queue.js';
+import { appendToolToCache } from './recent-tools-cache.js';
 
 /**
  * Enhanced metadata schema for episodic events
@@ -121,6 +122,23 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
   logSync('capture', { event });
 
   const cognitiveMode = (event.metadata?.cognitiveMode as CognitiveModeId) || 'dual';
+
+  // A1: Write to recent tool cache for tool_invocation events (async, non-blocking)
+  if (event.type === 'tool_invocation' && ctx?.username && event.metadata?.conversationId) {
+    const toolName = event.metadata.toolName || 'unknown';
+    const success = event.metadata.success !== false;
+    const output = JSON.stringify(event.metadata.toolOutputs || {});
+
+    // Fire-and-forget cache write (errors logged internally)
+    void appendToolToCache(
+      ctx.username,
+      event.metadata.conversationId,
+      event.id,
+      toolName,
+      success,
+      output
+    ).catch(() => {}); // Silently fail - cache is optional optimization
+  }
 
   if (ctx?.userId && ctx.profilePaths?.state) {
     scheduleIndexUpdate(

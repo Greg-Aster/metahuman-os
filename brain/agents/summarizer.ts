@@ -31,6 +31,10 @@ import {
   getUserContext,
   loadCognitiveMode,
   canWriteMemory,
+  markSummarizing,
+  markSummaryCompleted,
+  clearSummaryMarker,
+  isSummarizing,
 } from '../../packages/core/src/index';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -422,8 +426,15 @@ async function saveSummary(summary: ConversationSummary): Promise<string> {
 async function summarizeSession(sessionId: string): Promise<ConversationSummary | null> {
   const ctx = getUserContext();
   const userId = ctx?.userId;
+  const username = ctx?.username || 'anonymous';
 
   console.log(`[summarizer] Analyzing session: ${sessionId}`);
+
+  // C3: Skip if currently being summarized (backpressure)
+  if (await isSummarizing(username, sessionId)) {
+    console.log(`[summarizer] Session already being summarized (concurrent call detected): ${sessionId}`);
+    return null;
+  }
 
   // Skip if summary already exists
   if (await hasExistingSummary(sessionId, userId)) {
@@ -441,19 +452,31 @@ async function summarizeSession(sessionId: string): Promise<ConversationSummary 
 
   console.log(`[summarizer] Found ${events.length} events in session`);
 
-  // Generate summary
-  const summary = await generateSummary(events);
+  try {
+    // C2: Mark as summarizing BEFORE LLM call
+    await markSummarizing(username, sessionId);
 
-  // Save summary (mode-aware)
-  const filepath = await saveSummary(summary);
+    // Generate summary (LLM call happens here)
+    const summary = await generateSummary(events);
 
-  if (filepath) {
-    console.log(`[summarizer] Summary saved: ${filepath}`);
-  } else {
-    console.log(`[summarizer] Summary generated but not saved (read-only mode or no user context)`);
+    // Save summary (mode-aware)
+    const filepath = await saveSummary(summary);
+
+    // C2: Mark as completed after successful save
+    await markSummaryCompleted(username, sessionId);
+
+    if (filepath) {
+      console.log(`[summarizer] Summary saved: ${filepath}`);
+    } else {
+      console.log(`[summarizer] Summary generated but not saved (read-only mode or no user context)`);
+    }
+
+    return summary;
+  } catch (error) {
+    // Clear marker on error
+    await clearSummaryMarker(username, sessionId);
+    throw error;
   }
-
-  return summary;
 }
 
 /**

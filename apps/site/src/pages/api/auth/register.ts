@@ -69,8 +69,9 @@ export const POST: APIRoute = async (context) => {
       );
     }
 
-    // Determine role: first user is owner, rest are guests
-    const role = hasOwner() ? 'guest' : 'owner';
+    // Determine role: first user is owner, rest are standard users
+    // Note: Guests are read-only users and should only be created explicitly via admin
+    const role = hasOwner() ? 'standard' : 'owner';
 
     // Create user account
     const user = createUser(username, password, role, {

@@ -29,7 +29,7 @@
   interface User {
     id: string;
     username: string;
-    role: 'owner' | 'guest' | 'anonymous';
+    role: 'owner' | 'standard' | 'guest' | 'anonymous';
   }
   let currentUser: User | null = null;
 
@@ -462,14 +462,14 @@
   <nav class="menu">
     {#each menuItems as item}
       {@const isSecurityTab = item.id === 'security'}
-      {@const isDisabled = isSecurityTab && (!currentUser || currentUser.role !== 'owner')}
+      {@const isDisabled = isSecurityTab && (!currentUser || (currentUser.role !== 'owner' && currentUser.role !== 'standard'))}
       <button
         class="menu-item"
         class:active={$activeView === item.id}
         class:disabled={isDisabled}
         on:click={() => !isDisabled && selectView(item.id)}
         disabled={isDisabled}
-        title={isDisabled ? 'Owner access required for security settings' : item.description}
+        title={isDisabled ? 'Authentication required for security settings' : item.description}
       >
         <span class="menu-icon">{item.icon}</span>
         <div class="menu-text">

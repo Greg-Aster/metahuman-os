@@ -23,6 +23,9 @@
   let error: string | null = null;
   let pollInterval: ReturnType<typeof setInterval> | null = null;
   let exporting = false;
+  let trainingEnabled = false;
+  let togglingTraining = false;
+  let purging = false;
 
   async function fetchProgress() {
     try {
@@ -88,6 +91,78 @@
     }
   }
 
+  async function toggleTraining() {
+    togglingTraining = true;
+    // Note: bind:checked has already updated trainingEnabled when this is called
+    const newState = trainingEnabled;
+    try {
+      const response = await fetch('/api/voice-training', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'toggle', enabled: newState })
+      });
+
+      if (!response.ok) throw new Error('Failed to toggle voice training');
+
+      const data = await response.json();
+      trainingEnabled = data.enabled;
+      error = null;
+    } catch (e) {
+      error = String(e);
+      console.error('[VoiceTrainingWidget] Error toggling training:', e);
+      // Revert the toggle on error
+      trainingEnabled = !newState;
+    } finally {
+      togglingTraining = false;
+    }
+  }
+
+  async function purgeAllData() {
+    const confirmed = confirm(
+      'Are you sure you want to delete ALL voice clone training data?\n\n' +
+      'This will permanently delete:\n' +
+      '- All voice samples\n' +
+      '- Training progress\n' +
+      '- Exported datasets\n\n' +
+      'This action cannot be undone!'
+    );
+
+    if (!confirmed) return;
+
+    purging = true;
+    try {
+      const response = await fetch('/api/voice-training', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'purge' })
+      });
+
+      if (!response.ok) throw new Error('Failed to purge voice data');
+
+      const data = await response.json();
+      alert(`Successfully deleted ${data.deletedCount || 0} samples and all training data.`);
+
+      // Refresh data
+      await loadData();
+    } catch (e) {
+      error = String(e);
+      console.error('[VoiceTrainingWidget] Error purging data:', e);
+    } finally {
+      purging = false;
+    }
+  }
+
+  async function fetchTrainingStatus() {
+    try {
+      const response = await fetch('/api/voice-training?action=status');
+      if (!response.ok) throw new Error('Failed to fetch training status');
+      const data = await response.json();
+      trainingEnabled = data.enabled || false;
+    } catch (e) {
+      console.error('[VoiceTrainingWidget] Error fetching training status:', e);
+    }
+  }
+
   function formatDuration(seconds: number): string {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -108,7 +183,7 @@
 
   async function loadData() {
     loading = true;
-    await Promise.all([fetchProgress(), fetchSamples()]);
+    await Promise.all([fetchProgress(), fetchSamples(), fetchTrainingStatus()]);
     loading = false;
   }
 
@@ -127,11 +202,34 @@
 </script>
 
 <div class="voice-training-widget">
-  <h2>Voice Training</h2>
+  <div class="header">
+    <h2>Voice Clone Training</h2>
+    <div class="training-controls">
+      <div class="toggle-container">
+        <label class="toggle-switch">
+          <input
+            type="checkbox"
+            bind:checked={trainingEnabled}
+            on:change={toggleTraining}
+            disabled={togglingTraining}
+          />
+          <span class="slider"></span>
+        </label>
+        <span class="toggle-label">{trainingEnabled ? 'Enabled' : 'Disabled'}</span>
+      </div>
+    </div>
+  </div>
 
   {#if error}
     <div class="error">
       <strong>Error:</strong> {error}
+    </div>
+  {/if}
+
+  {#if !trainingEnabled}
+    <div class="disabled-notice">
+      <p>Voice clone training is currently disabled.</p>
+      <p>Enable it above to start collecting voice samples during conversations.</p>
     </div>
   {/if}
 
@@ -172,6 +270,9 @@
         <button on:click={exportDataset} disabled={exporting || !progress.readyForTraining}>
           {exporting ? 'Exporting...' : 'Export Dataset'}
         </button>
+        <button class="danger-btn" on:click={purgeAllData} disabled={purging}>
+          {purging ? 'Purging...' : 'Purge All Data'}
+        </button>
       </div>
     </div>
 
@@ -210,14 +311,128 @@
     max-width: 800px;
   }
 
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+
   h2 {
-    margin: 0 0 20px 0;
+    margin: 0;
     font-size: 1.5rem;
     color: #1a1a1a;
   }
 
   :global(.dark) h2 {
     color: #e0e0e0;
+  }
+
+  .training-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .toggle-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  /* Toggle Switch Styles */
+  .toggle-switch {
+    position: relative;
+    display: inline-block;
+    cursor: pointer;
+  }
+
+  .toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+  }
+
+  .slider {
+    position: relative;
+    display: block;
+    width: 50px;
+    height: 24px;
+    background-color: #ccc;
+    border-radius: 24px;
+    transition: background-color 0.3s;
+  }
+
+  .slider::before {
+    content: '';
+    position: absolute;
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    border-radius: 50%;
+    transition: transform 0.3s;
+  }
+
+  .toggle-switch input:checked + .slider {
+    background-color: #4CAF50;
+  }
+
+  .toggle-switch input:checked + .slider::before {
+    transform: translateX(26px);
+  }
+
+  .toggle-switch input:disabled + .slider {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  :global(.dark) .slider {
+    background-color: #555;
+  }
+
+  :global(.dark) .slider::before {
+    background-color: #ddd;
+  }
+
+  :global(.dark) .toggle-switch input:checked + .slider {
+    background-color: #66BB6A;
+  }
+
+  .toggle-label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #333;
+    min-width: 65px;
+  }
+
+  :global(.dark) .toggle-label {
+    color: #ccc;
+  }
+
+  .disabled-notice {
+    padding: 20px;
+    margin-bottom: 20px;
+    background: #f0f0f0;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    text-align: center;
+  }
+
+  .disabled-notice p {
+    margin: 5px 0;
+    color: #666;
+  }
+
+  :global(.dark) .disabled-notice {
+    background: #2a2a2a;
+    border-color: #444;
+  }
+
+  :global(.dark) .disabled-notice p {
+    color: #999;
   }
 
   h3 {
@@ -349,6 +564,8 @@
 
   .actions {
     margin-top: 15px;
+    display: flex;
+    gap: 10px;
   }
 
   button {
@@ -372,6 +589,22 @@
 
   :global(.dark) button:disabled {
     background: #444;
+  }
+
+  .danger-btn {
+    background: #f44336;
+  }
+
+  .danger-btn:hover:not(:disabled) {
+    background: #d32f2f;
+  }
+
+  :global(.dark) .danger-btn {
+    background: #e53935;
+  }
+
+  :global(.dark) .danger-btn:hover:not(:disabled) {
+    background: #c62828;
   }
 
   .samples-section {

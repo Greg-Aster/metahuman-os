@@ -17,7 +17,7 @@ import { audit } from './audit.js';
 export interface Session {
   id: string; // Session token (UUID)
   userId: string; // User ID
-  role: 'owner' | 'guest' | 'anonymous';
+  role: 'owner' | 'standard' | 'guest' | 'anonymous';
   createdAt: string;
   expiresAt: string;
   lastActivity: string;
@@ -90,7 +90,7 @@ function saveSessions(store: SessionStore): void {
  */
 export function createSession(
   userId: string,
-  role: 'owner' | 'guest' | 'anonymous',
+  role: 'owner' | 'standard' | 'guest' | 'anonymous',
   metadata?: { userAgent?: string; ip?: string }
 ): Session {
   const store = loadSessions();
@@ -99,7 +99,8 @@ export function createSession(
   let duration: number;
   switch (role) {
     case 'owner':
-      duration = OWNER_SESSION_DURATION;
+    case 'standard':
+      duration = OWNER_SESSION_DURATION; // Standard users get same 24h session as owners
       break;
     case 'guest':
       duration = GUEST_SESSION_DURATION;
@@ -302,6 +303,7 @@ export function getSessionStats(): {
 
   const byRole: Record<string, number> = {
     owner: 0,
+    standard: 0,
     guest: 0,
     anonymous: 0,
   };
@@ -359,7 +361,8 @@ export function refreshSession(sessionId: string): Session | null {
   let duration: number;
   switch (session.role) {
     case 'owner':
-      duration = OWNER_SESSION_DURATION;
+    case 'standard':
+      duration = OWNER_SESSION_DURATION; // Standard users get same 24h session as owners
       break;
     case 'guest':
       duration = GUEST_SESSION_DURATION;

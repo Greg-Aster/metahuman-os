@@ -19,7 +19,7 @@
   "models": {
     "default.orchestrator": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3-coder:30b",
       "adapters": [],
       "roles": [
         "orchestrator",
@@ -36,14 +36,14 @@
       "metadata": {
         "priority": "high",
         "alwaysLoaded": true,
-        "estimatedLatency": "fast",
-        "sizeGB": 9.3,
+        "estimatedLatency": "medium",
+        "sizeGB": 18,
         "purpose": "Executive function - intelligent intent routing and tool selection"
       }
     },
     "default.persona": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3-coder:30b",
       "adapters": [],
       "roles": [
         "persona",
@@ -60,8 +60,7 @@
       "metadata": {
         "priority": "high",
         "alwaysLoaded": true,
-        "estimatedLatency": "fast",
-        "sizeGB": 9.3
+        "estimatedLatency": "medium"
       }
     },
     "persona.with-lora": {
@@ -117,7 +116,7 @@
     },
     "default.coder": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3-coder:30b",
       "adapters": [],
       "roles": [
         "coder",
@@ -134,15 +133,15 @@
       "metadata": {
         "priority": "medium",
         "alwaysLoaded": false,
-        "estimatedLatency": "fast",
-        "sizeGB": 9.3,
+        "estimatedLatency": "medium",
+        "sizeGB": 18,
         "purpose": "Code specialist - generation, review, debugging, refactoring",
         "specialization": "code"
       }
     },
     "default.planner": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3-coder:30b",
       "adapters": [],
       "roles": [
         "planner",
@@ -159,8 +158,8 @@
       "metadata": {
         "priority": "medium",
         "alwaysLoaded": false,
-        "estimatedLatency": "fast",
-        "sizeGB": 9.3,
+        "estimatedLatency": "medium",
+        "sizeGB": 18,
         "purpose": "Planning specialist - strategic thinking, task breakdown, roadmap creation",
         "specialization": "planning"
       }
@@ -192,7 +191,7 @@
     },
     "default.fallback": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3-coder:30b",
       "adapters": [],
       "roles": [
         "fallback",
@@ -207,8 +206,7 @@
       "metadata": {
         "priority": "low",
         "alwaysLoaded": true,
-        "estimatedLatency": "fast",
-        "sizeGB": 9.3
+        "estimatedLatency": "fast"
       }
     }
   },

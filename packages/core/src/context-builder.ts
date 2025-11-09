@@ -23,6 +23,8 @@ import {
   canViewMemoryType,
   getMaxMemoriesForRole
 } from './memory-policy.js';
+import { readRecentToolsFromCache } from './recent-tools-cache.js';
+import { isSummarizing } from './summary-state.js';
 
 // ============================================================================
 // Context Package Cache (5min TTL)
@@ -132,6 +134,7 @@ function analyzeMemoryPatterns(memories: RelevantMemory[]): DetectedPattern[] {
  * Query conversation summary for a specific session
  *
  * Phase 3: Memory Continuity - retrieves existing conversation summary
+ * Workstream C3: Skip if summary is currently being generated (backpressure)
  *
  * @param conversationId - Session ID to find summary for
  * @returns Conversation summary or null if not found
@@ -139,10 +142,23 @@ function analyzeMemoryPatterns(memories: RelevantMemory[]): DetectedPattern[] {
 async function queryConversationSummary(conversationId?: string): Promise<string | null> {
   if (!conversationId) return null;
 
-  try {
-    const ctx = getUserContext();
-    if (!ctx) return null;
+  const ctx = getUserContext();
+  if (!ctx) return null;
 
+  // C3: Skip if currently being summarized (prevents concurrent LLM calls)
+  const beingSummarized = await isSummarizing(ctx.username, conversationId);
+  if (beingSummarized) {
+    audit({
+      level: 'info',
+      category: 'system',
+      event: 'conversation_summary_skipped_concurrent',
+      details: { conversationId, reason: 'summary_in_progress' },
+      actor: 'context_builder',
+    });
+    return null;
+  }
+
+  try {
     const episodicDir = ctx.profilePaths.episodic;
     if (!existsSync(episodicDir)) return null;
 
@@ -194,6 +210,7 @@ async function queryConversationSummary(conversationId?: string): Promise<string
  * Query recent tool invocations for the current conversation
  *
  * Phase 2: Memory Continuity - retrieves tool usage history from episodic memories
+ * Workstream A3: Cache-first approach - reads from recent-tools cache instead of scanning episodic files
  *
  * @param conversationId - Session ID to filter by
  * @param mode - Cognitive mode (affects limit via memory policy)
@@ -214,6 +231,47 @@ async function queryRecentToolInvocations(
     if (maxLimit === 0) return []; // Emulation mode or guests
 
     const limit = Math.min(options.limit || maxLimit, maxLimit);
+
+    // A3: Try cache first (O(records) instead of O(files))
+    if (conversationId) {
+      const cachedTools = await readRecentToolsFromCache(ctx.username, conversationId, limit);
+
+      if (cachedTools.length > 0) {
+        // Cache hit - transform to ToolInvocation format
+        const tools: ToolInvocation[] = cachedTools.map((t) => {
+          // Parse outputs from cache entry
+          let outputs: Record<string, any> = {};
+          if (t.snippetPath) {
+            // Large output stored separately - use summary
+            outputs = { _summary: t.summary || '(large output)' };
+          } else if (t.output) {
+            try {
+              outputs = JSON.parse(t.output);
+            } catch {
+              outputs = { _raw: t.output };
+            }
+          }
+
+          // Apply role-based filtering to outputs
+          const filteredOutputs = filterToolOutputs(outputs, ctx.role, t.toolName);
+
+          return {
+            id: t.eventId,
+            toolName: t.toolName,
+            timestamp: t.timestamp,
+            inputs: {}, // Not stored in cache (optimization)
+            outputs: filteredOutputs,
+            success: t.success,
+            error: undefined, // Not stored in cache
+            executionTimeMs: undefined, // Not stored in cache
+          };
+        });
+
+        return tools;
+      }
+    }
+
+    // Cache miss - fallback to episodic scan (cache miss already logged by readRecentToolsFromCache)
     const tools: ToolInvocation[] = [];
 
     const episodicDir = ctx.profilePaths.episodic;

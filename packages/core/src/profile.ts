@@ -952,8 +952,9 @@ export async function deleteProfileComplete(
       };
     }
 
-    // Prevent self-deletion
-    if (targetUser.id === requestingUserId) {
+    const isSelfDeletion = targetUser.id === requestingUserId;
+
+    if (isSelfDeletion && targetUser.role !== 'standard') {
       return {
         success: false,
         username,

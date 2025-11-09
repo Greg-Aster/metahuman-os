@@ -136,8 +136,8 @@ function computeSecurityPolicy(
     // The cognitiveMode is saved in metadata for LoRA training differentiation
     canWriteMemory: role !== 'anonymous' && role !== 'guest',
 
-    // Operator: dual or agent mode AND owner only (not emulation)
-    canUseOperator: canUseOperator(mode) && role === 'owner',
+    // Operator: dual or agent mode AND authenticated user (owner or standard, not guest/anonymous, not emulation)
+    canUseOperator: canUseOperator(mode) && (role === 'owner' || role === 'standard'),
 
     // Mode changes: owner only (regardless of current mode)
     canChangeMode: role === 'owner',
@@ -210,14 +210,14 @@ function computeSecurityPolicy(
       if (!this.canUseOperator) {
         throw new SecurityError('Operator access not allowed', {
           reason:
-            role !== 'owner'
+            role !== 'owner' && role !== 'standard'
               ? 'insufficient_role'
               : !canUseOperator(mode)
               ? 'operator_disabled_in_mode'
               : 'unknown',
           currentMode: mode,
           role,
-          required: 'owner role in dual mode',
+          required: 'authenticated user (owner or standard) in dual/agent mode',
         });
       }
     },

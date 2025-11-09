@@ -89,7 +89,7 @@ export function requireOperatorMode(handler: APIRoute): APIRoute {
           JSON.stringify({
             error: error.message,
             ...error.details,
-            hint: 'Only owners in dual consciousness mode can access operator'
+            hint: 'Operator access requires authenticated user (owner or standard) in dual/agent mode'
           }),
           {
             status: 403,

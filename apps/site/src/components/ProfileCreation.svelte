@@ -65,7 +65,14 @@
       const data = await response.json();
 
       if (data.success) {
-        success = `Profile '${username}' created successfully! ${role === 'owner' ? 'User can now log in with owner privileges.' : 'User can now log in as a guest.'}`;
+        const roleMessage =
+          role === 'owner'
+            ? 'User can now log in with owner privileges.'
+            : role === 'standard'
+            ? 'User can now log in with full access to their own profile.'
+            : 'User can now log in as a read-only guest.';
+
+        success = `Profile '${username}' created successfully! ${roleMessage}`;
 
         // Reset form
         username = '';
