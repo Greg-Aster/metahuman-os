@@ -222,24 +222,6 @@ let reasoningStages: ReasoningStage[] = [];
   $: thinkingSteps = thinkingTrace.join('\n\n');
   $: showThinkingIndicator = thinkingActive && reasoningStages.length === 0 && thinkingTrace.length > 0;
 
-  function setYoloMode(value: boolean, persist = true, suppressWarn = false) {
-    const changed = yoloMode !== value;
-    yoloModeStore.set(value); // Update shared store instead of local variable
-    if (persist) saveChatPrefs();
-    if (changed && value && !suppressWarn) {
-      try {
-        if (!localStorage.getItem('yoloWarned')) {
-          alert('YOLO mode relaxes safety checks and allows the operator to act more freely. Use with caution.');
-          localStorage.setItem('yoloWarned', '1');
-        }
-      } catch {}
-    }
-  }
-
-  function toggleYoloMobile() {
-    setYoloMode(!yoloMode);
-  }
-
   function normalizeTextForSpeech(text: string): string {
     if (!text) return '';
     let output = text;
@@ -391,7 +373,7 @@ let reasoningStages: ReasoningStage[] = [];
       if (typeof p.boredomTtsEnabled === 'boolean') boredomTtsEnabled = p.boredomTtsEnabled;
       // forceOperator removed - no longer used
       // audience removed - focus selector obsolete with ReAct operator
-      if (typeof p.yoloMode === 'boolean') setYoloMode(p.yoloMode, false, true);
+      // yoloMode removed - now managed in LeftSidebar trust level
     } catch {}
   }
   function saveChatPrefs() {
@@ -403,7 +385,7 @@ let reasoningStages: ReasoningStage[] = [];
         boredomTtsEnabled,
         // forceOperator removed - no longer used
         // audience removed - focus selector obsolete with ReAct operator
-        yoloMode,
+        // yoloMode removed - now managed in LeftSidebar trust level
       };
       localStorage.setItem('chatPrefs', JSON.stringify(prefs));
     } catch {}
@@ -926,7 +908,7 @@ let reasoningStages: ReasoningStage[] = [];
 
 <div class="chat-interface">
   <!-- Mode Toggle -->
-  <div class="mode-toggle-container">
+  <div class="mode-toggle-container sm:gap-3">
     <div class="mode-toggle">
       <button
         class={mode === 'conversation' ? 'mode-btn active' : 'mode-btn'}
@@ -941,7 +923,7 @@ let reasoningStages: ReasoningStage[] = [];
         on:click={() => { mode = 'inner'; loadHistoryForMode(); }}
         aria-label="Inner dialogue mode"
       >
-        <span class="mode-icon" aria-hidden="true">🧠</span>
+        <span class="mode-icon" aria-hidden="true">💭</span>
         <span class="mode-label">Inner Dialogue</span>
       </button>
     </div>
@@ -961,22 +943,23 @@ let reasoningStages: ReasoningStage[] = [];
 
     <!-- Reasoning depth slider -->
     <div class="reasoning-toggle">
-      <label class="control-label" for="reasoning-range">
-        <span class="control-icon" aria-hidden="true">🧠</span>
-        <span class="control-text">Reasoning</span>
-      </label>
-      <div class="reasoning-slider">
+      <div class="reasoning-slider-wrapper">
         <input
           id="reasoning-range"
           type="range"
+          class="reasoning-slider-input"
           min="0"
           max={reasoningLabels.length - 1}
           step="1"
           value={reasoningDepth}
           on:input={handleReasoningInput}
           on:change={handleReasoningChange}
+          title="Reasoning: {reasoningLabels[reasoningDepth]}"
+          aria-label="Reasoning depth: {reasoningLabels[reasoningDepth]}"
         />
-        <span class="reasoning-level">{reasoningLabels[reasoningDepth]}</span>
+        <div class="reasoning-emoji" style="left: {(reasoningDepth / (reasoningLabels.length - 1)) * 100}%">
+          🧠
+        </div>
       </div>
     </div>
 
@@ -1002,23 +985,22 @@ let reasoningStages: ReasoningStage[] = [];
       
       <!-- Inner dialog voice toggle (only visible in inner mode) -->
       {#if mode === 'inner'}
-        <button 
-          class="icon-btn {boredomTtsEnabled ? 'active' : ''}" 
+        <button
+          class="icon-btn {boredomTtsEnabled ? 'active' : ''}"
           title={boredomTtsEnabled ? 'Disable inner dialog voice (boredom service)' : 'Enable inner dialog voice (boredom service)'}
           on:click={() => { boredomTtsEnabled = !boredomTtsEnabled; saveChatPrefs(); }}
         >
-          <!-- Robot/Inner dialog icon -->
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>
-          </svg>
+          <!-- Thought bubble icon for inner dialog -->
+          <span style="font-size: 18px; line-height: 1;">💭</span>
           {#if boredomTtsEnabled}<span class="badge">Inner On</span>{/if}
         </button>
       {/if}
     </div>
 
     {#if messages.length > 0}
-      <button class="clear-btn" on:click={clearChat}>
-        Clear
+      <button class="clear-btn" on:click={clearChat} title="Clear chat history">
+        <span class="clear-icon" aria-hidden="true">🗑️</span>
+        <span class="clear-text">Clear</span>
       </button>
     {/if}
   </div>
@@ -1157,20 +1139,6 @@ let reasoningStages: ReasoningStage[] = [];
           disabled={loading}
         />
         <div class="input-actions">
-          {#if $currentMode !== 'emulation'}
-            <!-- Operator toggle removed: unified reasoning always uses operator for authenticated users -->
-            <button
-              class="operator-icon-btn yolo {yoloMode ? 'active' : ''}"
-              title={!$canUseOperator ? 'YOLO mode disabled in current mode' : (yoloMode ? 'YOLO mode enabled' : 'Enable YOLO mode')}
-              aria-pressed={yoloMode}
-              disabled={!$canUseOperator}
-              on:click={toggleYoloMobile}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M13 2L3 14h7l-1 8 10-12h-7z" />
-              </svg>
-            </button>
-          {/if}
           <!-- Stop button - only visible when audio is playing -->
           {#if currentAudio}
             <button
@@ -1212,504 +1180,22 @@ let reasoningStages: ReasoningStage[] = [];
 </div>
 
 <style>
-  /* Component-specific overrides and unique styles only */
+  /* Custom animations and pseudo-elements that can't be done with Tailwind */
 
-  /* Mobile responsive adjustments */
-  @media (max-width: 640px) {
-    .mode-toggle-container {
-      flex-wrap: nowrap;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.75rem 0.5rem;
-      overflow-x: auto;
-      overflow-y: hidden;
-      scrollbar-width: none;
-    }
-
-    .mode-toggle-container::-webkit-scrollbar {
-      display: none;
-    }
-
-    .mode-toggle {
-      flex: 0 0 auto;
-      gap: 0.35rem;
-    }
-
-    .mode-btn {
-      flex: 0 0 auto;
-      justify-content: center;
-      padding: 0.4rem 0.55rem;
-    }
-
-    .mode-label,
-    .control-text {
-      display: none;
-    }
-
-    .length-toggle,
-    .reasoning-toggle,
-    .quick-audio {
-      flex: 0 0 auto;
-      gap: 0.35rem;
-      white-space: nowrap;
-    }
-
-    .length-toggle select {
-      width: 82px;
-      padding: 0.3rem 0.5rem;
-    }
-
-    .reasoning-slider {
-      gap: 0.4rem;
-    }
-
-    .reasoning-slider input[type="range"] {
-      width: 80px;
-    }
-
-    .reasoning-level {
-      display: none;
-    }
-
-    .quick-audio {
-      gap: 0.35rem;
-      flex-wrap: nowrap;
-    }
-
-    .icon-btn {
-      padding: 0.3rem 0.4rem;
-    }
-  }
-
-
-
-  /* Mode Toggle */
-  .mode-toggle-container {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    padding: 1rem;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-    flex-shrink: 0;
-  }
-
-  :global(.dark) .mode-toggle-container {
-    border-bottom-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .mode-toggle {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.25rem;
-    background: rgba(0, 0, 0, 0.05);
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .mode-toggle {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .mode-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.45rem 0.85rem;
-    border: none;
-    background: transparent;
-    border-radius: 0.375rem;
-    font-size: 0.85rem;
-    font-weight: 500;
-    color: rgb(107 114 128);
-    cursor: pointer;
-    transition: all 0.2s;
-    min-width: fit-content;
-  }
-
-  :global(.dark) .mode-btn {
-    color: rgb(156 163 175);
-  }
-
-  .mode-icon {
-    font-size: 1rem;
-    line-height: 1;
-  }
-
-  .mode-label {
-    white-space: nowrap;
-  }
-
-  .control-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: rgb(107 114 128);
-    cursor: pointer;
-  }
-
-  :global(.dark) .control-label {
-    color: rgb(156 163 175);
-  }
-
-  .control-icon {
-    font-size: 1rem;
-    line-height: 1;
-  }
-
-  .control-text {
-    white-space: nowrap;
-  }
-
-  .mode-btn:hover {
-    background: rgba(0, 0, 0, 0.05);
-  }
-
-  :global(.dark) .mode-btn:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .mode-btn.active {
-    background: white;
-    color: rgb(17 24 39);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  }
-
-  :global(.dark) .mode-btn.active {
-    background: rgb(17 24 39);
-    color: rgb(243 244 246);
-  }
-
-  .clear-btn {
-    padding: 0.5rem 1rem;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    background: transparent;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: rgb(107 114 128);
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  :global(.dark) .clear-btn {
-    border-color: rgba(255, 255, 255, 0.1);
-    color: rgb(156 163 175);
-  }
-
-  .clear-btn:hover {
-    border-color: rgb(220 38 38);
-    color: rgb(220 38 38);
-  }
-
-  :global(.dark) .clear-btn:hover {
-    border-color: rgb(252 165 165);
-    color: rgb(252 165 165);
-  }
-
-  /* Length toggle styling */
-  .length-toggle { display: flex; align-items: center; gap: 0.5rem; }
-  .length-toggle select {
-    appearance: none;
-    padding: 0.35rem 0.75rem;
-    border: 1px solid rgba(0,0,0,0.15);
-    border-radius: 0.375rem;
-    background: white;
-    color: rgb(17 24 39);
-  }
-  :global(.dark) .length-toggle select {
-    background: rgb(17 24 39);
-    color: rgb(243 244 246);
-    border-color: rgba(255,255,255,0.2);
-  }
-
-  .quick-audio { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-  .reasoning-toggle { display: flex; align-items: center; gap: 0.5rem; }
-  .reasoning-slider {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    min-width: 0;
-  }
-
-  .reasoning-slider input[type="range"] {
-    width: 140px;
-    max-width: 100%;
-    accent-color: rgb(124 58 237);
-    cursor: pointer;
-  }
-
-  :global(.dark) .reasoning-slider input[type="range"] {
-    accent-color: rgb(167 139 250);
-  }
-
-  .reasoning-level {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: rgb(107 114 128);
-    min-width: 3.5rem;
-  }
-
-  :global(.dark) .reasoning-level {
-    color: rgb(156 163 175);
-  }
-  .icon-btn {
-    display: inline-flex; align-items: center; gap: 0.25rem;
-    padding: 0.35rem 0.5rem; border: 1px solid rgba(0,0,0,0.15);
-    background: white; color: rgb(17 24 39);
-    border-radius: 0.375rem; cursor: pointer;
-  }
-  .icon-btn.active {
-    background: #7c3aed; /* purple background when active */
-    color: white;
-    border-color: #7c3aed;
-  }
-  :global(.dark) .icon-btn { background: rgb(17 24 39); color: rgb(243 244 246); border-color: rgba(255,255,255,0.2); }
-  :global(.dark) .icon-btn.active { background: #8b5cf6; color: rgb(17 24 39); border-color: #8b5cf6; }
-  .icon-btn .badge { font-size: 0.65rem; background: #10b981; color: white; border-radius: 0.25rem; padding: 0 0.25rem; }
-
-  .mini-voice { border-bottom: 1px solid rgba(0,0,0,0.1); }
-  :global(.dark) .mini-voice { border-bottom-color: rgba(255,255,255,0.1); }
-  /* Compact voice interface inside chat */
-  :global(.mini-voice .voice-interface) { min-height: 180px; padding: 0.75rem; }
-  :global(.mini-voice .mode-selector), :global(.mini-voice .vad-settings) { display: none; }
-
-  /* Messages Container */
-  .messages-container {
-    flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-  }
-
-  /* Welcome Screen */
-  .welcome-screen {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    padding: 2rem;
-    text-align: center;
-  }
-
-  .welcome-icon {
-    font-size: 4rem;
-    margin-bottom: 1rem;
-  }
-
-  .welcome-title {
-    font-size: 1.875rem;
-    font-weight: 700;
-    color: rgb(17 24 39);
-    margin: 0 0 0.5rem 0;
-  }
-
-  :global(.dark) .welcome-title {
-    color: rgb(243 244 246);
-  }
-
-  .welcome-subtitle {
-    font-size: 1rem;
-    color: rgb(107 114 128);
-    margin: 0 0 2rem 0;
-  }
-
-  :global(.dark) .welcome-subtitle {
-    color: rgb(156 163 175);
-  }
-
-  .welcome-suggestions {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    max-width: 400px;
-    width: 100%;
-  }
-
-  .suggestion {
-    padding: 1rem;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    background: white;
-    border-radius: 0.75rem;
-    font-size: 0.875rem;
-    color: rgb(17 24 39);
-    cursor: pointer;
-    transition: all 0.2s;
-    text-align: left;
-  }
-
-  :global(.dark) .suggestion {
-    border-color: rgba(255, 255, 255, 0.1);
-    background: rgb(17 24 39);
-    color: rgb(243 244 246);
-  }
-
-  .suggestion:hover {
-    border-color: rgb(124 58 237);
-    box-shadow: 0 4px 12px rgba(124, 58, 237, 0.15);
-  }
-
-  :global(.dark) .suggestion:hover {
-    border-color: rgb(167 139 250);
-    box-shadow: 0 4px 12px rgba(167, 139, 250, 0.15);
-  }
-
-  /* Messages List */
-  .messages-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    padding: 2rem;
-    max-width: 48rem;
-    margin: 0 auto;
-    width: 100%;
-  }
-
-  .message-actions {
-    display: inline-flex;
-    gap: 0.25rem;
-    margin-left: 0.5rem;
-  }
-
-  .msg-btn {
-    width: 1.25rem;
-    height: 1.25rem;
-    line-height: 1rem;
-    border: 1px solid rgba(0,0,0,0.15);
-    border-radius: 0.25rem;
-    background: transparent;
-    color: rgba(0,0,0,0.6);
-    cursor: pointer;
-  }
-
-  :global(.dark) .msg-btn { border-color: rgba(255,255,255,0.2); color: rgba(255,255,255,0.8); }
-  .msg-btn.good { border-color: rgba(34,197,94,0.5); }
-  .msg-btn.bad { border-color: rgba(239,68,68,0.5); }
-
-  .msg-mic-btn {
+  .mic-btn.recording::after {
+    content: '';
     position: absolute;
-    bottom: 0.5rem;
-    right: 0.5rem;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.75rem;
-    height: 1.75rem;
-    padding: 0.375rem;
-    border: none;
-    border-radius: 50%;
-    background: rgba(0,0,0,0.08);
-    color: rgba(0,0,0,0.4);
-    cursor: pointer;
-    transition: all 0.2s;
-    opacity: 0.5;
-  }
-
-  .msg-mic-btn:hover {
-    background: rgba(0,0,0,0.15);
-    color: rgba(0,0,0,0.9);
-    opacity: 1;
-    transform: scale(1.15);
-  }
-
-  :global(.dark) .msg-mic-btn {
-    background: rgba(255,255,255,0.08);
-    color: rgba(255,255,255,0.4);
-  }
-
-  :global(.dark) .msg-mic-btn:hover {
-    background: rgba(255,255,255,0.15);
-    color: rgba(255,255,255,0.95);
-  }
-
-  /* For user messages (purple background), make mic button more visible */
-  .message-user .msg-mic-btn {
-    background: rgba(255,255,255,0.2);
-    color: rgba(255,255,255,0.7);
-  }
-
-  .message-user .msg-mic-btn:hover {
-    background: rgba(255,255,255,0.35);
-    color: rgba(255,255,255,1);
-  }
-
-  .message {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .message-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .message-role {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .message-role {
-    color: rgb(156 163 175);
-  }
-
-  .message-user .message-role {
-    color: rgb(124 58 237);
-  }
-
-  :global(.dark) .message-user .message-role {
-    color: rgb(167 139 250);
-  }
-
-  .message-time {
-    font-size: 0.7rem;
-    color: rgb(156 163 175);
-  }
-
-  :global(.dark) .message-time {
-    color: rgb(107 114 128);
-  }
-
-  .message-content {
-    position: relative;
-    padding: 1rem;
-    padding-bottom: 2.5rem; /* Extra space for mic button */
+    inset: -6px;
+    border: 2px solid rgba(167, 139, 250, 0.8);
     border-radius: 0.75rem;
-    font-size: 0.9375rem;
-    line-height: 1.6;
-    white-space: pre-wrap;
-    word-wrap: break-word;
+    animation: pulseMic 1.2s infinite ease-out;
+    pointer-events: none;
   }
 
-  .message-user .message-content {
-    background: rgb(124 58 237);
-    color: white;
-    margin-left: auto;
-    max-width: 85%;
-  }
-
-  :global(.dark) .message-user .message-content {
-    background: rgb(167 139 250);
-    color: rgb(17 24 39);
-  }
-
-  .message-assistant .message-content {
-    background: rgba(0, 0, 0, 0.05);
-    color: rgb(17 24 39);
-    max-width: 85%;
-  }
-
-  :global(.dark) .message-assistant .message-content {
-    background: rgba(255, 255, 255, 0.05);
-    color: rgb(243 244 246);
+  @keyframes pulseMic {
+    0% { transform: scale(0.9); opacity: 0.6; }
+    80% { transform: scale(1.15); opacity: 0; }
+    100% { transform: scale(1.2); opacity: 0; }
   }
 
   /* Facet-specific border colors for assistant messages */
@@ -1733,323 +1219,138 @@ let reasoningStages: ReasoningStage[] = [];
     border-left: 3px solid rgba(139,92,246,0.6);
   }
 
-  /* Facet indicator styling */
-  .facet-indicator {
-    font-size: 0.75rem;
-    opacity: 0.7;
-    font-weight: normal;
-    text-transform: capitalize;
-  }
-
-  .message-reflection .message-content {
-    background: rgba(167, 139, 250, 0.1);
-    color: rgb(109 40 217);
-    border: 1px solid rgba(167, 139, 250, 0.3);
-    max-width: 85%;
-    font-style: italic;
-  }
-
-  :global(.dark) .message-reflection .message-content {
-    background: rgba(167, 139, 250, 0.1);
-    color: rgb(196 181 253);
-    border-color: rgba(167, 139, 250, 0.3);
-  }
-
-  .message-system .message-content {
-    background: rgb(254 226 226);
-    color: rgb(153 27 27);
-    border: 1px solid rgb(252 165 165);
-    font-size: 0.875rem;
-    text-align: center;
-  }
-
-  :global(.dark) .message-system .message-content {
-    background: rgba(185, 28, 28, 0.2);
-    color: rgb(252 165 165);
-    border-color: rgba(252, 165, 165, 0.3);
-  }
-
-  /* Typing Indicator */
-  .typing {
-    display: flex;
-    gap: 0.375rem;
-    padding: 0.75rem 1rem;
-  }
-
-  .typing-dot {
-    width: 0.5rem;
-    height: 0.5rem;
-    border-radius: 50%;
-    background: rgb(107 114 128);
-    animation: typing 1.4s infinite;
-  }
-
-  :global(.dark) .typing-dot {
-    background: rgb(156 163 175);
-  }
-
-  .typing-dot:nth-child(2) {
-    animation-delay: 0.2s;
-  }
-
-  .typing-dot:nth-child(3) {
-    animation-delay: 0.4s;
-  }
-
-  @keyframes typing {
-    0%, 60%, 100% {
-      transform: translateY(0);
-      opacity: 0.7;
-    }
-    30% {
-      transform: translateY(-0.5rem);
-      opacity: 1;
-    }
-  }
-
-  .scroll-sentinel {
-    height: 1px;
-  }
-
-  /* Input Container */
-  .input-container {
-    padding: 1rem;
-    /* Ensure visible above iOS home indicator and Android gesture bar */
-    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
-    border-top: 1px solid rgba(0, 0, 0, 0.1);
-    background: rgba(255, 255, 255, 0.8);
-    backdrop-filter: blur(12px);
-    flex-shrink: 0;
-  }
-
-  :global(.dark) .input-container {
-    border-top-color: rgba(255, 255, 255, 0.1);
-    background: rgba(3, 7, 18, 0.8);
-  }
-
-  .input-wrapper {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    max-width: 48rem;
-    margin: 0 auto;
-  }
-
-  .input-row {
-    display: flex;
-    align-items: flex-end;
-    gap: 0.75rem;
-  }
-
-  .chat-input {
-    flex: 1;
-    padding: 0.75rem 1rem;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    border-radius: 0.75rem;
-    font-size: 0.9375rem;
-    font-family: inherit;
-    resize: none;
-    max-height: 200px;
-    background: white;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .chat-input {
-    border-color: rgba(255, 255, 255, 0.1);
-    background: rgb(17 24 39);
-    color: rgb(243 244 246);
-  }
-
-  .chat-input:focus {
-    outline: none;
-    border-color: rgb(124 58 237);
-    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
-  }
-
-  :global(.dark) .chat-input:focus {
-    border-color: rgb(167 139 250);
-    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.1);
-  }
-
-  .chat-input:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .input-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .send-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.75rem;
-    border: none;
-    border-radius: 0.75rem;
-    background: rgb(124 58 237);
-    color: white;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  :global(.dark) .send-btn {
-    background: rgb(167 139 250);
-    color: rgb(17 24 39);
-  }
-
-  .send-btn:hover:not(:disabled) {
-    background: rgb(109 40 217);
-    transform: translateY(-1px);
-  }
-
-  :global(.dark) .send-btn:hover:not(:disabled) {
-    background: rgb(196 181 253);
-  }
-
-  .send-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* Mobile-only operator icon button (hidden on desktop) */
-  .operator-icon-btn {
+  /* Clear button - hide icon on desktop, show text */
+  .clear-btn .clear-icon {
     display: none;
-    align-items: center;
-    justify-content: center;
-    padding: 0.55rem 0.6rem;
-    border: 1px solid rgba(0,0,0,0.1);
-    border-radius: 0.75rem;
-    background: white;
-    color: rgb(17 24 39);
-  }
-  :global(.dark) .operator-icon-btn { background: rgb(17 24 39); color: rgb(243 244 246); border-color: rgba(255,255,255,0.1); }
-  .operator-icon-btn.active { border-color: rgb(167 139 250); box-shadow: 0 0 0 3px rgba(167,139,250,0.25); }
-  :global(.dark) .operator-icon-btn.active { border-color: rgb(167, 139, 250); box-shadow: 0 0 0 3px rgba(167,139,250,0.35); background: rgba(167,139,250,0.15); }
-  .operator-icon-btn.yolo { border-color: rgba(234,179,8,0.4); color: rgb(202 138 4); background: rgba(253, 230, 138, 0.2); }
-  :global(.dark) .operator-icon-btn.yolo { border-color: rgba(253,224,71,0.35); background: rgba(146, 64, 14, 0.28); color: rgb(253 224 71); }
-  .operator-icon-btn.yolo.active { border-color: rgb(234,179,8); box-shadow: 0 0 0 3px rgba(234,179,8,0.32); background: rgba(253, 224, 71, 0.3); }
-  :global(.dark) .operator-icon-btn.yolo.active { border-color: rgb(250,204,21); box-shadow: 0 0 0 3px rgba(250,204,21,0.36); background: rgba(214, 158, 46, 0.4); }
-
-  .mic-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.55rem 0.6rem;
-    border: 1px solid rgba(0,0,0,0.1);
-    border-radius: 0.75rem;
-    background: white;
-    color: rgb(17 24 39);
-    cursor: pointer;
-  }
-  :global(.dark) .mic-btn { background: rgb(17 24 39); color: rgb(243 244 246); border-color: rgba(255,255,255,0.1); }
-  .mic-btn[disabled] { opacity: 0.6; cursor: not-allowed; }
-  .mic-btn.recording {
-    border-color: rgb(167 139 250);
-    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.2);
-    position: relative;
-  }
-  .mic-btn.recording::after {
-    content: '';
-    position: absolute;
-    inset: -6px;
-    border: 2px solid rgba(167, 139, 250, 0.8);
-    border-radius: 0.75rem;
-    animation: pulseMic 1.2s infinite ease-out;
-    pointer-events: none;
-  }
-  @keyframes pulseMic {
-    0% { transform: scale(0.9); opacity: 0.6 }
-    80% { transform: scale(1.15); opacity: 0 }
-    100% { transform: scale(1.2); opacity: 0 }
   }
 
-  /* Input stop button - matches mic/send button styling but with red theme */
-  .input-stop-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.55rem 0.6rem;
-    border: 1px solid rgba(220, 38, 38, 0.3);
-    border-radius: 0.75rem;
-    background: rgba(220, 38, 38, 0.1);
-    color: rgb(220, 38, 38);
-    cursor: pointer;
-    transition: all 0.2s;
+  .clear-btn .clear-text {
+    display: inline;
   }
 
-  .input-stop-btn:hover {
-    background: rgba(220, 38, 38, 0.2);
-    border-color: rgb(220, 38, 38);
-    transform: scale(1.05);
-  }
+  /* Mobile-specific overrides that benefit from media queries */
+  @media (max-width: 640px) {
+    .mode-toggle-container {
+      flex-wrap: nowrap;
+      gap: 0.5rem;
+      padding: 0.75rem 0.5rem;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
 
-  :global(.dark) .input-stop-btn {
-    background: rgba(252, 165, 165, 0.1);
-    border-color: rgba(252, 165, 165, 0.2);
-    color: rgb(252, 165, 165);
-  }
+    .mode-toggle-container::-webkit-scrollbar {
+      display: none;
+    }
 
-  :global(.dark) .input-stop-btn:hover {
-    background: rgba(252, 165, 165, 0.2);
-    border-color: rgb(252, 165, 165);
-  }
+    .mode-toggle {
+      flex: 0 0 auto;
+      gap: 0.35rem;
+    }
 
-  /* Scrollbar */
-  .messages-container::-webkit-scrollbar {
-    width: 8px;
-  }
+    .mode-btn {
+      flex: 0 0 auto;
+      padding: 0.45rem 0.5rem;
+      font-size: 1rem;
+      min-width: unset;
+    }
 
-  .messages-container::-webkit-scrollbar-track {
-    background: transparent;
-  }
+    .mode-label,
+    .control-text {
+      display: none;
+    }
 
-  .messages-container::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 4px;
-  }
+    /* Ensure mode icons are visible */
+    .mode-icon {
+      font-size: 1.1rem;
+    }
 
-  :global(.dark) .messages-container::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
-  }
+    /* Hide badges on mobile to save space */
+    .icon-btn .badge {
+      display: none;
+    }
 
-  .messages-container::-webkit-scrollbar-thumb:hover {
-    background: rgba(0, 0, 0, 0.3);
-  }
+    .length-toggle,
+    .reasoning-toggle,
+    .quick-audio {
+      flex: 0 0 auto;
+      gap: 0.35rem;
+    }
 
-  :global(.dark) .messages-container::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.3);
-  }
+    /* Make length select more compact - icon-only style */
+    .length-toggle {
+      gap: 0;
+    }
 
-  /* Responsive (mobile) adjustments */
-  @media (max-width: 767px) {
-    /* Hide verbose controls on mobile */
-    .mic-btn { display: none; }
+    .length-toggle .control-label {
+      display: none;
+    }
 
-    /* Hide YOLO button on mobile - now in status widget */
-    .operator-icon-btn.yolo { display: none; }
+    .length-toggle select {
+      width: 70px;
+      padding: 0.35rem 0.4rem;
+      font-size: 0.75rem;
+    }
 
-    /* Keep input row horizontal (textarea + buttons on same line) */
+    .reasoning-slider-wrapper {
+      width: 70px;
+      height: 28px;
+    }
+
+    .reasoning-slider-input::-webkit-slider-thumb {
+      width: 24px;
+      height: 24px;
+    }
+
+    .reasoning-slider-input::-moz-range-thumb {
+      width: 24px;
+      height: 24px;
+    }
+
+    .reasoning-emoji {
+      font-size: 16px;
+    }
+
+    .icon-btn {
+      padding: 0.35rem 0.45rem;
+      min-width: unset;
+    }
+
+    /* Make clear button icon-only on mobile */
+    .clear-btn {
+      padding: 0.35rem 0.5rem;
+      min-width: unset;
+      font-size: 1.1rem;
+    }
+
+    .clear-btn .clear-text {
+      display: none;
+    }
+
+    .clear-btn .clear-icon {
+      display: inline;
+    }
+
+    .mic-btn {
+      display: none;
+    }
+
+    .input-wrapper {
+      gap: 0.5rem;
+    }
+
+    .chat-input {
+      font-size: 0.95rem;
+      padding: 0.65rem 0.8rem;
+    }
+
     .input-row {
-      display: flex;
-      flex-direction: row;
-      align-items: flex-end;
       gap: 0.5rem;
     }
 
     .input-actions {
-      display: flex;
-      align-items: center;
       gap: 0.35rem;
     }
 
-    /* Tighten spacing to give input more room */
-    .input-wrapper { gap: 0.5rem; }
-    .chat-input { font-size: 0.95rem; padding: 0.65rem 0.8rem; }
-
-    /* Make buttons more compact on mobile */
     .input-stop-btn,
     .send-btn {
       padding: 0.6rem;

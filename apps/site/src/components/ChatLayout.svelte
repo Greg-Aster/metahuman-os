@@ -60,7 +60,7 @@
   };
 
   const defaultVisual: ModeVisual = {
-    icon: '🧠',
+    icon: '💭',
     color: '#7c3aed',
     glow: 'rgba(124, 58, 237, 0.55)',
   };
@@ -70,7 +70,7 @@
     switch (mode.id) {
       case 'dual':
         return {
-          icon: '🧠',
+          icon: '💭',
           color: '#a855f7',
           glow: 'rgba(168, 85, 247, 0.65)',
         };
@@ -328,7 +328,7 @@
       <div class="relative" bind:this={userMenuAnchor}>
         <button
           on:click={toggleUserMenu}
-          class="flex items-center gap-3 text-lg font-semibold text-gray-900 dark:text-gray-100 m-0 border-0 bg-transparent cursor-pointer p-2 rounded-md transition-all hover:bg-gray-100 dark:hover:bg-white/10"
+          class="flex items-center gap-2 sm:gap-3 text-lg font-semibold text-gray-900 dark:text-gray-100 m-0 border-0 bg-transparent cursor-pointer p-2 rounded-md transition-all hover:bg-gray-100 dark:hover:bg-white/10"
           aria-label="User menu"
         >
           {#if personaIcon && !personaIconError}
@@ -341,10 +341,10 @@
           {:else}
             <span class="persona-icon-fallback">🤖</span>
           {/if}
-          <span class="brand-name">{personaName}</span>
+          <span class="brand-name hidden sm:inline">{personaName}</span>
           {#if currentUser}
             <span class="text-xs text-gray-500 dark:text-gray-400 font-normal">
-              ({currentUser.username})
+              <span class="hidden sm:inline">(</span>{currentUser.username}<span class="hidden sm:inline">)</span>
             </span>
           {/if}
         </button>
@@ -387,7 +387,7 @@
       </div>
     </div>
 
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-2 sm:gap-3">
       <div class="relative" bind:this={modeMenuAnchor}>
         <button
           class={`mode-menu-trigger ${modeMenuOpen ? 'active' : ''}`}
@@ -395,10 +395,11 @@
           on:click={() => { modeMenuOpen = !modeMenuOpen; }}
           aria-haspopup="listbox"
           aria-expanded={modeMenuOpen}
+          title={cognitiveMode?.label ?? 'Mode'}
         >
           <span class="mode-dot" style={`background:${modeVisual.color}`}></span>
-          <span class="mode-text">{modeLoading ? 'Loading…' : cognitiveMode?.label ?? 'Mode unavailable'}</span>
-          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <span class="mode-text hidden sm:inline">{modeLoading ? 'Loading…' : cognitiveMode?.label ?? 'Mode unavailable'}</span>
+          <svg class="w-4 h-4 text-gray-400 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
           </svg>
         </button>
@@ -560,59 +561,7 @@
     min-height: var(--app-vh, 100vh);
   }
 
-  /* Component-specific mode styling with custom properties */
-  .mode-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.9rem;
-    transition: color 0.3s ease, text-shadow 0.3s ease;
-  }
-
-  .brand-name {
-    letter-spacing: 0.04em;
-    font-weight: 700;
-  }
-
-  .mode-label {
-    box-shadow: 0 0 18px var(--mode-glow, rgba(124, 58, 237, 0.6));
-    color: var(--mode-accent, inherit);
-  }
-
-  .mode-label.loading,
-  .mode-label.muted {
-    box-shadow: none;
-    color: inherit;
-  }
-
-  .mode-menu-trigger {
-    color: var(--mode-accent, inherit);
-    box-shadow: 0 0 12px rgba(148, 163, 184, 0.15);
-  }
-
-  .mode-menu-trigger:hover {
-    box-shadow: 0 0 20px var(--mode-glow, rgba(124, 58, 237, 0.25));
-    border-color: var(--mode-accent, rgba(124, 58, 237, 0.45));
-  }
-
-  .mode-menu-trigger.active {
-    box-shadow: 0 0 24px var(--mode-glow, rgba(124, 58, 237, 0.35));
-    border-color: var(--mode-accent, rgba(124, 58, 237, 0.55));
-  }
-
-  .mode-dot {
-    display: inline-flex;
-    height: 8px;
-    width: 8px;
-    border-radius: 999px;
-    box-shadow: 0 0 10px var(--mode-accent, rgba(124, 58, 237, 0.5));
-  }
-
-  .mode-text {
-    font-weight: 600;
-  }
-
-  /* Sidebar scrollbars */
+  /* Sidebar scrollbars - custom pseudo-elements that can't be done with Tailwind */
   aside > div::-webkit-scrollbar {
     width: 6px;
   }
@@ -631,15 +580,5 @@
   }
   :global(.dark) aside > div::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.3);
-  }
-
-  .persona-icon-fallback {
-    width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    flex-shrink: 0;
   }
 </style>
