@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { onMount, afterUpdate, tick, onDestroy } from 'svelte';
+  import { onMount, afterUpdate, onDestroy } from 'svelte';
   import Thinking from './Thinking.svelte';
   import VoiceInteraction from './VoiceInteraction.svelte';
   import ApprovalBox from './ApprovalBox.svelte';
   import { canUseOperator, currentMode } from '../stores/security-policy';
-  import { triggerClearAuditStream, clearChatTrigger } from '../stores/clear-events';
+  import { triggerClearAuditStream } from '../stores/clear-events';
   import { yoloModeStore } from '../stores/navigation';
 
 type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'dream' | 'reasoning';
@@ -34,7 +34,7 @@ let reasoningStages: ReasoningStage[] = [];
   const reasoningLabels = ['Off', 'Quick', 'Focused', 'Deep'];
   const clampReasoningDepth = (value: number) => Math.max(0, Math.min(reasoningLabels.length - 1, Math.round(value)));
   let chatResponseStream: EventSource | null = null;
-  let mode: 'conversation' | 'inner' | 'voice' = 'conversation';
+  let mode: 'conversation' | 'inner' = 'conversation';
   let lengthMode: 'auto' | 'concise' | 'detailed' = 'auto';
   let messagesContainer: HTMLDivElement;
   let shouldAutoScroll = true;
@@ -53,8 +53,6 @@ let reasoningStages: ReasoningStage[] = [];
   let currentObjectUrl: string | null = null;
   let currentTtsAbort: AbortController | null = null;
   let ttsPlaybackToken = 0;
-  // Operator status variables removed - controls moved to left sidebar status widget
-  let controlsExpanded = true;
   let yoloMode = false;
 
   // Thinking trace sourced from live audit events
@@ -66,7 +64,7 @@ let reasoningStages: ReasoningStage[] = [];
   let auditStream: EventSource | null = null;
 
   // Subscribe to shared YOLO mode store
-  yoloModeStore.subscribe(value => {
+  const unsubscribeYolo = yoloModeStore.subscribe(value => {
     yoloMode = value;
   });
 
@@ -236,11 +234,6 @@ let reasoningStages: ReasoningStage[] = [];
         }
       } catch {}
     }
-  }
-
-  function handleYoloToggle(event: Event) {
-    const target = event.target as HTMLInputElement;
-    setYoloMode(target?.checked ?? false);
   }
 
   function toggleYoloMobile() {
@@ -439,7 +432,6 @@ let reasoningStages: ReasoningStage[] = [];
   function sessionKey() { return `chatSession:${mode}`; }
   function saveSession() {
     try {
-      if (mode === 'voice') return;
       const toSave = messages.slice(-100); // keep last 100
       localStorage.setItem(sessionKey(), JSON.stringify(toSave));
     } catch {}
@@ -543,7 +535,6 @@ let reasoningStages: ReasoningStage[] = [];
 
   // Load chat history from episodic memory for the current mode
   async function loadHistoryForMode() {
-    if (mode === 'voice') return;
     try {
       const res = await fetch(`/api/chat/history?mode=${mode}&limit=60`);
       if (!res.ok) return;
@@ -585,6 +576,7 @@ let reasoningStages: ReasoningStage[] = [];
       try { audioCtx.close(); } catch {}
       audioCtx = null;
     }
+    unsubscribeYolo();
     // teardownOperatorOutsideListener removed - operator info popover removed
   });
 
@@ -689,7 +681,7 @@ let reasoningStages: ReasoningStage[] = [];
             }
             saveSession();
 
-            if (ttsEnabled && mode !== 'voice' && data.response) {
+            if (ttsEnabled && data.response) {
               console.log('[chat-tts] TTS enabled, speaking response:', data.response.substring(0, 50));
               void speakText(data.response);
             } else {
@@ -952,14 +944,6 @@ let reasoningStages: ReasoningStage[] = [];
         <span class="mode-icon" aria-hidden="true">🧠</span>
         <span class="mode-label">Inner Dialogue</span>
       </button>
-      <button
-        class={mode === 'voice' ? 'mode-btn active' : 'mode-btn'}
-        on:click={() => (mode = 'voice')}
-        aria-label="Voice mode"
-      >
-        <span class="mode-icon" aria-hidden="true">🎤</span>
-        <span class="mode-label">Voice</span>
-      </button>
     </div>
 
     <!-- Length toggle -->
@@ -1004,9 +988,13 @@ let reasoningStages: ReasoningStage[] = [];
         {#if ttsEnabled}<span class="badge">On</span>{/if}
       </button>
 
-      <button class="icon-btn" title={showMiniVoice ? 'Hide mic' : 'Show mic'} on:click={() => {
-        showMiniVoice = !showMiniVoice;
-      }}>
+      <button
+        class={`icon-btn ${showMiniVoice ? 'active' : ''}`}
+        title={showMiniVoice ? 'Hide inline mic controls' : 'Show inline mic controls'}
+        aria-pressed={showMiniVoice}
+        on:click={() => {
+          showMiniVoice = !showMiniVoice;
+        }}>
         <!-- Mic icon -->
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
         {#if showMiniVoice}<span class="badge">On</span>{/if}
@@ -1035,12 +1023,7 @@ let reasoningStages: ReasoningStage[] = [];
     {/if}
   </div>
 
-  <!-- Messages Area / Voice Interface -->
-  {#if mode === 'voice'}
-    <div class="voice-container">
-      <VoiceInteraction />
-    </div>
-  {:else}
+  <!-- Messages Area -->
   {#if showMiniVoice}
     <div class="mini-voice">
       <VoiceInteraction />
@@ -1156,16 +1139,9 @@ let reasoningStages: ReasoningStage[] = [];
       </div>
     {/if}
   </div>
-  {/if}
-
-  <!-- Input Area (hidden in voice mode) -->
-  {#if mode !== 'voice'}
+  <!-- Input Area -->
   <div class="input-container">
     <div class="input-wrapper">
-      <div class="input-controls">
-        <!-- All operator controls removed: YOLO, trust, and focus now in left sidebar status widget or obsolete -->
-      </div>
-
       <!-- Code approval box appears here when there are pending approvals -->
       <ApprovalBox />
 
@@ -1233,170 +1209,10 @@ let reasoningStages: ReasoningStage[] = [];
       </div>
     </div>
   </div>
-  {/if}
 </div>
 
 <style>
   /* Component-specific overrides and unique styles only */
-
-  /* YOLO toggle special styling */
-  .small-toggle.yolo-toggle {
-    color: rgb(217 119 6);
-    font-weight: 600;
-  }
-  .small-toggle.yolo-toggle input {
-    accent-color: rgb(234 179 8);
-  }
-  .small-toggle.yolo-toggle span {
-    color: inherit;
-    padding-inline: 6px;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    border-radius: 999px;
-    transition: color 0.2s ease, background 0.2s ease;
-  }
-  .small-toggle.yolo-toggle input:checked + span {
-    background: rgba(234, 179, 8, 0.18);
-    color: rgb(202 138 4);
-  }
-  :global(.dark) .small-toggle.yolo-toggle {
-    color: rgb(253 224 71);
-  }
-  :global(.dark) .small-toggle.yolo-toggle input:checked + span {
-    background: rgba(250, 204, 21, 0.22);
-    color: rgb(250 204 21);
-  }
-
-  /* Operator trigger SVG animation */
-  .operator-info-trigger svg {
-    transition: transform 0.2s ease;
-  }
-  .operator-info-trigger:focus-visible {
-    outline: 2px solid rgba(79, 70, 229, 0.45);
-    outline-offset: 2px;
-  }
-  .operator-info-trigger[aria-expanded="true"] svg {
-    transform: rotate(180deg);
-  }
-  /* Operator popover internal components */
-  .operator-popover-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 6px;
-  }
-  .operator-popover-header strong {
-    font-size: 12px;
-    letter-spacing: 0.02em;
-  }
-  .operator-popover-close {
-    border: none;
-    background: transparent;
-    color: inherit;
-    font-size: 16px;
-    line-height: 1;
-    cursor: pointer;
-  }
-  .operator-popover-close:focus-visible {
-    outline: 2px solid rgba(79,70,229,0.45);
-    outline-offset: 2px;
-  }
-  .operator-popover-trust {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-bottom: 8px;
-    color: rgba(79, 70, 229, 0.85);
-  }
-  :global(.dark) .operator-popover-trust {
-    color: rgba(167, 139, 250, 0.85);
-  }
-  .operator-popover-state {
-    font-size: 11px;
-    line-height: 1.45;
-  }
-  .operator-popover-error {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    font-size: 11px;
-    color: rgb(185, 28, 28);
-  }
-  .operator-popover-error button {
-    font-size: 10px;
-    padding: 2px 8px;
-    border-radius: 9999px;
-    border: 1px solid rgba(185, 28, 28, 0.6);
-    background: transparent;
-    color: inherit;
-    cursor: pointer;
-  }
-  .operator-popover-content {
-    max-height: 240px;
-    overflow-y: auto;
-    padding-right: 4px;
-    margin-bottom: 6px;
-  }
-  .operator-popover-content::-webkit-scrollbar {
-    width: 6px;
-  }
-  .operator-popover-content::-webkit-scrollbar-thumb {
-    background: rgba(79,70,229,0.3);
-    border-radius: 9999px;
-  }
-  :global(.dark) .operator-popover-content::-webkit-scrollbar-thumb {
-    background: rgba(167,139,250,0.4);
-  }
-  .operator-popover-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 6px;
-  }
-  .operator-popover-list li {
-    padding: 6px;
-    border-radius: 8px;
-    background: rgba(79, 70, 229, 0.06);
-    border: 1px solid rgba(79, 70, 229, 0.08);
-  }
-  :global(.dark) .operator-popover-list li {
-    background: rgba(167, 139, 250, 0.12);
-    border-color: rgba(167, 139, 250, 0.18);
-  }
-  .skill-head {
-    display: flex;
-    justify-content: space-between;
-    gap: 6px;
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .skill-meta {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: rgba(79, 70, 229, 0.75);
-  }
-  :global(.dark) .skill-meta {
-    color: rgba(167, 139, 250, 0.75);
-  }
-  .skill-desc {
-    margin-top: 3px;
-    font-size: 11px;
-    line-height: 1.4;
-  }
-  .operator-popover-footnote {
-    margin-top: 8px;
-    font-size: 10px;
-    line-height: 1.45;
-    color: rgba(55, 65, 81, 0.75);
-  }
-  :global(.dark) .operator-popover-footnote {
-    color: rgba(226, 232, 240, 0.75);
-  }
 
   /* Mobile responsive adjustments */
   @media (max-width: 640px) {
@@ -1667,14 +1483,6 @@ let reasoningStages: ReasoningStage[] = [];
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-  }
-
-  .voice-container {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
   }
 
   /* Welcome Screen */
@@ -2218,7 +2026,6 @@ let reasoningStages: ReasoningStage[] = [];
   /* Responsive (mobile) adjustments */
   @media (max-width: 767px) {
     /* Hide verbose controls on mobile */
-    .small-toggle,
     .mic-btn { display: none; }
 
     /* Hide YOLO button on mobile - now in status widget */
