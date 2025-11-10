@@ -23,7 +23,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { paths, audit, setActiveAdapter } from '../../packages/core/src/index.js';
+import { paths, audit, setActiveAdapter, recordSystemActivity } from '../../packages/core/src/index.js';
 import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
 
 export interface SleepConfig {
@@ -387,6 +387,7 @@ export function updateActivity() {
   // This could be hooked into audit events or user interactions
   // For now, we assume activity = recent audit events
   lastActivityTime = Date.now();
+  recordSystemActivity(lastActivityTime);
 }
 
 /**

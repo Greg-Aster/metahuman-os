@@ -5,10 +5,9 @@
   import ModelSelector from './ModelSelector.svelte';
   import BoredomControl from './BoredomControl.svelte';
   import AgentMonitor from './AgentMonitor.svelte';
-  import SleepStatusIndicator from './SleepStatusIndicator.svelte';
 
-  let activeTab = 'audit';
-  let useEnhancedAudit = false; // Toggle between old and new audit stream
+  let activeTab = 'monitor';
+  let useEnhancedAudit = true; // Toggle between old and new audit stream (default: grouped mode)
 
   // Load preference from localStorage
   onMount(() => {
@@ -269,7 +268,6 @@
       </div>
     {:else if activeTab === 'monitor'}
       <div class="monitor-container">
-        <SleepStatusIndicator />
         <AgentMonitor compact={true} />
       </div>
     {/if}

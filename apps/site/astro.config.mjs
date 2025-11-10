@@ -76,7 +76,8 @@ export default defineConfig({
         '127.0.0.1',
         'mh.dndiy.org',
         '.dndiy.org' // Allow all subdomains
-      ]
+      ],
+      hmr: process.env.DISABLE_HMR === 'true' ? false : true
     }
   }
 });

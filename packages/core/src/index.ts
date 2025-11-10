@@ -42,6 +42,7 @@ export * from './state';
 export * from './context-builder';
 export * from './cognitive-layers';
 export * from './agent-scheduler';
+export * from './system-activity';
 
 // Multi-user system (Phase 2)
 export * from './context';

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import ModelSelector from './ModelSelector.svelte';
   import BoredomControl from './BoredomControl.svelte';
 
   // Welcome modal toggle
@@ -16,10 +15,6 @@
   let dualAvailable = false;
   let dualEnabled = false;
   let selecting = false;
-
-  // LLM options
-  let llmNumCtx: number = 8192;
-  let llmNumPredict: number = 512;
 
   // Logging config
   let logLevel = 'info';
@@ -37,7 +32,6 @@
     loadWelcomeModalSetting();
     loadModelInfo();
     loadLoraState();
-    loadLLMOptions();
     loadLoggingConfig();
   });
 
@@ -115,18 +109,6 @@
     } finally {
       selecting = false;
     }
-  }
-
-  function loadLLMOptions() {
-    const ctx = localStorage.getItem('llm_num_ctx');
-    const predict = localStorage.getItem('llm_num_predict');
-    if (ctx) llmNumCtx = parseInt(ctx, 10);
-    if (predict) llmNumPredict = parseInt(predict, 10);
-  }
-
-  function saveLLMOptions() {
-    localStorage.setItem('llm_num_ctx', String(llmNumCtx));
-    localStorage.setItem('llm_num_predict', String(llmNumPredict));
   }
 
   function loadLoggingConfig() {
@@ -332,34 +314,11 @@
     </div>
   {/if}
 
-  <!-- LLM Model Selector -->
-  <div class="setting-group">
-    <label class="setting-label" for="llm-model-selector">LLM Model</label>
-    <div id="llm-model-selector">
-      <ModelSelector />
-    </div>
-  </div>
-
   <!-- Mind Wandering Control -->
   <div class="setting-group">
     <label class="setting-label" for="mind-wandering-control">Mind Wandering</label>
     <div id="mind-wandering-control">
       <BoredomControl />
-    </div>
-  </div>
-
-  <!-- LLM Options -->
-  <div class="setting-group">
-    <label class="setting-label" for="llm-options-grid">LLM Options</label>
-    <div id="llm-options-grid" class="info-grid">
-      <div class="info-item">
-        <label for="num-ctx-input" class="info-key">Context (num_ctx)</label>
-        <input id="num-ctx-input" type="number" min="2048" max="131072" step="1024" bind:value={llmNumCtx} on:change={saveLLMOptions} class="opt-input" />
-      </div>
-      <div class="info-item">
-        <label for="num-predict-input" class="info-key">Max Output (num_predict)</label>
-        <input id="num-predict-input" type="number" min="128" max="4096" step="64" bind:value={llmNumPredict} on:change={saveLLMOptions} class="opt-input" />
-      </div>
     </div>
   </div>
 

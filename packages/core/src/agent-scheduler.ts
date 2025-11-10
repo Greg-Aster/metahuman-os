@@ -11,6 +11,7 @@ import path from 'node:path';
 import { spawn, ChildProcess } from 'node:child_process';
 import { paths } from './paths.js';
 import { audit } from './audit.js';
+import { recordSystemActivity, readSystemActivityTimestamp } from './system-activity.js';
 
 // ============================================================================
 // Type Definitions
@@ -318,6 +319,7 @@ export class AgentScheduler extends EventEmitter {
       }
 
       this.running = true;
+      this.syncLastActivityFromDisk();
 
       audit({
         level: 'info',
@@ -727,7 +729,9 @@ export class AgentScheduler extends EventEmitter {
   private startActivityMonitoring(): void {
     // Check every 30 seconds
     this.activityTimer = setInterval(() => {
-      const inactiveSeconds = (Date.now() - this.lastActivity.getTime()) / 1000;
+      this.syncLastActivityFromDisk();
+      const now = Date.now();
+      const inactiveSeconds = (now - this.lastActivity.getTime()) / 1000;
 
       // Check all activity-based agents
       for (const [agentId, state] of this.agents.entries()) {
@@ -735,10 +739,16 @@ export class AgentScheduler extends EventEmitter {
           state.config.type === 'activity' &&
           state.config.enabled &&
           state.status === 'idle' &&
-          state.config.inactivityThreshold &&
-          inactiveSeconds >= state.config.inactivityThreshold
+          state.config.inactivityThreshold
         ) {
-          this.runAgent(agentId);
+          const threshold = state.config.inactivityThreshold;
+          const secondsSinceAgentRun = state.lastRun
+            ? (now - state.lastRun.getTime()) / 1000
+            : Number.POSITIVE_INFINITY;
+
+          if (inactiveSeconds >= threshold && secondsSinceAgentRun >= threshold) {
+            this.runAgent(agentId);
+          }
         }
       }
     }, 30000);
@@ -749,6 +759,7 @@ export class AgentScheduler extends EventEmitter {
    */
   public recordActivity(): void {
     this.lastActivity = new Date();
+    recordSystemActivity(this.lastActivity.getTime());
   }
 
   // ==========================================================================
@@ -833,6 +844,13 @@ export class AgentScheduler extends EventEmitter {
         nextRun: state.nextRun!,
       }))
       .sort((a, b) => a.nextRun.getTime() - b.nextRun.getTime());
+  }
+
+  private syncLastActivityFromDisk(): void {
+    const persisted = readSystemActivityTimestamp();
+    if (persisted && persisted > this.lastActivity.getTime()) {
+      this.lastActivity = new Date(persisted);
+    }
   }
 }
 

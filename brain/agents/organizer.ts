@@ -27,12 +27,12 @@ import {
   auditAction,
   callLLM,
   type RouterMessage,
-  acquireLock,
-  isLocked,
   initGlobalLogger,
   listUsers,
+  listActiveSessions,
   withUserContext,
 } from '@metahuman/core';
+import type { SafeUser } from '@metahuman/core';
 
 interface EpisodicMemory {
   id: string;
@@ -53,6 +53,32 @@ interface EpisodicMemory {
 interface AnalysisResult {
   tags: string[];
   entities: string[];
+}
+
+function getUsersWithActiveSessions(): {
+  users: SafeUser[];
+  sessionCount: number;
+} {
+  try {
+    const sessions = listActiveSessions().filter((session) => session.role !== 'anonymous');
+    const userIds = sessions
+      .map((session) => session.userId)
+      .filter((id): id is string => Boolean(id));
+
+    const uniqueIds = new Set(userIds);
+    if (uniqueIds.size === 0) {
+      return { users: [], sessionCount: sessions.length };
+    }
+
+    const users = listUsers().filter((user) => uniqueIds.has(user.id));
+    return {
+      users,
+      sessionCount: sessions.length,
+    };
+  } catch (error) {
+    console.error('[Organizer] Failed to determine active sessions:', (error as Error).message);
+    return { users: [], sessionCount: 0 };
+  }
 }
 
 /**
@@ -287,9 +313,28 @@ async function runCycle() {
   });
 
   try {
-    // Get all users
-    const users = listUsers();
-    console.log(`[Organizer] Found ${users.length} users to process`);
+    // Limit scope to users with active sessions to avoid leaking inactive profiles
+    const { users, sessionCount } = getUsersWithActiveSessions();
+
+    if (users.length === 0) {
+      console.log('[Organizer] No active sessions detected. Skipping cycle to respect profile privacy.');
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'agent_cycle_skipped',
+        details: {
+          agent: 'organizer',
+          reason: 'no_active_sessions',
+          activeSessionCount: sessionCount,
+        },
+        actor: 'agent',
+      });
+      return;
+    }
+
+    console.log(
+      `[Organizer] Found ${users.length} active user(s) across ${sessionCount} session(s) to process`
+    );
 
     let totalProcessed = 0;
 

@@ -932,7 +932,7 @@ let reasoningStages: ReasoningStage[] = [];
     <div class="length-toggle">
       <label class="control-label" for="length-select">
         <span class="control-icon" aria-hidden="true">📏</span>
-        <span class="control-text">Length</span>
+
       </label>
       <select id="length-select" bind:value={lengthMode} aria-label="Response length">
         <option value="auto">Auto</option>

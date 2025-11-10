@@ -961,4 +961,218 @@
   .input-stop-btn:hover {
     @apply bg-red-600/20 border-red-600 scale-105;
   }
+
+  /* === Agent Monitor Components === */
+  .agent-monitor-container {
+    @apply flex flex-col gap-2 h-full;
+  }
+
+  .agent-monitor-header {
+    @apply flex items-center gap-2 px-2 py-1.5 rounded-md flex-wrap;
+    background: rgba(0, 0, 0, 0.02);
+  }
+
+  :global(.dark) .agent-monitor-header {
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .agent-status-dot {
+    @apply w-2 h-2 rounded-full bg-gray-400;
+  }
+
+  .agent-status-dot.connected {
+    @apply bg-green-500;
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .agent-progress-bar {
+    @apply h-1.5 rounded-full overflow-hidden;
+    width: 60px;
+    background: rgba(0, 0, 0, 0.1);
+  }
+
+  :global(.dark) .agent-progress-bar {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .agent-progress-fill {
+    @apply h-full bg-violet-600 dark:bg-violet-400 transition-all duration-300;
+  }
+
+  .agent-card {
+    @apply relative p-3 rounded-lg border transition-all;
+    border-color: rgba(150, 150, 150, 0.363);
+    background: transparent;
+  }
+
+  :global(.dark) .agent-card {
+    border-color: rgba(255, 255, 255, 0.699);
+    background: transparent;
+  }
+
+  .agent-card.running {
+    border-color: rgba(34, 197, 94, 0.3);
+    background: rgba(34, 197, 94, 0.05);
+  }
+
+  :global(.dark) .agent-card.running {
+    border-color: rgba(134, 239, 172, 0.3);
+    background: rgba(134, 239, 172, 0.05);
+  }
+
+  .agent-card.error {
+    border-color: rgba(239, 68, 68, 0.3);
+    background: rgba(239, 68, 68, 0.05);
+  }
+
+  :global(.dark) .agent-card.error {
+    border-color: rgba(252, 165, 165, 0.3);
+    background: rgba(252, 165, 165, 0.05);
+  }
+
+  .agent-action-btn {
+    @apply flex items-center justify-center w-8 h-8 rounded-md border-0 cursor-pointer transition-all flex-shrink-0;
+    background: rgba(0, 0, 0, 0.08);
+    color: rgb(107 114 128);
+  }
+
+  :global(.dark) .agent-action-btn {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgb(156 163 175);
+  }
+
+  .agent-action-btn:hover {
+    background: rgba(124, 58, 237, 0.15);
+    color: rgb(124 58 237);
+    transform: scale(1.05);
+  }
+
+  :global(.dark) .agent-action-btn:hover {
+    background: rgba(167, 139, 250, 0.15);
+    color: rgb(167 139 250);
+  }
+
+  .agent-action-btn.running {
+    background: rgba(34, 197, 94, 0.15);
+    color: rgb(34 197 94);
+  }
+
+  :global(.dark) .agent-action-btn.running {
+    background: rgba(134, 239, 172, 0.15);
+    color: rgb(134 239 172);
+  }
+
+  .agent-action-btn.running:hover {
+    background: rgba(34, 197, 94, 0.25);
+  }
+
+  .agent-action-btn.running.active {
+    background: rgba(34, 197, 94, 0.25);
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 8px rgba(34, 197, 94, 0.4); }
+    50% { box-shadow: 0 0 12px rgba(34, 197, 94, 0.6); }
+  }
+
+  .agent-action-btn.error {
+    background: rgba(251, 191, 36, 0.15);
+    color: rgb(217 119 6);
+  }
+
+  :global(.dark) .agent-action-btn.error {
+    background: rgba(251, 191, 36, 0.15);
+    color: rgb(251 191 36);
+  }
+
+  .agent-action-btn.error:hover {
+    background: rgba(251, 191, 36, 0.25);
+  }
+
+  .agent-expand-toggle {
+    @apply absolute top-2 right-2 p-1.5 border-0 rounded-md cursor-pointer flex items-center justify-center transition-all;
+    background: rgba(0, 0, 0, 0.05);
+    color: rgb(107 114 128);
+    z-index: 1;
+  }
+
+  :global(.dark) .agent-expand-toggle {
+    background: rgba(255, 255, 255, 0.05);
+    color: rgb(156 163 175);
+  }
+
+  .agent-expand-toggle:hover {
+    background: rgba(124, 58, 237, 0.1);
+    color: rgb(124 58 237);
+  }
+
+  :global(.dark) .agent-expand-toggle:hover {
+    background: rgba(167, 139, 250, 0.15);
+    color: rgb(167 139 250);
+  }
+
+  .agent-expand-toggle.running {
+    background: rgba(34, 197, 94, 0.15);
+    color: rgb(34 197 94);
+  }
+
+  :global(.dark) .agent-expand-toggle.running {
+    background: rgba(134, 239, 172, 0.15);
+    color: rgb(134 239 172);
+  }
+
+  .agent-expand-toggle.running.active {
+    background: rgba(34, 197, 94, 0.25);
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.3);
+  }
+
+  .agent-expand-toggle.error {
+    background: rgba(239, 68, 68, 0.15);
+    color: rgb(239 68 68);
+  }
+
+  :global(.dark) .agent-expand-toggle.error {
+    background: rgba(252, 165, 165, 0.15);
+    color: rgb(252 165 165);
+  }
+
+  .agent-sparkline {
+    @apply flex items-end gap-0.5 w-full;
+    height: 40px;
+  }
+
+  .agent-sparkline-bar {
+    @apply flex-1 rounded-t transition-all;
+    min-height: 2px;
+    background: rgb(209 213 219);
+  }
+
+  :global(.dark) .agent-sparkline-bar {
+    background: rgb(75 85 99);
+  }
+
+  .agent-sparkline-bar:hover {
+    background: rgb(124 58 237);
+  }
+
+  :global(.dark) .agent-sparkline-bar:hover {
+    background: rgb(167 139 250);
+  }
+
+  .agent-sparkline-bar.active {
+    background: rgb(34 197 94);
+    animation: bar-pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes bar-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+  }
 }
