@@ -19,6 +19,7 @@ import { loadCognitiveMode } from '@metahuman/core/cognitive-mode';
 import { getUserContext } from '@metahuman/core/context';
 import { resolvePathWithFuzzyFallback, type PathResolution } from '@metahuman/core/path-resolver';
 import { initializeSkills } from '../skills/index';
+import { ReasoningEngine } from '@metahuman/core/reasoning';
 
 // Ensure the skills registry is populated before any ReAct loop runs.
 // initializeSkills() is idempotent, so calling on module load avoids missing-skill failures
@@ -65,6 +66,57 @@ export interface ReActConfig {
   enableDeepReasoning: boolean;
   observationMaxLength: number;
   reasoningDepth?: number;  // 0=off, 1=quick, 2=focused, 3=deep (matches UI slider)
+}
+
+// ============================================================================
+// V2 Scratchpad Types (Phase 2 Implementation)
+// ============================================================================
+
+/**
+ * Single entry in the structured scratchpad
+ */
+export interface ScratchpadEntry {
+  step: number;
+  thought: string; // LLM reasoning about what to do
+  action?: {
+    tool: string;
+    args: Record<string, any>;
+  }; // Optional tool invocation
+  observation?: {
+    mode: 'narrative' | 'structured' | 'verbatim';
+    content: string;
+    success: boolean;
+    error?: {
+      code: string;
+      message: string;
+      context: any;
+    };
+  }; // Result of tool execution
+  timestamp: string;
+}
+
+/**
+ * Planning response from LLM (JSON structured)
+ */
+export interface PlanningResponse {
+  thought: string; // Required reasoning about current state
+  action?: {
+    tool: string;
+    args: Record<string, any>;
+  }; // Optional tool to invoke
+  respond?: boolean; // True when ready to respond to user
+  responseStyle?: 'default' | 'strict' | 'summary'; // How to format final response
+}
+
+/**
+ * ReAct V2 state with structured scratchpad
+ */
+export interface ReactState {
+  scratchpad: ScratchpadEntry[];
+  maxSteps: number;
+  currentStep: number;
+  completed: boolean;
+  finalResponse?: string;
 }
 
 // ============================================================================
@@ -846,9 +898,23 @@ function formatObservation(result: SkillResult, config: ReActConfig): string {
       if (tasks.length === 0) {
         return 'No tasks found';
       }
-      return `Found ${tasks.length} task(s):\n${tasks.map((t: any) =>
-        `- [${t.status}] ${t.goal}`
-      ).join('\n')}`;
+
+      const formatValue = (label: string, value?: string) => value ? `${label}: ${value}` : '';
+
+      const formatTask = (task: any, index: number) => {
+        const parts = [
+          `title: ${task.title || task.goal || task.description || task.id || 'Untitled task'}`,
+          formatValue('status', task.status),
+          formatValue('priority', task.priority),
+          formatValue('tags', Array.isArray(task.tags) ? task.tags.join(', ') : task.tags),
+          formatValue('due', task.due),
+          formatValue('created', task.created),
+          formatValue('description', task.description)
+        ].filter(Boolean);
+        return `${index + 1}. ${parts.join(' | ')}`;
+      };
+
+      return `Found ${tasks.length} task(s):\n${tasks.map((task: any, idx: number) => formatTask(task, idx)).join('\n')}`;
     }
 
     // Generic output formatting
@@ -1217,8 +1283,1069 @@ Be concise but complete. Format the response for the ${context.audience || 'user
 }
 
 // ============================================================================
-// Public API
+// V2 Implementation (Phase 2 - Structured Scratchpad)
 // ============================================================================
+
+/**
+ * Format scratchpad for LLM consumption (V2)
+ */
+function formatScratchpadForLLM(scratchpad: ScratchpadEntry[]): string {
+  if (scratchpad.length === 0) {
+    return '(Empty - this is your first step)';
+  }
+
+  // Trim to last 10 steps to manage token limits
+  const recentSteps = scratchpad.slice(-10);
+
+  return recentSteps.map(entry => {
+    let text = `Thought ${entry.step}: ${entry.thought}\n`;
+
+    if (entry.action) {
+      text += `Action ${entry.step}: ${entry.action.tool}(${JSON.stringify(entry.action.args)})\n`;
+    }
+
+    if (entry.observation) {
+      if (entry.observation.success) {
+        text += `Observation ${entry.step}: ${entry.observation.content}`;
+      } else {
+        text += `Observation ${entry.step}: ❌ ERROR - ${entry.observation.error?.message}`;
+      }
+    }
+
+    return text;
+  }).join('\n\n---\n\n');
+}
+
+/**
+ * Plan next step using structured scratchpad (V2)
+ */
+async function planNextStepV2(
+  goal: string,
+  state: ReactState,
+  userContext?: { userId?: string; cognitiveMode?: string }
+): Promise<PlanningResponse> {
+  // Import tool catalog
+  const { getCachedCatalog } = await import('@metahuman/core');
+
+  // Build structured scratchpad prompt
+  const scratchpadText = formatScratchpadForLLM(state.scratchpad);
+  const toolCatalog = getCachedCatalog();
+
+  const systemPrompt = `You are an autonomous agent using a ReAct (Reason-Act-Observe) pattern to help the user.
+
+${toolCatalog}
+
+## Reasoning Process
+
+For each step, provide your reasoning in this JSON format:
+{
+  "thought": "Your analysis of the current situation and what to do next",
+  "action": { "tool": "skill_id", "args": {...} },  // Optional: omit if responding
+  "respond": false,  // Set to true when ready to give final response
+  "responseStyle": "default"  // Use "strict" for data-only responses, "default" for conversation
+}
+
+## Critical Rules
+
+1. **ONLY use data from Observations** - Never invent, assume, or hallucinate information
+2. **One action at a time** - Execute one tool, observe result, then plan next step
+3. **Cite your sources** - Reference specific observation numbers when making claims
+4. **Detect completion** - Set "respond": true when you have enough information to answer
+5. **Handle errors gracefully** - If a tool fails, try alternatives or ask for clarification
+
+## Current Scratchpad
+
+${scratchpadText}
+
+## User Goal
+
+${goal}`;
+
+  const messages: RouterMessage[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: 'Plan the next step. Return valid JSON only.' }
+  ];
+
+  // Use orchestrator model for planning
+  const response = await callLLM({
+    role: 'orchestrator',
+    messages,
+    options: {
+      temperature: 0.1,
+      maxTokens: 1000,
+    },
+    cognitiveMode: userContext?.cognitiveMode,
+    userId: userContext?.userId
+  });
+
+  // Parse and validate response
+  try {
+    const planning = JSON.parse(extractJsonBlock(response.content)) as PlanningResponse;
+
+    // Validate required fields
+    if (!planning.thought) {
+      throw new Error('Planning response missing required "thought" field');
+    }
+
+    if (planning.action && (!planning.action.tool || !planning.action.args)) {
+      throw new Error('Planning action missing "tool" or "args" field');
+    }
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'react_v2_step_planned',
+      details: {
+        step: state.currentStep,
+        action: planning.action?.tool,
+        respond: planning.respond,
+        model: response.modelId,
+      },
+      actor: 'operator-react-v2',
+    });
+
+    return planning;
+  } catch (parseError) {
+    // Retry once with schema hint
+    audit({
+      category: 'system',
+      level: 'warn',
+      event: 'react_v2_planning_json_parse_failed',
+      details: { error: (parseError as Error).message, response: response.content },
+      actor: 'operator-react-v2',
+    });
+
+    return retryPlanningWithHint(goal, state, response.content, userContext);
+  }
+}
+
+/**
+ * Retry planning with explicit schema hint (V2)
+ */
+async function retryPlanningWithHint(
+  goal: string,
+  state: ReactState,
+  invalidResponse: string,
+  userContext?: { userId?: string; cognitiveMode?: string }
+): Promise<PlanningResponse> {
+  const messages: RouterMessage[] = [
+    {
+      role: 'system',
+      content: `Your previous response was invalid JSON. Please provide a response matching this exact schema:
+
+{
+  "thought": "string - your reasoning",
+  "action": { "tool": "string", "args": {} },  // Optional
+  "respond": boolean,  // Optional, default false
+  "responseStyle": "default" | "strict" | "summary"  // Optional
+}
+
+Previous invalid response:
+${invalidResponse}`
+    },
+    { role: 'user', content: `Goal: ${goal}\n\nProvide valid JSON following the schema above.` }
+  ];
+
+  const response = await callLLM({
+    role: 'orchestrator',
+    messages,
+    options: { temperature: 0.05 },
+    cognitiveMode: userContext?.cognitiveMode,
+    userId: userContext?.userId
+  });
+
+  const planning = JSON.parse(extractJsonBlock(response.content)) as PlanningResponse;
+
+  if (!planning.thought) {
+    throw new Error('Retry failed: still missing "thought" field');
+  }
+
+  return planning;
+}
+
+// ============================================================================
+// V2 Observation Modes (Phase 3)
+// ============================================================================
+
+type ObservationMode = 'narrative' | 'structured' | 'verbatim';
+
+interface ObservationResult {
+  mode: ObservationMode;
+  content: string;
+  success: boolean;
+  error?: { code: string; message: string; context: any };
+}
+
+/**
+ * Format tool execution result based on mode (V2)
+ */
+function formatObservationV2(
+  tool: string,
+  result: SkillResult,
+  mode: ObservationMode = 'narrative'
+): ObservationResult {
+  if (!result.success) {
+    return {
+      mode,
+      content: `Error executing ${tool}: ${result.error || 'Unknown error'}`,
+      success: false,
+      error: {
+        code: 'SKILL_ERROR',
+        message: result.error || 'Unknown error',
+        context: { tool, result }
+      }
+    };
+  }
+
+  switch (mode) {
+    case 'verbatim':
+      return {
+        mode,
+        content: JSON.stringify(result.outputs, null, 2),
+        success: true
+      };
+
+    case 'structured':
+      return {
+        mode,
+        content: formatStructured(tool, result),
+        success: true
+      };
+
+    case 'narrative':
+    default:
+      return {
+        mode,
+        content: formatNarrative(tool, result),
+        success: true
+      };
+  }
+}
+
+/**
+ * Format observation as structured data (bullet lists/JSON)
+ */
+function formatStructured(tool: string, result: SkillResult): string {
+  const outputs = result.outputs || {};
+
+  switch (tool) {
+    case 'task_list': {
+      const tasks = outputs.tasks || [];
+      if (tasks.length === 0) return '• No tasks found';
+
+      return tasks.map((t: any) =>
+        `• [${t.status || 'unknown'}] ${t.title || t.goal || 'Untitled'} (priority: ${t.priority || 'none'})`
+      ).join('\n');
+    }
+
+    case 'fs_list': {
+      const files = outputs.files || [];
+      const dirs = outputs.directories || [];
+
+      let text = '';
+      if (dirs.length > 0) {
+        text += `Directories (${dirs.length}):\n${dirs.map((d: string) => `  📁 ${d}`).join('\n')}\n`;
+      }
+      if (files.length > 0) {
+        text += `Files (${files.length}):\n${files.map((f: string) => `  📄 ${f}`).join('\n')}`;
+      }
+
+      return text || '(empty directory)';
+    }
+
+    case 'fs_read': {
+      const content = outputs.content || '';
+      const lines = content.split('\n').length;
+      return `File size: ${content.length} chars, ${lines} lines\n\nContent:\n${content}`;
+    }
+
+    case 'task_find':
+    case 'task_create':
+    case 'task_update_status': {
+      const task = outputs.task || outputs;
+      return `• Task: ${task.title || task.goal || 'Untitled'}\n• Status: ${task.status || 'unknown'}\n• Priority: ${task.priority || 'none'}`;
+    }
+
+    case 'web_search': {
+      const results = outputs.results || [];
+      if (results.length === 0) return '• No results found';
+
+      return results.slice(0, 5).map((r: any, i: number) =>
+        `${i + 1}. ${r.title || 'Untitled'}\n   URL: ${r.url || 'N/A'}\n   Snippet: ${r.snippet || 'No description'}`
+      ).join('\n\n');
+    }
+
+    case 'search_index': {
+      const results = outputs.results || [];
+      if (results.length === 0) return '• No results found';
+
+      return results.slice(0, 5).map((r: any, i: number) =>
+        `${i + 1}. ${r.event || r.title || 'Untitled'} (score: ${r.score?.toFixed(2) || 'N/A'})`
+      ).join('\n');
+    }
+
+    default:
+      // Generic structured format
+      return Object.entries(outputs)
+        .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
+        .join('\n');
+  }
+}
+
+/**
+ * Format observation as narrative (existing logic)
+ */
+function formatNarrative(tool: string, result: SkillResult): string {
+  // Use existing formatObservation logic
+  return formatObservation(result, DEFAULT_CONFIG);
+}
+
+/**
+ * Detect if query is purely data retrieval (should use verbatim mode)
+ */
+function detectDataRetrievalIntent(goal: string): boolean {
+  const dataKeywords = [
+    'list', 'show', 'what tasks', 'display', 'read file',
+    'get', 'fetch', 'retrieve', 'search for', 'find all',
+    'tell me about my tasks', 'show me', 'what are'
+  ];
+
+  const goalLower = goal.toLowerCase();
+  return dataKeywords.some(keyword => goalLower.includes(keyword));
+}
+
+/**
+ * Check if we can short-circuit with verbatim response
+ */
+async function checkVerbatimShortCircuit(
+  goal: string,
+  onProgress?: (update: any) => void
+): Promise<any | null> {
+  if (!detectDataRetrievalIntent(goal)) {
+    return null; // Not a data query
+  }
+
+  // Simple heuristic: if goal mentions "tasks", try task_list
+  if (goal.toLowerCase().includes('task')) {
+    try {
+      const result = await coreExecuteSkill(
+        'task_list',
+        { includeCompleted: false },
+        'bounded_auto',
+        true
+      );
+
+      if (result.success) {
+        const observation = formatObservationV2('task_list', result, 'structured');
+
+        onProgress?.({
+          type: 'completion',
+          content: observation.content,
+          step: 1,
+          verbatim: true
+        });
+
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'react_v2_verbatim_shortcircuit',
+          details: {
+            goal,
+            tool: 'task_list',
+            savedIterations: 2
+          },
+          actor: 'operator-react-v2',
+        });
+
+        return {
+          goal,
+          result: observation.content,
+          reasoning: 'Direct task list retrieval (verbatim mode)',
+          actions: ['task_list'],
+          verbatim: true
+        };
+      }
+    } catch (error) {
+      // Fall through to normal loop
+      audit({
+        level: 'warn',
+        category: 'action',
+        event: 'react_v2_verbatim_shortcircuit_failed',
+        details: {
+          goal,
+          error: (error as Error).message
+        },
+        actor: 'operator-react-v2',
+      });
+    }
+  }
+
+  // Could add more heuristics for other common queries
+  return null;
+}
+
+// ============================================================================
+// V2 Error Handling (Phase 5)
+// ============================================================================
+
+interface ErrorAnalysis {
+  code: string;
+  suggestions: string[];
+}
+
+/**
+ * Analyze error and provide contextual suggestions
+ */
+function analyzeError(tool: string, args: any, errorMessage: string): ErrorAnalysis {
+  const errorLower = errorMessage.toLowerCase();
+
+  // File not found errors
+  if (errorLower.includes('not found') || errorLower.includes('enoent')) {
+    if (tool === 'fs_read' || tool === 'fs_write' || tool === 'fs_delete') {
+      return {
+        code: 'FILE_NOT_FOUND',
+        suggestions: [
+          'Use fs_list to check what files exist in the directory',
+          'Verify the file path is correct',
+          'Check if the file was recently deleted or moved'
+        ]
+      };
+    }
+
+    if (tool === 'task_find' || tool === 'task_list') {
+      return {
+        code: 'TASK_NOT_FOUND',
+        suggestions: [
+          'Use task_list to see all available tasks',
+          'Check if the task was already completed',
+          'Verify the task ID is correct'
+        ]
+      };
+    }
+  }
+
+  // Permission errors
+  if (errorLower.includes('permission') || errorLower.includes('eacces')) {
+    return {
+      code: 'PERMISSION_DENIED',
+      suggestions: [
+        'Check file/directory permissions',
+        'Verify you have access to this location',
+        'Try a different file or directory'
+      ]
+    };
+  }
+
+  // Invalid arguments
+  if (errorLower.includes('invalid') || errorLower.includes('validation')) {
+    return {
+      code: 'INVALID_ARGS',
+      suggestions: [
+        'Check the skill manifest for correct input format',
+        'Verify all required fields are provided',
+        'Check data types match the schema'
+      ]
+    };
+  }
+
+  // Network errors
+  if (errorLower.includes('network') || errorLower.includes('timeout') || errorLower.includes('econnrefused')) {
+    return {
+      code: 'NETWORK_ERROR',
+      suggestions: [
+        'Check network connectivity',
+        'Try again in a moment',
+        'Verify the URL or endpoint is correct'
+      ]
+    };
+  }
+
+  // Skill not found
+  if (errorLower.includes('skill') && errorLower.includes('not found')) {
+    return {
+      code: 'SKILL_NOT_FOUND',
+      suggestions: [
+        'Check available skills in the tool catalog',
+        'Verify the skill ID is spelled correctly',
+        'Use a similar skill that exists'
+      ]
+    };
+  }
+
+  // Generic error
+  return {
+    code: 'UNKNOWN_ERROR',
+    suggestions: [
+      'Try a different approach',
+      'Ask the user for clarification',
+      'Check the logs for more details'
+    ]
+  };
+}
+
+interface FailureTracker {
+  [actionKey: string]: {
+    count: number;
+    lastError: string;
+  };
+}
+
+/**
+ * Detect if we're in a failure loop (same action failing repeatedly)
+ */
+function detectFailureLoop(
+  scratchpad: ScratchpadEntry[],
+  currentAction: { tool: string; args: any }
+): { isLoop: boolean; suggestion: string } {
+  const failures: FailureTracker = {};
+
+  // Count failures for each unique action
+  for (const entry of scratchpad) {
+    if (entry.observation && !entry.observation.success && entry.action) {
+      const key = `${entry.action.tool}:${JSON.stringify(entry.action.args)}`;
+
+      if (!failures[key]) {
+        failures[key] = { count: 0, lastError: '' };
+      }
+
+      failures[key].count++;
+      failures[key].lastError = entry.observation.error?.message || '';
+    }
+  }
+
+  // Check if current action has already failed
+  const currentKey = `${currentAction.tool}:${JSON.stringify(currentAction.args)}`;
+  const currentFailures = failures[currentKey];
+
+  if (currentFailures && currentFailures.count >= 2) {
+    return {
+      isLoop: true,
+      suggestion: `⚠️ This action (${currentAction.tool}) has already failed ${currentFailures.count} times. Consider trying a different approach. Last error: ${currentFailures.lastError}`
+    };
+  }
+
+  return { isLoop: false, suggestion: '' };
+}
+
+interface SkillExecutionResult {
+  success: boolean;
+  content: string; // Formatted observation
+  outputs?: any; // Raw outputs
+  error?: {
+    code: string;
+    message: string;
+    context: any;
+    suggestions?: string[]; // Recommended next actions
+  };
+}
+
+/**
+ * Execute skill with enhanced error capture (V2)
+ */
+async function executeSkillWithErrorHandling(
+  tool: string,
+  args: Record<string, any>,
+  userContext?: { userId?: string; cognitiveMode?: string }
+): Promise<SkillExecutionResult> {
+  try {
+    const result = await coreExecuteSkill(
+      tool,
+      args,
+      'bounded_auto',
+      true
+    );
+
+    if (!result.success) {
+      // Analyze error and provide suggestions
+      const errorAnalysis = analyzeError(tool, args, result.error || 'Unknown error');
+
+      return {
+        success: false,
+        content: `❌ ${tool} failed: ${result.error}`,
+        error: {
+          code: errorAnalysis.code,
+          message: result.error || 'Unknown error',
+          context: { tool, args, result },
+          suggestions: errorAnalysis.suggestions
+        }
+      };
+    }
+
+    // Success - format observation using V2 formatter
+    const observationMode: ObservationMode = 'structured';
+    const observation = formatObservationV2(tool, result, observationMode);
+
+    return {
+      success: true,
+      content: observation.content,
+      outputs: result.outputs
+    };
+
+  } catch (error) {
+    // Unexpected error during execution
+    const errorAnalysis = analyzeError(tool, args, (error as Error).message);
+
+    return {
+      success: false,
+      content: `❌ Unexpected error executing ${tool}: ${(error as Error).message}`,
+      error: {
+        code: 'UNEXPECTED_ERROR',
+        message: (error as Error).message,
+        context: { tool, args, stack: (error as Error).stack },
+        suggestions: errorAnalysis.suggestions
+      }
+    };
+  }
+}
+
+/**
+ * Main V2 ReAct loop with structured scratchpad
+ */
+async function runReActLoopV2(
+  goal: string,
+  context: { memories?: any[]; conversationHistory?: any[] },
+  onProgress?: (update: any) => void,
+  userContext?: { userId?: string; cognitiveMode?: string }
+): Promise<any> {
+  // Check for verbatim short-circuit FIRST
+  const verbatimResult = await checkVerbatimShortCircuit(goal, onProgress);
+  if (verbatimResult) {
+    return verbatimResult;
+  }
+
+  const state: ReactState = {
+    scratchpad: [],
+    maxSteps: 10,
+    currentStep: 0,
+    completed: false
+  };
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'react_v2_loop_started',
+    details: {
+      goal,
+      maxSteps: state.maxSteps,
+    },
+    actor: 'operator-react-v2',
+  });
+
+  while (state.currentStep < state.maxSteps && !state.completed) {
+    state.currentStep++;
+
+    // Plan next step
+    const planning = await planNextStepV2(goal, state, userContext);
+
+    // Create scratchpad entry
+    const entry: ScratchpadEntry = {
+      step: state.currentStep,
+      thought: planning.thought,
+      timestamp: new Date().toISOString()
+    };
+
+    // Stream thought to UI
+    onProgress?.({
+      type: 'thought',
+      content: planning.thought,
+      step: state.currentStep
+    });
+
+    // Execute action if present
+    if (planning.action && !planning.respond) {
+      entry.action = planning.action;
+
+      // Check for failure loops BEFORE executing
+      const loopCheck = detectFailureLoop(state.scratchpad, planning.action);
+
+      if (loopCheck.isLoop) {
+        // Inject warning into scratchpad
+        const warningEntry: ScratchpadEntry = {
+          step: state.currentStep,
+          thought: `${planning.thought}\n\n${loopCheck.suggestion}`,
+          timestamp: new Date().toISOString()
+        };
+
+        state.scratchpad.push(warningEntry);
+
+        onProgress?.({
+          type: 'warning',
+          content: loopCheck.suggestion,
+          step: state.currentStep
+        });
+
+        audit({
+          level: 'warn',
+          category: 'action',
+          event: 'react_v2_failure_loop_detected',
+          details: {
+            goal,
+            step: state.currentStep,
+            action: planning.action.tool,
+            loopSuggestion: loopCheck.suggestion
+          },
+          actor: 'operator-react-v2',
+        });
+
+        // Give LLM one more chance to adjust (continue to next iteration)
+        continue;
+      }
+
+      // Execute skill with enhanced error handling
+      const executionResult = await executeSkillWithErrorHandling(
+        planning.action.tool,
+        planning.action.args,
+        userContext
+      );
+
+      // Convert execution result to observation format
+      entry.observation = {
+        mode: 'structured',
+        content: executionResult.content,
+        success: executionResult.success,
+        error: executionResult.error
+      };
+
+      // If error has suggestions, append them to observation content
+      if (executionResult.error?.suggestions) {
+        entry.observation.content += '\n\nSuggestions:\n' +
+          executionResult.error.suggestions.map(s => `- ${s}`).join('\n');
+      }
+
+      // Stream action + observation to UI
+      onProgress?.({
+        type: 'action',
+        tool: planning.action.tool,
+        args: planning.action.args,
+        step: state.currentStep
+      });
+
+      onProgress?.({
+        type: 'observation',
+        content: entry.observation.content,
+        success: executionResult.success,
+        mode: entry.observation.mode,
+        errorCode: executionResult.error?.code,
+        step: state.currentStep
+      });
+    }
+
+    state.scratchpad.push(entry);
+
+    // Check for completion
+    if (planning.respond) {
+      state.completed = true;
+
+      // Generate final response using conversational_response with style parameter
+      const observations = state.scratchpad
+        .filter(e => e.observation?.success)
+        .map(e => e.observation!.content)
+        .join('\n\n');
+
+      // Use the responseStyle from planning (default, strict, or summary)
+      const responseStyle = planning.responseStyle || 'default';
+
+      try {
+        const result = await coreExecuteSkill(
+          'conversational_response',
+          {
+            context: observations || 'No information gathered',
+            goal: goal,
+            style: responseStyle
+          },
+          'bounded_auto',
+          true
+        );
+
+        state.finalResponse = result.outputs?.response || 'Task completed';
+
+        onProgress?.({
+          type: 'completion',
+          content: state.finalResponse,
+          step: state.currentStep
+        });
+      } catch (error) {
+        state.finalResponse = observations || 'Task completed but response generation failed';
+
+        onProgress?.({
+          type: 'completion',
+          content: state.finalResponse,
+          step: state.currentStep
+        });
+      }
+    }
+  }
+
+  // Handle max iterations reached
+  if (!state.completed) {
+    audit({
+      level: 'warn',
+      category: 'action',
+      event: 'react_v2_max_iterations',
+      details: {
+        goal,
+        iterations: state.currentStep,
+      },
+      actor: 'operator-react-v2',
+    });
+
+    state.finalResponse = 'Max iterations reached without completion';
+  }
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'react_v2_loop_completed',
+    details: {
+      goal,
+      iterations: state.currentStep,
+      completed: state.completed,
+    },
+    actor: 'operator-react-v2',
+  });
+
+  return {
+    goal,
+    result: state.finalResponse || 'No result generated',
+    reasoning: state.scratchpad.map(e => e.thought).join(' → '),
+    actions: state.scratchpad.filter(e => e.action).map(e => e.action!.tool),
+    scratchpad: state.scratchpad // Include for debugging
+  };
+}
+
+// ============================================================================
+// Public API (Phase 6 - Feature Flag Integration)
+// ============================================================================
+
+/**
+ * Run operator using unified ReasoningEngine service.
+ * This is the new architecture that replaces inline V2 implementation.
+ *
+ * @param goal - User goal/question
+ * @param context - Reasoning context (memories, history)
+ * @param onProgress - Progress callback for SSE events
+ * @param userContext - User context (ID, cognitive mode)
+ * @param reasoningDepth - Reasoning depth (0-3 from UI slider)
+ * @returns Operator result
+ */
+async function runWithReasoningEngine(
+  goal: string,
+  context?: { memories?: any[]; conversationHistory?: any[]; sessionId?: string; conversationId?: string },
+  onProgress?: (update: any) => void,
+  userContext?: { userId?: string; cognitiveMode?: string },
+  reasoningDepth: number = 2 // Default: focused
+): Promise<any> {
+  // Map reasoning depth (0-3) to ReasoningDepth type
+  const depthMap: Record<number, 'off' | 'quick' | 'focused' | 'deep'> = {
+    0: 'off',
+    1: 'quick',
+    2: 'focused',
+    3: 'deep',
+  };
+  const depth = depthMap[reasoningDepth] || 'focused';
+
+  // Create reasoning engine
+  const engine = new ReasoningEngine({
+    depth,
+    sessionId: context?.sessionId || `session-${Date.now()}`,
+    conversationId: context?.conversationId,
+    userId: userContext?.userId,
+    enableFastPath: true,
+    enableVerbatimShortCircuit: true,
+    enableErrorRetry: true,
+    enableFailureLoopDetection: true,
+  });
+
+  // Convert ReasoningEngine events to operator progress format
+  const progressAdapter = (event: any) => {
+    // Map reasoning events to operator format for backward compatibility
+    switch (event.type) {
+      case 'thought':
+        // Raw event for backward compatibility
+        onProgress?.({
+          type: 'thought',
+          content: event.data.thought,
+          step: event.step,
+        });
+        // UI-compatible reasoning event (for ChatInterface reasoning slider)
+        onProgress?.({
+          type: 'reasoning',
+          data: {
+            round: event.step,
+            stage: 'thought',
+            content: `**Thought:** ${event.data.thought}`,
+          },
+        });
+        break;
+      case 'action':
+        // Raw event for backward compatibility
+        onProgress?.({
+          type: 'action',
+          content: `Executing ${event.data.tool}`,
+          step: event.step,
+          tool: event.data.tool,
+        });
+        // UI-compatible reasoning event
+        onProgress?.({
+          type: 'reasoning',
+          data: {
+            round: event.step,
+            stage: 'action',
+            content: `**Action:** Executing \`${event.data.tool}\` with args: \`${JSON.stringify(event.data.args)}\``,
+          },
+        });
+        break;
+      case 'observation':
+        // Raw event for backward compatibility
+        onProgress?.({
+          type: 'observation',
+          content: event.data.result,
+          step: event.step,
+          success: event.data.success,
+        });
+        // UI-compatible reasoning event
+        const obsPrefix = event.data.success ? '**Observation:**' : '**Error:**';
+        const obsContent = typeof event.data.result === 'string'
+          ? event.data.result
+          : JSON.stringify(event.data.result, null, 2);
+        onProgress?.({
+          type: 'reasoning',
+          data: {
+            round: event.step,
+            stage: 'observation',
+            content: `${obsPrefix} ${obsContent}`,
+          },
+        });
+        break;
+      case 'completion':
+        // Raw event for backward compatibility
+        onProgress?.({
+          type: 'completion',
+          content: event.data.finalResponse,
+          step: event.step,
+          metadata: event.data.metadata,
+        });
+        // UI-compatible reasoning event
+        onProgress?.({
+          type: 'reasoning',
+          data: {
+            round: event.step,
+            stage: 'completion',
+            content: `**Complete:** ${event.data.finalResponse}`,
+          },
+        });
+        break;
+      case 'error':
+        // Raw event for backward compatibility
+        onProgress?.({
+          type: 'error',
+          content: event.data.error?.message,
+          step: event.step,
+        });
+        // UI-compatible reasoning event
+        onProgress?.({
+          type: 'reasoning',
+          data: {
+            round: event.step,
+            stage: 'error',
+            content: `**Error:** ${event.data.error?.message || 'Unknown error'}`,
+          },
+        });
+        break;
+    }
+  };
+
+  // Run reasoning engine
+  const result = await engine.run(
+    goal,
+    {
+      memories: context?.memories || [],
+      conversationHistory: context?.conversationHistory || [],
+      cognitiveMode: userContext?.cognitiveMode,
+      userId: userContext?.userId,
+      sessionId: context?.sessionId,
+      conversationId: context?.conversationId,
+    },
+    progressAdapter
+  );
+
+  // Return in operator format
+  return {
+    goal,
+    result: result.result,
+    reasoning: result.scratchpad.map((e) => e.thought).join(' → '),
+    actions: result.scratchpad.filter((e) => e.action).map((e) => e.action!.tool),
+    scratchpad: result.scratchpad,
+    metadata: result.metadata,
+  };
+}
+
+/**
+ * Run operator with feature flag routing (V1 vs V2 vs ReasoningEngine)
+ *
+ * This function checks the reactV2 feature flag and routes to either:
+ * - V1: Legacy ReAct loop (runReActLoop)
+ * - V2: Enhanced scratchpad-based loop (runReActLoopV2) OR ReasoningEngine
+ *
+ * To use ReasoningEngine instead of inline V2, set: operator.useReasoningService = true
+ */
+export async function runOperatorWithFeatureFlag(
+  goal: string,
+  context?: { memories?: any[]; conversationHistory?: any[]; sessionId?: string; conversationId?: string },
+  onProgress?: (update: any) => void,
+  userContext?: { userId?: string; cognitiveMode?: string },
+  reasoningDepth?: number
+): Promise<any> {
+  const { isReactV2Enabled, useReasoningService: checkReasoningService } = await import('@metahuman/core/config');
+
+  const useV2 = isReactV2Enabled();
+  const useService = checkReasoningService();
+
+  audit({
+    level: 'info',
+    category: 'system',
+    event: 'operator_feature_flag_check',
+    details: {
+      goal: goal.substring(0, 100),
+      useV2,
+      useService,
+      userId: userContext?.userId
+    },
+    actor: 'operator',
+  });
+
+  if (useV2 && useService) {
+    // Run with unified ReasoningEngine service
+    return runWithReasoningEngine(goal, context || {}, onProgress, userContext, reasoningDepth);
+  } else if (useV2) {
+    // Run inline V2 with all enhancements
+    return runReActLoopV2(goal, context || {}, onProgress, userContext);
+  } else {
+    // Run V1 (legacy) - convert interface
+    const task: OperatorTask = {
+      id: `task-${Date.now()}`,
+      goal,
+      context: JSON.stringify(context),
+      status: 'in_progress',
+      created: new Date().toISOString()
+    };
+
+    const v1Context = await runReActLoop(task, (step) => {
+      onProgress?.({
+        type: 'step',
+        content: step.observation,
+        step: step.iteration
+      });
+    });
+
+    return {
+      goal,
+      result: v1Context.result,
+      reasoning: v1Context.steps.map(s => s.thought).join(' → '),
+      actions: v1Context.steps.map(s => s.action)
+    };
+  }
+}
 
 /**
  * Main entry point for the ReAct operator.

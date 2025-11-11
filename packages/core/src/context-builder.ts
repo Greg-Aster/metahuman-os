@@ -12,6 +12,7 @@ import { queryIndex, getIndexStatus } from './vector-index.js';
 import { loadPersonaCore } from './identity.js';
 import { loadShortTermState, loadPersonaCache } from './state.js';
 import { audit } from './audit.js';
+import { listActiveTasks } from './memory.js';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import path from 'path';
 import type { CognitiveModeId } from './cognitive-mode.js';
@@ -37,6 +38,38 @@ interface CacheEntry {
 
 const contextCache = new Map<string, CacheEntry>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+// ============================================================================
+// Warm Cache for Frequently Accessed Data (30sec TTL)
+// ============================================================================
+
+interface WarmCacheData {
+  tasks: any[];
+  timestamp: number;
+}
+
+const warmCache = new Map<string, WarmCacheData>();
+const WARM_CACHE_TTL = 30 * 1000; // 30 seconds (shorter TTL for more up-to-date data)
+
+function getWarmCachedTasks(userKey: string): any[] | null {
+  const entry = warmCache.get(`tasks:${userKey}`);
+  if (!entry) return null;
+
+  const age = Date.now() - entry.timestamp;
+  if (age > WARM_CACHE_TTL) {
+    warmCache.delete(`tasks:${userKey}`);
+    return null;
+  }
+
+  return entry.tasks;
+}
+
+function setWarmCachedTasks(userKey: string, tasks: any[]): void {
+  warmCache.set(`tasks:${userKey}`, {
+    tasks,
+    timestamp: Date.now()
+  });
+}
 
 interface CacheKeyContext {
   userKey?: string;
@@ -737,6 +770,24 @@ export async function buildContextPackage(
     recentTopics = state.conversationContext?.lastTopics || [];
   } else if (stateResult.status === 'rejected') {
     console.error('[context-builder] Error loading short-term state:', stateResult.reason);
+  }
+
+  // If task context is requested, load actual tasks from filesystem or cache
+  if (includeTaskContext) {
+    try {
+      // Try warm cache first (30-second TTL for fresh data)
+      let tasks = getWarmCachedTasks(userKey);
+
+      if (!tasks) {
+        // Cache miss - load from filesystem
+        tasks = listActiveTasks();
+        setWarmCachedTasks(userKey, tasks);
+      }
+
+      activeTasks = tasks.map((t: any) => `[${t.status.toUpperCase()}] ${t.title}`);
+    } catch (error) {
+      console.error('[context-builder] Error loading tasks:', error);
+    }
   }
 
   // ========================================================================

@@ -100,6 +100,109 @@ export function userConfigExists(filename: string): boolean {
   return fs.existsSync(configPath);
 }
 
+// ============================================================================
+// Operator Configuration (Phase 6)
+// ============================================================================
+
+export interface OperatorConfig {
+  version: string;
+  scratchpad: {
+    maxSteps: number;
+    trimToLastN: number;
+    enableVerbatimMode: boolean;
+    enableErrorRetry: boolean;
+  };
+  models: {
+    useSingleModel: boolean;
+    planningModel: string;
+    responseModel: string;
+  };
+  logging: {
+    enableScratchpadDump: boolean;
+    logDirectory: string;
+    verboseErrors: boolean;
+  };
+  performance: {
+    cacheCatalog: boolean;
+    catalogTTL: number;
+    parallelSkillExecution: boolean;
+  };
+}
+
+let operatorConfigCache: OperatorConfig | null = null;
+
+/**
+ * Load operator configuration from etc/operator.json
+ */
+export function loadOperatorConfig(): OperatorConfig {
+  if (operatorConfigCache) return operatorConfigCache;
+
+  const config = loadUserConfig<OperatorConfig>('operator.json', getDefaultOperatorConfig());
+  operatorConfigCache = config;
+  return config;
+}
+
+/**
+ * Get default operator configuration
+ */
+export function getDefaultOperatorConfig(): OperatorConfig {
+  return {
+    version: '2.0',
+    scratchpad: {
+      maxSteps: 10,
+      trimToLastN: 10,
+      enableVerbatimMode: true,
+      enableErrorRetry: true
+    },
+    models: {
+      useSingleModel: false,
+      planningModel: 'default.coder',
+      responseModel: 'persona'
+    },
+    logging: {
+      enableScratchpadDump: false,
+      logDirectory: 'logs/run/agents',
+      verboseErrors: true
+    },
+    performance: {
+      cacheCatalog: true,
+      catalogTTL: 60000,
+      parallelSkillExecution: false
+    }
+  };
+}
+
+/**
+ * Invalidate operator config cache (for testing)
+ */
+export function invalidateOperatorConfig(): void {
+  operatorConfigCache = null;
+}
+
+/**
+ * Check if ReAct V2 is enabled
+ */
+export function isReactV2Enabled(): boolean {
+  try {
+    const runtime = loadUserConfig<any>('runtime.json', {});
+    return runtime.operator?.reactV2 === true;
+  } catch {
+    return false; // Default to v1 if config missing
+  }
+}
+
+/**
+ * Check if Reasoning Service should be used instead of inline V2
+ */
+export function useReasoningService(): boolean {
+  try {
+    const runtime = loadUserConfig<any>('runtime.json', {});
+    return runtime.operator?.useReasoningService === true;
+  } catch {
+    return false; // Default to inline V2 if config missing
+  }
+}
+
 /**
  * List all config files in user's etc/ directory
  *

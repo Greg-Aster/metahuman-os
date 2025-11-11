@@ -23,11 +23,18 @@ interface StartResult {
 }
 
 function resolveTsx(): string {
-  if (process.platform === 'win32') {
-    return path.join(paths.root, 'node_modules', '.bin', 'tsx.cmd');
+  const candidates = [
+    path.join(paths.root, 'apps', 'site', 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx'),
+    path.join(paths.root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
   }
-  const candidate = path.join(paths.root, 'node_modules', '.bin', 'tsx');
-  return fs.existsSync(candidate) ? candidate : 'tsx';
+
+  return 'tsx';
 }
 
 function startService(agentName: string, actor: string): StartResult {

@@ -2,5 +2,9 @@
   "headless": false,
   "lastChangedBy": "remote",
   "changedAt": "2025-11-10T02:43:30.915Z",
-  "claimedBy": null
+  "claimedBy": null,
+  "operator": {
+    "reactV2": true,
+    "useReasoningService": false
+  }
 }

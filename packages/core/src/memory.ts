@@ -85,6 +85,42 @@ export interface Task {
   completed?: string;
 }
 
+const DEFAULT_EVENT_CATEGORY = 'episodic';
+
+function normalizeTag(value: string): string {
+  return value.toLowerCase().trim();
+}
+
+function resolveEventCategory(event: EpisodicEvent): string {
+  const type = normalizeTag(event.type || '');
+  const tags = new Set((event.tags || []).map(normalizeTag));
+
+  // Dedicated categories by explicit type
+  if (type === 'reflection') return 'reflections';
+  if (type === 'dream' && (tags.has('audio') || tags.has('transcript'))) return 'audio-dreams';
+  if (type === 'dream') return 'dreams';
+  if (type === 'audio') return 'audio';
+
+  // Tag-driven categories
+  if (tags.has('ingested') || tags.has('ai')) return 'ai-ingestor';
+  if (tags.has('curated')) return 'curated';
+  if (tags.has('audio') || tags.has('transcript')) return 'audio';
+
+  // Tool/Action logging
+  if (type === 'tool_invocation') return 'tool-invocations';
+  if (type === 'action') return 'actions';
+
+  return DEFAULT_EVENT_CATEGORY;
+}
+
+function buildEventDirectory(category: string, year: string): string {
+  const safeCategory = category.replace(/[^a-z0-9-_]/g, '-');
+  if (!safeCategory || safeCategory === DEFAULT_EVENT_CATEGORY) {
+    return path.join(paths.episodic, year);
+  }
+  return path.join(paths.episodic, safeCategory, year);
+}
+
 export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {}): string {
   // Get current user context (if any)
   const ctx = getUserContext();
@@ -104,8 +140,8 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
   };
 
   const year = new Date().getFullYear().toString();
-  // paths.episodic automatically resolves to user profile if context is set
-  const dir = path.join(paths.episodic, year);
+  const category = resolveEventCategory(event);
+  const dir = buildEventDirectory(category, year);
   fs.mkdirSync(dir, { recursive: true });
 
   const slug = content.toLowerCase()
@@ -360,6 +396,43 @@ export function searchMemory(query: string): string[] {
 
   searchIn.forEach(walk);
   return results;
+}
+
+/**
+ * Recursively collect all episodic memory files (JSON) under the current user's profile.
+ * Returns absolute paths sorted lexicographically for deterministic processing.
+ */
+export function listEpisodicFiles(): string[] {
+  const files: string[] = [];
+  const root = paths.episodic;
+
+  if (!fs.existsSync(root)) {
+    return files;
+  }
+
+  const stack: string[] = [root];
+
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      } else if (entry.isFile() && entry.name.endsWith('.json')) {
+        files.push(fullPath);
+      }
+    }
+  }
+
+  files.sort();
+  return files;
 }
 
 export function logSync(action: string, data: any): void {

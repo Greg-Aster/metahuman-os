@@ -210,6 +210,58 @@ Specifies which Ollama model to use for persona chat:
 }
 ```
 
+### `etc/runtime.json` - Runtime Feature Flags
+**Location**: `etc/runtime.json` (global, not per-user)
+
+Controls runtime behavior and feature flags for the operator and system services:
+
+```json
+{
+  "headless": false,
+  "lastChangedBy": "remote",
+  "changedAt": "2025-11-10T02:43:30.915Z",
+  "claimedBy": null,
+  "operator": {
+    "reactV2": true,
+    "useReasoningService": false
+  }
+}
+```
+
+**Fields:**
+- `headless` - Whether running in headless mode (see [Headless Runtime Mode](20-headless-runtime-mode.md))
+- `lastChangedBy` - Actor who last modified the config (`"ui"`, `"remote"`, `"cli"`)
+- `changedAt` - Timestamp of last modification
+- `claimedBy` - Instance ID that claimed headless mode (null if unclaimed)
+- `operator.reactV2` - Enable Operator V2 ReAct loop (multi-step reasoning)
+  - `true` - Use V2 ReAct pattern with structured scratchpad
+  - `false` - Use legacy V1 operator (deprecated)
+- `operator.useReasoningService` - Use unified ReasoningEngine service
+  - `true` - Use `@metahuman/core/reasoning` service (recommended)
+  - `false` - Use inline V2 implementation (safe default)
+
+**Operator Reasoning Modes:**
+
+| reactV2 | useReasoningService | Behavior |
+|---------|---------------------|----------|
+| `false` | `false` | **V1 Legacy** - Original operator (deprecated) |
+| `true` | `false` | **V2 Inline** - ReAct loop with inline implementation (default) |
+| `true` | `true` | **V2 Service** - ReAct loop using unified ReasoningEngine service |
+
+**When to Enable ReasoningEngine Service (`useReasoningService: true`):**
+- ✅ After validating V2 inline works correctly
+- ✅ When you want enhanced error recovery with 7 error types
+- ✅ When you need failure loop detection (prevents repeated errors)
+- ✅ For better observability with structured scratchpad events
+- ✅ To enable SSE reasoning slider in web UI
+
+**Rollback:** Set `useReasoningService: false` to return to inline V2 instantly (no code changes needed).
+
+**Related Documentation:**
+- [Autonomous Agents](08-autonomous-agents.md) - Operator agent details
+- [Advanced Usage](13-advanced-usage.md) - ReasoningEngine configuration
+- Implementation status: `docs/implementation-plans/reasoning-service-consolidation-STATUS.md`
+
 ### `profiles/<username>/etc/models.json` - Multi-Model Configuration
 Defines the roles and model assignments for the "Dual Consciousness" architecture. This file allows you to specify different models for different tasks, such as orchestration, persona conversation, and curation.
 

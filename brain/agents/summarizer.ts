@@ -19,7 +19,7 @@ import {
   callLLM,
   type RouterMessage,
   captureEvent,
-  paths,
+  listEpisodicFiles,
   audit,
   loadPersonaCore,
   acquireLock,
@@ -38,7 +38,6 @@ import {
   getConversationBufferPath,
 } from '../../packages/core/src/index';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 
 interface ConversationEvent {
   id: string;
@@ -69,61 +68,40 @@ interface ConversationSummary {
   mode: string;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+async function loadRecentEvents(lookbackDays: number, userId?: string): Promise<ConversationEvent[]> {
+  const cutoff = Date.now() - lookbackDays * DAY_MS;
+  const files = listEpisodicFiles();
+  const events: ConversationEvent[] = [];
+
+  for (const file of files) {
+    try {
+      const raw = await fs.readFile(file, 'utf-8');
+      const event = JSON.parse(raw) as ConversationEvent;
+      const ts = new Date(event.timestamp).getTime();
+      if (Number.isNaN(ts) || ts < cutoff) continue;
+      if (userId && (event as any).userId !== userId) continue;
+      events.push(event);
+    } catch {
+      // Ignore malformed or unreadable files
+    }
+  }
+
+  events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  return events;
+}
+
 /**
  * Get all events for a specific conversation session
  */
 async function getConversationEvents(sessionId: string, userId?: string): Promise<ConversationEvent[]> {
-  const ctx = getUserContext();
-  const episodicDir = ctx ? ctx.profilePaths.episodic : paths.episodic;
-
-  const events: ConversationEvent[] = [];
-
   try {
-    // Look back 7 days for conversation events
-    const today = new Date();
-    const lookbackDays = 7;
-
-    for (let i = 0; i < lookbackDays; i++) {
-      const date = new Date(today);
-      date.setDate(today.getDate() - i);
-      const year = date.getFullYear().toString();
-      const yearDir = path.join(episodicDir, year);
-
-      try {
-        const files = await fs.readdir(yearDir);
-
-        for (const file of files) {
-          if (!file.endsWith('.json')) continue;
-
-          const filepath = path.join(yearDir, file);
-          try {
-            const content = await fs.readFile(filepath, 'utf-8');
-            const event = JSON.parse(content) as ConversationEvent;
-
-            // Match by conversationId or sessionId
-            const eventSessionId = event.metadata?.conversationId || event.metadata?.sessionId;
-            if (eventSessionId === sessionId) {
-              // Filter by userId if in multi-user context
-              if (userId && (event as any).userId !== userId) {
-                continue;
-              }
-              events.push(event);
-            }
-          } catch (error) {
-            // Skip malformed files
-            continue;
-          }
-        }
-      } catch (error) {
-        // Year directory doesn't exist, continue
-        continue;
-      }
-    }
-
-    // Sort by timestamp (chronological order)
-    events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-    return events;
+    const events = await loadRecentEvents(7, userId);
+    return events.filter(event => {
+      const eventSessionId = event.metadata?.conversationId || event.metadata?.sessionId;
+      return eventSessionId === sessionId;
+    });
   } catch (error) {
     console.error('[summarizer] Error getting conversation events:', error);
     return [];
@@ -134,108 +112,39 @@ async function getConversationEvents(sessionId: string, userId?: string): Promis
  * Check if a session already has a saved summary event
  */
 async function hasExistingSummary(sessionId: string, userId?: string): Promise<boolean> {
-  const ctx = getUserContext();
-  const episodicDir = ctx ? ctx.profilePaths.episodic : paths.episodic;
-
   try {
-    const today = new Date();
-    const lookbackDays = 7;
-
-    for (let i = 0; i < lookbackDays; i++) {
-      const date = new Date(today);
-      date.setDate(today.getDate() - i);
-      const year = date.getFullYear().toString();
-      const yearDir = path.join(episodicDir, year);
-
-      try {
-        const files = await fs.readdir(yearDir);
-        for (const file of files) {
-          if (!file.endsWith('.json')) continue;
-
-          const filepath = path.join(yearDir, file);
-          try {
-            const content = await fs.readFile(filepath, 'utf-8');
-            const event = JSON.parse(content);
-
-            if (userId && event.userId !== userId) continue;
-            if (event.type !== 'summary') continue;
-
-            const eventSessionId = event.metadata?.conversationId || event.metadata?.sessionId;
-            if (eventSessionId === sessionId) {
-              return true;
-            }
-          } catch (error) {
-            continue;
-          }
-        }
-      } catch (error) {
-        continue;
-      }
-    }
+    const events = await loadRecentEvents(7, userId);
+    return events.some(event => {
+      if (event.type !== 'summary') return false;
+      const eventSessionId = event.metadata?.conversationId || event.metadata?.sessionId;
+      return eventSessionId === sessionId;
+    });
   } catch (error) {
     console.error('[summarizer] Error checking existing summaries:', error);
+    return false;
   }
-
-  return false;
 }
 
 /**
  * Get all unsummarized conversation sessions
  */
 async function getUnsummarizedSessions(userId?: string): Promise<string[]> {
-  const ctx = getUserContext();
-  const episodicDir = ctx ? ctx.profilePaths.episodic : paths.episodic;
-
   const sessionIds = new Set<string>();
   const summarizedSessions = new Set<string>();
 
   try {
-    // Look back 7 days
-    const today = new Date();
-    const lookbackDays = 7;
+    const events = await loadRecentEvents(7, userId);
+    for (const event of events) {
+      const sessionId = event.metadata?.conversationId || event.metadata?.sessionId;
+      if (!sessionId) continue;
 
-    for (let i = 0; i < lookbackDays; i++) {
-      const date = new Date(today);
-      date.setDate(today.getDate() - i);
-      const year = date.getFullYear().toString();
-      const yearDir = path.join(episodicDir, year);
-
-      try {
-        const files = await fs.readdir(yearDir);
-
-        for (const file of files) {
-          if (!file.endsWith('.json')) continue;
-
-          const filepath = path.join(yearDir, file);
-          try {
-            const content = await fs.readFile(filepath, 'utf-8');
-            const event = JSON.parse(content);
-
-            // Filter by userId if in multi-user context
-            if (userId && event.userId !== userId) {
-              continue;
-            }
-
-            // Track conversation sessions
-            const sessionId = event.metadata?.conversationId || event.metadata?.sessionId;
-            if (sessionId && event.type === 'conversation') {
-              sessionIds.add(sessionId);
-            }
-
-            // Track already summarized sessions
-            if (event.type === 'summary' && sessionId) {
-              summarizedSessions.add(sessionId);
-            }
-          } catch (error) {
-            continue;
-          }
-        }
-      } catch (error) {
-        continue;
+      if (event.type === 'summary') {
+        summarizedSessions.add(sessionId);
+      } else {
+        sessionIds.add(sessionId);
       }
     }
 
-    // Return sessions that haven't been summarized yet
     return Array.from(sessionIds).filter(id => !summarizedSessions.has(id));
   } catch (error) {
     console.error('[summarizer] Error getting unsummarized sessions:', error);

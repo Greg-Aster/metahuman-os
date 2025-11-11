@@ -25,6 +25,8 @@ export * from './runtime-mode';
 export * from './transcription';
 export * from './adapters';
 export * from './skills';
+export * from './tool-catalog';
+export * from './reasoning';
 export * from './policy';
 export * from './tts';
 export * from './stt';

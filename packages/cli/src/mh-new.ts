@@ -67,6 +67,42 @@ function ensureInitialized(): void {
   }
 }
 
+function countEventsForYear(year: string): number {
+  if (!fs.existsSync(paths.episodic)) return 0;
+
+  let count = 0;
+  const stack: string[] = [paths.episodic];
+
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      } else if (entry.isFile() && entry.name.endsWith('.json')) {
+        try {
+          const data = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+          const tsYear = data?.timestamp ? new Date(data.timestamp).getFullYear().toString() : '';
+          if (tsYear === year) {
+            count++;
+          }
+        } catch {
+          // ignore malformed files
+        }
+      }
+    }
+  }
+
+  return count;
+}
+
 function init(): void {
   // Create all required directories
   const dirs = [
@@ -178,11 +214,8 @@ function status(): void {
 
     // Check recent events
     const year = new Date().getFullYear().toString();
-    const episodicDir = paths.episodic + '/' + year;
-    if (fs.existsSync(episodicDir)) {
-      const events = fs.readdirSync(episodicDir).filter(f => f.endsWith('.json'));
-      console.log(`\nRecent Events: ${events.length} this year`);
-    }
+    const eventsThisYear = countEventsForYear(year);
+    console.log(`\nRecent Events: ${eventsThisYear} this year`);
 
   } catch (error) {
     console.error('Not initialized. Run: mh init');

@@ -19,6 +19,11 @@ import { paths } from '@metahuman/core/paths';
 const statusCache = new Map<string, { data: any; timestamp: number }>();
 const CACHE_TTL = 5000; // 5 seconds
 
+// Export function to invalidate status cache (called when models.json changes)
+export function invalidateStatusCache(): void {
+  statusCache.clear();
+}
+
 const handler: APIRoute = async ({ cookies }) => {
   try {
     const ctx = getUserContext();
@@ -202,9 +207,8 @@ const handler: APIRoute = async ({ cookies }) => {
       lastIndexed: indexStatus.createdAt || null,
     };
 
-    // Count memory files by type
+    // Count memory files by type across all memory directories
     try {
-      const episodicPath = paths.episodic;
       const walkDir = (dir: string): string[] => {
         if (!fs.existsSync(dir)) return [];
         let files: string[] = [];
@@ -219,29 +223,54 @@ const handler: APIRoute = async ({ cookies }) => {
         return files;
       };
 
-      const allEpisodicFiles = walkDir(episodicPath);
+      // Use profile-specific memory path from user context
+      const memoryPath = ctx.profilePaths.memory;
+      const categoryCounts: Record<string, number> = {
+        episodic: walkDir(ctx.profilePaths.episodic).length,
+        semantic: walkDir(path.join(memoryPath, 'semantic')).length,
+        procedural: walkDir(path.join(memoryPath, 'procedural')).length,
+        preferences: walkDir(path.join(memoryPath, 'preferences')).length,
+        curated: walkDir(path.join(memoryPath, 'curated')).length,
+        audio: walkDir(path.join(memoryPath, 'audio')).length,
+        calendar: walkDir(path.join(memoryPath, 'calendar')).length,
+        inbox: walkDir(path.join(memoryPath, 'inbox')).length,
+      };
 
-      // Count by type
-      const typeCounts: Record<string, number> = {};
+      // Also count episodic sub-types from actual file content (for backward compatibility)
+      const allEpisodicFiles = walkDir(ctx.profilePaths.episodic);
+      const episodicSubTypes: Record<string, number> = {};
       let lastCaptureTime: string | null = null;
 
       for (const file of allEpisodicFiles.slice(-100)) { // Check last 100 for performance
         try {
           const content = JSON.parse(fs.readFileSync(file, 'utf-8'));
           const type = content.type || 'episodic';
-          typeCounts[type] = (typeCounts[type] || 0) + 1;
+          episodicSubTypes[type] = (episodicSubTypes[type] || 0) + 1;
           if (content.timestamp && (!lastCaptureTime || content.timestamp > lastCaptureTime)) {
             lastCaptureTime = content.timestamp;
           }
         } catch {}
       }
 
-      memoryStats.totalFiles = allEpisodicFiles.length;
-      memoryStats.byType = typeCounts;
+      // Calculate total files
+      const totalFiles = Object.values(categoryCounts).reduce((sum, count) => sum + count, 0);
+
+      // Calculate percentages for each category
+      const percentages: Record<string, number> = {};
+      for (const [category, count] of Object.entries(categoryCounts)) {
+        percentages[category] = totalFiles > 0 ? Math.round((count / totalFiles) * 100) : 0;
+      }
+
+      memoryStats.totalFiles = totalFiles;
+      memoryStats.byCategory = categoryCounts;
+      memoryStats.byType = episodicSubTypes; // Keep legacy episodic sub-types
+      memoryStats.percentages = percentages;
       memoryStats.lastCapture = lastCaptureTime;
     } catch (error) {
       memoryStats.totalFiles = 0;
+      memoryStats.byCategory = {};
       memoryStats.byType = {};
+      memoryStats.percentages = {};
     }
 
     // AGENT ACTIVITY

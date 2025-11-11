@@ -24,12 +24,22 @@ function readModelRegistry() {
   }
 }
 
-function writeModelRegistry(registry: any) {
+async function writeModelRegistry(registry: any) {
   const p = path.join(paths.etc, 'models.json')
   fs.mkdirSync(path.dirname(p), { recursive: true })
   fs.writeFileSync(p, JSON.stringify(registry, null, 2))
-  // Invalidate cache to force reload
+  // Invalidate both caches to force reload
   invalidateModelCache()
+
+  // Also invalidate status cache (import dynamically to avoid circular dependency)
+  try {
+    const statusModule = await import('./status.js')
+    if (statusModule.invalidateStatusCache) {
+      statusModule.invalidateStatusCache()
+    }
+  } catch (e) {
+    // Status module might not be loaded yet, that's okay
+  }
 }
 
 /**
@@ -65,13 +75,13 @@ const getHandler: APIRoute = async () => {
 
     // Fetch all available models from Ollama
     const ollama = new OllamaClient()
-    let ollamaModels: string[] = []
+    let ollamaModels: Array<{ name: string; size?: number; modified_at?: string }> = []
     try {
       const tags = await ollama.listModels()
       // Filter out training artifacts and keep only production models
       ollamaModels = tags
-        .map(m => m.name)
-        .filter(name => !isTrainingArtifact(name))
+        .filter(m => !isTrainingArtifact(m.name))
+        .map(m => ({ name: m.name, size: m.size, modified_at: m.modified_at }))
     } catch (err) {
       console.error('[model-registry] Failed to fetch Ollama models:', err)
       // Continue with registry-only models if Ollama is unavailable
@@ -94,8 +104,8 @@ const getHandler: APIRoute = async () => {
     // Add Ollama models that aren't in the registry
     const registryModelNames = new Set(registryModels.map(m => m.model))
     const ollamaOnlyModels = ollamaModels
-      .filter(name => !registryModelNames.has(name))
-      .map(name => ({
+      .filter(({ name }) => !registryModelNames.has(name))
+      .map(({ name, size, modified_at }) => ({
         id: `ollama.${name}`,
         provider: 'ollama' as const,
         model: name,
@@ -103,7 +113,7 @@ const getHandler: APIRoute = async () => {
         description: 'Available in Ollama (not in registry)',
         adapters: [],
         baseModel: null,
-        metadata: { source: 'ollama-discovery' },
+        metadata: { source: 'ollama-discovery', size, modified_at },
         options: {},
         source: 'ollama' as const
       }))
@@ -172,12 +182,31 @@ const postHandler: APIRoute = async ({ request }) => {
 
     const registry = readModelRegistry()
 
-    // Verify the modelId exists
-    if (!registry.models?.[modelId]) {
-      return new Response(
-        JSON.stringify({ success: false, error: `Model ${modelId} not found in registry` }),
-        { status: 404, headers: { 'Content-Type': 'application/json' } }
-      )
+    registry.models = registry.models || {}
+
+    // Auto-register Ollama models that aren't yet in the registry
+    if (!registry.models[modelId]) {
+      const isOllamaModel = modelId.startsWith('ollama.')
+      const inferredName = isOllamaModel ? modelId.replace(/^ollama\./, '') : modelId
+
+      registry.models[modelId] = {
+        provider: 'ollama',
+        model: inferredName,
+        roles: [role],
+        adapters: [],
+        description: `Imported from Ollama tag ${inferredName}`,
+        options: {},
+        metadata: { source: 'ollama-discovery' }
+      }
+    }
+
+    // Ensure role list includes this role
+    const entry = registry.models[modelId]
+    if (!Array.isArray(entry.roles)) {
+      entry.roles = []
+    }
+    if (!entry.roles.includes(role)) {
+      entry.roles.push(role)
     }
 
     // If cognitiveMode is specified, update the cognitive mode mapping
@@ -198,7 +227,7 @@ const postHandler: APIRoute = async ({ request }) => {
       registry.defaults[role] = modelId
     }
 
-    writeModelRegistry(registry)
+    await writeModelRegistry(registry)
 
     await audit({
       category: 'data_change',
@@ -263,7 +292,7 @@ const putHandler: APIRoute = async ({ request }) => {
       ...globalSettings
     }
 
-    writeModelRegistry(registry)
+    await writeModelRegistry(registry)
 
     await audit({
       category: 'data_change',

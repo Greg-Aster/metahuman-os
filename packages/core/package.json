@@ -29,7 +29,9 @@
     "./cloudflare-tunnel": "./src/cloudflare-tunnel.ts",
     "./vector-index": "./src/vector-index.ts",
     "./onboarding": "./src/onboarding.ts",
-    "./runtime-mode": "./src/runtime-mode.ts"
+    "./runtime-mode": "./src/runtime-mode.ts",
+    "./reasoning": "./src/reasoning/index.ts",
+    "./config": "./src/config.ts"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

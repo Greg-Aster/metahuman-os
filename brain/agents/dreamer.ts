@@ -12,9 +12,12 @@ import {
   type RouterMessage,
   captureEvent,
   paths,
+  listEpisodicFiles,
   acquireLock,
   isLocked,
   audit,
+  recordSystemActivity,
+  scheduler,
   listUsers,
   withUserContext,
   initGlobalLogger,
@@ -38,6 +41,16 @@ interface SleepConfig {
   enabled: boolean;
   maxDreamsPerNight: number;
   evaluate: boolean;
+}
+
+function markBackgroundActivity() {
+  try {
+    recordSystemActivity();
+  } catch {}
+
+  try {
+    scheduler.recordActivity();
+  } catch {}
 }
 
 function loadSleepConfig(): SleepConfig {
@@ -73,69 +86,43 @@ async function curateMemories(sampleSize: number = 15, decayDays: number = 227):
     actor: 'dreamer',
   });
 
-  // Scan ALL years in episodic memory (no time limit)
-  const episodicDir = paths.episodic;
+  const episodicFiles = listEpisodicFiles();
 
-  try {
-    if (!fs.existsSync(episodicDir)) {
-      audit({
-        level: 'info',
-        category: 'action',
-        event: 'dream_curation_completed',
-        details: { memoriesFound: 0, curated: 0 },
-        actor: 'dreamer',
-      });
-      return [];
-    }
+  if (episodicFiles.length === 0) {
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'dream_curation_completed',
+      details: { memoriesFound: 0, curated: 0 },
+      actor: 'dreamer',
+    });
+    return [];
+  }
 
-    const yearDirs = fs.readdirSync(episodicDir);
+  for (const filepath of episodicFiles) {
+    try {
+      const content = fs.readFileSync(filepath, 'utf-8');
+      const memory = JSON.parse(content) as Memory;
 
-    for (const year of yearDirs) {
-      const yearPath = path.join(episodicDir, year);
-      const stats = fs.statSync(yearPath);
+      // Skip dreams, reflections, and low-confidence memories
+      const type = memory.type || memory.metadata?.type;
+      if (type === 'dream' || type === 'reflection') continue;
 
-      if (!stats.isDirectory()) continue;
+      // Calculate age in days
+      const memoryDate = new Date(memory.timestamp);
+      if (Number.isNaN(memoryDate.getTime())) continue;
+      const ageInMs = now.getTime() - memoryDate.getTime();
+      const ageInDays = Math.floor(ageInMs / (1000 * 60 * 60 * 24));
 
-      const files = fs.readdirSync(yearPath);
+      // Exponential decay weighting
+      const weight = Math.exp(-ageInDays / decayDays);
 
-      for (const file of files) {
-        if (!file.endsWith('.json')) continue;
-
-        const filepath = path.join(yearPath, file);
-
-        try {
-          const content = fs.readFileSync(filepath, 'utf-8');
-          const memory = JSON.parse(content) as Memory;
-
-          // Skip dreams, reflections, and low-confidence memories
-          if (memory.metadata?.type === 'dream') continue;
-          if (memory.metadata?.type === 'reflection') continue;
-
-          // Calculate age in days
-          const memoryDate = new Date(memory.timestamp);
-          const ageInMs = now.getTime() - memoryDate.getTime();
-          const ageInDays = Math.floor(ageInMs / (1000 * 60 * 60 * 24));
-
-          // Exponential decay: recent memories favored, but old memories surface meaningfully
-          // Formula: weight = exp(-age / decayConstant)
-          // decayDays=227 means 1-year-old memories retain ~20% weight (more reflective)
-          // This allows older memories to surface frequently, like a contemplative mind
-          const weight = Math.exp(-ageInDays / decayDays);
-
-          memories.push({ ...memory, weight, age: ageInDays });
-        } catch (error) {
-          // Skip malformed files
-          const err = error as Error;
-          if (!err.message.includes('Unexpected token')) {
-            console.warn(`[dreamer] Could not parse ${file}:`, err.message);
-          }
-        }
+      memories.push({ ...memory, weight, age: ageInDays });
+    } catch (error) {
+      const err = error as Error;
+      if (!err.message.includes('Unexpected token')) {
+        console.warn(`[dreamer] Could not parse ${path.basename(filepath)}:`, err.message);
       }
-    }
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (err.code !== 'ENOENT') {
-      console.error('[dreamer] Error scanning episodic memory:', error);
     }
   }
 
@@ -379,90 +366,93 @@ async function generateUserDreams(username: string): Promise<{
   heuristicsExtracted: number;
 }> {
   console.log(`[dreamer] Processing user: ${username}`);
+  const heartbeat = setInterval(() => {
+    markBackgroundActivity();
+  }, 15000);
 
-  const config = loadSleepConfig();
+  try {
+    const config = loadSleepConfig();
 
-  if (!config.enabled) {
-    console.log(`[dreamer]   Sleep system disabled for ${username}`);
-    return { dreamsGenerated: 0, memoriesCurated: 0, preferencesExtracted: 0, heuristicsExtracted: 0 };
-  }
+    if (!config.enabled) {
+      console.log(`[dreamer]   Sleep system disabled for ${username}`);
+      return { dreamsGenerated: 0, memoriesCurated: 0, preferencesExtracted: 0, heuristicsExtracted: 0 };
+    }
 
-  // Step 1: Curate memories from entire lifetime (uses user context!)
-  const curatedMemories = await curateMemories(15, 227);
+    const curatedMemories = await curateMemories(15, 227);
 
-  if (curatedMemories.length < 3) {
-    console.log(`[dreamer]   Not enough memories for ${username} (found ${curatedMemories.length})`);
+    if (curatedMemories.length < 3) {
+      console.log(`[dreamer]   Not enough memories for ${username} (found ${curatedMemories.length})`);
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'sleep_skipped',
+        details: { reason: 'insufficient_memories', memoriesFound: curatedMemories.length },
+        actor: 'dreamer',
+      });
+      return { dreamsGenerated: 0, memoriesCurated: curatedMemories.length, preferencesExtracted: 0, heuristicsExtracted: 0 };
+    }
+
+    const dreamCount = Math.min(config.maxDreamsPerNight, Math.floor(Math.random() * 3) + 1);
+    let dreamsGenerated = 0;
+
+    for (let i = 0; i < dreamCount; i++) {
+      const dreamMemories = curatedMemories.slice(i * 5, (i + 1) * 5);
+      if (dreamMemories.length < 3) break;
+
+      const dream = await generateDream(dreamMemories);
+      if (dream) {
+        const sourceIds = dreamMemories.map(m => m.id);
+        await captureEvent(dream, { type: 'dream', sources: sourceIds, confidence: 0.7 });
+        markBackgroundActivity();
+        dreamsGenerated++;
+        console.log(`[dreamer]   Dream ${i + 1}/${dreamCount} generated for ${username}`);
+
+        audit({
+          level: 'info',
+          category: 'decision',
+          event: 'dream_generated',
+          message: 'Dreamer generated new dream',
+          details: { dream, sourceCount: sourceIds.length },
+          metadata: { dream },
+          actor: 'dreamer',
+        });
+      }
+    }
+
+    console.log(`[dreamer]   Extracting preferences and learnings for ${username}...`);
+    const learnings = await extractLearnings(curatedMemories);
+    markBackgroundActivity();
+
+    const today = new Date().toISOString().split('T')[0];
+    const memoryCitations = curatedMemories.map(m => m.id);
+    const learningsFile = writeOvernightLearnings(today, learnings, memoryCitations);
+
+    console.log(`[dreamer]   Overnight learnings written: ${path.basename(learningsFile)}`);
+
     audit({
       level: 'info',
       category: 'action',
-      event: 'sleep_skipped',
-      details: { reason: 'insufficient_memories', memoriesFound: curatedMemories.length },
+      event: 'sleep_completed',
+      details: {
+        dreamsGenerated,
+        memoriesCurated: curatedMemories.length,
+        learningsFile: path.basename(learningsFile),
+        preferencesExtracted: learnings.preferences.length,
+        heuristicsExtracted: learnings.heuristics.length,
+      },
       actor: 'dreamer',
     });
-    return { dreamsGenerated: 0, memoriesCurated: curatedMemories.length, preferencesExtracted: 0, heuristicsExtracted: 0 };
-  }
 
-  // Step 2: Generate dreams (1-3 per night)
-  const dreamCount = Math.min(config.maxDreamsPerNight, Math.floor(Math.random() * 3) + 1);
-  let dreamsGenerated = 0;
-
-  for (let i = 0; i < dreamCount; i++) {
-    const dreamMemories = curatedMemories.slice(i * 5, (i + 1) * 5);
-    if (dreamMemories.length < 3) break;
-
-    const dream = await generateDream(dreamMemories);
-    if (dream) {
-      const sourceIds = dreamMemories.map(m => m.id);
-      await captureEvent(dream, { type: 'dream', sources: sourceIds, confidence: 0.7 });
-      dreamsGenerated++;
-      console.log(`[dreamer]   Dream ${i + 1}/${dreamCount} generated for ${username}`);
-
-      // Log dream to audit stream for inner dialogue display
-      audit({
-        level: 'info',
-        category: 'decision',
-        event: 'dream_generated',
-        message: 'Dreamer generated new dream',
-        details: { dream, sourceCount: sourceIds.length },
-        metadata: { dream },
-        actor: 'dreamer',
-      });
-    }
-  }
-
-  // Step 3: Extract preferences and learnings
-  console.log(`[dreamer]   Extracting preferences and learnings for ${username}...`);
-  const learnings = await extractLearnings(curatedMemories);
-
-  // Step 4: Write overnight learnings
-  const today = new Date().toISOString().split('T')[0];
-  const memoryCitations = curatedMemories.map(m => m.id);
-  const learningsFile = writeOvernightLearnings(today, learnings, memoryCitations);
-
-  console.log(`[dreamer]   Overnight learnings written: ${path.basename(learningsFile)}`);
-
-  audit({
-    level: 'info',
-    category: 'action',
-    event: 'sleep_completed',
-    details: {
+    return {
       dreamsGenerated,
       memoriesCurated: curatedMemories.length,
-      learningsFile: path.basename(learningsFile),
       preferencesExtracted: learnings.preferences.length,
       heuristicsExtracted: learnings.heuristics.length,
-    },
-    actor: 'dreamer',
-  });
-
-  console.log(`[dreamer]   Completed ${username} ✅`);
-
-  return {
-    dreamsGenerated,
-    memoriesCurated: curatedMemories.length,
-    preferencesExtracted: learnings.preferences.length,
-    heuristicsExtracted: learnings.heuristics.length,
-  };
+    };
+  } finally {
+    clearInterval(heartbeat);
+    markBackgroundActivity();
+  }
 }
 
 /**

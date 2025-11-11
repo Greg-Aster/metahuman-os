@@ -28,6 +28,8 @@
       lastIndexed: string | null;
       lastCapture: string | null;
       byType: Record<string, number>;
+      byCategory?: Record<string, number>;
+      percentages?: Record<string, number>;
     };
     agentActivity?: {
       available: Array<{ name: string; lastRun: string | null; runCount: number }>;
@@ -150,9 +152,9 @@
     {#if status.memoryStats}
       <section class="card p-6">
         <h3 class="text-lg font-semibold mb-4">Memory System</h3>
-        <div class="grid gap-4 sm:grid-cols-2">
+        <div class="grid gap-6 sm:grid-cols-2">
           <div>
-            <div class="text-xs uppercase tracking-wide muted mb-2">Index Status</div>
+            <div class="text-xs uppercase tracking-wide muted mb-3">Index Status</div>
             <div class="space-y-2">
               <div class="flex justify-between text-sm">
                 <span class="muted">Total Files</span>
@@ -183,14 +185,32 @@
             </div>
           </div>
           <div>
-            <div class="text-xs uppercase tracking-wide muted mb-2">Memory Types</div>
-            <div class="space-y-2">
-              {#each Object.entries(status.memoryStats.byType) as [type, count]}
-                <div class="flex justify-between text-sm">
-                  <span class="muted capitalize">{type}</span>
-                  <span class="font-semibold">{count}</span>
-                </div>
-              {/each}
+            <div class="text-xs uppercase tracking-wide muted mb-3">Memory Categories</div>
+            <div class="space-y-3">
+              {#if status.memoryStats.byCategory}
+                {#each Object.entries(status.memoryStats.byCategory).filter(([_, count]) => count > 0).sort((a, b) => b[1] - a[1]) as [category, count]}
+                  <div class="space-y-1">
+                    <div class="flex justify-between text-sm">
+                      <span class="muted capitalize">{category}</span>
+                      <span class="font-semibold">{count} <span class="text-xs muted">({status.memoryStats.percentages?.[category] || 0}%)</span></span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+                      <div
+                        class="bg-blue-500 dark:bg-blue-400 h-1.5 rounded-full transition-all duration-300"
+                        style="width: {status.memoryStats.percentages?.[category] || 0}%"
+                      ></div>
+                    </div>
+                  </div>
+                {/each}
+              {:else}
+                <!-- Fallback to legacy byType if byCategory not available -->
+                {#each Object.entries(status.memoryStats.byType) as [type, count]}
+                  <div class="flex justify-between text-sm">
+                    <span class="muted capitalize">{type}</span>
+                    <span class="font-semibold">{count}</span>
+                  </div>
+                {/each}
+              {/if}
             </div>
           </div>
         </div>

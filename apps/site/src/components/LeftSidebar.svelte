@@ -349,9 +349,14 @@
     roles?: string[];
     description: string;
     adapters: string[];
+    baseModel?: string | null;
+    metadata?: Record<string, any>;
+    options?: Record<string, any>;
+    source?: string;
   }
 
   let availableModels: AvailableModel[] = [];
+  let uniqueModels: AvailableModel[] = [];
   let roleAssignments: Record<string, string> = {};
   let modelDropdownOpen: Record<string, boolean> = {};
   let loadingModelRegistry = false;
@@ -367,6 +372,22 @@
       if (data.success) {
         availableModels = data.availableModels || [];
         roleAssignments = data.roleAssignments || {};
+
+        // Deduplicate models by model name
+        const seen = new Map<string, AvailableModel>();
+        for (const model of availableModels) {
+          const key = model.model;
+          if (!seen.has(key)) {
+            seen.set(key, model);
+          } else {
+            // Merge roles from duplicate entries
+            const existing = seen.get(key)!;
+            if (model.roles) {
+              existing.roles = Array.from(new Set([...(existing.roles || []), ...model.roles]));
+            }
+          }
+        }
+        uniqueModels = Array.from(seen.values());
       } else {
         console.error('Failed to load model registry:', data.error);
       }
@@ -390,6 +411,7 @@
       if (result.success) {
         roleAssignments[role] = modelId;
         modelDropdownOpen[role] = false;
+        modelDropdownOpen = { ...modelDropdownOpen };
 
         // Warm up the model in the background (non-blocking)
         // This preloads it into Ollama memory to avoid cold-start on first use
@@ -625,7 +647,7 @@
                   title="Click to change model for {role}\nCurrent: {info.model}{info.adapters && info.adapters.length > 0 ? ' + adapter' : ''}"
                   on:click|stopPropagation={() => toggleModelDropdown(role)}
                 >
-                  {info.model?.replace(/:.+$/, '') || '—'}
+                  {info.model || '—'}
                   {#if info.adapters && info.adapters.length > 0}
                     <span class="adapter-indicator">+LoRA</span>
                   {/if}
@@ -635,13 +657,21 @@
                 {#if modelDropdownOpen[role]}
                   <div class="model-dropdown">
                     <div class="dropdown-header">Select model for {role}</div>
-                    {#each availableModels.filter(m => !m.roles || m.roles.includes(role)) as model}
+                    {#each uniqueModels as model}
+                      {@const isSuggested = !model.roles || model.roles.includes(role)}
+                      {@const isCurrentlySelected = modelRoles[role]?.model === model.model}
                       <button
                         class="dropdown-item"
-                        class:selected={roleAssignments[role] === model.id}
+                        class:selected={isCurrentlySelected}
+                        class:suggested={isSuggested}
                         on:click|stopPropagation={() => assignModelToRole(role, model.id)}
                       >
-                        <span class="model-name">{model.model.replace(/:.+$/, '')}</span>
+                        <span class="model-name">
+                          {model.model}
+                          {#if isSuggested}
+                            <span class="suggested-indicator">✓</span>
+                          {/if}
+                        </span>
                         {#if model.adapters && model.adapters.length > 0}
                           <span class="adapter-indicator-small">+LoRA</span>
                         {/if}
@@ -1115,6 +1145,10 @@
     background: rgba(124, 58, 237, 0.12);
   }
 
+  .dropdown-item.suggested {
+    /* Subtle highlight for suggested models */
+  }
+
   :global(.dark) .dropdown-item {
     border-bottom-color: rgba(255, 255, 255, 0.05);
   }
@@ -1165,6 +1199,18 @@
 
   :global(.dark) .model-desc {
     color: rgb(156 163 175);
+  }
+
+  .suggested-indicator {
+    display: inline-block;
+    margin-left: 0.25rem;
+    font-size: 0.7rem;
+    color: rgb(34 197 94);
+    opacity: 0.7;
+  }
+
+  :global(.dark) .suggested-indicator {
+    color: rgb(74 222 128);
   }
 
   /* Unified trust level badge (cycles through levels + YOLO) */

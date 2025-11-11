@@ -183,7 +183,7 @@
     bulkFeedback = null;
 
     try {
-      const res = await fetch('/api/agent/bulk', {
+      const res = await fetch('/api/agents/control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action }),

@@ -772,7 +772,9 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   // Resolve user context up front so downstream routing can respect role-based restrictions
   const currentCtx = getUserContext();
   const userRole = currentCtx?.role ?? 'anonymous';
-  const operatorRoleAllowed = userRole === 'owner' || userRole === 'standard';
+  // Allow operator ONLY for the profile owner
+  // Guests and anonymous users get chat-only mode (no skill execution)
+  const operatorRoleAllowed = userRole === 'owner';
 
   // Load cognitive mode context once for consistent routing and memory policies
   // For unauthenticated users, force emulation mode (read-only, safe for guests)

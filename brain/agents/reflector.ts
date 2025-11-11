@@ -31,46 +31,56 @@ const technicalKeywords = [
  */
 async function getAllMemories() {
   const episodicDir = paths.episodic;
-  try {
-    const yearDirs = await fs.readdir(episodicDir);
-    let allMemories: Array<{ file: string; timestamp: Date; content: any }> = [];
 
-    for (const year of yearDirs) {
-      const yearPath = path.join(episodicDir, year);
-      const stats = await fs.stat(yearPath);
+  async function walk(dir: string, acc: Array<{ file: string; timestamp: Date; content: any }>) {
+    let entries: string[];
+    try {
+      entries = await fs.readdir(dir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return;
+      }
+      throw error;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry);
+      let stats;
+      try {
+        stats = await fs.stat(fullPath);
+      } catch {
+        continue;
+      }
+
       if (stats.isDirectory()) {
-        const files = await fs.readdir(yearPath);
-        for (const file of files) {
-          const filePath = path.join(yearPath, file);
-          try {
-            const content = JSON.parse(await fs.readFile(filePath, 'utf-8'));
+        await walk(fullPath, acc);
+      } else if (stats.isFile() && entry.endsWith('.json')) {
+        try {
+          const content = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
 
-            // Skip self-referential reflections (avoid echo chamber)
-            if (content.type === 'reflection' || content.metadata?.type === 'reflection') {
-              continue;
-            }
-
-            allMemories.push({
-              file: filePath,
-              timestamp: new Date(content.timestamp),
-              content
-            });
-          } catch {
-            // Skip malformed files
+          // Skip self-referential reflections (avoid echo chamber)
+          if (content.type === 'reflection' || content.metadata?.type === 'reflection') {
+            continue;
           }
+
+          acc.push({
+            file: fullPath,
+            timestamp: new Date(content.timestamp),
+            content
+          });
+        } catch {
+          // Skip malformed files
         }
       }
     }
-
-    // Sort by timestamp (newest first)
-    allMemories.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-    return allMemories;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return [];
-    }
-    throw error;
   }
+
+  const allMemories: Array<{ file: string; timestamp: Date; content: any }> = [];
+  await walk(episodicDir, allMemories);
+
+  // Sort by timestamp (newest first)
+  allMemories.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  return allMemories;
 }
 
 /**
@@ -148,7 +158,8 @@ async function getAssociativeMemoryChain(chainLength: number = 3): Promise<any[]
     }
   }
 
-  chain.push(seedMemory.content);
+  const seedEvent = { ...seedMemory.content, __file: seedMemory.file };
+  chain.push(seedEvent);
   usedFiles.add(seedMemory.file);
 
   console.log(`[reflector] Seed memory: "${seedMemory.content.content?.substring(0, 60)}..."`);
@@ -184,6 +195,7 @@ async function getAssociativeMemoryChain(chainLength: number = 3): Promise<any[]
 
       try {
         const memContent = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
+        (memContent as any).__file = fullPath;
         if (memContent.type !== 'reflection' && memContent.metadata?.type !== 'reflection') {
           relatedMemories.push(memContent);
         }
@@ -199,10 +211,12 @@ async function getAssociativeMemoryChain(chainLength: number = 3): Promise<any[]
 
     // Pick a random related memory (limit to top 10 most relevant)
     const nextMemory = relatedMemories[Math.floor(Math.random() * Math.min(10, relatedMemories.length))];
-    const nextFilePath = path.join(paths.episodic, new Date(nextMemory.timestamp).getFullYear().toString(), `${nextMemory.id}.json`);
+    const nextFilePath = (nextMemory as any).__file as string | undefined;
 
     chain.push(nextMemory);
-    usedFiles.add(nextFilePath);
+    if (nextFilePath) {
+      usedFiles.add(nextFilePath);
+    }
 
     console.log(`[reflector] Found related: "${nextMemory.content?.substring(0, 60)}..."`);
   }

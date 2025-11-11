@@ -122,6 +122,109 @@ Background processes that operate continuously:
 - Health checks, memory consolidation, skill updates
 - Automatic cleanup and optimization
 
+#### 3a. ReasoningEngine (Operator)
+
+The **Operator** agent uses a sophisticated multi-step reasoning system called the **ReasoningEngine** that implements the ReAct pattern (Reason-Act-Observe) for goal-oriented task execution.
+
+**ReAct Pattern:**
+```
+Goal → Thought → Action → Observation → Thought → ... → Response
+```
+
+**How It Works:**
+1. **Thought**: Plan the next step toward the goal
+2. **Action**: Execute a skill/tool to gather information or make changes
+3. **Observation**: Process the result and update understanding
+4. **Loop**: Repeat until goal is achieved or max steps reached
+5. **Response**: Generate final answer based on all observations
+
+**Key Features:**
+
+- **Structured Scratchpad**: Complete history of Thought → Action → Observation cycles
+- **Error Recovery**: 7 error types with contextual recovery suggestions
+  - `FILE_NOT_FOUND` → "Use fs_list to check what files exist"
+  - `TASK_NOT_FOUND` → "Use task_list to see available tasks"
+  - `PERMISSION_DENIED` → "Check file permissions with fs_list"
+  - And 4 more...
+- **Failure Loop Detection**: Prevents repeated failures of the same action (triggers after 2 attempts)
+- **3 Observation Modes**:
+  - **Verbatim**: Raw JSON output from skills
+  - **Structured**: Formatted tables and summaries
+  - **Narrative**: Natural language descriptions
+- **Fast-Path Optimizations**: Short-circuits simple queries (e.g., "list tasks" → direct execution)
+- **Tool Catalog Integration**: Auto-generated LLM-friendly skill documentation with caching
+
+**Reasoning Depth Levels:**
+
+| Level | Name | Steps | Use Case |
+|-------|------|-------|----------|
+| 0 | Off | 1 | Direct execution, no reasoning |
+| 1 | Quick | 5 | Simple single-task operations |
+| 2 | Focused | 10 | Multi-step tasks (default) |
+| 3 | Deep | 15 | Complex problem solving |
+
+**Configuration:**
+
+The reasoning system has two implementations:
+1. **V2 Inline** (default) - Reasoning logic embedded in operator-react.ts
+2. **V2 Service** (recommended) - Unified ReasoningEngine in `@metahuman/core/reasoning`
+
+Control via `etc/runtime.json`:
+```json
+{
+  "operator": {
+    "reactV2": true,              // Enable V2 ReAct pattern
+    "useReasoningService": false  // Use unified service (false = inline)
+  }
+}
+```
+
+**When to Enable ReasoningEngine Service:**
+- Enhanced error recovery with contextual suggestions
+- Better failure loop detection and prevention
+- Structured event streaming for UI observability
+- Full scratchpad history for debugging
+
+**Example Execution:**
+
+```
+User: "Create a task to review the documentation"
+
+Thought 1: Need to create a task. I should use task_create skill.
+Action 1: task_create({ title: "Review documentation", priority: "medium" })
+Observation 1: ✅ Task created with ID: task-123
+
+Thought 2: Task created successfully. I have all the information needed.
+Response: I've created a task titled "Review documentation" with medium priority (ID: task-123).
+```
+
+**Audit & Observability:**
+
+All reasoning steps are logged to `logs/audit/YYYY-MM-DD.ndjson`:
+```json
+{
+  "event": "reasoning_thought",
+  "step": 1,
+  "data": { "thought": "Need to create a task..." }
+}
+```
+
+**SSE Event Streaming:**
+
+When using the web UI, reasoning events stream in real-time:
+- `type: 'thought'` - Planning steps
+- `type: 'action'` - Tool executions
+- `type: 'observation'` - Results and feedback
+- `type: 'completion'` - Final response
+- `type: 'error'` - Failures and suggestions
+
+The "reasoning slider" in the web UI displays these events as they happen, showing you the agent's step-by-step thought process.
+
+**Related Documentation:**
+- [Autonomous Agents](08-autonomous-agents.md) - Operator agent details
+- [Advanced Usage](13-advanced-usage.md) - ReasoningEngine configuration
+- [Configuration Files](14-configuration-files.md) - runtime.json reference
+
 ### 4. Sync Engine (Human ↔ Digital Personality Extension)
 
 Bidirectional learning between you and your digital twin:
