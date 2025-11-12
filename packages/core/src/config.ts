@@ -235,19 +235,26 @@ export interface CuriosityConfig {
   minTrustLevel: string;              // Minimum trust to ask questions
 }
 
-let curiosityConfigCache: CuriosityConfig | null = null;
+const curiosityConfigCache = new Map<string, CuriosityConfig>();
+
+function getCuriosityCacheKey(): string {
+  // Cache per-user by etc path so multi-user contexts stay isolated
+  return path.join(paths.etc, 'curiosity.json');
+}
 
 export function loadCuriosityConfig(): CuriosityConfig {
-  if (curiosityConfigCache) return curiosityConfigCache;
+  const cacheKey = getCuriosityCacheKey();
+  const cached = curiosityConfigCache.get(cacheKey);
+  if (cached) return cached;
 
   const config = loadUserConfig<CuriosityConfig>('curiosity.json', getDefaultCuriosityConfig());
-  curiosityConfigCache = config;
+  curiosityConfigCache.set(cacheKey, config);
   return config;
 }
 
 export function saveCuriosityConfig(config: CuriosityConfig): void {
   saveUserConfig('curiosity.json', config);
-  curiosityConfigCache = config; // Update cache
+  curiosityConfigCache.set(getCuriosityCacheKey(), config);
 }
 
 export function getDefaultCuriosityConfig(): CuriosityConfig {
@@ -263,6 +270,10 @@ export function getDefaultCuriosityConfig(): CuriosityConfig {
 /**
  * Invalidate curiosity config cache (for testing)
  */
-export function invalidateCuriosityConfig(): void {
-  curiosityConfigCache = null;
+export function invalidateCuriosityConfig(targetPath?: string): void {
+  if (targetPath) {
+    curiosityConfigCache.delete(targetPath);
+    return;
+  }
+  curiosityConfigCache.clear();
 }

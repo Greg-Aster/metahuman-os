@@ -9,6 +9,8 @@ import { resolveModel, resolveModelForCognitiveMode, type ModelRole, type Resolv
 import { audit } from './audit.js';
 import { ollama } from './ollama.js';
 import { loadPersonaWithFacet, getActiveFacet } from './identity.js';
+import { loadCognitiveMode } from './cognitive-mode.js';
+import { getUserContext } from './context.js';
 
 // Re-export ModelRole for convenience
 export type { ModelRole } from './model-resolver.js';
@@ -57,6 +59,25 @@ export interface RouterStreamChunk {
     completion: number;
     total: number;
   };
+}
+
+function getContextualCognitiveMode(explicitMode: string | undefined): string | null {
+  if (explicitMode !== undefined) {
+    return explicitMode;
+  }
+
+  const ctx = getUserContext();
+  if (!ctx || (ctx.role === 'anonymous' && !ctx.activeProfile)) {
+    return null;
+  }
+
+  try {
+    const modeConfig = loadCognitiveMode();
+    return modeConfig.currentMode ?? null;
+  } catch (error) {
+    console.warn('[model-router] Failed to load cognitive mode from user context:', error);
+    return null;
+  }
 }
 
 /**
@@ -123,9 +144,11 @@ function buildPersonaContext(): string {
 export async function callLLM(callOptions: RouterCallOptions): Promise<RouterResponse> {
   const startTime = Date.now();
 
+  const effectiveCognitiveMode = getContextualCognitiveMode(callOptions.cognitiveMode);
+
   // Resolve the model for this role
-  const resolved = callOptions.cognitiveMode
-    ? resolveModelForCognitiveMode(callOptions.cognitiveMode, callOptions.role)
+  const resolved = effectiveCognitiveMode
+    ? resolveModelForCognitiveMode(effectiveCognitiveMode, callOptions.role)
     : resolveModel(callOptions.role, callOptions.overrides);
 
   // Check if we should include persona summary
@@ -211,7 +234,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
         provider: resolved.provider,
         model: resolved.model,
         adapters: resolved.adapters,
-        cognitiveMode: callOptions.cognitiveMode,
+        cognitiveMode: effectiveCognitiveMode,
         latencyMs: response.latencyMs,
         tokens: response.tokens,
         cached: response.cached || false,
@@ -234,7 +257,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
         modelId: resolved.id,
         provider: resolved.provider,
         model: resolved.model,
-        cognitiveMode: callOptions.cognitiveMode,
+        cognitiveMode: effectiveCognitiveMode,
         error: (error as Error).message,
         latencyMs,
       },

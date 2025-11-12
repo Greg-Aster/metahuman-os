@@ -46,7 +46,13 @@ function syncToScheduler() {
   }
 
   const currentLevel = config.level || 'off';
-  const intervalSeconds = config.intervals[currentLevel];
+  const rawInterval = config.intervals?.[currentLevel];
+  const intervalSeconds = typeof rawInterval === 'number' ? rawInterval : null;
+  const hasPositiveInterval = typeof intervalSeconds === 'number' && intervalSeconds > 0;
+  const fallbackInterval = typeof config.intervals?.low === 'number' ? config.intervals.low : 900;
+  const baseInterval = hasPositiveInterval ? intervalSeconds as number : fallbackInterval;
+  const thresholdSeconds = Math.max(baseInterval, 60);
+  const activityEnabled = hasPositiveInterval && autonomy.mode !== 'off';
 
   // Read current agents.json
   let agentsConfig;
@@ -57,22 +63,24 @@ function syncToScheduler() {
     return;
   }
 
-  // Update reflector agent configuration
+  // Reflector now runs only when boredom (activity) triggers fire. Keep interval disabled.
   if (agentsConfig.agents.reflector) {
-    agentsConfig.agents.reflector.enabled = intervalSeconds && intervalSeconds > 0;
-    agentsConfig.agents.reflector.interval = intervalSeconds || 900;
+    agentsConfig.agents.reflector.enabled = false;
+    agentsConfig.agents.reflector.interval = thresholdSeconds;
+    agentsConfig.agents.reflector.comment = 'Disabled in favor of activity-based reflections via boredom-maintenance';
   }
 
   // Update boredom-maintenance configuration
   if (agentsConfig.agents['boredom-maintenance']) {
-    agentsConfig.agents['boredom-maintenance'].enabled = autonomy.mode !== 'off';
-    agentsConfig.agents['boredom-maintenance'].inactivityThreshold = intervalSeconds || 900;
+    agentsConfig.agents['boredom-maintenance'].enabled = activityEnabled;
+    agentsConfig.agents['boredom-maintenance'].inactivityThreshold = thresholdSeconds;
   }
 
   // Write updated configuration
   try {
     fs.writeFileSync(agentsConfigFile, JSON.stringify(agentsConfig, null, 2));
-    console.log(`[boredom-service] Synced to scheduler: level=${currentLevel}, interval=${intervalSeconds}s`);
+    const intervalLabel = hasPositiveInterval ? `${intervalSeconds}s` : 'disabled';
+    console.log(`[boredom-service] Synced to scheduler: level=${currentLevel}, interval=${intervalLabel}, autonomy=${autonomy.mode}`);
 
     audit({
       category: 'system',
@@ -81,8 +89,9 @@ function syncToScheduler() {
       actor: 'boredom-service',
       metadata: {
         level: currentLevel,
-        intervalSeconds,
-        autonomyMode: autonomy.mode
+        intervalSeconds: hasPositiveInterval ? intervalSeconds : null,
+        autonomyMode: autonomy.mode,
+        activityEnabled
       }
     });
 

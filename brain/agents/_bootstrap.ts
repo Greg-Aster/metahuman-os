@@ -12,6 +12,10 @@ import { withUserContext } from '@metahuman/core/context';
 import { getUsers } from '@metahuman/core/users';
 import { systemPaths } from '@metahuman/core/paths';  // Use systemPaths instead of paths
 
+const agentScriptOverrides: Record<string, string> = {
+  curiosity: 'curiosity-service.ts',
+};
+
 async function main() {
   const agentName = process.argv[2];
 
@@ -32,7 +36,8 @@ async function main() {
   }
 
   // Use systemPaths.brain (system-level path) before context is set
-  const agentPath = `${systemPaths.brain}/agents/${agentName}.ts`;
+  const scriptName = agentScriptOverrides[agentName] ?? `${agentName}.ts`;
+  const agentPath = `${systemPaths.brain}/agents/${scriptName}`;
 
   // Establish owner context for the agent BEFORE importing
   // This allows agent module-level code to access user paths

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import BoredomControl from './BoredomControl.svelte';
+  import AddonsManager from './AddonsManager.svelte';
 
   // Welcome modal toggle
   let showWelcomeModal = false;
@@ -34,9 +35,23 @@
 
   const curiosityLevelDescriptions = [
     'Curiosity disabled - no questions will be asked',
-    'Gentle - 1 question at a time, infrequent prompts',
-    'Moderate - Up to 2 concurrent questions',
-    'Chatty - Up to 3 concurrent questions, shorter intervals'
+    'Gentle - Questions every ~60 minutes during idle time',
+    'Moderate - Questions every ~30 minutes during idle time',
+    'Active - Questions every ~15 minutes during idle time',
+    'Chatty - Questions every ~5 minutes during idle time',
+    'Very Active - Questions every ~2 minutes during idle time',
+    'Intense - Questions every minute during idle time'
+  ];
+
+  // Map curiosity levels to intervals (in seconds)
+  const curiosityIntervals = [
+    0,     // Level 0: Off
+    3600,  // Level 1: 60 minutes
+    1800,  // Level 2: 30 minutes
+    900,   // Level 3: 15 minutes
+    300,   // Level 4: 5 minutes
+    120,   // Level 5: 2 minutes
+    60     // Level 6: 1 minute
   ];
 
   onMount(async () => {
@@ -183,7 +198,8 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           maxOpenQuestions: curiosityLevel,
-          researchMode: curiosityResearchMode
+          researchMode: curiosityResearchMode,
+          questionIntervalSeconds: curiosityIntervals[curiosityLevel]
         })
       });
       if (!res.ok) throw new Error('Failed to save curiosity settings');
@@ -371,7 +387,7 @@
         <input
           type="range"
           min="0"
-          max="3"
+          max="6"
           bind:value={curiosityLevel}
           on:change={saveCuriositySettings}
           class="curiosity-slider"
@@ -380,7 +396,10 @@
           <span>Off</span>
           <span>Gentle</span>
           <span>Moderate</span>
+          <span>Active</span>
           <span>Chatty</span>
+          <span>Very</span>
+          <span>Intense</span>
         </div>
       </div>
       <p class="curiosity-description">
@@ -470,6 +489,12 @@
         <span class="info-value">0.1.0</span>
       </div>
     </div>
+  </div>
+
+  <!-- Addons System -->
+  <div class="setting-group">
+    <h3>Addons</h3>
+    <AddonsManager />
   </div>
 </div>
 
@@ -799,10 +824,11 @@
 
   .curiosity-labels {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    font-size: 0.75rem;
+    grid-template-columns: repeat(7, 1fr);
+    font-size: 0.7rem;
     color: #6b7280;
     padding: 0 0.25rem;
+    text-align: center;
   }
 
   :global(.dark) .curiosity-labels {

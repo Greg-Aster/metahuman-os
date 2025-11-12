@@ -261,6 +261,13 @@ const getHandler: APIRoute = async () => {
         currentVoice: currentVoiceFile,
         speakingRate: config.tts.piper.speakingRate || 1.0,
         provider: config.tts.provider,
+        sovits: {
+          serverUrl: config.tts.sovits?.serverUrl || 'http://127.0.0.1:9880',
+          speakerId: config.tts.sovits?.speakerId || 'default',
+          temperature: config.tts.sovits?.temperature || 0.6,
+          speed: config.tts.sovits?.speed || 1.0,
+          autoFallbackToPiper: config.tts.sovits?.autoFallbackToPiper ?? true,
+        },
       }),
       {
         status: 200,
@@ -289,7 +296,7 @@ const postHandler: APIRoute = async ({ request }) => {
       );
     }
 
-    const { voiceId, speakingRate } = await request.json();
+    const { voiceId, speakingRate, provider, sovits } = await request.json();
 
     const voiceConfigPath = context.profilePaths.voiceConfig;
     const voicesDir = context.systemPaths.voiceModels;
@@ -310,6 +317,10 @@ const postHandler: APIRoute = async ({ request }) => {
     }
 
     // Update configuration
+    if (provider) {
+      config.tts.provider = provider;
+    }
+
     if (voiceId) {
       config.tts.piper.model = selectedVoice.modelPath;
       config.tts.piper.config = selectedVoice.configPath;
@@ -319,12 +330,25 @@ const postHandler: APIRoute = async ({ request }) => {
       config.tts.piper.speakingRate = Math.max(0.5, Math.min(2.0, speakingRate));
     }
 
+    // Update SoVITS settings if provided
+    if (sovits) {
+      config.tts.sovits = config.tts.sovits || {} as any;
+      if (sovits.serverUrl) config.tts.sovits.serverUrl = sovits.serverUrl;
+      if (sovits.speakerId) config.tts.sovits.speakerId = sovits.speakerId;
+      if (typeof sovits.temperature === 'number') config.tts.sovits.temperature = sovits.temperature;
+      if (typeof sovits.speed === 'number') config.tts.sovits.speed = sovits.speed;
+      if (typeof sovits.autoFallbackToPiper === 'boolean') {
+        config.tts.sovits.autoFallbackToPiper = sovits.autoFallbackToPiper;
+      }
+    }
+
     // Save configuration
     fs.writeFileSync(voiceConfigPath, JSON.stringify(config, null, 2), 'utf8');
 
     return new Response(
       JSON.stringify({
         success: true,
+        provider: config.tts.provider,
         currentVoice: voiceId,
         speakingRate: config.tts.piper.speakingRate,
       }),

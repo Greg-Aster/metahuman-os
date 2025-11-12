@@ -33,7 +33,7 @@ import path from 'node:path';
 /**
  * Perform research on a single question
  */
-async function researchQuestion(questionData: any): Promise<string | null> {
+async function researchQuestion(questionData: any): Promise<{ notes: string; summary: string } | null> {
   const config = loadCuriosityConfig();
   const trust = loadTrustLevel();
   const persona = loadPersonaCore();
@@ -98,7 +98,7 @@ async function researchQuestion(questionData: any): Promise<string | null> {
 
   // Web research (requires higher trust)
   if (config.researchMode === 'web') {
-    const trustLevels = ['observe', 'suggest', 'trusted', 'supervised_auto', 'bounded_auto'];
+    const trustLevels = ['observe', 'suggest', 'trusted', 'supervised_auto', 'bounded_auto', 'adaptive_auto'];
     const currentTrustIdx = trustLevels.indexOf(trust);
     const requiredTrustIdx = trustLevels.indexOf('supervised_auto');
 
@@ -115,6 +115,7 @@ async function researchQuestion(questionData: any): Promise<string | null> {
   }
 
   // Generate research summary using LLM
+  let summary = '';
   try {
     const summaryPrompt = `Based on the following research notes about a curiosity question, provide a 2-3 sentence summary of the most interesting insights or patterns discovered:\n\n${researchNotes}`;
     const summaryMessages: RouterMessage[] = [
@@ -127,8 +128,9 @@ async function researchQuestion(questionData: any): Promise<string | null> {
       options: { temperature: 0.7, max_tokens: 150 }
     });
 
+    summary = summaryResponse.content.trim();
     researchNotes += `## Summary\n`;
-    researchNotes += summaryResponse.content.trim() + `\n\n`;
+    researchNotes += summary + `\n\n`;
   } catch (err) {
     console.error(`[curiosity-researcher] Error generating summary:`, err);
   }
@@ -136,7 +138,7 @@ async function researchQuestion(questionData: any): Promise<string | null> {
   researchNotes += `---\n`;
   researchNotes += `*Generated: ${new Date().toISOString()}*\n`;
 
-  return researchNotes;
+  return { notes: researchNotes, summary };
 }
 
 /**
@@ -172,11 +174,27 @@ async function processUserResearch(username: string): Promise<number> {
       }
 
       // Perform research
-      const researchNotes = await researchQuestion(questionData);
+      const researchResult = await researchQuestion(questionData);
 
-      if (researchNotes) {
-        await fs.writeFile(researchPath, researchNotes, 'utf-8');
+      if (researchResult) {
+        await fs.writeFile(researchPath, researchResult.notes, 'utf-8');
         researchCount++;
+
+        // Save research summary as inner dialogue event
+        if (researchResult.summary) {
+          const summaryText = `🔍 Research observation: ${researchResult.summary}`;
+          captureEvent(summaryText, {
+            type: 'inner_dialogue',
+            tags: ['curiosity', 'research', 'inner'],
+            metadata: {
+              curiosity: {
+                questionId: questionData.id,
+                researchFile: researchFilename,
+                question: questionData.question
+              }
+            }
+          });
+        }
 
         audit({
           category: 'action',
@@ -204,7 +222,33 @@ async function processUserResearch(username: string): Promise<number> {
 }
 
 /**
- * Main entry point (multi-user)
+ * Find the most recently active user (based on lastLogin)
+ */
+function getMostRecentlyActiveUser(): { userId: string; username: string; role: string } | null {
+  const users = listUsers();
+  if (users.length === 0) return null;
+
+  // Filter users with lastLogin, sort by most recent
+  const usersWithLogin = users
+    .filter(u => u.lastLogin)
+    .sort((a, b) => new Date(b.lastLogin!).getTime() - new Date(a.lastLogin!).getTime());
+
+  if (usersWithLogin.length === 0) {
+    // If no users have logged in yet, use the owner
+    const owner = users.find(u => u.role === 'owner');
+    if (owner) {
+      return { userId: owner.id, username: owner.username, role: owner.role };
+    }
+    // Fallback to first user
+    return { userId: users[0].id, username: users[0].username, role: users[0].role };
+  }
+
+  const mostRecent = usersWithLogin[0];
+  return { userId: mostRecent.id, username: mostRecent.username, role: mostRecent.role };
+}
+
+/**
+ * Main entry point (single active user only)
  */
 async function run() {
   initGlobalLogger('curiosity-researcher');
@@ -222,33 +266,40 @@ async function run() {
     return;
   }
 
-  console.log('[curiosity-researcher] Starting research cycle (multi-user)...');
+  console.log('[curiosity-researcher] Starting research cycle (active user only)...');
 
   try {
-    const users = listUsers();
+    // Find most recently active user
+    const activeUser = getMostRecentlyActiveUser();
+
+    if (!activeUser) {
+      console.log('[curiosity-researcher] No active users found, exiting.');
+      return;
+    }
+
+    console.log(`[curiosity-researcher] Processing active user: ${activeUser.username}`);
+
     let totalResearch = 0;
 
-    for (const user of users) {
-      try {
-        const count = await withUserContext(
-          { userId: user.id, username: user.username, role: user.role },
-          async () => processUserResearch(user.username)
-        );
-        totalResearch += count;
-      } catch (error) {
-        console.error(`[curiosity-researcher] Failed to process user ${user.username}:`, (error as Error).message);
-      }
+    try {
+      const count = await withUserContext(
+        { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
+        async () => processUserResearch(activeUser.username)
+      );
+      totalResearch += count;
+    } catch (error) {
+      console.error(`[curiosity-researcher] Failed to process user ${activeUser.username}:`, (error as Error).message);
     }
 
     if (totalResearch > 0) {
-      console.log(`[curiosity-researcher] Completed ${totalResearch} research tasks across ${users.length} users.`);
+      console.log(`[curiosity-researcher] Completed ${totalResearch} research tasks for user ${activeUser.username}.`);
 
       audit({
         category: 'action',
         level: 'info',
         message: 'Curiosity researcher completed cycle',
         actor: 'curiosity-researcher',
-        metadata: { researchCompleted: totalResearch, userCount: users.length }
+        metadata: { researchCompleted: totalResearch, username: activeUser.username }
       });
     }
   } finally {

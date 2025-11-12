@@ -67,9 +67,6 @@ export function getProfilePaths(username: string) {
 
     // Curiosity system
     curiosity: path.join(profileRoot, 'memory', 'curiosity'),
-    curiosityQuestions: path.join(profileRoot, 'memory', 'curiosity', 'questions'),
-    curiosityQuestionsPending: path.join(profileRoot, 'memory', 'curiosity', 'questions', 'pending'),
-    curiosityQuestionsAnswered: path.join(profileRoot, 'memory', 'curiosity', 'questions', 'answered'),
     curiosityFacts: path.join(profileRoot, 'memory', 'curiosity', 'facts'),
     curiosityResearch: path.join(profileRoot, 'memory', 'curiosity', 'research'),
     curiosityConfig: path.join(profileRoot, 'etc', 'curiosity.json'),
@@ -83,6 +80,10 @@ export function getProfilePaths(username: string) {
     voiceTraining: path.join(profileRoot, 'out', 'voice-training', 'recordings'),
     voiceDataset: path.join(profileRoot, 'out', 'voice-training', 'dataset'),
     voiceConfig: path.join(profileRoot, 'etc', 'voice.json'),
+
+    // GPT-SoVITS reference audio (profile-specific)
+    sovitsReference: path.join(profileRoot, 'out', 'voices', 'sovits'),
+    sovitsModels: path.join(profileRoot, 'out', 'voices', 'sovits-models'),
   };
 }
 
@@ -196,9 +197,6 @@ export const paths = new Proxy({} as ReturnType<typeof getProfilePaths> & typeof
 
       // Curiosity system
       curiosity: path.join(ROOT, 'memory', 'curiosity'),
-      curiosityQuestions: path.join(ROOT, 'memory', 'curiosity', 'questions'),
-      curiosityQuestionsPending: path.join(ROOT, 'memory', 'curiosity', 'questions', 'pending'),
-      curiosityQuestionsAnswered: path.join(ROOT, 'memory', 'curiosity', 'questions', 'answered'),
       curiosityFacts: path.join(ROOT, 'memory', 'curiosity', 'facts'),
       curiosityResearch: path.join(ROOT, 'memory', 'curiosity', 'research'),
       curiosityConfig: path.join(ROOT, 'etc', 'curiosity.json'),

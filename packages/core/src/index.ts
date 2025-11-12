@@ -31,6 +31,7 @@ export * from './policy';
 export * from './tts';
 export * from './stt';
 export * from './voice-training';
+export * from './audio-manager';
 export * from './autonomy';
 export * from './cognitive-mode';
 export * from './memory-policy';

@@ -386,3 +386,41 @@ export function refreshSession(sessionId: string): Session | null {
 
   return session;
 }
+
+/**
+ * Get all logged-in users (active, non-anonymous sessions)
+ *
+ * Returns users who have active sessions that haven't expired.
+ * Excludes anonymous sessions.
+ *
+ * @returns Array of logged-in users with userId, username, and role
+ */
+export function getLoggedInUsers(): Array<{ userId: string; username: string; role: string }> {
+  const store = loadSessions();
+  const now = new Date();
+  const activeUsers = new Map<string, { userId: string; username: string; role: string }>();
+
+  // Find all active, non-expired, non-anonymous sessions
+  for (const session of store.sessions) {
+    const expiresAt = new Date(session.expiresAt);
+
+    if (expiresAt > now && session.role !== 'anonymous') {
+      // Use userId as key to deduplicate (same user can have multiple sessions)
+      if (!activeUsers.has(session.userId)) {
+        // Get username from user database
+        const { getUser } = require('./users.js');
+        const user = getUser(session.userId);
+
+        if (user) {
+          activeUsers.set(session.userId, {
+            userId: session.userId,
+            username: user.username,
+            role: session.role
+          });
+        }
+      }
+    }
+  }
+
+  return Array.from(activeUsers.values());
+}

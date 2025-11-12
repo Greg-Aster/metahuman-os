@@ -89,6 +89,21 @@ export const GET: APIRoute = ({ request }) => {
                       timestamp: entry.timestamp,
                     });
                   }
+
+                  // Send curiosity question events
+                  if (
+                    entry.actor === 'curiosity-service' &&
+                    entry.event === 'chat_assistant' &&
+                    entry.details?.curiosityQuestionId &&
+                    entry.details?.content
+                  ) {
+                    sendEvent({
+                      type: 'curiosity',
+                      question: entry.details.content,
+                      questionId: entry.details.curiosityQuestionId,
+                      timestamp: entry.timestamp,
+                    });
+                  }
                 } catch (e) {
                   /* ignore malformed json */
                 }

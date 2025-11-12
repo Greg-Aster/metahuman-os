@@ -48,6 +48,12 @@ let reasoningStages: ReasoningStage[] = [];
   let showMiniVoice = false;
   let boredomTtsEnabled = false; // For inner dialog voice
   let audioUnlocked = false;
+  // Curiosity questions
+  let curiosityQuestions: any[] = [];
+  let lastQuestionCheck = 0;
+  // Reply-to system
+  let selectedMessage: ChatMessage | null = null;
+  let selectedMessageIndex: number | null = null;
   let audioCtx: AudioContext | null = null;
   let currentAudio: HTMLAudioElement | null = null;
   let currentObjectUrl: string | null = null;
@@ -282,7 +288,25 @@ let reasoningStages: ReasoningStage[] = [];
       }
 
       console.log('[chat-tts] Fetching TTS from /api/tts...');
+
+      // Get current provider from voice settings
+      let provider: string | undefined;
+      try {
+        const settingsRes = await fetch('/api/voice-settings');
+        if (settingsRes.ok) {
+          const settings = await settingsRes.json();
+          provider = settings.provider;
+        }
+      } catch (e) {
+        console.warn('[chat-tts] Failed to fetch voice provider, using default');
+      }
+
       const ttsBody: any = { text: speechText };
+
+      // Include provider if available
+      if (provider) {
+        ttsBody.provider = provider;
+      }
 
       // If multi-voice, use models array; otherwise use default single voice
       if (multiVoice && voiceModels) {
@@ -496,8 +520,37 @@ let reasoningStages: ReasoningStage[] = [];
             void speakText(data.dream);
           }
         }
+
+        // Handle curiosity questions (only in conversation mode)
+        if (data.type === 'curiosity' && data.question && mode === 'conversation') {
+          console.log('[curiosity] Received new question via SSE:', data.questionId);
+
+          const newMessage = {
+            role: 'assistant' as MessageRole,
+            content: data.question,
+            timestamp: new Date(data.timestamp).getTime(),
+            meta: {
+              curiosityQuestionId: data.questionId,
+              isCuriosityQuestion: true
+            }
+          };
+
+          messages = [...messages, newMessage];
+          saveSession();
+
+          // Auto-select the new question for easy reply
+          selectedMessage = newMessage;
+          selectedMessageIndex = messages.length - 1;
+          console.log('[curiosity] Auto-selected new question');
+
+          // Trigger TTS if enabled
+          if (ttsEnabled && data.question) {
+            console.log('[curiosity] Speaking question via TTS');
+            void speakText(data.question);
+          }
+        }
       } catch (e) {
-        console.error('Failed to parse reflection/dream event:', e);
+        console.error('Failed to parse reflection/dream/curiosity event:', e);
       }
     };
 
@@ -511,7 +564,13 @@ let reasoningStages: ReasoningStage[] = [];
     const cached = loadSessionFromStorage();
     if (cached) messages = cached;
 
-    return () => observer.disconnect();
+    // Curiosity questions now come through normal conversation stream
+    // They're saved as conversation events by curiosity-service agent
+    // and loaded via /api/chat/history just like regular messages
+
+    return () => {
+      observer.disconnect();
+    };
   });
 
 
@@ -588,9 +647,17 @@ let reasoningStages: ReasoningStage[] = [];
 
     // Signal activity when sending a message
     signalActivity();
-    
+
     const userMessage = input.trim();
     input = '';
+
+    // Capture replyTo metadata if a curiosity question is selected
+    const replyToQuestionId = selectedMessage?.meta?.curiosityQuestionId || null;
+
+    // Clear selection after capturing metadata
+    const wasReplying = selectedMessage !== null;
+    selectedMessage = null;
+    selectedMessageIndex = null;
 
     pushMessage('user', userMessage);
 
@@ -617,6 +684,12 @@ let reasoningStages: ReasoningStage[] = [];
       });
       params.set('yolo', String(yoloMode));
       // audience removed - focus selector obsolete with ReAct operator
+
+      // Add replyTo metadata if replying to a curiosity question
+      if (replyToQuestionId) {
+        params.set('replyToQuestionId', replyToQuestionId);
+        console.log('[curiosity] Replying to question:', replyToQuestionId);
+      }
 
       // Use EventSource for streaming with a GET request
       chatResponseStream = new EventSource(`/api/persona_chat?${params.toString()}`);
@@ -1037,7 +1110,7 @@ let reasoningStages: ReasoningStage[] = [];
       </div>
     {:else}
       <div class="messages-list">
-        {#each messages as message}
+        {#each messages as message, i}
           {#if mode === 'inner'
             ? (message.role === 'reflection' || message.role === 'dream' || message.role === 'reasoning')
             : (message.role !== 'reflection' && message.role !== 'dream')}
@@ -1048,7 +1121,24 @@ let reasoningStages: ReasoningStage[] = [];
                 initiallyOpen={false}
               />
             {:else}
-              <div class="message message-{message.role}" data-facet={message.meta?.facet || 'default'}>
+              <div
+                class="message message-{message.role}"
+                class:message-selected={selectedMessageIndex === i}
+                data-facet={message.meta?.facet || 'default'}
+                on:click={() => {
+                  if (selectedMessageIndex === i) {
+                    // Deselect if clicking same message
+                    selectedMessage = null;
+                    selectedMessageIndex = null;
+                  } else {
+                    // Select this message for reply
+                    selectedMessage = message;
+                    selectedMessageIndex = i;
+                  }
+                }}
+                role="button"
+                tabindex="0"
+              >
                 <div class="message-header">
                   <span class="message-role">
                     {#if message.role === 'user'}
@@ -1126,6 +1216,22 @@ let reasoningStages: ReasoningStage[] = [];
     <div class="input-wrapper">
       <!-- Code approval box appears here when there are pending approvals -->
       <ApprovalBox />
+
+      <!-- Reply-to indicator -->
+      {#if selectedMessage}
+        <div class="reply-indicator">
+          <span class="reply-label">↩ Replying to:</span>
+          <span class="reply-preview">{selectedMessage.content.substring(0, 60)}{selectedMessage.content.length > 60 ? '...' : ''}</span>
+          <button
+            class="reply-cancel"
+            on:click={() => {
+              selectedMessage = null;
+              selectedMessageIndex = null;
+            }}
+            title="Cancel reply"
+          >✕</button>
+        </div>
+      {/if}
 
       <div class="input-row">
         <textarea
@@ -1217,6 +1323,74 @@ let reasoningStages: ReasoningStage[] = [];
 
   .message-assistant[data-facet="default"] .message-content {
     border-left: 3px solid rgba(139,92,246,0.6);
+  }
+
+  /* Reply-to system: selected message highlighting */
+  .message-selected {
+    outline: 2px solid rgba(167, 139, 250, 0.5);
+    outline-offset: 2px;
+    background: rgba(167, 139, 250, 0.05);
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .message-selected:hover {
+    outline-color: rgba(167, 139, 250, 0.8);
+    background: rgba(167, 139, 250, 0.1);
+  }
+
+  .message {
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+
+  .message:hover:not(.message-selected) {
+    background: rgba(167, 139, 250, 0.03);
+  }
+
+  /* Reply indicator styling */
+  .reply-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(167, 139, 250, 0.1);
+    border-left: 3px solid rgba(167, 139, 250, 0.6);
+    border-radius: 0.375rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .reply-label {
+    font-weight: 600;
+    color: rgba(167, 139, 250, 1);
+  }
+
+  .reply-preview {
+    flex: 1;
+    color: rgba(156, 163, 175, 1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .reply-cancel {
+    flex-shrink: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.25rem;
+    background: rgba(239, 68, 68, 0.1);
+    color: rgba(239, 68, 68, 1);
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .reply-cancel:hover {
+    background: rgba(239, 68, 68, 0.2);
   }
 
   /* Clear button - hide icon on desktop, show text */

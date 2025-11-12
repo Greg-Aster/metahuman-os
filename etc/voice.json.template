@@ -7,6 +7,16 @@
       "config": "./out/voices/en_US-ryan-high.onnx.json",
       "speakingRate": 1.0,
       "outputFormat": "wav"
+    },
+    "sovits": {
+      "serverUrl": "http://127.0.0.1:9880",
+      "referenceAudioDir": "./out/voices/sovits",
+      "speakerId": "default",
+      "temperature": 0.6,
+      "speed": 1.0,
+      "outputFormat": "wav",
+      "timeout": 30000,
+      "autoFallbackToPiper": true
     }
   },
   "stt": {

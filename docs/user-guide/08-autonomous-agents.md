@@ -10,27 +10,30 @@ This specialization allows the system to use the best cognitive resources for ea
 
 ### Agent Scheduler System
 
-All autonomous agents are now managed by a centralized **Agent Scheduler** service that provides intelligent triggering and coordination.
+All autonomous agents are now managed by a centralized **Agent Scheduler** service that provides intelligent triggering and coordination. The scheduler is managed by the `run-with-agents` wrapper which is used automatically when you start the web UI via `pnpm dev`.
 
 **Features:**
-- **Centralized Management**: Single configuration file (`etc/agents.json`) controls all agent behavior
-- **Multiple Trigger Types**:
+- **Centralized Management**: The `scheduler-service` via `etc/agents.json` configuration controls all agent behavior
+- **Multiple Trigger Types** (via `etc/agents.json`):
   - `interval`: Run agent every N seconds (e.g., organizer every 60s)
   - `time-of-day`: Run agent at specific time (e.g., dreamer at 02:00)
   - `event`: Run agent when specific events occur (future feature)
   - `activity`: Run agent after inactivity threshold (e.g., boredom maintenance after 15 minutes idle)
-- **Hot-Reloading**: Changes to `etc/agents.json` take effect immediately without restart
 - **Status Tracking**: Monitors agent execution count, errors, and last run time
-- **Graceful Shutdown**: Proper cleanup of timers and resources
+- **Headless Mode Support**: Automatically adjusts which agents run based on headless mode setting
 
-**Configuration:** See `etc/agents.json` in the [Configuration Files](14-configuration-files.md#etcagentsjson---agent-scheduler-configuration) section.
+**How it works:**
+- The `run-with-agents` wrapper automatically starts `scheduler-service` and `audio-organizer`
+- Individual agents are registered via the `registerAgent()` system
+- Agents run in user context using the `_bootstrap.ts` wrapper
+- The system checks for headless mode and adjusts accordingly
 
 **Run as service:**
 ```bash
 ./bin/mh agent run scheduler-service
 ```
 
-The scheduler-service is automatically started with the web UI (`pnpm dev`) and replaces individual agent timers with a more robust, centralized system.
+The scheduler-service is automatically started with the web UI via the `run-with-agents` wrapper and replaces individual agent timers with a more robust, centralized system.
 
 ### 1. Organizer Agent
 
@@ -47,7 +50,7 @@ The scheduler-service is automatically started with the web UI (`pnpm dev`) and 
 ./bin/mh agent run organizer
 ```
 
-**Auto-run:** Started automatically with `pnpm dev` in the web UI.
+**Auto-run:** Started automatically via scheduler-service.
 
 ### 2. Reflector Agent
 
@@ -64,7 +67,7 @@ The scheduler-service is automatically started with the web UI (`pnpm dev`) and 
 ./bin/mh agent run reflector
 ```
 
-**Auto-triggered:** By the boredom-service at configurable intervals.
+**Auto-triggered:** By the scheduler-service at configurable intervals.
 
 ### 3. Boredom Service
 
@@ -620,7 +623,176 @@ tail -f logs/audit/$(date +%Y-%m-%d).ndjson | grep reasoning
 
 **Used by:** Auto-approver agent for quality-based acceptance
 
-### 25. Drift Monitor Agent (Future)
+### 25. Curiosity System (3 Agents)
+
+**Purpose:** Intelligently asks thoughtful questions during idle periods to deepen understanding and uncover patterns.
+
+**🎯 Conversational Design:** Questions appear naturally in the chat interface as non-blocking system messages. You can answer conversationally without any special formatting - the system uses LLM-based semantic detection to automatically recognize answers.
+
+**📖 Complete Documentation:** See [CURIOSITY-CONVERSATIONAL.md](../CURIOSITY-CONVERSATIONAL.md) for full usage guide, examples, and technical details.
+
+The curiosity system consists of three coordinated agents that work together to ask questions, research context, and detect answers:
+
+#### 25a. Curiosity Service Agent
+
+**Primary agent that generates and expires questions.**
+
+**How it works:**
+- Monitors user inactivity (configurable threshold, default 15 minutes)
+- Samples recent memories (last 7 days) to identify interesting patterns
+- Uses LLM to generate thoughtful, open-ended questions
+- Respects per-user trust levels and curiosity settings
+- Auto-expires unanswered questions older than 7 days
+- Only processes the most recently active user (based on lastLogin)
+
+**Configuration:** `profiles/{username}/etc/curiosity.json`
+```json
+{
+  "maxOpenQuestions": 1,
+  "researchMode": "local",
+  "inactivityThresholdSeconds": 900,
+  "questionTopics": [],
+  "minTrustLevel": "observe"
+}
+```
+
+**Settings:**
+- `maxOpenQuestions`: 0 = off, 1 = gentle, 3 = moderate, 5 = chatty
+- `researchMode`: "off", "local" (search memories), or "web" (future: web search)
+- `inactivityThresholdSeconds`: How long to wait before asking questions
+- `minTrustLevel`: Minimum trust level required to ask questions
+
+**UI Controls:**
+- Navigate to **System → Settings** in the web UI
+- Use the "Curiosity Level" slider to adjust `maxOpenQuestions`
+- Select research mode from dropdown
+
+**Question Lifecycle:**
+1. **Pending** (`memory/curiosity/questions/pending/`) - Newly asked, awaiting response
+2. **Answered** (`memory/curiosity/questions/answered/`) - User replied via chat
+3. **Expired** (`memory/curiosity/expired/`) - Older than 7 days without answer
+
+**Run manually:**
+```bash
+./bin/mh agent run curiosity
+```
+
+**Agent Schedule:** 30 minutes (1800s interval), **enabled by default** (auto-starts with dev server)
+
+#### 25b. Curiosity Answer Watcher Agent
+
+**Detects when users answer curiosity questions.**
+
+**How it works:**
+- Scans episodic memories for `metadata.curiosity.answerTo` field
+- Automatically moves answered questions from `pending/` to `answered/`
+- Links the answer event to the question for full traceability
+- Only processes the most recently active user
+
+**Answer Detection Flow:**
+1. User clicks "Reply in Chat" button on a curiosity question
+2. Chat interface sends message with `?questionId=cur-q-...` parameter
+3. `/api/persona_chat` captures user message with curiosity metadata
+4. Answer watcher detects the metadata and marks question as answered
+
+**Run manually:**
+```bash
+./bin/mh agent run curiosity-answer-watcher
+```
+
+**Agent Schedule:** 5 minutes (300s interval), **enabled by default** (auto-starts with dev server)
+
+#### 25c. Curiosity Researcher Agent
+
+**Performs deep research on pending questions.**
+
+**How it works:**
+- Selects one pending question per cycle (rate-limited)
+- Uses LLM to extract 2-3 key topics from the question
+- Searches episodic memories for up to 5 results per topic
+- Generates Markdown research notes with:
+  - Key topics identified
+  - Related memories with timestamps
+  - LLM-generated summary of insights
+- Saves research to `memory/curiosity/research/{questionId}-research.md`
+- Only processes the most recently active user
+
+**Research Note Example:**
+```markdown
+# Research Notes: cur-q-1234567890-abc123
+
+**Question:** What patterns do you notice in your creative work?
+
+**Asked:** 11/11/2025, 11:30:00 PM
+
+---
+
+## Key Topics
+- creative work
+- patterns
+- productivity
+
+## Related Memories
+
+### creative work
+- Started new painting project today...
+  *11/10/2025*
+
+### patterns
+- Noticed I'm most creative in mornings...
+  *11/08/2025*
+
+## Summary
+The research reveals a consistent pattern of morning creativity...
+
+---
+*Generated: 2025-11-11T23:45:00.000Z*
+```
+
+**Run manually:**
+```bash
+./bin/mh agent run curiosity-researcher
+```
+
+**Agent Schedule:** 60 minutes (3600s interval), **enabled by default** (auto-starts with dev server)
+
+**View in UI:**
+- Navigate to **Memory → Curiosity** tab to see all questions
+- Pending questions show "Reply in Chat" button
+- Answered questions display with completion timestamp
+- Research notes are stored as files and can be viewed in file browser
+
+**Control Agents:**
+All three curiosity agents are **enabled by default** and will start automatically with `pnpm dev`.
+
+You can control them via:
+- **Agent Monitor** in the web UI (right sidebar → System Status)
+- CLI: `./bin/mh agent stop curiosity` or `./bin/mh agent start curiosity`
+- Edit `etc/agents.json` to disable: set `"enabled": false`
+
+**Audit Trail:**
+All curiosity operations are logged to `logs/audit/*.ndjson`:
+- Question generation with metadata
+- Answer detection events
+- Research completion
+- Expiration events with question age
+
+**Trust Level Requirements:**
+- Asking questions: Minimum trust level from config (default: "observe")
+- Web research: Requires "supervised_auto" or higher
+- Answer detection: No trust restrictions (passive monitoring)
+
+**Performance Considerations:**
+- Answer watcher scans all episodic events (may be slow for large memory bases)
+- Researcher processes one question per cycle to avoid overwhelming system
+- Questions older than 7 days are automatically expired to keep system clean
+
+**See Also:**
+- Full implementation details: `docs/curiosity-system-COMPLETED.md`
+- Enhancement documentation: `docs/curiosity-system-ENHANCEMENTS-COMPLETED.md`
+- Configuration reference: [Configuration Files](14-configuration-files.md)
+
+### 26. Drift Monitor Agent (Future)
 
 **Purpose:** Automatically detect and revert poorly performing model adapters.
 

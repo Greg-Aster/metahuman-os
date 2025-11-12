@@ -7,7 +7,8 @@ import { generateSpeech, generateMultiVoiceSpeech } from '@metahuman/core';
  *
  * Body: {
  *   text: string,
- *   model?: string,           // Optional: override voice model path
+ *   provider?: 'piper' | 'gpt-sovits',  // Optional: TTS provider to use
+ *   model?: string,           // Optional: override voice model path (Piper) or speaker ID (SoVITS)
  *   models?: string[],        // Optional: array of voice models for multi-voice (mutant mode)
  *   config?: string,          // Optional: override voice config path
  *   speakingRate?: number     // Optional: override speaking rate (0.5 - 2.0)
@@ -16,7 +17,7 @@ import { generateSpeech, generateMultiVoiceSpeech } from '@metahuman/core';
  */
 export const POST: APIRoute = async ({ request }) => {
   try {
-    const { text, model, models, config, speakingRate } = await request.json();
+    const { text, provider, model, models, config, speakingRate } = await request.json();
 
     if (!text || typeof text !== 'string') {
       return new Response(JSON.stringify({ error: 'Text is required' }), {
@@ -33,14 +34,15 @@ export const POST: APIRoute = async ({ request }) => {
       audioBuffer = await generateMultiVoiceSpeech(text, models, {
         signal: request.signal,
         speakingRate,
+        provider,
       });
     } else {
       // Generate speech audio with optional overrides (single voice)
       audioBuffer = await generateSpeech(text, {
         signal: request.signal,
-        model,
-        config,
+        voice: model, // Use 'voice' parameter (works for both providers)
         speakingRate,
+        provider,
       });
     }
 

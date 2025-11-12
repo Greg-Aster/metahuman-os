@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+#
+# Auto-start GPT-SoVITS server if enabled in addons
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ADDONS_CONFIG="$REPO_ROOT/etc/addons.json"
+PID_FILE="$REPO_ROOT/logs/run/sovits.pid"
+
+# Check if addons config exists
+if [ ! -f "$ADDONS_CONFIG" ]; then
+  exit 0
+fi
+
+# Check if GPT-SoVITS is enabled
+ENABLED=$(grep -A 10 '"gpt-sovits"' "$ADDONS_CONFIG" | grep -o '"enabled"[[:space:]]*:[[:space:]]*true' || echo "")
+INSTALLED=$(grep -A 10 '"gpt-sovits"' "$ADDONS_CONFIG" | grep -o '"installed"[[:space:]]*:[[:space:]]*true' || echo "")
+
+if [ -z "$ENABLED" ] || [ -z "$INSTALLED" ]; then
+  # Not enabled or not installed - skip
+  exit 0
+fi
+
+# Check if already running
+if [ -f "$PID_FILE" ]; then
+  PID=$(jq -r '.pid' "$PID_FILE" 2>/dev/null || echo "")
+  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+    echo "• GPT-SoVITS server already running (PID: $PID)"
+    exit 0
+  fi
+fi
+
+# Start the server
+echo "• Starting GPT-SoVITS server..."
+"$REPO_ROOT/bin/mh" sovits start --port 9880 >/dev/null 2>&1 &
+
+# Wait a moment to verify it started
+sleep 2
+
+if [ -f "$PID_FILE" ]; then
+  PID=$(jq -r '.pid' "$PID_FILE" 2>/dev/null || echo "")
+  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+    echo "  ✓ GPT-SoVITS server started (PID: $PID)"
+  else
+    echo "  ✗ GPT-SoVITS server failed to start"
+  fi
+else
+  echo "  ⚠ GPT-SoVITS server may not have started properly"
+fi

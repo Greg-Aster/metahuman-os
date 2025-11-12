@@ -467,3 +467,235 @@ export function purgeVoiceTrainingData(): { deletedCount: number } {
     throw error;
   }
 }
+
+/**
+ * Get high-quality samples suitable for GPT-SoVITS reference audio
+ * GPT-SoVITS works best with 5-10 seconds of clear speech
+ */
+export function getReferenceSamples(minQuality = 0.8): VoiceSample[] {
+  const samples = listVoiceSamples(100); // Get up to 100 recent samples
+
+  // Filter for high quality samples
+  const qualitySamples = samples.filter(s => s.quality >= minQuality);
+
+  // Sort by quality descending
+  qualitySamples.sort((a, b) => b.quality - a.quality);
+
+  return qualitySamples;
+}
+
+/**
+ * Export voice training dataset for GPT-SoVITS
+ * Copies selected high-quality samples to the SoVITS reference directory
+ */
+export function exportSoVITSDataset(speakerId: string = 'default'): string {
+  const recordingsDir = paths.voiceTraining;
+  const sovitsRefDir = path.join(paths.sovitsReference, speakerId);
+
+  // Create SoVITS reference directory
+  if (!fs.existsSync(sovitsRefDir)) {
+    fs.mkdirSync(sovitsRefDir, { recursive: true });
+  }
+
+  // Get recommended reference samples (top quality, 5-10 seconds total)
+  const samples = getReferenceSamples(0.8);
+  let totalDuration = 0;
+  const targetDuration = 10; // 10 seconds total
+  const selectedSamples: VoiceSample[] = [];
+
+  // Select samples until we have 5-10 seconds
+  for (const sample of samples) {
+    if (totalDuration >= targetDuration) break;
+    if (totalDuration + sample.duration <= 15) { // Don't exceed 15 seconds
+      selectedSamples.push(sample);
+      totalDuration += sample.duration;
+    }
+  }
+
+  if (selectedSamples.length === 0) {
+    throw new Error('No suitable samples found for reference audio. Need high-quality recordings (quality ≥ 0.8)');
+  }
+
+  // Copy selected WAV files to SoVITS directory
+  let copiedCount = 0;
+  const manifest: any[] = [];
+
+  for (const sample of selectedSamples) {
+    const sourceWav = path.join(recordingsDir, `${sample.id}.wav`);
+    const sourceTxt = path.join(recordingsDir, `${sample.id}.txt`);
+    const destWav = path.join(sovitsRefDir, `${sample.id}.wav`);
+    const destTxt = path.join(sovitsRefDir, `${sample.id}.txt`);
+
+    if (fs.existsSync(sourceWav)) {
+      fs.copyFileSync(sourceWav, destWav);
+      if (fs.existsSync(sourceTxt)) {
+        fs.copyFileSync(sourceTxt, destTxt);
+      }
+      copiedCount++;
+
+      manifest.push({
+        id: sample.id,
+        duration: sample.duration,
+        quality: sample.quality,
+        filename: `${sample.id}.wav`,
+      });
+    }
+  }
+
+  // Write manifest file
+  const manifestPath = path.join(sovitsRefDir, 'manifest.json');
+  fs.writeFileSync(
+    manifestPath,
+    JSON.stringify(
+      {
+        speakerId,
+        createdAt: new Date().toISOString(),
+        totalDuration,
+        sampleCount: copiedCount,
+        samples: manifest,
+      },
+      null,
+      2
+    )
+  );
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'sovits_dataset_export',
+    details: {
+      speakerId,
+      sampleCount: copiedCount,
+      totalDuration,
+      exportPath: sovitsRefDir,
+    },
+    actor: 'system',
+  });
+
+  return sovitsRefDir;
+}
+
+/**
+ * Copy specific samples to GPT-SoVITS reference directory
+ */
+export function copyToSoVITS(sampleIds: string[], speakerId: string = 'default'): number {
+  const recordingsDir = paths.voiceTraining;
+  const sovitsRefDir = path.join(paths.sovitsReference, speakerId);
+
+  // Create SoVITS reference directory
+  if (!fs.existsSync(sovitsRefDir)) {
+    fs.mkdirSync(sovitsRefDir, { recursive: true });
+  }
+
+  let copiedCount = 0;
+
+  for (const sampleId of sampleIds) {
+    const sourceWav = path.join(recordingsDir, `${sampleId}.wav`);
+    const sourceTxt = path.join(recordingsDir, `${sampleId}.txt`);
+    const destWav = path.join(sovitsRefDir, `${sampleId}.wav`);
+    const destTxt = path.join(sovitsRefDir, `${sampleId}.txt`);
+
+    if (fs.existsSync(sourceWav)) {
+      fs.copyFileSync(sourceWav, destWav);
+      if (fs.existsSync(sourceTxt)) {
+        fs.copyFileSync(sourceTxt, destTxt);
+      }
+      copiedCount++;
+    }
+  }
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'sovits_reference_copy',
+    details: {
+      speakerId,
+      sampleCount: copiedCount,
+      sampleIds,
+    },
+    actor: 'system',
+  });
+
+  return copiedCount;
+}
+
+/**
+ * List reference audio files for a GPT-SoVITS speaker
+ */
+export function listSoVITSReferences(speakerId: string = 'default'): VoiceSample[] {
+  const sovitsRefDir = path.join(paths.sovitsReference, speakerId);
+
+  if (!fs.existsSync(sovitsRefDir)) {
+    return [];
+  }
+
+  const files = fs.readdirSync(sovitsRefDir);
+  const wavFiles = files.filter(f => f.endsWith('.wav'));
+  const samples: VoiceSample[] = [];
+
+  for (const wavFile of wavFiles) {
+    const id = wavFile.replace('.wav', '');
+    const wavPath = path.join(sovitsRefDir, wavFile);
+    const txtPath = path.join(sovitsRefDir, `${id}.txt`);
+    const metaPath = path.join(sovitsRefDir, `${id}.meta.json`);
+
+    let transcript = '';
+    let quality = 1.0;
+    let duration = 0;
+    let timestamp = '';
+
+    if (fs.existsSync(txtPath)) {
+      transcript = fs.readFileSync(txtPath, 'utf-8').trim();
+    }
+
+    if (fs.existsSync(metaPath)) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+        quality = meta.quality || 1.0;
+        duration = meta.duration || 0;
+        timestamp = meta.timestamp || '';
+      } catch (e) {
+        // Ignore parse errors
+      }
+    }
+
+    samples.push({
+      id,
+      audioPath: wavPath,
+      transcriptPath: txtPath,
+      duration,
+      timestamp,
+      quality,
+    });
+  }
+
+  return samples;
+}
+
+/**
+ * Delete reference audio for a GPT-SoVITS speaker
+ */
+export function deleteSoVITSReference(speakerId: string, sampleId: string): void {
+  const sovitsRefDir = path.join(paths.sovitsReference, speakerId);
+  const wavPath = path.join(sovitsRefDir, `${sampleId}.wav`);
+  const txtPath = path.join(sovitsRefDir, `${sampleId}.txt`);
+  const metaPath = path.join(sovitsRefDir, `${sampleId}.meta.json`);
+
+  if (fs.existsSync(wavPath)) {
+    fs.unlinkSync(wavPath);
+  }
+  if (fs.existsSync(txtPath)) {
+    fs.unlinkSync(txtPath);
+  }
+  if (fs.existsSync(metaPath)) {
+    fs.unlinkSync(metaPath);
+  }
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'sovits_reference_delete',
+    details: { speakerId, sampleId },
+    actor: 'system',
+  });
+}

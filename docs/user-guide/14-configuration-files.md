@@ -17,6 +17,7 @@ Each user has their own isolated configuration files that affect personality, be
 - `voice.json` - TTS/STT settings (with template variables)
 - `audio.json` - Audio processing configuration
 - `ingestor.json` - Inbox file processing settings
+- `curiosity.json` - Curiosity system configuration
 - `agents.json` - Agent execution schedules
 - `auto-approval.json` - Auto-approval rules
 - `adapter-builder.json` - Adapter building settings
@@ -202,6 +203,43 @@ Controls how often the reflector agent runs:
 }
 ```
 
+### `profiles/<username>/etc/curiosity.json` - Curiosity System
+Controls the curiosity system behavior, which asks thoughtful questions during idle periods:
+
+```json
+{
+  "maxOpenQuestions": 1,
+  "researchMode": "local",
+  "inactivityThresholdSeconds": 900,
+  "questionTopics": [],
+  "minTrustLevel": "observe"
+}
+```
+
+**Fields:**
+- `maxOpenQuestions`: How many unanswered questions can exist at once
+  - `0` = System disabled
+  - `1` = Gentle (recommended default)
+  - `3` = Moderate
+  - `5` = Chatty (may feel intrusive)
+- `researchMode`: How deeply to research questions
+  - `"off"` = No research, just ask questions
+  - `"local"` = Search memories for context (recommended)
+  - `"web"` = Search web for additional context (requires `supervised_auto` trust level, not yet implemented)
+- `inactivityThresholdSeconds`: How long to wait after last activity before asking questions (default: 900 = 15 minutes)
+- `questionTopics`: Array of topic strings to focus on (empty = all topics). Future feature for filtering question domains.
+- `minTrustLevel`: Minimum trust level required to ask questions (default: `"observe"`)
+  - Valid levels: `"observe"`, `"suggest"`, `"trusted"`, `"supervised_auto"`, `"bounded_auto"`, `"adaptive_auto"`
+
+**UI Controls:**
+- Navigate to **System → Settings** in the web UI
+- Use the "Curiosity Level" slider to adjust `maxOpenQuestions`
+- Select research mode from dropdown
+
+**See Also:**
+- Agent documentation: [Autonomous Agents - Curiosity System](08-autonomous-agents.md#25-curiosity-system-3-agents)
+- Full implementation docs: `docs/curiosity-system-COMPLETED.md`
+
 ### `profiles/<username>/etc/agent.json` - Default LLM Model
 Specifies which Ollama model to use for persona chat:
 ```json
@@ -315,15 +353,59 @@ Configures the audio transcription engine (`whisper.cpp`), including the model, 
 ```
 
 ### `profiles/<username>/etc/voice.json` - Voice & TTS/STT Configuration
-Defines local text-to-speech (Piper) and speech-to-text (Whisper) defaults for the profile. Important fields:
+Defines text-to-speech and speech-to-text configuration for the profile. Supports multiple TTS providers: **Piper** (local neural TTS) and **GPT-SoVITS** (few-shot voice cloning).
 
-- `tts.piper.binary` – Path to the Piper executable (auto-normalised to `<repo>/bin/piper/piper` when missing).
-- `tts.piper.model` / `config` – Absolute paths into the shared `out/voices/` directory. When a profile-scoped path is detected, the voice settings API rewrites it to the shared location automatically.
-- `tts.piper.speakingRate` – Preferred speech rate (0.5 – 2.0).
-- `cache.directory` – Profile-specific cache (`profiles/<username>/out/voice-cache`).
-- `training` – Controls per-user voice cloning thresholds and quality filters.
+#### TTS Provider Configuration
 
-> Drop additional `.onnx` + `.json` voice pairs into `out/voices/` to make them immediately available to all profiles.
+**Provider Selection:**
+- `tts.provider` – Active provider: `"piper"` (default) or `"gpt-sovits"`
+
+**Piper Settings** (`tts.piper`):
+- `binary` – Path to Piper executable (auto-normalized to `<repo>/bin/piper/piper`)
+- `model` / `config` – Absolute paths to voice model files in `out/voices/`
+- `speakingRate` – Speech rate multiplier (0.5 – 2.0)
+- `outputFormat` – Audio format (`"wav"`)
+
+**GPT-SoVITS Settings** (`tts.sovits`):
+- `serverUrl` – SoVITS server endpoint (default: `http://127.0.0.1:9880`)
+- `referenceAudioDir` – Directory containing speaker reference audio (`./out/voices/sovits`)
+- `speakerId` – Speaker identifier for voice selection (default: `"default"`)
+- `temperature` – Generation temperature for variation (0.1 – 1.0, default: 0.6)
+- `speed` – Speech speed multiplier (0.5 – 2.0, default: 1.0)
+- `timeout` – Request timeout in milliseconds (default: 30000)
+- `autoFallbackToPiper` – Auto-switch to Piper if SoVITS unavailable (default: `true`)
+
+**Shared Settings:**
+- `cache.directory` – Audio cache location (`profiles/<username>/out/voice-cache`)
+- `cache.enabled` – Enable caching to avoid regenerating identical audio
+- `cache.maxSizeMB` – Maximum cache size in megabytes
+
+**STT Settings** (`stt.whisper`):
+- `model` – Whisper model size (e.g., `"base.en"`)
+- `device` – Processing device (`"cpu"` or `"cuda"`)
+- `computeType` – Precision mode (`"int8"`, `"fp16"`, `"fp32"`)
+- `language` – Target language code (e.g., `"en"`)
+
+**Voice Training** (`training`):
+- Controls per-user voice cloning thresholds and quality filters
+
+#### Provider-Specific Notes
+
+**Piper:**
+- Drop additional `.onnx` + `.json` voice pairs into `out/voices/` to make them available to all profiles
+- Download voices from [Piper Releases](https://github.com/rhasspy/piper/releases)
+- Fast, CPU-friendly, no external services required
+
+**GPT-SoVITS:**
+- Requires GPT-SoVITS server running (separate installation)
+- Reference audio files go in `out/voices/sovits/[speaker-id]/reference.wav`
+- Supports few-shot voice cloning with minimal training data
+- Requires significant VRAM (recommended 12GB+)
+- Auto-fallback to Piper ensures graceful degradation if server is unavailable
+
+#### Switching Providers
+
+Change providers via the Web UI (Settings → Voice) or by editing `tts.provider` in `voice.json`. The system will automatically route TTS requests to the selected provider.
 
 ### `profiles/<username>/etc/agents.json` - Agent Scheduler Configuration
 Controls the centralized agent scheduler system. This file defines all autonomous agents, their trigger types, and scheduling parameters.

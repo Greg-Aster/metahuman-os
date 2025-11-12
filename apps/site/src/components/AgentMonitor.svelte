@@ -115,7 +115,11 @@
   }
 
   function isService(agentName: string): boolean {
-    return agentName.endsWith('-service');
+    // Only scheduler-service, boredom-service, and sleep-service are persistent services
+    // managed by './bin/mh start'. Other agents (even if ending in -service like curiosity-service)
+    // are scheduler-managed interval agents that CAN be manually triggered.
+    const persistentServices = ['scheduler-service', 'boredom-service', 'sleep-service'];
+    return persistentServices.includes(agentName);
   }
 
   const agentInfo: Record<string, { description: string; purpose: string }> = {
@@ -158,6 +162,18 @@
     'transcriber': {
       description: 'Audio Transcription Agent',
       purpose: 'Converts audio recordings to text using speech-to-text models. Processes audio backlog during overnight pipeline.'
+    },
+    'curiosity-service': {
+      description: 'Curiosity Question Generator',
+      purpose: 'Asks thoughtful questions during idle periods based on recent memories. Expires old unanswered questions after 7 days. Controlled by per-user curiosity.json config.'
+    },
+    'curiosity-answer-watcher': {
+      description: 'Curiosity Answer Detector',
+      purpose: 'Watches for episodic events with answerTo metadata and marks corresponding questions as answered. Runs every 5 minutes.'
+    },
+    'curiosity-researcher': {
+      description: 'Curiosity Research Agent',
+      purpose: 'Performs deeper research on curiosity questions by sampling related memories and running semantic searches. Processes one question per cycle (hourly).'
     }
   };
 

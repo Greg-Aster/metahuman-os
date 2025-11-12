@@ -50,6 +50,11 @@ import {
 } from '@metahuman/core';
 import { personaCommand } from './commands/persona.js';
 import { adapterCommand } from './commands/adapter.js';
+import { sovitsCommand } from './commands/sovits.js';
+
+const agentScriptOverrides: Record<string, string> = {
+  curiosity: 'curiosity-service.ts',
+};
 
 function ensureInitialized(): void {
   const required = [
@@ -231,7 +236,12 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
   const alwaysStart = ['headless-watcher'];
 
   // Only start these agents if NOT in headless mode
-  const conditionalAgents = ['scheduler-service', 'boredom-service', 'sleep-service'];
+  // NOTE: Most agents are managed by scheduler-service via etc/agents.json
+  // Only start essential standalone services here
+  const conditionalAgents = [
+    'scheduler-service',  // Timer bus - manages organizer, curiosity, etc.
+    'audio-organizer'     // Audio processing service
+  ];
 
   // Check headless mode for conditional agents
   const defaults = isHeadless()
@@ -266,7 +276,8 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
   }
 
   const spawnAgent = (agentName: string) => {
-    const agentPath = `${paths.brain}/agents/${agentName}.ts`;
+    const scriptName = agentScriptOverrides[agentName] ?? `${agentName}.ts`;
+    const agentPath = `${paths.brain}/agents/${scriptName}`;
 
     if (!fs.existsSync(agentPath)) {
       console.warn(`Skipping ${agentName}: not found at ${agentPath}`);
@@ -1848,6 +1859,9 @@ async function main() {
         break;
       case 'adapter':
         adapterCommand(args);
+        break;
+      case 'sovits':
+        await sovitsCommand(args);
         break;
       case 'voice':
         voiceCmd(args);

@@ -18,7 +18,7 @@ import {
   acquireLock,
   isLocked,
   initGlobalLogger,
-  listUsers,
+  getLoggedInUsers,
   withUserContext,
   loadCuriosityConfig,
   loadTrustLevel
@@ -50,77 +50,70 @@ async function isUserActive(username: string): Promise<boolean> {
 }
 
 /**
- * Count pending (unanswered) questions
+ * Count recent curiosity questions (last 24 hours)
+ * No longer uses pending directory - questions only in episodic memory
  */
 async function countPendingQuestions(): Promise<number> {
-  const pendingDir = paths.curiosityQuestionsPending;
-
-  if (!fsSync.existsSync(pendingDir)) {
-    await fs.mkdir(pendingDir, { recursive: true });
-    return 0;
-  }
-
-  const files = await fs.readdir(pendingDir);
-  return files.filter(f => f.endsWith('.json')).length;
+  // Since we're not tracking pending questions anymore,
+  // this is primarily for frequency control, not answer tracking
+  // Return 0 to allow questions (no artificial limit)
+  return 0;
 }
 
 /**
- * Expire old unanswered questions
- * Default: 7 days for unanswered questions
+ * Get timestamp of most recent question asked
+ * Now reads from episodic memory instead of pending directory
+ */
+async function getLastQuestionTime(): Promise<number | null> {
+  const episodicDir = paths.episodic;
+
+  if (!fsSync.existsSync(episodicDir)) {
+    return null;
+  }
+
+  try {
+    // Get current year directory
+    const year = new Date().getFullYear().toString();
+    const yearDir = path.join(episodicDir, year);
+
+    if (!fsSync.existsSync(yearDir)) {
+      return null;
+    }
+
+    const files = await fs.readdir(yearDir);
+    let mostRecent = 0;
+
+    // Scan episodic events for curiosity questions
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+
+      try {
+        const content = JSON.parse(await fs.readFile(path.join(yearDir, file), 'utf-8'));
+
+        // Check if this is a curiosity question
+        if (content.metadata?.curiosity?.isCuriosityQuestion && content.timestamp) {
+          const timestamp = new Date(content.timestamp).getTime();
+          if (timestamp > mostRecent) {
+            mostRecent = timestamp;
+          }
+        }
+      } catch {}
+    }
+
+    return mostRecent || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Expire old questions (no-op now that questions are only in episodic memory)
+ * Questions naturally age out with episodic memory, no manual expiration needed
  */
 async function expireOldQuestions(): Promise<number> {
-  const pendingDir = paths.curiosityQuestionsPending;
-  const expiredDir = path.join(paths.curiosity, 'expired');
-
-  if (!fsSync.existsSync(pendingDir)) {
-    return 0;
-  }
-
-  await fs.mkdir(expiredDir, { recursive: true });
-
-  const now = Date.now();
-  const maxAgeMs = 7 * 24 * 60 * 60 * 1000; // 7 days
-  let expiredCount = 0;
-
-  const files = await fs.readdir(pendingDir);
-  for (const file of files) {
-    if (!file.endsWith('.json')) continue;
-
-    try {
-      const questionPath = path.join(pendingDir, file);
-      const questionData = JSON.parse(await fs.readFile(questionPath, 'utf-8'));
-      const askedAt = new Date(questionData.askedAt).getTime();
-      const age = now - askedAt;
-
-      if (age > maxAgeMs) {
-        // Move to expired directory
-        questionData.status = 'expired';
-        questionData.expiredAt = new Date().toISOString();
-
-        await fs.writeFile(
-          path.join(expiredDir, file),
-          JSON.stringify(questionData, null, 2)
-        );
-        await fs.unlink(questionPath);
-
-        expiredCount++;
-
-        audit({
-          category: 'action',
-          level: 'info',
-          message: 'Curiosity question expired',
-          actor: 'curiosity-service',
-          metadata: { questionId: questionData.id, ageInDays: Math.floor(age / (24 * 60 * 60 * 1000)) }
-        });
-
-        console.log(`[curiosity-service] Expired question ${questionData.id} (${Math.floor(age / (24 * 60 * 60 * 1000))} days old)`);
-      }
-    } catch (err) {
-      console.warn(`[curiosity-service] Failed to process ${file} for expiration:`, err);
-    }
-  }
-
-  return expiredCount;
+  // No longer needed - questions only exist in episodic memory
+  // They age out naturally with the rest of conversation history
+  return 0;
 }
 
 /**
@@ -183,7 +176,7 @@ async function generateUserQuestion(username: string): Promise<boolean> {
   }
 
   // Check if user has permission (min trust level)
-  const trustLevels = ['observe', 'suggest', 'trusted', 'supervised_auto', 'bounded_auto'];
+  const trustLevels = ['observe', 'suggest', 'trusted', 'supervised_auto', 'bounded_auto', 'adaptive_auto'];
   const currentTrustIdx = trustLevels.indexOf(trust);
   const requiredTrustIdx = trustLevels.indexOf(config.minTrustLevel);
 
@@ -199,7 +192,18 @@ async function generateUserQuestion(username: string): Promise<boolean> {
     return false;
   }
 
-  // Check question limit
+  // Check if enough time has passed since last question (frequency control)
+  const questionInterval = config.questionIntervalSeconds || 1800; // Default 30 min
+  const lastQuestionTime = await getLastQuestionTime();
+  if (lastQuestionTime) {
+    const timeSinceLastQuestion = (Date.now() - lastQuestionTime) / 1000;
+    if (timeSinceLastQuestion < questionInterval) {
+      console.log(`[curiosity-service] Only ${Math.round(timeSinceLastQuestion/60)}min since last question, need ${Math.round(questionInterval/60)}min`);
+      return false;
+    }
+  }
+
+  // Enforce user-defined limit on outstanding questions
   const pendingCount = await countPendingQuestions();
   if (pendingCount >= config.maxOpenQuestions) {
     console.log(`[curiosity-service] Already have ${pendingCount} pending questions (max ${config.maxOpenQuestions}), skipping`);
@@ -254,47 +258,45 @@ What thoughtful question could deepen ${persona.identity.humanName || 'your'} un
       return false;
     }
 
-    // Store question
+    // Generate question ID for tracking
     const questionId = `cur-q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const questionData = {
-      id: questionId,
-      question,
-      askedAt: new Date().toISOString(),
-      seedMemories: recentMemories.map(m => m.__file).filter(Boolean),
-      status: 'pending',
-      trustLevel: trust,
-      autonomyMode: 'normal' // TODO: integrate with autonomy system
-    };
+    const askedAt = new Date().toISOString();
+    const seedMemories = recentMemories.map(m => m.__file).filter(Boolean);
 
-    const questionFile = path.join(paths.curiosityQuestionsPending, `${questionId}.json`);
-    await fs.mkdir(paths.curiosityQuestionsPending, { recursive: true });
-    await fs.writeFile(questionFile, JSON.stringify(questionData, null, 2));
+    // Format question for display
+    const questionText = `💭 I'm curious: ${question}`;
 
-    // Emit as episodic event
-    captureEvent(question, {
-      type: 'curiosity_question',
-      tags: ['curiosity', 'question', 'idle'],
-      metadata: {
-        curiosity: {
-          questionId,
-          topic: 'general',
-          seedMemories: questionData.seedMemories,
-          askedAt: questionData.askedAt
-        }
-      }
-    });
-
+    // Emit chat_assistant audit event so SSE stream picks it up
+    // Questions are NOT saved to episodic memory until user replies
+    // This keeps training data clean by only including actual conversations
     audit({
       category: 'action',
       level: 'info',
-      message: 'Curiosity service asked a question',
+      event: 'chat_assistant',
+      details: {
+        mode: 'conversation',
+        content: questionText,
+        cognitiveMode: 'dual',
+        usedOperator: false,
+        curiosityQuestionId: questionId,
+        // Store full question data for retrieval when user replies
+        curiosityData: {
+          questionId,
+          questionText,
+          rawQuestion: question,
+          topic: 'general',
+          seedMemories,
+          askedAt,
+          isCuriosityQuestion: true
+        }
+      },
       actor: 'curiosity-service',
       metadata: {
         questionId,
         question: question.substring(0, 100),
-        pendingCount: pendingCount + 1,
         trust,
-        autonomy: 'normal'
+        autonomy: 'normal',
+        username
       }
     });
 
@@ -315,7 +317,7 @@ What thoughtful question could deepen ${persona.identity.humanName || 'your'} un
 }
 
 /**
- * Main entry point (multi-user)
+ * Main entry point - processes all logged-in users
  */
 async function run() {
   initGlobalLogger('curiosity-service');
@@ -333,26 +335,37 @@ async function run() {
     return;
   }
 
-  console.log('[curiosity-service] Starting curiosity cycle (multi-user)...');
+  console.log('[curiosity-service] Starting curiosity cycle (logged-in users only)...');
 
   audit({
     category: 'action',
     level: 'info',
-    message: 'Curiosity service starting cycle',
+    event: 'curiosity_service_start',
+    details: { phase: 'cycle_start' },
     actor: 'curiosity-service'
   });
 
   try {
-    const users = listUsers();
-    console.log(`[curiosity-service] Found ${users.length} users to process`);
+    // Get all logged-in users (active sessions only)
+    const loggedInUsers = getLoggedInUsers();
 
-    let questionsAsked = 0;
-    let questionsExpired = 0;
+    if (loggedInUsers.length === 0) {
+      console.log('[curiosity-service] No logged-in users found, exiting.');
+      return;
+    }
 
-    for (const user of users) {
+    console.log(`[curiosity-service] Processing ${loggedInUsers.length} logged-in user(s)...`);
+
+    let totalQuestionsAsked = 0;
+    let totalQuestionsExpired = 0;
+
+    // Process each logged-in user sequentially with isolated context
+    for (const user of loggedInUsers) {
+      console.log(`[curiosity-service] Processing user: ${user.username}`);
+
       try {
         const stats = await withUserContext(
-          { userId: user.id, username: user.username, role: user.role },
+          { userId: user.userId, username: user.username, role: user.role },
           async () => {
             // First, expire old questions
             const expired = await expireOldQuestions();
@@ -364,21 +377,35 @@ async function run() {
           }
         );
 
-        if (stats.asked) questionsAsked++;
-        questionsExpired += stats.expired;
+        if (stats.asked) totalQuestionsAsked++;
+        totalQuestionsExpired += stats.expired;
       } catch (error) {
         console.error(`[curiosity-service] Failed to process user ${user.username}:`, (error as Error).message);
+        audit({
+          category: 'system',
+          level: 'error',
+          event: 'curiosity_service_user_error',
+          details: {
+            error: (error as Error).message,
+            username: user.username
+          },
+          actor: 'curiosity-service'
+        });
       }
     }
 
-    console.log(`[curiosity-service] Cycle complete. Asked ${questionsAsked} questions, expired ${questionsExpired} old questions across ${users.length} users.`);
+    console.log(`[curiosity-service] Cycle complete. Asked ${totalQuestionsAsked} questions, expired ${totalQuestionsExpired} old questions across ${loggedInUsers.length} user(s).`);
 
     audit({
       category: 'action',
       level: 'info',
-      message: 'Curiosity service completed cycle',
-      actor: 'curiosity-service',
-      metadata: { questionsAsked, questionsExpired, userCount: users.length }
+      event: 'curiosity_service_complete',
+      details: {
+        questionsAsked: totalQuestionsAsked,
+        questionsExpired: totalQuestionsExpired,
+        usersProcessed: loggedInUsers.length
+      },
+      actor: 'curiosity-service'
     });
 
   } finally {

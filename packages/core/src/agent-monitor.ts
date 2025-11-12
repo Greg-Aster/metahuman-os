@@ -188,12 +188,13 @@ export function getProcessingStatus(): {
   processedMemories: number;
   unprocessedMemories: number;
 } {
-  const episodicDir = paths.episodic;
-  let total = 0;
-  let processed = 0;
+  try {
+    const episodicDir = paths.episodic;
+    let total = 0;
+    let processed = 0;
 
-  const walk = (dir: string) => {
-    if (!fs.existsSync(dir)) return;
+    const walk = (dir: string) => {
+      if (!fs.existsSync(dir)) return;
 
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const fullPath = path.join(dir, entry.name);
@@ -216,13 +217,21 @@ export function getProcessingStatus(): {
     }
   };
 
-  walk(episodicDir);
+    walk(episodicDir);
 
-  return {
-    totalMemories: total,
-    processedMemories: processed,
-    unprocessedMemories: total - processed,
-  };
+    return {
+      totalMemories: total,
+      processedMemories: processed,
+      unprocessedMemories: total - processed,
+    };
+  } catch (error) {
+    // Handle access denied for anonymous users gracefully
+    return {
+      totalMemories: 0,
+      processedMemories: 0,
+      unprocessedMemories: 0,
+    };
+  }
 }
 
 /**

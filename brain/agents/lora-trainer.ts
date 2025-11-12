@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { paths, audit, ProgressTracker } from '../../packages/core/src/index.js';
 import dotenv from 'dotenv';
-import { mkdirpSync } from 'mkdirp';
+import { ensureDirSync } from 'fs-extra';
 import fetch from 'node-fetch';
 
 // Load environment variables from .env file
@@ -356,7 +356,7 @@ async function sshScpDownload(
 
 export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise<RunRemoteTrainingResult> {
   const logDir = path.join(paths.root, 'docs', 'run_logs', opts.DATE_STR, opts.RUN_LABEL);
-  mkdirpSync(logDir);
+  ensureDirSync(logDir);
   const logFilePath = path.join(logDir, 'trainer.log');
 
   // Initialize progress tracker
@@ -875,7 +875,7 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     if (summary.training_success) {
         console.log('📥 Part 1/2: Downloading merged GGUF model via SCP...');
         const finalGGUFPath = path.join(path.dirname(opts.FINAL_ADAPTER_DIR), 'adapter.gguf');
-        mkdirpSync(path.dirname(finalGGUFPath));
+        ensureDirSync(path.dirname(finalGGUFPath));
 
         const ggufDownloadResult = await sshScpDownload(
             ssh_user!, ssh_host!, ssh_key_path!,
@@ -902,11 +902,11 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
 
     // Second, download the adapter artifacts (for potential future merging)
     console.log('\n📥 Part 2/2: Downloading adapter artifacts for archival via SCP...');
-    mkdirpSync(opts.FINAL_ADAPTER_DIR);
+    ensureDirSync(opts.FINAL_ADAPTER_DIR);
     
     // Create a temporary directory for downloading the adapter contents
     const tempAdapterDir = path.join(opts.WORK_LOCAL, 'temp_adapter_download');
-    mkdirpSync(tempAdapterDir);
+    ensureDirSync(tempAdapterDir);
 
     const adapterDownloadResult = await sshScpDownload(
         ssh_user!, ssh_host!, ssh_key_path!,

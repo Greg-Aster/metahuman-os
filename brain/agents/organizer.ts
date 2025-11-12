@@ -28,11 +28,9 @@ import {
   callLLM,
   type RouterMessage,
   initGlobalLogger,
-  listUsers,
-  listActiveSessions,
+  getLoggedInUsers,
   withUserContext,
 } from '@metahuman/core';
-import type { SafeUser } from '@metahuman/core';
 
 interface EpisodicMemory {
   id: string;
@@ -53,32 +51,6 @@ interface EpisodicMemory {
 interface AnalysisResult {
   tags: string[];
   entities: string[];
-}
-
-function getUsersWithActiveSessions(): {
-  users: SafeUser[];
-  sessionCount: number;
-} {
-  try {
-    const sessions = listActiveSessions().filter((session) => session.role !== 'anonymous');
-    const userIds = sessions
-      .map((session) => session.userId)
-      .filter((id): id is string => Boolean(id));
-
-    const uniqueIds = new Set(userIds);
-    if (uniqueIds.size === 0) {
-      return { users: [], sessionCount: sessions.length };
-    }
-
-    const users = listUsers().filter((user) => uniqueIds.has(user.id));
-    return {
-      users,
-      sessionCount: sessions.length,
-    };
-  } catch (error) {
-    console.error('[Organizer] Failed to determine active sessions:', (error as Error).message);
-    return { users: [], sessionCount: 0 };
-  }
 }
 
 /**
@@ -313,19 +285,18 @@ async function runCycle() {
   });
 
   try {
-    // Limit scope to users with active sessions to avoid leaking inactive profiles
-    const { users, sessionCount } = getUsersWithActiveSessions();
+    // Get all logged-in users (active sessions only, no anonymous users)
+    const loggedInUsers = getLoggedInUsers();
 
-    if (users.length === 0) {
-      console.log('[Organizer] No active sessions detected. Skipping cycle to respect profile privacy.');
+    if (loggedInUsers.length === 0) {
+      console.log('[Organizer] No logged-in users found. Skipping cycle.');
       audit({
         level: 'info',
         category: 'action',
         event: 'agent_cycle_skipped',
         details: {
           agent: 'organizer',
-          reason: 'no_active_sessions',
-          activeSessionCount: sessionCount,
+          reason: 'no_logged_in_users',
         },
         actor: 'agent',
       });
@@ -333,17 +304,17 @@ async function runCycle() {
     }
 
     console.log(
-      `[Organizer] Found ${users.length} active user(s) across ${sessionCount} session(s) to process`
+      `[Organizer] Found ${loggedInUsers.length} logged-in user(s) to process`
     );
 
     let totalProcessed = 0;
 
-    // Process each user with isolated context
-    for (const user of users) {
+    // Process each logged-in user with isolated context
+    for (const user of loggedInUsers) {
       try {
         // Run with user context for automatic path resolution
         const processed = await withUserContext(
-          { userId: user.id, username: user.username, role: user.role },
+          { userId: user.userId, username: user.username, role: user.role },
           async () => {
             return await processUserMemories(user.username);
           }
@@ -357,7 +328,7 @@ async function runCycle() {
       }
     }
 
-    console.log(`[Organizer] Cycle finished. Processed ${totalProcessed} memories across ${users.length} users. ✅`);
+    console.log(`[Organizer] Cycle finished. Processed ${totalProcessed} memories across ${loggedInUsers.length} users. ✅`);
 
     // Audit completion (system-level)
     audit({
@@ -368,7 +339,7 @@ async function runCycle() {
         agent: 'organizer',
         mode: 'multi-user',
         totalProcessed,
-        userCount: users.length,
+        userCount: loggedInUsers.length,
       },
       actor: 'agent',
     });
