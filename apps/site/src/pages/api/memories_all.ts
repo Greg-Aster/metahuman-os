@@ -31,6 +31,16 @@ type CuratedItem = {
   relPath: string
 }
 
+type CuriosityQuestion = {
+  id: string
+  question: string
+  askedAt: string
+  status: 'pending' | 'answered'
+  relPath: string
+  seedMemories?: string[]
+  answeredAt?: string
+}
+
 function listEpisodic(): EpisodicItem[] {
   const items: EpisodicItem[] = []
   const walk = (dir: string) => {
@@ -104,6 +114,49 @@ function listCurated(): CuratedItem[] {
   return out
 }
 
+function listCuriosityQuestions(): CuriosityQuestion[] {
+  const out: CuriosityQuestion[] = []
+  const questionsDir = paths.curiosityQuestions
+
+  if (!fs.existsSync(questionsDir)) {
+    return out
+  }
+
+  const dirs = [
+    { dir: path.join(questionsDir, 'pending'), status: 'pending' as const },
+    { dir: path.join(questionsDir, 'answered'), status: 'answered' as const }
+  ]
+
+  for (const { dir, status } of dirs) {
+    if (!fs.existsSync(dir)) continue
+
+    for (const file of fs.readdirSync(dir)) {
+      if (!file.endsWith('.json')) continue
+
+      try {
+        const fullPath = path.join(dir, file)
+        const content = JSON.parse(fs.readFileSync(fullPath, 'utf-8'))
+
+        out.push({
+          id: content.id,
+          question: content.question,
+          askedAt: content.askedAt,
+          status,
+          relPath: path.relative(paths.root, fullPath),
+          seedMemories: content.seedMemories,
+          answeredAt: content.answeredAt
+        })
+      } catch (err) {
+        console.warn(`Failed to load curiosity question ${file}:`, err)
+      }
+    }
+  }
+
+  // Sort by askedAt timestamp (newest first)
+  out.sort((a, b) => new Date(b.askedAt).getTime() - new Date(a.askedAt).getTime())
+  return out
+}
+
 const handler: APIRoute = async (context) => {
   try {
     // Require authentication to access memory data
@@ -121,12 +174,15 @@ const handler: APIRoute = async (context) => {
     const episodicFiltered = episodic.filter(item => item.type !== 'reflection' && item.type !== 'dream')
     const tasks = listActiveTasks()
     const curated = listCurated()
+    const curiosityQuestions = listCuriosityQuestions()
+
     return new Response(JSON.stringify({
       episodic: episodicFiltered,
       reflections,
       dreams,
       tasks,
       curated,
+      curiosityQuestions,
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   } catch (err) {
     return new Response(JSON.stringify({ error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })

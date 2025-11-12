@@ -28,11 +28,23 @@
   // Factory reset
   let resettingFactory = false;
 
+  // Curiosity config
+  let curiosityLevel = 1;
+  let curiosityResearchMode: 'off' | 'local' | 'web' = 'local';
+
+  const curiosityLevelDescriptions = [
+    'Curiosity disabled - no questions will be asked',
+    'Gentle - 1 question at a time, infrequent prompts',
+    'Moderate - Up to 2 concurrent questions',
+    'Chatty - Up to 3 concurrent questions, shorter intervals'
+  ];
+
   onMount(async () => {
     loadWelcomeModalSetting();
     loadModelInfo();
     loadLoraState();
     loadLoggingConfig();
+    loadCuriositySettings();
   });
 
   function loadWelcomeModalSetting() {
@@ -148,6 +160,35 @@
       console.error('[SystemSettings] Error saving logging config:', err);
     } finally {
       savingLogging = false;
+    }
+  }
+
+  async function loadCuriositySettings() {
+    try {
+      const res = await fetch('/api/curiosity-config');
+      if (res.ok) {
+        const data = await res.json();
+        curiosityLevel = data.maxOpenQuestions;
+        curiosityResearchMode = data.researchMode || 'local';
+      }
+    } catch (err) {
+      console.error('[SystemSettings] Error loading curiosity config:', err);
+    }
+  }
+
+  async function saveCuriositySettings() {
+    try {
+      const res = await fetch('/api/curiosity-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          maxOpenQuestions: curiosityLevel,
+          researchMode: curiosityResearchMode
+        })
+      });
+      if (!res.ok) throw new Error('Failed to save curiosity settings');
+    } catch (err) {
+      console.error('[SystemSettings] Error saving curiosity config:', err);
     }
   }
 
@@ -319,6 +360,44 @@
     <label class="setting-label" for="mind-wandering-control">Mind Wandering</label>
     <div id="mind-wandering-control">
       <BoredomControl />
+    </div>
+  </div>
+
+  <!-- Curiosity Level Control -->
+  <div class="setting-group">
+    <label class="setting-label">Curiosity Level</label>
+    <div class="curiosity-control-container">
+      <div class="curiosity-slider-wrapper">
+        <input
+          type="range"
+          min="0"
+          max="3"
+          bind:value={curiosityLevel}
+          on:change={saveCuriositySettings}
+          class="curiosity-slider"
+        />
+        <div class="curiosity-labels">
+          <span>Off</span>
+          <span>Gentle</span>
+          <span>Moderate</span>
+          <span>Chatty</span>
+        </div>
+      </div>
+      <p class="curiosity-description">
+        {curiosityLevelDescriptions[curiosityLevel]}
+      </p>
+
+      <!-- Research Mode Toggle -->
+      {#if curiosityLevel > 0}
+        <div class="research-mode-controls">
+          <label class="field-label" for="research-mode-select">Research Mode</label>
+          <select id="research-mode-select" bind:value={curiosityResearchMode} on:change={saveCuriositySettings} class="logging-select">
+            <option value="off">Off - Questions only</option>
+            <option value="local">Local - Use existing memories</option>
+            <option value="web">Web - Allow web searches</option>
+          </select>
+        </div>
+      {/if}
     </div>
   </div>
 
@@ -697,5 +776,59 @@
 
   :global(.dark) .resource-description {
     color: #9ca3af;
+  }
+
+  /* Curiosity Controls */
+  .curiosity-control-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .curiosity-slider-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .curiosity-slider {
+    width: 100%;
+    accent-color: #7c3aed;
+    cursor: pointer;
+  }
+
+  .curiosity-labels {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    font-size: 0.75rem;
+    color: #6b7280;
+    padding: 0 0.25rem;
+  }
+
+  :global(.dark) .curiosity-labels {
+    color: #9ca3af;
+  }
+
+  .curiosity-description {
+    font-size: 0.875rem;
+    color: #4b5563;
+    margin: 0;
+    padding: 0.75rem;
+    background: rgba(124, 58, 237, 0.05);
+    border-radius: 0.375rem;
+    border-left: 3px solid #7c3aed;
+  }
+
+  :global(.dark) .curiosity-description {
+    color: #9ca3af;
+    background: rgba(167, 139, 250, 0.08);
+    border-left-color: #a78bfa;
+  }
+
+  .research-mode-controls {
+    margin-top: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
   }
 </style>

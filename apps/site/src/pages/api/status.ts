@@ -10,6 +10,7 @@ import { isRunning as isOllamaRunning } from '@metahuman/core/ollama';
 import { getRuntimeMode } from '@metahuman/core/runtime-mode';
 import { withUserContext } from '../../middleware/userContext';
 import { getUserContext } from '@metahuman/core/context';
+import { loadCuriosityConfig } from '@metahuman/core/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { paths } from '@metahuman/core/paths';
@@ -387,6 +388,27 @@ const handler: APIRoute = async ({ cookies }) => {
       }).filter(Boolean);
     } catch {}
 
+    // CURIOSITY STATS
+    const curiosityConfig = loadCuriosityConfig();
+    const pendingQuestionsDir = paths.curiosityQuestionsPending;
+    let openQuestionCount = 0;
+    let lastAskedTimestamp: string | null = null;
+
+    if (fs.existsSync(pendingQuestionsDir)) {
+      const files = fs.readdirSync(pendingQuestionsDir).filter(f => f.endsWith('.json'));
+      openQuestionCount = files.length;
+
+      // Find most recent question
+      files.forEach(file => {
+        try {
+          const q = JSON.parse(fs.readFileSync(path.join(pendingQuestionsDir, file), 'utf-8'));
+          if (!lastAskedTimestamp || q.askedAt > lastAskedTimestamp) {
+            lastAskedTimestamp = q.askedAt;
+          }
+        } catch {}
+      });
+    }
+
     // RUNTIME MODE STATUS
     const runtimeMode = getRuntimeMode();
 
@@ -433,6 +455,14 @@ const handler: APIRoute = async ({ cookies }) => {
         headless: runtimeMode.headless,
         lastChangedBy: runtimeMode.lastChangedBy,
         changedAt: runtimeMode.changedAt,
+      },
+      // Curiosity system stats
+      curiosity: {
+        enabled: curiosityConfig.maxOpenQuestions > 0,
+        openQuestions: openQuestionCount,
+        maxOpenQuestions: curiosityConfig.maxOpenQuestions,
+        lastAsked: lastAskedTimestamp,
+        researchMode: curiosityConfig.researchMode,
       },
     };
 

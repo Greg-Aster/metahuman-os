@@ -529,6 +529,7 @@ export const GET: APIRoute = withUserContext(async (context) => {
   const message = url.searchParams.get('message') || '';
   const mode = url.searchParams.get('mode') || 'inner';
   const newSession = url.searchParams.get('newSession') === 'true';
+  const questionId = url.searchParams.get('questionId') || undefined;
   const audience = url.searchParams.get('audience') || undefined;
   const length = url.searchParams.get('length') || 'auto';
   const reason = url.searchParams.get('reason') === 'true';
@@ -872,15 +873,24 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
         if (canCaptureConversation) {
           try {
+            const metadata: any = {
+              cognitiveMode,
+              conversationId: sessionId || undefined,
+              timestamp: new Date().toISOString(),
+              usedOperator: true,
+            };
+
+            // Link to curiosity question if provided
+            if (questionId) {
+              metadata.curiosity = {
+                answerTo: questionId
+              };
+            }
+
             userEventPath = captureEvent(`Me: "${message}"`, {
               type: eventType,
               tags: ['chat', m],
-              metadata: {
-                cognitiveMode,
-                conversationId: sessionId || undefined,
-                timestamp: new Date().toISOString(),
-                usedOperator: true,
-              },
+              metadata,
             });
             userEventId = userEventPath ? extractEventIdFromFile(userEventPath) : undefined;
           } catch (error) {
@@ -1015,7 +1025,17 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
           push('answer', { response: synthesized });
 
-          pushMessage(m, { role: 'assistant', content: synthesized }, sessionId);
+          pushMessage(m, {
+            role: 'assistant',
+            content: synthesized,
+            meta: {
+              operatorReport: result,
+              operatorSummary: formattedResult,
+              operatorGoal: message,
+              usedOperator: true,
+              completedAt: new Date().toISOString()
+            }
+          }, sessionId);
           lastAssistantReplies[m].push(synthesized);
         } catch (error) {
           console.error('[persona_chat] Operator error:', error);
@@ -1539,16 +1559,25 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
           const responseForMemory = assistantResponse && assistantResponse.trim().length > 0 ? assistantResponse.trim() : undefined;
 
           if (canPersistConversation) {
+            const metadata: any = {
+              cognitiveMode: cognitiveMode,
+              conversationId: sessionId || undefined,
+              timestamp: new Date().toISOString(),
+              usedOperator: false,
+            };
+
+            // Link to curiosity question if provided
+            if (questionId) {
+              metadata.curiosity = {
+                answerTo: questionId
+              };
+            }
+
             const userPath = captureEvent(`Me: "${message}"`, {
               type: eventType,
               tags: ['chat', m],
               response: responseForMemory,
-              metadata: {
-                cognitiveMode: cognitiveMode,
-                conversationId: sessionId || undefined,
-                timestamp: new Date().toISOString(),
-                usedOperator: false,
-              },
+              metadata,
             });
             const userRelPath = path.relative(ROOT, userPath);
 

@@ -360,6 +360,7 @@
   let roleAssignments: Record<string, string> = {};
   let modelDropdownOpen: Record<string, boolean> = {};
   let loadingModelRegistry = false;
+  let statusRefreshInFlight = false;
 
   async function loadModelRegistry() {
     if (loadingModelRegistry) return;
@@ -398,12 +399,55 @@
     }
   }
 
+  function updateModelRoleLocally(role: string, modelId: string) {
+    const selectedModel = availableModels.find(model => model.id === modelId);
+    if (!selectedModel) {
+      return;
+    }
+
+    modelRoles = {
+      ...modelRoles,
+      [role]: {
+        modelId: selectedModel.id,
+        provider: selectedModel.provider,
+        model: selectedModel.model,
+        adapters: selectedModel.adapters ?? [],
+        baseModel: selectedModel.baseModel ?? null,
+        temperature: selectedModel.options?.temperature,
+      },
+    };
+  }
+
+  async function refreshStatus(reason = 'manual') {
+    if (statusRefreshInFlight) return;
+    statusRefreshInFlight = true;
+    try {
+      const cacheBust = `_t=${Date.now()}`;
+      const res = await fetch(`/api/status?${cacheBust}`, { cache: 'no-store' });
+      if (!res.ok) {
+        throw new Error(`Failed to refresh status (${res.status})`);
+      }
+      const data = await res.json();
+      statusStore.set(data);
+    } catch (error) {
+      console.warn(`[LeftSidebar] Failed to refresh status after ${reason}:`, error);
+    } finally {
+      statusRefreshInFlight = false;
+    }
+  }
+
   async function assignModelToRole(role: string, modelId: string) {
     try {
+      const mode = get(currentMode);
+      const payload: Record<string, any> = { role, modelId };
+      if (mode) {
+        payload.cognitiveMode = mode;
+      }
+
       const response = await fetch('/api/model-registry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role, modelId }),
+        body: JSON.stringify(payload),
       });
 
       const result = await response.json();
@@ -412,6 +456,9 @@
         roleAssignments[role] = modelId;
         modelDropdownOpen[role] = false;
         modelDropdownOpen = { ...modelDropdownOpen };
+        updateModelRoleLocally(role, modelId);
+        void refreshStatus('model assignment');
+        void loadModelRegistry();
 
         // Warm up the model in the background (non-blocking)
         // This preloads it into Ollama memory to avoid cold-start on first use

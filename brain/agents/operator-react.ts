@@ -92,6 +92,7 @@ export interface ScratchpadEntry {
       context: any;
     };
   }; // Result of tool execution
+  outputs?: any; // Raw skill outputs for precision-grounded responses
   timestamp: string;
 }
 
@@ -1522,6 +1523,10 @@ function formatObservationV2(
   }
 }
 
+function hasExecutedTool(entries: ScratchpadEntry[]): boolean {
+  return entries.some(entry => entry.action && entry.observation);
+}
+
 /**
  * Format observation as structured data (bullet lists/JSON)
  */
@@ -2005,6 +2010,7 @@ async function runReActLoopV2(
         success: executionResult.success,
         error: executionResult.error
       };
+      entry.outputs = executionResult.outputs;
 
       // If error has suggestions, append them to observation content
       if (executionResult.error?.suggestions) {
@@ -2034,22 +2040,68 @@ async function runReActLoopV2(
 
     // Check for completion
     if (planning.respond) {
+      const requiresEvidence = !isPureChatRequest(goal);
+      const toolExecuted = hasExecutedTool(state.scratchpad);
+
+      if (requiresEvidence && !toolExecuted) {
+        const warning = 'Planned response lacks supporting tool execution; gather evidence before replying.';
+        onProgress?.({
+          type: 'warning',
+          content: warning,
+          step: state.currentStep
+        });
+
+        audit({
+          level: 'warn',
+          category: 'action',
+          event: 'react_v2_missing_evidence',
+          details: { goal, iteration: state.currentStep },
+          actor: 'operator-react-v2',
+        });
+
+        state.scratchpad.push({
+          step: state.currentStep,
+          thought: `${planning.thought}\n\n${warning}`,
+          timestamp: new Date().toISOString()
+        });
+
+        continue;
+      }
+
       state.completed = true;
 
-      // Generate final response using conversational_response with style parameter
-      const observations = state.scratchpad
-        .filter(e => e.observation?.success)
-        .map(e => e.observation!.content)
-        .join('\n\n');
+      const successfulEntries = state.scratchpad.filter(e => e.observation?.success);
+      const observations = successfulEntries.map(e => e.observation!.content).join('\n\n');
 
-      // Use the responseStyle from planning (default, strict, or summary)
-      const responseStyle = planning.responseStyle || 'default';
+      const evidenceBlocks = successfulEntries
+        .filter(e => e.outputs && typeof e.outputs === 'object')
+        .map(e => {
+          const toolName = e.action?.tool || 'unknown_tool';
+          try {
+            return `Tool ${toolName} outputs:\n${JSON.stringify(e.outputs, null, 2)}`;
+          } catch {
+            return `Tool ${toolName} outputs (non-serializable)`;
+          }
+        });
+
+      const responseContextSections: string[] = [];
+      if (evidenceBlocks.length > 0) {
+        responseContextSections.push(['## Structured Evidence', ...evidenceBlocks].join('\n\n'));
+      }
+      if (observations) {
+        responseContextSections.push(`## Observations\n${observations}`);
+      }
+
+      const responseContext = responseContextSections.join('\n\n') || 'No information gathered';
+
+      // Use strict style automatically when we have structured evidence unless planner overrides
+      const responseStyle = planning.responseStyle || (evidenceBlocks.length ? 'strict' : 'default');
 
       try {
         const result = await coreExecuteSkill(
           'conversational_response',
           {
-            context: observations || 'No information gathered',
+            context: responseContext,
             goal: goal,
             style: responseStyle
           },

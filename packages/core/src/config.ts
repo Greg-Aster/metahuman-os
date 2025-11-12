@@ -222,3 +222,47 @@ export function listUserConfigs(): string[] {
     return [];
   }
 }
+
+// ============================================================================
+// Curiosity Configuration
+// ============================================================================
+
+export interface CuriosityConfig {
+  maxOpenQuestions: number;          // 0 = off, 1 = gentle, 3 = chatty
+  researchMode: 'off' | 'local' | 'web';
+  inactivityThresholdSeconds: number; // How long to wait before asking
+  questionTopics: string[];           // Filter topics (empty = all)
+  minTrustLevel: string;              // Minimum trust to ask questions
+}
+
+let curiosityConfigCache: CuriosityConfig | null = null;
+
+export function loadCuriosityConfig(): CuriosityConfig {
+  if (curiosityConfigCache) return curiosityConfigCache;
+
+  const config = loadUserConfig<CuriosityConfig>('curiosity.json', getDefaultCuriosityConfig());
+  curiosityConfigCache = config;
+  return config;
+}
+
+export function saveCuriosityConfig(config: CuriosityConfig): void {
+  saveUserConfig('curiosity.json', config);
+  curiosityConfigCache = config; // Update cache
+}
+
+export function getDefaultCuriosityConfig(): CuriosityConfig {
+  return {
+    maxOpenQuestions: 1,
+    researchMode: 'local',
+    inactivityThresholdSeconds: 1800, // 30 minutes
+    questionTopics: [],
+    minTrustLevel: 'observe'
+  };
+}
+
+/**
+ * Invalidate curiosity config cache (for testing)
+ */
+export function invalidateCuriosityConfig(): void {
+  curiosityConfigCache = null;
+}

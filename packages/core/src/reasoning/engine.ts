@@ -7,6 +7,7 @@
 
 import { getCachedCatalog } from '../tool-catalog';
 import { executeSkill } from '../skills';
+import { audit } from '../audit';
 import { getDefaultConfig, validateConfig } from './config';
 import { formatScratchpadForLLM, getObservations } from './scratchpad';
 import { planNextStepV2 } from './planner';
@@ -310,15 +311,51 @@ export class ReasoningEngine {
 
           // Generate final response
           const observations = getObservations(state.scratchpad);
+          let finalResponse: string;
 
-          const responseResult = await executeSkill('conversational_response', {
-            context: observations,
-            goal: goal,
-            style: planning.responseStyle || 'default',
-          });
-          llmCalls++;
+          // STRICT MODE: If responseStyle is 'strict' and we have successful observations,
+          // skip conversational_response and return structured data directly
+          if (planning.responseStyle === 'strict' && observations.length > 0) {
+            // Use the last observation directly (assumes it contains the data)
+            const lastObs = state.scratchpad[state.scratchpad.length - 1];
 
-          const finalResponse = responseResult.outputs?.response || 'No response generated.';
+            if (lastObs?.observation && lastObs.observation.success) {
+              finalResponse = lastObs.observation.content;
+
+              // Log strict short-circuit event
+              audit({
+                level: 'info',
+                category: 'action',
+                event: 'reasoning_strict_shortcut',
+                details: {
+                  goal,
+                  tool: lastObs.action?.tool,
+                  sessionId: this.sessionId,
+                  message: 'Skipped conversational_response, returned structured data directly',
+                },
+                actor: 'reasoning-service',
+              });
+            } else {
+              // Fallback to conversational_response if observation failed
+              const responseResult = await executeSkill('conversational_response', {
+                context: observations,
+                goal: goal,
+                style: 'default', // Fallback to default style
+              });
+              llmCalls++;
+              finalResponse = responseResult.outputs?.response || 'No response generated.';
+            }
+          } else {
+            // Normal conversational response
+            const responseResult = await executeSkill('conversational_response', {
+              context: observations,
+              goal: goal,
+              style: planning.responseStyle || 'default',
+            });
+            llmCalls++;
+            finalResponse = responseResult.outputs?.response || 'No response generated.';
+          }
+
           state.finalResponse = finalResponse;
 
           // Emit completion event

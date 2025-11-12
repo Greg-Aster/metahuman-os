@@ -40,9 +40,10 @@ let aiIngestorMemories: EventItem[] = []
 let audioTranscriptMemories: EventItem[] = []
 let dreamMemories: EventItem[] = [];
 let reflectionMemories: EventItem[] = [];
+let curiosityQuestionsTab: Array<{ id: string; question: string; status: string; askedAt: string; relPath: string; seedMemories?: string[]; answeredAt?: string }> = []
 let loadingEvents = false
 let eventsError: string | null = null
-let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' = 'episodic'
+let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'setup' | 'datasets' | 'monitor' | 'adapters' = 'datasets'
 let systemTab: 'persona' | 'lifeline' | 'settings' = 'persona'
@@ -109,6 +110,7 @@ async function loadEvents() {
       const dreams = Array.isArray(data.dreams) ? data.dreams : [];
       tasksTab = Array.isArray(data.tasks) ? data.tasks : [];
       curatedTab = Array.isArray(data.curated) ? data.curated : [];
+      curiosityQuestionsTab = Array.isArray(data.curiosityQuestions) ? data.curiosityQuestions : [];
       
       // DEBUG: Log all fetched events
       console.log('--- Memory Buckets Fetched ---', { episodicEvents, reflections, dreams });
@@ -433,6 +435,7 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
           <button class="tab-button" class:active={memoryTab==='ai-ingestor'} on:click={() => memoryTab='ai-ingestor'}>AI Ingestor</button>
           <button class="tab-button" class:active={memoryTab==='audio'} on:click={() => memoryTab='audio'}>Audio</button>
           <button class="tab-button" class:active={memoryTab==='dreams'} on:click={() => memoryTab='dreams'}>Dreams 💭</button>
+          <button class="tab-button" class:active={memoryTab==='curiosity'} on:click={() => memoryTab='curiosity'}>Curiosity ❓</button>
         </div>
         {#if loadingEvents}
           <div class="loading-state">Loading memories...</div>
@@ -868,6 +871,49 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
             {/each}
           {:else}
             <p class="empty-state">No dreams recorded recently. Dreams are generated during the nightly sleep cycle based on recent memories.</p>
+          {/if}
+        </div>
+        {:else if memoryTab === 'curiosity'}
+        <div class="memory-list">
+          {#if curiosityQuestionsTab.length > 0}
+            {#each curiosityQuestionsTab as question}
+              <div class="event-card curiosity-question" class:pending={question.status === 'pending'} class:answered={question.status === 'answered'}>
+                <div class="event-card-header">
+                  <span class="event-icon">{question.status === 'pending' ? '❓' : '✅'}</span>
+                  <div class="event-card-meta">
+                    <span class="event-card-type">{question.status}</span>
+                    <span class="event-card-time">{new Date(question.askedAt).toLocaleString()}</span>
+                  </div>
+                </div>
+                <div class="event-card-content question-text">
+                  {question.question}
+                </div>
+                <div class="event-card-footer">
+                  <button class="btn-view" on:click={() => openEditor(question.relPath, 'Question')}>
+                    View Details
+                  </button>
+                  {#if question.status === 'pending'}
+                    <button class="btn-reply" on:click={() => {
+                      activeView.set('chat');
+                    }}>
+                      Reply in Chat
+                    </button>
+                  {/if}
+                  {#if question.answeredAt}
+                    <span class="answered-badge">Answered {new Date(question.answeredAt).toLocaleDateString()}</span>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          {:else}
+            <div class="empty-state">
+              <div class="empty-icon">❓</div>
+              <div class="empty-title">No Curiosity Questions Yet</div>
+              <div class="empty-description">
+                The curiosity system asks thoughtful questions during idle periods.
+                Adjust settings in System → Settings to enable.
+              </div>
+            </div>
           {/if}
         </div>
         {/if}
@@ -1310,6 +1356,58 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
   /* Onboarding Wrapper */
   .onboarding-wrapper {
     @apply max-w-4xl mx-auto py-4;
+  }
+
+  /* Curiosity Questions */
+  .curiosity-question {
+    border-left: 3px solid #7c3aed;
+  }
+
+  .curiosity-question.pending {
+    background: rgba(124, 58, 237, 0.05);
+  }
+
+  :global(.dark) .curiosity-question.pending {
+    background: rgba(167, 139, 250, 0.08);
+  }
+
+  .curiosity-question.answered {
+    background: rgba(16, 185, 129, 0.05);
+    border-left-color: #10b981;
+  }
+
+  :global(.dark) .curiosity-question.answered {
+    background: rgba(52, 211, 153, 0.08);
+    border-left-color: #34d399;
+  }
+
+  .question-text {
+    font-style: italic;
+    color: #4b5563;
+    line-height: 1.6;
+  }
+
+  :global(.dark) .question-text {
+    color: #d1d5db;
+  }
+
+  .btn-view, .btn-reply {
+    @apply px-3 py-1.5 text-sm font-medium rounded-md transition-colors;
+  }
+
+  .btn-view {
+    @apply bg-gray-100 hover:bg-gray-200 text-gray-700
+           dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200;
+  }
+
+  .btn-reply {
+    @apply bg-purple-600 hover:bg-purple-700 text-white
+           dark:bg-purple-700 dark:hover:bg-purple-600;
+  }
+
+  .answered-badge {
+    @apply text-xs px-2 py-1 rounded-full bg-green-100 text-green-700
+           dark:bg-green-900/30 dark:text-green-400;
   }
 </style>
 

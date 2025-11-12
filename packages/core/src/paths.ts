@@ -65,6 +65,15 @@ export function getProfilePaths(username: string) {
     audioTranscripts: path.join(profileRoot, 'memory', 'audio', 'transcripts'),
     audioArchive: path.join(profileRoot, 'memory', 'audio', 'archive'),
 
+    // Curiosity system
+    curiosity: path.join(profileRoot, 'memory', 'curiosity'),
+    curiosityQuestions: path.join(profileRoot, 'memory', 'curiosity', 'questions'),
+    curiosityQuestionsPending: path.join(profileRoot, 'memory', 'curiosity', 'questions', 'pending'),
+    curiosityQuestionsAnswered: path.join(profileRoot, 'memory', 'curiosity', 'questions', 'answered'),
+    curiosityFacts: path.join(profileRoot, 'memory', 'curiosity', 'facts'),
+    curiosityResearch: path.join(profileRoot, 'memory', 'curiosity', 'research'),
+    curiosityConfig: path.join(profileRoot, 'etc', 'curiosity.json'),
+
     // Logs (user-specific)
     decisions: path.join(profileRoot, 'logs', 'decisions'),
     actions: path.join(profileRoot, 'logs', 'actions'),
@@ -184,6 +193,15 @@ export const paths = new Proxy({} as ReturnType<typeof getProfilePaths> & typeof
       audioInbox: path.join(ROOT, 'memory', 'audio', 'inbox'),
       audioTranscripts: path.join(ROOT, 'memory', 'audio', 'transcripts'),
       audioArchive: path.join(ROOT, 'memory', 'audio', 'archive'),
+
+      // Curiosity system
+      curiosity: path.join(ROOT, 'memory', 'curiosity'),
+      curiosityQuestions: path.join(ROOT, 'memory', 'curiosity', 'questions'),
+      curiosityQuestionsPending: path.join(ROOT, 'memory', 'curiosity', 'questions', 'pending'),
+      curiosityQuestionsAnswered: path.join(ROOT, 'memory', 'curiosity', 'questions', 'answered'),
+      curiosityFacts: path.join(ROOT, 'memory', 'curiosity', 'facts'),
+      curiosityResearch: path.join(ROOT, 'memory', 'curiosity', 'research'),
+      curiosityConfig: path.join(ROOT, 'etc', 'curiosity.json'),
 
       // Logs
       decisions: path.join(ROOT, 'logs', 'decisions'),

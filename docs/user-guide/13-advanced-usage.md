@@ -70,6 +70,211 @@ Shows how many memories are:
 - Processed (have tags/entities)
 - Unprocessed (awaiting organizer)
 
+### Configuring the ReasoningEngine
+
+The **Operator** agent uses a multi-step reasoning system based on the ReAct pattern (Reason-Act-Observe). You can control which implementation is used via `etc/runtime.json`.
+
+#### Reasoning Implementations
+
+| Implementation | Description | Status |
+|----------------|-------------|--------|
+| **V1 Legacy** | Original operator (deprecated) | Not recommended |
+| **V2 Inline** | ReAct loop with inline code | Default, stable |
+| **V2 Service** | Unified ReasoningEngine service | Recommended |
+
+#### Enabling ReasoningEngine Service
+
+**Step 1:** Edit `etc/runtime.json`:
+```json
+{
+  "operator": {
+    "reactV2": true,
+    "useReasoningService": true
+  }
+}
+```
+
+**Step 2:** Restart web UI (if running):
+```bash
+cd apps/site && pnpm dev
+```
+
+**Step 3:** Verify in audit logs:
+```bash
+tail -f logs/audit/$(date +%Y-%m-%d).ndjson | grep operator_feature_flag
+```
+
+You should see:
+```json
+{
+  "event": "operator_feature_flag_check",
+  "details": {
+    "useV2": true,
+    "useService": true
+  }
+}
+```
+
+#### Benefits of ReasoningEngine Service
+
+1. **Enhanced Error Recovery**: 7 error types with contextual suggestions
+   ```
+   FILE_NOT_FOUND → "Use fs_list to check what files exist in the directory"
+   TASK_NOT_FOUND → "Use task_list to see available tasks"
+   PERMISSION_DENIED → "Check file permissions with fs_list"
+   ```
+
+2. **Failure Loop Detection**: Prevents repeated failures
+   ```
+   Attempt 1: fs_read({ path: "/missing.txt" }) → Error
+   Attempt 2: fs_read({ path: "/missing.txt" }) → Error
+   Attempt 3: ⚠️ Loop detected! "This action has already failed 2 times..."
+   ```
+
+3. **Structured Event Streaming**: Better UI observability
+   - Reasoning slider shows step-by-step progress
+   - Dual event formats for backward compatibility
+   - Full scratchpad history
+
+4. **Reasoning Depth Levels**: Control complexity
+
+   | Level | Name | Steps | Use Case |
+   |-------|------|-------|----------|
+   | 0 | Off | 1 | Direct execution |
+   | 1 | Quick | 5 | Simple tasks |
+   | 2 | Focused | 10 | Multi-step (default) |
+   | 3 | Deep | 15 | Complex problems |
+
+#### Testing ReasoningEngine
+
+**Test 1: Simple Query (Fast-Path)**
+```
+User: "List my tasks"
+
+Expected: Fast-path short-circuit, direct skill execution
+Audit Event: verbatim_short_circuit
+```
+
+**Test 2: Multi-Step Reasoning**
+```
+User: "Create a task to review the docs and mark it as high priority"
+
+Expected:
+  Thought 1: Need to create task with task_create
+  Action 1: task_create({ title: "Review the docs", priority: "high" })
+  Observation 1: ✅ Task created (ID: task-123)
+  Thought 2: Task created successfully
+  Response: Created task "Review the docs" with high priority (ID: task-123)
+```
+
+**Test 3: Error Recovery**
+```
+User: "Read the file missing.txt"
+
+Expected:
+  Thought 1: Need to read missing.txt
+  Action 1: fs_read({ path: "missing.txt" })
+  Observation 1: ❌ FILE_NOT_FOUND
+    Suggestions:
+    - Use fs_list to check what files exist
+    - Verify the file path is correct
+  Thought 2: File doesn't exist, inform user with suggestions
+  Response: File not found. Would you like me to list available files?
+```
+
+#### Rollback to Inline V2
+
+If you encounter issues, rollback instantly:
+
+```json
+{
+  "operator": {
+    "reactV2": true,
+    "useReasoningService": false
+  }
+}
+```
+
+No code changes needed—the feature flag controls routing.
+
+#### Observing Reasoning Events
+
+**Via Web UI:**
+1. Open chat interface
+2. Look for "reasoning slider" panel
+3. Watch events stream in real-time:
+   - 💭 Thought: Blue text
+   - ⚡ Action: Yellow text
+   - 👁️ Observation: Green text
+   - ✅ Completion: Purple text
+
+**Via Audit Logs:**
+```bash
+tail -f logs/audit/$(date +%Y-%m-%d).ndjson | grep reasoning
+```
+
+Events:
+- `reasoning_loop_started` - Reasoning loop begins
+- `reasoning_thought` - Planning step
+- `reasoning_action` - Skill execution
+- `reasoning_observation` - Result processing
+- `reasoning_completion` - Final response
+- `reasoning_loop_completed` - Loop ends with metadata
+
+#### Performance Characteristics
+
+**V2 Inline vs. Service:**
+- ✅ **Same performance** - Service is extracted code, not extra overhead
+- ✅ **Same LLM calls** - No additional model invocations
+- ✅ **Better observability** - Structured events, clearer logs
+- ✅ **Easier debugging** - Scratchpad shows complete reasoning history
+
+**Fast-Path Optimization:**
+- Simple queries bypass reasoning loop
+- Direct skill execution in <100ms
+- Example: "list tasks" → task_list() → response
+- Audit event: `verbatim_short_circuit`
+
+#### Configuration Reference
+
+**Full Configuration (`etc/runtime.json`):**
+```json
+{
+  "headless": false,
+  "operator": {
+    "reactV2": true,
+    "useReasoningService": false
+  }
+}
+```
+
+**ReasoningEngine Config (programmatic):**
+```typescript
+import { ReasoningEngine } from '@metahuman/core/reasoning';
+
+const engine = new ReasoningEngine({
+  depth: 'focused',              // 'off' | 'quick' | 'focused' | 'deep'
+  maxSteps: 10,                  // Override depth default
+  enableFastPath: true,          // Enable fast-path optimizations
+  enableVerbatimShortCircuit: true, // Short-circuit simple queries
+  enableErrorRetry: true,        // Enable error analysis & suggestions
+  enableFailureLoopDetection: true, // Prevent repeated failures
+  sessionId: 'session-123',
+  userId: 'user-456',
+});
+
+const result = await engine.run(
+  'List my tasks',
+  { memories: [], conversationHistory: [] },
+  (event) => console.log(event) // Progress callback
+);
+```
+
+**Related Documentation:**
+- [Core Concepts - ReasoningEngine](04-core-concepts.md#3a-reasoningengine-operator)
+- [Configuration Files - runtime.json](14-configuration-files.md#etcruntimejson---runtime-feature-flags)
+- Implementation Status: `docs/implementation-plans/reasoning-service-consolidation-STATUS.md`
+
 ### LoRA Training Workflow Testing
 Try this comprehensive test sequence:
 

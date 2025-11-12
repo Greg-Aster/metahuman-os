@@ -279,38 +279,134 @@ Track the LoRA training pipeline via:
 
 ### 7. Operator Agent
 
-**Purpose:** Executes complex multi-step tasks using skills.
+**Purpose:** Executes complex multi-step tasks using skills via the ReAct pattern (Reason-Act-Observe).
 
-**Two Modes Available:**
+**Three Implementations Available:**
 
-#### ReAct Operator (Recommended) - `/api/operator/react`
-Modern **Reason + Act** loop with dynamic observation:
+#### V2 Service (Recommended) - ReasoningEngine
+Unified reasoning service with enhanced capabilities:
+- **Architecture**: Extracted from operator-react.ts into reusable `@metahuman/core/reasoning` module
+- **Error Recovery**: 7 error types with contextual suggestions
+  - `FILE_NOT_FOUND` → "Use fs_list to check what files exist"
+  - `TASK_NOT_FOUND` → "Use task_list to see available tasks"
+  - `PERMISSION_DENIED` → "Check file permissions with fs_list"
+  - Plus 4 more error types
+- **Failure Loop Detection**: Prevents repeated failures (triggers after 2 attempts)
+- **3 Observation Modes**:
+  - **Verbatim**: Raw JSON output
+  - **Structured**: Formatted tables/summaries
+  - **Narrative**: Natural language descriptions
+- **Reasoning Depth Levels**: 0 (off), 1 (quick), 2 (focused), 3 (deep)
+- **Fast-Path Optimizations**: Short-circuits simple queries (<100ms)
+- **SSE Event Streaming**: Real-time reasoning progress in UI
+
+**Enable via** `etc/runtime.json`:
+```json
+{
+  "operator": {
+    "reactV2": true,
+    "useReasoningService": true
+  }
+}
+```
+
+**Example Execution:**
+```
+User: "Create a task to review the docs"
+
+Thought 1: Need to create a task using task_create skill
+Action 1: task_create({ title: "Review the docs", priority: "medium" })
+Observation 1: ✅ Task created (ID: task-123)
+Thought 2: Task created successfully, I have all needed info
+Response: I've created a task "Review the docs" with medium priority (ID: task-123)
+```
+
+#### V2 Inline (Default) - `/api/operator/react`
+Modern **Reason + Act** loop with inline implementation:
 - Plans **ONE step at a time** based on actual observed results
 - Never hallucinates data - only uses what it observes
 - Adapts strategy when skills fail
 - Real-time streaming via Server-Sent Events
 - Max 10 iterations with intelligent completion detection
-- **Example**: When asked to "list files in docs", it runs `fs_list` FIRST, observes the actual filenames, then reads those specific files (not hallucinated ones)
+- **Same logic as V2 Service**, just not extracted into separate module
 
-**Test it:**
+**Enable via** `etc/runtime.json`:
+```json
+{
+  "operator": {
+    "reactV2": true,
+    "useReasoningService": false
+  }
+}
+```
+
+#### V1 Legacy (Deprecated) - `/api/operator`
+Original 3-phase flow preserved for backward compatibility:
+- Plans ALL steps upfront (before seeing any results)
+- 3 phases: planner → executor → critic
+- Can hallucinate filenames it hasn't observed yet
+- Not recommended for new usage
+
+**Disable V2 via** `etc/runtime.json`:
+```json
+{
+  "operator": {
+    "reactV2": false,
+    "useReasoningService": false
+  }
+}
+```
+
+#### Testing the Operator
+
+**Via Web UI:**
+1. Open chat interface
+2. Ask: "List files in docs/user-guide and summarize the first one"
+3. Watch reasoning slider for step-by-step progress
+
+**Via API:**
 ```bash
 curl -X POST http://localhost:4321/api/operator/react \
   -H "Content-Type: application/json" \
   -d '{"goal": "List files in docs/user-guide"}'
 ```
 
-#### Legacy Operator (Static Planner) - `/api/operator`
-Original 3-phase flow preserved for backward compatibility:
-- Plans ALL steps upfront (before seeing any results)
-- 3 phases: planner → executor → critic
-- Can hallucinate filenames it hasn't observed yet
-- Kept for comparison and rollback
+**Via CLI:**
+```bash
+./bin/mh chat
+> Create a task to review the documentation
+```
 
-**How both work:**
-- Take user goals and execute them using the skills system
-- Handle complex file operations, git commands, web search, and more
-- Support approval flows for high-risk skills
-- Full audit trail of all operations
+#### Observing Reasoning Events
+
+**Audit Log Events:**
+- `reasoning_loop_started` - Loop begins
+- `reasoning_thought` - Planning step
+- `reasoning_action` - Skill execution
+- `reasoning_observation` - Result processing
+- `reasoning_completion` - Final response
+- `reasoning_loop_completed` - Loop ends with metadata
+
+**Tail audit logs:**
+```bash
+tail -f logs/audit/$(date +%Y-%m-%d).ndjson | grep reasoning
+```
+
+#### Performance Comparison
+
+| Feature | V1 Legacy | V2 Inline | V2 Service |
+|---------|-----------|-----------|------------|
+| **Planning** | Upfront | Step-by-step | Step-by-step |
+| **Error Recovery** | Basic | Good | Enhanced (7 types) |
+| **Loop Detection** | None | Basic | Advanced |
+| **Observability** | Limited | Good | Excellent |
+| **SSE Events** | No | Yes | Yes (dual format) |
+| **Modularity** | Monolithic | Inline | Extracted service |
+
+#### Related Documentation
+- [Core Concepts - ReasoningEngine](04-core-concepts.md#3a-reasoningengine-operator)
+- [Advanced Usage - Configuring ReasoningEngine](13-advanced-usage.md#configuring-the-reasoningengine)
+- [Configuration Files - runtime.json](14-configuration-files.md#etcruntimejson---runtime-feature-flags)
 
 ### 8. Coder Agent (Self-Healing)
 

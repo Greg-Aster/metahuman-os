@@ -69,6 +69,42 @@
       "autoRestart": true,
       "maxRetries": 2,
       "comment": "Refreshes memory metrics cache every 5 minutes and cleans up orphaned tool outputs"
+    },
+    "curiosity": {
+      "id": "curiosity",
+      "enabled": false,
+      "type": "interval",
+      "priority": "low",
+      "agentPath": "curiosity-service.ts",
+      "interval": 1800,
+      "runOnBoot": false,
+      "autoRestart": true,
+      "maxRetries": 2,
+      "comment": "Asks thoughtful questions during idle periods. Also expires old unanswered questions (7 days). Controlled by per-user curiosity.json config."
+    },
+    "curiosity-answer-watcher": {
+      "id": "curiosity-answer-watcher",
+      "enabled": false,
+      "type": "interval",
+      "priority": "low",
+      "agentPath": "curiosity-answer-watcher.ts",
+      "interval": 300,
+      "runOnBoot": false,
+      "autoRestart": true,
+      "maxRetries": 2,
+      "comment": "Detects when users answer curiosity questions and marks them as answered. Runs every 5 minutes."
+    },
+    "curiosity-researcher": {
+      "id": "curiosity-researcher",
+      "enabled": false,
+      "type": "interval",
+      "priority": "low",
+      "agentPath": "curiosity-researcher.ts",
+      "interval": 3600,
+      "runOnBoot": false,
+      "autoRestart": true,
+      "maxRetries": 2,
+      "comment": "Performs research on pending curiosity questions by searching memories and generating context notes. Processes one question per cycle."
     }
   }
 }
