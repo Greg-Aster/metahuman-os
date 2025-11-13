@@ -1,10 +1,10 @@
 {
-  "maxOpenQuestions": 2,
+  "maxOpenQuestions": 4,
   "researchMode": "local",
   "inactivityThresholdSeconds": 1800,
   "questionTopics": [],
   "minTrustLevel": "observe",
-  "questionIntervalSeconds": 1800,
+  "questionIntervalSeconds": 300,
   "innerQuestionMode": "local",
   "innerQuestionIntervalSeconds": 3600
 }

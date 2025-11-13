@@ -5,8 +5,8 @@
 
 import type { APIRoute } from 'astro';
 import { initializeSkills } from '../../../../../brain/skills/index';
-import { runTask } from '../../../../../brain/agents/operator';
-import { executeSkill, loadTrustLevel, getAvailableSkills, listSkills } from '../../../../../packages/core/src/skills';
+import { runOperatorWithFeatureFlag } from '../../../../../brain/agents/operator-react';
+import { loadTrustLevel, getAvailableSkills, listSkills } from '../../../../../packages/core/src/skills';
 import { audit } from '@metahuman/core/audit';
 import { requireOperatorMode } from '../../middleware/cognitiveModeGuard';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
@@ -22,35 +22,19 @@ interface OperatorRequest {
   yolo?: boolean;
   mode?: 'strict' | 'yolo';
   allowMemoryWrites?: boolean; // Cognitive mode memory write permission
+  reasoningDepth?: number;
+  sessionId?: string;
+  conversationId?: string;
 }
 
 interface OperatorResponse {
   success: boolean;
-  task: {
-    goal: string;
-    context?: string;
-  };
-  plan?: {
-    steps: Array<{
-      id: number;
-      description: string;
-      skillId: string;
-      inputs: Record<string, any>;
-      expectedOutput: string;
-    }>;
-  };
-  results?: Array<{
-    stepId: number;
-    success: boolean;
-    output?: any;
-    error?: string;
-  }>;
-  critique?: {
-    success: boolean;
-    feedback: string;
-    shouldRetry: boolean;
-    suggestedFixes?: string;
-  };
+  goal: string;
+  result?: string;
+  reasoning?: string;
+  actions?: string[];
+  scratchpad?: any[];
+  metadata?: Record<string, any>;
   error?: string;
   mode?: 'strict' | 'yolo';
 }
@@ -59,7 +43,18 @@ const postHandler: APIRoute = async (context) => {
   try {
     const { request } = context;
     const body: OperatorRequest = await request.json();
-    const { goal, context: taskContext, autoApprove = false, profile, yolo, mode, allowMemoryWrites } = body;
+    const {
+      goal,
+      context: taskContext,
+      autoApprove = false,
+      profile,
+      yolo,
+      mode,
+      allowMemoryWrites,
+      reasoningDepth,
+      sessionId,
+      conversationId
+    } = body;
 
     if (!goal) {
       return new Response(
@@ -91,27 +86,47 @@ const postHandler: APIRoute = async (context) => {
         autoApprove,
         mode: resolvedMode,
         allowMemoryWrites: effectiveMemoryWrites,
+        reasoningDepth,
+        profile,
         cognitiveMode: policy.mode,
         role: policy.role
       },
       actor: 'web_ui',
     });
 
-    // Pass policy to runTask so skills can enforce security at execution layer
-    const result = await runTask(
-      { goal, context: taskContext },
-      1,
-      { autoApprove, profile, mode: resolvedMode, policy }
+    const conversationHistory = taskContext
+      ? [{ role: 'user', content: taskContext }]
+      : [];
+
+    const operatorContext = {
+      conversationHistory,
+      allowMemoryWrites: effectiveMemoryWrites,
+      sessionId: sessionId ?? policy.sessionId,
+      conversationId
+    };
+
+    const userContext = {
+      userId: policy.sessionId ?? policy.username,
+      cognitiveMode: policy.mode
+    };
+
+    const result = await runOperatorWithFeatureFlag(
+      goal,
+      operatorContext,
+      undefined,
+      userContext,
+      reasoningDepth
     );
 
     // Return success response
     const response: OperatorResponse = {
-      success: result.success,
-      task: { goal, context: taskContext },
-      plan: result.plan,
-      results: result.results,
-      critique: result.critique,
-      error: result.error,
+      success: true,
+      goal,
+      result: result?.result,
+      reasoning: result?.reasoning,
+      actions: result?.actions,
+      scratchpad: result?.scratchpad,
+      metadata: result?.metadata,
       mode: resolvedMode,
     };
 
@@ -132,9 +147,9 @@ const postHandler: APIRoute = async (context) => {
     });
 
     return new Response(
-      JSON.stringify({ 
-        success: false, 
-        error: `Operator API error: ${(error as Error).message}` 
+      JSON.stringify({
+        success: false,
+        error: `Operator API error: ${(error as Error).message}`
       }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );

@@ -66,9 +66,19 @@ adaptive_auto (future)
 |-------------|------------------|------------------------------------------------------|--------------|-------|
 | `owner`     | 24 hours         | Own profile (`profiles/<username>/…`) + shared assets   | Mode-dependent | Can switch modes, manage profiles, change settings, manage other users. |
 | `guest`     | 1 hour           | Own profile (`profiles/<username>/…`)                 | Mode-dependent | Can modify own data within trust level limits. Cannot manage other users. |
-| `anonymous` | 30 minutes       | Public profiles only (read-only emulation)           | **Denied**   | Requests touching user data receive `401/403`. Can browse public personas. |
+| `anonymous` | 30 minutes       | Public profiles only (read-only emulation)           | **Denied**   | API endpoints return clean 401 responses for protected operations, or sensible defaults for public reads. Can browse public personas. |
 
 Switching users always tears down the existing context. Background agents iterate through the registered users by repeatedly invoking `withUserContext`, ensuring each profile is processed in isolation with appropriate permissions.
+
+#### Streamlined Path Resolution
+
+The system uses a new streamlined authentication architecture that eliminates confusing "anonymous user" path access errors:
+
+- **Public Read Endpoints** degrade gracefully for anonymous users (e.g., `/api/boot` returns default persona)
+- **Protected Operations** return clean 401 responses with clear error messages
+- **System Operations** use `systemPaths` and never touch user-specific data
+
+For developers: See [AUTHENTICATION_STREAMLINED.md](../AUTHENTICATION_STREAMLINED.md) for implementation details and migration guide.
 
 ### Trust Levels and Skill Availability
 
@@ -98,8 +108,8 @@ All read/write operations pass through the path proxy, so users only touch their
 #### Read Permissions
 - ✅ Owners: `profiles/<owner>/memory`, `profiles/<owner>/persona`, `profiles/<owner>/logs`, `profiles/<owner>/out`, `profiles/<owner>/etc`
 - ✅ Owners & guests: `out/voices` (shared Piper models), documentation, audit logs that reference their own actions
-- ❌ Guests: other users’ profiles (never exposed), system code directories
-- ❌ Anonymous: any profile or memory path (requests error with `401/403`)
+- ❌ Guests: other users' profiles (never exposed), system code directories
+- ❌ Anonymous: Protected operations return `401 Unauthorized`; public read endpoints return sensible defaults
 
 System code is always read-only:
 - ❌ `brain/`, `packages/`, `apps/`, `bin/`, `node_modules/`
@@ -326,6 +336,8 @@ With the `WETWARE_DECEASED=true` environment variable:
 - **Automatic expiration**: Sessions expire based on user role (24h owner, 1h guest, 30min anonymous)
 - **Context isolation**: Each request operates within a specific user context that restricts file access
 - **Audit logging**: All security-relevant events are logged with user attribution
+- **Path resolution security**: The `tryResolveProfilePath()` helper prevents anonymous users from accessing profile paths while allowing graceful degradation for public endpoints
+- **Dev session helper**: For local development, use `pnpm tsx scripts/dev-session.ts` to create long-lived authenticated sessions (30 days)
 
 ### File System Permissions
 
@@ -333,5 +345,55 @@ With the `WETWARE_DECEASED=true` environment variable:
 - **Shared assets**: Common resources like voice models are stored in `out/voices/` and accessible to all users
 - **Config isolation**: Each user gets a copy of configuration files in their `etc/` directory
 - **Audit trail**: All file access and modifications are logged with user context and timestamps
+- **Safe path resolution**: API endpoints use `tryResolveProfilePath()` and `requireProfilePath()` helpers to handle anonymous users gracefully instead of throwing exceptions
+
+### API Security Patterns
+
+MetaHuman OS provides three security patterns for API endpoints:
+
+1. **Public Reads** (`tryResolveProfilePath` + default fallback)
+   - Return sensible defaults for anonymous users
+   - Examples: `/api/boot`, `/api/persona-core` (GET)
+   - Use when unauthenticated access should degrade gracefully
+
+2. **Protected Operations** (`tryResolveProfilePath` + 401 response)
+   - Require authentication to access
+   - Examples: `/api/capture`, `/api/memories`, `/api/tasks`
+   - Use for any operation that modifies user data
+
+3. **System Operations** (`systemPaths` directly)
+   - Never touch user-specific paths
+   - Examples: `/api/agent`, `/api/models`, `/api/auth/*`
+   - Use for system-level operations
+
+See [Authentication Setup Guide](17-authentication-setup.md) for development authentication helpers and [AUTHENTICATION_STREAMLINED.md](../AUTHENTICATION_STREAMLINED.md) for complete implementation details.
+
+### Secure External Storage (Planned)
+
+MetaHuman OS will support storing sensitive profile data on encrypted external drives for enhanced physical security:
+
+**Benefits:**
+- **Physical Security**: Data encrypted at rest, requires drive to be present
+- **User Ownership**: Each user controls their own data physically
+- **Minimal Server Exposure**: Central server never stores plaintext sensitive data
+- **Remote Access**: Users can mount drives remotely when needed via secure tunnels
+- **Flexible Security**: Configurable per-user encryption levels and data placement
+
+**Planned Features:**
+1. **Encrypted Drive Support**: LUKS (Linux), APFS-Encrypted (macOS), BitLocker (Windows)
+2. **Auto-Mount/Unmount**: Automatic drive detection and mounting with passphrase
+3. **Selective Data Placement**: Choose what lives on drive (memory, persona, models, etc.)
+4. **Remote Access**: Mount drives via WireGuard/SSHFS for remote sessions
+5. **Health Monitoring**: SMART status, free space, last mounted
+6. **Security Policies**: Require drive for writes, allow read-only fallback, auto-eject on idle
+7. **Web UI Controls**: Drive registration wizard, mount/unmount buttons, data migration interface
+
+**Use Cases:**
+- **Personal Security**: Keep sensitive memories on a drive you physically control
+- **Multi-User Servers**: Users bring their own encrypted drives when accessing shared systems
+- **Remote Access**: Owner keeps drive locally, mounts it remotely when needed (central server never has plaintext)
+- **Compliance**: Meet data residency or privacy requirements by keeping data on portable encrypted media
+
+See [SECURE_STORAGE_PLAN.md](../SECURE_STORAGE_PLAN.md) for detailed implementation roadmap and platform-specific setup instructions.
 
 ---

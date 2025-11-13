@@ -94,19 +94,96 @@ import { createUser, deleteUser, listUsers } from '@metahuman/core/users';
 
 ---
 
-### 8. Troubleshooting
+### 8. Development Authentication Helper
+
+For developers working on the codebase, repeatedly logging in can be tedious. Use the dev-session helper script:
+
+```bash
+# Create a long-lived session (30 days)
+pnpm tsx scripts/dev-session.ts --username=greggles
+
+# Output will show:
+# ✅ Dev session created successfully!
+# Session ID: 38d26955b5588a341b78bfee344f637341758298af02f37a72e49630682fd6b4
+# 🍪 Copy this cookie value into your browser...
+```
+
+**To use the session:**
+1. Open DevTools (F12)
+2. Go to Application → Cookies → http://localhost:4321
+3. Add cookie: `mh_session` = `<session-id-from-script>`
+4. Reload the page
+
+This eliminates authentication friction during development. The session persists for 30 days and is saved to `.env.development` for reference.
+
+**Security Note:** Only use this on your local development machine. Never use dev sessions in production or share session IDs.
+
+---
+
+### 9. Troubleshooting
 
 | Issue | Fix |
 |-------|-----|
-| **“Authentication required” when hitting APIs** | Ensure you are logged in. Anonymous sessions cannot access profile endpoints. |
-| **Guest can’t see a persona** | Confirm the owner marked the profile as `Public`. Visibility changes take effect immediately. |
+| **"Authentication required" when hitting APIs** | Ensure you are logged in. Anonymous sessions cannot access profile endpoints. Use the dev-session helper for local development. |
+| **"Access denied: Anonymous users cannot access user data paths"** | This is the old error message. The new streamlined system returns clean 401 responses instead. Update your API endpoints to use `tryResolveProfilePath()` helper. See [AUTHENTICATION_STREAMLINED.md](../AUTHENTICATION_STREAMLINED.md). |
+| **Guest can't see a persona** | Confirm the owner marked the profile as `Public`. Visibility changes take effect immediately. |
 | **Session expires unexpectedly** | Check system clock, review `logs/run/sessions.json`, and confirm `pnpm dev` output for validation errors. |
 | **Forgot owner password** | Stop the server, run a short script using `deleteUser(userId)` then re-run `createUser()` with new credentials, or temporarily remove the entry from `persona/users.json` and restart. |
 | **Legacy data still in root directories** | Re-run `pnpm tsx scripts/migrate-to-profiles.ts --username <owner>` and verify symlinks/old folders were moved. |
 
 ---
 
-### 9. Security Checklist
+### 10. API Endpoint Authentication Patterns
+
+For developers building API endpoints, MetaHuman OS provides streamlined path resolution helpers that eliminate "anonymous user" errors:
+
+#### Path Resolution Helpers
+
+Instead of directly accessing `paths.*` (which throws for anonymous users), use:
+
+```typescript
+import { tryResolveProfilePath, requireProfilePath, systemPaths } from '@metahuman/core';
+
+// For public reads (return defaults for anonymous users)
+const result = tryResolveProfilePath('personaCore');
+if (!result.ok) {
+  return new Response(JSON.stringify({ default: 'data' }), { status: 200 });
+}
+const data = fs.readFileSync(result.path, 'utf-8');
+
+// For protected operations (return 401 for anonymous users)
+const result = tryResolveProfilePath('episodic');
+if (!result.ok) {
+  return new Response(
+    JSON.stringify({ error: 'Authentication required' }),
+    { status: 401 }
+  );
+}
+fs.writeFileSync(path.join(result.path, 'event.json'), data);
+
+// For system operations (not user-specific)
+const agentPath = path.join(systemPaths.brain, 'agents', `${name}.ts`);
+```
+
+#### API Endpoint Categories
+
+1. **Public Reads**: Degrade gracefully for anonymous users
+   - Examples: `/api/boot`, `/api/persona-core` (GET)
+   - Return sensible defaults instead of errors
+
+2. **Protected Operations**: Require authentication
+   - Examples: `/api/capture`, `/api/memories`, `/api/tasks`
+   - Return 401 with clear error message
+
+3. **System Operations**: Use `systemPaths` directly
+   - Examples: `/api/agent`, `/api/models`, `/api/auth/*`
+   - Never touch user-specific paths
+
+See [AUTHENTICATION_STREAMLINED.md](../AUTHENTICATION_STREAMLINED.md) for complete implementation guide.
+
+---
+
+### 11. Security Checklist
 
 - Keep only the intended personas public. Use private visibility when sharing the instance on a network.
 - Regularly inspect `logs/audit/*.ndjson` to confirm guest sessions remain read-only.
@@ -115,7 +192,7 @@ import { createUser, deleteUser, listUsers } from '@metahuman/core/users';
 
 ---
 
-### 10. Next Steps
+### 12. Next Steps
 
 - Learn about [Multi-User Profiles & Guest Mode](19-multi-user-profiles.md) for detailed information on persona facets, profile switching, and the special "Mutant Super Intelligence" feature.
 - Review [Security & Trust](10-security-trust.md) for trust levels and directory boundaries.

@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths } from '@metahuman/core'
+import { tryResolveProfilePath, systemPaths } from '@metahuman/core'
 import { getSecurityPolicy } from '../../../../../packages/core/src/security-policy.js'
 import { withUserContext } from '../../middleware/userContext'
 
@@ -27,8 +27,16 @@ const handler: APIRoute = async (context) => {
       );
     }
 
-    const root = paths.episodic
-    const items: EventItem[] = []
+    const result = tryResolveProfilePath('episodic');
+    if (!result.ok) {
+      return new Response(
+        JSON.stringify({ events: [] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const root = result.path;
+    const items: EventItem[] = [];
 
     const walk = (dir: string) => {
       if (!fs.existsSync(dir)) return
@@ -47,7 +55,7 @@ const handler: APIRoute = async (context) => {
                 tags: obj.tags || [],
                 entities: Array.isArray(obj.entities) ? obj.entities : [],
                 links: Array.isArray(obj.links) ? obj.links : [],
-                relPath: path.relative(paths.root, full),
+                relPath: path.relative(systemPaths.root, full),
                 validation: obj.validation || undefined,
               })
             }

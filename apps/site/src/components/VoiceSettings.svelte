@@ -21,6 +21,10 @@
       pitchShift: number;
       speed: number;
       autoFallbackToPiper: boolean;
+      indexRate?: number;
+      volumeEnvelope?: number;
+      protect?: number;
+      f0Method?: string;
     };
   }
 
@@ -66,6 +70,15 @@
       const response = await fetch('/api/voice-settings');
       if (!response.ok) throw new Error('Failed to load voice settings');
       config = await response.json();
+
+      // Set RVC defaults if not present
+      if (config && config.rvc) {
+        config.rvc.indexRate = config.rvc.indexRate ?? 1.0;
+        config.rvc.volumeEnvelope = config.rvc.volumeEnvelope ?? 0.0;
+        config.rvc.protect = config.rvc.protect ?? 0.15;
+        config.rvc.f0Method = config.rvc.f0Method || 'rmvpe';
+      }
+
       error = null;
     } catch (e) {
       error = String(e);
@@ -472,6 +485,84 @@
             <span>Slower</span>
             <span>Normal</span>
             <span>Faster</span>
+          </div>
+        </div>
+
+        <!-- Advanced Quality Settings -->
+        <div class="advanced-settings">
+          <h5 style="margin: 1rem 0 0.5rem 0; color: #6b7280; font-size: 0.875rem;">⚙️ Advanced Quality Settings</h5>
+
+          <div class="setting-group">
+            <label for="rvc-index-rate">
+              Index Rate: {(config.rvc.indexRate ?? 1.0).toFixed(2)}
+            </label>
+            <input
+              id="rvc-index-rate"
+              type="range"
+              min="0.0"
+              max="1.0"
+              step="0.05"
+              bind:value={config.rvc.indexRate}
+              disabled={saving}
+            />
+            <p class="hint">Voice retrieval strength (higher = more voice characteristics, 1.0 recommended)</p>
+          </div>
+
+          <div class="setting-group">
+            <label for="rvc-volume-envelope">
+              Volume Envelope: {(config.rvc.volumeEnvelope ?? 0.0).toFixed(2)}
+            </label>
+            <input
+              id="rvc-volume-envelope"
+              type="range"
+              min="0.0"
+              max="1.0"
+              step="0.05"
+              bind:value={config.rvc.volumeEnvelope}
+              disabled={saving}
+            />
+            <p class="hint">RMS mix rate (0.0 = pure conversion, 1.0 = blend with original)</p>
+          </div>
+
+          <div class="setting-group">
+            <label for="rvc-protect">
+              Consonant Protection: {(config.rvc.protect ?? 0.15).toFixed(2)}
+            </label>
+            <input
+              id="rvc-protect"
+              type="range"
+              min="0.0"
+              max="0.5"
+              step="0.01"
+              bind:value={config.rvc.protect}
+              disabled={saving}
+            />
+            <p class="hint">Protect voiceless consonants (0.15-0.20 recommended for clarity)</p>
+          </div>
+
+          <div class="setting-group">
+            <label for="rvc-f0-method">Pitch Detection Method</label>
+            <select
+              id="rvc-f0-method"
+              bind:value={config.rvc.f0Method}
+              disabled={saving}
+            >
+              <option value="rmvpe">RMVPE (Recommended)</option>
+              <option value="crepe">CREPE (High Quality)</option>
+              <option value="harvest">Harvest (Fast)</option>
+              <option value="dio">DIO (Fastest)</option>
+            </select>
+            <p class="hint">RMVPE is the most accurate for most voices</p>
+          </div>
+
+          <div class="quality-tips">
+            <strong>💡 Quality Tips:</strong>
+            <ul>
+              <li>For grainy voice: Keep Index Rate at 1.0, Volume Envelope at 0.0</li>
+              <li>For robotic voice: Increase Consonant Protection to 0.20-0.25</li>
+              <li>For muffled voice: Decrease Consonant Protection to 0.10-0.15</li>
+              <li>Test after each adjustment to hear the difference</li>
+            </ul>
           </div>
         </div>
 
@@ -885,5 +976,66 @@
 
   .test-button.rvc-test:hover:not(:disabled) {
     background: #7c3aed;
+  }
+
+  /* Advanced settings section */
+  .advanced-settings {
+    margin: 1.5rem 0;
+    padding: 1rem;
+    background: #f9fafb;
+    border-radius: 0.5rem;
+    border: 1px solid #e5e7eb;
+  }
+
+  :global(.dark) .advanced-settings {
+    background: #111827;
+    border-color: #374151;
+  }
+
+  .advanced-settings h5 {
+    margin: 0.5rem 0;
+    color: #6b7280;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  :global(.dark) .advanced-settings h5 {
+    color: #9ca3af;
+  }
+
+  .quality-tips {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background: #eff6ff;
+    border-left: 3px solid #3b82f6;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+  }
+
+  :global(.dark) .quality-tips {
+    background: #1e3a5f;
+    border-color: #60a5fa;
+  }
+
+  .quality-tips strong {
+    color: #1f2937;
+  }
+
+  :global(.dark) .quality-tips strong {
+    color: #f3f4f6;
+  }
+
+  .quality-tips ul {
+    margin: 0.5rem 0 0 0;
+    padding-left: 1.25rem;
+    color: #374151;
+  }
+
+  :global(.dark) .quality-tips ul {
+    color: #d1d5db;
+  }
+
+  .quality-tips li {
+    margin: 0.25rem 0;
   }
 </style>

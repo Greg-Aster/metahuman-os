@@ -19,6 +19,16 @@ export const GET: APIRoute = ({ request }) => {
       let lastPosition = 0;
       let fileExists = fs.existsSync(auditFile);
 
+      // Initialize lastPosition to current file size to skip historical entries
+      if (fileExists) {
+        try {
+          lastPosition = fs.statSync(auditFile).size;
+        } catch {
+          fileExists = false;
+          lastPosition = 0;
+        }
+      }
+
       const sendEvent = (data: object) => {
         controller.enqueue(`data: ${JSON.stringify(data)}\n\n`);
       };

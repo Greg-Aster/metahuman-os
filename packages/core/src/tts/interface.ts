@@ -74,6 +74,13 @@ export interface RVCConfig {
   speed: number;
   outputFormat: 'wav';
   autoFallbackToPiper: boolean;
+  // Inference parameters for voice quality tuning
+  indexRate?: number;        // Voice retrieval strength (0.0-1.0, default: 1.0)
+  volumeEnvelope?: number;    // RMS mix rate (0.0-1.0, default: 0.0)
+  protect?: number;           // Protect voiceless consonants (0.0-0.5, default: 0.15)
+  f0Method?: string;          // Pitch detection method (default: "rmvpe")
+  // GPU management
+  pauseOllamaDuringInference?: boolean;  // Pause Ollama to free GPU VRAM (default: true)
 }
 
 export interface TTSConfig {

@@ -8,7 +8,7 @@
  * 4. Changes appear in approval queue
  */
 
-import { runTask } from '../brain/agents/operator';
+import { runOperatorWithFeatureFlag } from '../brain/agents/operator-react';
 import fs from 'node:fs';
 import path from 'node:path';
 import { paths } from '../packages/core/src/index';
@@ -51,41 +51,50 @@ console.log('');
 
 async function runTest() {
 try {
-  const result = await runTask(task, 1, { autoApprove: false, mode: 'strict' });
+  const operatorResult = await runOperatorWithFeatureFlag(task.goal, {
+    conversationHistory: task.context
+      ? [{ role: 'user', content: task.context }]
+      : []
+  });
 
   console.log('\n' + '='.repeat(70));
   console.log('RESULTS');
   console.log('='.repeat(70));
   console.log('');
 
-  if (result.success) {
+  if (operatorResult?.result) {
     console.log('✓ Task completed successfully');
     console.log('');
+    console.log(`Response:\n${operatorResult.result}\n`);
 
-    // Check if plan used code skills
-    if (result.plan) {
-      console.log('Plan steps:');
-      result.plan.steps.forEach(step => {
-        console.log(`  ${step.id}. [${step.skillId}] ${step.description}`);
+    const scratchpad: Array<any> = Array.isArray(operatorResult.scratchpad)
+      ? operatorResult.scratchpad
+      : [];
+    if (scratchpad.length > 0) {
+      console.log('Scratchpad actions:');
+      scratchpad.forEach(entry => {
+        if (entry.action) {
+          console.log(`  Step ${entry.step}: ${entry.action.tool}`);
+        }
       });
       console.log('');
-
-      const usedCodeGenerate = result.plan.steps.some(s => s.skillId === 'code_generate');
-      const usedCodeApply = result.plan.steps.some(s => s.skillId === 'code_apply_patch');
-
-      if (usedCodeGenerate) {
-        console.log('✓ Plan used code_generate skill');
-      } else {
-        console.log('✗ Plan did NOT use code_generate skill');
-      }
-
-      if (usedCodeApply) {
-        console.log('✓ Plan used code_apply_patch skill');
-      } else {
-        console.log('✗ Plan did NOT use code_apply_patch skill');
-      }
-      console.log('');
     }
+
+    const usedCodeGenerate = scratchpad.some((entry: any) => entry.action?.tool === 'code_generate');
+    const usedCodeApply = scratchpad.some((entry: any) => entry.action?.tool === 'code_apply_patch');
+
+    if (usedCodeGenerate) {
+      console.log('✓ Scratchpad used code_generate skill');
+    } else {
+      console.log('✗ Scratchpad did NOT use code_generate skill');
+    }
+
+    if (usedCodeApply) {
+      console.log('✓ Scratchpad used code_apply_patch skill');
+    } else {
+      console.log('✗ Scratchpad did NOT use code_apply_patch skill');
+    }
+    console.log('');
 
     // Check if changes were staged
     const stagingDir = path.join(paths.out, 'code-drafts');
@@ -110,11 +119,11 @@ try {
     }
   } else {
     console.log('✗ Task failed');
-    if (result.critique) {
-      console.log(`  Feedback: ${result.critique.feedback}`);
+    if (operatorResult?.reasoning) {
+      console.log(`  Reasoning: ${operatorResult.reasoning}`);
     }
-    if (result.error) {
-      console.log(`  Error: ${result.error}`);
+    if (operatorResult?.metadata?.errors) {
+      console.log(`  Errors: ${operatorResult.metadata.errors}`);
     }
   }
 

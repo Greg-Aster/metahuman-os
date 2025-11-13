@@ -122,7 +122,9 @@
       "roles": [
         "coder",
         "code-generation",
-        "code-review"
+        "code-review",
+        "orchestrator",
+        "persona"
       ],
       "description": "Specialized model for code generation, review, and refactoring",
       "options": {
@@ -245,8 +247,8 @@
   },
   "cognitiveModeMappings": {
     "dual": {
-      "orchestrator": "default.orchestrator",
-      "persona": "default.persona",
+      "orchestrator": "default.coder",
+      "persona": "default.coder",
       "coder": "default.coder",
       "planner": "default.planner",
       "curator": "default.curator",

@@ -71,3 +71,6 @@ Welcome to the MetaHuman OS User Guide. This guide is organized into the followi
 
 22. **[Ethical Use Policy](22-ethical-use-policy.md)**
     *   **Responsible AI Usage Guidelines**: Learn about prohibited uses (impersonation without consent, malicious AI systems), ethical principles (authenticity, consent, autonomy), and your commitment to responsible use of MetaHuman OS. Remember: Don't make Skynet!
+
+23. **[Voice System (Text-to-Speech)](23-voice-system.md)**
+    *   **Local Voice Cloning & TTS**: Comprehensive guide to MetaHuman's three TTS providers: Piper (fast synthetic voices), GPT-SoVITS (instant voice cloning with 5-10 second samples), and RVC (highest quality trained voice conversion). Includes training workflows, configurable parameters, troubleshooting, and best practices for voice quality.

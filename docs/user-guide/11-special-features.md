@@ -459,6 +459,7 @@ grep "nightly_pipeline" logs/audit/$(date +%Y-%m-%d).ndjson | jq .
 ```
 
 ### Audio Ingestion & Processing
+
 To give your MetaHuman "ears," the OS includes a complete, local-first audio processing pipeline. This allows you to capture audio, automatically transcribe it, and convert key moments into episodic memories without relying on any cloud services.
 
 **Core Principles:**
@@ -473,6 +474,16 @@ To give your MetaHuman "ears," the OS includes a complete, local-first audio pro
 4.  **Archive:** Once processed, the original audio file is moved to `memory/audio/archive`.
 
 This entire process is designed to run in the background, especially during idle or night cycles, to continuously integrate your spoken thoughts and conversations into your digital personality's memory.
+
+### Voice Synthesis (Text-to-Speech)
+
+MetaHuman OS includes a sophisticated local voice system that allows your digital personality to speak with synthetic voices or your own cloned voice. The system supports three TTS providers with different capabilities:
+
+- **Piper TTS**: Fast, natural-sounding synthetic voices (no training required)
+- **GPT-SoVITS**: Instant voice cloning from 5-10 seconds of reference audio
+- **RVC**: Highest quality voice conversion with full model training
+
+**For complete documentation on the voice system**, including training workflows, configurable parameters, troubleshooting, and best practices, see the **[Voice System (TTS) Guide](23-voice-system.md)**.
 
 ### Adaptive Trust (Future Enhancement)
 The system will automatically suggest trust level changes based on demonstrated reliability.

@@ -301,7 +301,7 @@ Track the LoRA training pipeline via:
 
 **Purpose:** Executes complex multi-step tasks using skills via the ReAct pattern (Reason-Act-Observe).
 
-**Three Implementations Available:**
+**Current Deployment Modes:**
 
 #### V2 Service (Recommended) - ReasoningEngine
 Unified reasoning service with enhanced capabilities:
@@ -341,12 +341,13 @@ Thought 2: Task created successfully, I have all needed info
 Response: I've created a task "Review the docs" with medium priority (ID: task-123)
 ```
 
-#### V2 Inline (Default) - `/api/operator/react`
+#### V2 Inline (Default) - `/api/operator` + `/api/operator/react`
 Modern **Reason + Act** loop with inline implementation:
 - Plans **ONE step at a time** based on actual observed results
 - Never hallucinates data - only uses what it observes
 - Adapts strategy when skills fail
-- Real-time streaming via Server-Sent Events
+- `/api/operator/react` streams progress via Server-Sent Events
+- `/api/operator` now uses the same engine for synchronous responses
 - Max 10 iterations with intelligent completion detection
 - **Same logic as V2 Service**, just not extracted into separate module
 
@@ -360,22 +361,7 @@ Modern **Reason + Act** loop with inline implementation:
 }
 ```
 
-#### V1 Legacy (Deprecated) - `/api/operator`
-Original 3-phase flow preserved for backward compatibility:
-- Plans ALL steps upfront (before seeing any results)
-- 3 phases: planner → executor → critic
-- Can hallucinate filenames it hasn't observed yet
-- Not recommended for new usage
-
-**Disable V2 via** `etc/runtime.json`:
-```json
-{
-  "operator": {
-    "reactV2": false,
-    "useReasoningService": false
-  }
-}
-```
+> **Legacy planner removed:** The original planner/executor/critic loop (`brain/agents/operator.ts`) has been retired. Toggling `reactV2` now switches between the enhanced scratchpad loop and the lighter original ReAct loop; both `/api/operator` and `/api/operator/react` use the modern operator stack.
 
 #### Testing the Operator
 
@@ -852,4 +838,3 @@ All curiosity operations are logged to `logs/audit/*.ndjson`:
 **Status:** Planned for Phase 5 (Full Autonomy). See the "What's Next" chapter for timeline.
 
 ---
-

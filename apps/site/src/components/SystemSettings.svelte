@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import BoredomControl from './BoredomControl.svelte';
   import AddonsManager from './AddonsManager.svelte';
+  import GPUMonitor from './GPUMonitor.svelte';
 
   // Welcome modal toggle
   let showWelcomeModal = false;
@@ -474,6 +475,12 @@
     <button class="danger-button" on:click={resetFactorySettings} disabled={resettingFactory}>
       {resettingFactory ? 'Resetting…' : 'Reset to Factory Settings'}
     </button>
+  </div>
+
+  <!-- GPU Monitoring -->
+  <div class="setting-group">
+    <label class="setting-label">GPU Memory Status</label>
+    <GPUMonitor />
   </div>
 
   <!-- System Info -->

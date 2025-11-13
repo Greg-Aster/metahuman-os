@@ -121,13 +121,26 @@ export class RVCService implements ITextToSpeechService {
       });
 
       console.log('[RVCService] Stage 2 starting - RVC voice conversion...');
-      const convertedAudio = await this._convertWithRVC(
-        baseAudio,
-        speakerId,
-        pitchShift,
-        signal
-      );
-      console.log('[RVCService] Stage 2 complete - RVC converted audio:', convertedAudio.length, 'bytes');
+
+      // Pause Ollama to free GPU VRAM for RVC inference (if enabled)
+      const shouldPauseOllama = this.config.pauseOllamaDuringInference ?? true; // Default to true
+      const ollamaPaused = shouldPauseOllama ? await this._pauseOllama() : false;
+
+      let convertedAudio: Buffer;
+      try {
+        convertedAudio = await this._convertWithRVC(
+          baseAudio,
+          speakerId,
+          pitchShift,
+          signal
+        );
+        console.log('[RVCService] Stage 2 complete - RVC converted audio:', convertedAudio.length, 'bytes');
+      } finally {
+        // Always resume Ollama, even if RVC fails
+        if (ollamaPaused) {
+          await this._resumeOllama();
+        }
+      }
 
       // Cache the final result
       cacheAudio(this.cacheConfig, text, cacheKey, speakingRate, convertedAudio);
@@ -243,6 +256,20 @@ export class RVCService implements ITextToSpeechService {
       // Add index file if it exists
       if (fs.existsSync(indexPath)) {
         args.push('--index', indexPath);
+      }
+
+      // Add inference quality parameters
+      if (this.config.indexRate !== undefined) {
+        args.push('--index-rate', this.config.indexRate.toString());
+      }
+      if (this.config.volumeEnvelope !== undefined) {
+        args.push('--volume-envelope', this.config.volumeEnvelope.toString());
+      }
+      if (this.config.protect !== undefined) {
+        args.push('--protect', this.config.protect.toString());
+      }
+      if (this.config.f0Method) {
+        args.push('--f0-method', this.config.f0Method);
       }
 
       console.log('[RVCService] Spawning RVC inference with args:', args);
@@ -392,5 +419,76 @@ export class RVCService implements ITextToSpeechService {
 
   clearCache(): void {
     clearCache(this.cacheConfig);
+  }
+
+  /**
+   * Pause Ollama to free GPU VRAM for RVC inference
+   * Returns true if Ollama was running and successfully paused
+   */
+  private async _pauseOllama(): Promise<boolean> {
+    try {
+      // Check if Ollama is running
+      const { execSync } = await import('node:child_process');
+
+      try {
+        execSync('pgrep -f ollama', { stdio: 'pipe' });
+      } catch {
+        // Ollama not running, no need to pause
+        console.log('[RVCService] Ollama not running, no GPU conflict');
+        return false;
+      }
+
+      console.log('[RVCService] Pausing Ollama to free GPU VRAM...');
+
+      audit({
+        level: 'info',
+        category: 'system',
+        event: 'ollama_paused_for_rvc',
+        details: { reason: 'Free GPU VRAM for RVC inference' },
+        actor: 'system',
+      });
+
+      // Send SIGSTOP to pause Ollama (keeps it in memory but stops GPU usage)
+      execSync('pkill -STOP -f ollama', { stdio: 'ignore' });
+
+      // Wait 500ms for GPU memory to be released
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      console.log('[RVCService] Ollama paused, GPU VRAM released');
+      return true;
+    } catch (error) {
+      console.error('[RVCService] Failed to pause Ollama:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Resume Ollama after RVC inference completes
+   */
+  private async _resumeOllama(): Promise<void> {
+    try {
+      console.log('[RVCService] Resuming Ollama...');
+
+      const { execSync } = await import('node:child_process');
+
+      // Send SIGCONT to resume Ollama
+      execSync('pkill -CONT -f ollama', { stdio: 'ignore' });
+
+      // Wait 500ms for Ollama to reload models into GPU
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      audit({
+        level: 'info',
+        category: 'system',
+        event: 'ollama_resumed_after_rvc',
+        details: { message: 'Ollama resumed after RVC inference' },
+        actor: 'system',
+      });
+
+      console.log('[RVCService] Ollama resumed');
+    } catch (error) {
+      console.error('[RVCService] Failed to resume Ollama:', error);
+      // Non-fatal - Ollama will auto-resume on next request
+    }
   }
 }

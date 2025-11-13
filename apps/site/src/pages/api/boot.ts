@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import {
-  paths,
+  systemPaths,
   isAgentRunning,
   registerAgent,
   unregisterAgent,
@@ -35,7 +35,7 @@ export const GET: APIRoute = async ({ cookies }) => {
   const isAuthenticated = !!sessionCookie;
 
   // Prefer a deterministic tsx path under the site app to avoid PATH issues
-  const tsxPath = path.join(paths.root, 'apps', 'site', 'node_modules', '.bin', 'tsx')
+  const tsxPath = path.join(systemPaths.root, 'apps', 'site', 'node_modules', '.bin', 'tsx')
 
   // Determine which agents to start based on headless mode
   const agentsToStart = headlessMode
@@ -44,7 +44,7 @@ export const GET: APIRoute = async ({ cookies }) => {
 
   for (const agentName of agentsToStart) {
     try {
-      const agentPath = path.join(paths.brain, 'agents', `${agentName}.ts`)
+      const agentPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`)
 
       // Basic existence check
       try {
@@ -64,13 +64,13 @@ export const GET: APIRoute = async ({ cookies }) => {
       const runner = tsxPath
       const child = spawn(runner, [agentPath], {
         stdio: 'ignore', // detach from API request
-        cwd: paths.root,
+        cwd: systemPaths.root,
         env: {
           ...process.env,
           NODE_PATH: [
-            path.join(paths.root, 'node_modules'),
-            path.join(paths.root, 'packages/cli/node_modules'),
-            path.join(paths.root, 'apps/site/node_modules'),
+            path.join(systemPaths.root, 'node_modules'),
+            path.join(systemPaths.root, 'packages/cli/node_modules'),
+            path.join(systemPaths.root, 'apps/site/node_modules'),
           ].join(':'),
         },
         detached: true,
@@ -122,7 +122,7 @@ export const GET: APIRoute = async ({ cookies }) => {
     // Try to get version from package.json
     try {
       const fs = await import('node:fs')
-      const pkgPath = path.join(paths.root, 'package.json')
+      const pkgPath = path.join(systemPaths.root, 'package.json')
       if (fs.existsSync(pkgPath)) {
         const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
         version = pkg.version || version

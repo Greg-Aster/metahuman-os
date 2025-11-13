@@ -1,0 +1,129 @@
+#!/bin/bash
+# Configure Ollama to limit VRAM usage, leaving headroom for RVC and other GPU processes
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+echo -e "${GREEN}=== Ollama VRAM Configuration Tool ===${NC}\n"
+
+# Check if nvidia-smi is available
+if ! command -v nvidia-smi &> /dev/null; then
+    echo -e "${RED}Error: nvidia-smi not found. This tool requires an NVIDIA GPU.${NC}"
+    exit 1
+fi
+
+# Get total GPU VRAM
+TOTAL_VRAM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
+echo -e "Total GPU VRAM: ${GREEN}${TOTAL_VRAM} MB${NC}"
+
+# Recommend allocation based on GPU size
+if [ "$TOTAL_VRAM" -lt 8000 ]; then
+    RECOMMENDED_FRACTION="0.5"
+    RECOMMENDED_DESC="50% for Ollama, 50% for RVC (not recommended for <8GB GPUs)"
+elif [ "$TOTAL_VRAM" -lt 12000 ]; then
+    RECOMMENDED_FRACTION="0.6"
+    RECOMMENDED_DESC="60% for Ollama (~$(($TOTAL_VRAM * 60 / 100))MB), 40% for RVC (~$(($TOTAL_VRAM * 40 / 100))MB)"
+elif [ "$TOTAL_VRAM" -lt 16000 ]; then
+    RECOMMENDED_FRACTION="0.7"
+    RECOMMENDED_DESC="70% for Ollama (~$(($TOTAL_VRAM * 70 / 100))MB), 30% for RVC (~$(($TOTAL_VRAM * 30 / 100))MB)"
+else
+    RECOMMENDED_FRACTION="0.75"
+    RECOMMENDED_DESC="75% for Ollama (~$(($TOTAL_VRAM * 75 / 100))MB), 25% for RVC (~$(($TOTAL_VRAM * 25 / 100))MB)"
+fi
+
+echo -e "Recommended allocation: ${GREEN}${RECOMMENDED_DESC}${NC}\n"
+
+# Ask user for confirmation or custom value
+read -p "Use recommended ${RECOMMENDED_FRACTION} fraction? [Y/n/custom]: " CHOICE
+
+if [[ "$CHOICE" =~ ^[Nn]$ ]]; then
+    echo "Skipping VRAM configuration."
+    exit 0
+elif [[ "$CHOICE" == "custom" ]]; then
+    read -p "Enter custom fraction (0.1-0.9): " CUSTOM_FRACTION
+    if ! [[ "$CUSTOM_FRACTION" =~ ^0\.[1-9]$ ]]; then
+        echo -e "${RED}Error: Invalid fraction. Must be between 0.1 and 0.9${NC}"
+        exit 1
+    fi
+    GPU_MEM_FRACTION="$CUSTOM_FRACTION"
+else
+    GPU_MEM_FRACTION="$RECOMMENDED_FRACTION"
+fi
+
+echo -e "\n${GREEN}Configuring Ollama to use ${GPU_MEM_FRACTION} of GPU VRAM...${NC}\n"
+
+# Check if Ollama is running as systemd service
+if systemctl is-active --quiet ollama 2>/dev/null; then
+    echo "Detected Ollama running as systemd service."
+    echo "Creating systemd override..."
+
+    sudo mkdir -p /etc/systemd/system/ollama.service.d
+
+    cat <<EOF | sudo tee /etc/systemd/system/ollama.service.d/gpu-mem-limit.conf
+[Service]
+Environment="OLLAMA_GPU_MEM_FRACTION=${GPU_MEM_FRACTION}"
+# Optional: Limit GPU layers if model is too large
+# Environment="OLLAMA_NUM_GPU_LAYERS=25"
+EOF
+
+    echo -e "${GREEN}✓ Systemd override created${NC}"
+    echo "Reloading systemd and restarting Ollama..."
+
+    sudo systemctl daemon-reload
+    sudo systemctl restart ollama
+
+    echo -e "${GREEN}✓ Ollama restarted with new VRAM limit${NC}"
+
+else
+    echo -e "${YELLOW}Ollama is not running as a systemd service.${NC}"
+    echo "To manually start Ollama with VRAM limit, use:"
+    echo ""
+    echo -e "${GREEN}OLLAMA_GPU_MEM_FRACTION=${GPU_MEM_FRACTION} ollama serve${NC}"
+    echo ""
+    echo "Or add this to your shell profile (~/.bashrc or ~/.zshrc):"
+    echo -e "${GREEN}export OLLAMA_GPU_MEM_FRACTION=${GPU_MEM_FRACTION}${NC}"
+fi
+
+# Update MetaHuman voice config to disable auto-pause
+VOICE_CONFIG="$ROOT_DIR/profiles/greggles/etc/voice.json"
+
+if [ -f "$VOICE_CONFIG" ]; then
+    echo -e "\n${YELLOW}Recommendation:${NC} Since Ollama now has a VRAM limit, you can disable"
+    echo "auto-pause in RVC settings for better performance."
+    echo ""
+    read -p "Disable RVC auto-pause of Ollama? [Y/n]: " DISABLE_PAUSE
+
+    if [[ ! "$DISABLE_PAUSE" =~ ^[Nn]$ ]]; then
+        # Use jq to update JSON if available, otherwise manual edit needed
+        if command -v jq &> /dev/null; then
+            TMP_FILE=$(mktemp)
+            jq '.tts.rvc.pauseOllamaDuringInference = false' "$VOICE_CONFIG" > "$TMP_FILE"
+            mv "$TMP_FILE" "$VOICE_CONFIG"
+            echo -e "${GREEN}✓ Disabled auto-pause in voice config${NC}"
+        else
+            echo -e "${YELLOW}Please manually set in $VOICE_CONFIG:${NC}"
+            echo '  "pauseOllamaDuringInference": false'
+        fi
+    fi
+fi
+
+echo -e "\n${GREEN}=== Configuration Complete ===${NC}"
+echo ""
+echo "Summary:"
+echo "  • Ollama VRAM limit: ${GPU_MEM_FRACTION} ($(($TOTAL_VRAM * ${GPU_MEM_FRACTION%.*} / 100))MB)"
+echo "  • Available for RVC: $((100 - ${GPU_MEM_FRACTION%.*} * 100))% (~$(($TOTAL_VRAM * (100 - ${GPU_MEM_FRACTION%.*} * 100) / 10000))MB)"
+echo ""
+echo "Test the configuration:"
+echo "  1. Check GPU usage: nvidia-smi"
+echo "  2. Load a model in Ollama: ./bin/mh ollama chat"
+echo "  3. Test RVC voice: Go to Voice Settings → Test RVC Voice"
+echo ""
+echo "If you still get OOM errors, reduce the fraction further."

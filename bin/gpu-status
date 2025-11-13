@@ -1,0 +1,100 @@
+#!/bin/bash
+# Display GPU memory usage and recommend optimal settings
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+echo -e "${BLUE}=== GPU Memory Status ===${NC}\n"
+
+# Check if nvidia-smi exists
+if ! command -v nvidia-smi &> /dev/null; then
+    echo -e "${RED}Error: nvidia-smi not found. No NVIDIA GPU detected.${NC}"
+    exit 1
+fi
+
+# Get GPU info
+nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,utilization.memory --format=csv,noheader,nounits | while IFS=',' read -r index name total used free gpu_util mem_util; do
+    # Trim whitespace
+    index=$(echo "$index" | xargs)
+    name=$(echo "$name" | xargs)
+    total=$(echo "$total" | xargs)
+    used=$(echo "$used" | xargs)
+    free=$(echo "$free" | xargs)
+    gpu_util=$(echo "$gpu_util" | xargs)
+    mem_util=$(echo "$mem_util" | xargs)
+
+    echo -e "${GREEN}GPU $index: $name${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo -e "  Total VRAM:  ${BLUE}${total} MB${NC}"
+    echo -e "  Used:        ${YELLOW}${used} MB${NC} (${mem_util}%)"
+    echo -e "  Free:        ${GREEN}${free} MB${NC}"
+    echo -e "  GPU Usage:   ${gpu_util}%"
+    echo ""
+
+    # Calculate percentages
+    used_pct=$((used * 100 / total))
+    free_pct=$((free * 100 / total))
+
+    # Visual bar
+    bar_width=40
+    used_bars=$((used_pct * bar_width / 100))
+    free_bars=$((bar_width - used_bars))
+
+    echo -n "  ["
+    for ((i=0; i<used_bars; i++)); do echo -n "█"; done
+    for ((i=0; i<free_bars; i++)); do echo -n "░"; done
+    echo "]"
+    echo ""
+
+    # Recommendations
+    if [ "$free" -lt 3000 ]; then
+        echo -e "${RED}⚠ Warning: Low free VRAM (${free}MB)${NC}"
+        echo "  Recommendation: Reduce Ollama VRAM usage"
+        echo "  Run: ./bin/configure-ollama-vram"
+    elif [ "$free" -lt 4000 ]; then
+        echo -e "${YELLOW}⚠ Caution: Limited free VRAM (${free}MB)${NC}"
+        echo "  RVC may compete with Ollama for VRAM"
+        echo "  Consider running: ./bin/configure-ollama-vram"
+    else
+        echo -e "${GREEN}✓ Sufficient free VRAM for RVC${NC}"
+    fi
+    echo ""
+done
+
+# Check if Ollama is running
+echo -e "${BLUE}=== Process Status ===${NC}\n"
+
+if pgrep -f "ollama" > /dev/null; then
+    ollama_pid=$(pgrep -f "ollama" | head -1)
+    echo -e "${GREEN}✓ Ollama is running${NC} (PID: $ollama_pid)"
+
+    # Check if VRAM limit is configured
+    if systemctl is-active --quiet ollama 2>/dev/null; then
+        if [ -f /etc/systemd/system/ollama.service.d/gpu-mem-limit.conf ]; then
+            limit=$(grep OLLAMA_GPU_MEM_FRACTION /etc/systemd/system/ollama.service.d/gpu-mem-limit.conf | cut -d'=' -f3 | tr -d '"')
+            echo -e "  VRAM Limit: ${GREEN}${limit}${NC} (configured)"
+        else
+            echo -e "  VRAM Limit: ${YELLOW}Not configured${NC}"
+            echo -e "  ${YELLOW}→ Run: ./bin/configure-ollama-vram${NC}"
+        fi
+    fi
+else
+    echo -e "${YELLOW}✗ Ollama is not running${NC}"
+fi
+
+echo ""
+
+# Check for common GPU-heavy processes
+echo -e "${BLUE}=== GPU Processes ===${NC}\n"
+nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader | while IFS=',' read -r pid name mem; do
+    pid=$(echo "$pid" | xargs)
+    name=$(echo "$name" | xargs)
+    mem=$(echo "$mem" | xargs)
+    echo "  • $name (PID: $pid) - ${mem}"
+done
+
+echo ""

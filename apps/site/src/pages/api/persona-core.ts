@@ -1,13 +1,20 @@
 import type { APIRoute } from 'astro';
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
-import { paths } from '@metahuman/core';
+import { tryResolveProfilePath } from '@metahuman/core';
 import { requireWriteMode } from '../../middleware/cognitiveModeGuard';
 import { withUserContext } from '../../middleware/userContext';
 
 async function readPersonaCore() {
-  // Use context-aware paths.personaCore which resolves to user profile
-  const raw = await fs.readFile(paths.personaCore, 'utf-8');
+  const result = tryResolveProfilePath('personaCore');
+  if (!result.ok) {
+    // Return default persona for anonymous/unauthenticated users
+    return {
+      identity: { name: 'MetaHuman', role: 'Digital Assistant' },
+      personality: {},
+      values: {},
+    };
+  }
+  const raw = await fs.readFile(result.path, 'utf-8');
   return JSON.parse(raw);
 }
 
@@ -42,6 +49,15 @@ const getHandler: APIRoute = async () => {
 
 const postHandler: APIRoute = async ({ request }) => {
   try {
+    // Check path access first for writes
+    const result = tryResolveProfilePath('personaCore');
+    if (!result.ok) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Authentication required to modify persona' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     const body = await request.json();
     const persona = await readPersonaCore();
 
@@ -83,8 +99,8 @@ const postHandler: APIRoute = async ({ request }) => {
 
     persona.lastUpdated = new Date().toISOString();
 
-    // Use context-aware paths.personaCore which resolves to user profile
-    await fs.writeFile(paths.personaCore, JSON.stringify(persona, null, 2) + '\n', 'utf-8');
+    // We already checked access above, safe to use result.path
+    await fs.writeFile(result.path, JSON.stringify(persona, null, 2) + '\n', 'utf-8');
 
     return new Response(JSON.stringify({ success: true, persona }), {
       status: 200,
