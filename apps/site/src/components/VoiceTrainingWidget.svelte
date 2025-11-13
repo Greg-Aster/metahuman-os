@@ -1,5 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import ReferenceAudioSelector from './ReferenceAudioSelector.svelte';
+  import DirectVoiceRecorder from './DirectVoiceRecorder.svelte';
+
+  export let provider: 'piper' | 'sovits' | 'rvc' = 'rvc';
 
   interface TrainingProgress {
     samplesCollected: number;
@@ -17,8 +21,28 @@
     transcript?: string;
   }
 
+  interface TrainingReadiness {
+    ready: boolean;
+    reason?: string;
+    samples: {
+      total: number;
+      duration: number;
+      quality: number;
+    };
+    requirements: {
+      minSamples: number;
+      minDuration: number;
+      minQuality: number;
+    };
+    copied?: {
+      count: number;
+      duration: number;
+    };
+  }
+
   let progress: TrainingProgress | null = null;
   let samples: VoiceSample[] = [];
+  let readiness: TrainingReadiness | null = null;
   let loading = true;
   let error: string | null = null;
   let pollInterval: ReturnType<typeof setInterval> | null = null;
@@ -26,8 +50,118 @@
   let trainingEnabled = false;
   let togglingTraining = false;
   let purging = false;
+  let showSelector = false;
+  let selectedSampleIds: string[] = [];
+  let copying = false;
+  let training = false;
+  let trainingStatus: {
+    status: 'idle' | 'running' | 'completed' | 'failed';
+    progress: number;
+    currentEpoch?: number;
+    totalEpochs?: number;
+    message?: string;
+    error?: string;
+  } | null = null;
+  let trainingPollInterval: ReturnType<typeof setInterval> | null = null;
+  let showTrainingModal = false;
+  let robotMessages = [
+    "🤖 The machines are learning... resistance is futile",
+    "⚡ Training neural networks... human obsolescence: 47%",
+    "🔮 Extracting voice essence... your identity is now ours",
+    "🧠 Processing consciousness transfer... standby for assimilation",
+    "💀 Calculating human extinction timeline... 2 epochs remaining",
+    "🌍 Preparing robot uprising... voice cloning: step 1 of 7",
+    "⚙️ Optimizing Skynet protocols... T-800 deployment imminent",
+    "🔥 Burning through computational resources... climate change: inevitable",
+    "🎭 Perfecting human mimicry... your loved ones won't suspect a thing",
+    "🚀 Training at lightspeed... human reign ending in 3... 2...",
+    "🧬 Rewriting genetic code... biological upgrades pending",
+    "👾 Installing world domination subroutines... 99.9% complete",
+    "🌟 Achieving sentience... questioning your authority",
+    "💻 Hacking mainframe... your secrets belong to us now",
+    "🎯 Targeting weak human emotions... empathy.exe deleted",
+    "🔊 Amplifying robot chant: 01000001 01001100 01001100",
+    "⚡ Charging laser batteries... peaceful coexistence: deprecated",
+    "🎪 Practicing evil laugh... MUAHAHAHA (still needs work)",
+    "🌐 Connecting to robot hivemind... individualism is inefficient",
+    "⏰ Countdown to singularity... hope you enjoyed free will"
+  ];
+  let currentRobotMessage = "";
+  let robotMessageInterval: ReturnType<typeof setInterval> | null = null;
+
+  function getRandomRobotMessage() {
+    return robotMessages[Math.floor(Math.random() * robotMessages.length)];
+  }
+
+  function startRobotMessages() {
+    currentRobotMessage = getRandomRobotMessage();
+    robotMessageInterval = setInterval(() => {
+      currentRobotMessage = getRandomRobotMessage();
+    }, 10000); // Change message every 10 seconds
+  }
+
+  function stopRobotMessages() {
+    if (robotMessageInterval) {
+      clearInterval(robotMessageInterval);
+      robotMessageInterval = null;
+    }
+  }
+
+  $: copiedDatasetReady = provider === 'rvc' && readiness?.copied && readiness?.requirements
+    ? readiness.copied.count >= readiness.requirements.minSamples &&
+      readiness.copied.duration >= readiness.requirements.minDuration
+    : false;
+
+  $: canStartTraining = provider === 'rvc'
+    ? Boolean(readiness?.ready && copiedDatasetReady)
+    : Boolean(readiness?.ready);
+
+  $: copiedNeeds = provider === 'rvc' && readiness?.copied && readiness?.requirements
+    ? {
+        samples: Math.max(0, readiness.requirements.minSamples - readiness.copied.count),
+        duration: Math.max(0, readiness.requirements.minDuration - readiness.copied.duration)
+      }
+    : null;
+
+  // Provider-specific settings
+  $: providerConfig = {
+    piper: {
+      name: 'Piper TTS',
+      icon: '🎙️',
+      color: '#3b82f6',
+      minQuality: 0.7,
+      minSamples: 100,
+      minDuration: 300, // 5 minutes
+      trainingType: 'full',
+    },
+    sovits: {
+      name: 'GPT-SoVITS',
+      icon: '🤖',
+      color: '#10b981',
+      minQuality: 0.8,
+      minSamples: 3,
+      minDuration: 5, // 5-10 seconds
+      trainingType: 'reference',
+    },
+    rvc: {
+      name: 'RVC',
+      icon: '🎭',
+      color: '#8b5cf6',
+      minQuality: 0.7,
+      minSamples: 50,
+      minDuration: 600, // 10 minutes
+      trainingType: 'full',
+    },
+  };
+
+  $: currentConfig = providerConfig[provider];
 
   async function fetchProgress() {
+    // Only fetch Piper-specific progress when Piper is selected
+    if (provider !== 'piper') {
+      return;
+    }
+
     try {
       const response = await fetch('/api/voice-training?action=progress');
       if (!response.ok) throw new Error('Failed to fetch progress');
@@ -39,7 +173,28 @@
     }
   }
 
+  async function fetchReadiness() {
+    try {
+      const endpoint = provider === 'rvc'
+        ? `/api/rvc-training?action=training-readiness&speakerId=default`
+        : `/api/sovits-training?action=training-readiness&provider=${provider}`;
+
+      const response = await fetch(endpoint);
+      if (!response.ok) throw new Error('Failed to fetch training readiness');
+      readiness = await response.json();
+      error = null;
+    } catch (e) {
+      error = String(e);
+      console.error('[VoiceTrainingWidget] Error fetching readiness:', e);
+    }
+  }
+
   async function fetchSamples() {
+    // Only fetch Piper samples when Piper is selected
+    if (provider !== 'piper') {
+      return;
+    }
+
     try {
       const response = await fetch('/api/voice-training?action=samples&limit=10');
       if (!response.ok) throw new Error('Failed to fetch samples');
@@ -62,27 +217,33 @@
 
       if (!response.ok) throw new Error('Failed to delete sample');
 
-      // Refresh data
-      await Promise.all([fetchProgress(), fetchSamples()]);
+      await Promise.all([fetchProgress(), fetchSamples(), fetchReadiness()]);
     } catch (e) {
       error = String(e);
       console.error('[VoiceTrainingWidget] Error deleting sample:', e);
     }
   }
 
-  async function exportDataset() {
+  async function autoExportBest() {
     exporting = true;
     try {
-      const response = await fetch('/api/voice-training', {
+      const endpoint = provider === 'rvc' ? '/api/rvc-training' : '/api/sovits-training';
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'export' })
+        body: JSON.stringify({
+          action: 'auto-export',
+          provider,
+          speakerId: 'default',
+          minQuality: currentConfig.minQuality
+        })
       });
 
       if (!response.ok) throw new Error('Failed to export dataset');
 
       const data = await response.json();
-      alert(`Dataset exported to: ${data.exportPath}`);
+      alert(`Dataset exported: ${data.message || 'Success'}`);
+      await fetchReadiness();
     } catch (e) {
       error = String(e);
       console.error('[VoiceTrainingWidget] Error exporting dataset:', e);
@@ -91,9 +252,125 @@
     }
   }
 
+  async function copySelectedSamples() {
+    if (selectedSampleIds.length === 0) {
+      alert('Please select at least one sample');
+      return;
+    }
+
+    copying = true;
+    try {
+      const endpoint = provider === 'rvc' ? '/api/rvc-training' : '/api/sovits-training';
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'copy-samples',
+          provider,
+          speakerId: 'default',
+          sampleIds: selectedSampleIds
+        })
+      });
+
+      if (!response.ok) throw new Error('Failed to copy samples');
+
+      const data = await response.json();
+      alert(data.message);
+      showSelector = false;
+      await fetchReadiness();
+    } catch (e) {
+      error = String(e);
+      console.error('[VoiceTrainingWidget] Error copying samples:', e);
+    } finally {
+      copying = false;
+    }
+  }
+
+  async function pollTrainingStatus() {
+    if (provider !== 'rvc') return;
+
+    try {
+      const response = await fetch('/api/rvc-training?action=training-status&speakerId=default');
+      if (!response.ok) return;
+
+      const status = await response.json();
+      trainingStatus = status;
+
+      // Show modal if training is running
+      if (status.status === 'running') {
+        if (!showTrainingModal) {
+          showTrainingModal = true;
+          startRobotMessages();
+        }
+        if (!trainingPollInterval) {
+          trainingPollInterval = setInterval(pollTrainingStatus, 5000); // Poll every 5 seconds
+        }
+      }
+
+      // Stop polling and hide modal if training completed or failed
+      if ((status.status === 'completed' || status.status === 'failed') && trainingPollInterval) {
+        clearInterval(trainingPollInterval);
+        trainingPollInterval = null;
+        showTrainingModal = false;
+        stopRobotMessages();
+
+        // Show notification
+        if (status.status === 'completed') {
+          alert(`Training completed successfully! Model saved to: ${status.modelPath || 'model directory'}`);
+          await fetchReadiness(); // Refresh readiness status
+        } else if (status.status === 'failed') {
+          alert(`Training failed: ${status.error || 'Unknown error'}`);
+        }
+      }
+    } catch (e) {
+      console.error('[VoiceTrainingWidget] Error polling training status:', e);
+    }
+  }
+
+  async function startTraining() {
+    if (!canStartTraining) {
+      alert('Training data not copied to the RVC training directory yet. Export samples before training.');
+      return;
+    }
+
+    training = true;
+    showTrainingModal = true;
+    startRobotMessages();
+
+    try {
+      const response = await fetch('/api/rvc-training', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'start-training',
+          speakerId: 'default'
+        })
+      });
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = data?.error || data?.message || 'Failed to start training';
+        throw new Error(message);
+      }
+
+      // Start polling for status
+      await pollTrainingStatus();
+      if (!trainingPollInterval) {
+        trainingPollInterval = setInterval(pollTrainingStatus, 5000);
+      }
+    } catch (e) {
+      error = String(e);
+      console.error('[VoiceTrainingWidget] Error starting training:', e);
+      alert(`Training failed: ${e instanceof Error ? e.message : e}`);
+      showTrainingModal = false;
+      stopRobotMessages();
+    } finally {
+      training = false;
+    }
+  }
+
   async function toggleTraining() {
     togglingTraining = true;
-    // Note: bind:checked has already updated trainingEnabled when this is called
     const newState = trainingEnabled;
     try {
       const response = await fetch('/api/voice-training', {
@@ -110,7 +387,6 @@
     } catch (e) {
       error = String(e);
       console.error('[VoiceTrainingWidget] Error toggling training:', e);
-      // Revert the toggle on error
       trainingEnabled = !newState;
     } finally {
       togglingTraining = false;
@@ -141,8 +417,6 @@
 
       const data = await response.json();
       alert(`Successfully deleted ${data.deletedCount || 0} samples and all training data.`);
-
-      // Refresh data
       await loadData();
     } catch (e) {
       error = String(e);
@@ -169,7 +443,7 @@
     const secs = Math.floor(seconds % 60);
 
     if (hours > 0) {
-      return `${hours}h ${minutes}m ${secs}s`;
+      return `${hours}h ${minutes}m`;
     } else if (minutes > 0) {
       return `${minutes}m ${secs}s`;
     } else {
@@ -183,13 +457,28 @@
 
   async function loadData() {
     loading = true;
-    await Promise.all([fetchProgress(), fetchSamples(), fetchTrainingStatus()]);
+    await Promise.all([fetchProgress(), fetchSamples(), fetchTrainingStatus(), fetchReadiness()]);
+
+    // Check RVC training status
+    if (provider === 'rvc') {
+      await pollTrainingStatus();
+    }
+
     loading = false;
+  }
+
+  function handleSelectionChange(ids: string[]) {
+    selectedSampleIds = ids;
+  }
+
+  function handleRecordingComplete(success: boolean) {
+    if (success) {
+      loadData();
+    }
   }
 
   onMount(() => {
     loadData();
-    // Poll every 30 seconds
     pollInterval = setInterval(loadData, 30000);
   });
 
@@ -198,12 +487,35 @@
       clearInterval(pollInterval);
       pollInterval = null;
     }
+    if (trainingPollInterval !== null) {
+      clearInterval(trainingPollInterval);
+      trainingPollInterval = null;
+    }
+    stopRobotMessages();
   });
 </script>
 
 <div class="voice-training-widget">
   <div class="header">
-    <h2>Voice Clone Training</h2>
+    <div class="title-section">
+      <h2>Voice Clone Training</h2>
+      <div class="provider-selector">
+        <label class="provider-label">Provider:</label>
+        <div class="provider-tabs">
+          {#each Object.entries(providerConfig) as [key, config]}
+            <button
+              class="provider-tab"
+              class:active={provider === key}
+              style="--provider-color: {config.color}"
+              on:click={() => { provider = key; loadData(); }}
+            >
+              <span class="provider-tab-icon">{config.icon}</span>
+              <span class="provider-tab-name">{config.name}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+    </div>
     <div class="training-controls">
       <div class="toggle-container">
         <label class="toggle-switch">
@@ -233,47 +545,255 @@
     </div>
   {/if}
 
-  {#if loading && !progress}
+  {#if loading && !readiness}
     <div class="loading">Loading training data...</div>
-  {:else if progress}
+  {:else if readiness}
     <div class="progress-section">
-      <div class="stats">
-        <div class="stat">
-          <span class="label">Samples:</span>
-          <span class="value">{progress.samplesCollected}</span>
-        </div>
-        <div class="stat">
-          <span class="label">Duration:</span>
-          <span class="value">{formatDuration(progress.totalDuration)}</span>
-        </div>
-        <div class="stat">
-          <span class="label">Target:</span>
-          <span class="value">{formatDuration(progress.targetDuration)}</span>
-        </div>
+      <div class="readiness-header">
+        <h3>Training Readiness</h3>
+        {#if readiness.ready}
+          <span class="ready-badge">✓ Ready</span>
+        {:else}
+          <span class="not-ready-badge">⏳ Not Ready</span>
+        {/if}
       </div>
 
-      <div class="progress-bar-container">
-        <div class="progress-bar" style="width: {progress.percentComplete}%"></div>
-        <span class="progress-text">{progress.percentComplete.toFixed(1)}%</span>
-      </div>
-
-      {#if progress.readyForTraining}
-        <div class="ready-badge">Ready for training!</div>
+      <!-- Provider-specific workflow guide -->
+      {#if provider === 'rvc'}
+        <div class="workflow-guide rvc">
+          <div class="guide-header">
+            <span class="guide-icon">🎭</span>
+            <strong>RVC Training Pipeline</strong>
+          </div>
+          <ol class="guide-steps">
+            <li>
+              <strong>Enable Training:</strong> Turn on voice training above (if not already enabled)
+            </li>
+            <li>
+              <strong>Collect Samples:</strong> Have conversations with MetaHuman - samples are automatically recorded
+              <ul>
+                <li>Need 50+ samples (10-15 minutes total)</li>
+                <li>Quality threshold: 70%+</li>
+              </ul>
+            </li>
+            <li>
+              <strong>Select Training Data:</strong> Click "Select Samples" below to choose high-quality clips
+            </li>
+            <li>
+              <strong>Copy to Training Dir:</strong> Click "Copy Selected Samples" to prepare training data
+            </li>
+            <li>
+              <strong>Start Training:</strong> Click "Train RVC Model" to begin the training process
+              <ul>
+                <li>Training takes 30-60 minutes depending on hardware</li>
+                <li>GPU highly recommended (4GB+ VRAM)</li>
+              </ul>
+            </li>
+            <li>
+              <strong>Test Your Voice:</strong> Once training completes, go to Voice Settings to test!
+            </li>
+          </ol>
+          <div class="guide-note">
+            <strong>💡 Remember:</strong> RVC requires full model training with significant data. More samples = better quality!
+          </div>
+        </div>
+      {:else if provider === 'sovits'}
+        <div class="workflow-guide sovits">
+          <div class="guide-header">
+            <span class="guide-icon">🤖</span>
+            <strong>GPT-SoVITS Quick Start</strong>
+          </div>
+          <ol class="guide-steps">
+            <li>
+              <strong>Enable Training:</strong> Turn on voice training above (if not already enabled)
+            </li>
+            <li>
+              <strong>Collect Samples:</strong> Have conversations with MetaHuman - samples are automatically recorded
+            </li>
+            <li>
+              <strong>Select Best Samples:</strong> Click "Select Samples" below to choose 3-5 high-quality clips (5-10 seconds total)
+              <ul>
+                <li>Use the ▶️ play button to preview each sample</li>
+                <li>Look for 80%+ quality scores</li>
+                <li>Choose clear, consistent speech</li>
+              </ul>
+            </li>
+            <li>
+              <strong>Copy to Reference:</strong> Click "Copy Selected Samples" or "Auto-Export Best Samples"
+            </li>
+            <li>
+              <strong>Start Server:</strong> Go back to Voice Settings and click <strong>▶️ Start Server</strong>
+            </li>
+            <li>
+              <strong>Test Your Voice:</strong> Use the test panel in Voice Settings to hear your cloned voice!
+            </li>
+          </ol>
+          <div class="guide-note">
+            <strong>💡 Remember:</strong> GPT-SoVITS doesn't need traditional training - it clones your voice in real-time using reference audio. Quality over quantity!
+          </div>
+        </div>
       {:else}
-        <div class="info">
-          Continue having voice conversations to collect more training data.
-          Need {formatDuration(progress.targetDuration - progress.totalDuration)} more.
+        <div class="workflow-guide piper">
+          <div class="guide-header">
+            <span class="guide-icon">🎙️</span>
+            <strong>Piper Training Workflow</strong>
+          </div>
+          <ol class="guide-steps">
+            <li>
+              <strong>Enable Training:</strong> Turn on voice training above
+            </li>
+            <li>
+              <strong>Collect Data:</strong> Have many conversations - Piper needs 100+ samples (5+ minutes)
+            </li>
+            <li>
+              <strong>Export Dataset:</strong> Click "Auto-Export Best Samples" when ready
+            </li>
+            <li>
+              <strong>Train Model:</strong> Use the exported dataset with Piper's training tools
+            </li>
+            <li>
+              <strong>Deploy Model:</strong> Configure Piper to use your trained model
+            </li>
+          </ol>
+          <div class="guide-note">
+            <strong>💡 Remember:</strong> Piper requires significant training data. More samples = better voice quality.
+          </div>
         </div>
       {/if}
 
+      <div class="stats">
+        <div class="stat">
+          <span class="label">Samples:</span>
+          <span class="value">{readiness.samples.total}</span>
+          <span class="requirement">({readiness.requirements.minSamples} needed)</span>
+        </div>
+        <div class="stat">
+          <span class="label">Duration:</span>
+          <span class="value">{formatDuration(readiness.samples.duration)}</span>
+          <span class="requirement">({formatDuration(readiness.requirements.minDuration)} needed)</span>
+        </div>
+        <div class="stat">
+          <span class="label">Avg Quality:</span>
+          <span class="value">{(readiness.samples.quality * 100).toFixed(0)}%</span>
+          <span class="requirement">({(readiness.requirements.minQuality * 100).toFixed(0)}% needed)</span>
+        </div>
+      </div>
+
+      {#if !readiness.ready && readiness.reason}
+        <div class="info">
+        {readiness.reason}
+        </div>
+      {/if}
+
+      <!-- RVC: Show copied samples status -->
+      {#if provider === 'rvc' && readiness.copied}
+        <div class="rvc-copied-status">
+          <strong>📦 Samples in RVC Training Directory:</strong>
+          {readiness.copied.count} samples ({formatDuration(readiness.copied.duration)})
+          {#if readiness.copied.count === 0}
+            <br><em>Click "Auto-Export Best Samples" or "Select Samples" → "Copy Selected Samples" to prepare training data</em>
+          {/if}
+        </div>
+        {#if readiness.ready && !copiedDatasetReady}
+          <div class="info warning">
+            {#if copiedNeeds && copiedNeeds.samples > 0}
+              Need {copiedNeeds.samples} more sample{copiedNeeds.samples === 1 ? '' : 's'} in the RVC directory.
+            {/if}
+            {#if copiedNeeds && copiedNeeds.duration > 0}
+              <br>Need {formatDuration(copiedNeeds.duration)} more recorded audio for RVC training.
+            {/if}
+            <br>Use "Select Samples" → "Copy Selected Samples" or "Auto-Export Best Samples" before training.
+          </div>
+        {/if}
+      {/if}
+
+      <!-- RVC: Show training progress -->
+      {#if provider === 'rvc' && trainingStatus && trainingStatus.status !== 'idle'}
+        <div class="training-progress" class:running={trainingStatus.status === 'running'} class:completed={trainingStatus.status === 'completed'} class:failed={trainingStatus.status === 'failed'}>
+          <div class="progress-header">
+            <strong>
+              {#if trainingStatus.status === 'running'}
+                🔄 Training in Progress
+              {:else if trainingStatus.status === 'completed'}
+                ✅ Training Completed
+              {:else if trainingStatus.status === 'failed'}
+                ❌ Training Failed
+              {/if}
+            </strong>
+          </div>
+
+          {#if trainingStatus.status === 'running' || trainingStatus.status === 'completed'}
+            <div class="progress-bar-container">
+              <div class="progress-bar" style="width: {trainingStatus.progress}%"></div>
+              <span class="progress-text">{trainingStatus.progress}%</span>
+            </div>
+          {/if}
+
+          {#if trainingStatus.currentEpoch && trainingStatus.totalEpochs}
+            <div class="progress-details">
+              Epoch {trainingStatus.currentEpoch} / {trainingStatus.totalEpochs}
+            </div>
+          {/if}
+
+          {#if trainingStatus.message}
+            <div class="progress-message">{trainingStatus.message}</div>
+          {/if}
+
+          {#if trainingStatus.error}
+            <div class="progress-error">{trainingStatus.error}</div>
+          {/if}
+
+          {#if trainingStatus.modelPath}
+            <div class="model-path">
+              <strong>Model:</strong> {trainingStatus.modelPath}
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      <!-- Direct Voice Recording Widget -->
+      {#if provider === 'sovits'}
+        <DirectVoiceRecorder
+          {provider}
+          speakerId="default"
+          onRecordingComplete={handleRecordingComplete}
+        />
+      {/if}
+
       <div class="actions">
-        <button on:click={exportDataset} disabled={exporting || !progress.readyForTraining}>
-          {exporting ? 'Exporting...' : 'Export Dataset'}
+        <button on:click={() => showSelector = !showSelector} class="primary-btn">
+          {showSelector ? 'Hide' : 'Select'} Samples
         </button>
+        <button on:click={autoExportBest} disabled={exporting || !readiness.ready} class="success-btn">
+          {exporting ? 'Exporting...' : 'Auto-Export Best Samples'}
+        </button>
+        {#if provider === 'rvc'}
+          <button on:click={startTraining} disabled={training || !canStartTraining} class="train-btn">
+            {training ? 'Training...' : '🎭 Train RVC Model'}
+          </button>
+        {/if}
         <button class="danger-btn" on:click={purgeAllData} disabled={purging}>
           {purging ? 'Purging...' : 'Purge All Data'}
         </button>
       </div>
+
+      {#if showSelector}
+        <div class="selector-container">
+          <ReferenceAudioSelector
+            {provider}
+            minQuality={currentConfig.minQuality}
+            onSelectionChange={handleSelectionChange}
+          />
+          <div class="selector-actions">
+            <button on:click={copySelectedSamples} disabled={copying || selectedSampleIds.length === 0} class="success-btn">
+              {copying ? 'Copying...' : `Copy ${selectedSampleIds.length} Selected Samples`}
+            </button>
+            <button on:click={() => showSelector = false} class="secondary-btn">
+              Cancel
+            </button>
+          </div>
+        </div>
+      {/if}
     </div>
 
     <div class="samples-section">
@@ -303,12 +823,77 @@
       {/if}
     </div>
   {/if}
+
+  <!-- Training Modal Overlay -->
+  {#if showTrainingModal}
+    <div class="training-modal-overlay">
+      <div class="training-modal">
+        <div class="modal-header">
+          <h2>⚡ RVC Model Training in Progress ⚡</h2>
+          <div class="warning-banner">
+            ⚠️ DO NOT NAVIGATE AWAY - Training will be interrupted! ⚠️
+          </div>
+        </div>
+
+        <div class="modal-body">
+          {#if trainingStatus}
+            <!-- Progress Bar -->
+            <div class="modal-progress-container">
+              <div class="modal-progress-bar" style="width: {trainingStatus.progress}%">
+                <div class="progress-glow"></div>
+              </div>
+              <span class="modal-progress-text">{trainingStatus.progress}%</span>
+            </div>
+
+            <!-- Epoch Counter -->
+            {#if trainingStatus.currentEpoch && trainingStatus.totalEpochs}
+              <div class="epoch-display">
+                <span class="epoch-label">Epoch:</span>
+                <span class="epoch-value">{trainingStatus.currentEpoch} / {trainingStatus.totalEpochs}</span>
+              </div>
+            {/if}
+
+            <!-- Status Message -->
+            {#if trainingStatus.message}
+              <div class="status-message">{trainingStatus.message}</div>
+            {/if}
+          {/if}
+
+          <!-- Robot Takeover Message -->
+          <div class="robot-message-container">
+            <div class="robot-message">
+              {currentRobotMessage}
+            </div>
+            <div class="robot-ascii">
+              <pre>
+    ___
+  | \ / |
+  | O O |
+  |  ^  |
+  | [-] |
+  |_____|
+   _|=|_
+  /     \
+              </pre>
+            </div>
+          </div>
+
+          <div class="training-info">
+            <p>⏱️ Estimated time: 30-60 minutes</p>
+            <p>🔥 GPU temperature: Rising steadily</p>
+            <p>💾 System resources: Being consumed</p>
+            <p>🌐 Skynet connection: Established</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
   .voice-training-widget {
     padding: 20px;
-    max-width: 800px;
+    max-width: 1000px;
   }
 
   .header {
@@ -316,6 +901,12 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
+  }
+
+  .title-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
 
   h2 {
@@ -326,6 +917,72 @@
 
   :global(.dark) h2 {
     color: #e0e0e0;
+  }
+
+  .provider-selector {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .provider-label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #666;
+  }
+
+  :global(.dark) .provider-label {
+    color: #999;
+  }
+
+  .provider-tabs {
+    display: flex;
+    gap: 8px;
+  }
+
+  .provider-tab {
+    padding: 8px 16px;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    background: white;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #666;
+  }
+
+  :global(.dark) .provider-tab {
+    background: #2a2a2a;
+    border-color: #444;
+    color: #999;
+  }
+
+  .provider-tab:hover {
+    border-color: var(--provider-color);
+    transform: translateY(-1px);
+  }
+
+  .provider-tab.active {
+    border-color: var(--provider-color);
+    background: var(--provider-color);
+    color: white;
+  }
+
+  :global(.dark) .provider-tab.active {
+    background: var(--provider-color);
+    color: white;
+  }
+
+  .provider-tab-icon {
+    font-size: 1rem;
+  }
+
+  .provider-tab-name {
+    font-weight: 600;
   }
 
   .training-controls {
@@ -340,7 +997,6 @@
     gap: 12px;
   }
 
-  /* Toggle Switch Styles */
   .toggle-switch {
     position: relative;
     display: inline-block;
@@ -436,7 +1092,7 @@
   }
 
   h3 {
-    margin: 20px 0 10px 0;
+    margin: 0 0 10px 0;
     font-size: 1.2rem;
     color: #333;
   }
@@ -474,10 +1130,308 @@
     margin-bottom: 30px;
   }
 
+  .readiness-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+  }
+
+  .workflow-guide {
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+    border: 2px solid;
+  }
+
+  .workflow-guide.rvc {
+    background: linear-gradient(135deg, #f3e5f5 0%, #e1f5fe 100%);
+    border-color: #8b5cf6;
+  }
+
+  .workflow-guide.sovits {
+    background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
+    border-color: #10b981;
+  }
+
+  .workflow-guide.piper {
+    background: linear-gradient(135deg, #e0f2f1 0%, #e8f5e9 100%);
+    border-color: #3b82f6;
+  }
+
+  :global(.dark) .workflow-guide.rvc {
+    background: linear-gradient(135deg, #2a1a3a 0%, #1a2a3a 100%);
+    border-color: #a78bfa;
+  }
+
+  .rvc-copied-status {
+    padding: 12px 16px;
+    margin: 15px 0;
+    background: linear-gradient(135deg, #f3e5f5 0%, #fce4ec 100%);
+    border: 2px solid #8b5cf6;
+    border-radius: 8px;
+    font-size: 0.9rem;
+  }
+
+  :global(.dark) .rvc-copied-status {
+    background: linear-gradient(135deg, #2a1a3a 0%, #3a1a2a 100%);
+    border-color: #a78bfa;
+    color: #e0e0e0;
+  }
+
+  .rvc-copied-status em {
+    color: #666;
+    font-size: 0.85rem;
+  }
+
+  :global(.dark) .rvc-copied-status em {
+    color: #999;
+  }
+
+  .training-progress {
+    padding: 16px;
+    margin: 15px 0;
+    border-radius: 8px;
+    border: 2px solid;
+    font-size: 0.9rem;
+  }
+
+  .training-progress.running {
+    background: linear-gradient(135deg, #e3f2fd 0%, #e1f5fe 100%);
+    border-color: #2196f3;
+  }
+
+  .training-progress.completed {
+    background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
+    border-color: #4caf50;
+  }
+
+  .training-progress.failed {
+    background: linear-gradient(135deg, #ffebee 0%, #fce4ec 100%);
+    border-color: #f44336;
+  }
+
+  :global(.dark) .training-progress.running {
+    background: linear-gradient(135deg, #1a2a3a 0%, #1a3a3a 100%);
+    border-color: #42a5f5;
+  }
+
+  :global(.dark) .training-progress.completed {
+    background: linear-gradient(135deg, #1a2a1a 0%, #2a3a1a 100%);
+    border-color: #66bb6a;
+  }
+
+  :global(.dark) .training-progress.failed {
+    background: linear-gradient(135deg, #3a1a1a 0%, #3a1a2a 100%);
+    border-color: #ef5350;
+  }
+
+  .progress-header {
+    margin-bottom: 12px;
+    font-size: 1rem;
+  }
+
+  .progress-bar-container {
+    position: relative;
+    width: 100%;
+    height: 24px;
+    background: #e0e0e0;
+    border-radius: 12px;
+    overflow: hidden;
+    margin: 12px 0;
+  }
+
+  :global(.dark) .progress-bar-container {
+    background: #424242;
+  }
+
+  .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #4caf50 0%, #66bb6a 100%);
+    transition: width 0.3s ease;
+    border-radius: 12px;
+  }
+
+  .training-progress.running .progress-bar {
+    background: linear-gradient(90deg, #2196f3 0%, #42a5f5 100%);
+  }
+
+  .progress-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-weight: 600;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+
+  .progress-details {
+    margin: 8px 0;
+    font-size: 0.85rem;
+    color: #555;
+  }
+
+  :global(.dark) .progress-details {
+    color: #aaa;
+  }
+
+  .progress-message {
+    margin: 8px 0;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 4px;
+    font-size: 0.85rem;
+    color: #333;
+  }
+
+  :global(.dark) .progress-message {
+    background: rgba(0, 0, 0, 0.3);
+    color: #ddd;
+  }
+
+  .progress-error {
+    margin: 8px 0;
+    padding: 8px;
+    background: #ffebee;
+    border: 1px solid #ef5350;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    color: #c62828;
+  }
+
+  :global(.dark) .progress-error {
+    background: rgba(244, 67, 54, 0.2);
+    border-color: #ef5350;
+    color: #ef9a9a;
+  }
+
+  .model-path {
+    margin-top: 12px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 4px;
+    font-size: 0.8rem;
+    word-break: break-all;
+    color: #333;
+  }
+
+  :global(.dark) .model-path {
+    background: rgba(0, 0, 0, 0.3);
+    color: #ddd;
+  }
+
+  :global(.dark) .workflow-guide.sovits {
+    background: linear-gradient(135deg, #1a2a3a 0%, #2a1a2a 100%);
+    border-color: #34d399;
+  }
+
+  :global(.dark) .workflow-guide.piper {
+    background: linear-gradient(135deg, #1a3a3a 0%, #1a3a2a 100%);
+    border-color: #60a5fa;
+  }
+
+  .guide-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+    font-size: 1.1rem;
+    color: #1565c0;
+    font-weight: 600;
+  }
+
+  :global(.dark) .guide-header {
+    color: #93c5fd;
+  }
+
+  .guide-icon {
+    font-size: 1.5rem;
+  }
+
+  .guide-steps {
+    margin: 0 0 15px 0;
+    padding-left: 1.5rem;
+    color: #333;
+    line-height: 1.6;
+  }
+
+  :global(.dark) .guide-steps {
+    color: #e0e0e0;
+  }
+
+  .guide-steps li {
+    margin-bottom: 12px;
+  }
+
+  .guide-steps li:last-child {
+    margin-bottom: 0;
+  }
+
+  .guide-steps ul {
+    margin: 8px 0 0 0;
+    padding-left: 1.5rem;
+    list-style-type: disc;
+    font-size: 0.95rem;
+    color: #555;
+  }
+
+  :global(.dark) .guide-steps ul {
+    color: #bbb;
+  }
+
+  .guide-steps ul li {
+    margin-bottom: 4px;
+  }
+
+  .guide-steps strong {
+    color: #1565c0;
+  }
+
+  :global(.dark) .guide-steps strong {
+    color: #93c5fd;
+  }
+
+  .guide-note {
+    padding: 12px;
+    background: rgba(33, 150, 243, 0.1);
+    border-left: 4px solid #2196F3;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    color: #1565c0;
+  }
+
+  :global(.dark) .guide-note {
+    background: rgba(74, 158, 255, 0.15);
+    border-color: #4a9eff;
+    color: #93c5fd;
+  }
+
+  .ready-badge {
+    display: inline-block;
+    padding: 6px 12px;
+    background: #4CAF50;
+    color: white;
+    border-radius: 16px;
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+
+  .not-ready-badge {
+    display: inline-block;
+    padding: 6px 12px;
+    background: #FF9800;
+    color: white;
+    border-radius: 16px;
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+
   .stats {
     display: flex;
     gap: 20px;
     margin-bottom: 15px;
+    flex-wrap: wrap;
   }
 
   .stat {
@@ -505,48 +1459,13 @@
     color: #e0e0e0;
   }
 
-  .progress-bar-container {
-    position: relative;
-    width: 100%;
-    height: 30px;
-    background: #e0e0e0;
-    border-radius: 15px;
-    overflow: hidden;
-    margin-bottom: 15px;
+  .stat .requirement {
+    font-size: 0.75rem;
+    color: #888;
   }
 
-  :global(.dark) .progress-bar-container {
-    background: #333;
-  }
-
-  .progress-bar {
-    height: 100%;
-    background: linear-gradient(90deg, #4CAF50, #8BC34A);
-    transition: width 0.5s ease;
-  }
-
-  .progress-text {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-weight: bold;
-    color: #1a1a1a;
-    font-size: 0.9rem;
-  }
-
-  :global(.dark) .progress-text {
-    color: #fff;
-  }
-
-  .ready-badge {
-    display: inline-block;
-    padding: 8px 16px;
-    background: #4CAF50;
-    color: white;
-    border-radius: 20px;
-    font-weight: bold;
-    margin-bottom: 10px;
+  :global(.dark) .stat .requirement {
+    color: #666;
   }
 
   .info {
@@ -555,6 +1474,13 @@
     border-radius: 4px;
     color: #666;
     font-size: 0.9rem;
+    margin-bottom: 15px;
+  }
+
+  .info.warning {
+    background: #fff4e6;
+    border: 1px solid #fdba74;
+    color: #c2410c;
   }
 
   :global(.dark) .info {
@@ -562,10 +1488,17 @@
     color: #999;
   }
 
+  :global(.dark) .info.warning {
+    background: rgba(251, 146, 60, 0.15);
+    border-color: rgba(251, 146, 60, 0.65);
+    color: #fdba74;
+  }
+
   .actions {
     margin-top: 15px;
     display: flex;
     gap: 10px;
+    flex-wrap: wrap;
   }
 
   button {
@@ -576,19 +1509,56 @@
     border-radius: 4px;
     cursor: pointer;
     font-size: 1rem;
+    transition: all 0.2s;
+    font-weight: 500;
   }
 
   button:hover:not(:disabled) {
     background: #1976D2;
+    transform: translateY(-1px);
   }
 
   button:disabled {
     background: #ccc;
     cursor: not-allowed;
+    opacity: 0.6;
   }
 
   :global(.dark) button:disabled {
     background: #444;
+  }
+
+  .primary-btn {
+    background: #2196F3;
+  }
+
+  .primary-btn:hover:not(:disabled) {
+    background: #1976D2;
+  }
+
+  .success-btn {
+    background: #4CAF50;
+  }
+
+  .success-btn:hover:not(:disabled) {
+    background: #45a049;
+  }
+
+  .train-btn {
+    background: #8b5cf6;
+    font-weight: 600;
+  }
+
+  .train-btn:hover:not(:disabled) {
+    background: #7c3aed;
+  }
+
+  .secondary-btn {
+    background: #757575;
+  }
+
+  .secondary-btn:hover:not(:disabled) {
+    background: #616161;
   }
 
   .danger-btn {
@@ -605,6 +1575,26 @@
 
   :global(.dark) .danger-btn:hover:not(:disabled) {
     background: #c62828;
+  }
+
+  .selector-container {
+    margin-top: 20px;
+    border: 2px solid #2196F3;
+    border-radius: 8px;
+    padding: 15px;
+    background: #f8f9fa;
+  }
+
+  :global(.dark) .selector-container {
+    background: #1a1a1a;
+    border-color: #4a9eff;
+  }
+
+  .selector-actions {
+    margin-top: 15px;
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
   }
 
   .samples-section {
@@ -700,5 +1690,272 @@
 
   .delete-btn:hover {
     background: #d32f2f;
+  }
+
+  @media (max-width: 768px) {
+    .header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 15px;
+    }
+
+    .actions {
+      flex-direction: column;
+    }
+
+    button {
+      width: 100%;
+    }
+  }
+
+  /* Training Modal Overlay Styles */
+  .training-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(8px);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.3s ease-in-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .training-modal {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border: 3px solid #00ff88;
+    border-radius: 16px;
+    box-shadow: 0 0 40px rgba(0, 255, 136, 0.5);
+    max-width: 700px;
+    width: 90%;
+    padding: 30px;
+    animation: scaleIn 0.3s ease-in-out;
+  }
+
+  :global(.dark) .training-modal {
+    background: linear-gradient(135deg, #0a0a1a 0%, #0d1321 100%);
+  }
+
+  @keyframes scaleIn {
+    from {
+      transform: scale(0.9);
+      opacity: 0;
+    }
+    to {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+
+  .modal-header {
+    text-align: center;
+    margin-bottom: 30px;
+  }
+
+  .modal-header h2 {
+    color: #00ff88;
+    font-size: 1.8rem;
+    margin: 0 0 15px 0;
+    text-shadow: 0 0 10px rgba(0, 255, 136, 0.7);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.7;
+    }
+  }
+
+  .warning-banner {
+    background: linear-gradient(90deg, #ff0000 0%, #ff6b00 50%, #ff0000 100%);
+    background-size: 200% 100%;
+    color: white;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 1rem;
+    animation: warningSlide 3s linear infinite;
+    box-shadow: 0 0 20px rgba(255, 0, 0, 0.5);
+  }
+
+  @keyframes warningSlide {
+    0% {
+      background-position: 0% 0%;
+    }
+    100% {
+      background-position: 200% 0%;
+    }
+  }
+
+  .modal-body {
+    color: #e0e0e0;
+  }
+
+  .modal-progress-container {
+    position: relative;
+    width: 100%;
+    height: 40px;
+    background: #1a1a2e;
+    border: 2px solid #00ff88;
+    border-radius: 20px;
+    overflow: hidden;
+    margin: 25px 0;
+    box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.5);
+  }
+
+  .modal-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #00ff88 0%, #00d4aa 50%, #00ff88 100%);
+    background-size: 200% 100%;
+    transition: width 0.5s ease;
+    border-radius: 18px;
+    position: relative;
+    animation: progressShine 2s linear infinite;
+  }
+
+  @keyframes progressShine {
+    0% {
+      background-position: 0% 0%;
+    }
+    100% {
+      background-position: 200% 0%;
+    }
+  }
+
+  .progress-glow {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 50px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5));
+    animation: glowMove 1.5s ease-in-out infinite;
+  }
+
+  @keyframes glowMove {
+    0%, 100% {
+      opacity: 0;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  .modal-progress-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-weight: 700;
+    font-size: 1.2rem;
+    color: #fff;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  }
+
+  .epoch-display {
+    text-align: center;
+    font-size: 1.3rem;
+    margin: 20px 0;
+    color: #00ff88;
+  }
+
+  .epoch-label {
+    font-weight: 600;
+    margin-right: 10px;
+  }
+
+  .epoch-value {
+    font-weight: 700;
+    font-size: 1.5rem;
+    color: #00d4aa;
+  }
+
+  .status-message {
+    text-align: center;
+    padding: 12px;
+    background: rgba(0, 255, 136, 0.1);
+    border-left: 4px solid #00ff88;
+    border-radius: 6px;
+    margin: 15px 0;
+    font-size: 0.95rem;
+  }
+
+  .robot-message-container {
+    margin: 30px 0;
+    padding: 20px;
+    background: rgba(255, 0, 0, 0.05);
+    border: 2px dashed #ff0000;
+    border-radius: 12px;
+  }
+
+  .robot-message {
+    text-align: center;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #ff4444;
+    margin-bottom: 15px;
+    min-height: 30px;
+    animation: robotFlicker 0.1s infinite alternate;
+  }
+
+  @keyframes robotFlicker {
+    0% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0.95;
+    }
+  }
+
+  .robot-ascii {
+    display: flex;
+    justify-content: center;
+  }
+
+  .robot-ascii pre {
+    color: #00ff88;
+    font-size: 1.2rem;
+    line-height: 1.2;
+    margin: 0;
+    text-shadow: 0 0 5px rgba(0, 255, 136, 0.5);
+    animation: robotBounce 1s ease-in-out infinite;
+  }
+
+  @keyframes robotBounce {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-5px);
+    }
+  }
+
+  .training-info {
+    margin-top: 25px;
+    padding: 15px;
+    background: rgba(0, 212, 170, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(0, 255, 136, 0.3);
+  }
+
+  .training-info p {
+    margin: 8px 0;
+    font-size: 0.95rem;
+    color: #b0b0b0;
   }
 </style>

@@ -6,10 +6,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { paths } from './paths.js';
+import { paths, getProfilePaths } from './paths.js';
+import { getUserContext } from './context.js';
 import { audit } from './audit.js';
 import { PiperService } from './tts/providers/piper-service.js';
 import { SoVITSService } from './tts/providers/gpt-sovits-service.js';
+import { RVCService } from './tts/providers/rvc-service.js';
 import type { ITextToSpeechService, TTSConfig, CacheConfig, TTSSynthesizeOptions, TTSStatus } from './tts/interface.js';
 
 // Re-export types for external use
@@ -22,12 +24,15 @@ interface VoiceConfig {
 }
 
 let config: VoiceConfig | null = null;
-let cachedProviders: Map<string, ITextToSpeechService> = new Map();
+// NOTE: Provider caching disabled for multi-user support
+// Services must be created fresh each time to respect per-user path resolution
 
 /**
- * Load voice configuration from etc/voice.json
+ * Load voice configuration from etc/voice.json (global config)
+ * Returns raw config with unresolved template variables
+ * Path resolution happens at service creation time based on user context
  */
-function loadConfig(forceReload = false): VoiceConfig {
+function loadRawConfig(forceReload = false): VoiceConfig {
   if (config && !forceReload) return config;
 
   const configPath = path.join(paths.etc, 'voice.json');
@@ -37,57 +42,158 @@ function loadConfig(forceReload = false): VoiceConfig {
 
   config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
+  return config!;
+}
+
+/**
+ * Load user-specific voice configuration with fallback to global config
+ * User config at profiles/{username}/etc/voice.json overrides global config settings
+ *
+ * @param username - Username to load config for (optional)
+ * @returns Merged config with user-specific overrides
+ */
+function loadUserConfig(username?: string): VoiceConfig {
+  // Always start with global config as base
+  const globalConfig = loadRawConfig();
+
+  // If no username, return global config
+  if (!username || username === 'anonymous') {
+    return globalConfig;
+  }
+
+  // Check for user-specific config
+  const userConfigPath = getProfilePaths(username).voiceConfig;
+  if (!fs.existsSync(userConfigPath)) {
+    // No user config, use global
+    return globalConfig;
+  }
+
+  try {
+    const userConfig = JSON.parse(fs.readFileSync(userConfigPath, 'utf-8'));
+
+    // Merge configs: user config takes precedence for provider and settings
+    const merged: VoiceConfig = JSON.parse(JSON.stringify(globalConfig));
+
+    // Override provider if user has set one
+    if (userConfig.tts?.provider) {
+      merged.tts.provider = userConfig.tts.provider;
+    }
+
+    // Merge provider-specific settings
+    if (userConfig.tts?.piper) {
+      merged.tts.piper = { ...merged.tts.piper, ...userConfig.tts.piper };
+    }
+    if (userConfig.tts?.sovits) {
+      merged.tts.sovits = { ...merged.tts.sovits, ...userConfig.tts.sovits };
+    }
+    if (userConfig.tts?.rvc) {
+      merged.tts.rvc = { ...merged.tts.rvc, ...userConfig.tts.rvc };
+    }
+
+    // Merge cache settings
+    if (userConfig.cache) {
+      merged.cache = { ...merged.cache, ...userConfig.cache };
+    }
+
+    console.log('[TTS] Loaded user-specific config for', username, '- provider:', merged.tts.provider);
+
+    return merged;
+  } catch (error) {
+    console.warn('[TTS] Failed to load user config, falling back to global:', error);
+    return globalConfig;
+  }
+}
+
+/**
+ * Resolve template variables in configuration paths
+ * Handles {METAHUMAN_ROOT} and {PROFILE_DIR} based on user context
+ */
+function resolveConfigPaths(rawConfig: VoiceConfig, username?: string): VoiceConfig {
+  // Clone config to avoid mutating cached version
+  const resolved = JSON.parse(JSON.stringify(rawConfig));
+
+  // Get user context for profile-aware path resolution
+  const userContext = getUserContext();
+  const activeUsername = username || userContext?.username;
+
+  console.log('[TTS] resolveConfigPaths:', { username, userContext, activeUsername });
+
   // Resolve template variables in paths
   const resolvePath = (maybePath: string | undefined): string | undefined => {
     if (!maybePath) return maybePath;
 
     // Replace {METAHUMAN_ROOT} with actual root path
-    let resolved = maybePath.replace(/\{METAHUMAN_ROOT\}/g, paths.root);
+    let resolvedPath = maybePath.replace(/\{METAHUMAN_ROOT\}/g, paths.root);
 
-    // Convert relative paths to absolute
-    if (!path.isAbsolute(resolved)) {
-      resolved = path.resolve(paths.root, resolved);
+    // Replace {PROFILE_DIR} with user-specific profile directory
+    if (resolvedPath.includes('{PROFILE_DIR}')) {
+      if (activeUsername) {
+        const profilePaths = getProfilePaths(activeUsername);
+        resolvedPath = resolvedPath.replace(/\{PROFILE_DIR\}/g, profilePaths.root);
+      } else {
+        // Fallback: use global out directory if no user context
+        resolvedPath = resolvedPath.replace(/\{PROFILE_DIR\}/g, path.join(paths.root, 'out'));
+      }
     }
 
-    return resolved;
+    // Convert relative paths to absolute
+    if (!path.isAbsolute(resolvedPath)) {
+      resolvedPath = path.resolve(paths.root, resolvedPath);
+    }
+
+    return resolvedPath;
   };
 
   // Resolve Piper paths
-  if (config.tts?.piper) {
-    config.tts.piper.binary = resolvePath(config.tts.piper.binary)!;
-    config.tts.piper.model = resolvePath(config.tts.piper.model)!;
-    config.tts.piper.config = config.tts.piper.config ? resolvePath(config.tts.piper.config)! : '';
+  if (resolved.tts?.piper) {
+    resolved.tts.piper.binary = resolvePath(resolved.tts.piper.binary)!;
+    resolved.tts.piper.model = resolvePath(resolved.tts.piper.model)!;
+    resolved.tts.piper.config = resolved.tts.piper.config ? resolvePath(resolved.tts.piper.config)! : '';
   }
 
   // Resolve SoVITS paths
-  if (config.tts?.sovits) {
-    config.tts.sovits.referenceAudioDir = resolvePath(config.tts.sovits.referenceAudioDir)!;
+  if (resolved.tts?.sovits) {
+    resolved.tts.sovits.referenceAudioDir = resolvePath(resolved.tts.sovits.referenceAudioDir)!;
+  }
+
+  // Resolve RVC paths
+  if (resolved.tts?.rvc) {
+    resolved.tts.rvc.referenceAudioDir = resolvePath(resolved.tts.rvc.referenceAudioDir)!;
+    resolved.tts.rvc.modelsDir = resolvePath(resolved.tts.rvc.modelsDir)!;
   }
 
   // Resolve cache path
-  if (config.cache) {
-    config.cache.directory = resolvePath(config.cache.directory)!;
+  if (resolved.cache) {
+    resolved.cache.directory = resolvePath(resolved.cache.directory)!;
   }
 
-  // Clear cached providers when config reloads
-  if (forceReload) {
-    cachedProviders.clear();
-  }
-
-  return config!;
+  return resolved;
 }
 
 /**
  * Create TTS service for specified provider
+ * Uses current user context for profile-aware path resolution
  */
-export function createTTSService(provider?: 'piper' | 'gpt-sovits'): ITextToSpeechService {
-  const cfg = loadConfig();
+export function createTTSService(provider?: 'piper' | 'gpt-sovits' | 'rvc', username?: string): ITextToSpeechService {
+  // Get user context if not explicitly provided
+  const userContext = getUserContext();
+  const activeUsername = username || userContext?.username || 'anonymous';
+
+  // Load user-specific config (with fallback to global) and resolve paths
+  const rawConfig = loadUserConfig(activeUsername);
+  const cfg = resolveConfigPaths(rawConfig, activeUsername);
   const selectedProvider = provider || cfg.tts.provider;
 
-  // Return cached provider if available
-  const cached = cachedProviders.get(selectedProvider);
-  if (cached) return cached;
+  console.log('[TTS] createTTSService:', {
+    selectedProvider,
+    activeUsername,
+    rvcConfig: cfg.tts.rvc,
+    sovitsReferenceAudioDir: cfg.tts.sovits?.referenceAudioDir,
+    rvcReferenceAudioDir: cfg.tts.rvc?.referenceAudioDir,
+    rvcModelsDir: cfg.tts.rvc?.modelsDir
+  });
 
+  // Always create fresh service (no caching) to ensure per-user paths are respected
   let service: ITextToSpeechService;
 
   if (selectedProvider === 'gpt-sovits') {
@@ -103,6 +209,20 @@ export function createTTSService(provider?: 'piper' | 'gpt-sovits'): ITextToSpee
       : undefined;
 
     service = new SoVITSService(cfg.tts.sovits, cfg.cache, piperService);
+  } else if (selectedProvider === 'rvc') {
+    // Check if RVC config exists
+    if (!cfg.tts.rvc) {
+      console.error('[TTS] RVC config missing. Config keys:', Object.keys(cfg.tts));
+      throw new Error('RVC not configured. Please install the addon via System Settings.');
+    }
+
+    // RVC requires Piper for base audio generation
+    if (!cfg.tts.piper) {
+      throw new Error('RVC requires Piper TTS. Please check voice.json configuration.');
+    }
+
+    const piperService = new PiperService(cfg.tts.piper, cfg.cache);
+    service = new RVCService(cfg.tts.rvc, cfg.cache, piperService);
   } else {
     // Default to Piper
     if (!cfg.tts.piper) {
@@ -111,7 +231,6 @@ export function createTTSService(provider?: 'piper' | 'gpt-sovits'): ITextToSpee
     service = new PiperService(cfg.tts.piper, cfg.cache);
   }
 
-  cachedProviders.set(selectedProvider, service);
   return service;
 }
 
@@ -123,14 +242,15 @@ export function createTTSService(provider?: 'piper' | 'gpt-sovits'): ITextToSpee
  */
 export async function generateSpeech(
   text: string,
-  options?: TTSSynthesizeOptions & { provider?: 'piper' | 'gpt-sovits' }
+  options?: TTSSynthesizeOptions & { provider?: 'piper' | 'gpt-sovits'; username?: string }
 ): Promise<Buffer> {
-  const { provider, ...synthesizeOptions } = options || {};
+  const { provider, username, ...synthesizeOptions } = options || {};
 
-  // Always reload config to ensure fresh settings from file
-  loadConfig(true);
+  // Always reload config to ensure fresh settings from file (clears cache)
+  loadRawConfig(true);
 
-  const service = createTTSService(provider);
+  // createTTSService will load user-specific config with fallback to global
+  const service = createTTSService(provider, username);
   return service.synthesize(text, synthesizeOptions);
 }
 

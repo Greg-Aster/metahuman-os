@@ -1,18 +1,20 @@
 /**
- * API endpoint for streaming reflections in real-time
+ * API endpoint for streaming agent-generated events in real-time
  * Uses Server-Sent Events (SSE) for live updates
+ *
+ * NOTE: Reflections (type: inner_dialogue) are NEVER streamed to main chat.
+ * They are internal thoughts only, visible in Inner Dialogue tab.
  */
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, ROOT } from '@metahuman/core';
+import { paths } from '@metahuman/core';
 
 export const GET: APIRoute = ({ request }) => {
   const stream = new ReadableStream({
     async start(controller) {
       const today = new Date().toISOString().split('T')[0];
       const auditFile = path.join(paths.logs, 'audit', `${today}.ndjson`);
-      const boredomConfigPath = path.join(ROOT, 'etc', 'boredom.json');
 
       let lastPosition = 0;
       let fileExists = fs.existsSync(auditFile);
@@ -21,24 +23,11 @@ export const GET: APIRoute = ({ request }) => {
         controller.enqueue(`data: ${JSON.stringify(data)}\n\n`);
       };
 
-      const isShowInChatEnabled = () => {
-        try {
-          const configData = fs.readFileSync(boredomConfigPath, 'utf-8');
-          const config = JSON.parse(configData);
-          return config.showInChat !== undefined ? config.showInChat : true;
-        } catch {
-          return true; // Default to enabled
-        }
-      };
-
       const readNewLines = () => {
         if (!fileExists) {
           fileExists = fs.existsSync(auditFile);
           if (!fileExists) return;
         }
-
-        // Check if chat display is enabled
-        if (!isShowInChatEnabled()) return;
 
         try {
           const stats = fs.statSync(auditFile);
@@ -62,19 +51,10 @@ export const GET: APIRoute = ({ request }) => {
                 try {
                   const entry = JSON.parse(line);
 
-                  // Send reflection events
-                  if (
-                    entry.actor === 'reflector' &&
-                    entry.category === 'decision' &&
-                    entry.message === 'Reflector generated new insight' &&
-                    entry.metadata?.reflection
-                  ) {
-                    sendEvent({
-                      type: 'reflection',
-                      reflection: entry.metadata.reflection,
-                      timestamp: entry.timestamp,
-                    });
-                  }
+                  // NOTE: Reflections are NO LONGER sent to chat stream.
+                  // They are inner_dialogue type and only visible in Inner Dialogue tab.
+                  // The following block has been removed:
+                  // - Reflection streaming (was: entry.actor === 'reflector')
 
                   // Send dream events
                   if (

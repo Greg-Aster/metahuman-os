@@ -85,6 +85,22 @@ async function installAddon(addonId: string, addon: any): Promise<{ success: boo
       }
     }
 
+    case 'rvc': {
+      // Run RVC installation script
+      const scriptPath = path.join(rootPath, 'bin', 'install-rvc.sh');
+
+      if (!fs.existsSync(scriptPath)) {
+        return { success: false, error: 'RVC installation script not found' };
+      }
+
+      try {
+        await runScript(scriptPath);
+        return { success: true, message: 'RVC installed successfully' };
+      } catch (error) {
+        return { success: false, error: String(error) };
+      }
+    }
+
     default:
       return { success: false, error: 'Addon installation not implemented' };
   }

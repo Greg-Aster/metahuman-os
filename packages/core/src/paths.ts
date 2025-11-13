@@ -84,6 +84,10 @@ export function getProfilePaths(username: string) {
     // GPT-SoVITS reference audio (profile-specific)
     sovitsReference: path.join(profileRoot, 'out', 'voices', 'sovits'),
     sovitsModels: path.join(profileRoot, 'out', 'voices', 'sovits-models'),
+
+    // RVC voice models (profile-specific)
+    rvcReference: path.join(profileRoot, 'out', 'voices', 'rvc'),
+    rvcModels: path.join(profileRoot, 'out', 'voices', 'rvc-models'),
   };
 }
 
@@ -106,6 +110,9 @@ export const systemPaths = {
   // Auth and session databases (stay at root)
   usersDb: path.join(ROOT, 'persona', 'users.json'),
   sessionsFile: path.join(ROOT, 'logs', 'run', 'sessions.json'),
+
+  // System configuration (accessible to all users)
+  etc: path.join(ROOT, 'etc'),
 
   // Voice models (shared system-wide - these are large 60-120MB files)
   voiceModels: path.join(ROOT, 'out', 'voices'),

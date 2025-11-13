@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
 
   let level: string = 'off';
-  let showInChat: boolean = true;
   let isLoading: boolean = true;
   let error: string | null = null;
   let feedback: { type: 'success' | 'error'; text: string } | null = null;
@@ -21,7 +20,6 @@
       if (!response.ok) throw new Error('Failed to fetch boredom settings');
       const data = await response.json();
       level = data.level;
-      showInChat = data.showInChat !== undefined ? data.showInChat : true;
     } catch (e) {
       error = (e as Error).message;
     } finally {
@@ -39,49 +37,22 @@
         body: JSON.stringify({ level: newLevel }),
       });
       if (!response.ok) throw new Error('Failed to update boredom level');
-      await restartService();
-    } catch (e) {
-      error = (e as Error).message;
-    }
-  }
 
-  async function handleShowInChatChange() {
-    feedback = null;
-    try {
-      const response = await fetch('/api/boredom', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ showInChat }),
-      });
-      if (!response.ok) throw new Error('Failed to update chat setting');
-      await restartService();
-    } catch (e) {
-      error = (e as Error).message;
-    }
-  }
-
-  async function restartService() {
-    try {
-      const res = await fetch('/api/agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentName: 'boredom-service' }),
-      });
-      if (!res.ok) throw new Error('Agent restart request failed');
-      feedback = { type: 'success', text: 'Settings applied. Mind-wandering will restart with the new cadence.' };
-    } catch (err) {
+      // Show success feedback
       feedback = {
-        type: 'error',
-        text: `Settings saved, but the boredom-service could not be restarted automatically. Run "mh agent run boredom-service". ${(err as Error).message}`,
+        type: 'success',
+        text: 'Settings applied. Reflections are internal thoughts only.'
       };
+      setTimeout(() => { feedback = null; }, 4000);
+    } catch (e) {
+      error = (e as Error).message;
     }
-    setTimeout(() => { feedback = null; }, 6000);
   }
 </script>
 
 <div class="boredom-control">
   <p class="description">
-    How often your digital personality extension reflects on memories when idle.
+    How often your AI generates internal reflections on memories when idle. These are inner thoughts only, visible in the Inner Dialogue tab.
   </p>
   {#if feedback}
     <div class="banner" class:success={feedback.type === 'success'} class:error={feedback.type === 'error'}>
@@ -107,18 +78,6 @@
           <span class="level-label">{l.label}</span>
         </label>
       {/each}
-    </div>
-
-    <div class="chat-toggle">
-      <label class="toggle-option">
-        <input
-          type="checkbox"
-          bind:checked={showInChat}
-          on:change={handleShowInChatChange}
-          class="toggle-checkbox"
-        />
-        <span class="toggle-label">Show reflections in chat</span>
-      </label>
     </div>
   {/if}
 </div>
@@ -217,38 +176,6 @@
   }
 
   :global(.dark) .level-label {
-    color: rgb(243 244 246);
-  }
-
-  .chat-toggle {
-    margin-top: 0.5rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid rgba(0, 0, 0, 0.1);
-  }
-
-  :global(.dark) .chat-toggle {
-    border-top-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .toggle-option {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    cursor: pointer;
-  }
-
-  .toggle-checkbox {
-    width: 1rem;
-    height: 1rem;
-    cursor: pointer;
-  }
-
-  .toggle-label {
-    font-size: 0.875rem;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .toggle-label {
     color: rgb(243 244 246);
   }
 </style>

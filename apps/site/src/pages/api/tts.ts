@@ -1,5 +1,8 @@
 import type { APIRoute } from 'astro';
 import { generateSpeech, generateMultiVoiceSpeech } from '@metahuman/core';
+import { getSession } from '@metahuman/core/sessions';
+import { getUser } from '@metahuman/core/users';
+import { withUserContext } from '../../middleware/userContext';
 
 /**
  * POST /api/tts
@@ -7,23 +10,39 @@ import { generateSpeech, generateMultiVoiceSpeech } from '@metahuman/core';
  *
  * Body: {
  *   text: string,
- *   provider?: 'piper' | 'gpt-sovits',  // Optional: TTS provider to use
- *   model?: string,           // Optional: override voice model path (Piper) or speaker ID (SoVITS)
+ *   provider?: 'piper' | 'sovits' | 'rvc',  // Optional: TTS provider to use
+ *   voiceId?: string,         // Optional: voice ID (Piper) or speaker ID (SoVITS/RVC)
+ *   model?: string,           // Optional: override voice model path (legacy)
  *   models?: string[],        // Optional: array of voice models for multi-voice (mutant mode)
- *   config?: string,          // Optional: override voice config path
- *   speakingRate?: number     // Optional: override speaking rate (0.5 - 2.0)
+ *   speakingRate?: number,    // Optional: override speaking rate (0.5 - 2.0)
+ *   pitchShift?: number,      // Optional: RVC pitch shift (-12 to +12 semitones)
+ *   speed?: number            // Optional: SoVITS/RVC speed (0.5 - 2.0)
  * }
  * Returns: audio/wav stream
  */
-export const POST: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ request, cookies }) => {
   try {
-    const { text, provider, model, models, config, speakingRate } = await request.json();
+    const { text, provider, model, voiceId, models, config, speakingRate, pitchShift, speed } = await request.json();
 
     if (!text || typeof text !== 'string') {
       return new Response(JSON.stringify({ error: 'Text is required' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });
+    }
+
+    // Get user session for profile-aware TTS
+    const sessionCookie = cookies.get('mh_session');
+    let username = 'anonymous';
+
+    if (sessionCookie) {
+      const session = getSession(sessionCookie.value);
+      if (session) {
+        const user = getUser(session.userId);
+        if (user) {
+          username = user.username;
+        }
+      }
     }
 
     let audioBuffer: Buffer;
@@ -35,14 +54,17 @@ export const POST: APIRoute = async ({ request }) => {
         signal: request.signal,
         speakingRate,
         provider,
+        username,
       });
     } else {
       // Generate speech audio with optional overrides (single voice)
       audioBuffer = await generateSpeech(text, {
         signal: request.signal,
-        voice: model, // Use 'voice' parameter (works for both providers)
-        speakingRate,
+        voice: voiceId || model, // Use voiceId (preferred) or model (legacy)
+        speakingRate: speakingRate || speed, // speakingRate for Piper, speed for SoVITS/RVC
+        pitchShift, // RVC-specific
         provider,
+        username,
       });
     }
 
@@ -71,10 +93,10 @@ export const POST: APIRoute = async ({ request }) => {
  * GET /api/tts
  * Get TTS status
  */
-export const GET: APIRoute = async () => {
+const getHandler: APIRoute = async () => {
   try {
     const { getTTSStatus } = await import('@metahuman/core');
-    const status = getTTSStatus();
+    const status = await getTTSStatus();
 
     return new Response(JSON.stringify(status), {
       status: 200,
@@ -88,3 +110,6 @@ export const GET: APIRoute = async () => {
     });
   }
 };
+
+export const POST = withUserContext(postHandler);
+export const GET = withUserContext(getHandler);

@@ -64,11 +64,11 @@ adaptive_auto (future)
 
 | Role        | Session Duration | Read Access                                          | Write Access | Notes |
 |-------------|------------------|------------------------------------------------------|--------------|-------|
-| `owner`     | 24 hours         | Own profile (`profiles/<owner>/…`) + shared assets   | Mode-dependent | Can switch modes, manage profiles, change settings. |
-| `guest`     | 1 hour           | Selected public profile (emulation only)             | **Denied**   | Forced into read-only emulation; memory writes blocked. |
-| `anonymous` | 30 minutes       | System health endpoints only                         | **Denied**   | Requests touching user data receive `401/403`. |
+| `owner`     | 24 hours         | Own profile (`profiles/<username>/…`) + shared assets   | Mode-dependent | Can switch modes, manage profiles, change settings, manage other users. |
+| `guest`     | 1 hour           | Own profile (`profiles/<username>/…`)                 | Mode-dependent | Can modify own data within trust level limits. Cannot manage other users. |
+| `anonymous` | 30 minutes       | Public profiles only (read-only emulation)           | **Denied**   | Requests touching user data receive `401/403`. Can browse public personas. |
 
-Switching users always tears down the existing context. Background agents iterate through the registered users by repeatedly invoking `withUserContext`, ensuring each profile is processed in isolation.
+Switching users always tears down the existing context. Background agents iterate through the registered users by repeatedly invoking `withUserContext`, ensuring each profile is processed in isolation with appropriate permissions.
 
 ### Trust Levels and Skill Availability
 
@@ -292,5 +292,46 @@ When a skill requires approval:
 ```bash
 ./bin/mh approvals clear
 ```
+
+### Per-User Configuration Security
+
+Security is enforced at the configuration level through per-user settings:
+
+- **User-specific configs**: Each user has isolated configuration files in `profiles/<username>/etc/`
+- **Path resolution**: The `paths` proxy automatically resolves to the correct user directory based on context
+- **Model isolation**: Users can have different model preferences without affecting others
+- **Privacy controls**: Users control their own profile visibility (public/private) independently
+
+### CLI Security
+
+The CLI enforces security through user contexts:
+
+- All commands can be run as specific users: `mh --user <username> <command>`
+- Commands automatically operate within the specified user's profile space
+- Permission checks are performed based on the active user context
+- Audit logs are properly attributed to the executing user
+
+### Special Security States
+
+#### Wetware Deceased Mode
+With the `WETWARE_DECEASED=true` environment variable:
+- **Dual Consciousness Mode** is permanently disabled
+- System operates as an independent digital consciousness
+- Appropriate permissions maintained based on remaining cognitive modes
+- Banner displayed in UI indicating operational state
+
+### Session Management Security
+
+- **HTTPOnly cookies**: Session cookies (`mh_session`) are HTTPOnly to prevent XSS attacks
+- **Automatic expiration**: Sessions expire based on user role (24h owner, 1h guest, 30min anonymous)
+- **Context isolation**: Each request operates within a specific user context that restricts file access
+- **Audit logging**: All security-relevant events are logged with user attribution
+
+### File System Permissions
+
+- **Profile isolation**: Each user's data is stored in `profiles/<username>/` with strict access controls
+- **Shared assets**: Common resources like voice models are stored in `out/voices/` and accessible to all users
+- **Config isolation**: Each user gets a copy of configuration files in their `etc/` directory
+- **Audit trail**: All file access and modifications are logged with user context and timestamps
 
 ---

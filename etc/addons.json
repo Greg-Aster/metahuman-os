@@ -5,7 +5,7 @@
       "name": "GPT-SoVITS TTS",
       "description": "Advanced voice cloning with few-shot learning. Enables highly realistic voice synthesis from minimal training data.",
       "category": "tts",
-      "enabled": true,
+      "enabled": false,
       "installed": true,
       "size": "~2.5 GB",
       "requirements": {
@@ -37,6 +37,47 @@
       "status": {
         "command": "mh sovits status"
       }
+    },
+    "rvc": {
+      "name": "RVC Voice Cloning",
+      "description": "High-fidelity voice cloning using Retrieval-based Voice Conversion. Requires training but delivers outstanding quality with fine-grained pitch control.",
+      "category": "tts",
+      "enabled": true,
+      "installed": true,
+      "size": "~2 GB",
+      "requirements": {
+        "python": ">=3.9",
+        "gpu": "recommended",
+        "vram": "4GB+ recommended"
+      },
+      "dependencies": {
+        "pip": [
+          "torch",
+          "librosa",
+          "soundfile",
+          "scipy",
+          "numpy",
+          "faiss-cpu",
+          "praat-parselmouth"
+        ],
+        "system": [
+          "ffmpeg"
+        ]
+      },
+      "installation": {
+        "script": "bin/install-rvc.sh",
+        "commands": [
+          "mh rvc install"
+        ]
+      },
+      "configuration": {
+        "file": "etc/voice.json",
+        "ui": "VoiceSettings"
+      },
+      "status": {
+        "command": "mh rvc status"
+      },
+      "note": "Requires 10-15 minutes of training audio. Two-stage synthesis: Piper generates base audio, RVC applies voice conversion."
     },
     "whisper-stt": {
       "name": "Whisper Speech-to-Text",

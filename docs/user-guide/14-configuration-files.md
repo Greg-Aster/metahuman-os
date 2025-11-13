@@ -29,6 +29,7 @@ System-wide infrastructure settings shared across all users:
 - `cloudflare.json` - Tunnel configuration
 - `network.json` - Network settings
 - `lifeline.json` - System service configuration
+- `runtime.json` - Runtime feature flags and implementation choices
 
 **Path Resolution**: The `paths` proxy in `@metahuman/core` automatically resolves to the correct user-specific directory based on session context. For example, `paths.etc` resolves to `profiles/greggles/etc/` for owner "greggles" or `profiles/guest/etc/` for guest sessions.
 
@@ -38,6 +39,46 @@ System-wide infrastructure settings shared across all users:
 For detailed information on multi-user profiles and guest access, see [Multi-User Profiles & Guest Mode](19-multi-user-profiles.md).
 
 ---
+
+### `etc/runtime.json` - Runtime Feature Flags
+
+This configuration file allows you to control which implementations of various components are used, particularly for the Operator agent's reasoning engine.
+
+**Structure:**
+```json
+{
+  "operator": {
+    "reactV2": true,
+    "useReasoningService": false
+  }
+}
+```
+
+**Configuration Options:**
+
+**Operator Reasoning Engine:**
+- `operator.reactV2`: When `true`, uses the modern step-by-step reasoning approach; when `false`, uses the legacy upfront planning approach
+- `operator.useReasoningService`: When `true`, uses the extracted ReasoningEngine service; when `false`, uses the inline implementation
+
+**Available Operator Implementations:**
+
+1. **V2 Service (ReasoningEngine)** - `reactV2=true, useReasoningService=true`
+   - Extracted into reusable `@metahuman/core/reasoning` module
+   - Enhanced error recovery with 7 error types
+   - Failure loop detection
+   - Multiple observation modes (Verbatim, Structured, Narrative)
+   - SSE event streaming
+
+2. **V2 Inline** - `reactV2=true, useReasoningService=false` (Default)
+   - Modern Reason + Act loop with inline implementation
+   - Plans one step at a time based on actual observed results
+   - Never hallucinates data - only uses what it observes
+   - Max 10 iterations with intelligent completion detection
+
+3. **V1 Legacy** - `reactV2=false, useReasoningService=false`
+   - Original 3-phase flow (planner → executor → critic)
+   - Plans all steps upfront (before seeing any results)
+   - Can hallucinate filenames it hasn't observed yet
 
 ### `.env` - Environment Configuration
 This file in the project root allows you to configure system behavior and activate special states.
@@ -51,6 +92,10 @@ This file in the project root allows you to configure system behavior and activa
 - `WETWARE_DECEASED=true`
   - **Purpose**: Simulates the scenario where the biological user is deceased, and the MetaHuman OS is operating as an independent digital consciousness.
   - **Effect**: Disables **Dual Consciousness Mode**, as there is no longer a living "wetware" counterpart to be in sync with. Agent and Emulation modes remain available. A banner is displayed in the UI.
+
+- `HEADLESS_RUNTIME=true`
+  - **Purpose**: Enables headless runtime mode for remote access.
+  - **Effect**: Pauses all autonomous agents while keeping web UI and tunnel running. Only essential `headless-watcher` service runs. Reduces resource conflicts when accessing system remotely.
 
 #### 3-Layer Cognitive Architecture (Phase 4)
 
@@ -474,8 +519,8 @@ The scheduler-service watches `profiles/<username>/etc/agents.json` for changes 
 - Adjust intervals and schedules
 - Add new agents without downtime
 
-**Backward Compatibility:**
-The `boredom-service` (`profiles/<username>/etc/boredom.json`) continues to work and automatically syncs its configuration to the agent scheduler for the `reflector` and `boredom-maintenance` agents.
+**Mind-Wandering Configuration:**
+Mind-wandering (reflection triggering) is now configured directly via the web UI (Settings → Boredom Control), which updates the `boredom-maintenance` agent in `etc/agents.json`. The legacy `etc/boredom.json` file is maintained for the `showInChat` setting but is no longer the primary configuration source.
 
 ### `profiles/<username>/etc/sleep.json` - Sleep & Dreaming Configuration
 Controls the nightly sleep window, dreaming system, and model adaptation:

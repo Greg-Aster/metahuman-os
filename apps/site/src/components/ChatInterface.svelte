@@ -1325,27 +1325,57 @@ let reasoningStages: ReasoningStage[] = [];
     border-left: 3px solid rgba(139,92,246,0.6);
   }
 
-  /* Reply-to system: selected message highlighting */
-  .message-selected {
-    outline: 2px solid rgba(167, 139, 250, 0.5);
-    outline-offset: 2px;
-    background: rgba(167, 139, 250, 0.05);
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .message-selected:hover {
-    outline-color: rgba(167, 139, 250, 0.8);
-    background: rgba(167, 139, 250, 0.1);
-  }
-
+  /* Message interaction styles */
   .message {
     cursor: pointer;
-    transition: background 0.15s ease;
   }
 
-  .message:hover:not(.message-selected) {
-    background: rgba(167, 139, 250, 0.03);
+  /* Make message-content positioned so mic button can be absolutely positioned inside */
+  .message-content {
+    position: relative;
+    padding-bottom: 2rem; /* Extra space for mic button */
+  }
+
+  /* Hover effect - add subtle overlay to message bubble */
+  .message:hover:not(.message-selected) .message-content {
+    box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.15) inset;
+  }
+
+  /* Reply-to system: selected message highlighting */
+  .message-selected .message-content {
+    box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.4) inset !important;
+  }
+
+  .message-selected:hover .message-content {
+    box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.6) inset !important;
+  }
+
+  /* Show mic button on hover - override global styles for better visibility */
+  .msg-mic-btn {
+    opacity: 0.3;
+    background: rgba(139, 92, 246, 0.15) !important;
+    color: rgba(139, 92, 246, 0.9) !important;
+  }
+
+  :global(.dark) .msg-mic-btn {
+    background: rgba(167, 139, 250, 0.2) !important;
+    color: rgba(167, 139, 250, 0.95) !important;
+  }
+
+  .message:hover .msg-mic-btn {
+    opacity: 1;
+  }
+
+  .msg-mic-btn:hover {
+    opacity: 1 !important;
+    transform: scale(1.15);
+    background: rgba(139, 92, 246, 0.25) !important;
+    color: rgba(139, 92, 246, 1) !important;
+  }
+
+  :global(.dark) .msg-mic-btn:hover {
+    background: rgba(167, 139, 250, 0.3) !important;
+    color: rgba(167, 139, 250, 1) !important;
   }
 
   /* Reply indicator styling */

@@ -59,26 +59,57 @@ export const POST: APIRoute = async ({ request }) => {
 
 async function toggleAddonConfiguration(addonId: string, enabled: boolean): Promise<void> {
   const rootPath = path.resolve(process.cwd(), '../..');
+  const voiceConfigPath = path.join(rootPath, 'etc', 'voice.json');
+  const addonsConfigPath = path.join(rootPath, 'etc', 'addons.json');
 
-  switch (addonId) {
-    case 'gpt-sovits': {
-      // Update voice.json provider setting
-      const voiceConfigPath = path.join(rootPath, 'etc', 'voice.json');
+  // Handle TTS provider addons (gpt-sovits, rvc, piper)
+  const ttsProviders = ['gpt-sovits', 'rvc'];
 
-      if (fs.existsSync(voiceConfigPath)) {
-        const voiceConfig = JSON.parse(fs.readFileSync(voiceConfigPath, 'utf-8'));
-        // Only change provider if enabling and provider is not already set
-        if (enabled && voiceConfig.tts.provider !== 'gpt-sovits') {
-          // Don't automatically switch - let user choose
-          // voiceConfig.tts.provider = 'gpt-sovits';
-        }
-        // fs.writeFileSync(voiceConfigPath, JSON.stringify(voiceConfig, null, 2));
-      }
-      break;
+  if (ttsProviders.includes(addonId)) {
+    if (!fs.existsSync(voiceConfigPath)) {
+      return; // Voice config doesn't exist, skip
     }
 
-    default:
-      // No configuration changes needed
-      break;
+    const voiceConfig = JSON.parse(fs.readFileSync(voiceConfigPath, 'utf-8'));
+    const addonsConfig = JSON.parse(fs.readFileSync(addonsConfigPath, 'utf-8'));
+
+    if (enabled) {
+      // Enable this TTS provider - disable conflicting ones
+      const providerMap: Record<string, string> = {
+        'gpt-sovits': 'sovits',
+        'rvc': 'rvc'
+      };
+
+      const newProvider = providerMap[addonId];
+
+      if (newProvider) {
+        // Set this as the active provider
+        voiceConfig.tts.provider = newProvider;
+
+        // Disable other TTS addons
+        for (const otherProvider of ttsProviders) {
+          if (otherProvider !== addonId && addonsConfig.addons[otherProvider]) {
+            addonsConfig.addons[otherProvider].enabled = false;
+          }
+        }
+
+        // Save both configs
+        fs.writeFileSync(voiceConfigPath, JSON.stringify(voiceConfig, null, 2));
+        fs.writeFileSync(addonsConfigPath, JSON.stringify(addonsConfig, null, 2));
+      }
+    } else {
+      // Disabling - fall back to piper (default)
+      const currentProvider = voiceConfig.tts.provider;
+      const providerMap: Record<string, string> = {
+        'gpt-sovits': 'sovits',
+        'rvc': 'rvc'
+      };
+
+      // If this addon's provider is active, switch to piper
+      if (currentProvider === providerMap[addonId]) {
+        voiceConfig.tts.provider = 'piper';
+        fs.writeFileSync(voiceConfigPath, JSON.stringify(voiceConfig, null, 2));
+      }
+    }
   }
 }

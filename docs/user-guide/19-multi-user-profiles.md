@@ -1,10 +1,11 @@
 # Multi-User Profiles & Guest Mode
 
 **MetaHuman OS** now supports multiple users with independent configurations, memories, and personas. This enables:
-- Guest users to explore public profiles
+- Owner and guest user accounts with role-based access
 - Independent settings per user
 - Profile switching and persona merging
 - Complete data isolation
+- CLI access with per-user context using `--user` flag
 
 ---
 
@@ -12,46 +13,117 @@
 
 ### User Roles & Permission Tiers
 
-MetaHuman OS implements a three-tier permission system to ensure security and data isolation:
+MetaHuman OS implements a role-based permission system to ensure security and data isolation:
 
-1. **Owner (Admin)** - Full system access
-   - Can create, edit, and delete any user profile
-   - Can modify system code and configurations
-   - Can access all profiles and their data
-   - Can edit documentation
-   - Full operator and training access
-
-2. **Standard User** - Own profile access
+1. **Owner** - Full system access
+   - Can create, edit, and delete user profiles
    - Full read/write access to own profile directory (`profiles/{username}/`)
-   - Read-only access to documentation (`docs/`)
+   - Can access and manage all user accounts via web UI and CLI
+   - Can modify own configurations and data
+   - Full operator and training access for own profile
+   - Can set other users' profile visibility (public/private)
+
+2. **Guest** - Limited profile access
+   - Full read/write access to own profile directory (`profiles/{username}/`)
+   - Can modify own persona and settings
    - Cannot access other users' profiles
    - Cannot modify system configurations
    - Can use operator and training features for own profile
+   - Cannot set profile visibility for other users
 
-3. **Guest** - Read-only access
-   - Can read documentation (`docs/`)
-   - Can view public profiles (read-only)
-   - Cannot write memories or modify any data
-   - No operator or training access
+3. **Anonymous** - Unauthenticated users
+   - Forced into read-only emulation mode
+   - Can browse public profiles via web UI
+   - Cannot save memories, modify data, or create accounts
+   - Cannot run CLI commands (except help)
 
-4. **Anonymous** - Unauthenticated users
-   - Read-only access (emulation mode only)
-   - Can chat with public profiles
-   - Cannot save memories or modify data
+### User Management
+
+**CLI Commands for User Management:**
+- `mh user list` - List all registered users
+- `mh user whoami` - Show current user context
+- `mh user info <username>` - Show detailed info for a specific user
+
+**CLI Commands with User Context:**
+- `mh --user <username> <command>` - Run any command as specific user
+- `mh -u <username> <command>` - Short form for user context
+
+**Examples:**
+```bash
+# View current user
+mh user whoami
+
+# List all users
+mh user list
+
+# Check specific user info
+mh user info alice
+
+# Run commands as different users
+mh --user alice capture "Alice did this"
+mh -u bob task add "Bob's task"
+mh --user charlie remember "project notes"
+```
 
 ### Profile Architecture
 
 Each user has their own isolated directory:
 ```
 profiles/
-├── {username}/          # Owner profile
-│   ├── persona/         # Personality & facets
-│   ├── memory/          # Memories & reflections
-│   ├── etc/             # User-specific configs
-│   └── logs/            # User activity logs
-└── guest/               # Shared guest profile
-    └── [same structure]
+├── {username}/          # Individual user profile
+│   ├── etc/             # User-specific configurations
+│   ├── memory/          # User's memories (episodic, tasks, etc.)
+│   ├── persona/         # User's persona configuration
+│   ├── out/             # User's generated artifacts (voice training, etc.)
+│   └── logs/            # User-specific logs and audit trail
+└── shared/              # System-wide shared assets (voices, models)
 ```
+
+**Per-User Config Files:**
+When users are created, they get isolated copies of configuration files:
+- `etc/voice.json` - User-specific voice settings
+- `etc/models.json` - User-specific model preferences
+- `etc/cognitive-layers.json` - Cognitive mode settings
+- `etc/training.json` - Training parameters
+- `etc/boredom.json` - Boredom service configuration
+- `etc/sleep.json` - Sleep/dream time windows
+- `etc/autonomy.json` - Autonomy level configuration
+- `etc/trust-coupling.json` - Trust level mappings
+- `etc/agents.json` - Agent execution schedules
+- `etc/auto-approval.json` - Auto-approval rules
+- `etc/curiosity.json` - Curiosity system configuration
+- `etc/adapter-builder.json` - Adapter building settings
+- `etc/logging.json` - Logging preferences
+- `etc/audio.json` - Audio processing configuration
+
+### Authentication Database
+
+User credentials and metadata are stored in:
+- `persona/users.json` - Hashed credentials, roles, profile metadata
+- This file is critical for system integrity - back it up regularly
+
+---
+
+## Getting Started as an Owner
+
+### 1. Create the First Owner Account
+
+The first user to register via the web UI automatically becomes the **owner**:
+
+1. Start the web UI: `cd apps/site && pnpm dev`
+2. Visit `http://localhost:4321`
+3. Click **Create Account**
+4. Fill in your username, password, and optional display name
+5. The first account is automatically granted the `owner` role
+
+### 2. Manage Your Profile
+
+As an owner, you can:
+- Update your persona in `profiles/{yourname}/persona/`
+- Configure your settings in `profiles/{yourname}/etc/`
+- Mark your profile as public/private via web UI
+- Manage other users through the web UI
+- Access your profile via CLI using `mh --user {yourname}` (optional, as owner is default context)
 
 ---
 
@@ -59,25 +131,139 @@ profiles/
 
 ### 1. Access the Web UI
 
-When you first visit MetaHuman OS without logging in, you're an **anonymous user** with limited access.
+When you first visit MetaHuman OS, you'll see the authentication options.
 
-### 2. Select a Public Profile
+### 2. Create a Guest Account (for full access) or Browse Public Profiles (for read-only)
 
-To interact with the system, select a public profile:
+**Option A: Create a Guest Account**
+1. Click **Login** in the top right
+2. Click **Create Account** (your account will be created as guest role)
+3. Enter your credentials
+4. You now have your own profile space with read/write access
 
-1. Look for the **profile selector** in the UI (usually in header/sidebar)
-2. Choose from available public profiles:
-   - Individual profiles (e.g., "greggles")
-   - Special merged profile: "Mutant Super Intelligence"
-3. Click to activate
+**Option B: Browse Public Profiles (Anonymous Access)**
+1. Click **Continue as Guest** (no account creation required)
+2. You'll be prompted to select from **public** personas only
+3. You can interact with the selected profile, but in read-only emulation mode
+4. Private profiles are hidden from anonymous users
 
-**What happens:**
-- Persona data copied to guest profile
-- All 14 config files copied
-- Facet files copied (poet, thinker, friend, antagonist)
-- Session updated with selected profile
+### 3. Interact with the System
 
-### 3. Interact with the Persona
+**As a logged-in user (owner or guest):**
+- Full access to your own profile data
+- Can create memories, tasks, and modify your persona
+- Can run autonomous agents for your profile
+- Can train voice models using your own data
+
+**As an anonymous user browsing public profiles:**
+- Read-only access to selected public profile
+- Can chat with the persona in emulation mode
+- Cannot modify data or run agents
+- Session lasts 30 minutes
+
+---
+
+## Profile Visibility and Privacy
+
+### Setting Profile Visibility
+
+Owners can control whether their profile appears to anonymous users:
+
+1. Navigate to **System → Settings** in the web UI
+2. Find **Profile Visibility** section
+3. Choose:
+   - `Private` – Hidden from anonymous users (default)
+   - `Public` – Visible to anonymous users selecting "Continue as Guest"
+4. The visibility status appears in the sidebar next to your profile name
+
+### Privacy Considerations
+
+- **Voice training data** always remains private to the user, even when profile is public
+- **Memory and persona data** for public profiles becomes accessible to anonymous users in emulation mode
+- **Configuration files** are copied to guest profiles when they select a public profile to browse
+- **Personal logs** are never shared with other users
+
+---
+
+## Command Line Interface with Multiple Users
+
+### Multi-User CLI Usage
+
+All CLI commands can be run in the context of specific users:
+
+```bash
+# Run command as specific user
+mh --user <username> <command>
+
+# Short form
+mh -u <username> <command>
+
+# Examples
+mh --user alice capture "Had coffee with Bob"
+mh -u bob task add "Review PR"
+mh --user charlie remember "project notes"
+mh --user alice agent run organizer
+mh --user bob ollama status
+```
+
+### User Context Flow
+
+When you use `--user` or `-u` flags:
+1. The system validates that the user exists
+2. Establishes a user context using the `withUserContext` middleware
+3. All file operations are scoped to that user's profile directory
+4. All audit logs are attributed to that user
+5. All configuration is loaded from that user's `etc/` directory
+
+### Checking User Context
+
+```bash
+# Check which user context you're currently running in
+mh user whoami
+
+# List all registered users
+mh user list
+
+# Get details about a specific user
+mh user info <username>
+```
+
+### Admin Privileges
+
+- Only **owner** users can perform administrative functions
+- Admin functions include managing other users, system configuration files, and cross-user operations
+- These privileges are determined by the `ADMIN_USERS` environment variable
+- Regular users are restricted to their own profile data and cannot access other users' files
+
+---
+
+## Authentication Flow and Sessions
+
+### Session Management
+
+- **Owner sessions**: 24 hours when authenticated
+- **Guest sessions**: 1 hour when authenticated
+- **Anonymous sessions**: 30 minutes when browsing public profiles
+- Sessions are managed with HTTPOnly cookies (`mh_session`)
+- To log out immediately, use the profile menu in the header
+
+### Cookie-Based Authentication
+
+All requests resolve within a user context that carries:
+- Username and role
+- Profile paths (automatically resolved to correct user's directories)
+- Session metadata
+- Audit trail attribution
+
+### Migration from Single-User
+
+Existing single-user installations can be migrated using:
+```bash
+pnpm tsx scripts/migrate-to-profiles.ts --username <owner>
+```
+This moves the root-level memory, persona, and etc directories into `profiles/<owner>/` while preserving shared assets like voice models.
+
+---
 
 Once a profile is selected:
 - Chat with the persona

@@ -51,6 +51,7 @@ import {
 import { personaCommand } from './commands/persona.js';
 import { adapterCommand } from './commands/adapter.js';
 import { sovitsCommand } from './commands/sovits.js';
+import { rvcCommand } from './commands/rvc.js';
 
 const agentScriptOverrides: Record<string, string> = {
   curiosity: 'curiosity-service.ts',
@@ -1862,6 +1863,9 @@ async function main() {
         break;
       case 'sovits':
         await sovitsCommand(args);
+        break;
+      case 'rvc':
+        await rvcCommand(args);
         break;
       case 'voice':
         voiceCmd(args);

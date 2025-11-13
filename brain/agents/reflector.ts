@@ -58,8 +58,9 @@ async function getAllMemories() {
         try {
           const content = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
 
-          // Skip self-referential reflections (avoid echo chamber)
-          if (content.type === 'reflection' || content.metadata?.type === 'reflection') {
+          // Skip self-referential reflections and inner dialogue (avoid echo chamber)
+          if (content.type === 'reflection' || content.type === 'inner_dialogue' ||
+              content.metadata?.type === 'reflection' || content.metadata?.type === 'inner_dialogue') {
             continue;
           }
 
@@ -196,7 +197,8 @@ async function getAssociativeMemoryChain(chainLength: number = 3): Promise<any[]
       try {
         const memContent = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
         (memContent as any).__file = fullPath;
-        if (memContent.type !== 'reflection' && memContent.metadata?.type !== 'reflection') {
+        if (memContent.type !== 'reflection' && memContent.type !== 'inner_dialogue' &&
+            memContent.metadata?.type !== 'reflection' && memContent.metadata?.type !== 'inner_dialogue') {
           relatedMemories.push(memContent);
         }
       } catch {
@@ -347,8 +349,8 @@ What am I noticing? What thoughts or feelings are emerging?
     if (reflection) {
       console.log(`[reflector] Generated new insight: "${reflection}"`);
 
-      // Capture the reflection as a memory
-      const reflectionMemoryPath = captureEvent(reflection, { type: 'reflection', tags: ['idle-thought', 'self-reflection'] });
+      // Capture the reflection as an inner dialogue (never shows in main chat)
+      const reflectionMemoryPath = captureEvent(reflection, { type: 'inner_dialogue', tags: ['idle-thought', 'self-reflection', 'inner'] });
       const reflectionRelPath = path.relative(paths.root, reflectionMemoryPath);
 
       const reflectionWordCount = reflection.split(/\s+/).filter(Boolean).length;
@@ -389,8 +391,8 @@ Summarize the core takeaway. ${conciseHint}
 
         if (reflectionSummary) {
           captureEvent(reflectionSummary, {
-            type: 'reflection_summary',
-            tags: ['idle-thought', 'summary', 'concise'],
+            type: 'inner_dialogue',
+            tags: ['idle-thought', 'summary', 'concise', 'inner'],
             links: [{ type: 'reflection', target: reflectionRelPath }]
           });
 
@@ -445,8 +447,8 @@ Compose an extended conclusion (2–3 sentences, <= 120 words) that captures the
 
           if (extendedSummary) {
             captureEvent(extendedSummary, {
-              type: 'reflection_summary',
-              tags: ['idle-thought', 'summary', 'extended'],
+              type: 'inner_dialogue',
+              tags: ['idle-thought', 'summary', 'extended', 'inner'],
               links: [{ type: 'reflection', target: reflectionRelPath }]
             });
 

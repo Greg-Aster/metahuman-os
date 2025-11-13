@@ -93,6 +93,18 @@
       "autoRestart": true,
       "maxRetries": 2,
       "comment": "Performs research on pending curiosity questions by searching memories and generating context notes. Processes one question per cycle."
+    },
+    "inner-curiosity": {
+      "id": "inner-curiosity",
+      "enabled": true,
+      "type": "interval",
+      "priority": "low",
+      "agentPath": "inner-curiosity.ts",
+      "interval": 3600,
+      "runOnBoot": false,
+      "autoRestart": true,
+      "maxRetries": 2,
+      "comment": "Generates self-directed questions and answers them using local memory. Saves as inner_dialogue (never shows in chat)."
     }
   }
 }

@@ -20,15 +20,19 @@ import type {
 interface SoVITSRequest {
   text: string;
   text_lang?: string;
+  text_language?: string;
   ref_audio_path?: string;
+  refer_wav_path?: string;
   prompt_text?: string;
   prompt_lang?: string;
+  prompt_language?: string;
   top_k?: number;
   top_p?: number;
   temperature?: number;
   text_split_method?: string;
   batch_size?: number;
   speed_factor?: number;
+  speed?: number;
   ref_text_free?: boolean;
 }
 
@@ -42,6 +46,19 @@ export class SoVITSService implements ITextToSpeechService {
     fallbackService?: ITextToSpeechService
   ) {
     this.fallbackService = fallbackService;
+
+    // Auto-create reference audio directory if it doesn't exist
+    const speakerDir = path.join(this.config.referenceAudioDir, this.config.speakerId);
+    if (!fs.existsSync(speakerDir)) {
+      fs.mkdirSync(speakerDir, { recursive: true });
+      audit({
+        level: 'info',
+        category: 'system',
+        event: 'sovits_directory_created',
+        details: { speakerDir },
+        actor: 'system',
+      });
+    }
   }
 
   async synthesize(text: string, options?: TTSSynthesizeOptions): Promise<Buffer> {
@@ -110,15 +127,47 @@ export class SoVITSService implements ITextToSpeechService {
       // Find reference audio for speaker
       const referenceAudio = this._findReferenceAudio(speakerId);
 
-      // Prepare request payload
+      // GPT-SoVITS requires reference audio - fallback if not available
+      if (!referenceAudio) {
+        if (this.config.autoFallbackToPiper && this.fallbackService) {
+          audit({
+            level: 'info',
+            category: 'action',
+            event: 'tts_fallback_to_piper',
+            details: { reason: 'No reference audio found for speaker: ' + speakerId },
+            actor: 'system',
+          });
+          return this.fallbackService.synthesize(text, { speakingRate: speed, signal });
+        }
+        throw new Error(`No reference audio found for speaker: ${speakerId}`);
+      }
+
+      // Read transcript file if it exists (for prompt_text)
+      const transcriptPath = referenceAudio.replace(/\.(wav|mp3|flac)$/i, '.txt');
+      let promptText: string | undefined;
+      try {
+        if (fs.existsSync(transcriptPath)) {
+          promptText = fs.readFileSync(transcriptPath, 'utf-8').trim();
+        }
+      } catch {
+        // Transcript optional
+      }
+
+      const effectivePromptText = (promptText && promptText.trim().length > 0)
+        ? promptText.trim()
+        : 'Reference audio sample';
+
+      // Prepare request payload for api.py (simple interface)
       const payload: SoVITSRequest = {
         text,
-        text_lang: 'en',
-        ref_audio_path: referenceAudio,
-        prompt_lang: 'en',
+        text_language: 'en', // api.py uses text_language not text_lang
+        refer_wav_path: referenceAudio, // api.py uses refer_wav_path
+        prompt_text: effectivePromptText,
+        prompt_language: 'en', // api.py uses prompt_language not prompt_lang
         temperature,
-        speed_factor: speed,
-        ref_text_free: !referenceAudio, // If no reference, use zero-shot mode
+        top_k: 5,
+        top_p: 1,
+        speed, // api.py supports speed parameter
       };
 
       // Make HTTP request to SoVITS server
@@ -137,7 +186,9 @@ export class SoVITSService implements ITextToSpeechService {
         signal.addEventListener('abort', onAbort, { once: true });
       }
 
-      const response = await fetch(`${this.config.serverUrl}/tts`, {
+      // Use root endpoint (/) for api.py, or /tts for api_v2.py
+      // The old api.py only has / endpoint
+      const response = await fetch(`${this.config.serverUrl}/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -235,14 +286,18 @@ export class SoVITSService implements ITextToSpeechService {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-      const response = await fetch(`${this.config.serverUrl}/health`, {
+      // GPT-SoVITS doesn't have a /health endpoint, so we check the root endpoint
+      // Any response (even 400) means the server is alive
+      const response = await fetch(`${this.config.serverUrl}/`, {
         method: 'GET',
         signal: controller.signal,
       }).catch(() => null);
 
       clearTimeout(timeoutId);
 
-      return response?.ok ?? false;
+      // Accept any response (including 400) as a sign the server is running
+      // 400 is expected when hitting / without parameters
+      return response !== null;
     } catch {
       return false;
     }
@@ -252,11 +307,26 @@ export class SoVITSService implements ITextToSpeechService {
     const speakerDir = path.join(this.config.referenceAudioDir, speakerId);
 
     if (!fs.existsSync(speakerDir)) {
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'sovits_reference_lookup',
+        details: { speakerId, speakerDir, exists: false },
+        actor: 'system',
+      });
       return undefined;
     }
 
     // Look for reference audio files (wav, mp3, flac)
     const files = fs.readdirSync(speakerDir).filter((f) => /\.(wav|mp3|flac)$/i.test(f));
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'sovits_reference_lookup',
+      details: { speakerId, speakerDir, exists: true, filesFound: files.length, files },
+      actor: 'system',
+    });
 
     if (files.length === 0) {
       return undefined;

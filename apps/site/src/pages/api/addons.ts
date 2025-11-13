@@ -70,6 +70,10 @@ async function checkAddonInstalled(addonId: string, addon: any): Promise<boolean
       const sovitsDir = path.join(rootPath, 'external', 'gpt-sovits');
       return fs.existsSync(sovitsDir);
     }
+    case 'rvc': {
+      const rvcDir = path.join(rootPath, 'external', 'applio-rvc');
+      return fs.existsSync(rvcDir);
+    }
     case 'whisper-stt': {
       // Check if whisper binary exists
       const whisperBin = path.join(rootPath, 'bin', 'whisper');

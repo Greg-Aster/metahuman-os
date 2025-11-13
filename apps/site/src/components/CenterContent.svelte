@@ -47,6 +47,7 @@ let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' 
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'setup' | 'datasets' | 'monitor' | 'adapters' = 'datasets'
 let systemTab: 'persona' | 'lifeline' | 'settings' = 'persona'
+let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
 
 // Legacy expansion state (no longer used but kept to prevent errors)
 let expanded: Record<string, boolean> = {}
@@ -95,6 +96,18 @@ let personaLoaded = false
 let personaError: string | null = null
 let personaSaving = false
 let personaSuccess: string | null = null
+
+async function loadVoiceProvider() {
+  try {
+    const res = await fetch('/api/voice-settings');
+    if (res.ok) {
+      const data = await res.json();
+      currentVoiceProvider = data.provider || 'rvc';
+    }
+  } catch (e) {
+    console.error('[CenterContent] Error loading voice provider:', e);
+  }
+}
 
 async function loadEvents() {
   if ($activeView !== 'memory') return;
@@ -162,6 +175,10 @@ async function loadEvents() {
 
 $: if ($activeView === 'memory') {
   loadEvents();
+}
+
+$: if ($activeView === 'voice' && voiceTab === 'training') {
+  loadVoiceProvider();
 }
 
 // Reset sub-tabs when navigating away from parent views
@@ -928,7 +945,7 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
       <div class="view-content">
         <div class="tab-group">
           <button class="tab-button" class:active={voiceTab === 'upload'} on:click={() => voiceTab = 'upload'}>Upload & Transcribe</button>
-          <button class="tab-button" class:active={voiceTab === 'training'} on:click={() => voiceTab = 'training'}>Voice Clone Training</button>
+          <button class="tab-button" class:active={voiceTab === 'training'} on:click={() => { voiceTab = 'training'; loadVoiceProvider(); }}>Voice Clone Training</button>
           <button class="tab-button" class:active={voiceTab === 'settings'} on:click={() => voiceTab = 'settings'}>Voice Settings</button>
         </div>
         {#if voiceTab === 'upload'}
@@ -937,7 +954,7 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
             <AudioRecorder />
           </div>
         {:else if voiceTab === 'training'}
-          <VoiceTrainingWidget />
+          <VoiceTrainingWidget provider={currentVoiceProvider} />
         {:else if voiceTab === 'settings'}
           <VoiceSettings />
         {/if}

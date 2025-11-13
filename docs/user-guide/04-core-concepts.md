@@ -56,6 +56,7 @@ Structured storage of your experiences, knowledge, and learnings:
 - Timeline of events, conversations, observations with full context
 - Stored as JSON files in `memory/episodic/YYYY/`
 - Each event includes timestamp, content, tags, entities, and metadata
+- **Per-User Isolation**: Each user has their own episodic memory in `profiles/<username>/memory/episodic/`
 
 **Semantic Memory:** (Planned)
 - Facts, knowledge, learnings, concepts, and their relationships
@@ -78,6 +79,150 @@ Structured storage of your experiences, knowledge, and learnings:
 
 **Fast Retrieval:**
 - Vector search for semantic similarity
+
+### 3. Autonomous Agent System
+
+The system runs intelligent agents that process memories and perform tasks autonomously:
+
+**Agent Scheduler:**
+- Centralized management via `scheduler-service`
+- Configured through `etc/agents.json` with multiple trigger types:
+  - `interval`: Run agent every N seconds
+  - `time-of-day`: Run agent at specific time
+  - `event`: Run agent when specific events occur
+- Supports headless mode with reduced agent set
+- Single-instance protection via `running.json` registry
+
+**Key Agents:**
+- **Organizer**: Enriches memories with tags and entities
+- **Reflector**: Generates thoughtful reflections on recent events
+- **Boredom Service**: Triggers reflections during idle time
+- **Dreamer**: Creates surreal dream narratives during sleep cycle
+- **Sleep Service**: Orchestrates nightly pipeline (dreams, audio processing, learning)
+- **Ingestor**: Converts raw files to episodic memories
+- **Operator**: Executes complex multi-step tasks using skills
+- **Curiosity System**: Asks thoughtful questions to deepen understanding
+
+### 3a. ReasoningEngine (Operator)
+
+The operator agent uses a sophisticated reasoning system with multiple implementation levels:
+
+**Three Implementations Available:**
+
+#### V2 Service (Recommended) - ReasoningEngine
+- Extracted into reusable `@metahuman/core/reasoning` module
+- Enhanced error recovery with 7 error types and contextual suggestions
+- Failure loop detection to prevent repeated failures
+- Three observation modes: Verbatim, Structured, Narrative
+- Reasoning depth levels: 0 (off) to 3 (deep)
+- SSE event streaming for real-time progress
+
+#### V2 Inline (Default) - Modern Reason + Act
+- Plans one step at a time based on actual observed results
+- Never hallucinates data - only uses what it observes
+- Max 10 iterations with intelligent completion detection
+- Real-time streaming via Server-Sent Events
+
+#### V1 Legacy - Original 3-Phase Flow
+- Plans all steps upfront (before seeing any results)
+- Can hallucinate data it hasn't observed yet
+- Preserved for backward compatibility
+
+**Configuration** via `etc/runtime.json`:
+```json
+{
+  "operator": {
+    "reactV2": true,        // Use modern reasoning (true) vs legacy (false)
+    "useReasoningService": false  // Use extracted service (true) vs inline (false)
+  }
+}
+```
+
+### 4. Skills System (Executable Capabilities)
+
+Skills provide controlled interfaces for the AI to interact with the system:
+
+**Design Principles:**
+- Sandboxed execution with strict permission boundaries
+- Trust-aware availability and auto-execution
+- Fully audited with inputs, outputs, results
+- Risk-based approval requirements
+- Fuzzy paths by default (typos auto-corrected)
+
+**Skill Categories:**
+- `fs` - File system operations (read, write, list, etc.)
+- `memory` - Memory operations (search, create, update)
+- `agent` - Agent management (start, stop, status)
+- `shell` - Shell command execution (whitelisted)
+- `network` - Network operations (future)
+
+**Skill Execution Flow:**
+1. Operator requests skill execution
+2. Policy Engine checks permissions and trust level
+3. Validation and approval requirements applied
+4. Skill executes with full audit logging
+5. Results returned to operator for next steps
+
+### 5. Multi-User Context Management
+
+The system provides complete user isolation and context management:
+
+**User Context Architecture:**
+- Session-based user context via middleware
+- Per-user path resolution and file access
+- Role-based permissions (owner, guest, anonymous)
+- Secure session management with HTTPOnly cookies
+- Automatic context switching between users
+
+**Per-User Isolation:**
+- Each user has separate `profiles/<username>/` directory
+- Isolated memory, persona, config, and log files
+- User-specific configuration files in `etc/` subdirectories
+- Cross-user access strictly forbidden
+- Proper audit trail attribution to correct user
+
+### 6. Cognitive Modes
+
+Different operational paradigms for different use cases:
+
+**Dual Consciousness Mode** (Default):
+- Parallel intelligence that syncs with your thoughts
+- Memory capture and learning from interactions
+- Full autonomous operation with user oversight
+
+**Agent Mode**:
+- Command-driven assistance
+- Limited memory learning
+- Task-focused operation
+
+**Emulation Mode**:
+- Stable, non-learning conversation partner
+- Read-only operation
+- Used for guest access and high-security scenarios
+
+### 7. Security & Trust Framework
+
+Comprehensive security model with progressive autonomy:
+
+**Unified Security Policy:**
+- Centralized permission enforcement
+- Cognitive mode validation
+- User context validation
+- Per-user isolation enforcement
+
+**Trust Levels (Progressive Autonomy):**
+1. `observe` - Monitor only, learn patterns
+2. `suggest` - Propose actions, require approval
+3. `supervised_auto` - Execute within approved categories
+4. `bounded_auto` - Full autonomy within boundaries
+5. `adaptive_auto` - Self-expand boundaries (experimental)
+
+**Safety Mechanisms:**
+- Complete audit trail of all operations
+- Dry-run mode for previewing changes
+- Rate limits and confidence thresholds
+- Emergency stop and rollback capabilities
+- Approval queue for high-risk operations
 - Temporal queries for timeline navigation
 - Associative links between related memories
 - Tag-based filtering for quick categorization

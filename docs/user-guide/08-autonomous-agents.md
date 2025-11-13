@@ -21,12 +21,14 @@ All autonomous agents are now managed by a centralized **Agent Scheduler** servi
   - `activity`: Run agent after inactivity threshold (e.g., boredom maintenance after 15 minutes idle)
 - **Status Tracking**: Monitors agent execution count, errors, and last run time
 - **Headless Mode Support**: Automatically adjusts which agents run based on headless mode setting
+- **Single-Instance Protection**: Uses `running.json` registry to prevent duplicate agent instances
 
 **How it works:**
 - The `run-with-agents` wrapper automatically starts `scheduler-service` and `audio-organizer`
-- Individual agents are registered via the `registerAgent()` system
-- Agents run in user context using the `_bootstrap.ts` wrapper
-- The system checks for headless mode and adjusts accordingly
+- Individual agents are registered via the `registerAgent()` system and tracked in `logs/run/running.json`
+- Agents run in user context using the `_bootstrap.ts` wrapper from `brain/agents/`
+- The system checks for headless mode and only runs essential services (`headless-watcher`) when enabled
+- All agent processes are monitored and can be viewed with `mh agent ps`
 
 **Run as service:**
 ```bash
@@ -34,6 +36,21 @@ All autonomous agents are now managed by a centralized **Agent Scheduler** servi
 ```
 
 The scheduler-service is automatically started with the web UI via the `run-with-agents` wrapper and replaces individual agent timers with a more robust, centralized system.
+
+### Agent Execution and User Context
+
+All agents now run within a specific user context using the `_bootstrap.ts` wrapper from `brain/agents/`. This ensures:
+
+- **Per-user isolation**: Each agent operates within the correct user's profile space
+- **Security**: Agents access only authorized memory and configuration files
+- **Proper auditing**: All agent actions are logged with correct user context
+- **Configuration consistency**: Agents use user-specific settings from `profiles/{username}/etc/`
+
+The bootstrap wrapper handles:
+- Loading the correct user context based on the agent's intended user
+- Setting up file path resolution to the appropriate profile directory
+- Maintaining audit trail with proper user attribution
+- Managing model selection based on user preferences
 
 ### 1. Organizer Agent
 

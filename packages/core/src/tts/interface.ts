@@ -10,6 +10,8 @@ export interface TTSSynthesizeOptions {
   speakingRate?: number;
   /** Custom voice/model identifier */
   voice?: string;
+  /** Pitch shift in semitones (RVC only, -12 to +12) */
+  pitchShift?: number;
   /** Additional provider-specific options */
   [key: string]: any;
 }
@@ -64,10 +66,21 @@ export interface SoVITSConfig {
   autoFallbackToPiper: boolean;
 }
 
+export interface RVCConfig {
+  referenceAudioDir: string;
+  modelsDir: string;
+  speakerId: string;
+  pitchShift: number;
+  speed: number;
+  outputFormat: 'wav';
+  autoFallbackToPiper: boolean;
+}
+
 export interface TTSConfig {
-  provider: 'piper' | 'gpt-sovits';
+  provider: 'piper' | 'gpt-sovits' | 'rvc';
   piper: PiperConfig;
   sovits: SoVITSConfig;
+  rvc?: RVCConfig;
 }
 
 export interface CacheConfig {

@@ -162,11 +162,12 @@ async function startServer(args: string[]): Promise<void> {
   const logFd = fs.openSync(logFile, 'a');
 
   // Start server in background using system Python
-  const serverScript = path.join(SOVITS_DIR, 'api.py'); // Adjust path based on actual GPT-SoVITS structure
+  // Use api.py which doesn't require pretrained models (uses reference audio only)
+  const serverScript = path.join(SOVITS_DIR, 'api.py');
 
   const serverProcess = spawn(
     pythonBin,
-    [serverScript, '--port', port],
+    [serverScript, '-p', port, '-a', '0.0.0.0'],
     {
       cwd: SOVITS_DIR,
       detached: true,

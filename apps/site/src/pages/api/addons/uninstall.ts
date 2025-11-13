@@ -79,6 +79,22 @@ async function uninstallAddon(addonId: string, addon: any): Promise<{ success: b
       }
     }
 
+    case 'rvc': {
+      const rvcDir = path.join(rootPath, 'external', 'applio-rvc');
+
+      if (!fs.existsSync(rvcDir)) {
+        return { success: true, message: 'RVC already uninstalled' };
+      }
+
+      try {
+        // Remove directory
+        fs.rmSync(rvcDir, { recursive: true, force: true });
+        return { success: true, message: 'RVC uninstalled successfully' };
+      } catch (error) {
+        return { success: false, error: String(error) };
+      }
+    }
+
     default:
       return { success: false, error: 'Addon uninstallation not implemented' };
   }

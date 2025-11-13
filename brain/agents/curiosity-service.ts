@@ -117,47 +117,126 @@ async function expireOldQuestions(): Promise<number> {
 }
 
 /**
- * Sample recent memories (simple version - enhance later with weighted selection)
+ * Get ALL memories with weighted selection (same algorithm as reflector)
+ * This ensures curiosity questions are based on meaningful, diverse memories
+ * rather than just the most recent ones
  */
-async function sampleRecentMemories(count: number): Promise<any[]> {
+async function getAllMemories(): Promise<Array<{ file: string; timestamp: Date; content: any }>> {
   const episodicDir = paths.episodic;
-  if (!fsSync.existsSync(episodicDir)) return [];
+  const allMemories: Array<{ file: string; timestamp: Date; content: any }> = [];
 
-  const memories: any[] = [];
-  const now = Date.now();
-  const maxAgeMs = 7 * 24 * 60 * 60 * 1000; // Last 7 days
-
-  async function walk(dir: string) {
+  async function walk(dir: string, acc: Array<{ file: string; timestamp: Date; content: any }>) {
+    let entries: string[];
     try {
-      const entries = await fs.readdir(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          await walk(fullPath);
-        } else if (entry.isFile() && entry.name.endsWith('.json')) {
-          try {
-            const content = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
-            const timestamp = new Date(content.timestamp).getTime();
-            const age = now - timestamp;
+      entries = await fs.readdir(dir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return;
+      }
+      throw error;
+    }
 
-            // Filter: recent, not self-referential
-            if (age < maxAgeMs &&
-                content.type !== 'curiosity_question' &&
-                content.type !== 'reflection' &&
-                content.type !== 'dream') {
-              memories.push({ ...content, __file: fullPath });
-            }
-          } catch {}
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry);
+      let stats;
+      try {
+        stats = await fs.stat(fullPath);
+      } catch {
+        continue;
+      }
+
+      if (stats.isDirectory()) {
+        await walk(fullPath, acc);
+      } else if (stats.isFile() && entry.endsWith('.json')) {
+        try {
+          const content = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
+
+          // Skip self-referential types (avoid asking questions about questions)
+          if (content.type === 'curiosity_question' ||
+              content.type === 'reflection' ||
+              content.type === 'inner_dialogue' ||
+              content.type === 'dream' ||
+              content.metadata?.type === 'curiosity_question' ||
+              content.metadata?.type === 'reflection' ||
+              content.metadata?.type === 'inner_dialogue') {
+            continue;
+          }
+
+          acc.push({
+            file: fullPath,
+            timestamp: new Date(content.timestamp),
+            content
+          });
+        } catch {
+          // Skip malformed files
         }
       }
-    } catch {}
+    }
   }
 
-  await walk(episodicDir);
+  await walk(episodicDir, allMemories);
 
-  // Sort by recency and take top N
-  memories.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  return memories.slice(0, count);
+  // Sort by timestamp (newest first)
+  allMemories.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  return allMemories;
+}
+
+/**
+ * Sample memories using weighted selection (favors recent but includes older meaningful memories)
+ * Uses exponential decay with 14-day half-life, same as reflector
+ */
+async function sampleRecentMemories(count: number): Promise<any[]> {
+  const allMemories = await getAllMemories();
+  if (allMemories.length === 0) return [];
+
+  const now = Date.now();
+  const decayFactor = 14; // Days - same as reflector
+  const selected: any[] = [];
+  const usedIndices = new Set<number>();
+
+  // Technical keywords to deprioritize (avoid meta-questions about the system)
+  const technicalKeywords = [
+    'metahuman', 'ai agent', 'organizer', 'reflector', 'boredom-service',
+    'llm', 'ollama', 'typescript', 'package.json', 'astro', 'dev server',
+    'audit', 'persona', 'memory system', 'cli', 'codebase', 'development'
+  ];
+
+  for (let i = 0; i < count && selected.length < Math.min(count, allMemories.length); i++) {
+    // Calculate weights for all unused memories
+    const weights = allMemories.map((mem, idx) => {
+      if (usedIndices.has(idx)) return 0;
+
+      const ageInDays = (now - mem.timestamp.getTime()) / (1000 * 60 * 60 * 24);
+      let weight = Math.exp(-ageInDays / decayFactor);
+
+      // Reduce weight for technical development memories
+      const contentLower = mem.content.content?.toLowerCase() || '';
+      const isTechnical = technicalKeywords.some(kw => contentLower.includes(kw));
+      if (isTechnical) {
+        weight *= 0.3;
+      }
+
+      return weight;
+    });
+
+    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+    if (totalWeight === 0) break;
+
+    // Weighted random selection
+    let rand = Math.random() * totalWeight;
+    let cumulativeWeight = 0;
+
+    for (let idx = 0; idx < allMemories.length; idx++) {
+      cumulativeWeight += weights[idx];
+      if (rand <= cumulativeWeight) {
+        selected.push(allMemories[idx].content);
+        usedIndices.add(idx);
+        break;
+      }
+    }
+  }
+
+  return selected;
 }
 
 /**
@@ -210,12 +289,14 @@ async function generateUserQuestion(username: string): Promise<boolean> {
     return false;
   }
 
-  // Sample recent memories for context
+  // Sample memories using weighted selection (diverse, meaningful memories)
   const recentMemories = await sampleRecentMemories(5);
   if (recentMemories.length === 0) {
     console.log(`[curiosity-service] No memories to base questions on yet`);
     return false;
   }
+
+  console.log(`[curiosity-service] Selected ${recentMemories.length} weighted memories for question generation`);
 
   // Generate question via LLM
   const persona = loadPersonaCore();

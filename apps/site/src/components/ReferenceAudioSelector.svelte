@@ -6,7 +6,7 @@
 
   import { onMount } from 'svelte';
 
-  export let provider: 'piper' | 'gpt-sovits' = 'gpt-sovits';
+  export let provider: 'piper' | 'sovits' | 'gpt-sovits' | 'rvc' = 'gpt-sovits';
   export let speakerId: string = 'default';
   export let minQuality: number = 0.8;
   export let onSelectionChange: (selectedIds: string[]) => void = () => {};
@@ -26,6 +26,8 @@
   let error = '';
   let totalDuration = 0;
   let avgQuality = 0;
+  let playingId: string | null = null;
+  let audioElement: HTMLAudioElement | null = null;
 
   onMount(() => {
     loadSamples();
@@ -36,7 +38,7 @@
     error = '';
     try {
       const response = await fetch(
-        `/api/sovits-training?action=available-samples&provider=${provider}&minQuality=${minQuality}&limit=100`
+        `/api/sovits-training?action=available-samples&provider=${provider}&minQuality=${minQuality}&limit=1000`
       );
       if (!response.ok) throw new Error('Failed to load samples');
 
@@ -98,6 +100,51 @@
     } catch {
       return timestamp;
     }
+  }
+
+  function togglePlayAudio(sample: VoiceSample, event: Event) {
+    event.stopPropagation(); // Prevent checkbox toggle
+
+    // If already playing this sample, stop it
+    if (playingId === sample.id) {
+      if (audioElement) {
+        audioElement.pause();
+        audioElement = null;
+      }
+      playingId = null;
+      return;
+    }
+
+    // Stop any currently playing audio
+    if (audioElement) {
+      audioElement.pause();
+      audioElement = null;
+    }
+
+    // Start playing the selected sample via API endpoint
+    playingId = sample.id;
+    // Use API endpoint to serve the audio file
+    const audioUrl = `/api/voice-samples/${sample.id}`;
+    audioElement = new Audio(audioUrl);
+
+    audioElement.addEventListener('ended', () => {
+      playingId = null;
+      audioElement = null;
+    });
+
+    audioElement.addEventListener('error', (e) => {
+      error = `Failed to play audio: ${sample.id}`;
+      playingId = null;
+      audioElement = null;
+      console.error('[ReferenceAudioSelector] Audio playback error:', e);
+    });
+
+    audioElement.play().catch(err => {
+      error = `Failed to play audio: ${err.message}`;
+      playingId = null;
+      audioElement = null;
+      console.error('[ReferenceAudioSelector] Audio play() failed:', err);
+    });
   }
 
   $: selectedSamples = samples.filter(s => selectedIds.has(s.id));
@@ -190,6 +237,14 @@
                 </span>
               </div>
             </div>
+
+            <button
+              class="play-button"
+              on:click={(e) => togglePlayAudio(sample, e)}
+              title={playingId === sample.id ? 'Stop' : 'Play'}
+            >
+              {playingId === sample.id ? '⏸️' : '▶️'}
+            </button>
 
             <div class="sample-quality-bar">
               <div class="quality-fill" style="width: {sample.quality * 100}%"></div>
@@ -363,6 +418,36 @@
     width: 1.2rem;
     height: 1.2rem;
     cursor: pointer;
+  }
+
+  .play-button {
+    padding: 0.5rem;
+    background: var(--bg-button, #3b82f6);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 2.5rem;
+    height: 2.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: all 0.2s;
+    margin-right: 0.5rem;
+  }
+
+  .play-button:hover {
+    background: var(--bg-button-hover, #2563eb);
+    transform: scale(1.1);
+  }
+
+  :global(.dark) .play-button {
+    background: #1e40af;
+  }
+
+  :global(.dark) .play-button:hover {
+    background: #1e3a8a;
   }
 
   .sample-info {

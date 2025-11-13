@@ -257,16 +257,24 @@ const getHandler: APIRoute = async () => {
 
     return new Response(
       JSON.stringify({
-        voices,
-        currentVoice: currentVoiceFile,
-        speakingRate: config.tts.piper.speakingRate || 1.0,
         provider: config.tts.provider,
+        piper: {
+          voices,
+          currentVoice: currentVoiceFile,
+          speakingRate: config.tts.piper.speakingRate || 1.0,
+        },
         sovits: {
           serverUrl: config.tts.sovits?.serverUrl || 'http://127.0.0.1:9880',
           speakerId: config.tts.sovits?.speakerId || 'default',
           temperature: config.tts.sovits?.temperature || 0.6,
           speed: config.tts.sovits?.speed || 1.0,
           autoFallbackToPiper: config.tts.sovits?.autoFallbackToPiper ?? true,
+        },
+        rvc: {
+          speakerId: config.tts.rvc?.speakerId || 'default',
+          pitchShift: config.tts.rvc?.pitchShift || 0,
+          speed: config.tts.rvc?.speed || 1.0,
+          autoFallbackToPiper: config.tts.rvc?.autoFallbackToPiper ?? true,
         },
       }),
       {
@@ -296,7 +304,8 @@ const postHandler: APIRoute = async ({ request }) => {
       );
     }
 
-    const { voiceId, speakingRate, provider, sovits } = await request.json();
+    const body = await request.json();
+    const { provider, piper, sovits, rvc } = body;
 
     const voiceConfigPath = context.profilePaths.voiceConfig;
     const voicesDir = context.systemPaths.voiceModels;
@@ -304,33 +313,29 @@ const postHandler: APIRoute = async ({ request }) => {
     const voices = getAvailableVoices(voicesDir);
     const config = ensureVoiceConfig(voiceConfigPath, voicesDir, rootDir, voices);
 
-    // Find selected voice
-    const selectedVoice = voices.find(v => v.id === voiceId);
-    if (!selectedVoice) {
-      return new Response(
-        JSON.stringify({ error: 'Voice not found' }),
-        {
-          status: 404,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      );
-    }
-
-    // Update configuration
+    // Update provider
     if (provider) {
       config.tts.provider = provider;
     }
 
-    if (voiceId) {
-      config.tts.piper.model = selectedVoice.modelPath;
-      config.tts.piper.config = selectedVoice.configPath;
+    // Update Piper settings
+    if (piper) {
+      config.tts.piper = config.tts.piper || {} as any;
+
+      if (piper.currentVoice) {
+        const selectedVoice = voices.find(v => v.id === piper.currentVoice);
+        if (selectedVoice) {
+          config.tts.piper.model = selectedVoice.modelPath;
+          config.tts.piper.config = selectedVoice.configPath;
+        }
+      }
+
+      if (typeof piper.speakingRate === 'number') {
+        config.tts.piper.speakingRate = Math.max(0.5, Math.min(2.0, piper.speakingRate));
+      }
     }
 
-    if (typeof speakingRate === 'number') {
-      config.tts.piper.speakingRate = Math.max(0.5, Math.min(2.0, speakingRate));
-    }
-
-    // Update SoVITS settings if provided
+    // Update GPT-SoVITS settings
     if (sovits) {
       config.tts.sovits = config.tts.sovits || {} as any;
       if (sovits.serverUrl) config.tts.sovits.serverUrl = sovits.serverUrl;
@@ -342,6 +347,21 @@ const postHandler: APIRoute = async ({ request }) => {
       }
     }
 
+    // Update RVC settings
+    if (rvc) {
+      config.tts.rvc = config.tts.rvc || {} as any;
+      if (rvc.speakerId) config.tts.rvc.speakerId = rvc.speakerId;
+      if (typeof rvc.pitchShift === 'number') {
+        config.tts.rvc.pitchShift = Math.max(-12, Math.min(12, rvc.pitchShift));
+      }
+      if (typeof rvc.speed === 'number') {
+        config.tts.rvc.speed = Math.max(0.5, Math.min(2.0, rvc.speed));
+      }
+      if (typeof rvc.autoFallbackToPiper === 'boolean') {
+        config.tts.rvc.autoFallbackToPiper = rvc.autoFallbackToPiper;
+      }
+    }
+
     // Save configuration
     fs.writeFileSync(voiceConfigPath, JSON.stringify(config, null, 2), 'utf8');
 
@@ -349,8 +369,6 @@ const postHandler: APIRoute = async ({ request }) => {
       JSON.stringify({
         success: true,
         provider: config.tts.provider,
-        currentVoice: voiceId,
-        speakingRate: config.tts.piper.speakingRate,
       }),
       {
         status: 200,
