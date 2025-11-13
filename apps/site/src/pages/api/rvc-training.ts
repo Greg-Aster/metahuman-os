@@ -145,7 +145,13 @@ export const POST: APIRoute = async ({ request }) => {
       }
 
       case 'start-training': {
-        const result = startRVCTraining(speakerId);
+        const { totalEpochs, saveEveryEpoch, batchSize } = body;
+
+        const result = startRVCTraining(speakerId, {
+          totalEpochs,
+          saveEveryEpoch,
+          batchSize
+        });
 
         if (!result.success) {
           return new Response(JSON.stringify({ error: result.error }), {

@@ -16,6 +16,7 @@
     "./agent-monitor": "./src/agent-monitor.ts",
     "./skills": "./src/skills.ts",
     "./cognitive-mode": "./src/cognitive-mode.ts",
+    "./memory-metrics-cache": "./src/memory-metrics-cache.ts",
     "./memory-policy": "./src/memory-policy.ts",
     "./model-resolver": "./src/model-resolver.ts",
     "./model-router": "./src/model-router.ts",

@@ -242,7 +242,7 @@ export function createTTSService(provider?: 'piper' | 'gpt-sovits' | 'rvc', user
  */
 export async function generateSpeech(
   text: string,
-  options?: TTSSynthesizeOptions & { provider?: 'piper' | 'gpt-sovits'; username?: string }
+  options?: TTSSynthesizeOptions & { provider?: 'piper' | 'gpt-sovits' | 'rvc'; username?: string }
 ): Promise<Buffer> {
   const { provider, username, ...synthesizeOptions } = options || {};
 
@@ -283,7 +283,7 @@ export function clearTTSCache(provider?: 'piper' | 'gpt-sovits'): void {
 export async function generateMultiVoiceSpeech(
   text: string,
   voiceModels: string[],
-  options?: TTSSynthesizeOptions & { provider?: 'piper' | 'gpt-sovits' }
+  options?: TTSSynthesizeOptions & { provider?: 'piper' | 'gpt-sovits' | 'rvc' }
 ): Promise<Buffer> {
   if (voiceModels.length === 0) {
     throw new Error('At least one voice model is required');

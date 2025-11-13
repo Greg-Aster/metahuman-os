@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
+import { stopSovitsServer } from '../../../lib/sovits-server';
 
 /**
  * POST /api/addons/toggle
@@ -60,7 +61,6 @@ export const POST: APIRoute = async ({ request }) => {
 async function toggleAddonConfiguration(addonId: string, enabled: boolean): Promise<void> {
   const rootPath = path.resolve(process.cwd(), '../..');
   const voiceConfigPath = path.join(rootPath, 'etc', 'voice.json');
-  const addonsConfigPath = path.join(rootPath, 'etc', 'addons.json');
 
   // Handle TTS provider addons (gpt-sovits, rvc, piper)
   const ttsProviders = ['gpt-sovits', 'rvc'];
@@ -71,44 +71,21 @@ async function toggleAddonConfiguration(addonId: string, enabled: boolean): Prom
     }
 
     const voiceConfig = JSON.parse(fs.readFileSync(voiceConfigPath, 'utf-8'));
-    const addonsConfig = JSON.parse(fs.readFileSync(addonsConfigPath, 'utf-8'));
+    const providerMap: Record<string, string> = {
+      'gpt-sovits': 'sovits',
+      'rvc': 'rvc',
+    };
 
-    if (enabled) {
-      // Enable this TTS provider - disable conflicting ones
-      const providerMap: Record<string, string> = {
-        'gpt-sovits': 'sovits',
-        'rvc': 'rvc'
-      };
+    if (!enabled && voiceConfig.tts?.provider === providerMap[addonId]) {
+      voiceConfig.tts.provider = 'piper';
+      fs.writeFileSync(voiceConfigPath, JSON.stringify(voiceConfig, null, 2));
 
-      const newProvider = providerMap[addonId];
-
-      if (newProvider) {
-        // Set this as the active provider
-        voiceConfig.tts.provider = newProvider;
-
-        // Disable other TTS addons
-        for (const otherProvider of ttsProviders) {
-          if (otherProvider !== addonId && addonsConfig.addons[otherProvider]) {
-            addonsConfig.addons[otherProvider].enabled = false;
-          }
+      if (addonId === 'gpt-sovits') {
+        try {
+          await stopSovitsServer();
+        } catch (error) {
+          console.error('[API /addons/toggle] Failed to stop SoVITS server:', error);
         }
-
-        // Save both configs
-        fs.writeFileSync(voiceConfigPath, JSON.stringify(voiceConfig, null, 2));
-        fs.writeFileSync(addonsConfigPath, JSON.stringify(addonsConfig, null, 2));
-      }
-    } else {
-      // Disabling - fall back to piper (default)
-      const currentProvider = voiceConfig.tts.provider;
-      const providerMap: Record<string, string> = {
-        'gpt-sovits': 'sovits',
-        'rvc': 'rvc'
-      };
-
-      // If this addon's provider is active, switch to piper
-      if (currentProvider === providerMap[addonId]) {
-        voiceConfig.tts.provider = 'piper';
-        fs.writeFileSync(voiceConfigPath, JSON.stringify(voiceConfig, null, 2));
       }
     }
   }

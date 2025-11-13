@@ -8,7 +8,14 @@ import {
   getTrainingReadiness,
   getAvailableSamples,
   type VoiceProvider,
+  setSoVITSReferenceSample,
 } from '@metahuman/core';
+
+function normalizeProvider(provider?: string | null): VoiceProvider {
+  if (!provider) return 'gpt-sovits';
+  if (provider === 'sovits') return 'gpt-sovits';
+  return provider as VoiceProvider;
+}
 
 /**
  * GET /api/sovits-training
@@ -18,7 +25,7 @@ export const GET: APIRoute = async ({ request }) => {
   try {
     const url = new URL(request.url);
     const action = url.searchParams.get('action');
-    const provider = (url.searchParams.get('provider') as VoiceProvider) || 'gpt-sovits';
+    const provider = normalizeProvider(url.searchParams.get('provider'));
     const speakerId = url.searchParams.get('speakerId') || 'default';
     const minQuality = parseFloat(url.searchParams.get('minQuality') || '0.7');
     const limit = parseInt(url.searchParams.get('limit') || '100', 10);
@@ -81,7 +88,15 @@ export const GET: APIRoute = async ({ request }) => {
 export const POST: APIRoute = async ({ request }) => {
   try {
     const body = await request.json();
-    const { action, provider = 'gpt-sovits', speakerId = 'default', sampleIds, sampleId, minQuality = 0.8 } = body;
+    const {
+      action,
+      provider: providerRaw = 'gpt-sovits',
+      speakerId = 'default',
+      sampleIds,
+      sampleId,
+      minQuality = 0.8,
+    } = body;
+    const provider = normalizeProvider(providerRaw);
 
     if (action === 'copy-samples') {
       // Copy specific samples to reference directory
@@ -93,6 +108,13 @@ export const POST: APIRoute = async ({ request }) => {
       }
 
       const copiedCount = copyToReference(sampleIds, provider as VoiceProvider, speakerId);
+      if (provider === 'gpt-sovits' && copiedCount > 0) {
+        try {
+          setSoVITSReferenceSample(speakerId, sampleIds[sampleIds.length - 1]);
+        } catch (error) {
+          console.error('[sovits-training] Failed to update reference sample:', error);
+        }
+      }
       return new Response(
         JSON.stringify({
           success: true,
@@ -107,6 +129,13 @@ export const POST: APIRoute = async ({ request }) => {
     } else if (action === 'auto-export') {
       // Automatically select and export best samples
       const outputDir = autoExportBestSamples(provider as VoiceProvider, speakerId, minQuality);
+      if (provider === 'gpt-sovits') {
+        try {
+          setSoVITSReferenceSample(speakerId);
+        } catch (error) {
+          console.error('[sovits-training] Failed to update reference sample after auto-export:', error);
+        }
+      }
       return new Response(
         JSON.stringify({
           success: true,
@@ -137,6 +166,38 @@ export const POST: APIRoute = async ({ request }) => {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         }
+      );
+    } else if (action === 'set-reference') {
+      if (provider !== 'gpt-sovits') {
+        return new Response(
+          JSON.stringify({ error: 'Reference management is only supported for GPT-SoVITS' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (!sampleId) {
+        return new Response(
+          JSON.stringify({ error: 'sampleId required' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const result = setSoVITSReferenceSample(speakerId, sampleId);
+      return new Response(
+        JSON.stringify({ success: true, message: `Reference audio set to ${sampleId}`, referencePath: result.referencePath }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    } else if (action === 'set-reference-latest') {
+      if (provider !== 'gpt-sovits') {
+        return new Response(
+          JSON.stringify({ error: 'Reference management is only supported for GPT-SoVITS' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const result = setSoVITSReferenceSample(speakerId);
+      return new Response(
+        JSON.stringify({ success: true, message: 'Reference audio updated to latest sample', referencePath: result.referencePath }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     } else {
       return new Response(

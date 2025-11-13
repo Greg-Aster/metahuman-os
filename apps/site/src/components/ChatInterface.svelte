@@ -255,6 +255,59 @@ let reasoningStages: ReasoningStage[] = [];
     return output;
   }
 
+  const VOICE_MODELS_CACHE_TTL = 60_000;
+  const VOICE_PROVIDER_CACHE_TTL = 30_000;
+  let voiceModelsCache: { multiVoice: boolean; models?: string[] } | null = null;
+  let voiceModelsCacheTime = 0;
+  let voiceProviderCache: { provider?: string } | null = null;
+  let voiceProviderCacheTime = 0;
+
+  async function fetchVoiceModels(): Promise<{ multiVoice: boolean; models?: string[] }> {
+    const now = Date.now();
+    if (voiceModelsCache && now - voiceModelsCacheTime < VOICE_MODELS_CACHE_TTL) {
+      return voiceModelsCache;
+    }
+
+    try {
+      const voiceModelsRes = await fetch('/api/voice-models');
+      if (voiceModelsRes.ok) {
+        const voiceData = await voiceModelsRes.json();
+        const result = {
+          multiVoice: !!voiceData.multiVoice && Array.isArray(voiceData.models) && voiceData.models.length > 1,
+          models: Array.isArray(voiceData.models) ? voiceData.models : undefined,
+        };
+        voiceModelsCache = result;
+        voiceModelsCacheTime = now;
+        return result;
+      }
+    } catch (error) {
+      console.warn('[chat-tts] Failed to fetch voice models:', error);
+    }
+
+    return { multiVoice: false };
+  }
+
+  async function fetchVoiceProvider(): Promise<string | undefined> {
+    const now = Date.now();
+    if (voiceProviderCache && now - voiceProviderCacheTime < VOICE_PROVIDER_CACHE_TTL) {
+      return voiceProviderCache.provider;
+    }
+
+    try {
+      const settingsRes = await fetch('/api/voice-settings');
+      if (settingsRes.ok) {
+        const settings = await settingsRes.json();
+        voiceProviderCache = { provider: settings.provider };
+        voiceProviderCacheTime = now;
+        return settings.provider;
+      }
+    } catch (error) {
+      console.warn('[chat-tts] Failed to fetch voice provider:', error);
+    }
+
+    return undefined;
+  }
+
   async function speakText(text: string): Promise<void> {
     console.log('[chat-tts] speakText called with text length:', text.length);
     const speechText = normalizeTextForSpeech(text);
@@ -274,32 +327,15 @@ let reasoningStages: ReasoningStage[] = [];
     try {
       // Fetch voice models for current session/profile
       console.log('[chat-tts] Fetching voice models...');
-      const voiceModelsRes = await fetch('/api/voice-models');
-      let voiceModels: string[] | undefined = undefined;
-      let multiVoice = false;
-
-      if (voiceModelsRes.ok) {
-        const voiceData = await voiceModelsRes.json();
-        if (voiceData.multiVoice && voiceData.models && voiceData.models.length > 1) {
-          voiceModels = voiceData.models;
-          multiVoice = true;
-          console.log(`[chat-tts] Multi-voice mode active with ${voiceModels.length} voices:`, voiceData.mergedProfiles);
-        }
+      const { multiVoice, models: voiceModels } = await fetchVoiceModels();
+      if (multiVoice && voiceModels) {
+        console.log(`[chat-tts] Multi-voice mode active with ${voiceModels.length} voices`);
       }
 
       console.log('[chat-tts] Fetching TTS from /api/tts...');
 
       // Get current provider from voice settings
-      let provider: string | undefined;
-      try {
-        const settingsRes = await fetch('/api/voice-settings');
-        if (settingsRes.ok) {
-          const settings = await settingsRes.json();
-          provider = settings.provider;
-        }
-      } catch (e) {
-        console.warn('[chat-tts] Failed to fetch voice provider, using default');
-      }
+      const provider = await fetchVoiceProvider();
 
       const ttsBody: any = { text: speechText };
 

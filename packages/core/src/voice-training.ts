@@ -650,6 +650,8 @@ export function copyToSoVITS(sampleIds: string[], speakerId: string = 'default')
     }
   }
 
+  let referenceGenerated = false;
+
   // If multiple samples were copied, concatenate them into a single reference.wav
   // This gives GPT-SoVITS more voice data for better accuracy
   if (copiedFiles.length > 1) {
@@ -691,12 +693,23 @@ export function copyToSoVITS(sampleIds: string[], speakerId: string = 'default')
           },
           actor: 'system',
         });
+        referenceGenerated = true;
       } else {
         console.error('[copyToSoVITS] ffmpeg concatenation failed:', result.stderr?.toString());
       }
     } catch (error) {
       console.error('[copyToSoVITS] Failed to concatenate audio files:', error);
       // Continue anyway - individual files still work
+    }
+  }
+
+  if (!referenceGenerated && copiedFiles.length > 0) {
+    try {
+      const lastSample = path.basename(copiedFiles[copiedFiles.length - 1], '.wav');
+      setSoVITSReferenceSample(speakerId, lastSample);
+      referenceGenerated = true;
+    } catch (error) {
+      console.error('[copyToSoVITS] Failed to set reference sample:', error);
     }
   }
 
@@ -743,6 +756,72 @@ export function copyToSoVITS(sampleIds: string[], speakerId: string = 'default')
   }
 
   return copiedCount;
+}
+
+/**
+ * Promote a SoVITS sample to be the active reference file (reference.wav)
+ * If sampleId not provided, the most recent sample in the reference directory is used
+ */
+export function setSoVITSReferenceSample(
+  speakerId: string = 'default',
+  sampleId?: string
+): { referencePath: string } {
+  const sovitsRefDir = path.join(paths.sovitsReference, speakerId);
+
+  if (!fs.existsSync(sovitsRefDir)) {
+    throw new Error(`SoVITS reference directory not found for speaker ${speakerId}`);
+  }
+
+  const resolveSamplePath = (): string => {
+    if (sampleId) {
+      const explicitPath = path.join(sovitsRefDir, `${sampleId}.wav`);
+      if (fs.existsSync(explicitPath)) {
+        return explicitPath;
+      }
+      console.warn(`[sovits_reference] Sample ${sampleId} not found, falling back to latest file.`);
+    }
+
+    const wavFiles = fs.readdirSync(sovitsRefDir)
+      .filter(f => f.endsWith('.wav') && f !== 'reference.wav')
+      .map(file => ({
+        file,
+        mtime: fs.statSync(path.join(sovitsRefDir, file)).mtimeMs,
+      }));
+
+    if (wavFiles.length === 0) {
+      throw new Error(`No SoVITS samples found for speaker ${speakerId}`);
+    }
+
+    wavFiles.sort((a, b) => a.mtime - b.mtime);
+    return path.join(sovitsRefDir, wavFiles[wavFiles.length - 1].file);
+  };
+
+  const sourcePath = resolveSamplePath();
+  const referencePath = path.join(sovitsRefDir, 'reference.wav');
+
+  fs.copyFileSync(sourcePath, referencePath);
+
+  const transcriptSource = sourcePath.replace(/\.wav$/i, '.txt');
+  const referenceTranscript = referencePath.replace(/\.wav$/i, '.txt');
+  if (fs.existsSync(transcriptSource)) {
+    fs.copyFileSync(transcriptSource, referenceTranscript);
+  } else if (fs.existsSync(referenceTranscript)) {
+    fs.unlinkSync(referenceTranscript);
+  }
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'sovits_reference_set',
+    details: {
+      speakerId,
+      referencePath,
+      source: path.basename(sourcePath),
+    },
+    actor: 'system',
+  });
+
+  return { referencePath };
 }
 
 /**
@@ -827,8 +906,46 @@ export function deleteSoVITSReference(speakerId: string, sampleId: string): void
 }
 
 /**
+ * Clear RVC training directory to remove all samples
+ */
+export function clearRVCDirectory(speakerId: string = 'default'): number {
+  const rvcRefDir = path.join(paths.rvcReference, speakerId);
+
+  if (!fs.existsSync(rvcRefDir)) {
+    return 0; // Nothing to clear
+  }
+
+  const files = fs.readdirSync(rvcRefDir);
+  let deletedCount = 0;
+
+  for (const file of files) {
+    try {
+      const filePath = path.join(rvcRefDir, file);
+      fs.unlinkSync(filePath);
+      deletedCount++;
+    } catch (error) {
+      console.error(`[clearRVCDirectory] Failed to delete ${file}:`, error);
+    }
+  }
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'rvc_directory_cleared',
+    details: {
+      speakerId,
+      filesDeleted: deletedCount,
+    },
+    actor: 'system',
+  });
+
+  return deletedCount;
+}
+
+/**
  * Copy specific samples to RVC training directory
  * RVC requires 10-15 minutes of training audio (100+ samples)
+ * IMPORTANT: This function clears the directory before copying to prevent duplicates
  */
 export function copyToRVC(sampleIds: string[], speakerId: string = 'default'): number {
   const recordingsDir = paths.voiceTraining;
@@ -838,6 +955,10 @@ export function copyToRVC(sampleIds: string[], speakerId: string = 'default'): n
   if (!fs.existsSync(rvcRefDir)) {
     fs.mkdirSync(rvcRefDir, { recursive: true });
   }
+
+  // Clear directory first to prevent duplicate samples
+  const clearedCount = clearRVCDirectory(speakerId);
+  console.log(`[copyToRVC] Cleared ${clearedCount} existing files from ${rvcRefDir}`);
 
   let copiedCount = 0;
   let totalDuration = 0;
@@ -1184,10 +1305,81 @@ function runRVCFeatureExtraction(
 }
 
 /**
+ * Generate FAISS index file for RVC model
+ * Index enables retrieval of speaker characteristics during inference
+ * This should be run after training completes
+ */
+function generateRVCIndex(
+  speakerId: string,
+  experimentDir: string,
+  indexAlgorithm: string = 'Auto'
+): boolean {
+  const rvcDir = path.join(systemPaths.root, 'external', 'applio-rvc');
+  const venvPython = path.join(rvcDir, 'venv', 'bin', 'python3');
+  const indexScript = path.join(rvcDir, 'rvc', 'train', 'process', 'extract_index.py');
+
+  console.log(`[RVC Index Generation] Creating FAISS index for ${speakerId}...`);
+
+  const result = spawnSync(
+    venvPython,
+    [
+      indexScript,
+      experimentDir,      // arg 1: exp_dir (logs/default)
+      indexAlgorithm,     // arg 2: index_algorithm (Auto, KMeans, or other)
+    ],
+    {
+      cwd: rvcDir,
+      stdio: 'inherit', // Show output directly in console
+      encoding: 'utf-8',
+      timeout: 300000, // 5 minutes max
+    }
+  );
+
+  if (result.status !== 0) {
+    console.error(`[RVC Index Generation] Failed with exit code ${result.status}`);
+    return false;
+  }
+
+  // Copy index file to model output directory
+  const sourceIndexPath = path.join(experimentDir, `${speakerId}.index`);
+  const targetIndexPath = path.join(paths.rvcModels, speakerId, `${speakerId}.index`);
+
+  if (fs.existsSync(sourceIndexPath)) {
+    try {
+      const targetDir = path.dirname(targetIndexPath);
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+      fs.copyFileSync(sourceIndexPath, targetIndexPath);
+      console.log(`[RVC Index Generation] Index copied to: ${targetIndexPath}`);
+      return true;
+    } catch (error) {
+      console.error(`[RVC Index Generation] Failed to copy index file:`, error);
+      return false;
+    }
+  } else {
+    console.error(`[RVC Index Generation] Source index file not found: ${sourceIndexPath}`);
+    return false;
+  }
+}
+
+/**
+ * Training configuration options
+ */
+export interface RVCTrainingOptions {
+  totalEpochs?: number;
+  saveEveryEpoch?: number;
+  batchSize?: number;
+}
+
+/**
  * Start RVC model training
  * This spawns a Python training script in the background
  */
-export function startRVCTraining(speakerId: string = 'default'): { success: boolean; error?: string } {
+export function startRVCTraining(
+  speakerId: string = 'default',
+  options?: RVCTrainingOptions
+): { success: boolean; error?: string } {
   // Check if training is already running
   const currentStatus = getRVCTrainingStatus(speakerId);
   if (currentStatus.status === 'running') {
@@ -1312,10 +1504,12 @@ export function startRVCTraining(speakerId: string = 'default'): { success: bool
   // Step 3: Train the model
   console.log('[RVC Training] Step 3/3: Training voice conversion model...');
 
-  // Training parameters
-  const totalEpochs = 300; // Standard for RVC
-  const saveEveryEpoch = 50; // Save checkpoints every 50 epochs
-  const batchSize = 8;
+  // Training parameters (use provided options or defaults)
+  const totalEpochs = options?.totalEpochs ?? 300; // Standard for RVC
+  const saveEveryEpoch = options?.saveEveryEpoch ?? 50; // Save checkpoints every 50 epochs
+  const batchSize = options?.batchSize ?? 8;
+
+  console.log(`[RVC Training] Configuration: ${totalEpochs} epochs, saving every ${saveEveryEpoch}, batch size ${batchSize}`);
 
   // Initialize training status
   const trainingStatus: RVCTrainingStatus = {
@@ -1437,6 +1631,15 @@ export function startRVCTraining(speakerId: string = 'default'): { success: bool
       status.modelPath = modelPath;
       writeRVCTrainingStatus(status);
 
+      // Generate FAISS index file for improved voice retrieval
+      console.log('[RVC Training] Generating FAISS index for voice retrieval...');
+      const indexSuccess = generateRVCIndex(speakerId, rvcExperimentDir);
+      if (indexSuccess) {
+        console.log('[RVC Training] Index file generated successfully');
+      } else {
+        console.log('[RVC Training] Warning: Index generation failed, but model is still usable');
+      }
+
       audit({
         level: 'info',
         category: 'action',
@@ -1472,6 +1675,15 @@ export function startRVCTraining(speakerId: string = 'default'): { success: bool
         const modelPath = path.join(modelOutputDir, `${speakerId}.pth`);
         if (fs.existsSync(modelPath)) {
           status.modelPath = modelPath;
+        }
+
+        // Generate FAISS index file for improved voice retrieval
+        console.log('[RVC Training] Generating FAISS index for voice retrieval...');
+        const indexSuccess = generateRVCIndex(speakerId, rvcExperimentDir);
+        if (indexSuccess) {
+          console.log('[RVC Training] Index file generated successfully');
+        } else {
+          console.log('[RVC Training] Warning: Index generation failed, but model is still usable');
         }
       } else {
         status.status = 'failed';

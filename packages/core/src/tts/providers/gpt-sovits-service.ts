@@ -170,6 +170,8 @@ export class SoVITSService implements ITextToSpeechService {
         speed, // api.py supports speed parameter
       };
 
+      console.log('[SoVITS] Request payload:', JSON.stringify(payload, null, 2));
+
       // Make HTTP request to SoVITS server
       const controller = new AbortController();
       const cleanup = () => {
@@ -306,6 +308,12 @@ export class SoVITSService implements ITextToSpeechService {
   private _findReferenceAudio(speakerId: string): string | undefined {
     const speakerDir = path.join(this.config.referenceAudioDir, speakerId);
 
+    console.log('[SoVITS] Looking for reference audio:', {
+      speakerId,
+      speakerDir,
+      referenceAudioDir: this.config.referenceAudioDir
+    });
+
     if (!fs.existsSync(speakerDir)) {
       audit({
         level: 'info',
@@ -314,6 +322,7 @@ export class SoVITSService implements ITextToSpeechService {
         details: { speakerId, speakerDir, exists: false },
         actor: 'system',
       });
+      console.log('[SoVITS] Speaker directory does not exist:', speakerDir);
       return undefined;
     }
 
@@ -328,7 +337,10 @@ export class SoVITSService implements ITextToSpeechService {
       actor: 'system',
     });
 
+    console.log('[SoVITS] Found audio files:', files);
+
     if (files.length === 0) {
+      console.log('[SoVITS] No audio files found in speaker directory');
       return undefined;
     }
 
@@ -336,7 +348,10 @@ export class SoVITSService implements ITextToSpeechService {
     const referenceFile =
       files.find((f) => f.toLowerCase().startsWith('reference')) || files[0];
 
-    return path.join(speakerDir, referenceFile);
+    const fullPath = path.join(speakerDir, referenceFile);
+    console.log('[SoVITS] Selected reference audio:', fullPath);
+
+    return fullPath;
   }
 
   private async _normalizeSampleRate(audioBuffer: Buffer): Promise<Buffer> {

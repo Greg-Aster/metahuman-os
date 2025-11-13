@@ -5,11 +5,11 @@
    * Minimum 5 seconds, no maximum - user controls when to stop
    */
 
-  import { onDestroy } from 'svelte';
+import { onDestroy } from 'svelte';
 
-  export let provider: 'piper' | 'gpt-sovits' = 'gpt-sovits';
-  export let speakerId: string = 'default';
-  export let onRecordingComplete: (success: boolean) => void = () => {};
+export let provider: 'piper' | 'sovits' | 'gpt-sovits' = 'gpt-sovits';
+export let speakerId: string = 'default';
+export let onRecordingComplete: (success: boolean) => void = () => {};
 
   let isRecording = false;
   let recordingSeconds = 0;
@@ -25,6 +25,10 @@
 
   const MIN_DURATION = 5;
   const RECOMMENDED_PROMPT = "The quick brown fox jumps over the lazy dog. Testing, one, two, three.";
+
+  function normalizeProvider(value: string): 'piper' | 'gpt-sovits' {
+    return value === 'sovits' ? 'gpt-sovits' : (value as 'piper' | 'gpt-sovits');
+  }
 
   onDestroy(() => {
     cleanup();
@@ -174,7 +178,8 @@
       const formData = new FormData();
       formData.append('audio', audioBlob, 'recording.webm');
       formData.append('transcript', RECOMMENDED_PROMPT);
-      formData.append('provider', provider);
+      const normalizedProvider = normalizeProvider(provider);
+      formData.append('provider', normalizedProvider);
       formData.append('speakerId', speakerId);
       formData.append('duration', recordingSeconds.toString());
       formData.append('quality', '1.0'); // Assume high quality for direct recordings
@@ -194,7 +199,7 @@
       const result = await uploadResponse.json();
 
       if (result.copiedToReference) {
-        successMessage = `Voice profile saved and set as reference audio! Sample ID: ${result.sampleId}`;
+        successMessage = `✅ Voice profile saved! Created reference.wav in SoVITS directory. Ready for testing. Sample ID: ${result.sampleId}`;
       } else {
         successMessage = `Voice profile saved! Sample ID: ${result.sampleId}`;
       }
@@ -204,6 +209,7 @@
       audioUrl = '';
       recordingSeconds = 0;
 
+      // Trigger readiness refresh in parent
       onRecordingComplete(true);
     } catch (err) {
       error = `Failed to save voice profile: ${(err as Error).message}`;

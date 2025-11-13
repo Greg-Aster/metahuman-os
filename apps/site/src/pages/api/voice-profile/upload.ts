@@ -3,14 +3,15 @@
  * Saves directly to voice training directory and optionally copies to SoVITS reference
  */
 import type { APIRoute } from 'astro';
-import { saveVoiceSample, copyToSoVITS } from '@metahuman/core';
+import { saveVoiceSample, copyToSoVITS, setSoVITSReferenceSample } from '@metahuman/core';
 
 export const POST: APIRoute = async ({ request }) => {
   try {
     const formData = await request.formData();
     const audioFile = formData.get('audio') as File;
     const transcript = formData.get('transcript') as string;
-    const provider = formData.get('provider') as string;
+    const providerRaw = formData.get('provider') as string;
+    const provider = providerRaw === 'sovits' ? 'gpt-sovits' : providerRaw;
     const speakerId = formData.get('speakerId') as string || 'default';
     const duration = parseFloat(formData.get('duration') as string);
     const quality = parseFloat(formData.get('quality') as string) || 1.0;
@@ -49,9 +50,18 @@ export const POST: APIRoute = async ({ request }) => {
 
     // If GPT-SoVITS and copyToReference is true, immediately copy to reference directory
     let copiedToReference = false;
+    let referencePath: string | undefined;
     if (provider === 'gpt-sovits' && copyToReference) {
       const copiedCount = copyToSoVITS([sample.id], speakerId);
       copiedToReference = copiedCount > 0;
+      if (copiedToReference) {
+        try {
+          const result = setSoVITSReferenceSample(speakerId, sample.id);
+          referencePath = result.referencePath;
+        } catch (error) {
+          console.error('[voice-profile/upload] Failed to set SoVITS reference:', error);
+        }
+      }
     }
 
     return new Response(
@@ -62,6 +72,7 @@ export const POST: APIRoute = async ({ request }) => {
         duration: sample.duration,
         quality: sample.quality,
         copiedToReference,
+        referencePath,
         message: copiedToReference
           ? `Voice profile saved and set as reference audio for ${speakerId}`
           : 'Voice sample saved successfully',

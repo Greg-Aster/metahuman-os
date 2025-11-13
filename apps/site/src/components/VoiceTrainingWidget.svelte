@@ -89,6 +89,12 @@
   let currentRobotMessage = "";
   let robotMessageInterval: ReturnType<typeof setInterval> | null = null;
 
+  // Training parameters for RVC
+  let totalEpochs = 300;
+  let saveEveryEpoch = 50;
+  let batchSize = 8;
+  let showAdvancedSettings = false;
+
   function getRandomRobotMessage() {
     return robotMessages[Math.floor(Math.random() * robotMessages.length)];
   }
@@ -155,6 +161,8 @@
   };
 
   $: currentConfig = providerConfig[provider];
+  $: apiProvider = (provider === 'sovits' ? 'gpt-sovits' : provider) as 'piper' | 'gpt-sovits' | 'rvc';
+  $: apiProvider = provider === 'sovits' ? 'gpt-sovits' : provider;
 
   async function fetchProgress() {
     // Only fetch Piper-specific progress when Piper is selected
@@ -177,7 +185,7 @@
     try {
       const endpoint = provider === 'rvc'
         ? `/api/rvc-training?action=training-readiness&speakerId=default`
-        : `/api/sovits-training?action=training-readiness&provider=${provider}`;
+        : `/api/sovits-training?action=training-readiness&provider=${apiProvider}`;
 
       const response = await fetch(endpoint);
       if (!response.ok) throw new Error('Failed to fetch training readiness');
@@ -233,7 +241,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'auto-export',
-          provider,
+          provider: apiProvider,
           speakerId: 'default',
           minQuality: currentConfig.minQuality
         })
@@ -266,7 +274,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'copy-samples',
-          provider,
+          provider: apiProvider,
           speakerId: 'default',
           sampleIds: selectedSampleIds
         })
@@ -343,7 +351,10 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'start-training',
-          speakerId: 'default'
+          speakerId: 'default',
+          totalEpochs,
+          saveEveryEpoch,
+          batchSize
         })
       });
 
@@ -601,35 +612,38 @@
         <div class="workflow-guide sovits">
           <div class="guide-header">
             <span class="guide-icon">🤖</span>
-            <strong>GPT-SoVITS Quick Start</strong>
+            <strong>GPT-SoVITS Automated Workflow</strong>
           </div>
           <ol class="guide-steps">
             <li>
-              <strong>Enable Training:</strong> Turn on voice training above (if not already enabled)
-            </li>
-            <li>
-              <strong>Collect Samples:</strong> Have conversations with MetaHuman - samples are automatically recorded
-            </li>
-            <li>
-              <strong>Select Best Samples:</strong> Click "Select Samples" below to choose 3-5 high-quality clips (5-10 seconds total)
+              <strong>Record Your Voice:</strong> Use the recorder below to record 5-10 seconds of clear speech
               <ul>
-                <li>Use the ▶️ play button to preview each sample</li>
-                <li>Look for 80%+ quality scores</li>
-                <li>Choose clear, consistent speech</li>
+                <li>The sample is <strong>automatically</strong> copied to the reference directory</li>
+                <li>No manual export needed!</li>
               </ul>
             </li>
             <li>
-              <strong>Copy to Reference:</strong> Click "Copy Selected Samples" or "Auto-Export Best Samples"
+              <strong>Alternative - Select from Conversations:</strong> If you prefer, click "Select Samples" to choose from previously recorded conversations
+              <ul>
+                <li>Look for 80%+ quality scores</li>
+                <li>Then click "Copy Selected Samples" or "Auto-Export Best Samples"</li>
+              </ul>
             </li>
             <li>
-              <strong>Start Server:</strong> Go back to Voice Settings and click <strong>▶️ Start Server</strong>
+              <strong>Go to Voice Settings:</strong> Click "Voice Settings" in the left sidebar
             </li>
             <li>
-              <strong>Test Your Voice:</strong> Use the test panel in Voice Settings to hear your cloned voice!
+              <strong>Select GPT-SoVITS Provider:</strong> Choose GPT-SoVITS from the provider dropdown
+            </li>
+            <li>
+              <strong>Click Save:</strong> The server will <strong>automatically start</strong> and load your reference audio
+            </li>
+            <li>
+              <strong>Test Your Voice:</strong> Use the "Test Voice" button in Voice Settings to hear your cloned voice!
             </li>
           </ol>
           <div class="guide-note">
-            <strong>💡 Remember:</strong> GPT-SoVITS doesn't need traditional training - it clones your voice in real-time using reference audio. Quality over quantity!
+            <strong>💡 Fully Automated:</strong> Recording → Auto-copy → Test → Save. GPT-SoVITS clones your voice in real-time using reference audio. No training required!
           </div>
         </div>
       {:else}
@@ -754,7 +768,7 @@
       <!-- Direct Voice Recording Widget -->
       {#if provider === 'sovits'}
         <DirectVoiceRecorder
-          {provider}
+          provider={apiProvider}
           speakerId="default"
           onRecordingComplete={handleRecordingComplete}
         />
@@ -768,6 +782,9 @@
           {exporting ? 'Exporting...' : 'Auto-Export Best Samples'}
         </button>
         {#if provider === 'rvc'}
+          <button on:click={() => showAdvancedSettings = !showAdvancedSettings} class="settings-btn">
+            {showAdvancedSettings ? '⚙️ Hide' : '⚙️ Show'} Training Settings
+          </button>
           <button on:click={startTraining} disabled={training || !canStartTraining} class="train-btn">
             {training ? 'Training...' : '🎭 Train RVC Model'}
           </button>
@@ -777,10 +794,86 @@
         </button>
       </div>
 
+      {#if provider === 'rvc' && showAdvancedSettings}
+        <div class="training-settings">
+          <h4>⚙️ Training Parameters</h4>
+          <div class="settings-grid">
+            <div class="setting-group">
+              <label for="totalEpochs">
+                Total Epochs:
+                <span class="setting-help">Number of training iterations (300-1000)</span>
+              </label>
+              <input
+                id="totalEpochs"
+                type="number"
+                bind:value={totalEpochs}
+                min="100"
+                max="2000"
+                step="50"
+                disabled={training}
+              />
+              <div class="setting-note">
+                Default: 300. Higher = better quality but longer training time.
+                <br />Recommended: 300-600 for good quality, 800-1000 for best results.
+              </div>
+            </div>
+            <div class="setting-group">
+              <label for="saveEveryEpoch">
+                Save Checkpoint Every:
+                <span class="setting-help">How often to save model checkpoints</span>
+              </label>
+              <input
+                id="saveEveryEpoch"
+                type="number"
+                bind:value={saveEveryEpoch}
+                min="10"
+                max="200"
+                step="10"
+                disabled={training}
+              />
+              <div class="setting-note">
+                Default: 50. Lower = more checkpoints (uses more disk space).
+              </div>
+            </div>
+            <div class="setting-group">
+              <label for="batchSize">
+                Batch Size:
+                <span class="setting-help">Training batch size</span>
+              </label>
+              <input
+                id="batchSize"
+                type="number"
+                bind:value={batchSize}
+                min="1"
+                max="32"
+                step="1"
+                disabled={training}
+              />
+              <div class="setting-note">
+                Default: 8. Lower if you run out of GPU memory. Higher for faster training (if GPU allows).
+              </div>
+            </div>
+          </div>
+          <div class="settings-info">
+            <strong>⏱️ Estimated Training Time:</strong>
+            {#if totalEpochs <= 300}
+              30-60 minutes
+            {:else if totalEpochs <= 600}
+              1-2 hours
+            {:else if totalEpochs <= 1000}
+              2-3 hours
+            {:else}
+              3+ hours
+            {/if}
+            (GPU recommended for faster training)
+          </div>
+        </div>
+      {/if}
+
       {#if showSelector}
         <div class="selector-container">
           <ReferenceAudioSelector
-            {provider}
+            provider={apiProvider}
             minQuality={currentConfig.minQuality}
             onSelectionChange={handleSelectionChange}
           />
@@ -1575,6 +1668,125 @@
 
   :global(.dark) .danger-btn:hover:not(:disabled) {
     background: #c62828;
+  }
+
+  .settings-btn {
+    background: #607d8b;
+  }
+
+  .settings-btn:hover:not(:disabled) {
+    background: #546e7a;
+  }
+
+  .training-settings {
+    margin-top: 20px;
+    border: 2px solid #8b5cf6;
+    border-radius: 8px;
+    padding: 20px;
+    background: #f3f0ff;
+  }
+
+  :global(.dark) .training-settings {
+    background: #1a1520;
+    border-color: #9f7aea;
+  }
+
+  .training-settings h4 {
+    margin: 0 0 15px 0;
+    color: #8b5cf6;
+    font-size: 1.1rem;
+  }
+
+  :global(.dark) .training-settings h4 {
+    color: #9f7aea;
+  }
+
+  .settings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+    margin-bottom: 15px;
+  }
+
+  .setting-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .setting-group label {
+    font-weight: 600;
+    color: #333;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  :global(.dark) .setting-group label {
+    color: #e0e0e0;
+  }
+
+  .setting-help {
+    font-weight: 400;
+    font-size: 0.85rem;
+    color: #666;
+    font-style: italic;
+  }
+
+  :global(.dark) .setting-help {
+    color: #999;
+  }
+
+  .setting-group input[type="number"] {
+    padding: 10px;
+    border: 2px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 1rem;
+    background: white;
+    color: #333;
+    transition: border-color 0.2s;
+  }
+
+  :global(.dark) .setting-group input[type="number"] {
+    background: #2a2a2a;
+    color: #e0e0e0;
+    border-color: #444;
+  }
+
+  .setting-group input[type="number"]:focus {
+    outline: none;
+    border-color: #8b5cf6;
+  }
+
+  .setting-group input[type="number"]:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .setting-note {
+    font-size: 0.85rem;
+    color: #666;
+    line-height: 1.4;
+  }
+
+  :global(.dark) .setting-note {
+    color: #999;
+  }
+
+  .settings-info {
+    margin-top: 15px;
+    padding: 12px;
+    background: #e9d5ff;
+    border-left: 4px solid #8b5cf6;
+    border-radius: 4px;
+    font-size: 0.95rem;
+    color: #333;
+  }
+
+  :global(.dark) .settings-info {
+    background: #2d1b3d;
+    border-color: #9f7aea;
+    color: #e0e0e0;
   }
 
   .selector-container {

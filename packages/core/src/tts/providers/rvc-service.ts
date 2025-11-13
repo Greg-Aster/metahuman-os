@@ -317,7 +317,26 @@ export class RVCService implements ITextToSpeechService {
       });
 
       // Read converted audio
+      console.log('[RVCService] Reading converted audio from:', outputFile);
+
+      // Verify output file exists and has content
+      if (!fs.existsSync(outputFile)) {
+        throw new Error(`RVC conversion completed but output file not found: ${outputFile}`);
+      }
+
+      const stats = fs.statSync(outputFile);
+      console.log('[RVCService] Output file size:', stats.size, 'bytes');
+
+      if (stats.size === 0) {
+        throw new Error('RVC conversion produced empty output file');
+      }
+
+      if (stats.size < 44) {
+        throw new Error('RVC conversion produced invalid WAV file (too small)');
+      }
+
       const convertedBuffer = await readFile(outputFile);
+      console.log('[RVCService] Successfully read converted audio:', convertedBuffer.length, 'bytes');
 
       // Clean up temp files
       await unlink(inputFile).catch(() => {});

@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { getUserContext } from '@metahuman/core/context';
 import { withUserContext } from '../../middleware/userContext';
+import { startSovitsServer, stopSovitsServer } from '../../lib/sovits-server';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -59,6 +60,19 @@ type VoiceConfig = {
       speakingRate: number;
       outputFormat: string;
     };
+    sovits?: {
+      serverUrl: string;
+      speakerId: string;
+      temperature: number;
+      speed: number;
+      autoFallbackToPiper: boolean;
+    };
+    rvc?: {
+      speakerId: string;
+      pitchShift: number;
+      speed: number;
+      autoFallbackToPiper: boolean;
+    };
   };
   stt: Record<string, any>;
   cache: Record<string, any>;
@@ -86,6 +100,19 @@ function buildDefaultVoiceConfig(
         config: defaultConfig,
         speakingRate: 1.0,
         outputFormat: 'wav',
+      },
+      sovits: {
+        serverUrl: 'http://127.0.0.1:9880',
+        speakerId: 'default',
+        temperature: 0.6,
+        speed: 1.0,
+        autoFallbackToPiper: true,
+      },
+      rvc: {
+        speakerId: 'default',
+        pitchShift: 0,
+        speed: 1.0,
+        autoFallbackToPiper: true,
       },
     },
     stt: {
@@ -180,6 +207,25 @@ function ensureVoiceConfig(
 
   config.tts.piper.outputFormat = config.tts.piper.outputFormat || 'wav';
 
+  if (!config.tts.sovits) {
+    config.tts.sovits = {
+      serverUrl: 'http://127.0.0.1:9880',
+      speakerId: 'default',
+      temperature: 0.6,
+      speed: 1.0,
+      autoFallbackToPiper: true,
+    };
+  }
+
+  if (!config.tts.rvc) {
+    config.tts.rvc = {
+      speakerId: 'default',
+      pitchShift: 0,
+      speed: 1.0,
+      autoFallbackToPiper: true,
+    };
+  }
+
   // Ensure cache directory exists
   config.cache = config.cache ?? {
     enabled: true,
@@ -255,9 +301,11 @@ const getHandler: APIRoute = async () => {
     const currentModelPath = config.tts.piper.model;
     const currentVoiceFile = path.basename(currentModelPath, '.onnx');
 
+    const providerForUI = config.tts.provider === 'gpt-sovits' ? 'sovits' : config.tts.provider;
+
     return new Response(
       JSON.stringify({
-        provider: config.tts.provider,
+        provider: providerForUI,
         piper: {
           voices,
           currentVoice: currentVoiceFile,
@@ -307,15 +355,20 @@ const postHandler: APIRoute = async ({ request }) => {
     const body = await request.json();
     const { provider, piper, sovits, rvc } = body;
 
+    console.log('[voice-settings POST] Received body:', { provider, hasPiper: !!piper, hasSovits: !!sovits, hasRvc: !!rvc });
+
     const voiceConfigPath = context.profilePaths.voiceConfig;
     const voicesDir = context.systemPaths.voiceModels;
     const rootDir = context.systemPaths.root;
     const voices = getAvailableVoices(voicesDir);
     const config = ensureVoiceConfig(voiceConfigPath, voicesDir, rootDir, voices);
+    const previousProvider = config.tts.provider;
 
-    // Update provider
+    console.log('[voice-settings POST] Previous provider:', previousProvider, '→ New provider:', provider);
+
+    // Update provider (normalize sovits → sovits for internal storage)
     if (provider) {
-      config.tts.provider = provider;
+      config.tts.provider = provider === 'sovits' ? 'gpt-sovits' : provider;
     }
 
     // Update Piper settings
@@ -365,16 +418,40 @@ const postHandler: APIRoute = async ({ request }) => {
     // Save configuration
     fs.writeFileSync(voiceConfigPath, JSON.stringify(config, null, 2), 'utf8');
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        provider: config.tts.provider,
-      }),
-      {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
+    // Handle provider switching and service orchestration
+    try {
+      await syncTTSBackends(previousProvider, config.tts.provider, config);
+
+      const responseProvider = config.tts.provider === 'gpt-sovits' ? 'sovits' : config.tts.provider;
+      return new Response(
+        JSON.stringify({
+          success: true,
+          provider: responseProvider,
+          message: responseProvider === 'sovits'
+            ? 'Voice settings saved. SoVITS server started successfully.'
+            : `Voice settings saved. Provider switched to ${responseProvider}.`,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    } catch (serviceError) {
+      // Settings were saved, but service failed to start
+      console.error('[voice-settings] Service orchestration failed:', serviceError);
+      const responseProvider = config.tts.provider === 'gpt-sovits' ? 'sovits' : config.tts.provider;
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `Settings saved, but failed to start ${responseProvider} server: ${(serviceError as Error).message}`,
+          provider: responseProvider,
+        }),
+        {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
   } catch (error) {
     console.error('[voice-settings] Error saving settings:', error);
     return new Response(
@@ -386,6 +463,70 @@ const postHandler: APIRoute = async ({ request }) => {
     );
   }
 };
+
+async function syncTTSBackends(
+  previousProvider: string,
+  nextProvider: string,
+  config: VoiceConfig
+): Promise<void> {
+  const normalize = (provider: string) => provider === 'sovits' || provider === 'gpt-sovits' ? 'gpt-sovits' : provider;
+  const prev = normalize(previousProvider);
+  const next = normalize(nextProvider);
+
+  if (prev === next) {
+    return;
+  }
+
+  console.log(`[voice-settings] Provider switch: ${previousProvider} → ${nextProvider}`);
+
+  // Stop previous provider's services
+  if (prev === 'gpt-sovits') {
+    try {
+      console.log('[voice-settings] Stopping SoVITS server...');
+      await stopSovitsServer();
+    } catch (error) {
+      console.error('[voice-settings] Failed to stop SoVITS server:', error);
+    }
+  }
+
+  // RVC and Piper don't have background services, just stop SoVITS if switching away
+
+  // Start new provider's services
+  if (next === 'gpt-sovits') {
+    const port = extractSovitsPort(config);
+    try {
+      console.log(`[voice-settings] Starting SoVITS server on port ${port}...`);
+      const result = await startSovitsServer(port);
+      if (!result.success) {
+        console.error('[voice-settings] Failed to start SoVITS server:', result.error);
+        throw new Error(result.error || 'Failed to start SoVITS server');
+      }
+      console.log(`[voice-settings] SoVITS server started successfully`);
+    } catch (error) {
+      console.error('[voice-settings] Error starting SoVITS server:', error);
+      throw error; // Propagate error so user knows the server didn't start
+    }
+  } else if (nextProvider === 'rvc') {
+    console.log('[voice-settings] Switched to RVC (no background service needed)');
+  } else if (nextProvider === 'piper') {
+    console.log('[voice-settings] Switched to Piper (no background service needed)');
+  }
+}
+
+function extractSovitsPort(config: VoiceConfig): number {
+  const serverUrl = config.tts.sovits?.serverUrl;
+  if (!serverUrl) return 9880;
+
+  try {
+    const parsed = new URL(serverUrl);
+    if (parsed.port) {
+      return Number(parsed.port);
+    }
+    return parsed.protocol === 'https:' ? 443 : 80;
+  } catch {
+    return 9880;
+  }
+}
 
 export const GET = withUserContext(getHandler);
 export const POST = withUserContext(postHandler);

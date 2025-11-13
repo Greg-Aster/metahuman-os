@@ -61,7 +61,21 @@ export async function computeMemoryMetrics(
   const indexStatus = getIndexStatus();
 
   let totalMemories = 0;
-  const memoriesByType: Record<string, number> = {};
+  const memoriesByType: Record<string, number> = {
+    conversation: 0,
+    chat: 0,
+    inner_dialogue: 0,
+    reflection: 0,
+    observation: 0,
+    dream: 0,
+    action: 0,
+    journal: 0,
+    summary: 0,
+    tool_invocation: 0,
+    file_read: 0,
+    file_write: 0,
+    unknown: 0,
+  };
   let lastCaptureTimestamp = '';
   let recentToolInvocations = 0;
   let recentFileOperations = 0;

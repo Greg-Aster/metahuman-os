@@ -32,6 +32,7 @@
   let testText = 'Hello! This is a test of the text to speech system.';
   let testingVoice = false;
   let testAudio: HTMLAudioElement | null = null;
+  let generatingReference = false;
 
   // Provider metadata
   const providerInfo = {
@@ -80,16 +81,22 @@
       successMessage = null;
       error = null;
 
+      console.log('[VoiceSettings] Saving config:', { provider: config?.provider });
+
       const response = await fetch('/api/voice-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
       });
 
-      if (!response.ok) throw new Error('Failed to save settings');
+      const result = await response.json();
 
-      successMessage = 'Settings saved successfully!';
-      setTimeout(() => { successMessage = null; }, 3000);
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to save settings');
+      }
+
+      successMessage = result.message || 'Settings saved successfully!';
+      setTimeout(() => { successMessage = null; }, 5000);
     } catch (e) {
       error = String(e);
       console.error('[VoiceSettings] Save error:', e);
@@ -98,8 +105,45 @@
     }
   }
 
-  async function testVoice() {
+  async function generateReference() {
+    if (!config || config.provider !== 'sovits') return;
+
+    try {
+      generatingReference = true;
+      successMessage = null;
+      error = null;
+
+      const response = await fetch('/api/sovits-training', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'set-reference-latest',
+          provider: 'gpt-sovits',
+          speakerId: config.sovits?.speakerId || 'default',
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to generate reference audio');
+      }
+
+      successMessage = result.message || 'Reference audio regenerated successfully!';
+      setTimeout(() => { successMessage = null; }, 5000);
+    } catch (e) {
+      error = String(e);
+      console.error('[VoiceSettings] Generate reference error:', e);
+    } finally {
+      generatingReference = false;
+    }
+  }
+
+  async function testVoice(forceProvider?: Provider) {
     if (!config) return;
+
+    // Use explicit provider or fall back to current selection
+    const providerToTest = forceProvider || config.provider;
 
     try {
       testingVoice = true;
@@ -110,9 +154,10 @@
         testAudio = null;
       }
 
-      let requestBody: any = { text: testText, provider: config.provider };
+      console.log('[VoiceSettings] Testing voice with provider:', providerToTest);
+      let requestBody: any = { text: testText, provider: providerToTest };
 
-      if (config.provider === 'piper' && config.piper) {
+      if (providerToTest === 'piper' && config.piper) {
         const voice = config.piper.voices.find(v => v.id === config.piper!.currentVoice);
         if (!voice) {
           error = 'Please select a voice';
@@ -122,11 +167,11 @@
         // Use full model path instead of just ID
         requestBody.voiceId = voice.modelPath;
         requestBody.speakingRate = config.piper.speakingRate;
-      } else if (config.provider === 'sovits' && config.sovits) {
+      } else if (providerToTest === 'sovits' && config.sovits) {
         // TTS API expects voiceId, not speakerId
         requestBody.voiceId = config.sovits.speakerId;
         requestBody.speed = config.sovits.speed;
-      } else if (config.provider === 'rvc' && config.rvc) {
+      } else if (providerToTest === 'rvc' && config.rvc) {
         // TTS API expects voiceId, not speakerId
         requestBody.voiceId = config.rvc.speakerId;
         requestBody.pitchShift = config.rvc.pitchShift;
@@ -164,8 +209,9 @@
 
   function switchProvider(newProvider: Provider) {
     if (config) {
-      config.provider = newProvider;
-      config = config; // Trigger reactivity
+      console.log('[VoiceSettings] Switching provider:', config.provider, '→', newProvider);
+      config = { ...config, provider: newProvider }; // Create new object to trigger reactivity
+      console.log('[VoiceSettings] Provider switched. Current:', config.provider);
     }
   }
 
@@ -236,6 +282,25 @@
             <span>Normal</span>
             <span>Faster</span>
           </div>
+        </div>
+
+        <!-- Piper Test Section -->
+        <div class="provider-test-section">
+          <label for="piper-test-text">Test Piper Voice</label>
+          <textarea
+            id="piper-test-text"
+            bind:value={testText}
+            rows="2"
+            placeholder="Enter text to test Piper..."
+            disabled={testingVoice || saving}
+          ></textarea>
+          <button
+            class="test-button piper-test"
+            on:click={() => testVoice('piper')}
+            disabled={testingVoice || saving}
+          >
+            {testingVoice ? '🔊 Playing...' : '▶️ Test Piper'}
+          </button>
         </div>
       </div>
 
@@ -321,6 +386,37 @@
             Auto-fallback to Piper if unavailable
           </label>
         </div>
+
+        <div class="setting-group">
+          <label>Reference Audio Management</label>
+          <p class="hint">Generate reference.wav from the latest recorded sample in your voice profile.</p>
+          <button
+            class="btn-generate-reference"
+            on:click={generateReference}
+            disabled={generatingReference || saving}
+          >
+            {generatingReference ? '🔄 Generating...' : '🎯 Generate Reference Audio'}
+          </button>
+        </div>
+
+        <!-- SoVITS Test Section -->
+        <div class="provider-test-section">
+          <label for="sovits-test-text">Test Cloned Voice</label>
+          <textarea
+            id="sovits-test-text"
+            bind:value={testText}
+            rows="2"
+            placeholder="Enter text to test your cloned voice..."
+            disabled={testingVoice || saving}
+          ></textarea>
+          <button
+            class="test-button sovits-test"
+            on:click={() => testVoice('sovits')}
+            disabled={testingVoice || saving}
+          >
+            {testingVoice ? '🔊 Playing...' : '▶️ Test SoVITS'}
+          </button>
+        </div>
       </div>
 
     {:else if config.provider === 'rvc' && config.rvc}
@@ -385,27 +481,27 @@
             Auto-fallback to Piper if model unavailable
           </label>
         </div>
+
+        <!-- RVC Test Section -->
+        <div class="provider-test-section">
+          <label for="rvc-test-text">Test RVC Voice</label>
+          <textarea
+            id="rvc-test-text"
+            bind:value={testText}
+            rows="2"
+            placeholder="Enter text to test RVC voice conversion..."
+            disabled={testingVoice || saving}
+          ></textarea>
+          <button
+            class="test-button rvc-test"
+            on:click={() => testVoice('rvc')}
+            disabled={testingVoice || saving}
+          >
+            {testingVoice ? '🔊 Playing...' : '▶️ Test RVC'}
+          </button>
+        </div>
       </div>
     {/if}
-
-    <!-- Test Voice -->
-    <div class="test-section">
-      <label for="test-text">Test Text</label>
-      <textarea
-        id="test-text"
-        bind:value={testText}
-        rows="2"
-        placeholder="Enter text to test the voice..."
-        disabled={testingVoice || saving}
-      ></textarea>
-      <button
-        class="test-button"
-        on:click={testVoice}
-        disabled={testingVoice || saving}
-      >
-        {testingVoice ? '🔊 Playing...' : '▶️ Test Voice'}
-      </button>
-    </div>
 
     <!-- Actions -->
     <div class="actions">
@@ -723,5 +819,71 @@
 
   .actions {
     margin-top: 1.5rem;
+  }
+
+  .btn-generate-reference {
+    width: 100%;
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 0.5rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: #10b981;
+    color: white;
+    margin-top: 0.5rem;
+  }
+
+  .btn-generate-reference:hover:not(:disabled) {
+    background: #059669;
+  }
+
+  .btn-generate-reference:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .provider-test-section {
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 2px solid #e5e7eb;
+  }
+
+  :global(.dark) .provider-test-section {
+    border-top-color: #374151;
+  }
+
+  .provider-test-section label {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #1f2937;
+  }
+
+  :global(.dark) .provider-test-section label {
+    color: #f3f4f6;
+  }
+
+  .test-button.piper-test {
+    background: #3b82f6;
+  }
+
+  .test-button.piper-test:hover:not(:disabled) {
+    background: #2563eb;
+  }
+
+  .test-button.sovits-test {
+    background: #10b981;
+  }
+
+  .test-button.sovits-test:hover:not(:disabled) {
+    background: #059669;
+  }
+
+  .test-button.rvc-test {
+    background: #8b5cf6;
+  }
+
+  .test-button.rvc-test:hover:not(:disabled) {
+    background: #7c3aed;
   }
 </style>

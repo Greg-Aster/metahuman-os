@@ -5,7 +5,7 @@
       "name": "GPT-SoVITS TTS",
       "description": "Advanced voice cloning with few-shot learning. Enables highly realistic voice synthesis from minimal training data.",
       "category": "tts",
-      "enabled": false,
+      "enabled": true,
       "installed": true,
       "size": "~2.5 GB",
       "requirements": {

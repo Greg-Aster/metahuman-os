@@ -10,7 +10,7 @@ import { withUserContext } from '../../middleware/userContext';
  *
  * Body: {
  *   text: string,
- *   provider?: 'piper' | 'sovits' | 'rvc',  // Optional: TTS provider to use
+ *   provider?: 'piper' | 'sovits' | 'gpt-sovits' | 'rvc',  // Optional: TTS provider to use (UI may send "sovits")
  *   voiceId?: string,         // Optional: voice ID (Piper) or speaker ID (SoVITS/RVC)
  *   model?: string,           // Optional: override voice model path (legacy)
  *   models?: string[],        // Optional: array of voice models for multi-voice (mutant mode)
@@ -20,6 +20,12 @@ import { withUserContext } from '../../middleware/userContext';
  * }
  * Returns: audio/wav stream
  */
+const normalizeProvider = (provider?: string): 'piper' | 'gpt-sovits' | 'rvc' | undefined => {
+  if (!provider) return undefined;
+  if (provider === 'sovits') return 'gpt-sovits';
+  return provider as 'piper' | 'gpt-sovits' | 'rvc';
+};
+
 const postHandler: APIRoute = async ({ request, cookies }) => {
   try {
     const { text, provider, model, voiceId, models, config, speakingRate, pitchShift, speed } = await request.json();
@@ -45,6 +51,7 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
       }
     }
 
+    const normalizedProvider = normalizeProvider(provider);
     let audioBuffer: Buffer;
 
     // Check if multi-voice mode is requested (for Mutant Super Intelligence)
@@ -53,7 +60,7 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
       audioBuffer = await generateMultiVoiceSpeech(text, models, {
         signal: request.signal,
         speakingRate,
-        provider,
+        provider: normalizedProvider,
         username,
       });
     } else {
@@ -63,7 +70,7 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
         voice: voiceId || model, // Use voiceId (preferred) or model (legacy)
         speakingRate: speakingRate || speed, // speakingRate for Piper, speed for SoVITS/RVC
         pitchShift, // RVC-specific
-        provider,
+        provider: normalizedProvider,
         username,
       });
     }

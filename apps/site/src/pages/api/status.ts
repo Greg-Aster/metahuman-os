@@ -11,6 +11,7 @@ import { getRuntimeMode } from '@metahuman/core/runtime-mode';
 import { withUserContext } from '../../middleware/userContext';
 import { getUserContext } from '@metahuman/core/context';
 import { loadCuriosityConfig } from '@metahuman/core/config';
+import { getMemoryMetrics } from '@metahuman/core/memory-metrics-cache';
 import fs from 'node:fs';
 import path from 'node:path';
 import { paths } from '@metahuman/core/paths';
@@ -200,79 +201,61 @@ const handler: APIRoute = async ({ cookies }) => {
     }
 
     // MEMORY SYSTEM STATUS
-    const indexStatus = await getIndexStatus();
-    let memoryStats: any = {
-      totalIndexed: indexStatus.items || 0,
-      indexAvailable: indexStatus.exists,
-      indexModel: indexStatus.model || null,
-      lastIndexed: indexStatus.createdAt || null,
+    const metrics = await getMemoryMetrics(ctx.username);
+    const memoryStats: any = {
+      totalFiles: metrics.totalMemories,
+      byType: metrics.memoriesByType,
+      lastCapture: metrics.lastCaptureTimestamp,
     };
 
-    // Count memory files by type across all memory directories
-    try {
-      const walkDir = (dir: string): string[] => {
-        if (!fs.existsSync(dir)) return [];
-        let files: string[] = [];
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-          const fullPath = path.join(dir, entry.name);
-          if (entry.isDirectory()) {
-            files = files.concat(walkDir(fullPath));
-          } else if (entry.isFile() && entry.name.endsWith('.json')) {
-            files.push(fullPath);
-          }
+    // Group types into categories for the UI
+    const categories: Record<string, string[]> = {
+      Internal: ['inner_dialogue', 'reflection', 'dream'],
+      Conversational: ['conversation', 'chat'],
+      Knowledge: ['observation', 'action', 'journal', 'summary'],
+      System: ['tool_invocation', 'file_read', 'file_write', 'unknown'],
+    };
+
+    const byCategory: Record<string, number> = {
+      Internal: 0,
+      Conversational: 0,
+      Knowledge: 0,
+      System: 0,
+    };
+
+    for (const [type, count] of Object.entries(metrics.memoriesByType)) {
+      let categorized = false;
+      for (const [cat, types] of Object.entries(categories)) {
+        if (types.includes(type)) {
+          byCategory[cat] = (byCategory[cat] || 0) + count;
+          categorized = true;
+          break;
         }
-        return files;
-      };
-
-      // Use profile-specific memory path from user context
-      const memoryPath = ctx.profilePaths.memory;
-      const categoryCounts: Record<string, number> = {
-        episodic: walkDir(ctx.profilePaths.episodic).length,
-        semantic: walkDir(path.join(memoryPath, 'semantic')).length,
-        procedural: walkDir(path.join(memoryPath, 'procedural')).length,
-        preferences: walkDir(path.join(memoryPath, 'preferences')).length,
-        curated: walkDir(path.join(memoryPath, 'curated')).length,
-        audio: walkDir(path.join(memoryPath, 'audio')).length,
-        calendar: walkDir(path.join(memoryPath, 'calendar')).length,
-        inbox: walkDir(path.join(memoryPath, 'inbox')).length,
-      };
-
-      // Also count episodic sub-types from actual file content (for backward compatibility)
-      const allEpisodicFiles = walkDir(ctx.profilePaths.episodic);
-      const episodicSubTypes: Record<string, number> = {};
-      let lastCaptureTime: string | null = null;
-
-      for (const file of allEpisodicFiles.slice(-100)) { // Check last 100 for performance
-        try {
-          const content = JSON.parse(fs.readFileSync(file, 'utf-8'));
-          const type = content.type || 'episodic';
-          episodicSubTypes[type] = (episodicSubTypes[type] || 0) + 1;
-          if (content.timestamp && (!lastCaptureTime || content.timestamp > lastCaptureTime)) {
-            lastCaptureTime = content.timestamp;
-          }
-        } catch {}
       }
-
-      // Calculate total files
-      const totalFiles = Object.values(categoryCounts).reduce((sum, count) => sum + count, 0);
-
-      // Calculate percentages for each category
-      const percentages: Record<string, number> = {};
-      for (const [category, count] of Object.entries(categoryCounts)) {
-        percentages[category] = totalFiles > 0 ? Math.round((count / totalFiles) * 100) : 0;
+      if (!categorized) {
+        byCategory['System'] = (byCategory['System'] || 0) + count;
       }
-
-      memoryStats.totalFiles = totalFiles;
-      memoryStats.byCategory = categoryCounts;
-      memoryStats.byType = episodicSubTypes; // Keep legacy episodic sub-types
-      memoryStats.percentages = percentages;
-      memoryStats.lastCapture = lastCaptureTime;
-    } catch (error) {
-      memoryStats.totalFiles = 0;
-      memoryStats.byCategory = {};
-      memoryStats.byType = {};
-      memoryStats.percentages = {};
     }
+
+    memoryStats.byCategory = byCategory;
+
+    // Calculate percentages
+    const percentages: Record<string, number> = {};
+    if (metrics.totalMemories > 0) {
+      for (const [category, count] of Object.entries(byCategory)) {
+        percentages[category] = Math.round((count / metrics.totalMemories) * 100);
+      }
+    }
+    memoryStats.percentages = percentages;
+
+    // Add index status from metrics if available
+    const indexStatus = await getIndexStatus();
+    memoryStats.totalIndexed = indexStatus.items || 0;
+    memoryStats.indexAvailable = indexStatus.exists;
+    memoryStats.indexModel = indexStatus.model || null;
+    memoryStats.lastIndexed = indexStatus.createdAt || null;
+
+
 
     // AGENT ACTIVITY
     let agentActivity: any = {

@@ -109,6 +109,10 @@ echo "  Installing RVC-specific dependencies..."
 echo "  Installing preprocessing and training dependencies..."
 ./venv/bin/pip install tensorboard matplotlib noisereduce torchcrepe torchfcpe
 
+# Install inference dependencies (pedalboard for audio processing)
+echo "  Installing inference dependencies..."
+./venv/bin/pip install pedalboard
+
 # Optional: Install additional helpful packages
 ./venv/bin/pip install tqdm
 
