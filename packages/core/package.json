@@ -32,7 +32,8 @@
     "./onboarding": "./src/onboarding.ts",
     "./runtime-mode": "./src/runtime-mode.ts",
     "./reasoning": "./src/reasoning/index.ts",
-    "./config": "./src/config.ts"
+    "./config": "./src/config.ts",
+    "./recovery-codes": "./src/recovery-codes.ts"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

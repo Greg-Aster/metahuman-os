@@ -3,7 +3,7 @@
   import OnboardingWizard from './OnboardingWizard.svelte';
   import ProfileSelector from './ProfileSelector.svelte';
 
-  let view: 'splash' | 'login' | 'register' | 'post-register' | 'onboarding' = 'splash';
+  let view: 'splash' | 'login' | 'register' | 'post-register' | 'onboarding' | 'forgot-password' | 'recovery-codes' = 'splash';
   let isAuthenticated = false;
   let isCheckingAuth = true;
   let bootData: any = null;
@@ -18,6 +18,13 @@
   let confirmPassword = '';
   let displayName = '';
   let email = '';
+
+  // Recovery code fields
+  let recoveryCode = '';
+  let newPassword = '';
+  let confirmNewPassword = '';
+  let generatedRecoveryCodes: string[] = [];
+  let registeredUsername = '';
 
   // Agreement checkboxes
   let agreeToTerms = false;
@@ -122,14 +129,82 @@
 
       if (data.success) {
         isAuthenticated = true;
-        // Show post-registration screen with onboarding option
-        view = 'post-register';
+        registeredUsername = username;
+        // Store recovery codes
+        if (data.recoveryCodes && Array.isArray(data.recoveryCodes)) {
+          generatedRecoveryCodes = data.recoveryCodes;
+          // Show recovery codes first
+          view = 'recovery-codes';
+        } else {
+          // Fallback to post-register if no codes
+          view = 'post-register';
+        }
       } else {
         error = data.error || 'Registration failed';
       }
     } catch (err) {
       error = 'Network error. Please try again.';
       console.error('Registration error:', err);
+    } finally {
+      loading = false;
+    }
+  }
+
+  // Handle password reset with recovery code
+  async function handlePasswordReset(e: Event) {
+    e.preventDefault();
+    error = '';
+
+    // Validate inputs
+    if (!username || !recoveryCode || !newPassword || !confirmNewPassword) {
+      error = 'All fields are required';
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      error = 'Passwords do not match';
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      error = 'Password must be at least 6 characters';
+      return;
+    }
+
+    loading = true;
+
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username,
+          recoveryCode: recoveryCode.toUpperCase().trim(),
+          newPassword,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        // Clear form
+        username = '';
+        recoveryCode = '';
+        newPassword = '';
+        confirmNewPassword = '';
+        // Show login with success message
+        error = '';
+        view = 'login';
+        // Show success (reuse error field with success styling)
+        setTimeout(() => {
+          alert('Password reset successfully! Please login with your new password.');
+        }, 100);
+      } else {
+        error = data.error || 'Password reset failed';
+      }
+    } catch (err) {
+      error = 'Network error. Please try again.';
+      console.error('Password reset error:', err);
     } finally {
       loading = false;
     }
@@ -351,6 +426,12 @@
             <button type="submit" class="btn btn-primary btn-block" disabled={loading}>
               {loading ? 'Signing in...' : 'Sign In'}
             </button>
+
+            <div class="forgot-password-link">
+              <button class="link-button" on:click={() => view = 'forgot-password'}>
+                Forgot password?
+              </button>
+            </div>
           </form>
 
           <div class="form-footer">
@@ -487,6 +568,146 @@
               Already have an account?
               <button class="link-button" on:click={() => view = 'login'}>Sign in</button>
             </p>
+          </div>
+        </div>
+      {:else if view === 'forgot-password'}
+        <!-- Forgot Password / Recovery Code Form -->
+        <div class="form-content">
+          <button class="back-button" on:click={() => view = 'login'}>
+            <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
+              <path d="M8 14L2 8l6-6M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+
+          <div class="form-header">
+            <h2>Reset Password</h2>
+            <p>Use a recovery code to reset your password</p>
+          </div>
+
+          <form on:submit={handlePasswordReset}>
+            <div class="form-group">
+              <label for="reset-username">Username</label>
+              <input
+                id="reset-username"
+                type="text"
+                bind:value={username}
+                required
+                disabled={loading}
+                autocomplete="username"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="recovery-code">Recovery Code</label>
+              <input
+                id="recovery-code"
+                type="text"
+                bind:value={recoveryCode}
+                required
+                disabled={loading}
+                placeholder="XXXX-XXXX-XXXX-XXXX"
+                pattern="[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}"
+                title="Format: XXXX-XXXX-XXXX-XXXX"
+                style="text-transform: uppercase; font-family: monospace;"
+              />
+              <small style="display: block; margin-top: 0.5rem; color: rgba(255,255,255,0.6); font-size: 0.8rem;">
+                Enter one of your 10 recovery codes. Each code can only be used once.
+              </small>
+            </div>
+
+            <div class="form-group">
+              <label for="new-password">New Password</label>
+              <input
+                id="new-password"
+                type="password"
+                bind:value={newPassword}
+                required
+                disabled={loading}
+                autocomplete="new-password"
+                minlength="6"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="confirm-new-password">Confirm New Password</label>
+              <input
+                id="confirm-new-password"
+                type="password"
+                bind:value={confirmNewPassword}
+                required
+                disabled={loading}
+                autocomplete="new-password"
+                minlength="6"
+              />
+            </div>
+
+            {#if error}
+              <div class="error-message">{error}</div>
+            {/if}
+
+            <button type="submit" class="btn btn-primary btn-block" disabled={loading}>
+              {loading ? 'Resetting password...' : 'Reset Password'}
+            </button>
+          </form>
+
+          <div class="form-footer">
+            <p>
+              Remember your password?
+              <button class="link-button" on:click={() => view = 'login'}>Sign in</button>
+            </p>
+          </div>
+        </div>
+      {:else if view === 'recovery-codes'}
+        <!-- Recovery Codes Display (After Registration) -->
+        <div class="form-content recovery-codes-view">
+          <div class="form-header">
+            <div class="success-icon">🔑</div>
+            <h2>Save Your Recovery Codes</h2>
+            <p>These codes can be used to reset your password if you forget it</p>
+          </div>
+
+          <div class="recovery-codes-warning">
+            <svg width="20" height="20" viewBox="0 0 16 16" fill="none" style="flex-shrink: 0;">
+              <path d="M8 1L1 14h14L8 1z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              <path d="M8 6v3M8 11v1" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            <div>
+              <strong>IMPORTANT:</strong> Save these codes in a secure location (password manager, printed copy, etc.).
+              Each code can only be used once. You won't see them again!
+            </div>
+          </div>
+
+          <div class="recovery-codes-grid">
+            {#each generatedRecoveryCodes as code, index}
+              <div class="recovery-code-item">
+                <span class="code-number">{index + 1}.</span>
+                <code class="code-value">{code}</code>
+              </div>
+            {/each}
+          </div>
+
+          <div class="recovery-codes-actions">
+            <button
+              class="btn btn-secondary"
+              on:click={() => {
+                const codesText = generatedRecoveryCodes.map((c, i) => `${i + 1}. ${c}`).join('\n');
+                navigator.clipboard.writeText(codesText);
+                alert('Recovery codes copied to clipboard!');
+              }}
+            >
+              📋 Copy All Codes
+            </button>
+            <button
+              class="btn btn-primary"
+              on:click={() => view = 'post-register'}
+            >
+              I've Saved My Codes →
+            </button>
+          </div>
+
+          <div class="recovery-codes-footer">
+            <p><strong>What are recovery codes?</strong></p>
+            <p>Recovery codes allow you to reset your password if you forget it. Keep them safe and never share them with anyone.</p>
           </div>
         </div>
       {/if}

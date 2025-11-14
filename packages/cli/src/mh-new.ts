@@ -48,6 +48,7 @@ import {
   // Runtime mode
   isHeadless,
 } from '@metahuman/core';
+import { verifyRecoveryCode, getRemainingCodes } from '@metahuman/core/recovery-codes';
 import { personaCommand } from './commands/persona.js';
 import { adapterCommand } from './commands/adapter.js';
 import { sovitsCommand } from './commands/sovits.js';
@@ -1757,11 +1758,88 @@ function userCmd(args: string[]): void {
       break;
     }
 
+    case 'reset-password': {
+      const username = subargs[0];
+      const useRecoveryCode = subargs.includes('--recovery');
+
+      if (!username) {
+        console.error('Error: reset-password requires a username');
+        console.error('Usage: mh user reset-password <username> [--recovery]');
+        console.error('       --recovery: Use a recovery code instead of admin access');
+        process.exit(1);
+      }
+
+      const user = getUserByUsername(username);
+      if (!user) {
+        console.error(`Error: User '${username}' not found`);
+        process.exit(1);
+      }
+
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+      });
+
+      const promptForPassword = () => {
+        rl.question('Enter new password: ', (password) => {
+          if (!password || password.length < 4) {
+            console.error('Error: Password must be at least 4 characters');
+            rl.close();
+            process.exit(1);
+          }
+
+          rl.question('Confirm new password: ', (confirmPassword) => {
+            rl.close();
+
+            if (password !== confirmPassword) {
+              console.error('Error: Passwords do not match');
+              process.exit(1);
+            }
+
+            updatePassword(user.id, password);
+            console.log(`✓ Password updated successfully for user: ${username}`);
+
+            const remaining = getRemainingCodes(username);
+            if (useRecoveryCode && remaining.length > 0) {
+              console.log(`\n🔑 You have ${remaining.length} recovery codes remaining`);
+            }
+
+            auditSecurity({
+              actor: 'cli',
+              event: 'password_reset',
+              details: { username, adminReset: !useRecoveryCode, usedRecoveryCode: useRecoveryCode }
+            });
+          });
+        });
+      };
+
+      if (useRecoveryCode) {
+        // Require recovery code
+        rl.question('Enter recovery code: ', (code) => {
+          if (!verifyRecoveryCode(username, code)) {
+            console.error('Error: Invalid or already-used recovery code');
+            rl.close();
+            process.exit(1);
+          }
+
+          console.log('✓ Recovery code verified');
+          promptForPassword();
+        });
+      } else {
+        // Admin reset (no recovery code needed)
+        console.log('⚠️  Admin password reset (no recovery code required)');
+        promptForPassword();
+      }
+      break;
+    }
+
     default:
       console.log('User Management Commands:');
-      console.log('  mh user list          List all registered users');
-      console.log('  mh user whoami        Show current user context');
-      console.log('  mh user info <name>   Show detailed info for a user');
+      console.log('  mh user list                      List all registered users');
+      console.log('  mh user whoami                    Show current user context');
+      console.log('  mh user info <name>               Show detailed info for a user');
+      console.log('  mh user reset-password <name>     Reset password (admin access)');
+      console.log('  mh user reset-password <name> --recovery  Reset using recovery code');
       console.log('');
       console.log('Multi-User CLI Usage:');
       console.log('  mh --user <username> <command>    Run command as specific user');

@@ -12,6 +12,7 @@
 
 import { createUser, deleteUser } from '../packages/core/src/users.js';
 import { initializeProfile } from '../packages/core/src/profile.js';
+import { generateRecoveryCodes, saveRecoveryCodes } from '../packages/core/src/recovery-codes.js';
 
 // =============================================================================
 // CONFIGURATION - EDIT THESE VALUES
@@ -74,6 +75,10 @@ async function main() {
       throw new Error(`Profile initialization failed: ${(profileError as Error).message}`);
     }
 
+    // Generate recovery codes
+    const recoveryCodes = generateRecoveryCodes();
+    const recoveryFile = saveRecoveryCodes(user.username, recoveryCodes);
+
     console.log('✅ Owner user created successfully!');
     console.log('');
     console.log('User Details:');
@@ -87,6 +92,18 @@ async function main() {
     console.log('User file saved to:');
     console.log(`  persona/users.json`);
     console.log('');
+    console.log('🔑 RECOVERY CODES (Save these in a safe place!):');
+    console.log('═'.repeat(50));
+    console.log('Use these codes to reset your password if you forget it.');
+    console.log('Each code can only be used once.');
+    console.log('');
+    recoveryCodes.forEach((code, index) => {
+      console.log(`  ${(index + 1).toString().padStart(2, ' ')}. ${code}`);
+    });
+    console.log('');
+    console.log(`Recovery codes saved to: ${recoveryFile}`);
+    console.log('⚠️  Store these codes in a password manager or print them!');
+    console.log('');
     console.log('Next Steps:');
     console.log('  1. Start the dev server: pnpm dev');
     console.log('  2. Navigate to: http://localhost:4321');
@@ -94,6 +111,10 @@ async function main() {
     console.log('  4. Click "Login"');
     console.log(`  5. Enter username: ${user.username}`);
     console.log('  6. Enter your password');
+    console.log('');
+    console.log('Password Recovery:');
+    console.log(`  If you forget your password, use: mh user reset-password ${user.username}`);
+    console.log('  Or use a recovery code in the web UI (future feature)');
     console.log('');
     console.log('🎉 You\'re all set!');
     console.log('');

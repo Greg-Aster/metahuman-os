@@ -1,0 +1,17 @@
+{
+  "users": [
+    {
+      "id": "d326707a-f090-4e79-ba64-0496c66e121e",
+      "username": "Friendly-Robot-Will-Not-Kill-You",
+      "passwordHash": "$2b$12$L.hTCaUBBhMJrgr8Z0qILe/PfqEM2ugCstGgvsgIvRKz/uX2PWGqS",
+      "role": "owner",
+      "createdAt": "2025-11-09T18:42:44.561Z",
+      "metadata": {
+        "displayName": "Friendly-Robot-Will-Not-Kill-You",
+        "profileVisibility": "public"
+      }
+    }
+  ],
+  "version": 1,
+  "_comment": "Default demo account - Password: 'demo'. Copy this file to users.json to get started, or run scripts/create-owner.ts to create your own user."
+}
