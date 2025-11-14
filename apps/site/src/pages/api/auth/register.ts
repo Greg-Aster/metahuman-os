@@ -3,6 +3,7 @@ import { createUser, hasOwner, deleteUser } from '@metahuman/core/users';
 import { initializeProfile } from '@metahuman/core/profile';
 import { createSession } from '@metahuman/core/sessions';
 import { audit } from '@metahuman/core/audit';
+import { generateRecoveryCodes, saveRecoveryCodes } from '@metahuman/core/recovery-codes';
 
 /**
  * POST /api/auth/register
@@ -122,6 +123,10 @@ export const POST: APIRoute = async (context) => {
       throw new Error(`Failed to initialize profile: ${(profileError as Error).message}`);
     }
 
+    // Generate recovery codes for password reset
+    const recoveryCodes = generateRecoveryCodes();
+    saveRecoveryCodes(username, recoveryCodes);
+
     // Create session and log them in automatically
     const session = createSession(user.id, user.role, {
       userAgent: context.request.headers.get('user-agent') || undefined,
@@ -159,6 +164,7 @@ export const POST: APIRoute = async (context) => {
           role: user.role,
           metadata: user.metadata,
         },
+        recoveryCodes, // Include recovery codes for user to save
         message: role === 'owner'
           ? 'Account created successfully! You are now the system owner.'
           : 'Account created successfully!',

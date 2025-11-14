@@ -436,7 +436,7 @@ async function getRelevantContext(
   userMessage: string,
   mode: Mode,
   sessionId: string,
-  opts?: { usingLora?: boolean; includePersonaSummary?: boolean }
+  opts?: { usingLora?: boolean; includePersonaSummary?: boolean; replyToMessage?: string }
 ): Promise<{ context: string; usedSemantic: boolean; contextPackage: any }> {
   try {
     // Load cognitive mode to enforce mode-specific retrieval behavior
@@ -485,10 +485,17 @@ async function getRelevantContext(
     });
 
     // Format context for prompt
-    const context = formatContextForPrompt(contextPackage, {
+    let context = formatContextForPrompt(contextPackage, {
       maxChars: contextPackage.maxContextChars,
       includePersona: opts?.includePersonaSummary !== false && !opts?.usingLora
     });
+
+    // INJECT reply-to context at the top if provided
+    if (opts?.replyToMessage) {
+      const replyToSection = `# User is Replying To\n${opts.replyToMessage}\n\n`;
+      context = replyToSection + context;
+      console.log('[context-builder] Injected reply-to context:', opts.replyToMessage.substring(0, 100));
+    }
 
     // Track used semantic search
     const usedSemantic = contextPackage.indexStatus === 'available' && contextPackage.memoryCount > 0;
@@ -505,6 +512,7 @@ async function getRelevantContext(
         cognitiveMode,
         usedFallback: contextPackage.fallbackUsed,
         memoryCount: contextPackage.memoryCount,
+        hasReplyTo: !!opts?.replyToMessage,
       },
       actor: 'system',
     });
@@ -589,6 +597,7 @@ export const GET: APIRoute = withUserContext(async (context) => {
   const forceOperator = url.searchParams.get('forceOperator') === 'true' || url.searchParams.get('operator') === 'true';
   const yolo = url.searchParams.get('yolo') === 'true';
   const replyToQuestionId = url.searchParams.get('replyToQuestionId') || undefined;
+  const replyToContent = url.searchParams.get('replyToContent') || undefined;
   // Extract conversation session ID for memory continuity
   let sessionId = url.searchParams.get('sessionId') || url.searchParams.get('conversationId') || '';
   if (!sessionId) {
@@ -605,7 +614,7 @@ export const GET: APIRoute = withUserContext(async (context) => {
     }
   }
 
-  return handleChatRequest({ message, mode, newSession, audience, length, reason, reasoningDepth, llm, forceOperator, yolo, sessionId, replyToQuestionId, origin: url.origin, cookies });
+  return handleChatRequest({ message, mode, newSession, audience, length, reason, reasoningDepth, llm, forceOperator, yolo, sessionId, replyToQuestionId, replyToContent, origin: url.origin, cookies });
 });
 
 export const POST: APIRoute = withUserContext(async ({ request, cookies }) => {
@@ -770,7 +779,7 @@ Stay true to your personality. Don't mention "the operator" or technical details
   return text || operatorReport;
 }
 
-async function handleChatRequest({ message, mode = 'inner', newSession = false, audience, length, reason, reasoningDepth, llm, forceOperator = false, yolo = false, sessionId, replyToQuestionId, origin, cookies }: { message: string; mode?: string; newSession?: boolean; audience?: string; length?: string; reason?: boolean; reasoningDepth?: number; llm?: any; forceOperator?: boolean; yolo?: boolean; sessionId?: string; replyToQuestionId?: string; origin?: string; cookies?: any }) {
+async function handleChatRequest({ message, mode = 'inner', newSession = false, audience, length, reason, reasoningDepth, llm, forceOperator = false, yolo = false, sessionId, replyToQuestionId, replyToContent, origin, cookies }: { message: string; mode?: string; newSession?: boolean; audience?: string; length?: string; reason?: boolean; reasoningDepth?: number; llm?: any; forceOperator?: boolean; yolo?: boolean; sessionId?: string; replyToQuestionId?: string; replyToContent?: string; origin?: string; cookies?: any }) {
   console.log(`\n[CHAT_REQUEST] Received: "${message}"`);
   const m: Mode = mode === 'conversation' ? 'conversation' : 'inner';
   ensureHistoryLoaded(m);
@@ -853,10 +862,37 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   console.log(`[CHAT_REQUEST] Authenticated: ${isAuthenticated}`);
   console.log(`[CHAT_REQUEST] Routing decision: ${useOperator ? 'REACT_OPERATOR (unified)' : 'CHAT_ONLY (emulation)'}`);
 
+  // Build reply-to context BEFORE retrieving memories
+  // This ensures the LLM knows what the user is responding to
+  let replyToMessage: string | undefined = undefined;
+  let curiosityData: any = null; // Store full curiosity metadata for later
+
+  // Priority 1: Curiosity question (fetch from audit logs)
+  if (replyToQuestionId) {
+    const questionData = await retrieveCuriosityQuestion(replyToQuestionId);
+    if (questionData) {
+      replyToMessage = questionData.questionText;
+      curiosityData = questionData.curiosityData; // Save for capture later
+      console.log(`[CHAT_REQUEST] Replying to curiosity question: "${replyToMessage.substring(0, 100)}..."`);
+    } else {
+      console.warn(`[CHAT_REQUEST] Could not retrieve curiosity question: ${replyToQuestionId}`);
+    }
+  }
+
+  // Priority 2: Regular message (from selected message in UI)
+  if (!replyToMessage && replyToContent) {
+    replyToMessage = replyToContent;
+    console.log(`[CHAT_REQUEST] Replying to selected message: "${replyToMessage.substring(0, 100)}..."`);
+  }
+
   // Get relevant context (memories + tasks) BEFORE routing decision
   // This context will be used by both operator and chat paths
-  const { context: contextInfo, usedSemantic, contextPackage } = await getRelevantContext(message, m, sessionId, { usingLora, includePersonaSummary });
-  console.log(`[CHAT_REQUEST] Context retrieved. Length: ${contextInfo.length}, Semantic Search: ${usedSemantic}, Memories: ${contextPackage?.memoryCount || 0}`);
+  // Pass reply-to message so it gets injected at the top of context
+  const { context: contextInfo, usedSemantic, contextPackage } = await getRelevantContext(
+    message, m, sessionId,
+    { usingLora, includePersonaSummary, replyToMessage }
+  );
+  console.log(`[CHAT_REQUEST] Context retrieved. Length: ${contextInfo.length}, Semantic Search: ${usedSemantic}, Memories: ${contextPackage?.memoryCount || 0}, ReplyTo: ${!!replyToMessage}`);
 
   // currentCtx resolved earlier for routing and logging
 
@@ -934,23 +970,29 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               };
             }
 
+            // Store reply-to context for downstream agents
+            if (replyToMessage) {
+              metadata.replyTo = {
+                content: replyToMessage.substring(0, 500), // Truncate to avoid bloat
+                source: replyToQuestionId ? 'curiosity' : 'message_selection'
+              };
+            }
+
             // If replying to a curiosity question, save the question first
-            if (replyToQuestionId) {
-              const questionData = await retrieveCuriosityQuestion(replyToQuestionId);
-              if (questionData) {
-                console.log(`[persona_chat] Saving curiosity question before answer: ${replyToQuestionId}`);
-                captureEvent(questionData.questionText, {
-                  type: 'conversation',
-                  tags: ['chat', 'conversation', 'curiosity', 'assistant'],
-                  metadata: {
-                    curiosity: questionData.curiosityData,
-                    cognitiveMode: 'dual',
-                    usedOperator: false,
-                  }
-                });
-              } else {
-                console.warn(`[persona_chat] Could not retrieve curiosity question: ${replyToQuestionId}`);
-              }
+            // NOTE: replyToMessage and curiosityData were already fetched earlier (line 871), so we can reuse them
+            if (replyToQuestionId && replyToMessage && curiosityData) {
+              console.log(`[persona_chat] Saving curiosity question before answer: ${replyToQuestionId}`);
+              captureEvent(replyToMessage, {
+                type: 'conversation',
+                tags: ['chat', 'conversation', 'curiosity', 'assistant'],
+                metadata: {
+                  curiosity: curiosityData,
+                  cognitiveMode: 'dual',
+                  usedOperator: true, // Changed to true since we're in operator path
+                }
+              });
+            } else if (replyToQuestionId && !curiosityData) {
+              console.warn(`[persona_chat] Could not retrieve curiosity question: ${replyToQuestionId}`);
             }
 
             userEventPath = captureEvent(`Me: "${message}"`, {
@@ -1639,23 +1681,29 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               };
             }
 
+            // Store reply-to context for downstream agents
+            if (replyToMessage) {
+              metadata.replyTo = {
+                content: replyToMessage.substring(0, 500), // Truncate to avoid bloat
+                source: replyToQuestionId ? 'curiosity' : 'message_selection'
+              };
+            }
+
             // If replying to a curiosity question, save the question first
-            if (replyToQuestionId) {
-              const questionData = await retrieveCuriosityQuestion(replyToQuestionId);
-              if (questionData) {
-                console.log(`[persona_chat] Saving curiosity question before answer: ${replyToQuestionId}`);
-                captureEvent(questionData.questionText, {
-                  type: 'conversation',
-                  tags: ['chat', 'conversation', 'curiosity', 'assistant'],
-                  metadata: {
-                    curiosity: questionData.curiosityData,
-                    cognitiveMode: 'dual',
-                    usedOperator: false,
-                  }
-                });
-              } else {
-                console.warn(`[persona_chat] Could not retrieve curiosity question: ${replyToQuestionId}`);
-              }
+            // NOTE: replyToMessage and curiosityData were already fetched earlier (line 871), so we can reuse them
+            if (replyToQuestionId && replyToMessage && curiosityData) {
+              console.log(`[persona_chat] Saving curiosity question before answer: ${replyToQuestionId}`);
+              captureEvent(replyToMessage, {
+                type: 'conversation',
+                tags: ['chat', 'conversation', 'curiosity', 'assistant'],
+                metadata: {
+                  curiosity: curiosityData,
+                  cognitiveMode: 'dual',
+                  usedOperator: false,
+                }
+              });
+            } else if (replyToQuestionId && !curiosityData) {
+              console.warn(`[persona_chat] Could not retrieve curiosity question: ${replyToQuestionId}`);
             }
 
             const userPath = captureEvent(`Me: "${message}"`, {

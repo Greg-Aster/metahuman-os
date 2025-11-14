@@ -121,6 +121,31 @@ export PATH="$PATH:$(pwd)/bin"
    # Then open http://localhost:4321
    ```
 
+### Demo Accounts
+
+MetaHuman OS ships with a pre-configured demo persona to get you started:
+
+**First-Time Setup:**
+1. Copy the default users file:
+   ```bash
+   cp persona/users.json.default persona/users.json
+   ```
+2. Start the web UI: `cd apps/site && pnpm dev`
+3. Navigate to http://localhost:4321
+4. Login with the demo account:
+   - **Username:** `Friendly-Robot-Will-Not-Kill-You`
+   - **Password:** `demo`
+
+**To create your own user:**
+1. Edit `scripts/create-owner.ts` with your desired username/password
+2. Run: `npx tsx scripts/create-owner.ts`
+3. Your new user will be added to `persona/users.json`
+4. Login with your credentials
+
+**Easter Egg:** When there are 2+ public profiles, a special "Mutant Super Intelligence" profile appears that combines multiple personas!
+
+**Security Note:** Change the demo password in production! The default is `demo`.
+
 ### Python Virtual Environment
 MetaHuman OS requires a Python virtual environment for its extensive ML/AI dependencies:
 - **Setup**: Automatically created by startup scripts or manually with `python3 -m venv venv`

@@ -699,8 +699,9 @@ let reasoningStages: ReasoningStage[] = [];
     const userMessage = input.trim();
     input = '';
 
-    // Capture replyTo metadata if a curiosity question is selected
+    // Capture replyTo metadata if any message is selected
     const replyToQuestionId = selectedMessage?.meta?.curiosityQuestionId || null;
+    const replyToContent = selectedMessage?.content || null;
 
     // Clear selection after capturing metadata
     const wasReplying = selectedMessage !== null;
@@ -733,10 +734,15 @@ let reasoningStages: ReasoningStage[] = [];
       params.set('yolo', String(yoloMode));
       // audience removed - focus selector obsolete with ReAct operator
 
-      // Add replyTo metadata if replying to a curiosity question
+      // Add replyTo metadata if replying to any message (curiosity or regular)
       if (replyToQuestionId) {
         params.set('replyToQuestionId', replyToQuestionId);
-        console.log('[curiosity] Replying to question:', replyToQuestionId);
+        console.log('[reply-to] Replying to curiosity question:', replyToQuestionId);
+      }
+      if (replyToContent) {
+        // Truncate to 500 chars to avoid URL length issues
+        params.set('replyToContent', replyToContent.substring(0, 500));
+        console.log('[reply-to] Replying to message:', replyToContent.substring(0, 100));
       }
 
       // Use EventSource for streaming with a GET request
