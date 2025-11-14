@@ -74,6 +74,9 @@ export interface RVCConfig {
   speed: number;
   outputFormat: 'wav';
   autoFallbackToPiper: boolean;
+  // Server configuration
+  serverUrl?: string;         // HTTP server URL for persistent inference (default: http://127.0.0.1:9881)
+  useServer?: boolean;        // Prefer server over process spawning (default: true if server is available)
   // Inference parameters for voice quality tuning
   indexRate?: number;        // Voice retrieval strength (0.0-1.0, default: 1.0)
   volumeEnvelope?: number;    // RMS mix rate (0.0-1.0, default: 0.0)
@@ -81,6 +84,7 @@ export interface RVCConfig {
   f0Method?: string;          // Pitch detection method (default: "rmvpe")
   // GPU management
   pauseOllamaDuringInference?: boolean;  // Pause Ollama to free GPU VRAM (default: true)
+  device?: 'cuda' | 'cpu';    // Device for inference (default: "cuda")
 }
 
 export interface TTSConfig {

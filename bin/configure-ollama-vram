@@ -118,8 +118,12 @@ fi
 echo -e "\n${GREEN}=== Configuration Complete ===${NC}"
 echo ""
 echo "Summary:"
-echo "  • Ollama VRAM limit: ${GPU_MEM_FRACTION} ($(($TOTAL_VRAM * ${GPU_MEM_FRACTION%.*} / 100))MB)"
-echo "  • Available for RVC: $((100 - ${GPU_MEM_FRACTION%.*} * 100))% (~$(($TOTAL_VRAM * (100 - ${GPU_MEM_FRACTION%.*} * 100) / 10000))MB)"
+# Use bc for floating point math
+OLLAMA_MB=$(echo "$TOTAL_VRAM * $GPU_MEM_FRACTION" | bc | cut -d'.' -f1)
+RVC_MB=$(echo "$TOTAL_VRAM * (1 - $GPU_MEM_FRACTION)" | bc | cut -d'.' -f1)
+RVC_PERCENT=$(echo "(1 - $GPU_MEM_FRACTION) * 100" | bc | cut -d'.' -f1)
+echo "  • Ollama VRAM limit: ${GPU_MEM_FRACTION} (~${OLLAMA_MB}MB)"
+echo "  • Available for RVC: ~${RVC_PERCENT}% (~${RVC_MB}MB)"
 echo ""
 echo "Test the configuration:"
 echo "  1. Check GPU usage: nvidia-smi"

@@ -262,6 +262,12 @@ let reasoningStages: ReasoningStage[] = [];
   let voiceProviderCache: { provider?: string } | null = null;
   let voiceProviderCacheTime = 0;
 
+  function prefetchVoiceResources(): void {
+    Promise.all([fetchVoiceModels(), fetchVoiceProvider()]).catch(err => {
+      console.warn('[chat-tts] Voice prefetch failed:', err);
+    });
+  }
+
   async function fetchVoiceModels(): Promise<{ multiVoice: boolean; models?: string[] }> {
     const now = Date.now();
     if (voiceModelsCache && now - voiceModelsCacheTime < VOICE_MODELS_CACHE_TTL) {
@@ -325,17 +331,17 @@ let reasoningStages: ReasoningStage[] = [];
     currentTtsAbort = controller;
 
     try {
-      // Fetch voice models for current session/profile
-      console.log('[chat-tts] Fetching voice models...');
-      const { multiVoice, models: voiceModels } = await fetchVoiceModels();
+      // Fetch voice metadata for current session/profile
+      console.log('[chat-tts] Fetching voice metadata...');
+      const [{ multiVoice, models: voiceModels }, provider] = await Promise.all([
+        fetchVoiceModels(),
+        fetchVoiceProvider(),
+      ]);
       if (multiVoice && voiceModels) {
         console.log(`[chat-tts] Multi-voice mode active with ${voiceModels.length} voices`);
       }
 
       console.log('[chat-tts] Fetching TTS from /api/tts...');
-
-      // Get current provider from voice settings
-      const provider = await fetchVoiceProvider();
 
       const ttsBody: any = { text: speechText };
 
@@ -490,6 +496,9 @@ let reasoningStages: ReasoningStage[] = [];
 
   onMount(() => {
     loadChatPrefs();
+    if (ttsEnabled) {
+      prefetchVoiceResources();
+    }
 
     // Initialize or restore conversation session ID
     try {
@@ -680,6 +689,9 @@ let reasoningStages: ReasoningStage[] = [];
   async function sendMessage() {
     if (!input.trim() || loading) return;
     await ensureAudioUnlocked();
+    if (ttsEnabled) {
+      prefetchVoiceResources();
+    }
 
     // Signal activity when sending a message
     signalActivity();
@@ -1074,7 +1086,16 @@ let reasoningStages: ReasoningStage[] = [];
 
     <!-- Quick voice/tts controls -->
     <div class="quick-audio">
-      <button class="icon-btn" title={ttsEnabled ? 'Disable speech' : 'Enable speech'} on:click={() => { ttsEnabled = !ttsEnabled; saveChatPrefs(); }}>
+      <button
+        class="icon-btn"
+        title={ttsEnabled ? 'Disable speech' : 'Enable speech'}
+        on:click={() => {
+          ttsEnabled = !ttsEnabled;
+          if (ttsEnabled) {
+            prefetchVoiceResources();
+          }
+          saveChatPrefs();
+        }}>
         <!-- Speaker icon -->
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 5V5L7 10H3zM16.5 12a4.5 4.5 0 00-1.5-3.356V15.356A4.5 4.5 0 0016.5 12z"></path></svg>
         {#if ttsEnabled}<span class="badge">On</span>{/if}
@@ -1201,7 +1222,7 @@ let reasoningStages: ReasoningStage[] = [];
                 <div class="message-content">
                   {message.content}
                   <!-- TTS replay button inside bubble at bottom right -->
-                  <button class="msg-mic-btn" title="Listen to this message" on:click={() => speakText(message.content)}>
+                  <button class="msg-mic-btn" title="Listen to this message" on:click={(e) => { e.stopPropagation(); speakText(message.content); }}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/>
                     </svg>
@@ -1388,9 +1409,19 @@ let reasoningStages: ReasoningStage[] = [];
 
   /* Show mic button on hover - override global styles for better visibility */
   .msg-mic-btn {
+    position: absolute;
+    bottom: 0.5rem;
+    right: 0.5rem;
+    z-index: 10;
     opacity: 0.3;
     background: rgba(139, 92, 246, 0.15) !important;
     color: rgba(139, 92, 246, 0.9) !important;
+    border: none;
+    border-radius: 0.375rem;
+    padding: 0.375rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    pointer-events: auto;
   }
 
   :global(.dark) .msg-mic-btn {

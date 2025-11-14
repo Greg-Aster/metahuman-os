@@ -5,6 +5,8 @@ import { startSovitsServer, stopSovitsServer } from '../../lib/sovits-server';
 import fs from 'node:fs';
 import path from 'node:path';
 
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
 interface VoiceModel {
   id: string;
   name: string;
@@ -68,10 +70,19 @@ type VoiceConfig = {
       autoFallbackToPiper: boolean;
     };
     rvc?: {
+      referenceAudioDir?: string;
+      modelsDir?: string;
       speakerId: string;
       pitchShift: number;
       speed: number;
       autoFallbackToPiper: boolean;
+      indexRate?: number;
+      volumeEnvelope?: number;
+      protect?: number;
+      f0Method?: string;
+      device?: 'cuda' | 'cpu';
+      outputFormat?: string;
+      pauseOllamaDuringInference?: boolean;
     };
   };
   stt: Record<string, any>;
@@ -90,6 +101,8 @@ function buildDefaultVoiceConfig(
   const defaultBinary = path.join(rootDir, 'bin', 'piper', 'piper');
   const defaultModel = defaultVoice?.modelPath ?? path.join(voicesDir, 'en_US-lessac-medium.onnx');
   const defaultConfig = defaultVoice?.configPath ?? `${defaultModel}.json`;
+  const defaultRvcSamplesDir = path.join(profileRoot, 'out', 'voices', 'rvc-samples');
+  const defaultRvcModelsDir = path.join(profileRoot, 'out', 'voices', 'rvc-models');
 
   return {
     tts: {
@@ -109,10 +122,19 @@ function buildDefaultVoiceConfig(
         autoFallbackToPiper: true,
       },
       rvc: {
+        referenceAudioDir: defaultRvcSamplesDir,
+        modelsDir: defaultRvcModelsDir,
         speakerId: 'default',
         pitchShift: 0,
         speed: 1.0,
+        outputFormat: 'wav',
         autoFallbackToPiper: true,
+        indexRate: 1.0,
+        volumeEnvelope: 0.0,
+        protect: 0.15,
+        f0Method: 'rmvpe',
+        device: 'cuda',
+        pauseOllamaDuringInference: true,
       },
     },
     stt: {
@@ -219,11 +241,53 @@ function ensureVoiceConfig(
 
   if (!config.tts.rvc) {
     config.tts.rvc = {
+      referenceAudioDir: path.join(profileRoot, 'out', 'voices', 'rvc-samples'),
+      modelsDir: path.join(profileRoot, 'out', 'voices', 'rvc-models'),
       speakerId: 'default',
       pitchShift: 0,
       speed: 1.0,
+      outputFormat: 'wav',
       autoFallbackToPiper: true,
+      indexRate: 1.0,
+      volumeEnvelope: 0.0,
+      protect: 0.15,
+      f0Method: 'rmvpe',
+      device: 'cuda',
+      pauseOllamaDuringInference: true,
     };
+  }
+
+  const rvcSamplesDir = path.join(profileRoot, 'out', 'voices', 'rvc-samples');
+  const rvcModelsDir = path.join(profileRoot, 'out', 'voices', 'rvc-models');
+
+  config.tts.rvc.referenceAudioDir = config.tts.rvc.referenceAudioDir || rvcSamplesDir;
+  config.tts.rvc.modelsDir = config.tts.rvc.modelsDir || rvcModelsDir;
+  config.tts.rvc.outputFormat = config.tts.rvc.outputFormat || 'wav';
+  config.tts.rvc.pauseOllamaDuringInference = config.tts.rvc.pauseOllamaDuringInference ?? true;
+  config.tts.rvc.speakerId = config.tts.rvc.speakerId || 'default';
+  config.tts.rvc.pitchShift = typeof config.tts.rvc.pitchShift === 'number'
+    ? clamp(config.tts.rvc.pitchShift, -12, 12)
+    : 0;
+  config.tts.rvc.speed = typeof config.tts.rvc.speed === 'number'
+    ? clamp(config.tts.rvc.speed, 0.5, 2.0)
+    : 1.0;
+  config.tts.rvc.indexRate = typeof config.tts.rvc.indexRate === 'number'
+    ? clamp(config.tts.rvc.indexRate, 0, 1)
+    : 1.0;
+  config.tts.rvc.volumeEnvelope = typeof config.tts.rvc.volumeEnvelope === 'number'
+    ? clamp(config.tts.rvc.volumeEnvelope, 0, 1)
+    : 0.0;
+  config.tts.rvc.protect = typeof config.tts.rvc.protect === 'number'
+    ? clamp(config.tts.rvc.protect, 0, 0.5)
+    : 0.15;
+  config.tts.rvc.f0Method = config.tts.rvc.f0Method || 'rmvpe';
+  config.tts.rvc.device = config.tts.rvc.device === 'cpu' ? 'cpu' : 'cuda';
+
+  try {
+    fs.mkdirSync(config.tts.rvc.referenceAudioDir, { recursive: true });
+    fs.mkdirSync(config.tts.rvc.modelsDir, { recursive: true });
+  } catch (error) {
+    console.warn('[voice-settings] Unable to ensure RVC directories:', error);
   }
 
   // Ensure cache directory exists
@@ -323,6 +387,11 @@ const getHandler: APIRoute = async () => {
           pitchShift: config.tts.rvc?.pitchShift || 0,
           speed: config.tts.rvc?.speed || 1.0,
           autoFallbackToPiper: config.tts.rvc?.autoFallbackToPiper ?? true,
+          indexRate: config.tts.rvc?.indexRate ?? 1.0,
+          volumeEnvelope: config.tts.rvc?.volumeEnvelope ?? 0.0,
+          protect: config.tts.rvc?.protect ?? 0.15,
+          f0Method: config.tts.rvc?.f0Method || 'rmvpe',
+          device: config.tts.rvc?.device || 'cuda',
         },
       }),
       {
@@ -404,14 +473,34 @@ const postHandler: APIRoute = async ({ request }) => {
     if (rvc) {
       config.tts.rvc = config.tts.rvc || {} as any;
       if (rvc.speakerId) config.tts.rvc.speakerId = rvc.speakerId;
-      if (typeof rvc.pitchShift === 'number') {
-        config.tts.rvc.pitchShift = Math.max(-12, Math.min(12, rvc.pitchShift));
+      const parsedPitch = Number(rvc.pitchShift);
+      if (Number.isFinite(parsedPitch)) {
+        config.tts.rvc.pitchShift = clamp(parsedPitch, -12, 12);
       }
-      if (typeof rvc.speed === 'number') {
-        config.tts.rvc.speed = Math.max(0.5, Math.min(2.0, rvc.speed));
+      const parsedSpeed = Number(rvc.speed);
+      if (Number.isFinite(parsedSpeed)) {
+        config.tts.rvc.speed = clamp(parsedSpeed, 0.5, 2.0);
       }
       if (typeof rvc.autoFallbackToPiper === 'boolean') {
         config.tts.rvc.autoFallbackToPiper = rvc.autoFallbackToPiper;
+      }
+      const parsedIndexRate = Number(rvc.indexRate);
+      if (Number.isFinite(parsedIndexRate)) {
+        config.tts.rvc.indexRate = clamp(parsedIndexRate, 0, 1);
+      }
+      const parsedVolumeEnvelope = Number(rvc.volumeEnvelope);
+      if (Number.isFinite(parsedVolumeEnvelope)) {
+        config.tts.rvc.volumeEnvelope = clamp(parsedVolumeEnvelope, 0, 1);
+      }
+      const parsedProtect = Number(rvc.protect);
+      if (Number.isFinite(parsedProtect)) {
+        config.tts.rvc.protect = clamp(parsedProtect, 0, 0.5);
+      }
+      if (typeof rvc.f0Method === 'string' && rvc.f0Method.trim()) {
+        config.tts.rvc.f0Method = rvc.f0Method.trim();
+      }
+      if (rvc.device === 'cuda' || rvc.device === 'cpu') {
+        config.tts.rvc.device = rvc.device;
       }
     }
 

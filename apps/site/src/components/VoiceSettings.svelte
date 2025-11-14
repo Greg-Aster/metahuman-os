@@ -2,10 +2,19 @@
   import { onMount } from 'svelte';
   import ServerStatusIndicator from './ServerStatusIndicator.svelte';
 
+  interface PiperVoice {
+    id: string;
+    name: string;
+    language: string;
+    quality: string;
+    modelPath: string;
+    configPath: string;
+  }
+
   interface VoiceConfig {
     provider: 'piper' | 'sovits' | 'rvc';
     piper?: {
-      voices: { id: string; name: string; language: string; quality: string }[];
+      voices: PiperVoice[];
       currentVoice: string;
       speakingRate: number;
     };
@@ -25,6 +34,7 @@
       volumeEnvelope?: number;
       protect?: number;
       f0Method?: string;
+      device?: 'cuda' | 'cpu';
     };
   }
 
@@ -77,6 +87,7 @@
         config.rvc.volumeEnvelope = config.rvc.volumeEnvelope ?? 0.0;
         config.rvc.protect = config.rvc.protect ?? 0.15;
         config.rvc.f0Method = config.rvc.f0Method || 'rmvpe';
+        config.rvc.device = config.rvc.device || 'cuda';
       }
 
       error = null;
@@ -437,6 +448,17 @@
         <h4>RVC Settings</h4>
 
         <div class="setting-group">
+          <label>Server Status</label>
+          <ServerStatusIndicator
+            serverName="RVC"
+            statusEndpoint="/api/rvc-server"
+            controlEndpoint="/api/rvc-server"
+            autoRefresh={true}
+            refreshInterval={15000}
+          />
+        </div>
+
+        <div class="setting-group">
           <label for="rvc-speaker">Speaker ID</label>
           <input
             id="rvc-speaker"
@@ -553,6 +575,22 @@
               <option value="dio">DIO (Fastest)</option>
             </select>
             <p class="hint">RMVPE is the most accurate for most voices</p>
+          </div>
+
+          <div class="setting-group">
+            <label for="rvc-device">Device for Inference</label>
+            <select
+              id="rvc-device"
+              bind:value={config.rvc.device}
+              disabled={saving}
+            >
+              <option value="cuda">GPU (CUDA) - Faster</option>
+              <option value="cpu">CPU - Slower, no GPU conflicts</option>
+            </select>
+            <p class="hint">
+              CPU mode eliminates GPU VRAM conflicts with Ollama but is slower (~2-5x).
+              Recommended: Use CPU for daily voice interactions, GPU for testing.
+            </p>
           </div>
 
           <div class="quality-tips">

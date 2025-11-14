@@ -62,42 +62,47 @@ async function countPendingQuestions(): Promise<number> {
 
 /**
  * Get timestamp of most recent question asked
- * Now reads from episodic memory instead of pending directory
+ * Scans audit logs for chat_assistant events with curiosityQuestionId
  */
 async function getLastQuestionTime(): Promise<number | null> {
-  const episodicDir = paths.episodic;
+  const auditDir = path.join(paths.logs, 'audit');
 
-  if (!fsSync.existsSync(episodicDir)) {
+  if (!fsSync.existsSync(auditDir)) {
     return null;
   }
 
   try {
-    // Get current year directory
-    const year = new Date().getFullYear().toString();
-    const yearDir = path.join(episodicDir, year);
+    // Check today's and yesterday's audit logs (questions should be recent)
+    const dates = [
+      new Date().toISOString().split('T')[0],
+      new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    ];
 
-    if (!fsSync.existsSync(yearDir)) {
-      return null;
-    }
-
-    const files = await fs.readdir(yearDir);
     let mostRecent = 0;
 
-    // Scan episodic events for curiosity questions
-    for (const file of files) {
-      if (!file.endsWith('.json')) continue;
+    for (const date of dates) {
+      const auditFile = path.join(auditDir, `${date}.ndjson`);
+      if (!fsSync.existsSync(auditFile)) continue;
 
-      try {
-        const content = JSON.parse(await fs.readFile(path.join(yearDir, file), 'utf-8'));
+      const content = await fs.readFile(auditFile, 'utf-8');
+      const lines = content.trim().split('\n').filter(Boolean);
 
-        // Check if this is a curiosity question
-        if (content.metadata?.curiosity?.isCuriosityQuestion && content.timestamp) {
-          const timestamp = new Date(content.timestamp).getTime();
-          if (timestamp > mostRecent) {
-            mostRecent = timestamp;
+      // Scan audit entries for curiosity questions (reverse order for efficiency)
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const entry = JSON.parse(lines[i]);
+
+          // Check if this is a curiosity question audit event
+          if (entry.event === 'chat_assistant' &&
+              entry.details?.curiosityQuestionId &&
+              entry.timestamp) {
+            const timestamp = new Date(entry.timestamp).getTime();
+            if (timestamp > mostRecent) {
+              mostRecent = timestamp;
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      }
     }
 
     return mostRecent || null;

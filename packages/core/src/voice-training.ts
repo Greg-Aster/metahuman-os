@@ -1364,6 +1364,132 @@ function generateRVCIndex(
 }
 
 /**
+ * Clean up intermediate RVC training checkpoints
+ * Keeps only the latest and best checkpoints, deletes all others
+ * This can free up 20+ GB of disk space after training
+ */
+function cleanupRVCCheckpoints(speakerId: string, experimentDir: string): boolean {
+  try {
+    console.log(`[RVC Checkpoint Cleanup] Scanning for checkpoints in: ${experimentDir}`);
+
+    if (!fs.existsSync(experimentDir)) {
+      console.log('[RVC Checkpoint Cleanup] Experiment directory not found');
+      return false;
+    }
+
+    // Find all .pth checkpoint files
+    const allFiles = fs.readdirSync(experimentDir);
+    const pthFiles = allFiles.filter(f => f.endsWith('.pth'));
+
+    if (pthFiles.length === 0) {
+      console.log('[RVC Checkpoint Cleanup] No checkpoint files found');
+      return true;
+    }
+
+    // Find the latest step number from G_ and D_ files
+    const stepPattern = /_[GD]_(\d+)\.pth$/;
+    let latestStep = 0;
+
+    for (const file of pthFiles) {
+      const match = file.match(stepPattern);
+      if (match) {
+        const step = parseInt(match[1]);
+        if (step > latestStep) {
+          latestStep = step;
+        }
+      }
+    }
+
+    if (latestStep === 0) {
+      console.log('[RVC Checkpoint Cleanup] Could not determine latest training step');
+      return false;
+    }
+
+    console.log(`[RVC Checkpoint Cleanup] Latest training step found: ${latestStep}`);
+
+    const filesToKeep = new Set<string>();
+    const filesToDelete: string[] = [];
+
+    for (const file of pthFiles) {
+      // Keep the latest G and D models
+      const isLatestG = file === `G_${latestStep}.pth`;
+      const isLatestD = file === `D_${latestStep}.pth`;
+
+      // Keep any file designated as the best epoch
+      const isBest = file.includes('best_epoch');
+
+      // Keep the final summarized model file
+      const isFinalSummary = file.includes(`${latestStep}s`);
+
+      if (isLatestG || isLatestD || isBest || isFinalSummary) {
+        filesToKeep.add(file);
+      } else {
+        // Only mark checkpoint files for deletion
+        if (stepPattern.test(file) || (file.includes('_e_') && file.includes('_s'))) {
+          filesToDelete.push(file);
+        }
+      }
+    }
+
+    if (filesToDelete.length === 0) {
+      console.log('[RVC Checkpoint Cleanup] No intermediate checkpoints to delete');
+      return true;
+    }
+
+    console.log(`[RVC Checkpoint Cleanup] Files to keep: ${Array.from(filesToKeep).join(', ')}`);
+    console.log(`[RVC Checkpoint Cleanup] Deleting ${filesToDelete.length} intermediate checkpoint files...`);
+
+    let deletedCount = 0;
+    let totalSizeFreed = 0;
+
+    for (const file of filesToDelete) {
+      try {
+        const filePath = path.join(experimentDir, file);
+        const fileSize = fs.statSync(filePath).size;
+        fs.unlinkSync(filePath);
+        deletedCount++;
+        totalSizeFreed += fileSize;
+      } catch (error) {
+        console.error(`[RVC Checkpoint Cleanup] Failed to delete ${file}:`, error);
+      }
+    }
+
+    const gbFreed = (totalSizeFreed / 1e9).toFixed(2);
+    console.log(`[RVC Checkpoint Cleanup] Deleted ${deletedCount} files, freed ${gbFreed} GB`);
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'rvc_checkpoint_cleanup',
+      details: {
+        speakerId,
+        experimentDir,
+        deletedCount,
+        totalSizeFreed,
+        gbFreed: parseFloat(gbFreed),
+      },
+      actor: 'system',
+    });
+
+    return true;
+  } catch (error) {
+    console.error('[RVC Checkpoint Cleanup] Cleanup failed:', error);
+    audit({
+      level: 'error',
+      category: 'action',
+      event: 'rvc_checkpoint_cleanup_failed',
+      details: {
+        speakerId,
+        experimentDir,
+        error: (error as Error).message,
+      },
+      actor: 'system',
+    });
+    return false;
+  }
+}
+
+/**
  * Training configuration options
  */
 export interface RVCTrainingOptions {
@@ -1640,6 +1766,15 @@ export function startRVCTraining(
         console.log('[RVC Training] Warning: Index generation failed, but model is still usable');
       }
 
+      // Cleanup intermediate training checkpoints to free disk space
+      console.log('[RVC Training] Cleaning up intermediate training checkpoints...');
+      const cleanupSuccess = cleanupRVCCheckpoints(speakerId, rvcExperimentDir);
+      if (cleanupSuccess) {
+        console.log('[RVC Training] Checkpoint cleanup completed successfully');
+      } else {
+        console.log('[RVC Training] Warning: Checkpoint cleanup failed, but model is still usable');
+      }
+
       audit({
         level: 'info',
         category: 'action',
@@ -1684,6 +1819,15 @@ export function startRVCTraining(
           console.log('[RVC Training] Index file generated successfully');
         } else {
           console.log('[RVC Training] Warning: Index generation failed, but model is still usable');
+        }
+
+        // Cleanup intermediate training checkpoints to free disk space
+        console.log('[RVC Training] Cleaning up intermediate training checkpoints...');
+        const cleanupSuccess = cleanupRVCCheckpoints(speakerId, rvcExperimentDir);
+        if (cleanupSuccess) {
+          console.log('[RVC Training] Checkpoint cleanup completed successfully');
+        } else {
+          console.log('[RVC Training] Warning: Checkpoint cleanup failed, but model is still usable');
         }
       } else {
         status.status = 'failed';

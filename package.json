@@ -26,7 +26,7 @@
 		"url": "https://github.com/Greg-Aster/metahuman-os.git"
 	},
 	"scripts": {
-		"dev": "cd apps/site && pnpm dev",
+		"dev": "NODE_OPTIONS='--max-old-space-size=4096' cd apps/site && pnpm dev",
 		"build": "cd apps/site && pnpm build",
 		"start": "cd apps/site && pnpm preview"
 	},

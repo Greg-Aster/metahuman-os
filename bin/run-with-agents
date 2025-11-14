@@ -35,8 +35,8 @@ fi
 # Auto-start Cloudflare tunnel if enabled
 "$REPO_ROOT/bin/start-cloudflare" 2>/dev/null || true
 
-# Auto-start GPT-SoVITS if enabled
-"$REPO_ROOT/bin/start-sovits" 2>/dev/null || true
+# Auto-start voice server based on active TTS provider
+"$REPO_ROOT/bin/start-voice-server" 2>/dev/null || true
 
 cd "$REPO_ROOT/apps/site"
 

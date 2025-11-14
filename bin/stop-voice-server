@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+#
+# Stop voice server (any provider)
+# Intelligently detects and stops running voice servers
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo "• Stopping voice servers..."
+
+STOPPED=false
+
+# Stop RVC server
+RVC_PID_FILE="$REPO_ROOT/logs/run/rvc.pid"
+if [ -f "$RVC_PID_FILE" ]; then
+  PID=$(cat "$RVC_PID_FILE" 2>/dev/null || echo "")
+  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+    echo "  Stopping RVC server (PID: $PID)..."
+    kill "$PID" 2>/dev/null || true
+    rm -f "$RVC_PID_FILE"
+    STOPPED=true
+  fi
+fi
+
+# Check for RVC process by port
+if lsof -ti:9881 > /dev/null 2>&1; then
+  echo "  Stopping RVC server on port 9881..."
+  pkill -f "server.py" 2>/dev/null || true
+  STOPPED=true
+fi
+
+# Stop GPT-SoVITS server
+SOVITS_PID_FILE="$REPO_ROOT/logs/run/sovits.pid"
+if [ -f "$SOVITS_PID_FILE" ]; then
+  PID=$(jq -r '.pid' "$SOVITS_PID_FILE" 2>/dev/null || echo "")
+  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+    echo "  Stopping GPT-SoVITS server (PID: $PID)..."
+    kill "$PID" 2>/dev/null || true
+    rm -f "$SOVITS_PID_FILE"
+    STOPPED=true
+  fi
+fi
+
+if [ "$STOPPED" = true ]; then
+  echo -e "  ${GREEN}✓ Voice servers stopped${NC}"
+else
+  echo "  ✓ No voice servers running"
+fi

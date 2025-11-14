@@ -24,7 +24,8 @@
       "roles": [
         "orchestrator",
         "router",
-        "planner"
+        "planner",
+        "persona"
       ],
       "description": "Capable orchestrator using same model as persona for better intent routing",
       "options": {
@@ -247,8 +248,8 @@
   },
   "cognitiveModeMappings": {
     "dual": {
-      "orchestrator": "default.coder",
-      "persona": "default.coder",
+      "orchestrator": "default.orchestrator",
+      "persona": "default.orchestrator",
       "coder": "default.coder",
       "planner": "default.planner",
       "curator": "default.curator",

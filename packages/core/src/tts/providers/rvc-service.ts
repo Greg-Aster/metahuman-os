@@ -56,9 +56,19 @@ export class RVCService implements ITextToSpeechService {
     const speakerId = options?.voice || this.config.speakerId;
     const pitchShift = options?.pitchShift ?? this.config.pitchShift;
     const speakingRate = options?.speakingRate ?? this.config.speed;
+    const qualityKey = [
+      speakerId,
+      pitchShift,
+      Number.isFinite(speakingRate) ? speakingRate.toFixed(2) : 'default',
+      Number.isFinite(this.config.indexRate ?? NaN) ? (this.config.indexRate as number).toFixed(2) : 'idx',
+      Number.isFinite(this.config.volumeEnvelope ?? NaN) ? (this.config.volumeEnvelope as number).toFixed(2) : 'env',
+      Number.isFinite(this.config.protect ?? NaN) ? (this.config.protect as number).toFixed(2) : 'prot',
+      this.config.f0Method || 'rmvpe',
+      this.config.device || 'cuda',
+    ].join(':');
 
-    // Check cache first
-    const cacheKey = `rvc:${speakerId}:${pitchShift}`;
+    // Check cache first (include quality parameters so slider changes take effect)
+    const cacheKey = `rvc:${qualityKey}`;
     const cached = getCachedAudio(this.cacheConfig, text, cacheKey, speakingRate);
     if (cached) {
       return cached;
@@ -197,8 +207,109 @@ export class RVCService implements ITextToSpeechService {
   }
 
   /**
+   * Check if RVC HTTP server is available
+   */
+  private async _checkServerAvailable(): Promise<boolean> {
+    const serverUrl = this.config.serverUrl || 'http://127.0.0.1:9881';
+
+    try {
+      const response = await fetch(`${serverUrl}/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(1000), // 1 second timeout
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('[RVCService] Server health check:', data);
+        return data.status === 'healthy';
+      }
+
+      return false;
+    } catch (error) {
+      console.log('[RVCService] Server not available:', (error as Error).message);
+      return false;
+    }
+  }
+
+  /**
+   * Convert audio using HTTP server (persistent model loading - FAST!)
+   */
+  private async _convertWithRVCServer(
+    inputAudio: Buffer,
+    speakerId: string,
+    pitchShift: number,
+    signal?: globalThis.AbortSignal
+  ): Promise<Buffer> {
+    const serverUrl = this.config.serverUrl || 'http://127.0.0.1:9881';
+    console.log('[RVCService] Using HTTP server for RVC conversion:', serverUrl);
+
+    try {
+      // Encode audio to base64
+      const audioBase64 = inputAudio.toString('base64');
+
+      // Prepare request body
+      const requestBody = {
+        audio_base64: audioBase64,
+        speaker_id: speakerId,
+        pitch_shift: pitchShift,
+        index_rate: this.config.indexRate ?? 1.0,
+        volume_envelope: this.config.volumeEnvelope ?? 0.0,
+        protect: this.config.protect ?? 0.15,
+        f0_method: this.config.f0Method || 'rmvpe',
+      };
+
+      // Call server API
+      const response = await fetch(`${serverUrl}/synthesize`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+        signal,
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(`Server returned ${response.status}: ${error.detail || 'Unknown error'}`);
+      }
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Server conversion failed');
+      }
+
+      console.log('[RVCService] Server conversion completed in', result.duration_ms, 'ms');
+      console.log('[RVCService] Output audio size:', result.audio_size, 'bytes');
+
+      // Decode base64 audio
+      const outputAudio = Buffer.from(result.audio_base64, 'base64');
+
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'rvc_server_conversion',
+        details: {
+          speakerId,
+          pitchShift,
+          inputSize: inputAudio.length,
+          outputSize: outputAudio.length,
+          durationMs: result.duration_ms,
+        },
+        actor: 'system',
+      });
+
+      return outputAudio;
+
+    } catch (error) {
+      console.error('[RVCService] Server conversion failed:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Apply RVC voice conversion to base audio
-   * Uses Applio RVC inference script
+   * Tries HTTP server first (fast), falls back to process spawning (slow)
    */
   private async _convertWithRVC(
     inputAudio: Buffer,
@@ -207,6 +318,26 @@ export class RVCService implements ITextToSpeechService {
     signal?: globalThis.AbortSignal
   ): Promise<Buffer> {
     console.log('[RVCService] _convertWithRVC called:', { speakerId, pitchShift, inputSize: inputAudio.length });
+
+    // Try HTTP server first if enabled (default: true)
+    const useServer = this.config.useServer ?? true;
+    if (useServer) {
+      const serverAvailable = await this._checkServerAvailable();
+      if (serverAvailable) {
+        console.log('[RVCService] Server available, using HTTP API for fast inference');
+        try {
+          return await this._convertWithRVCServer(inputAudio, speakerId, pitchShift, signal);
+        } catch (error) {
+          console.warn('[RVCService] Server conversion failed, falling back to process spawning:', error);
+          // Fall through to process spawning method below
+        }
+      } else {
+        console.log('[RVCService] Server not available, using process spawning (slow)');
+      }
+    }
+
+    // Fallback to process spawning (original slow method)
+    console.log('[RVCService] Using process spawning method for RVC conversion');
 
     const { tmpdir } = await import('node:os');
     const { unlink, writeFile, readFile } = await import('node:fs/promises');
@@ -270,6 +401,9 @@ export class RVCService implements ITextToSpeechService {
       }
       if (this.config.f0Method) {
         args.push('--f0-method', this.config.f0Method);
+      }
+      if (this.config.device) {
+        args.push('--device', this.config.device);
       }
 
       console.log('[RVCService] Spawning RVC inference with args:', args);
