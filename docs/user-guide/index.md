@@ -27,10 +27,7 @@ Welcome to the MetaHuman OS User Guide. This guide is organized into the followi
 8.  **[Autonomous Agents](08-autonomous-agents.md)**
     *   **Background Processes and Automation**: Learn about the autonomous agents that operate continuously to augment your cognitive abilities. This section covers how these agents function in the background to manage tasks, process information, and drive the system's proactive behavior.
 
-9.  **[Audit Stream Enhancements](05-user-interface.md#developer-sidebar-audit-stream-enhanced)**
-    *   **Grouped Live Auditing**: Understand the new grouped + expandable audit stream UI for reviewing system activity at a glance.
-
-10.  **[Skills System](09-skills-system.md)**
+9.  **[Skills System](09-skills-system.md)**
     *   **Executable Capabilities**: Explore the skills system, which defines the executable capabilities of MetaHuman OS. Understand how the system plans and executes these skills to ingest, organize, and act within defined trust boundaries.
 
 10. **[Security & Trust Model](10-security-trust.md)**
@@ -54,23 +51,38 @@ Welcome to the MetaHuman OS User Guide. This guide is organized into the followi
 16. **[What's Next](16-whats-next.md)**
     *   **Roadmap and Future Features**: Get a glimpse into the future of MetaHuman OS by reviewing the project roadmap and upcoming features.
 
-17. **[Support](17-support.md)**
+17. **[Authentication, Profiles & Guest Access](17-authentication-setup.md)**
     *   **Getting Help**: Information on how to get support, report issues, and contribute to the MetaHuman OS project.
 
-18. **[Special States & Protocols](18-special-states.md)**
+18. **[Cloudflare Tunnel Setup Guide](17-cloudflare-tunnel-setup.md)**
+    *   **Getting Help**: Information on how to get support, report issues, and contribute to the MetaHuman OS project.
+
+19. **[Support](17-support.md)**
+    *   **Getting Help**: Information on how to get support, report issues, and contribute to the MetaHuman OS project.
+
+20. **[Special States & Protocols](18-special-states.md)**
     *   **Easter Eggs & Emergency Features**: Learn about special modes like "Wetware Deceased", "Lifeline Protocol", and the "Kill Switch".
 
-19. **[Multi-User Profiles & Guest Mode](19-multi-user-profiles.md)**
+21. **[Multi-User Profiles & Guest Mode](19-multi-user-profiles.md)**
     *   **Independent User Configurations**: Understand how MetaHuman OS supports multiple users with isolated profiles, guest access to public personas, persona facets, and the special "Mutant Super Intelligence" merged consciousness feature.
 
-20. **[Headless Runtime Mode](20-headless-runtime-mode.md)**
+22. **[Headless Runtime Mode](20-headless-runtime-mode.md)**
     *   **Remote Access Without Conflicts**: Learn how to enable headless mode to pause local agents while keeping the web server and tunnel running. Perfect for dedicated remote access from mobile devices or multiple locations without resource conflicts.
 
-21. **[Terms of Service](21-terms-of-service.md)**
+23. **[Terms of Service](21-terms-of-service.md)**
     *   **Privacy Commitment & Liability**: Understand the privacy-first approach of MetaHuman OS, including data security responsibilities, local-first infrastructure, and limitation of liability. Learn about your responsibilities when using the system.
 
-22. **[Ethical Use Policy](22-ethical-use-policy.md)**
+24. **[Ethical Use Policy](22-ethical-use-policy.md)**
     *   **Responsible AI Usage Guidelines**: Learn about prohibited uses (impersonation without consent, malicious AI systems), ethical principles (authenticity, consent, autonomy), and your commitment to responsible use of MetaHuman OS. Remember: Don't make Skynet!
 
-23. **[Voice System (Text-to-Speech)](23-voice-system.md)**
+25. **[Voice System (Text-to-Speech)](23-voice-system.md)**
     *   **Local Voice Cloning & TTS**: Comprehensive guide to MetaHuman's three TTS providers: Piper (fast synthetic voices), GPT-SoVITS (instant voice cloning with 5-10 second samples), and RVC (highest quality trained voice conversion). Includes training workflows, configurable parameters, troubleshooting, and best practices for voice quality.
+
+26. **[Persona Generation System](25-persona-generation.md)**
+    *   **Guided Persona Creation**: Learn about the interactive interview process that helps you create a high-fidelity persona profile for your MetaHuman OS, guided by a specialized "psychotherapist" language model.
+
+27. **[Graceful Failure & Guidance Learning](26-graceful-failure-and-guidance-learning.md)**
+    *   **Resilient Operator Behavior**: Understand how the MetaHuman OS operator handles errors gracefully, asks for your guidance, and learns from your input to prevent similar issues in the future.
+
+28. **[Cognitive Architecture: Multi-Layer Intelligence System](27-cognitive-architecture.md)**
+    *   **Authentic Personality Emulation**: Explore the new multi-layer cognitive architecture that mimics human consciousness, enabling more authentic personality emulation while maintaining computational efficiency and scalability.

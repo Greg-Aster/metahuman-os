@@ -35,7 +35,12 @@
     "./config": "./src/config.ts",
     "./recovery-codes": "./src/recovery-codes.ts",
     "./function-memory": "./src/function-memory.ts",
-    "./context-builder": "./src/context-builder.ts"
+    "./context-builder": "./src/context-builder.ts",
+    "./persona/session-manager": "./src/persona/session-manager.ts",
+    "./persona/question-generator": "./src/persona/question-generator.ts",
+    "./persona/extractor": "./src/persona/extractor.ts",
+    "./persona/merger": "./src/persona/merger.ts",
+    "./persona/cleanup": "./src/persona/cleanup.ts"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
