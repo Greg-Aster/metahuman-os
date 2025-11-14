@@ -1,0 +1,13 @@
+{
+  "trustLevel": "suggest",
+  "allowedActions": [
+    "capture_memory",
+    "create_task",
+    "reflect"
+  ],
+  "requireApproval": [
+    "edit_persona",
+    "delete_data",
+    "external_api_calls"
+  ]
+}

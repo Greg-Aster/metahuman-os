@@ -1,0 +1,48 @@
+{
+  "tts": {
+    "provider": "piper",
+    "piper": {
+      "binary": "/home/greggles/metahuman/bin/piper/piper",
+      "model": "/home/greggles/metahuman/out/voices/en_US-lessac-medium.onnx",
+      "config": "/home/greggles/metahuman/out/voices/en_US-lessac-medium.onnx.json",
+      "speakingRate": 1,
+      "outputFormat": "wav"
+    },
+    "sovits": {
+      "serverUrl": "http://127.0.0.1:9880",
+      "referenceAudioDir": "{METAHUMAN_ROOT}/out/voices/sovits",
+      "speakerId": "default",
+      "temperature": 0.6,
+      "speed": 1.0,
+      "outputFormat": "wav",
+      "timeout": 30000,
+      "autoFallbackToPiper": true
+    }
+  },
+  "stt": {
+    "provider": "whisper",
+    "whisper": {
+      "model": "base.en",
+      "device": "cpu",
+      "computeType": "int8",
+      "language": "en"
+    }
+  },
+  "cache": {
+    "enabled": true,
+    "directory": "/home/greggles/metahuman/profiles/mutant-super-intelligence/out/voice-cache",
+    "maxSizeMB": 500
+  },
+  "webSocket": {
+    "path": "/voice-stream",
+    "maxPayloadMB": 10,
+    "audioChunkMs": 100
+  },
+  "training": {
+    "enabled": true,
+    "minDuration": 2,
+    "maxDuration": 120,
+    "minQuality": 0.6,
+    "targetHours": 3
+  }
+}

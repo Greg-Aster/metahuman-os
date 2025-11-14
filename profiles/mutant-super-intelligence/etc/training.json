@@ -1,0 +1,11 @@
+{
+  "base_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct",
+  "max_seq_length": 2048,
+  "lora_rank": 8,
+  "lora_alpha": 16,
+  "num_train_epochs": 2,
+  "learning_rate": 0.0002,
+  "per_device_train_batch_size": 1,
+  "gradient_accumulation_steps": 16,
+  "dtype": "bfloat16"
+}

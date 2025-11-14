@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "0.1.0",
+  "lastUpdated": "2025-11-09T18:42:44.565Z",
+  "activeFacet": "default",
+  "description": "Persona facets allow different aspects of personality to be emphasized",
+  "facets": {
+    "default": {
+      "name": "Default",
+      "description": "Balanced, authentic self - the primary persona",
+      "personaFile": "core.json",
+      "enabled": true,
+      "color": "purple"
+    }
+  },
+  "notes": "Additional facets can be created to emphasize different personality aspects"
+}

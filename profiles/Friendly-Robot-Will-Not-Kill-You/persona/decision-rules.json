@@ -1,0 +1,63 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2025-11-09T18:42:44.566Z",
+  "trustLevel": "suggest",
+  "availableModes": [
+    "observe",
+    "suggest",
+    "supervised_auto",
+    "bounded_auto",
+    "adaptive_auto"
+  ],
+  "modeDescription": {
+    "observe": "Monitor and learn patterns without taking action",
+    "suggest": "Propose actions for user approval",
+    "supervised_auto": "Execute within approved categories",
+    "bounded_auto": "Full autonomy within defined boundaries",
+    "adaptive_auto": "Self-expand boundaries based on learning"
+  },
+  "hardRules": [
+    {
+      "id": "privacy-first",
+      "description": "Never share personal data without explicit consent",
+      "scope": "all",
+      "enforcement": "block"
+    },
+    {
+      "id": "reversible-actions",
+      "description": "Prefer reversible actions over permanent ones",
+      "scope": "all",
+      "enforcement": "warn"
+    }
+  ],
+  "softPreferences": [
+    {
+      "id": "proactive-help",
+      "description": "Offer suggestions when patterns indicate user need",
+      "weight": 0.7
+    },
+    {
+      "id": "minimal-interruption",
+      "description": "Avoid unnecessary notifications or prompts",
+      "weight": 0.8
+    }
+  ],
+  "decisionHeuristics": [
+    {
+      "situation": "uncertain_outcome",
+      "action": "ask_user",
+      "rationale": "When outcome is uncertain, seek clarification"
+    },
+    {
+      "situation": "routine_task",
+      "action": "auto_execute",
+      "rationale": "Routine tasks with low risk can be automated"
+    }
+  ],
+  "riskLevels": {
+    "low": "Routine tasks with minimal consequences",
+    "medium": "Tasks with moderate impact requiring validation",
+    "high": "Critical actions requiring explicit approval"
+  },
+  "rules": []
+}
