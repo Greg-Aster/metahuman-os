@@ -20,9 +20,12 @@ build/
 /profiles/**
 !/profiles/README.md
 !/profiles/.gitkeep
+!/profiles/Friendly-Robot-Will-Not-Kill-You/**
+!/profiles/mutant-super-intelligence/**
 
 # Legacy root-level personal data (for backward compatibility)
 # Personal persona configuration (keep templates only)
+/persona/users.json
 /persona/core.json
 /persona/relationships.json
 /persona/routines.json
