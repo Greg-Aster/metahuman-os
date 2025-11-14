@@ -20,6 +20,7 @@ import { getUserContext } from '@metahuman/core/context';
 import { resolvePathWithFuzzyFallback, type PathResolution } from '@metahuman/core/path-resolver';
 import { initializeSkills } from '../skills/index';
 import { ReasoningEngine } from '@metahuman/core/reasoning';
+import { formatContextForPrompt } from '@metahuman/core/context-builder';
 
 // Ensure the skills registry is populated before any ReAct loop runs.
 // initializeSkills() is idempotent, so calling on module load avoids missing-skill failures
@@ -1323,6 +1324,7 @@ function formatScratchpadForLLM(scratchpad: ScratchpadEntry[]): string {
 async function planNextStepV2(
   goal: string,
   state: ReactState,
+  contextPackage?: any,
   userContext?: { userId?: string; cognitiveMode?: string }
 ): Promise<PlanningResponse> {
   // Import tool catalog
@@ -1332,10 +1334,15 @@ async function planNextStepV2(
   const scratchpadText = formatScratchpadForLLM(state.scratchpad);
   const toolCatalog = getCachedCatalog();
 
+  // NEW: Format context package if provided
+  const contextNarrative = contextPackage
+    ? `\n## Relevant Context\n\n${formatContextForPrompt(contextPackage)}\n`
+    : '';
+
   const systemPrompt = `You are an autonomous agent using a ReAct (Reason-Act-Observe) pattern to help the user.
 
 ${toolCatalog}
-
+${contextNarrative}
 ## Reasoning Process
 
 For each step, provide your reasoning in this JSON format:
@@ -1352,7 +1359,7 @@ For each step, provide your reasoning in this JSON format:
 2. **One action at a time** - Execute one tool, observe result, then plan next step
 3. **Cite your sources** - Reference specific observation numbers when making claims
 4. **Detect completion** - Set "respond": true when you have enough information to answer
-5. **Handle errors gracefully** - If a tool fails, try alternatives or ask for clarification
+5. **Handle errors gracefully** - If a tool fails, try alternatives or ask for clarification${contextNarrative ? '\n6. **Leverage context** - Use relevant memories, function guides, and tool history when applicable' : ''}
 
 ## Current Scratchpad
 
@@ -1908,7 +1915,7 @@ async function executeSkillWithErrorHandling(
  */
 async function runReActLoopV2(
   goal: string,
-  context: { memories?: any[]; conversationHistory?: any[] },
+  context: { memories?: any[]; conversationHistory?: any[]; contextPackage?: any },
   onProgress?: (update: any) => void,
   userContext?: { userId?: string; cognitiveMode?: string }
 ): Promise<any> {
@@ -1940,7 +1947,7 @@ async function runReActLoopV2(
     state.currentStep++;
 
     // Plan next step
-    const planning = await planNextStepV2(goal, state, userContext);
+    const planning = await planNextStepV2(goal, state, context.contextPackage, userContext);
 
     // Create scratchpad entry
     const entry: ScratchpadEntry = {
@@ -2156,13 +2163,70 @@ async function runReActLoopV2(
     actor: 'operator-react-v2',
   });
 
-  return {
+  // ========================================================================
+  // Phase 3: Track Function Usage
+  // ========================================================================
+
+  // Extract function IDs from context if provided
+  const providedFunctionIds: string[] = [];
+  if (context.contextPackage?.functionGuides) {
+    providedFunctionIds.push(...context.contextPackage.functionGuides.map((g: any) => g.id));
+  }
+
+  const result = {
     goal,
     result: state.finalResponse || 'No result generated',
     reasoning: state.scratchpad.map(e => e.thought).join(' → '),
     actions: state.scratchpad.filter(e => e.action).map(e => e.action!.tool),
-    scratchpad: state.scratchpad // Include for debugging
+    scratchpad: state.scratchpad, // Include for debugging
+    metadata: {
+      completed: state.completed,
+      iterations: state.currentStep,
+      providedFunctions: providedFunctionIds,
+      timestamp: new Date().toISOString(),
+    }
   };
+
+  // Record function usage if functions were provided
+  if (providedFunctionIds.length > 0 && state.completed) {
+    try {
+      const { recordFunctionUsage } = await import('@metahuman/core/function-memory');
+
+      // Record usage for each provided function
+      for (const functionId of providedFunctionIds) {
+        await recordFunctionUsage(functionId, state.completed);
+      }
+    } catch (error) {
+      // Don't fail the operator if usage tracking fails
+      console.error('[operator-react-v2] Error recording function usage:', error);
+    }
+  }
+
+  // ========================================================================
+  // Phase 3: Auto-Learn New Functions from Multi-Step Patterns
+  // ========================================================================
+
+  // Detect if this execution created a pattern worth learning
+  if (state.completed && state.scratchpad.length >= 3) {
+    try {
+      const { detectAndLearnPattern } = await import('@metahuman/core/function-memory');
+
+      // Analyze scratchpad for reusable patterns
+      await detectAndLearnPattern(
+        goal,
+        state.scratchpad,
+        {
+          sessionId: context.sessionId,
+          userId: userContext?.userId || 'system',
+        }
+      );
+    } catch (error) {
+      // Don't fail the operator if pattern learning fails
+      console.error('[operator-react-v2] Error learning pattern:', error);
+    }
+  }
+
+  return result;
 }
 
 // ============================================================================
@@ -2182,7 +2246,7 @@ async function runReActLoopV2(
  */
 async function runWithReasoningEngine(
   goal: string,
-  context?: { memories?: any[]; conversationHistory?: any[]; sessionId?: string; conversationId?: string },
+  context?: { memories?: any[]; conversationHistory?: any[]; contextPackage?: any; sessionId?: string; conversationId?: string },
   onProgress?: (update: any) => void,
   userContext?: { userId?: string; cognitiveMode?: string },
   reasoningDepth: number = 2 // Default: focused
@@ -2313,6 +2377,7 @@ async function runWithReasoningEngine(
     {
       memories: context?.memories || [],
       conversationHistory: context?.conversationHistory || [],
+      contextPackage: context?.contextPackage,
       cognitiveMode: userContext?.cognitiveMode,
       userId: userContext?.userId,
       sessionId: context?.sessionId,
@@ -2343,7 +2408,7 @@ async function runWithReasoningEngine(
  */
 export async function runOperatorWithFeatureFlag(
   goal: string,
-  context?: { memories?: any[]; conversationHistory?: any[]; sessionId?: string; conversationId?: string },
+  context?: { memories?: any[]; conversationHistory?: any[]; contextPackage?: any; sessionId?: string; conversationId?: string },
   onProgress?: (update: any) => void,
   userContext?: { userId?: string; cognitiveMode?: string },
   reasoningDepth?: number

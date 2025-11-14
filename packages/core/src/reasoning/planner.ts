@@ -6,16 +6,11 @@
  */
 
 import { getCachedCatalog } from '../tool-catalog';
-import { callLLM } from '../model-router';
+import { callLLM, type RouterMessage } from '../model-router';
 import { audit } from '../audit';
 import { formatScratchpadForLLM } from './scratchpad';
+import { formatContextForPrompt } from '../context-builder';
 import type { PlanningResponse, ReactState, ReasoningEngineConfig } from './types';
-
-// RouterMessage type from model-router
-interface RouterMessage {
-  role: string;
-  content: string;
-}
 
 /**
  * Extract JSON block from LLM response (handles markdown code blocks).
@@ -47,6 +42,7 @@ export function extractJsonBlock(raw: string): string {
  * @param goal - User goal
  * @param state - Current ReAct state
  * @param config - Reasoning engine configuration
+ * @param contextPackage - Optional context package with memories, persona, etc.
  * @param userContext - User context (ID, cognitive mode)
  * @returns Planning response (validated JSON)
  */
@@ -54,16 +50,22 @@ export async function planNextStepV2(
   goal: string,
   state: ReactState,
   config: Required<ReasoningEngineConfig>,
+  contextPackage?: any,
   userContext?: { userId?: string; cognitiveMode?: string }
 ): Promise<PlanningResponse> {
   // Build structured scratchpad prompt
   const scratchpadText = formatScratchpadForLLM(state.scratchpad, config.scratchpadTrimSize);
   const toolCatalog = config.toolCatalog || getCachedCatalog();
 
+  // NEW: Format context package if provided
+  const contextNarrative = contextPackage
+    ? `\n## Relevant Context\n\n${formatContextForPrompt(contextPackage)}\n`
+    : '';
+
   const systemPrompt = `You are an autonomous agent using a ReAct (Reason-Act-Observe) pattern to help the user.
 
 ${toolCatalog}
-
+${contextNarrative}
 ## Reasoning Process
 
 For each step, provide your reasoning in this JSON format:
@@ -80,7 +82,7 @@ For each step, provide your reasoning in this JSON format:
 2. **One action at a time** - Execute one tool, observe result, then plan next step
 3. **Cite your sources** - Reference specific observation numbers when making claims
 4. **Detect completion** - Set "respond": true when you have enough information to answer
-5. **Handle errors gracefully** - If a tool fails, try alternatives or ask for clarification
+5. **Handle errors gracefully** - If a tool fails, try alternatives or ask for clarification${contextNarrative ? '\n6. **Leverage context** - Use relevant memories, function guides, and tool history when applicable' : ''}
 
 ## Current Scratchpad
 

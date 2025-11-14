@@ -145,6 +145,7 @@ export class ReasoningEngine {
           goal,
           state,
           this.config,
+          context.contextPackage,
           {
             userId: context.userId || this.config.userId,
             cognitiveMode: context.cognitiveMode,

@@ -10,6 +10,8 @@ import { loadTrustLevel, getAvailableSkills, listSkills } from '../../../../../p
 import { audit } from '@metahuman/core/audit';
 import { requireOperatorMode } from '../../middleware/cognitiveModeGuard';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
+import { buildContextPackage } from '@metahuman/core/context-builder';
+import { loadRuntimeConfig } from '@metahuman/core/config';
 
 // Initialize skills when module loads
 initializeSkills();
@@ -94,16 +96,42 @@ const postHandler: APIRoute = async (context) => {
       actor: 'web_ui',
     });
 
-    const conversationHistory = taskContext
-      ? [{ role: 'user', content: taskContext }]
-      : [];
+    // Check feature flag for context integration (Phase 0)
+    const runtimeConfig = loadRuntimeConfig();
+    const useContextPackage = runtimeConfig.operator?.useContextPackage ?? true;
 
-    const operatorContext = {
-      conversationHistory,
-      allowMemoryWrites: effectiveMemoryWrites,
-      sessionId: sessionId ?? policy.sessionId,
-      conversationId
-    };
+    let enrichedContext;
+
+    if (useContextPackage) {
+      // NEW: Build semantic context before invoking operator
+      const contextPackage = await buildContextPackage(
+        goal,  // Use goal as semantic query
+        policy.mode,  // Cognitive mode
+        {
+          maxMemories: 10,
+          conversationId,
+          sessionId: sessionId ?? policy.sessionId,
+          userId: policy.sessionId ?? policy.username
+        }
+      );
+
+      // Add conversation history to context package (preserve existing behavior)
+      enrichedContext = {
+        ...contextPackage,
+        conversationHistory: taskContext ? [{ role: 'user', content: taskContext }] : [],
+        allowMemoryWrites: effectiveMemoryWrites,
+        sessionId: sessionId ?? policy.sessionId,
+        conversationId
+      };
+    } else {
+      // LEGACY: Use minimal context (backward compatibility)
+      enrichedContext = {
+        conversationHistory: taskContext ? [{ role: 'user', content: taskContext }] : [],
+        allowMemoryWrites: effectiveMemoryWrites,
+        sessionId: sessionId ?? policy.sessionId,
+        conversationId
+      };
+    }
 
     const userContext = {
       userId: policy.sessionId ?? policy.username,
@@ -112,7 +140,7 @@ const postHandler: APIRoute = async (context) => {
 
     const result = await runOperatorWithFeatureFlag(
       goal,
-      operatorContext,
+      enrichedContext,  // Now includes ContextPackage data when enabled
       undefined,
       userContext,
       reasoningDepth

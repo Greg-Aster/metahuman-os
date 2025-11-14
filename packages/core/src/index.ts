@@ -11,6 +11,7 @@ export * from './memory';
 export * from './memory-metrics-cache';
 export * from './recent-tools-cache';
 export * from './summary-state';
+export * from './function-memory';
 export * from './audit';
 export * from './ollama';
 export * from './model-resolver';
@@ -46,6 +47,8 @@ export * from './context-builder';
 export * from './cognitive-layers';
 export * from './agent-scheduler';
 export * from './system-activity';
+export * from './persona/session-manager';
+export * from './persona/question-generator';
 
 // Multi-user system (Phase 2)
 export * from './context';

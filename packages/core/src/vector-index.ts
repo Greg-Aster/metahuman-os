@@ -14,7 +14,7 @@ import { embedText, cosineSimilarity } from './embeddings.js'
 export interface VectorIndexItem {
   id: string
   path: string
-  type: 'episodic' | 'task'
+  type: 'episodic' | 'task' | 'function'
   timestamp?: string
   text: string
   vector: number[]
@@ -63,13 +63,14 @@ function walkFiles(dir: string, filter: (p: string) => boolean): string[] {
 export async function buildMemoryIndex(options: {
   provider?: 'ollama' | 'mock'
   model?: string
-  include?: { episodic?: boolean; tasks?: boolean; curated?: boolean }
+  include?: { episodic?: boolean; tasks?: boolean; curated?: boolean; functions?: boolean }
 } = {}): Promise<string> {
   const provider = options.provider || 'ollama'
   const model = options.model || 'nomic-embed-text'
   const includeEpisodic = options.include?.episodic !== false
   const includeTasks = options.include?.tasks !== false
   const includeCurated = options.include?.curated !== false
+  const includeFunctions = options.include?.functions !== false
 
   const items: VectorIndexItem[] = []
 
@@ -108,6 +109,45 @@ export async function buildMemoryIndex(options: {
         items.push({ id: obj.id, path: f, type: 'task', timestamp: obj.updated || obj.created, text, vector })
       } catch {}
     }
+  }
+
+  if (includeFunctions) {
+    try {
+      const verified = path.join(paths.functions, 'verified')
+      const drafts = path.join(paths.functions, 'drafts')
+      const files = [
+        ...walkFiles(verified, p => p.endsWith('.json')),
+        ...walkFiles(drafts, p => p.endsWith('.json')),
+      ]
+      for (const f of files) {
+        try {
+          const obj = readJSON<any>(f)
+          if (!obj || !obj.id || !obj.title) continue
+          const tags = Array.isArray(obj.tags) ? obj.tags.join(' ') : ''
+          const skillsUsed = Array.isArray(obj.skillsUsed) ? obj.skillsUsed.join(' ') : ''
+          const examples = Array.isArray(obj.examples)
+            ? obj.examples.map((ex: any) => `Example: ${ex.query || ''}`).join(' ')
+            : ''
+          const text = [
+            obj.title,
+            obj.summary || '',
+            obj.description || '',
+            tags ? `Tags: ${tags}` : '',
+            skillsUsed ? `Skills: ${skillsUsed}` : '',
+            examples,
+          ].join(' ').trim()
+          const vector = await embedText(text, { provider, model })
+          items.push({
+            id: obj.id,
+            path: f,
+            type: 'function',
+            timestamp: obj.metadata?.createdAt,
+            text,
+            vector,
+          })
+        } catch {}
+      }
+    } catch {}
   }
 
   if (includeCurated) {

@@ -14,6 +14,7 @@
     "coder": "default.coder",
     "planner": "default.planner",
     "summarizer": "default.summarizer",
+    "psychotherapist": "default.psychotherapist",
     "fallback": "default.fallback"
   },
   "models": {
@@ -213,6 +214,43 @@
         "estimatedLatency": "fast",
         "sizeGB": 9.3
       }
+    },
+    "default.psychotherapist": {
+      "provider": "ollama",
+      "model": "qwen3:14b",
+      "adapters": [],
+      "roles": [
+        "psychotherapist",
+        "interviewer",
+        "analyzer"
+      ],
+      "description": "Specialized interviewer for persona analysis using motivational interviewing techniques",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "medium",
+        "alwaysLoaded": false,
+        "estimatedLatency": "medium",
+        "sizeGB": 9.3,
+        "purpose": "Persona generation and psychological analysis"
+      }
+    },
+    "ollama.qwen3:30b": {
+      "provider": "ollama",
+      "model": "qwen3:30b",
+      "roles": [
+        "psychotherapist"
+      ],
+      "adapters": [],
+      "description": "Imported from Ollama tag qwen3:30b",
+      "options": {},
+      "metadata": {
+        "source": "ollama-discovery"
+      }
     }
   },
   "roleHierarchy": {
@@ -242,6 +280,11 @@
       "default.curator",
       "default.fallback"
     ],
+    "psychotherapist": [
+      "default.psychotherapist",
+      "default.persona",
+      "default.fallback"
+    ],
     "fallback": [
       "default.fallback"
     ]
@@ -254,6 +297,7 @@
       "planner": "default.planner",
       "curator": "default.curator",
       "summarizer": "default.summarizer",
+      "psychotherapist": "ollama.qwen3:30b",
       "description": "Full cognitive mirror with operator routing"
     },
     "agent": {
@@ -263,6 +307,7 @@
       "planner": "default.planner",
       "curator": "default.curator",
       "summarizer": "default.summarizer",
+      "psychotherapist": "default.psychotherapist",
       "description": "Lightweight assistant mode"
     },
     "emulation": {

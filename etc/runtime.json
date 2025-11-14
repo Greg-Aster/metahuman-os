@@ -5,6 +5,7 @@
   "claimedBy": null,
   "operator": {
     "reactV2": true,
-    "useReasoningService": false
+    "useReasoningService": false,
+    "useContextPackage": true
   }
 }

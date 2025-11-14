@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { paths, ROOT } from './paths.js';
 
-export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'fallback';
+export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'fallback';
 export type ModelProvider = 'ollama' | 'openai' | 'local';
 
 export interface ModelDefinition {

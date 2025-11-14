@@ -5,8 +5,6 @@
  * Extracted from Operator V2 implementation.
  */
 
-import type { Memory } from '../types/memory';
-
 /**
  * Scratchpad entry representing one step in the reasoning process.
  * Follows Thought → Action → Observation pattern.
@@ -48,12 +46,13 @@ export interface PlanningResponse {
  * Context passed to reasoning engine.
  */
 export interface ReasoningContext {
-  memories: Memory[];
+  memories: any[]; // Memory objects from episodic storage
   conversationHistory: Array<{
     role: string;
     content: string;
     timestamp?: string;
   }>;
+  contextPackage?: any; // ContextPackage from context-builder (Phase 0)
   cognitiveMode?: string;
   allowMemoryWrites?: boolean;
   userId?: string;
