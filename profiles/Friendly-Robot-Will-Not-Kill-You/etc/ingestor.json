@@ -1,0 +1,11 @@
+{
+  "enabled": true,
+  "pollIntervalSeconds": 60,
+  "supportedFormats": [
+    ".txt",
+    ".md",
+    ".json",
+    ".pdf",
+    ".docx"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "sleepHour": 2,
+  "wakeHour": 8,
+  "timezone": "America/New_York",
+  "enabled": true
+}
