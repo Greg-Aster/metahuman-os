@@ -21,6 +21,7 @@ import { resolvePathWithFuzzyFallback, type PathResolution } from '@metahuman/co
 import { initializeSkills } from '../skills/index';
 import { ReasoningEngine } from '@metahuman/core/reasoning';
 import { formatContextForPrompt } from '@metahuman/core/context-builder';
+import { loadOperatorConfig } from '@metahuman/core/config';
 
 // Ensure the skills registry is populated before any ReAct loop runs.
 // initializeSkills() is idempotent, so calling on module load avoids missing-skill failures
@@ -1839,6 +1840,115 @@ function detectFailureLoop(
   return { isLoop: false, suggestion: '' };
 }
 
+/**
+ * Detect if the operator is stuck and unable to make progress
+ *
+ * Returns structured error information for graceful failure handling
+ */
+function detectStuckState(state: ReactState): {
+  stuck: boolean;
+  reason: string;
+  errorType: 'repeated_failures' | 'no_progress' | 'timeout_approaching' | null;
+  context: any;
+  suggestions: string[];
+} {
+  // Check 1: Multiple consecutive failures (3+ in last 5 steps)
+  const recentSteps = state.scratchpad.slice(-5);
+  const recentFailures = recentSteps.filter(
+    e => e.observation && !e.observation.success
+  );
+
+  if (recentFailures.length >= 3) {
+    const failedActions = recentFailures
+      .map(e => e.action?.tool)
+      .filter(Boolean);
+
+    const errors = recentFailures
+      .map(e => e.observation?.error?.message || e.observation?.content || 'Unknown error')
+      .filter(Boolean);
+
+    return {
+      stuck: true,
+      reason: `Multiple consecutive failures (${recentFailures.length} failures in last ${recentSteps.length} steps)`,
+      errorType: 'repeated_failures',
+      context: {
+        failedActions,
+        failureCount: recentFailures.length,
+        errors
+      },
+      suggestions: [
+        'Try breaking the task into smaller, simpler steps',
+        'Check if required information or files are available',
+        'Consider using different skills to achieve the goal',
+        'Verify that the goal is achievable with available tools'
+      ]
+    };
+  }
+
+  // Check 2: No progress toward completion (8+ iterations, no completion attempts)
+  const completionActions = state.scratchpad.filter(
+    e => e.action?.tool === 'conversational_response'
+  );
+
+  if (state.currentStep >= 8 && completionActions.length === 0) {
+    const actions = state.scratchpad
+      .filter(e => e.action)
+      .map(e => e.action!.tool);
+
+    return {
+      stuck: true,
+      reason: `No progress toward completion after ${state.currentStep} iterations`,
+      errorType: 'no_progress',
+      context: {
+        iterations: state.currentStep,
+        actionsAttempted: actions,
+        uniqueTools: Array.from(new Set(actions))
+      },
+      suggestions: [
+        'Re-evaluate the goal and ensure it\'s clearly defined',
+        'Check if you\'re stuck in a loop trying the same actions',
+        'Consider if the goal requires information not currently available',
+        'Try formulating a response with what you\'ve learned so far'
+      ]
+    };
+  }
+
+  // Check 3: Approaching max iterations (within 2 steps of limit)
+  const config = loadOperatorConfig();
+  const maxSteps = config.scratchpad?.maxSteps || 10;
+
+  if (state.currentStep >= maxSteps - 2) {
+    const successRate = state.scratchpad.filter(
+      e => e.observation?.success
+    ).length / Math.max(state.scratchpad.length, 1);
+
+    return {
+      stuck: true,
+      reason: `Approaching iteration limit (${state.currentStep}/${maxSteps})`,
+      errorType: 'timeout_approaching',
+      context: {
+        currentStep: state.currentStep,
+        maxSteps,
+        successRate: (successRate * 100).toFixed(0) + '%'
+      },
+      suggestions: [
+        'Summarize what has been accomplished so far',
+        'Provide a partial answer if complete solution isn\'t possible',
+        'Explain what information or steps are still needed',
+        'Consider if the goal is too complex for a single operation'
+      ]
+    };
+  }
+
+  return {
+    stuck: false,
+    reason: '',
+    errorType: null,
+    context: {},
+    suggestions: []
+  };
+}
+
 interface SkillExecutionResult {
   success: boolean;
   content: string; // Formatted observation
@@ -1945,6 +2055,61 @@ async function runReActLoopV2(
 
   while (state.currentStep < state.maxSteps && !state.completed) {
     state.currentStep++;
+
+    // Check if stuck before continuing (Phase 1: Graceful Failure Handling)
+    const stuckCheck = detectStuckState(state);
+    if (stuckCheck.stuck) {
+      // Audit stuck state
+      audit({
+        level: 'warn',
+        category: 'action',
+        event: 'operator_stuck_state_detected',
+        details: {
+          goal,
+          reason: stuckCheck.reason,
+          errorType: stuckCheck.errorType,
+          context: stuckCheck.context,
+          step: state.currentStep
+        },
+        actor: 'operator-react-v2',
+      });
+
+      // Stream warning to UI
+      onProgress?.({
+        type: 'error',
+        content: `⚠️ Stuck: ${stuckCheck.reason}`,
+        step: state.currentStep
+      });
+
+      // Return structured error instead of throwing
+      return {
+        goal,
+        result: null,
+        error: {
+          type: 'stuck',
+          reason: stuckCheck.reason,
+          errorType: stuckCheck.errorType,
+          context: stuckCheck.context,
+          suggestions: stuckCheck.suggestions,
+          scratchpad: state.scratchpad.map(e => ({
+            step: e.step,
+            thought: e.thought,
+            action: e.action?.tool,
+            success: e.observation?.success
+          }))
+        },
+        reasoning: state.scratchpad.map(e => e.thought).join(' → '),
+        actions: state.scratchpad.filter(e => e.action).map(e => e.action!.tool),
+        scratchpad: state.scratchpad,
+        metadata: {
+          completed: false,
+          stuck: true,
+          iterations: state.currentStep,
+          providedFunctions: [],
+          timestamp: new Date().toISOString(),
+        }
+      };
+    }
 
     // Plan next step
     const planning = await planNextStepV2(goal, state, context.contextPackage, userContext);

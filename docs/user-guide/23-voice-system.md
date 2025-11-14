@@ -107,6 +107,146 @@ GPT-SoVITS is a zero-shot voice cloning system that can replicate your voice fro
 - Situations where you don't have enough samples for RVC
 - Real-time voice adaptation (reference can be updated anytime)
 
+**Setup and Management:**
+
+***System Requirements:***
+- Python 3.9+
+- 8GB RAM (16GB+ recommended)
+- 10GB+ free disk space
+- FFmpeg
+
+***Installation:***
+MetaHuman OS provides a one-command installation:
+```bash
+./bin/mh sovits install
+```
+This will clone the GPT-SoVITS repository, create a virtual environment, install dependencies, and download pre-trained models.
+
+***Server Management:***
+The server runs in the background. You can manage it with the following commands:
+```bash
+# Start server
+./bin/mh sovits start
+
+# Stop server
+./bin/mh sovits stop
+
+# Check status
+./bin/mh sovits status
+
+# View logs
+./bin/mh sovits logs
+```
+
+***Uninstallation:***
+To remove GPT-SoVITS:
+```bash
+./bin/mh sovits uninstall
+```
+
+**Advanced Usage:**
+
+***Multiple Voices:***
+Create multiple speaker directories in `out/voices/sovits/` and switch between them by changing the Speaker ID in the voice settings.
+
+***Remote Server:***
+You can run the GPT-SoVITS server on a separate machine and configure the `serverUrl` in `etc/voice.json` to point to it.
+
+**Performance Notes:**
+
+- **VRAM**: Recommended 12GB+ for smooth operation.
+- **CPU Mode**: Works but is much slower.
+- **First Generation**: Takes longer as models load into memory.
+- **Subsequent Generations**: Much faster once models are loaded.
+
+**Troubleshooting:**
+
+***"No reference audio specified"***
+This means you haven't placed any reference audio files in the correct directory. Create the folder structure and add a WAV/MP3 file.
+
+***Server won't start***
+1. Check logs: `pnpm --filter metahuman-cli mh sovits logs`
+2. Verify installation: `ls -la external/gpt-sovits/venv`
+3. Check models: `ls -la external/gpt-sovits/GPT_SoVITS/pretrained_models/`
+
+***Poor quality output***
+- Use higher quality reference audio (16kHz+ sample rate).
+- Ensure reference audio has clear speech, no music/noise.
+- Try adjusting temperature (lower for more consistency).
+
+**FAQ:**
+
+***Q: Can I use GPT-SoVITS without a GPU?***
+A: Yes, but generation will be much slower. Enable auto-fallback to Piper for a better experience.
+
+***Q: How much reference audio do I need?***
+A: 5-30 seconds is typically sufficient. Quality matters more than quantity.
+
+***Q: Can I train custom voices?***
+A: Yes, but training requires significant data and is beyond the scope of this guide. Refer to the official GPT-SoVITS documentation for more information.
+
+**Advanced Usage:**
+
+***Multiple Voices:***
+Create multiple speaker directories:
+```
+out/voices/sovits/
+├── person-a/
+│   └── reference.wav
+├── person-b/
+│   └── voice.wav
+└── narrator/
+    └── sample.mp3
+```
+
+Then switch between them by changing the Speaker ID in settings.
+
+***Server Management:***
+The server automatically starts when you run `pnpm dev` if the addon is enabled.
+You can also control it manually:
+```bash
+# Start server
+pnpm --filter metahuman-cli mh sovits start
+
+# Stop server
+pnpm --filter metahuman-cli mh sovits stop
+
+# Check status
+pnpm --filter metahuman-cli mh sovits status
+
+# View logs
+pnpm --filter metahuman-cli mh sovits logs
+```
+
+***API Endpoints:***
+The GPT-SoVITS server provides several endpoints:
+
+- `POST /` - Text-to-speech synthesis
+- `POST /tts` - Alternative TTS endpoint
+- `GET /voices` - List available voices (if configured)
+
+**Troubleshooting:**
+
+***"No reference audio specified"***
+This means you haven't placed any reference audio files in the correct directory. Create the folder structure and add a WAV/MP3 file.
+
+***Server won't start***
+1. Check logs: `pnpm --filter metahuman-cli mh sovits logs`
+2. Verify installation: `ls -la external/gpt-sovits/venv`
+3. Check models: `ls -la external/gpt-sovits/GPT_SoVITS/pretrained_models/`
+
+***Poor quality output***
+- Use higher quality reference audio (16kHz+ sample rate)
+- Ensure reference audio has clear speech, no music/noise
+- Try adjusting temperature (lower for more consistency)
+
+**Performance Notes:**
+
+- **VRAM**: Recommended 12GB+ for smooth operation
+- **CPU Mode**: Works but much slower
+- **First Generation**: Takes longer as models load into memory
+- **Subsequent Generations**: Much faster once models are loaded
+
 ---
 
 ### 3. RVC (Retrieval-based Voice Conversion)
@@ -121,6 +261,12 @@ RVC uses full model training to create a high-fidelity voice conversion model. T
 - **Configurable Training**: Adjust epochs, batch size, checkpoints
 - **Index-Based Retrieval**: Uses FAISS index for better voice characteristics
 - **GPU Accelerated**: Training leverages GPU for faster results
+
+**Two-Stage Synthesis:**
+1.  **Stage 1 - Base Audio**: Piper generates initial speech.
+2.  **Stage 2 - Voice Conversion**: RVC converts the Piper voice to your voice using the trained model.
+
+This approach results in better quality than single-stage systems because Piper provides a high-quality base prosody, and RVC can focus solely on voice timbre conversion.
 
 **Workflow:**
 
@@ -372,6 +518,24 @@ These parameters control voice conversion quality and can be fine-tuned to fix g
 - You have sufficient training samples (50-200)
 - You can afford 1-3 hours of GPU training time
 - Professional applications requiring accurate voice replication
+
+**Performance Considerations:**
+- **VRAM**: 2-4 GB for inference, 10GB+ for training.
+- **CPU Mode**: Works but is much slower.
+- **Synthesis Speed**: 2-4 seconds for the first request, <100ms for cached requests.
+
+**Known Limitations:**
+- **Training Not Fully Integrated**: Currently requires external RVC training tools.
+- **No Real-time Training Progress**: Training progress monitoring is not yet implemented in the UI.
+- **No Model Validation**: The system doesn't validate that `.pth` files are actually RVC models.
+
+**Future Enhancements:**
+- Full RVC training integration via Python scripts.
+- Training progress monitoring in the UI.
+- Model quality validation.
+- Auto-detection of optimal pitch shift.
+- Batch voice conversion for faster synthesis.
+- RVC model marketplace to share and import voices.
 
 ---
 

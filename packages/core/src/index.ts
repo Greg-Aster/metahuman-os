@@ -49,6 +49,9 @@ export * from './agent-scheduler';
 export * from './system-activity';
 export * from './persona/session-manager';
 export * from './persona/question-generator';
+export * from './persona/extractor';
+export * from './persona/merger';
+export * from './persona/cleanup';
 
 // Multi-user system (Phase 2)
 export * from './context';

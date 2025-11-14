@@ -368,32 +368,72 @@ MetaHuman OS provides three security patterns for API endpoints:
 
 See [Authentication Setup Guide](17-authentication-setup.md) for development authentication helpers and [AUTHENTICATION_STREAMLINED.md](../AUTHENTICATION_STREAMLINED.md) for complete implementation details.
 
+### Secure Storage Implementation
+
+This section provides a high-level overview of the technical implementation of the secure external storage feature. For more detailed information, see the [Secure Storage Implementation Details](../SECURE_STORAGE_IMPLEMENTATION_DETAILS.md) and [Secure Storage Security Addendum](../SECURE_STORAGE_SECURITY_ADDENDUM.md) documents.
+
+#### Key Derivation Hierarchy
+
+The security of your data on an external drive relies on a multi-tier key derivation process that starts with your login password:
+
+1.  **User Login Password**: The password you use to authenticate with MetaHuman OS. This is never stored directly.
+2.  **Profile Master Key**: A master key is derived from your password using `scrypt`, a strong, memory-hard key derivation function. The salt for this process is stored securely in your operating system's keychain (e.g., macOS Keychain, Linux libsecret).
+3.  **Storage-Specific Keys**: From the master key, separate keys are derived for different purposes (e.g., encrypting metadata, caching) using `PBKDF2`. This ensures that even if one key is compromised, the others remain secure.
+
+This hierarchical approach ensures that your raw password is never stored and that different parts of the system use different keys, strengthening the overall security posture.
+
+#### Session Token Flow for the Storage Daemon
+
+To securely manage mounting and unmounting of encrypted drives, the system uses short-lived, signed session tokens:
+
+1.  **Token Generation**: When you initiate a storage operation (like mounting a drive) through the web UI, the backend generates a short-lived (30-second) JSON Web Token (JWT). This token is signed with a secret key known only to the MetaHuman OS backend.
+2.  **Daemon Request**: The signed token is sent to the `mh-storaged` daemon, a background service responsible for managing the encrypted drive.
+3.  **Token Validation**: The daemon validates the token's signature and expiration date. It also verifies that the session associated with the token is still active and that the user has the appropriate permissions (e.g., is an owner).
+4.  **Command Execution**: If the token is valid, the daemon executes the requested command (e.g., mount, unmount).
+
+This flow ensures that only authenticated and authorized users can perform sensitive storage operations.
+
+#### Critical Security Considerations
+
+- **Metadata Protection**: To prevent sensitive information leakage (like device serial numbers or network configurations), the storage metadata file (`storage.json`) has its sensitive fields encrypted.
+- **Cache Protection**: The read-only fallback feature, which allows reading from a local cache when the drive is unplugged, is disabled by default. This is because caching sensitive data on the server would defeat the purpose of physical security. If you enable this feature, the cache will be encrypted.
+- **Remote Access Security**: Remote access to the encrypted drive is protected using mutual TLS authentication, key rotation policies, and read-only exports to prevent unauthorized access.
+- **Privilege Separation**: A dedicated background service (`mh-storaged`) handles all mount and unmount operations. This daemon runs with elevated privileges but exposes a very narrow, strictly validated interface, reducing the risk of privilege escalation attacks.
+
+#### Remote Access Integration
+
+The secure storage system is designed to support remote access to your encrypted drive via WireGuard or SSHFS. The system includes CLI commands and a web UI to:
+
+*   Set up and configure remote access tunnels.
+*   Generate and rotate security keys.
+*   Display client configuration details for you to set up on your remote device.
+
+This allows you to keep your data physically secure on an encrypted drive while still being able to access it remotely when needed.
+
 ### Secure External Storage (Planned)
 
-MetaHuman OS will support storing sensitive profile data on encrypted external drives for enhanced physical security:
+MetaHuman OS will support storing sensitive profile data on encrypted external drives for enhanced physical security. This feature is currently in the planning stage. For a detailed implementation roadmap, see the [Secure Storage Plan](../SECURE_STORAGE_PLAN.md).
 
 **Benefits:**
-- **Physical Security**: Data encrypted at rest, requires drive to be present
-- **User Ownership**: Each user controls their own data physically
-- **Minimal Server Exposure**: Central server never stores plaintext sensitive data
-- **Remote Access**: Users can mount drives remotely when needed via secure tunnels
-- **Flexible Security**: Configurable per-user encryption levels and data placement
+- **Physical Security**: Your data is encrypted at rest and requires the physical drive to be present for access.
+- **User Ownership**: Each user can physically control their own data.
+- **Minimal Server Exposure**: The central server never stores plaintext sensitive data.
+- **Remote Access**: You can mount your drive remotely when needed via secure tunnels.
+- **Flexible Security**: The system will support configurable per-user encryption levels and data placement.
 
 **Planned Features:**
-1. **Encrypted Drive Support**: LUKS (Linux), APFS-Encrypted (macOS), BitLocker (Windows)
-2. **Auto-Mount/Unmount**: Automatic drive detection and mounting with passphrase
-3. **Selective Data Placement**: Choose what lives on drive (memory, persona, models, etc.)
-4. **Remote Access**: Mount drives via WireGuard/SSHFS for remote sessions
-5. **Health Monitoring**: SMART status, free space, last mounted
-6. **Security Policies**: Require drive for writes, allow read-only fallback, auto-eject on idle
-7. **Web UI Controls**: Drive registration wizard, mount/unmount buttons, data migration interface
+1. **Encrypted Drive Support**: Support for LUKS (Linux), APFS-Encrypted (macOS), and BitLocker (Windows).
+2. **Auto-Mount/Unmount**: Automatic drive detection and mounting with a passphrase.
+3. **Selective Data Placement**: You'll be able to choose which data lives on the drive (e.g., memory, persona, models).
+4. **Remote Access**: The ability to mount drives via WireGuard or SSHFS for remote sessions.
+5. **Health Monitoring**: The system will monitor the drive's health, including SMART status and free space.
+6. **Security Policies**: You'll be able to configure policies such as requiring the drive for write operations, allowing a read-only fallback, and auto-ejecting the drive on idle.
+7. **Web UI Controls**: The web UI will include a drive registration wizard, mount/unmount buttons, and a data migration interface.
 
 **Use Cases:**
-- **Personal Security**: Keep sensitive memories on a drive you physically control
-- **Multi-User Servers**: Users bring their own encrypted drives when accessing shared systems
-- **Remote Access**: Owner keeps drive locally, mounts it remotely when needed (central server never has plaintext)
-- **Compliance**: Meet data residency or privacy requirements by keeping data on portable encrypted media
-
-See [SECURE_STORAGE_PLAN.md](../SECURE_STORAGE_PLAN.md) for detailed implementation roadmap and platform-specific setup instructions.
+- **Personal Security**: Keep your most sensitive memories on a drive that you physically control.
+- **Multi-User Servers**: In a shared environment, each user can bring their own encrypted drive to access the system.
+- **Remote Access**: Keep your drive with you locally and mount it remotely when needed, ensuring the central server never has your plaintext data.
+- **Compliance**: Meet data residency or privacy requirements by keeping your data on portable, encrypted media.
 
 ---
