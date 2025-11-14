@@ -386,7 +386,7 @@
       <div class="progress-section">
         <h4>Category Coverage</h4>
         <div class="progress-bars">
-          {#each Object.entries(currentSession.categoryCoverage) as [category, percentage]}
+          {#each Object.entries(currentSession?.categoryCoverage || {}) as [category, percentage]}
             <div class="progress-item">
               <span class="category-name">{category}</span>
               <div class="progress-bar-container">
@@ -403,7 +403,7 @@
 
       <!-- Conversation -->
       <div class="conversation" bind:this={messagesContainer}>
-        {#each currentSession.questions as question, i}
+        {#each currentSession?.questions || [] as question, i}
           <div class="message assistant">
             <div class="message-content">
               <strong>Psychotherapist:</strong>
@@ -412,7 +412,7 @@
             </div>
           </div>
 
-          {#if currentSession.answers[i]}
+          {#if currentSession?.answers?.[i]}
             <div class="message user">
               <div class="message-content">
                 <strong>You:</strong>
@@ -432,7 +432,7 @@
       </div>
 
       <!-- Input Area -->
-      {#if currentSession.status === 'active' && currentSession.questions.length > currentSession.answers.length}
+      {#if currentSession?.status === 'active' && (currentSession?.questions?.length || 0) > (currentSession?.answers?.length || 0)}
         <div class="input-area">
           <textarea
             bind:value={currentAnswer}
@@ -460,14 +460,14 @@
         </div>
       {/if}
 
-      {#if currentSession.status === 'completed'}
+      {#if currentSession?.status === 'completed'}
         <div class="completion-message">
           <h3>Interview Complete!</h3>
           <p>Finalizing your persona data...</p>
         </div>
       {/if}
 
-      {#if currentSession.status === 'applied'}
+      {#if currentSession?.status === 'applied'}
         <div class="success-message">
           <h3>✓ Persona Applied Successfully</h3>
           <p>Your personality profile has been updated.</p>

@@ -90,6 +90,8 @@ async function testGracefulFailure() {
     } catch (error) {
       console.log('❌ Unexpected exception thrown (should have returned structured error)');
       console.log(`   Error: ${(error as Error).message}`);
+      console.log(`\n   Stack trace:`);
+      console.log((error as Error).stack);
     }
   }
 
