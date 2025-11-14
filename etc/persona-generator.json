@@ -1,0 +1,85 @@
+{
+  "$schema": "https://metahuman.dev/schemas/persona-generator.json",
+  "version": "1.0.0",
+  "description": "Configuration for persona generation interview system",
+  "baselineQuestions": [
+    {
+      "id": "q1",
+      "category": "values",
+      "prompt": "What core values guide your most important life decisions?"
+    },
+    {
+      "id": "q2",
+      "category": "goals",
+      "prompt": "What are you currently working toward? What do you hope to achieve in the next year?"
+    },
+    {
+      "id": "q3",
+      "category": "style",
+      "prompt": "How would you describe your communication style? Do you prefer direct and concise, or detailed and thorough?"
+    },
+    {
+      "id": "q4",
+      "category": "values",
+      "prompt": "When you face a difficult choice, what factors matter most to you?"
+    },
+    {
+      "id": "q5",
+      "category": "biography",
+      "prompt": "What experiences have shaped who you are today?"
+    },
+    {
+      "id": "q6",
+      "category": "current_focus",
+      "prompt": "What topics, projects, or areas of life are you most engaged with right now?"
+    },
+    {
+      "id": "q7",
+      "category": "style",
+      "prompt": "How do you prefer to process information - through conversation, quiet reflection, or hands-on experience?"
+    },
+    {
+      "id": "q8",
+      "category": "goals",
+      "prompt": "If you could master one new skill or area of knowledge, what would it be and why?"
+    }
+  ],
+  "maxQuestionsPerSession": 15,
+  "requireMinimumAnswers": 7,
+  "categories": [
+    "values",
+    "goals",
+    "style",
+    "biography",
+    "current_focus"
+  ],
+  "categoryDescriptions": {
+    "values": "Core principles, ethics, and what matters most to the user",
+    "goals": "Short-term and long-term aspirations, projects, and objectives",
+    "style": "Communication preferences, information processing, and interaction patterns",
+    "biography": "Formative experiences, background, and personal history",
+    "current_focus": "Present interests, active projects, and immediate priorities"
+  },
+  "privacyGuidelines": [
+    "Never ask for full legal name, unless user volunteers it",
+    "Never ask for social security number, government IDs, or similar identifiers",
+    "Never ask for specific medical diagnoses or detailed health information",
+    "Never ask for financial account numbers or passwords",
+    "Avoid questions about specific locations (addresses) unless relevant to lifestyle",
+    "Focus on patterns, preferences, and personality rather than specific private facts"
+  ],
+  "interviewingTechniques": {
+    "motivationalInterviewing": true,
+    "openEndedQuestions": true,
+    "reflectiveListening": true,
+    "avoidJudgment": true,
+    "respectAutonomy": true
+  },
+  "sessionDefaults": {
+    "minAnswerLength": 20,
+    "maxAnswerLength": 2000,
+    "targetCategoryCompletionPercentage": 80,
+    "allowResume": true,
+    "autoSaveInterval": 30000
+  }
+}

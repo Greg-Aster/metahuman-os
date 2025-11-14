@@ -454,6 +454,9 @@ export interface ContextPackage {
   // Tool history (Phase 2: Memory Continuity)
   recentTools: ToolInvocation[];
 
+  // Function guides (Phase 2: Function Memory)
+  functionGuides: Array<{ id: string; title: string; summary: string; score: number }>;
+
   // Conversation summary (Phase 3: Future)
   conversationSummary?: string;
 
@@ -866,6 +869,34 @@ export async function buildContextPackage(
   }
 
   // ========================================================================
+  // Step 6.5: Retrieve Function Guides (Phase 2: Function Memory)
+  // ========================================================================
+
+  let functionGuides: Array<{ id: string; title: string; summary: string; score: number }> = [];
+
+  try {
+    const { retrieveFunctions } = await import('./function-memory');
+
+    // Retrieve functions using semantic search on the user message
+    const matchingFunctions = await retrieveFunctions(userMessage, {
+      topK: 3, // Limit to top 3 most relevant functions
+      minScore: 0.6, // Require at least 60% similarity
+      includeDrafts: false, // Only include verified functions
+    });
+
+    // Extract lightweight summaries for context package (include ID for tracking)
+    functionGuides = matchingFunctions.map(({ function: func, score }) => ({
+      id: func.id,
+      title: func.title,
+      summary: func.summary,
+      score,
+    }));
+  } catch (error) {
+    // Function retrieval is optional, don't fail if it errors
+    console.error('[context-builder] Error retrieving functions:', error);
+  }
+
+  // ========================================================================
   // Step 7: Build Context Package
   // ========================================================================
 
@@ -881,6 +912,7 @@ export async function buildContextPackage(
     recentTopics,
     patterns,
     recentTools,
+    functionGuides,
     conversationSummary,
     mode,
     retrievalTime,
@@ -912,6 +944,7 @@ export async function buildContextPackage(
       activeTasks: activeTasks.length,
       patternsDetected: patterns.length,
       recentTools: recentTools.length,
+      functionGuides: functionGuides.length,
       hasSummary: !!conversationSummary,
       userRole: auditCtx?.role || 'unknown',
       privacyFiltered,
@@ -1056,6 +1089,19 @@ export function formatContextForPrompt(
   // Conversation summary (Phase 3: Memory Continuity)
   if (context.conversationSummary) {
     sections.push(`\n## Conversation Summary:\n${context.conversationSummary}`);
+  }
+
+  // Function guides (Phase 2: Function Memory)
+  if (context.functionGuides.length > 0) {
+    sections.push(`\n## Proven Workflows (${context.functionGuides.length} available):`);
+    sections.push('The following function guides may help accomplish this goal:');
+
+    for (const guide of context.functionGuides) {
+      const scorePercent = (guide.score * 100).toFixed(0);
+      sections.push(`- **${guide.title}** (${scorePercent}% match): ${guide.summary}`);
+    }
+
+    sections.push('\nNote: Full step-by-step guides are available in the function memory system.');
   }
 
   // Recent tool invocations (Phase 2: Memory Continuity)

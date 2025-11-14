@@ -790,11 +790,13 @@ let reasoningStages: ReasoningStage[] = [];
             }
             saveSession();
 
+            // Auto-TTS: Speak assistant responses when TTS toggle is enabled
+            console.log('[chat-tts] Auto-TTS check - ttsEnabled:', ttsEnabled, 'hasResponse:', !!data.response, 'responseLength:', data.response?.length || 0);
             if (ttsEnabled && data.response) {
-              console.log('[chat-tts] TTS enabled, speaking response:', data.response.substring(0, 50));
+              console.log('[chat-tts] Auto-TTS FIRING - speaking response:', data.response.substring(0, 50));
               void speakText(data.response);
             } else {
-              console.log('[chat-tts] TTS skipped - enabled:', ttsEnabled, 'mode:', mode, 'hasResponse:', !!data.response);
+              console.log('[chat-tts] Auto-TTS SKIPPED - enabled:', ttsEnabled, 'mode:', mode, 'hasResponse:', !!data.response);
             }
 
             loading = false;

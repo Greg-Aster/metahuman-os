@@ -41,9 +41,19 @@ let audioTranscriptMemories: EventItem[] = []
 let dreamMemories: EventItem[] = [];
 let reflectionMemories: EventItem[] = [];
 let curiosityQuestionsTab: Array<{ id: string; question: string; status: string; askedAt: string; relPath: string; seedMemories?: string[]; answeredAt?: string }> = []
+let functionMemories: Array<{
+  id: string
+  title: string
+  summary: string
+  trustLevel: 'draft' | 'verified'
+  usageCount: number
+  qualityScore?: number
+  createdAt: string
+  skillsUsed: string[]
+}> = []
 let loadingEvents = false
 let eventsError: string | null = null
-let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' = 'episodic'
+let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'setup' | 'datasets' | 'monitor' | 'adapters' = 'datasets'
 let systemTab: 'persona' | 'lifeline' | 'settings' = 'persona'
@@ -173,8 +183,21 @@ async function loadEvents() {
   }
 }
 
+async function loadFunctions() {
+  try {
+    const res = await fetch('/api/functions?sortBy=qualityScore&sortOrder=desc');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    functionMemories = Array.isArray(data.functions) ? data.functions : [];
+  } catch (err) {
+    console.error('Failed to load functions:', err);
+    eventsError = (err as Error).message;
+  }
+}
+
 $: if ($activeView === 'memory') {
   loadEvents();
+  loadFunctions();
 }
 
 $: if ($activeView === 'voice' && voiceTab === 'training') {
@@ -453,6 +476,7 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
           <button class="tab-button" class:active={memoryTab==='audio'} on:click={() => memoryTab='audio'}>Audio</button>
           <button class="tab-button" class:active={memoryTab==='dreams'} on:click={() => memoryTab='dreams'}>Dreams 💭</button>
           <button class="tab-button" class:active={memoryTab==='curiosity'} on:click={() => memoryTab='curiosity'}>Curiosity ❓</button>
+          <button class="tab-button" class:active={memoryTab==='functions'} on:click={() => memoryTab='functions'}>Functions 🔧</button>
         </div>
         {#if loadingEvents}
           <div class="loading-state">Loading memories...</div>
@@ -933,6 +957,58 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
             </div>
           {/if}
         </div>
+        {:else if memoryTab === 'functions'}
+          <div class="functions-list">
+            {#if functionMemories.length > 0}
+              {#each functionMemories as func}
+                <div class="event-card function-card">
+                  <div class="event-card-header">
+                    <div class="function-header-content">
+                      <div class="function-title-row">
+                        <span class="function-icon">{func.trustLevel === 'verified' ? '✓' : '📝'}</span>
+                        <span class="function-title">{func.title}</span>
+                        <span class="function-trust-badge {func.trustLevel}">{func.trustLevel}</span>
+                      </div>
+                      <div class="function-summary">{func.summary}</div>
+                    </div>
+                  </div>
+                  <div class="function-body">
+                    <div class="function-stats">
+                      <div class="stat-item">
+                        <span class="stat-label">Uses:</span>
+                        <span class="stat-value">{func.usageCount}</span>
+                      </div>
+                      <div class="stat-item">
+                        <span class="stat-label">Quality:</span>
+                        <span class="stat-value">{func.qualityScore ? (func.qualityScore * 100).toFixed(0) + '%' : 'N/A'}</span>
+                      </div>
+                      <div class="stat-item">
+                        <span class="stat-label">Skills:</span>
+                        <span class="stat-value">{func.skillsUsed.length}</span>
+                      </div>
+                    </div>
+                    <div class="function-skills">
+                      {#each func.skillsUsed as skill}
+                        <span class="skill-tag">{skill}</span>
+                      {/each}
+                    </div>
+                  </div>
+                  <div class="event-card-meta">
+                    <div class="event-card-time">{new Date(func.createdAt).toLocaleString()}</div>
+                  </div>
+                </div>
+              {/each}
+            {:else}
+              <div class="empty-state">
+                <div class="empty-icon">🔧</div>
+                <div class="empty-title">No Functions Yet</div>
+                <div class="empty-description">
+                  Functions are automatically learned from successful operator executions.
+                  The system will create draft functions as it discovers multi-step patterns.
+                </div>
+              </div>
+            {/if}
+          </div>
         {/if}
       </div>
     </div>
@@ -1425,6 +1501,148 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
   .answered-badge {
     @apply text-xs px-2 py-1 rounded-full bg-green-100 text-green-700
            dark:bg-green-900/30 dark:text-green-400;
+  }
+
+  /* Function Memory Styles */
+  .functions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .function-card {
+    border-left: 3px solid #6366f1;
+  }
+
+  :global(.dark) .function-card {
+    border-left-color: #818cf8;
+  }
+
+  .function-header-content {
+    width: 100%;
+  }
+
+  .function-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .function-icon {
+    font-size: 1.25rem;
+    flex-shrink: 0;
+  }
+
+  .function-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #111827;
+    flex: 1;
+  }
+
+  :global(.dark) .function-title {
+    color: #f3f4f6;
+  }
+
+  .function-trust-badge {
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+  }
+
+  .function-trust-badge.verified {
+    background: rgba(16, 185, 129, 0.1);
+    color: #059669;
+  }
+
+  :global(.dark) .function-trust-badge.verified {
+    background: rgba(52, 211, 153, 0.15);
+    color: #34d399;
+  }
+
+  .function-trust-badge.draft {
+    background: rgba(251, 191, 36, 0.1);
+    color: #d97706;
+  }
+
+  :global(.dark) .function-trust-badge.draft {
+    background: rgba(251, 191, 36, 0.15);
+    color: #fbbf24;
+  }
+
+  .function-summary {
+    font-size: 0.875rem;
+    color: #6b7280;
+    line-height: 1.5;
+  }
+
+  :global(.dark) .function-summary {
+    color: #9ca3af;
+  }
+
+  .function-body {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  :global(.dark) .function-body {
+    border-top-color: #374151;
+  }
+
+  .function-stats {
+    display: flex;
+    gap: 1.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .stat-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .stat-label {
+    font-size: 0.75rem;
+    color: #6b7280;
+    font-weight: 500;
+  }
+
+  :global(.dark) .stat-label {
+    color: #9ca3af;
+  }
+
+  .stat-value {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #111827;
+  }
+
+  :global(.dark) .stat-value {
+    color: #f3f4f6;
+  }
+
+  .function-skills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .skill-tag {
+    padding: 0.25rem 0.625rem;
+    background: #f3f4f6;
+    border-radius: 0.375rem;
+    font-size: 0.75rem;
+    color: #4b5563;
+    font-family: 'Courier New', monospace;
+  }
+
+  :global(.dark) .skill-tag {
+    background: #374151;
+    color: #d1d5db;
   }
 </style>
 

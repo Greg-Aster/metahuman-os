@@ -52,6 +52,8 @@ export function getProfilePaths(username: string) {
     personaDecisionRules: path.join(profileRoot, 'persona', 'decision-rules.json'),
     personaFacets: path.join(profileRoot, 'persona', 'facets.json'),
     personaFacetsDir: path.join(profileRoot, 'persona', 'facets'),
+    personaInterviews: path.join(profileRoot, 'persona', 'interviews'),
+    personaInterviewsIndex: path.join(profileRoot, 'persona', 'interviews', 'index.json'),
 
     // Memory directories
     episodic: path.join(profileRoot, 'memory', 'episodic'),
@@ -70,6 +72,11 @@ export function getProfilePaths(username: string) {
     curiosityFacts: path.join(profileRoot, 'memory', 'curiosity', 'facts'),
     curiosityResearch: path.join(profileRoot, 'memory', 'curiosity', 'research'),
     curiosityConfig: path.join(profileRoot, 'etc', 'curiosity.json'),
+
+    // Function memory (Phase 1)
+    functions: path.join(profileRoot, 'memory', 'functions'),
+    functionsVerified: path.join(profileRoot, 'memory', 'functions', 'verified'),
+    functionsDrafts: path.join(profileRoot, 'memory', 'functions', 'drafts'),
 
     // Logs (user-specific)
     decisions: path.join(profileRoot, 'logs', 'decisions'),
@@ -189,6 +196,8 @@ export const paths = new Proxy({} as ReturnType<typeof getProfilePaths> & typeof
       personaDecisionRules: path.join(ROOT, 'persona', 'decision-rules.json'),
       personaFacets: path.join(ROOT, 'persona', 'facets.json'),
       personaFacetsDir: path.join(ROOT, 'persona', 'facets'),
+      personaInterviews: path.join(ROOT, 'persona', 'interviews'),
+      personaInterviewsIndex: path.join(ROOT, 'persona', 'interviews', 'index.json'),
 
       // Memory directories
       episodic: path.join(ROOT, 'memory', 'episodic'),
@@ -328,6 +337,9 @@ export function tryResolveProfilePath(
       curiosityFacts: path.join(ROOT, 'memory', 'curiosity', 'facts'),
       curiosityResearch: path.join(ROOT, 'memory', 'curiosity', 'research'),
       curiosityConfig: path.join(ROOT, 'etc', 'curiosity.json'),
+      functions: path.join(ROOT, 'memory', 'functions'),
+      functionsVerified: path.join(ROOT, 'memory', 'functions', 'verified'),
+      functionsDrafts: path.join(ROOT, 'memory', 'functions', 'drafts'),
       decisions: path.join(ROOT, 'logs', 'decisions'),
       actions: path.join(ROOT, 'logs', 'actions'),
       sync: path.join(ROOT, 'logs', 'sync'),
