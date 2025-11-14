@@ -877,12 +877,16 @@ export async function buildContextPackage(
   try {
     const { retrieveFunctions } = await import('./function-memory');
 
+    console.log('[context-builder] Retrieving functions for query:', userMessage.substring(0, 80));
+
     // Retrieve functions using semantic search on the user message
     const matchingFunctions = await retrieveFunctions(userMessage, {
       topK: 3, // Limit to top 3 most relevant functions
       minScore: 0.6, // Require at least 60% similarity
       includeDrafts: false, // Only include verified functions
     });
+
+    console.log(`[context-builder] Retrieved ${matchingFunctions.length} matching functions`);
 
     // Extract lightweight summaries for context package (include ID for tracking)
     functionGuides = matchingFunctions.map(({ function: func, score }) => ({
@@ -891,6 +895,10 @@ export async function buildContextPackage(
       summary: func.summary,
       score,
     }));
+
+    if (functionGuides.length > 0) {
+      console.log('[context-builder] Function guides:', functionGuides.map(g => `${g.title} (${(g.score * 100).toFixed(1)}%)`).join(', '));
+    }
   } catch (error) {
     // Function retrieval is optional, don't fail if it errors
     console.error('[context-builder] Error retrieving functions:', error);

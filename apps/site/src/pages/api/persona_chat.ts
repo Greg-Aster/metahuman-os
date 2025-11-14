@@ -633,7 +633,50 @@ function formatOperatorResult(result: any): string {
   if (result.iterations !== undefined && result.result !== undefined) {
     // ReAct operator response
     if (result.error) {
-      return `Task failed after ${result.iterations} iteration(s): ${result.error}`;
+      // Format structured error gracefully (Phase 1: Graceful Failure Handling)
+      let errorMsg = `⚠️ **Task encountered an issue**\n\n`;
+
+      if (result.error.type === 'stuck') {
+        errorMsg += `**Reason:** ${result.error.reason}\n\n`;
+
+        if (result.error.context) {
+          errorMsg += `**Details:**\n`;
+          if (result.error.context.failedActions) {
+            errorMsg += `- Failed actions: ${result.error.context.failedActions.join(', ')}\n`;
+          }
+          if (result.error.context.errors && result.error.context.errors.length > 0) {
+            errorMsg += `- Recent errors:\n`;
+            result.error.context.errors.slice(0, 3).forEach((err: string) => {
+              errorMsg += `  - ${err}\n`;
+            });
+          }
+          if (result.error.context.iterations) {
+            errorMsg += `- Iterations completed: ${result.error.context.iterations}\n`;
+          }
+        }
+
+        if (result.error.suggestions && result.error.suggestions.length > 0) {
+          errorMsg += `\n**Suggestions:**\n`;
+          result.error.suggestions.forEach((suggestion: string) => {
+            errorMsg += `- ${suggestion}\n`;
+          });
+        }
+      } else if (result.error.type === 'exception') {
+        errorMsg += `**Reason:** ${result.error.reason}\n\n`;
+        errorMsg += `**Message:** ${result.error.message || 'Unknown error'}\n\n`;
+
+        if (result.error.suggestions && result.error.suggestions.length > 0) {
+          errorMsg += `**Suggestions:**\n`;
+          result.error.suggestions.forEach((suggestion: string) => {
+            errorMsg += `- ${suggestion}\n`;
+          });
+        }
+      } else {
+        // Fallback for legacy string errors
+        errorMsg = `Task failed after ${result.iterations} iteration(s): ${result.error}`;
+      }
+
+      return errorMsg;
     }
     // Return the synthesized result directly
     return result.result;

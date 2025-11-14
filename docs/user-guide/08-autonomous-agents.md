@@ -23,6 +23,20 @@ All autonomous agents are now managed by a centralized **Agent Scheduler** servi
 - **Headless Mode Support**: Automatically adjusts which agents run based on headless mode setting
 - **Single-Instance Protection**: Uses `running.json` registry to prevent duplicate agent instances
 
+**Benefits:**
+- **Centralized Control**: A single place to pause/resume/configure all agents.
+- **Visibility**: It's easy to see what agents are scheduled and when they'll run.
+- **Coordination**: Agents can depend on each other (e.g., "run organizer after memory created").
+- **Debugging**: All agent triggers are logged to the audit trail.
+- **User Experience**:
+  - No agents trigger on boot (configurable).
+  - Quiet hours support.
+  - Activity detection (don't interrupt user).
+- **Resource Management**:
+  - Prevent too many agents from running simultaneously.
+  - Priority-based scheduling.
+  - Detect hung agents and restart them.
+
 **How it works:**
 - The `run-with-agents` wrapper automatically starts `scheduler-service` and `audio-organizer`
 - Individual agents are registered via the `registerAgent()` system and tracked in `logs/run/running.json`
@@ -773,6 +787,26 @@ You can control them via:
 - CLI: `./bin/mh agent stop curiosity` or `./bin/mh agent start curiosity`
 - Edit `etc/agents.json` to disable: set `"enabled": false`
 
+**Click-to-Reply System:**
+- Questions appear in the chat interface and are automatically selected with a purple outline.
+- A "Reply Indicator" appears above the input box with a preview of the question.
+- Simply type your reply and send. The `replyToQuestionId` metadata is automatically included.
+- To deselect a question, click the message again or click the cancel (✕) button in the reply indicator.
+
+**API Endpoints:**
+- `GET /api/curiosity/questions`: Fetches pending questions for the authenticated user.
+- `GET/POST /api/persona_chat`: Handles chat messages and captures reply metadata via the `replyToQuestionId` parameter.
+
+**File Structure:**
+```
+memory/curiosity/
+├── questions/
+│   ├── pending/
+│   ├── answered/
+│   └── expired/
+└── research/
+```
+
 **Audit Trail:**
 All curiosity operations are logged to `logs/audit/*.ndjson`:
 - Question generation with metadata
@@ -794,6 +828,54 @@ All curiosity operations are logged to `logs/audit/*.ndjson`:
 - Full implementation details: `docs/curiosity-system-COMPLETED.md`
 - Enhancement documentation: `docs/curiosity-system-ENHANCEMENTS-COMPLETED.md`
 - Configuration reference: [Configuration Files](14-configuration-files.md)
+
+**Future Enhancements:**
+- **Question Quality Scoring**: Track which questions get answered vs. ignored and use ML to learn what makes a good question.
+- **Multi-Turn Conversations**: Track partial answers across multiple messages.
+- **Web Research Integration**: Implement actual web search for `researchMode: 'web'`.
+- **Topic Filtering**: Use `questionTopics` config to filter question domains.
+- **User Feedback Loop**: Add "helpful/not helpful" buttons to questions.
+
+**Troubleshooting:**
+
+***Issue: Answer Watcher Not Detecting Answers***
+- Check if `questionId` was passed in the URL.
+- Run the watcher manually with verbose logging: `tsx brain/agents/curiosity-answer-watcher.ts`
+- Check for lock conflicts: `ls -la logs/run/locks/agent-curiosity-answer-watcher.lock`
+
+***Issue: Researcher Not Generating Notes***
+- Check if there are pending questions.
+- Run the researcher manually: `tsx brain/agents/curiosity-researcher.ts`
+- Check LLM connectivity.
+
+***Issue: Questions Not Expiring***
+- Check the timestamps of the questions in the `pending` directory.
+- Run the curiosity service manually (expiration runs first): `tsx brain/agents/curiosity-service.ts`
+- Check the `expired` directory.
+
+**Future Enhancements:**
+- **Question Quality Scoring**: Track which questions get answered vs. ignored and use ML to learn what makes a good question.
+- **Multi-Turn Conversations**: Track partial answers across multiple messages.
+- **Web Research Integration**: Implement actual web search for `researchMode: 'web'`.
+- **Topic Filtering**: Use `questionTopics` config to filter question domains.
+- **User Feedback Loop**: Add "helpful/not helpful" buttons to questions.
+
+**Troubleshooting:**
+
+***Issue: Answer Watcher Not Detecting Answers***
+- Check if `questionId` was passed in the URL.
+- Run the watcher manually with verbose logging: `tsx brain/agents/curiosity-answer-watcher.ts`
+- Check for lock conflicts: `ls -la logs/run/locks/agent-curiosity-answer-watcher.lock`
+
+***Issue: Researcher Not Generating Notes***
+- Check if there are pending questions.
+- Run the researcher manually: `tsx brain/agents/curiosity-researcher.ts`
+- Check LLM connectivity.
+
+***Issue: Questions Not Expiring***
+- Check the timestamps of the questions in the `pending` directory.
+- Run the curiosity service manually (expiration runs first): `tsx brain/agents/curiosity-service.ts`
+- Check the `expired` directory.
 
 ### 26. Drift Monitor Agent (Future)
 

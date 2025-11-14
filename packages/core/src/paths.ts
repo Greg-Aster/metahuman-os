@@ -217,6 +217,11 @@ export const paths = new Proxy({} as ReturnType<typeof getProfilePaths> & typeof
       curiosityResearch: path.join(ROOT, 'memory', 'curiosity', 'research'),
       curiosityConfig: path.join(ROOT, 'etc', 'curiosity.json'),
 
+      // Function memory
+      functions: path.join(ROOT, 'memory', 'functions'),
+      functionsVerified: path.join(ROOT, 'memory', 'functions', 'verified'),
+      functionsDrafts: path.join(ROOT, 'memory', 'functions', 'drafts'),
+
       // Logs
       decisions: path.join(ROOT, 'logs', 'decisions'),
       actions: path.join(ROOT, 'logs', 'actions'),

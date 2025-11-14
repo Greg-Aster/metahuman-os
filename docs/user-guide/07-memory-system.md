@@ -62,24 +62,42 @@ Structured to-do items with:
 }
 ```
 
-#### Calendar Memory (`memory/calendar/`)
-Events for the calendar system:
-- `id`, `title`, `description`
-- `start`, `end`, `allDay`
-- `location`, `attendees`
-- `linkedTasks`: References to Task IDs
-- `reminders`: e.g., `{ type: 'email', offset: '-PT30M' }`
+#### Function Memory
 
-```json
-{
-  "id": "evt-20251109100000",
-  "title": "Team Sync",
-  "start": "2025-11-09T10:00:00.000Z",
-  "end": "2025-11-09T10:30:00.000Z",
-  "attendees": ["greg@example.com"],
-  "linkedTasks": ["task-20251019143000"]
-}
+Function Memory stores reusable multi-step execution patterns learned from successful operator runs. When the operator encounters a similar task in the future, it can retrieve and execute these proven workflows instead of planning from scratch.
+
+**Architecture:**
 ```
+memory/functions/
+├── verified/          # User-approved, trusted functions
+│   └── <uuid>.json    # High-quality, production-ready workflows
+└── drafts/            # Auto-learned, awaiting review
+    └── <uuid>.json    # Automatically discovered patterns
+```
+
+**Trust Levels:**
+- **Draft**: Automatically learned from operator execution, awaiting user review.
+- **Verified**: User-approved, fully trusted for production use.
+
+#### Learning New Functions
+
+The system can automatically learn new functions from successful operator runs. When the operator successfully completes a task that involves at least two different skills and has a success rate of 80% or higher, the system can analyze the sequence of actions and create a new "draft" function. This draft is then stored in the `memory/functions/drafts/` directory for you to review and approve.
+
+The system also includes a deduplication mechanism to avoid creating duplicate functions for similar workflows.
+
+#### Retrieval and Usage
+
+When you give the operator a command, the context builder automatically queries the function memory for relevant guides. If a matching function is found (with a similarity score of 60% or higher), it is injected into the operator's prompt as a "Function Guide". The operator can then use this guide to inform its planning and execution, leading to more efficient and reliable task completion.
+
+The system also includes a fallback mechanism. If the operator encounters repeated errors, it can trigger a "function lookup" to see if there is a known solution to the problem.
+
+#### UI & UX
+
+The function memory is exposed to the user in the web UI in the following ways:
+
+*   **Memory Tab**: A new "Functions" tab in the memory viewer allows you to browse, inspect, edit, and share your functions.
+*   **Function Inspector**: A detailed view of each function, showing its step-by-step instructions, examples, and usage statistics.
+*   **Operator Console Integration**: When a function is used during an operator run, a chip will be displayed in the operator monitor to indicate which function was used.
 
 ### Conversation Continuity & Summaries
 

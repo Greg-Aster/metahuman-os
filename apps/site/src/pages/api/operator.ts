@@ -32,12 +32,21 @@ interface OperatorRequest {
 interface OperatorResponse {
   success: boolean;
   goal: string;
-  result?: string;
+  result?: string | null;
   reasoning?: string;
   actions?: string[];
   scratchpad?: any[];
   metadata?: Record<string, any>;
-  error?: string;
+  error?: {
+    type: 'stuck' | 'exception';
+    reason: string;
+    errorType?: 'repeated_failures' | 'no_progress' | 'timeout_approaching';
+    message?: string;
+    context?: any;
+    suggestions?: string[];
+    scratchpad?: any[];
+    stack?: string;
+  };
   mode?: 'strict' | 'yolo';
 }
 
@@ -146,6 +155,40 @@ const postHandler: APIRoute = async (context) => {
       reasoningDepth
     );
 
+    // Check if operator returned an error (graceful failure)
+    if (result?.error) {
+      audit({
+        level: 'warn',
+        category: 'action',
+        event: 'operator_graceful_failure',
+        details: {
+          goal,
+          errorType: result.error.type,
+          reason: result.error.reason,
+          context: result.error.context
+        },
+        actor: 'web_ui',
+      });
+
+      // Return error details with HTTP 200 (not 500) for graceful failure
+      const errorResponse: OperatorResponse = {
+        success: false,
+        goal,
+        result: null,
+        error: result.error,  // Structured error with suggestions
+        reasoning: result?.reasoning,
+        actions: result?.actions,
+        scratchpad: result?.scratchpad,
+        metadata: result?.metadata,
+        mode: resolvedMode,
+      };
+
+      return new Response(
+        JSON.stringify(errorResponse),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Return success response
     const response: OperatorResponse = {
       success: true,
@@ -165,21 +208,39 @@ const postHandler: APIRoute = async (context) => {
 
   } catch (error) {
     console.error('[operator_api] Unexpected error:', error);
-    
+
     audit({
       level: 'error',
       category: 'system',
       event: 'operator_api_error',
-      details: { error: (error as Error).message },
+      details: {
+        error: (error as Error).message,
+        stack: process.env.NODE_ENV === 'development' ? (error as Error).stack : undefined
+      },
       actor: 'web_ui',
     });
 
+    // Return HTTP 200 with structured error (not 500) for graceful handling in UI
     return new Response(
       JSON.stringify({
         success: false,
-        error: `Operator API error: ${(error as Error).message}`
+        goal,
+        result: null,
+        error: {
+          type: 'exception',
+          reason: 'Unexpected error during operator execution',
+          message: (error as Error).message,
+          stack: process.env.NODE_ENV === 'development' ? (error as Error).stack : undefined,
+          suggestions: [
+            'Check the audit logs for detailed error information',
+            'Verify all required services are running (Ollama, etc.)',
+            'Try simplifying the request or breaking it into smaller tasks',
+            'Report this error if it persists'
+          ]
+        },
+        mode: resolvedMode,
       }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   }
 };

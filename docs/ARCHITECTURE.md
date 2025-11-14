@@ -76,6 +76,43 @@ All state is plain text so users can inspect, version, or sync selectively.
 ### Language + Reasoning
 LLM access flows through the Ollama client. Agents and UI components request completions or JSON outputs with local models; the client handles health checks, streaming pulls, and fallbacks when models are missing. Embedding support uses the same endpoint to produce dense vectors for retrieval, with a deterministic mock for environments without Ollama.【F:packages/core/src/ollama.ts†L1-L92】【F:packages/core/src/embeddings.ts†L1-L24】
 
+### Persona Generation System
+The persona generation system uses an LLM-powered interview process to build and refine user personality profiles through structured conversations. It introduces a dedicated **psychotherapist role** that uses motivational interviewing techniques to extract authentic personality traits, values, goals, and communication styles.
+
+**Core Modules** (`packages/core/src/persona/`):
+- **session-manager.ts** — Creates, loads, updates, and finalizes interview sessions with multi-user isolation and ownership validation.【F:packages/core/src/persona/session-manager.ts†L1-L400】
+- **question-generator.ts** — Generates adaptive follow-up questions using the psychotherapist role, tracks category coverage (values, goals, style, biography, current_focus), and determines interview completion.【F:packages/core/src/persona/question-generator.ts†L1-L300】
+- **extractor.ts** — Converts conversational interview transcripts into structured persona data using LLM-powered extraction with confidence scoring.【F:packages/core/src/persona/extractor.ts†L1-L200】
+- **merger.ts** — Intelligently merges new persona data with existing profiles using three strategies: replace (full override), merge (deduplicated combination), or append (additive accumulation). Creates backups before applying changes.【F:packages/core/src/persona/merger.ts†L1-L250】
+- **cleanup.ts** — Archives old interview sessions based on age and status, with dry-run support and configurable retention policies.【F:packages/core/src/persona/cleanup.ts†L1-L150】
+
+**Psychotherapist Role**:
+The psychotherapist is a specialized LLM role configured in `etc/models.json` and `persona/profiles/psychotherapist.json` that:
+- Uses motivational interviewing methodology (open-ended questions, reflective listening, empathic exploration)
+- Generates adaptive follow-up questions based on previous answers and category coverage gaps
+- Maintains professional boundaries and avoids requesting sensitive personal identifiers
+- Routes through the model registry for cognitive-mode-aware model selection
+
+**Interview Flow**:
+1. User starts session via web UI (`PersonaGenerator.svelte`) or CLI (`mh persona generate`)
+2. System presents baseline question from `etc/persona-generator.json`
+3. User provides answer, triggering LLM-generated follow-up based on response content and category gaps
+4. Category coverage tracked across 5 dimensions; interview completes when all reach 80% or max questions reached
+5. Finalization extracts structured persona data from full transcript with confidence scoring
+6. User reviews diff preview showing additions/updates/removals
+7. Changes applied using selected merge strategy, with automatic backup creation
+8. Optional: Training data exported to `memory/training/persona-interviews/` for LoRA fine-tuning
+
+**Security & Isolation**:
+All session operations verify user authentication and ownership. Anonymous users receive 401 errors. Sessions are stored per-user in `profiles/<username>/persona/interviews/` with audit logging for all actions (start, answer, finalize, apply, discard). See [docs/PERSONA-GENERATOR-AUDIT-EVENTS.md](PERSONA-GENERATOR-AUDIT-EVENTS.md) for complete event specifications.
+
+**Configuration**:
+- `etc/persona-generator.json` — Baseline questions and category definitions
+- `etc/models.json` — Psychotherapist role model mappings for each cognitive mode
+- `persona/profiles/psychotherapist.json` — Role profile with methodology and guidelines
+
+All persona generation modules are exported from `@metahuman/core` for use across CLI, web UI, and future automation.【F:packages/core/src/index.ts†L50-L54】
+
 ### Memory Retrieval & RAG
 `vector-index.ts` walks episodic and task stores, embeds their content, and persists an index file. Queries compute cosine similarity locally to retrieve relevant context for prompts or dashboards, enabling RAG workflows without external services.【F:packages/core/src/vector-index.ts†L1-L97】
 
