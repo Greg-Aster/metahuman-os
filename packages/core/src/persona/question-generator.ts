@@ -132,12 +132,15 @@ export async function generateNextQuestion(
   // Parse response
   let parsed: any;
   try {
+    // Extract content from LLM response
+    const responseText = typeof response === 'string' ? response : response.content;
+
     // Try to extract JSON from response
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       parsed = JSON.parse(jsonMatch[0]);
     } else {
-      parsed = JSON.parse(response);
+      parsed = JSON.parse(responseText);
     }
   } catch (error) {
     console.error('[question-generator] Failed to parse LLM response:', response);

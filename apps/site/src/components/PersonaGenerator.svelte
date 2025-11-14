@@ -41,6 +41,13 @@
   // Auto-scroll
   let messagesContainer: HTMLDivElement;
 
+  // Admin actions
+  let showPurgeConfirm = false;
+  let showResetConfirm = false;
+  let adminLoading = false;
+  let adminError = '';
+  let resetConfirmText = '';
+
   onMount(async () => {
     await loadSessionHistory();
     // Check for active session to resume
@@ -284,6 +291,62 @@
     if (percentage >= 60) return '#f59e0b'; // orange
     return '#6b7280'; // gray
   }
+
+  async function handlePurgeSessions() {
+    adminLoading = true;
+    adminError = '';
+
+    try {
+      const response = await fetch('/api/persona/generator/purge-sessions', {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to purge sessions');
+      }
+
+      const data = await response.json();
+      showPurgeConfirm = false;
+      localStorage.removeItem('persona-generator-session');
+      await loadSessionHistory();
+      alert(`Successfully purged ${data.deletedCount} session(s)`);
+    } catch (err: any) {
+      adminError = err.message;
+    } finally {
+      adminLoading = false;
+    }
+  }
+
+  async function handleResetPersona() {
+    if (resetConfirmText !== 'RESET') {
+      adminError = 'Please type "RESET" to confirm';
+      return;
+    }
+
+    adminLoading = true;
+    adminError = '';
+
+    try {
+      const response = await fetch('/api/persona/generator/reset-persona', {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to reset persona');
+      }
+
+      const data = await response.json();
+      showResetConfirm = false;
+      resetConfirmText = '';
+      alert(`Persona file reset successfully. Backup saved at: ${data.backupPath}`);
+    } catch (err: any) {
+      adminError = err.message;
+    } finally {
+      adminLoading = false;
+    }
+  }
 </script>
 
 <div class="persona-generator">
@@ -379,23 +442,33 @@
           </div>
         </div>
       {/if}
+
+      <!-- Admin Section -->
+      <div class="admin-section">
+        <h4>⚠️ Administrative Actions</h4>
+        <p class="admin-warning">
+          These actions are irreversible. Use with caution.
+        </p>
+        <div class="admin-actions">
+          <button class="danger" on:click={() => showPurgeConfirm = true}>
+            Purge All Sessions
+          </button>
+          <button class="danger" on:click={() => showResetConfirm = true}>
+            Reset Persona File
+          </button>
+        </div>
+      </div>
     </div>
   {:else}
     <div class="interview-screen">
-      <!-- Progress Meter -->
-      <div class="progress-section">
-        <h4>Category Coverage</h4>
-        <div class="progress-bars">
+      <!-- Compact Progress Meter -->
+      <div class="progress-section-compact">
+        <div class="progress-header">
+          <span class="progress-label">Progress:</span>
           {#each Object.entries(currentSession?.categoryCoverage || {}) as [category, percentage]}
-            <div class="progress-item">
-              <span class="category-name">{category}</span>
-              <div class="progress-bar-container">
-                <div
-                  class="progress-bar-fill"
-                  style="width: {percentage}%; background-color: {getCategoryColor(percentage)}"
-                />
-              </div>
-              <span class="category-percentage">{percentage}%</span>
+            <div class="progress-pill">
+              <span class="pill-category">{category.charAt(0).toUpperCase() + category.slice(1, 4)}</span>
+              <span class="pill-percentage" style="color: {getCategoryColor(percentage)}">{percentage}%</span>
             </div>
           {/each}
         </div>
@@ -483,6 +556,75 @@
     onApply={handleApply}
     onDiscard={handleDiscard}
   />
+{/if}
+
+<!-- Purge Confirmation Modal -->
+{#if showPurgeConfirm}
+  <div class="modal-backdrop" on:click={() => showPurgeConfirm = false}>
+    <div class="modal-content" on:click|stopPropagation>
+      <h3>⚠️ Purge All Sessions</h3>
+      <p class="modal-description">
+        This will permanently delete <strong>all interview sessions</strong> ({sessions.length} total)
+        from your profile directory.
+      </p>
+      <p class="modal-warning">
+        This action cannot be undone. Session transcripts will be lost forever.
+      </p>
+
+      {#if adminError}
+        <div class="modal-error">{adminError}</div>
+      {/if}
+
+      <div class="modal-actions">
+        <button class="secondary" on:click={() => { showPurgeConfirm = false; adminError = ''; }} disabled={adminLoading}>
+          Cancel
+        </button>
+        <button class="danger" on:click={handlePurgeSessions} disabled={adminLoading}>
+          {adminLoading ? 'Purging...' : 'Purge All Sessions'}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Reset Persona Confirmation Modal -->
+{#if showResetConfirm}
+  <div class="modal-backdrop" on:click={() => showResetConfirm = false}>
+    <div class="modal-content" on:click|stopPropagation>
+      <h3>⚠️ Reset Persona File</h3>
+      <p class="modal-description">
+        This will reset your <code>persona/core.json</code> file to default settings.
+      </p>
+      <p class="modal-warning">
+        All personality traits, values, goals, and preferences will be lost.
+        A backup will be created before resetting.
+      </p>
+
+      <div class="confirmation-input">
+        <label for="reset-confirm">Type <strong>RESET</strong> to confirm:</label>
+        <input
+          id="reset-confirm"
+          type="text"
+          bind:value={resetConfirmText}
+          placeholder="RESET"
+          disabled={adminLoading}
+        />
+      </div>
+
+      {#if adminError}
+        <div class="modal-error">{adminError}</div>
+      {/if}
+
+      <div class="modal-actions">
+        <button class="secondary" on:click={() => { showResetConfirm = false; resetConfirmText = ''; adminError = ''; }} disabled={adminLoading}>
+          Cancel
+        </button>
+        <button class="danger" on:click={handleResetPersona} disabled={adminLoading || resetConfirmText !== 'RESET'}>
+          {adminLoading ? 'Resetting...' : 'Reset Persona'}
+        </button>
+      </div>
+    </div>
+  </div>
 {/if}
 
 <style>
@@ -717,59 +859,50 @@
     flex-direction: column;
     gap: 1rem;
     flex: 1;
-    overflow: hidden;
+    min-height: 0;
   }
 
-  .progress-section {
+  /* Compact horizontal progress meter */
+  .progress-section-compact {
     background: #1f2937;
     border-radius: 0.5rem;
-    padding: 1rem;
+    padding: 0.75rem 1rem;
+    flex-shrink: 0;
   }
 
-  .progress-section h4 {
-    margin: 0 0 0.75rem 0;
-    color: #f9fafb;
-    font-size: 0.9rem;
-  }
-
-  .progress-bars {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .progress-item {
+  .progress-header {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 1rem;
+    flex-wrap: wrap;
   }
 
-  .category-name {
-    min-width: 120px;
-    font-size: 0.85rem;
-    color: #9ca3af;
-    text-transform: capitalize;
-  }
-
-  .progress-bar-container {
-    flex: 1;
-    height: 8px;
-    background: #374151;
-    border-radius: 9999px;
-    overflow: hidden;
-  }
-
-  .progress-bar-fill {
-    height: 100%;
-    transition: width 0.3s ease;
-  }
-
-  .category-percentage {
-    min-width: 45px;
-    text-align: right;
-    font-size: 0.85rem;
+  .progress-label {
+    font-size: 0.875rem;
     color: #9ca3af;
     font-weight: 600;
+  }
+
+  .progress-pill {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: #374151;
+    padding: 0.375rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.8125rem;
+  }
+
+  .pill-category {
+    color: #9ca3af;
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.025em;
+  }
+
+  .pill-percentage {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
   }
 
   .conversation {
@@ -781,6 +914,7 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
+    min-height: 0;
   }
 
   .message {
@@ -833,6 +967,7 @@
     background: #1f2937;
     border-radius: 0.5rem;
     padding: 1rem;
+    flex-shrink: 0;
   }
 
   textarea {
@@ -890,5 +1025,140 @@
   .success-message p {
     margin: 0;
     color: #9ca3af;
+  }
+
+  /* Admin Section */
+  .admin-section {
+    background: #1f2937;
+    border: 2px solid #7f1d1d;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    margin-top: 1.5rem;
+  }
+
+  .admin-section h4 {
+    margin: 0 0 0.75rem 0;
+    color: #fca5a5;
+    font-size: 1rem;
+  }
+
+  .admin-warning {
+    margin: 0 0 1rem 0;
+    color: #fca5a5;
+    font-size: 0.85rem;
+  }
+
+  .admin-actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  /* Confirmation Modals */
+  .modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    padding: 1rem;
+  }
+
+  .modal-content {
+    background: #1f2937;
+    border: 1px solid #374151;
+    border-radius: 0.5rem;
+    max-width: 500px;
+    width: 100%;
+    padding: 2rem;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  }
+
+  .modal-content h3 {
+    margin: 0 0 1rem 0;
+    color: #fca5a5;
+  }
+
+  .modal-description {
+    margin: 0 0 1rem 0;
+    color: #e5e7eb;
+    line-height: 1.6;
+  }
+
+  .modal-description strong,
+  .modal-description code {
+    color: #f9fafb;
+  }
+
+  .modal-description code {
+    background: #111827;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-family: monospace;
+    font-size: 0.9em;
+  }
+
+  .modal-warning {
+    margin: 0 0 1.5rem 0;
+    padding: 0.75rem 1rem;
+    background: #7f1d1d;
+    border: 1px solid #991b1b;
+    border-radius: 0.375rem;
+    color: #fecaca;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+
+  .modal-error {
+    margin: 0 0 1rem 0;
+    padding: 0.75rem 1rem;
+    background: #7f1d1d;
+    border: 1px solid #991b1b;
+    border-radius: 0.375rem;
+    color: #fecaca;
+    font-size: 0.85rem;
+  }
+
+  .confirmation-input {
+    margin-bottom: 1.5rem;
+  }
+
+  .confirmation-input label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: #e5e7eb;
+    font-size: 0.9rem;
+  }
+
+  .confirmation-input strong {
+    color: #fca5a5;
+    font-family: monospace;
+  }
+
+  .confirmation-input input {
+    width: 100%;
+    padding: 0.75rem;
+    background: #111827;
+    border: 1px solid #374151;
+    border-radius: 0.375rem;
+    color: #e5e7eb;
+    font-size: 1rem;
+    font-family: monospace;
+  }
+
+  .confirmation-input input:focus {
+    outline: none;
+    border-color: #7f1d1d;
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
   }
 </style>

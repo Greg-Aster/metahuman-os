@@ -147,12 +147,15 @@ ${conversationText}`;
   // Parse LLM response as JSON
   let extracted: PersonaDraft;
   try {
+    // Extract content from LLM response
+    const responseText = typeof response === 'string' ? response : response.content;
+
     // Try to find JSON in the response (LLM might add explanation text)
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       extracted = JSON.parse(jsonMatch[0]);
     } else {
-      extracted = JSON.parse(response);
+      extracted = JSON.parse(responseText);
     }
   } catch (parseError) {
     console.error('[extractor] Failed to parse LLM response:', response);
