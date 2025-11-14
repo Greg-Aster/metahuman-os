@@ -126,6 +126,18 @@ export async function startRvcServer(): Promise<RvcActionResult> {
   const profile = 'greggles'; // TODO: read from config
   const modelsDir = path.join(rootPath, 'profiles', profile, 'out', 'voices', 'rvc-models');
 
+  // Read device setting from voice.json
+  let device = 'cuda'; // default
+  try {
+    const voiceConfigPath = path.join(rootPath, 'profiles', profile, 'etc', 'voice.json');
+    if (fs.existsSync(voiceConfigPath)) {
+      const voiceConfig = JSON.parse(fs.readFileSync(voiceConfigPath, 'utf-8'));
+      device = voiceConfig?.tts?.rvc?.device || 'cuda';
+    }
+  } catch (error) {
+    console.warn('[rvc-server] Could not read device from voice.json, using default: cuda');
+  }
+
   try {
     const logDir = path.dirname(RVC_LOG_FILE);
     if (!fs.existsSync(logDir)) {
@@ -139,7 +151,7 @@ export async function startRvcServer(): Promise<RvcActionResult> {
       [
         serverScript,
         '--port', String(RVC_PORT),
-        '--device', 'cuda',
+        '--device', device,
         '--speaker', 'default',
         '--models-dir', modelsDir,
       ],

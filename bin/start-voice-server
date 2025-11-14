@@ -72,11 +72,16 @@ case "$PROVIDER" in
       exit 1
     fi
 
+    # Read device setting from voice.json (default: cuda)
+    DEVICE=$(jq -r '.tts.rvc.device // "cuda"' "$VOICE_CONFIG" 2>/dev/null || echo "cuda")
+
+    echo "  Device: $DEVICE"
+
     # Start server in background with proper working directory
     cd "$RVC_DIR"
     nohup "$PYTHON_BIN" "$SERVER_SCRIPT" \
       --port 9881 \
-      --device cuda \
+      --device "$DEVICE" \
       --speaker default \
       --models-dir "$MODELS_DIR" \
       > "$LOG_FILE" 2>&1 &

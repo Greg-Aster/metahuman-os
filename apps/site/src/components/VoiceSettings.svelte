@@ -587,9 +587,12 @@
               <option value="cuda">GPU (CUDA) - Faster</option>
               <option value="cpu">CPU - Slower, no GPU conflicts</option>
             </select>
+            <p class="hint" style="color: #f59e0b; font-weight: 500;">
+              ⚠️ Restart server required: Device changes only take effect after restarting the RVC server (use the restart button in Server Status above).
+            </p>
             <p class="hint">
-              CPU mode eliminates GPU VRAM conflicts with Ollama but is slower (~2-5x).
-              Recommended: Use CPU for daily voice interactions, GPU for testing.
+              CPU mode eliminates GPU VRAM conflicts with Ollama but is 10-40x slower.
+              Recommended: GPU (CUDA) for conversation, CPU only if GPU unavailable.
             </p>
           </div>
 

@@ -249,7 +249,7 @@
   "cognitiveModeMappings": {
     "dual": {
       "orchestrator": "default.orchestrator",
-      "persona": "default.orchestrator",
+      "persona": "default.coder",
       "coder": "default.coder",
       "planner": "default.planner",
       "curator": "default.curator",
