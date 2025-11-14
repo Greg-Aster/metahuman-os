@@ -265,7 +265,7 @@
   });
 </script>
 
-{#if !isAuthenticated || view === 'post-register' || view === 'onboarding'}
+{#if !isAuthenticated || view === 'post-register' || view === 'onboarding' || view === 'recovery-codes'}
   <div class="auth-backdrop">
     <div class="auth-container" class:onboarding-container={view === 'onboarding'}>
       {#if view === 'onboarding'}
@@ -1343,6 +1343,129 @@
 
   :global(html:not(.dark)) .wizard-info ul {
     color: rgba(0, 0, 0, 0.7);
+  }
+
+  /* Forgot Password Link */
+  .forgot-password-link {
+    text-align: center;
+    margin-top: 0.75rem;
+  }
+
+  /* Recovery Codes View */
+  .recovery-codes-view {
+    max-width: 600px;
+  }
+
+  .recovery-codes-warning {
+    display: flex;
+    gap: 0.75rem;
+    padding: 1rem;
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 8px;
+    margin: 1.5rem 0;
+    color: #fbbf24;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  :global(html:not(.dark)) .recovery-codes-warning {
+    background: rgba(245, 158, 11, 0.1);
+    border-color: rgba(245, 158, 11, 0.4);
+    color: #d97706;
+  }
+
+  .recovery-codes-warning strong {
+    color: #f59e0b;
+  }
+
+  :global(html:not(.dark)) .recovery-codes-warning strong {
+    color: #b45309;
+  }
+
+  .recovery-codes-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.75rem;
+    margin: 1.5rem 0;
+  }
+
+  @media (max-width: 640px) {
+    .recovery-codes-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .recovery-code-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+  }
+
+  :global(html:not(.dark)) .recovery-code-item {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.1);
+  }
+
+  .code-number {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.5);
+    min-width: 20px;
+  }
+
+  :global(html:not(.dark)) .code-number {
+    color: rgba(0, 0, 0, 0.5);
+  }
+
+  .code-value {
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+    font-size: 0.9rem;
+    color: #60a5fa;
+    background: rgba(96, 165, 250, 0.1);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    letter-spacing: 0.5px;
+  }
+
+  :global(html:not(.dark)) .code-value {
+    color: #2563eb;
+    background: rgba(37, 99, 235, 0.1);
+  }
+
+  .recovery-codes-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin: 1.5rem 0;
+  }
+
+  .recovery-codes-footer {
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.875rem;
+    color: rgba(255, 255, 255, 0.6);
+  }
+
+  :global(html:not(.dark)) .recovery-codes-footer {
+    border-top-color: rgba(0, 0, 0, 0.1);
+    color: rgba(0, 0, 0, 0.6);
+  }
+
+  .recovery-codes-footer p {
+    margin: 0.5rem 0;
+  }
+
+  .recovery-codes-footer strong {
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  :global(html:not(.dark)) .recovery-codes-footer strong {
+    color: rgba(0, 0, 0, 0.9);
   }
 
   /* Responsive */
