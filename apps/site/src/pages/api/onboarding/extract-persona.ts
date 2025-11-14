@@ -20,6 +20,9 @@ import {
   mergePersonaDraft,
   savePersona,
 } from '@metahuman/core/persona/merger';
+import { captureEvent } from '@metahuman/core/memory';
+import path from 'node:path';
+import fs from 'node:fs';
 
 /**
  * POST /api/onboarding/extract-persona
@@ -54,11 +57,54 @@ const handler: APIRoute = async ({ request }) => {
     const personaPath = context.profilePaths.personaCore;
     const currentPersona = loadExistingPersona(personaPath);
 
+    // Create backup before applying changes
+    const backupDir = path.join(path.dirname(personaPath), 'backups');
+    fs.mkdirSync(backupDir, { recursive: true });
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = path.join(backupDir, `persona-core-onboarding-${timestamp}.json`);
+    fs.writeFileSync(backupPath, JSON.stringify(currentPersona, null, 2), 'utf-8');
+
     // Merge extracted data with existing persona (using 'merge' strategy)
     const { updated } = mergePersonaDraft(currentPersona, extracted, 'merge');
 
     // Save updated persona
     savePersona(personaPath, updated);
+
+    // Save conversation transcript as episodic memory
+    const transcript = messages
+      .map((m) => `${m.role === 'assistant' ? 'Interviewer' : 'You'}: ${m.content}`)
+      .join('\n\n');
+
+    await captureEvent({
+      type: 'observation',
+      content: `Quick Personality Survey - Onboarding\n\n${transcript}`,
+      tags: ['onboarding', 'personality-survey', 'quick-survey'],
+      metadata: {
+        source: 'onboarding',
+        questionCount: messages.filter((m) => m.role === 'assistant').length,
+        extractedPersona: true,
+        confidence: extracted.confidence?.overall || 0,
+      },
+    });
+
+    // Export as training data (JSONL format)
+    const trainingDir = path.join(
+      context.profilePaths.root,
+      'memory/training/personality-surveys'
+    );
+    fs.mkdirSync(trainingDir, { recursive: true });
+
+    const trainingPath = path.join(
+      trainingDir,
+      `quick-survey-${timestamp}.jsonl`
+    );
+
+    const trainingData = messages
+      .map((m) => JSON.stringify({ role: m.role, content: m.content }))
+      .join('\n');
+
+    fs.writeFileSync(trainingPath, trainingData, 'utf-8');
 
     return new Response(
       JSON.stringify({
@@ -66,6 +112,9 @@ const handler: APIRoute = async ({ request }) => {
         message: 'Personality data extracted and saved',
         extracted,
         personaPath,
+        backupPath,
+        trainingDataPath: trainingPath,
+        episodicMemorySaved: true,
       }),
       {
         status: 200,

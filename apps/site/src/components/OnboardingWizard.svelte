@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import Step1Welcome from './onboarding/Step1_Welcome.svelte';
   import Step2Identity from './onboarding/Step2_Identity.svelte';
-  import Step3Personality from './onboarding/Step3_Personality.svelte';
+  import Step3PersonalityChoice from './onboarding/Step3_PersonalityChoice.svelte';
   import Step4Context from './onboarding/Step4_Context.svelte';
   import Step5Goals from './onboarding/Step5_Goals.svelte';
   import Step6Complete from './onboarding/Step6_Complete.svelte';
@@ -175,10 +175,9 @@
           onSkip={() => showSkipModal = true}
         />
       {:else if currentStep === 3}
-        <Step3Personality
+        <Step3PersonalityChoice
           onNext={() => handleStepComplete('personality')}
           onBack={prevStep}
-          onSkip={() => showSkipModal = true}
         />
       {:else if currentStep === 4}
         <Step4Context
