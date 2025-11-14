@@ -43,6 +43,13 @@
   let profileVisibility: 'private' | 'public' = 'private';
   let savingVisibility = false;
 
+  // Recovery codes state
+  let recoveryCodes: string[] = [];
+  let recoveryCodesLoading = false;
+  let showRecoveryCodes = false;
+  let regeneratingCodes = false;
+  let showRegenerateConfirm = false;
+
   interface TunnelStatus {
     installed: boolean;
     running: boolean;
@@ -66,6 +73,7 @@
     await loadCognitiveLayersConfig();
     await fetchVisibility();
     await loadTunnelStatus();
+    await loadRecoveryCodes();
   });
 
   async function fetchCurrentUser() {
@@ -524,6 +532,62 @@
       cognitiveLayersSaving = false;
     }
   }
+
+  // Recovery codes functions
+  async function loadRecoveryCodes() {
+    recoveryCodesLoading = true;
+    try {
+      const response = await fetch('/api/recovery-codes');
+      const data = await response.json();
+      if (response.ok && data.success) {
+        recoveryCodes = data.codes || [];
+      }
+    } catch (err) {
+      console.error('Failed to load recovery codes:', err);
+    } finally {
+      recoveryCodesLoading = false;
+    }
+  }
+
+  async function handleRegenerateCodes() {
+    regeneratingCodes = true;
+    error = '';
+    success = '';
+
+    try {
+      const response = await fetch('/api/recovery-codes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        recoveryCodes = data.codes;
+        showRecoveryCodes = true;
+        showRegenerateConfirm = false;
+        success = 'Recovery codes regenerated successfully! Save them in a secure place.';
+      } else {
+        error = data.error || 'Failed to regenerate recovery codes';
+      }
+    } catch (err) {
+      error = 'Network error. Please try again.';
+      console.error(err);
+    } finally {
+      regeneratingCodes = false;
+    }
+  }
+
+  function copyAllCodesToClipboard() {
+    const codesText = recoveryCodes.join('\n');
+    navigator.clipboard.writeText(codesText).then(() => {
+      success = 'Recovery codes copied to clipboard!';
+      setTimeout(() => success = '', 3000);
+    }).catch((err) => {
+      error = 'Failed to copy to clipboard';
+      console.error(err);
+    });
+  }
 </script>
 
 <div class="security-container">
@@ -686,6 +750,106 @@
             </button>
           </div>
         </form>
+      {/if}
+    </div>
+
+    <!-- Recovery Codes -->
+    <div class="card">
+      <h2>🔑 Recovery Codes</h2>
+      <p>Use recovery codes to reset your password if you forget it. Each code can only be used once.</p>
+
+      {#if recoveryCodesLoading}
+        <p class="loading-text">Loading recovery codes...</p>
+      {:else}
+        <div class="recovery-status">
+          <div class="recovery-count">
+            <strong>{recoveryCodes.length} of 10 codes remaining</strong>
+          </div>
+          {#if recoveryCodes.length <= 3 && recoveryCodes.length > 0}
+            <div class="warning-box">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M8 1L1 14h14L8 1z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                <path d="M8 6v3M8 11v1" stroke="currentColor" stroke-width="2" />
+              </svg>
+              <div>
+                <strong>Low Recovery Codes</strong>
+                <p>You have {recoveryCodes.length} code{recoveryCodes.length === 1 ? '' : 's'} remaining. Consider regenerating new codes soon.</p>
+              </div>
+            </div>
+          {:else if recoveryCodes.length === 0}
+            <div class="warning-box danger-warning">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M8 1L1 14h14L8 1z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                <path d="M8 6v3M8 11v1" stroke="currentColor" stroke-width="2" />
+              </svg>
+              <div>
+                <strong>No Recovery Codes Available</strong>
+                <p>You have no recovery codes left. Regenerate codes immediately to ensure you can recover your account.</p>
+              </div>
+            </div>
+          {/if}
+        </div>
+
+        <div class="recovery-actions">
+          {#if recoveryCodes.length > 0 && !showRecoveryCodes}
+            <button class="btn btn-secondary" on:click={() => showRecoveryCodes = true}>
+              View Remaining Codes
+            </button>
+          {/if}
+
+          {#if !showRegenerateConfirm}
+            <button
+              class="btn btn-primary"
+              on:click={() => showRegenerateConfirm = true}
+              disabled={regeneratingCodes}
+            >
+              Regenerate All Codes
+            </button>
+          {:else}
+            <div class="confirm-box">
+              <p><strong>⚠️ Are you sure?</strong></p>
+              <p>This will invalidate all existing recovery codes and generate 10 new ones.</p>
+              <div class="confirm-actions">
+                <button
+                  class="btn btn-primary"
+                  on:click={handleRegenerateCodes}
+                  disabled={regeneratingCodes}
+                >
+                  {regeneratingCodes ? 'Regenerating...' : 'Yes, Regenerate'}
+                </button>
+                <button
+                  class="btn btn-secondary"
+                  on:click={() => showRegenerateConfirm = false}
+                  disabled={regeneratingCodes}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          {/if}
+        </div>
+
+        {#if showRecoveryCodes && recoveryCodes.length > 0}
+          <div class="recovery-codes-display">
+            <div class="codes-header">
+              <h3>Your Recovery Codes</h3>
+              <button class="btn btn-secondary btn-sm" on:click={copyAllCodesToClipboard}>
+                📋 Copy All
+              </button>
+            </div>
+            <div class="codes-grid">
+              {#each recoveryCodes as code, index}
+                <div class="code-item">
+                  <span class="code-number">{(index + 1).toString().padStart(2, '0')}.</span>
+                  <code class="code-value">{code}</code>
+                </div>
+              {/each}
+            </div>
+            <button class="btn btn-secondary" on:click={() => showRecoveryCodes = false}>
+              Hide Codes
+            </button>
+          </div>
+        {/if}
       {/if}
     </div>
 
@@ -1894,5 +2058,229 @@
 
   :global(.dark) .info-footer code {
     background: rgb(55 65 81);
+  }
+
+  /* Recovery Codes Styles */
+  .recovery-status {
+    margin-bottom: 1.5rem;
+  }
+
+  .recovery-count {
+    margin-bottom: 1rem;
+  }
+
+  .recovery-count strong {
+    color: rgb(17 24 39);
+    font-size: 1.125rem;
+  }
+
+  :global(.dark) .recovery-count strong {
+    color: rgb(243 244 246);
+  }
+
+  .warning-box {
+    display: flex;
+    gap: 0.75rem;
+    padding: 1rem;
+    background: rgb(254 252 232);
+    border: 1px solid rgb(253 224 71);
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  :global(.dark) .warning-box {
+    background: rgb(113 63 18 / 0.2);
+    border-color: rgb(180 83 9);
+  }
+
+  .warning-box.danger-warning {
+    background: rgb(254 242 242);
+    border-color: rgb(254 226 226);
+  }
+
+  :global(.dark) .warning-box.danger-warning {
+    background: rgb(127 29 29 / 0.3);
+    border-color: rgb(153 27 27);
+  }
+
+  .warning-box svg {
+    flex-shrink: 0;
+    width: 1.25rem;
+    height: 1.25rem;
+    color: rgb(161 98 7);
+  }
+
+  :global(.dark) .warning-box svg {
+    color: rgb(251 191 36);
+  }
+
+  .warning-box.danger-warning svg {
+    color: rgb(153 27 27);
+  }
+
+  :global(.dark) .warning-box.danger-warning svg {
+    color: rgb(254 226 226);
+  }
+
+  .warning-box div {
+    flex: 1;
+  }
+
+  .warning-box strong {
+    display: block;
+    color: rgb(120 53 15);
+    margin-bottom: 0.25rem;
+    font-size: 0.875rem;
+  }
+
+  :global(.dark) .warning-box strong {
+    color: rgb(253 224 71);
+  }
+
+  .warning-box.danger-warning strong {
+    color: rgb(153 27 27);
+  }
+
+  :global(.dark) .warning-box.danger-warning strong {
+    color: rgb(254 226 226);
+  }
+
+  .warning-box p {
+    margin: 0;
+    font-size: 0.875rem;
+    color: rgb(161 98 7);
+  }
+
+  :global(.dark) .warning-box p {
+    color: rgb(250 204 21);
+  }
+
+  .warning-box.danger-warning p {
+    color: rgb(153 27 27);
+  }
+
+  :global(.dark) .warning-box.danger-warning p {
+    color: rgb(254 226 226);
+  }
+
+  .recovery-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .confirm-box {
+    flex: 1 1 100%;
+    padding: 1rem;
+    background: rgb(254 252 232);
+    border: 2px solid rgb(253 224 71);
+    border-radius: 0.5rem;
+  }
+
+  :global(.dark) .confirm-box {
+    background: rgb(113 63 18 / 0.2);
+    border-color: rgb(180 83 9);
+  }
+
+  .confirm-box p {
+    margin: 0 0 0.5rem 0;
+    color: rgb(120 53 15);
+  }
+
+  :global(.dark) .confirm-box p {
+    color: rgb(250 204 21);
+  }
+
+  .confirm-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1rem;
+  }
+
+  .recovery-codes-display {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    background: rgb(249 250 251);
+    border: 1px solid rgb(229 231 235);
+    border-radius: 0.5rem;
+  }
+
+  :global(.dark) .recovery-codes-display {
+    background: rgb(31 41 55);
+    border-color: rgb(55 65 81);
+  }
+
+  .codes-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid rgb(229 231 235);
+  }
+
+  :global(.dark) .codes-header {
+    border-color: rgb(55 65 81);
+  }
+
+  .codes-header h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: rgb(17 24 39);
+    margin: 0;
+  }
+
+  :global(.dark) .codes-header h3 {
+    color: rgb(243 244 246);
+  }
+
+  .btn-sm {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+  }
+
+  .codes-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .code-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: white;
+    border: 1px solid rgb(229 231 235);
+    border-radius: 0.375rem;
+  }
+
+  :global(.dark) .code-item {
+    background: rgb(17 24 39);
+    border-color: rgb(55 65 81);
+  }
+
+  .code-number {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: rgb(107 114 128);
+  }
+
+  :global(.dark) .code-number {
+    color: rgb(156 163 175);
+  }
+
+  .code-value {
+    font-family: 'Courier New', monospace;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: rgb(139, 92, 246);
+    letter-spacing: 0.05em;
+  }
+
+  :global(.dark) .code-value {
+    color: rgb(196 181 253);
   }
 </style>
