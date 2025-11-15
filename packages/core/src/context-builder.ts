@@ -39,6 +39,18 @@ interface CacheEntry {
 const contextCache = new Map<string, CacheEntry>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+const conversationSummaryCache = new Map<string, { value: string | null; timestamp: number }>();
+const SUMMARY_CACHE_TTL = 5 * 60 * 1000;
+
+const functionAvailabilityCache = new Map<string, { available: boolean; timestamp: number }>();
+const FUNCTION_CACHE_TTL = 5 * 60 * 1000;
+
+const toolScanCooldown = new Map<string, { timestamp: number; hadResults: boolean }>();
+const TOOL_SCAN_COOLDOWN_MS = 2 * 60 * 1000;
+
+const CONTEXT_TIMING_FLAG = process.env.MH_CONTEXT_TIMING === '1';
+const CONTEXT_SLOW_THRESHOLD = Number(process.env.MH_CONTEXT_TIMING_THRESHOLD || 5000);
+
 // ============================================================================
 // Warm Cache for Frequently Accessed Data (30sec TTL)
 // ============================================================================
@@ -69,6 +81,90 @@ function setWarmCachedTasks(userKey: string, tasks: any[]): void {
     tasks,
     timestamp: Date.now()
   });
+}
+
+function getSummaryCacheKey(conversationId: string, username?: string): string {
+  return `${username || 'anonymous'}:${conversationId}`;
+}
+
+function getCachedConversationSummary(conversationId?: string): string | null | undefined {
+  if (!conversationId) return undefined;
+  const ctx = getUserContext();
+  const cacheKey = getSummaryCacheKey(conversationId, ctx?.username);
+  const cached = conversationSummaryCache.get(cacheKey);
+  if (!cached) return undefined;
+  if (Date.now() - cached.timestamp > SUMMARY_CACHE_TTL) {
+    conversationSummaryCache.delete(cacheKey);
+    return undefined;
+  }
+  return cached.value;
+}
+
+function setCachedConversationSummary(conversationId: string, value: string | null): void {
+  const ctx = getUserContext();
+  const cacheKey = getSummaryCacheKey(conversationId, ctx?.username);
+  conversationSummaryCache.set(cacheKey, { value, timestamp: Date.now() });
+}
+
+function hasFunctionMemoryAvailable(): boolean {
+  const ctx = getUserContext();
+  const dir = ctx?.profilePaths?.functionsVerified;
+  if (!dir) return false;
+
+  const cached = functionAvailabilityCache.get(dir);
+  if (cached && Date.now() - cached.timestamp < FUNCTION_CACHE_TTL) {
+    return cached.available;
+  }
+
+  let available = false;
+  try {
+    if (existsSync(dir)) {
+      const files = readdirSync(dir).filter(f => f.endsWith('.json'));
+      available = files.length > 0;
+    }
+  } catch {
+    available = false;
+  }
+
+  functionAvailabilityCache.set(dir, { available, timestamp: Date.now() });
+  return available;
+}
+
+function shouldSkipToolScan(conversationId?: string): boolean {
+  if (!conversationId) return true;
+  const entry = toolScanCooldown.get(conversationId);
+  if (!entry) return false;
+  if (entry.hadResults) return false;
+  if (Date.now() - entry.timestamp > TOOL_SCAN_COOLDOWN_MS) {
+    toolScanCooldown.delete(conversationId);
+    return false;
+  }
+  return true;
+}
+
+function recordToolScan(conversationId: string | undefined, hadResults: boolean): void {
+  if (!conversationId) return;
+  if (hadResults) {
+    toolScanCooldown.delete(conversationId);
+    return;
+  }
+  toolScanCooldown.set(conversationId, { timestamp: Date.now(), hadResults });
+}
+
+type TimingMap = Record<string, number>;
+
+function logContextTimings(
+  cacheHit: boolean,
+  retrievalTime: number,
+  timings: TimingMap
+): void {
+  if (!CONTEXT_TIMING_FLAG && retrievalTime < CONTEXT_SLOW_THRESHOLD) {
+    return;
+  }
+  const parts = Object.entries(timings)
+    .map(([key, value]) => `${key}=${value}ms`)
+    .join(', ');
+  console.log(`[context-builder] timings (${cacheHit ? 'cache' : 'fresh'}): total=${retrievalTime}ms ${parts}`);
 }
 
 interface CacheKeyContext {
@@ -191,6 +287,11 @@ async function queryConversationSummary(conversationId?: string): Promise<string
   const ctx = getUserContext();
   if (!ctx) return null;
 
+  const cached = getCachedConversationSummary(conversationId);
+  if (cached !== undefined) {
+    return cached;
+  }
+
   // C3: Skip if currently being summarized (prevents concurrent LLM calls)
   const beingSummarized = await isSummarizing(ctx.username, conversationId);
   if (beingSummarized) {
@@ -236,7 +337,9 @@ async function queryConversationSummary(conversationId?: string): Promise<string
             const summarySessionId = event.metadata.conversationId || event.metadata.sessionId;
             if (summarySessionId === conversationId) {
               // Return the full summary from metadata
-              return event.metadata.fullSummary || event.content || null;
+              const summary = event.metadata.fullSummary || event.content || null;
+              setCachedConversationSummary(conversationId, summary);
+              return summary;
             }
           }
         } catch (error) {
@@ -245,9 +348,11 @@ async function queryConversationSummary(conversationId?: string): Promise<string
       }
     }
 
+    setCachedConversationSummary(conversationId, null);
     return null;
   } catch (error) {
     console.error('[context-builder] Error querying conversation summary:', error);
+    setCachedConversationSummary(conversationId, null);
     return null;
   }
 }
@@ -282,7 +387,7 @@ async function queryRecentToolInvocations(
     if (conversationId) {
       const cachedTools = await readRecentToolsFromCache(ctx.profilePaths, conversationId, limit);
 
-      if (cachedTools.length > 0) {
+      if (cachedTools && cachedTools.length > 0) {
         // Cache hit - transform to ToolInvocation format
         const tools: ToolInvocation[] = cachedTools.map((t) => {
           // Parse outputs from cache entry
@@ -315,9 +420,17 @@ async function queryRecentToolInvocations(
 
         return tools;
       }
+
+      if (cachedTools && cachedTools.length === 0) {
+        return [];
+      }
     }
 
     // Cache miss - fallback to episodic scan (cache miss already logged by readRecentToolsFromCache)
+    if (conversationId && shouldSkipToolScan(conversationId)) {
+      return [];
+    }
+
     const tools: ToolInvocation[] = [];
 
     const episodicDir = ctx.profilePaths.episodic;
@@ -383,8 +496,13 @@ async function queryRecentToolInvocations(
       }
     }
 
+    const ordered = tools.reverse();
+    if (conversationId) {
+      recordToolScan(conversationId, ordered.length > 0);
+    }
+
     // Return in chronological order (oldest first)
-    return tools.reverse();
+    return ordered;
   } catch (error) {
     console.error('[context-builder] Error querying tool invocations:', error);
     return [];
@@ -523,6 +641,7 @@ export async function buildContextPackage(
   options: ContextBuilderOptions = {}
 ): Promise<ContextPackage> {
   const startTime = Date.now();
+  const timings: TimingMap = {};
   const ctx = getUserContext();
   const userKey = ctx?.profilePaths
     ? path.basename(ctx.profilePaths.root)
@@ -536,6 +655,7 @@ export async function buildContextPackage(
   });
   const cached = getCachedContext(cacheKey);
   if (cached) {
+    logContextTimings(true, Date.now() - startTime, { cache: Date.now() - startTime });
     audit({
       level: 'info',
       category: 'action',
@@ -578,6 +698,7 @@ export async function buildContextPackage(
   // Step 1: Memory Retrieval (Semantic Search or Fallback)
   // ========================================================================
 
+  const memoryStart = Date.now();
   try {
     const idx = await getIndexStatus();
 
@@ -723,6 +844,7 @@ export async function buildContextPackage(
     fallbackUsed = true;
     memories = [];
   }
+  timings.memoryRetrieval = Date.now() - memoryStart;
 
   // ========================================================================
   // Step 2 & 3: Parallel Loading (Persona + State)
@@ -838,6 +960,7 @@ export async function buildContextPackage(
   let recentTools: ToolInvocation[] = [];
 
   if (options.conversationId) {
+    const toolStart = Date.now();
     try {
       recentTools = await queryRecentToolInvocations(
         options.conversationId,
@@ -847,6 +970,8 @@ export async function buildContextPackage(
     } catch (error) {
       console.error('[context-builder] Error querying recent tools:', error);
       // Continue without tool history
+    } finally {
+      timings.toolHistory = Date.now() - toolStart;
     }
   }
 
@@ -857,6 +982,7 @@ export async function buildContextPackage(
   let conversationSummary: string | undefined;
 
   if (options.conversationId) {
+    const summaryStart = Date.now();
     try {
       const summary = await queryConversationSummary(options.conversationId);
       if (summary) {
@@ -865,6 +991,8 @@ export async function buildContextPackage(
     } catch (error) {
       console.error('[context-builder] Error querying conversation summary:', error);
       // Continue without summary
+    } finally {
+      timings.summaryLookup = Date.now() - summaryStart;
     }
   }
 
@@ -874,34 +1002,39 @@ export async function buildContextPackage(
 
   let functionGuides: Array<{ id: string; title: string; summary: string; score: number }> = [];
 
-  try {
-    const { retrieveFunctions } = await import('./function-memory');
+  if (hasFunctionMemoryAvailable()) {
+    const functionStart = Date.now();
+    try {
+      const { retrieveFunctions } = await import('./function-memory');
 
-    console.log('[context-builder] Retrieving functions for query:', userMessage.substring(0, 80));
+      console.log('[context-builder] Retrieving functions for query:', userMessage.substring(0, 80));
 
-    // Retrieve functions using semantic search on the user message
-    const matchingFunctions = await retrieveFunctions(userMessage, {
-      topK: 3, // Limit to top 3 most relevant functions
-      minScore: 0.6, // Require at least 60% similarity
-      includeDrafts: false, // Only include verified functions
-    });
+      // Retrieve functions using semantic search on the user message
+      const matchingFunctions = await retrieveFunctions(userMessage, {
+        topK: 3, // Limit to top 3 most relevant functions
+        minScore: 0.6, // Require at least 60% similarity
+        includeDrafts: false, // Only include verified functions
+      });
 
-    console.log(`[context-builder] Retrieved ${matchingFunctions.length} matching functions`);
+      console.log(`[context-builder] Retrieved ${matchingFunctions.length} matching functions`);
 
-    // Extract lightweight summaries for context package (include ID for tracking)
-    functionGuides = matchingFunctions.map(({ function: func, score }) => ({
-      id: func.id,
-      title: func.title,
-      summary: func.summary,
-      score,
-    }));
+      // Extract lightweight summaries for context package (include ID for tracking)
+      functionGuides = matchingFunctions.map(({ function: func, score }) => ({
+        id: func.id,
+        title: func.title,
+        summary: func.summary,
+        score,
+      }));
 
-    if (functionGuides.length > 0) {
-      console.log('[context-builder] Function guides:', functionGuides.map(g => `${g.title} (${(g.score * 100).toFixed(1)}%)`).join(', '));
+      if (functionGuides.length > 0) {
+        console.log('[context-builder] Function guides:', functionGuides.map(g => `${g.title} (${(g.score * 100).toFixed(1)}%)`).join(', '));
+      }
+    } catch (error) {
+      // Function retrieval is optional, don't fail if it errors
+      console.error('[context-builder] Error retrieving functions:', error);
+    } finally {
+      timings.functionLookup = Date.now() - functionStart;
     }
-  } catch (error) {
-    // Function retrieval is optional, don't fail if it errors
-    console.error('[context-builder] Error retrieving functions:', error);
   }
 
   // ========================================================================
@@ -963,6 +1096,8 @@ export async function buildContextPackage(
 
   // Cache the result
   setCachedContext(cacheKey, contextPackage);
+
+  logContextTimings(false, retrievalTime, timings);
 
   return contextPackage;
 }

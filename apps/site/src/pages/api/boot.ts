@@ -9,6 +9,7 @@ import {
   audit,
   loadPersonaCore,
   isHeadless,
+  checkOllamaHealth,
 } from '@metahuman/core'
 import { loadCognitiveMode } from '@metahuman/core/cognitive-mode'
 
@@ -111,6 +112,7 @@ export const GET: APIRoute = async ({ cookies }) => {
   let version = '1.0.0'
   let modelInfo = null
   let cognitiveMode = 'emulation'
+  let ollamaStatus = null
 
   try {
     persona = loadPersonaCore()
@@ -137,6 +139,19 @@ export const GET: APIRoute = async ({ cookies }) => {
       const fallbackModel = registry.models?.[fallbackId]
       modelInfo = { model: fallbackModel?.model || 'Local Models' }
     } catch {}
+
+    // Check Ollama health status
+    try {
+      ollamaStatus = await checkOllamaHealth()
+    } catch (e) {
+      ollamaStatus = {
+        running: false,
+        hasModels: false,
+        modelCount: 0,
+        models: [],
+        error: String(e)
+      }
+    }
   } catch (e) {
     // Continue without persona data if loading fails
   }
@@ -151,7 +166,8 @@ export const GET: APIRoute = async ({ cookies }) => {
       modelInfo,
       cognitiveMode,
       isAuthenticated,
-      headlessMode
+      headlessMode,
+      ollamaStatus
     }),
     { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }
   )

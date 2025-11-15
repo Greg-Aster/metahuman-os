@@ -146,7 +146,7 @@ export async function readRecentToolsFromCache(
   profilePaths: ProfilePaths | undefined,
   conversationId: string,
   contextDepth: number = 10
-): Promise<RecentToolEntry[]> {
+): Promise<RecentToolEntry[] | null> {
   if (!profilePaths) return [];
   const cacheFile = getCacheFilePath(profilePaths, conversationId);
 
@@ -164,7 +164,7 @@ export async function readRecentToolsFromCache(
         details: { profile: profileName, conversationId, reason: 'cache_file_not_found' },
         actor: 'system',
       });
-      return [];
+      return null;
     }
 
     const content = await fs.readFile(cacheFile, 'utf-8');
@@ -190,7 +190,7 @@ export async function readRecentToolsFromCache(
       },
       actor: 'system',
     });
-    return [];
+    return null;
   }
 }
 

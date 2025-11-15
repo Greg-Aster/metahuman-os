@@ -920,6 +920,11 @@ function formatObservation(result: SkillResult, config: ReActConfig): string {
       return `Found ${tasks.length} task(s):\n${tasks.map((task: any, idx: number) => formatTask(task, idx)).join('\n')}`;
     }
 
+    if (outputs.response && typeof outputs.response === 'string') {
+      // conversational_response result - return the response directly
+      return outputs.response;
+    }
+
     // Generic output formatting
     const dataStr = JSON.stringify(outputs, null, 2);
     if (dataStr.length <= config.observationMaxLength) {
@@ -1595,6 +1600,11 @@ function formatStructured(tool: string, result: SkillResult): string {
       return results.slice(0, 5).map((r: any, i: number) =>
         `${i + 1}. ${r.event || r.title || 'Untitled'} (score: ${r.score?.toFixed(2) || 'N/A'})`
       ).join('\n');
+    }
+
+    case 'conversational_response': {
+      // Return response directly without JSON wrapping
+      return outputs.response || '';
     }
 
     default:

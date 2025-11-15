@@ -61,6 +61,12 @@ let reasoningStages: ReasoningStage[] = [];
   let ttsPlaybackToken = 0;
   let yoloMode = false;
 
+  // Ollama health status
+  let ollamaRunning = true;
+  let ollamaHasModels = true;
+  let ollamaModelCount = 0;
+  let ollamaError: string | null = null;
+
   // Thinking trace sourced from live audit events
   const THINKING_TRACE_LIMIT = 40;
   let thinkingTrace: string[] = [];
@@ -494,11 +500,31 @@ let reasoningStages: ReasoningStage[] = [];
     return null;
   }
 
+  async function checkOllamaStatus() {
+    try {
+      const response = await fetch('/api/boot');
+      if (!response.ok) return;
+
+      const data = await response.json();
+      if (data.ollamaStatus) {
+        ollamaRunning = data.ollamaStatus.running;
+        ollamaHasModels = data.ollamaStatus.hasModels;
+        ollamaModelCount = data.ollamaStatus.modelCount || 0;
+        ollamaError = data.ollamaStatus.error || null;
+      }
+    } catch (e) {
+      console.error('Failed to check Ollama status:', e);
+    }
+  }
+
   onMount(() => {
     loadChatPrefs();
     if (ttsEnabled) {
       prefetchVoiceResources();
     }
+
+    // Check Ollama health status
+    checkOllamaStatus();
 
     // Initialize or restore conversation session ID
     try {
@@ -688,6 +714,13 @@ let reasoningStages: ReasoningStage[] = [];
 
   async function sendMessage() {
     if (!input.trim() || loading) return;
+
+    // Check Ollama status before sending
+    if (!ollamaRunning || !ollamaHasModels) {
+      alert('Cannot send message: Ollama is not running or no models are loaded. Please start Ollama and load a model first.');
+      return;
+    }
+
     await ensureAudioUnlocked();
     if (ttsEnabled) {
       prefetchVoiceResources();
@@ -1149,6 +1182,36 @@ let reasoningStages: ReasoningStage[] = [];
       <VoiceInteraction />
     </div>
   {/if}
+
+  <!-- Ollama Status Warning Banner -->
+  {#if !ollamaRunning || !ollamaHasModels}
+    <div class="ollama-warning-banner">
+      <div class="warning-icon">⚠️</div>
+      <div class="warning-content">
+        <div class="warning-title">
+          {#if !ollamaRunning}
+            Ollama Service Not Running
+          {:else}
+            No Language Models Loaded
+          {/if}
+        </div>
+        <div class="warning-message">
+          {#if !ollamaRunning}
+            The Ollama service is not running. Please start it using: <code>systemctl start ollama</code>
+          {:else if ollamaModelCount === 0}
+            No models are currently loaded. Please install a model using: <code>ollama pull phi3:mini</code>
+          {/if}
+          {#if ollamaError}
+            <div class="warning-error">Error: {ollamaError}</div>
+          {/if}
+        </div>
+        <button class="warning-refresh-btn" on:click={checkOllamaStatus}>
+          Recheck Status
+        </button>
+      </div>
+    </div>
+  {/if}
+
   <div class="messages-container" bind:this={messagesContainer}>
     {#if messages.length === 0}
       <div class="welcome-screen">
@@ -1352,6 +1415,93 @@ let reasoningStages: ReasoningStage[] = [];
 
 <style>
   /* Custom animations and pseudo-elements that can't be done with Tailwind */
+
+  /* Ollama Warning Banner */
+  .ollama-warning-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1rem 1.5rem;
+    margin: 1rem;
+    background: rgba(239, 68, 68, 0.1);
+    border: 2px solid rgba(239, 68, 68, 0.3);
+    border-radius: 0.5rem;
+    font-size: 0.95rem;
+  }
+
+  :global(.dark) .ollama-warning-banner {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.4);
+  }
+
+  .warning-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+  }
+
+  .warning-content {
+    flex: 1;
+  }
+
+  .warning-title {
+    font-weight: 600;
+    color: rgba(239, 68, 68, 0.9);
+    margin-bottom: 0.5rem;
+    font-size: 1rem;
+  }
+
+  :global(.dark) .warning-title {
+    color: rgba(239, 68, 68, 1);
+  }
+
+  .warning-message {
+    color: rgba(0, 0, 0, 0.8);
+    line-height: 1.5;
+  }
+
+  :global(.dark) .warning-message {
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  .warning-message code {
+    background: rgba(0, 0, 0, 0.1);
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+  }
+
+  :global(.dark) .warning-message code {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .warning-error {
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: rgba(239, 68, 68, 0.8);
+    font-style: italic;
+  }
+
+  .warning-refresh-btn {
+    margin-top: 0.75rem;
+    padding: 0.5rem 1rem;
+    background: rgba(139, 92, 246, 0.8);
+    color: white;
+    border: none;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s ease;
+  }
+
+  .warning-refresh-btn:hover {
+    background: rgba(139, 92, 246, 1);
+    transform: translateY(-1px);
+  }
+
+  .warning-refresh-btn:active {
+    transform: translateY(0);
+  }
 
   .mic-btn.recording::after {
     content: '';
