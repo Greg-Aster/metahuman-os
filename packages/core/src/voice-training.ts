@@ -1576,17 +1576,94 @@ export function startRVCTraining(
     fs.mkdirSync(rvcExperimentDir, { recursive: true });
   }
 
+  // Clear old training data from previous runs
+  // This prevents conflicts between old spectrograms and new audio files
+  console.log('[RVC Training] Clearing old training data from previous runs...');
+  try {
+    const files = fs.readdirSync(rvcExperimentDir);
+    let clearedCount = 0;
+
+    for (const file of files) {
+      // Delete checkpoint files (.pth)
+      if (file.endsWith('.pth')) {
+        const filePath = path.join(rvcExperimentDir, file);
+        fs.unlinkSync(filePath);
+        clearedCount++;
+        console.log(`[RVC Training]   Deleted checkpoint: ${file}`);
+      }
+    }
+
+    // Also clear preprocessed data directories to force fresh preprocessing
+    // This is critical because stale spec.pt files cause tensor dimension errors
+    const dirsToClear = ['sliced_audios', 'sliced_audios_16k', 'extracted', 'f0', 'f0_voiced'];
+    for (const dirName of dirsToClear) {
+      const dirPath = path.join(rvcExperimentDir, dirName);
+      if (fs.existsSync(dirPath)) {
+        const dirFiles = fs.readdirSync(dirPath);
+        for (const file of dirFiles) {
+          try {
+            fs.unlinkSync(path.join(dirPath, file));
+            clearedCount++;
+          } catch (e) {
+            console.error(`[RVC Training] Failed to delete ${dirName}/${file}:`, e);
+          }
+        }
+        console.log(`[RVC Training]   Cleared ${dirFiles.length} files from ${dirName}/`);
+      }
+    }
+
+    if (clearedCount > 0) {
+      console.log(`[RVC Training] Cleared ${clearedCount} old training files`);
+    } else {
+      console.log('[RVC Training] No old training files found');
+    }
+  } catch (error) {
+    console.error('[RVC Training] Warning: Failed to clear old data:', error);
+    // Continue anyway
+  }
+
   // RVC uses 40kHz sample rate
   const rvcSampleRate = 40000;
 
   // Stop Ollama to free up GPU VRAM for training (RVC needs ~10GB, Ollama uses ~9.5GB)
   console.log('[RVC Training] Stopping Ollama to free GPU VRAM...');
   try {
-    spawnSync('pkill', ['-f', 'ollama'], { stdio: 'ignore' });
-    console.log('[RVC Training] Ollama stopped successfully');
+    // Try systemctl first (if Ollama is a service)
+    const systemctlResult = spawnSync('systemctl', ['stop', 'ollama'], { stdio: 'pipe' });
 
-    // Wait 2 seconds for VRAM to be fully released
-    spawnSync('sleep', ['2']);
+    if (systemctlResult.status === 0) {
+      console.log('[RVC Training] Stopped Ollama service via systemctl');
+    } else {
+      // Fallback to pkill if systemctl fails
+      spawnSync('pkill', ['-f', 'ollama'], { stdio: 'ignore' });
+      console.log('[RVC Training] Stopped Ollama via pkill');
+    }
+
+    // Wait for GPU VRAM to be fully released
+    console.log('[RVC Training] Waiting for GPU VRAM to be released...');
+    let vramFreed = false;
+    for (let i = 0; i < 15; i++) {
+      spawnSync('sleep', ['1']);
+
+      // Check if Ollama process is gone
+      const psResult = spawnSync('pgrep', ['-f', 'ollama'], { stdio: 'pipe' });
+      if (psResult.status !== 0) {
+        vramFreed = true;
+        console.log('[RVC Training] Ollama stopped, VRAM freed');
+        break;
+      }
+
+      // If still running after 5 seconds, try force kill
+      if (i === 4) {
+        console.log('[RVC Training] Ollama still running, attempting force kill...');
+        spawnSync('pkill', ['-9', '-f', 'ollama'], { stdio: 'ignore' });
+      }
+    }
+
+    if (!vramFreed) {
+      console.warn('[RVC Training] Warning: Ollama may still be using GPU memory');
+      console.warn('[RVC Training] Training may fail due to insufficient GPU VRAM');
+    }
   } catch (error) {
     console.log('[RVC Training] Ollama may not be running (this is OK)');
   }
@@ -1598,7 +1675,14 @@ export function startRVCTraining(
     // Restart Ollama before returning error
     console.log('[RVC Training] Restarting Ollama after preprocessing failure...');
     try {
-      spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' }).unref();
+      const startResult = spawnSync('systemctl', ['start', 'ollama'], { stdio: 'pipe' });
+      if (startResult.status === 0) {
+        console.log('[RVC Training] Ollama service restarted via systemctl');
+      } else {
+        // Fallback to direct spawn
+        spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' }).unref();
+        console.log('[RVC Training] Ollama started via spawn');
+      }
     } catch (e) {
       console.error('[RVC Training] Failed to restart Ollama:', e);
     }
@@ -1616,7 +1700,14 @@ export function startRVCTraining(
     // Restart Ollama before returning error
     console.log('[RVC Training] Restarting Ollama after feature extraction failure...');
     try {
-      spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' }).unref();
+      const startResult = spawnSync('systemctl', ['start', 'ollama'], { stdio: 'pipe' });
+      if (startResult.status === 0) {
+        console.log('[RVC Training] Ollama service restarted via systemctl');
+      } else {
+        // Fallback to direct spawn
+        spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' }).unref();
+        console.log('[RVC Training] Ollama started via spawn');
+      }
     } catch (e) {
       console.error('[RVC Training] Failed to restart Ollama:', e);
     }
@@ -1849,11 +1940,14 @@ export function startRVCTraining(
       // Restart Ollama after training completes (success or failure)
       console.log('[RVC Training] Restarting Ollama...');
       try {
-        spawn('ollama', ['serve'], {
-          detached: true,
-          stdio: 'ignore'
-        }).unref(); // Unref so parent process doesn't wait for Ollama
-        console.log('[RVC Training] Ollama restarted successfully');
+        const startResult = spawnSync('systemctl', ['start', 'ollama'], { stdio: 'pipe' });
+        if (startResult.status === 0) {
+          console.log('[RVC Training] Ollama service restarted via systemctl');
+        } else {
+          // Fallback to direct spawn
+          spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' }).unref();
+          console.log('[RVC Training] Ollama started via spawn');
+        }
       } catch (error) {
         console.error('[RVC Training] Failed to restart Ollama:', error);
       }

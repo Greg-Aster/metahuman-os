@@ -535,14 +535,22 @@ function buildSystemPrompt(mode: Mode, includePersonaSummary = true): string {
     // Phase 5: Add persona cache context (long-term themes and facts)
     const personaCache = getPersonaContext();
 
+    const communicationStyle = persona.personality?.communicationStyle ?? {};
+    const tone = communicationStyle.tone;
+    const toneText = Array.isArray(tone) ? tone.join(', ') : tone || 'adaptive';
+
+    const values = Array.isArray(persona.values?.core)
+      ? persona.values.core.map((v: any) => v.value || v).filter(Boolean)
+      : [];
+
     systemPrompt = `
 You are ${persona.identity.name}, an autonomous digital personality extension.
 Your role is: ${persona.identity.role}.
 Your purpose is: ${persona.identity.purpose}.
 
 Your personality is defined by these traits:
-- Communication Style: ${persona.personality.communicationStyle.tone.join(', ')}.
-- Values: ${persona.values.core.map(v => v.value).join(', ')}.
+- Communication Style: ${toneText}.
+- Values: ${values.join(', ') || 'Not specified'}.
 
 ${personaCache ? `Long-term context:\n${personaCache}\n` : ''}
 You are having a ${mode}.
@@ -848,6 +856,13 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
     const globalSettings = registry.globalSettings || {};
     includePersonaSummary = globalSettings.includePersonaSummary !== false;
+    try {
+      if (getActiveFacet() === 'inactive') {
+        includePersonaSummary = false;
+      }
+    } catch {
+      // ignore facet errors for guests
+    }
 
     // Use adapter if enabled, otherwise use base model
     if (globalSettings.useAdapter && globalSettings.activeAdapter) {

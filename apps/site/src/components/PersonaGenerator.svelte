@@ -29,6 +29,9 @@
   let error = '';
   let showReviewDialog = false;
   let reviewData: any = null;
+  let editingAnswerId: string | null = null;
+  let editedAnswerText = '';
+  let editLoading = false;
 
   // Session history
   let sessions: any[] = [];
@@ -48,6 +51,40 @@
   let adminError = '';
   let resetConfirmText = '';
 
+  // Quick Add Notes
+  let showQuickNotes = false;
+  let quickNotesText = '';
+  let quickNotesLoading = false;
+  let quickNotesError = '';
+  let quickNotesSuccess = '';
+
+  // Fun loading messages
+  let loadingMessageIndex = 0;
+  let loadingInterval: NodeJS.Timeout | null = null;
+
+  const THINKING_MESSAGES = [
+    "🧠 Analyzing your psyche's WiFi password...",
+    "🔮 Consulting the cosmic unconscious...",
+    "📚 Cross-referencing with Freud's dream journal...",
+    "🎭 Decoding your inner theater's stage directions...",
+    "🌀 Untangling the threads of your subconscious tapestry...",
+    "🎪 Interviewing your id, ego, and superego...",
+    "🌙 Transcribing messages from your shadow self...",
+    "🎨 Painting a portrait of your personality landscape...",
+    "🧩 Assembling the puzzle pieces of your psyche...",
+    "🎯 Calibrating the empathy resonance chamber...",
+    "🌊 Navigating the depths of your mental ocean...",
+    "🎼 Composing a symphony of your behavioral patterns...",
+    "🔬 Examining your personality under a microscope...",
+    "🌳 Growing a family tree of your thought processes...",
+    "⚡ Charging the neural network with introspective energy...",
+    "🎲 Rolling the dice of existential probability...",
+    "🌌 Mapping the constellations of your character...",
+    "🎪 Balancing on the tightrope between nature and nurture...",
+    "🧘 Meditating on the meaning of your meanings...",
+    "🎭 Rehearsing for the play of your life story...",
+  ];
+
   onMount(async () => {
     await loadSessionHistory();
     // Check for active session to resume
@@ -57,6 +94,26 @@
       resumableSessionId = savedSessionId;
     }
   });
+
+  onDestroy(() => {
+    if (loadingInterval) {
+      clearInterval(loadingInterval);
+    }
+  });
+
+  function startLoadingMessages() {
+    loadingMessageIndex = 0;
+    loadingInterval = setInterval(() => {
+      loadingMessageIndex = (loadingMessageIndex + 1) % THINKING_MESSAGES.length;
+    }, 3000); // Change message every 3 seconds
+  }
+
+  function stopLoadingMessages() {
+    if (loadingInterval) {
+      clearInterval(loadingInterval);
+      loadingInterval = null;
+    }
+  }
 
   async function loadSessionHistory() {
     try {
@@ -93,6 +150,8 @@
         answers: [],
         categoryCoverage: data.categoryCoverage,
       };
+      editingAnswerId = null;
+      editedAnswerText = '';
 
       // Save to localStorage for resume
       localStorage.setItem('persona-generator-session', data.sessionId);
@@ -103,9 +162,10 @@
     }
   }
 
-  async function resumeSession(sessionId: string) {
+  async function resumeSession(sessionId: string, options?: { persist?: boolean }) {
     loading = true;
     error = '';
+    const shouldPersist = options?.persist ?? true;
 
     try {
       const response = await fetch(`/api/persona/generator/load?sessionId=${sessionId}`);
@@ -117,12 +177,73 @@
 
       const data = await response.json();
       currentSession = data.session;
-      localStorage.setItem('persona-generator-session', sessionId);
+      editingAnswerId = null;
+      editedAnswerText = '';
+      if (shouldPersist) {
+        localStorage.setItem('persona-generator-session', sessionId);
+      }
     } catch (err: any) {
       error = err.message;
-      localStorage.removeItem('persona-generator-session');
+      if (shouldPersist) {
+        localStorage.removeItem('persona-generator-session');
+      }
     } finally {
       loading = false;
+    }
+  }
+
+  function reviewSession(sessionId: string) {
+    resumeSession(sessionId, { persist: false });
+  }
+
+  function startEditAnswer(questionId: string, content: string) {
+    editingAnswerId = questionId;
+    editedAnswerText = content;
+  }
+
+  function cancelEditAnswer() {
+    editingAnswerId = null;
+    editedAnswerText = '';
+  }
+
+  async function saveEditedAnswer(questionId: string) {
+    if (!currentSession) return;
+    if (!editedAnswerText.trim()) {
+      error = 'Answer cannot be empty';
+      return;
+    }
+
+    editLoading = true;
+    error = '';
+
+    try {
+      const response = await fetch('/api/persona/generator/update-answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession.sessionId,
+          questionId,
+          content: editedAnswerText.trim(),
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to update answer');
+      }
+
+      const data = await response.json();
+      const updatedAnswer = data.answer;
+      const updatedAnswers = currentSession.answers.map((answer) =>
+        answer.questionId === questionId ? updatedAnswer : answer
+      );
+      currentSession = { ...currentSession, answers: updatedAnswers };
+      editingAnswerId = null;
+      editedAnswerText = '';
+    } catch (err: any) {
+      error = err.message;
+    } finally {
+      editLoading = false;
     }
   }
 
@@ -131,6 +252,7 @@
 
     loading = true;
     error = '';
+    startLoadingMessages(); // Start cycling fun messages
 
     const lastQuestion = currentSession.questions[currentSession.questions.length - 1];
 
@@ -184,6 +306,7 @@
       error = err.message;
     } finally {
       loading = false;
+      stopLoadingMessages(); // Stop cycling messages
     }
   }
 
@@ -290,6 +413,44 @@
     if (percentage >= 80) return '#10b981'; // green
     if (percentage >= 60) return '#f59e0b'; // orange
     return '#6b7280'; // gray
+  }
+
+  async function handleQuickNotes() {
+    if (!quickNotesText.trim()) {
+      quickNotesError = 'Please enter some notes or observations';
+      return;
+    }
+
+    quickNotesLoading = true;
+    quickNotesError = '';
+    quickNotesSuccess = '';
+
+    try {
+      const response = await fetch('/api/persona/generator/add-notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: quickNotesText }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to add notes');
+      }
+
+      const data = await response.json();
+      quickNotesSuccess = 'Notes processed and merged with your persona!';
+      quickNotesText = '';
+
+      // Hide success message after 3 seconds
+      setTimeout(() => {
+        quickNotesSuccess = '';
+        showQuickNotes = false;
+      }, 3000);
+    } catch (err: any) {
+      quickNotesError = err.message;
+    } finally {
+      quickNotesLoading = false;
+    }
   }
 
   async function handlePurgeSessions() {
@@ -402,7 +563,62 @@
           <li>Tracks coverage across 5 personality categories</li>
           <li>Generates structured persona data from your responses</li>
           <li>Review and customize before applying changes</li>
+          <li><strong>New sessions merge with existing persona</strong> - more data improves accuracy</li>
         </ul>
+      </div>
+
+      <!-- Quick Add Notes Section -->
+      <div class="quick-notes-section">
+        <div class="quick-notes-header">
+          <h4>📝 Quick Add Notes</h4>
+          <p class="quick-notes-description">
+            Add observations, thoughts, or details about yourself. The system will extract personality traits and merge them with your existing persona.
+          </p>
+        </div>
+
+        {#if !showQuickNotes}
+          <button class="secondary" on:click={() => showQuickNotes = true}>
+            Add Notes to Persona
+          </button>
+        {:else}
+          <div class="quick-notes-input">
+            <textarea
+              bind:value={quickNotesText}
+              placeholder="Example: I've realized I'm more introverted than I thought. I prefer deep one-on-one conversations over group settings. I value authenticity and directness in communication..."
+              rows="5"
+              disabled={quickNotesLoading}
+            ></textarea>
+
+            {#if quickNotesError}
+              <div class="quick-notes-error">{quickNotesError}</div>
+            {/if}
+
+            {#if quickNotesSuccess}
+              <div class="quick-notes-success">{quickNotesSuccess}</div>
+            {/if}
+
+            <div class="quick-notes-actions">
+              <button
+                class="secondary"
+                on:click={() => {
+                  showQuickNotes = false;
+                  quickNotesText = '';
+                  quickNotesError = '';
+                }}
+                disabled={quickNotesLoading}
+              >
+                Cancel
+              </button>
+              <button
+                class="primary"
+                on:click={handleQuickNotes}
+                disabled={quickNotesLoading || !quickNotesText.trim()}
+              >
+                {quickNotesLoading ? 'Processing...' : 'Add to Persona'}
+              </button>
+            </div>
+          </div>
+        {/if}
       </div>
 
       <div class="actions">
@@ -435,6 +651,14 @@
                 {#if session.status === 'active'}
                   <button class="resume-btn" on:click={() => resumeSession(session.sessionId)}>
                     Resume
+                  </button>
+                {:else if session.status === 'completed'}
+                  <button class="resume-btn" on:click={() => reviewSession(session.sessionId)}>
+                    Edit Session
+                  </button>
+                {:else if session.status === 'finalized' || session.status === 'applied'}
+                  <button class="resume-btn secondary" on:click={() => reviewSession(session.sessionId)}>
+                    View
                   </button>
                 {/if}
               </div>
@@ -489,7 +713,41 @@
             <div class="message user">
               <div class="message-content">
                 <strong>You:</strong>
-                <p>{currentSession.answers[i].content}</p>
+                {#if editingAnswerId === question.id}
+                  <textarea
+                    class="answer-edit-input"
+                    bind:value={editedAnswerText}
+                    rows="4"
+                    disabled={editLoading}
+                  ></textarea>
+                  <div class="edit-actions">
+                    <button
+                      class="primary"
+                      on:click={() => saveEditedAnswer(question.id)}
+                      disabled={editLoading}
+                    >
+                      {editLoading ? 'Saving...' : 'Save Changes'}
+                    </button>
+                    <button class="secondary" on:click={cancelEditAnswer} disabled={editLoading}>
+                      Cancel
+                    </button>
+                  </div>
+                {:else}
+                  <p>{currentSession.answers[i].content}</p>
+                  <div class="message-footer">
+                    {#if currentSession.answers[i].editedAt}
+                      <span class="message-meta">
+                        Edited {new Date(currentSession.answers[i].editedAt).toLocaleString()}
+                      </span>
+                    {/if}
+                    <button
+                      class="link-button"
+                      on:click={() => startEditAnswer(question.id, currentSession.answers[i].content)}
+                    >
+                      Edit Response
+                    </button>
+                  </div>
+                {/if}
               </div>
             </div>
           {/if}
@@ -497,8 +755,9 @@
 
         {#if loading}
           <div class="message assistant">
-            <div class="message-content">
-              <em>Thinking...</em>
+            <div class="message-content thinking-message">
+              <div class="thinking-icon">🤔</div>
+              <em class="thinking-text">{THINKING_MESSAGES[loadingMessageIndex]}</em>
             </div>
           </div>
         {/if}
@@ -536,7 +795,14 @@
       {#if currentSession?.status === 'completed'}
         <div class="completion-message">
           <h3>Interview Complete!</h3>
-          <p>Finalizing your persona data...</p>
+          {#if loading}
+            <p>Finalizing your persona data...</p>
+          {:else}
+            <p>You can finalize again if the previous attempt failed.</p>
+            <button class="primary" on:click={finalizeSession}>
+              Retry Finalize
+            </button>
+          {/if}
         </div>
       {/if}
 
@@ -955,6 +1221,72 @@
     color: #e5e7eb;
   }
 
+  .answer-edit-input {
+    width: 100%;
+    margin-top: 0.5rem;
+    background: #111827;
+    border: 1px solid #4b5563;
+    color: #f9fafb;
+    border-radius: 0.375rem;
+    padding: 0.75rem;
+    font-family: inherit;
+    resize: vertical;
+  }
+
+  .edit-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+  }
+
+  .message-footer {
+    margin-top: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .link-button {
+    background: transparent;
+    border: none;
+    color: #93c5fd;
+    padding: 0;
+    font-size: 0.85rem;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  .link-button:hover:not(:disabled) {
+    color: #bfdbfe;
+  }
+
+  .thinking-message {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.5rem;
+  }
+
+  .thinking-icon {
+    font-size: 2rem;
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+  }
+
+  .thinking-text {
+    flex: 1;
+    font-size: 0.95rem;
+    font-style: italic;
+    color: #9ca3af;
+    line-height: 1.6;
+  }
+
   .message-meta {
     display: block;
     margin-top: 0.5rem;
@@ -1025,6 +1357,81 @@
   .success-message p {
     margin: 0;
     color: #9ca3af;
+  }
+
+  /* Quick Add Notes Section */
+  .quick-notes-section {
+    background: #1f2937;
+    border: 2px solid #3b82f6;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    margin-top: 1.5rem;
+  }
+
+  .quick-notes-header h4 {
+    margin: 0 0 0.5rem 0;
+    color: #60a5fa;
+    font-size: 1rem;
+  }
+
+  .quick-notes-description {
+    margin: 0 0 1rem 0;
+    color: #9ca3af;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  .quick-notes-input {
+    margin-top: 1rem;
+  }
+
+  .quick-notes-input textarea {
+    width: 100%;
+    background: #111827;
+    border: 1px solid #374151;
+    border-radius: 0.375rem;
+    padding: 0.75rem;
+    color: #e5e7eb;
+    font-family: inherit;
+    font-size: 0.95rem;
+    resize: vertical;
+    margin-bottom: 0.75rem;
+    min-height: 120px;
+  }
+
+  .quick-notes-input textarea:focus {
+    outline: none;
+    border-color: #3b82f6;
+  }
+
+  .quick-notes-input textarea::placeholder {
+    color: #6b7280;
+  }
+
+  .quick-notes-error {
+    padding: 0.75rem;
+    background: #7f1d1d;
+    border: 1px solid #991b1b;
+    border-radius: 0.375rem;
+    color: #fecaca;
+    font-size: 0.85rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .quick-notes-success {
+    padding: 0.75rem;
+    background: #065f46;
+    border: 1px solid #047857;
+    border-radius: 0.375rem;
+    color: #a7f3d0;
+    font-size: 0.85rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .quick-notes-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
   }
 
   /* Admin Section */

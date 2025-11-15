@@ -1,15 +1,22 @@
 /**
- * Full Cycle Orchestrator (one-shot) - Remote Training Version
+ * User-Aware Full Cycle Orchestrator - Remote Training Version
+ * Runs training on RunPod for a specific user's profile
+ *
  * 1) Build dataset
  * 2) Prepare config
  * 3) Run remote training via runRemoteTraining()
  * 4) If successful: Evaluate adapter, activate adapter, auto-load to Ollama
  * 5) If failed: Write summary and exit with error
+ *
+ * Usage:
+ *   npx tsx brain/agents/full-cycle.ts --username <username>
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { paths, audit, setActiveAdapter } from '../../packages/core/src/index.js';
+import { systemPaths, audit, setActiveAdapter } from '../../packages/core/src/index.js';
+import { withUserContext, getUserContext } from '../../packages/core/src/context.js';
+import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
 import dotenv from 'dotenv';
 import { mkdirpSync } from 'mkdirp';
 import { runRemoteTraining } from './lora-trainer';
@@ -17,7 +24,7 @@ import { randomBytes } from 'node:crypto';
 import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
 
 // Load environment variables from .env file FIRST
-dotenv.config({ path: path.join(paths.root, '.env') });
+dotenv.config({ path: path.join(systemPaths.root, '.env') });
 
 // This will hold the ID for the current run, so the catch handler can access it.
 let currentRunId: string | null = null;
@@ -49,14 +56,14 @@ function cleanupAfterSuccessfulMerge(runRoot: string, workLocal?: string) {
 
 async function runAgent(agentName: string, args: string[] = []): Promise<number> {
   return new Promise((resolve, reject) => {
-    const agentPath = path.join(paths.brain, 'agents', `${agentName}.ts`);
+    const agentPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
     if (!fs.existsSync(agentPath)) {
       console.error(`[full-cycle] Agent not found: ${agentName}`);
       return resolve(1);
     }
 
     console.log(`[full-cycle] Running agent: ${agentName} with args: ${args.join(' ')}`);
-    const child = spawn('tsx', [agentPath, ...args], { cwd: paths.root, stdio: ['inherit', 'pipe', 'pipe'] });
+    const child = spawn('tsx', [agentPath, ...args], { cwd: systemPaths.root, stdio: ['inherit', 'pipe', 'pipe'] });
 
     let stdout = '';
     let stderr = '';
@@ -149,9 +156,21 @@ function writeDebugLog(message: string, details?: any) {
   fs.appendFileSync(logPath, logMessage + '\n');
 }
 
-async function main() {
+async function mainWithContext() {
+  const ctx = getUserContext();
+
+  if (!ctx) {
+    console.error('[full-cycle] ERROR: No user context found.');
+    console.error('[full-cycle] This must be run with withUserContext()');
+    process.exit(1);
+  }
+
   currentRunId = randomBytes(8).toString('hex');
-  writeDebugLog(`=== Starting new full cycle run (${currentRunId}) ===`);
+  writeDebugLog(`=== Starting remote full cycle for user: ${ctx.username} (${currentRunId}) ===`);
+
+  // User-specific paths
+  const profileRoot = path.dirname(ctx.profilePaths.personaCore);
+
   // 2.1. Compute run identifiers and paths
   const now = new Date();
   const DATE_STR = now.toISOString().slice(0, 10); // e.g. "2025-10-24"
@@ -160,11 +179,12 @@ async function main() {
   const RUN_LABEL = `${DATE_STR}-${TIME_STR}-${runSuffix}`;
   currentRunLabel = RUN_LABEL;
 
-  const PROJECT_ROOT = paths.root;
-  const datasetDir = path.join(paths.out, 'adapters', DATE_STR);
+  const PROJECT_ROOT = systemPaths.root;
+  // User-specific dataset directory
+  const datasetDir = path.join(profileRoot, 'out', 'adapters', DATE_STR);
   const OUT_ROOT = path.join(datasetDir, RUN_LABEL);
-  const WORK_LOCAL = path.join(PROJECT_ROOT, 'metahuman-runs', DATE_STR, RUN_LABEL);
-  const legacyRunRoot = path.join(PROJECT_ROOT, 'metahuman-runs', DATE_STR);
+  const WORK_LOCAL = path.join(PROJECT_ROOT, 'metahuman-runs', ctx.username, DATE_STR, RUN_LABEL);
+  const legacyRunRoot = path.join(PROJECT_ROOT, 'metahuman-runs', ctx.username, DATE_STR);
   const FINAL_ADAPTER_DIR = path.join(OUT_ROOT, 'adapter');
   currentWorkLocal = WORK_LOCAL;
   currentRunOutputDir = OUT_ROOT;
@@ -178,7 +198,7 @@ async function main() {
   const uniqueRunInfoPath = path.join(datasetDir, `${RUN_LABEL}-run.json`);
 
   console.log('[full-cycle] Preparing dataset...');
-  audit({ level: 'info', category: 'action', event: 'full_cycle_started', details: { date: DATE_STR, run_id: currentRunId, run_label: RUN_LABEL }, actor: 'full-cycle' });
+  audit({ level: 'info', category: 'action', event: 'full_cycle_started', details: { date: DATE_STR, run_id: currentRunId, run_label: RUN_LABEL, username: ctx.username }, actor: ctx.username });
 
   // Ensure dirs exist
   try {
@@ -206,7 +226,7 @@ async function main() {
 
   if (datasetStrategy === 'ai') {
     console.log('[full-cycle] Using AI dataset builder strategy');
-    const aiBuilderPath = path.join(paths.brain, 'agents', 'ai-dataset-builder.ts');
+    const aiBuilderPath = path.join(systemPaths.brain, 'agents', 'ai-dataset-builder.ts');
     const args = ['tsx', aiBuilderPath, '--output', CLEAN_DATA_FILE];
     if (process.env.METAHUMAN_DATASET_MAX) {
       args.push('--max', process.env.METAHUMAN_DATASET_MAX);
@@ -220,7 +240,7 @@ async function main() {
 
     console.log(`[full-cycle] Running: ${args.join(' ')}`);
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(args[0], args.slice(1), { cwd: paths.root, stdio: 'inherit' });
+      const child = spawn(args[0], args.slice(1), { cwd: systemPaths.root, stdio: 'inherit' });
       child.on('exit', (code) => {
         if (code === 0) resolve();
         else reject(new Error(`ai-dataset-builder exited with code ${code}`));
@@ -422,7 +442,7 @@ async function main() {
   // We will proceed directly to activation.
 
   // Step 4.5: Merge historical adapters (if multiple exist and dual mode is enabled)
-  const adaptersRoot = path.join(paths.out, 'adapters');
+  const adaptersRoot = path.join(profileRoot, 'out', 'adapters');
   const allAdapterDates = fs.readdirSync(adaptersRoot)
     .filter(name => /^\d{4}-\d{2}-\d{2}$/.test(name) && name !== DATE_STR)
     .sort();
@@ -454,7 +474,8 @@ async function main() {
   console.log('[full-cycle] Skipping GGUF conversion (already merged on RunPod)...');
 
   // Step 5: Activate - Create Modelfile that loads the merged GGUF directly
-  const modelName = `greg-${RUN_LABEL}`;
+  const modelName = `${ctx.username}-${DATE_STR}`;
+  const personaName = ctx.username.charAt(0).toUpperCase() + ctx.username.slice(1);
   const recentGGUF = path.join(OUT_ROOT, 'adapter.gguf');
   const canonicalGGUF = path.join(datasetDir, 'adapter.gguf');
   const uniqueGGUF = path.join(datasetDir, `adapter-${RUN_LABEL}.gguf`);
@@ -503,23 +524,27 @@ async function main() {
     console.warn('[full-cycle] Warning: Dual-adapter mode may not work with Qwen3-30B architecture');
     console.warn('[full-cycle] Consider disabling dual mode: export METAHUMAN_DUAL_MODE=0');
 
-    modelfile = `# MetaHuman OS Dual-Adapter Model - ${DATE_STR}
+    modelfile = `# MetaHuman OS Dual-Adapter Model - ${ctx.username} - ${DATE_STR}
 # WARNING: This may not work with Qwen3-30B due to llama.cpp limitations
 FROM ${recentGGUF}
 ADAPTER ${mergedAdapterPath}
+
+SYSTEM You are ${personaName}'s digital personality extension. Speak naturally in first person as ${personaName}.
 `;
 
-    audit({ level: 'info', category: 'action', event: 'full_cycle_dual_adapter_modelfile', details: { base: recentGGUF, historical: mergedAdapterPath }, actor: 'full-cycle' });
+    audit({ level: 'info', category: 'action', event: 'full_cycle_dual_adapter_modelfile', details: { base: recentGGUF, historical: mergedAdapterPath, username: ctx.username }, actor: ctx.username });
   } else {
     // Single merged model - NO ADAPTER keyword needed
     // This is the recommended approach for Qwen3-30B
-    modelfile = `# MetaHuman OS Fully-Merged Model - ${DATE_STR}
+    modelfile = `# MetaHuman OS Fully-Merged Model - ${ctx.username} - ${DATE_STR}
 # This GGUF contains both the base model and trained adapter (merged on RunPod)
 FROM ${recentGGUF}
+
+SYSTEM You are ${personaName}'s digital personality extension. Speak naturally in first person as ${personaName}.
 `;
 
     console.log('[full-cycle] Using single fully-merged model (recommended for Qwen3-30B)');
-    audit({ level: 'info', category: 'action', event: 'full_cycle_single_merged_modelfile', details: { ggufPath: recentGGUF, run_label: RUN_LABEL }, actor: 'full-cycle' });
+    audit({ level: 'info', category: 'action', event: 'full_cycle_single_merged_modelfile', details: { ggufPath: recentGGUF, run_label: RUN_LABEL, username: ctx.username }, actor: ctx.username });
   }
 
   const modelfilePath = path.join(OUT_ROOT, 'Modelfile');
@@ -579,7 +604,7 @@ FROM ${recentGGUF}
 
   setActiveAdapter(activeInfo);
 
-  audit({ level: 'info', category: 'action', event: 'adapter_activated', details: { date: DATE_STR, modelName, auto: true }, actor: 'full-cycle' });
+  audit({ level: 'info', category: 'action', event: 'adapter_activated', details: { date: DATE_STR, modelName, auto: true, username: ctx.username }, actor: ctx.username });
 
   // Step 6: Auto-load into Ollama (best-effort)
   try {
@@ -603,8 +628,38 @@ FROM ${recentGGUF}
     cleanupAfterSuccessfulMerge(OUT_ROOT, WORK_LOCAL);
   }
 
-  audit({ level: 'info', category: 'action', event: 'full_cycle_completed', details: { date: DATE_STR, run_id: currentRunId, run_label: RUN_LABEL }, actor: 'full-cycle' });
-  console.log('[full-cycle] Run complete.');
+  audit({ level: 'info', category: 'action', event: 'full_cycle_completed', details: { date: DATE_STR, run_id: currentRunId, run_label: RUN_LABEL, username: ctx.username }, actor: ctx.username });
+  console.log(`\n✅ [full-cycle] Training complete for user: ${ctx.username}`);
+  console.log(`   Model name: ${modelName}`);
+  console.log(`   Dataset: ${datasetDir}`);
+}
+
+async function main() {
+  // Parse CLI arguments
+  const args = process.argv.slice(2);
+  let username: string | null = null;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--username' && i + 1 < args.length) {
+      username = args[i + 1];
+      break;
+    }
+  }
+
+  if (!username) {
+    console.error('[full-cycle] ERROR: --username <name> is required');
+    console.error('\nUsage: npx tsx brain/agents/full-cycle.ts --username <username>');
+    console.error('\nExample: npx tsx brain/agents/full-cycle.ts --username greggles');
+    process.exit(1);
+  }
+
+  // Resolve user info
+  const userInfo = requireUserInfo(username);
+
+  console.log(`[full-cycle] Starting remote training for user: ${username}`);
+
+  // Run with user context
+  await withUserContext(userInfo, mainWithContext);
 }
 
 main().catch(err => {
@@ -613,7 +668,7 @@ main().catch(err => {
   try {
     const fallbackDate = new Date().toISOString().slice(0, 10);
     const fallbackRunLabel = currentRunLabel || `${fallbackDate}-error`;
-    const fallbackWorkLocal = currentWorkLocal || path.join(paths.root, 'metahuman-runs', fallbackDate, fallbackRunLabel);
+    const fallbackWorkLocal = currentWorkLocal || path.join(systemPaths.root, 'metahuman-runs', fallbackDate, fallbackRunLabel);
     mkdirpSync(fallbackWorkLocal); // Ensure directory exists
     
     const partialSummary = {
@@ -632,7 +687,7 @@ main().catch(err => {
     const SUMMARY_FILE = path.join(fallbackWorkLocal, 'run-summary.json');
     fs.writeFileSync(SUMMARY_FILE, JSON.stringify(partialSummary, null, 2));
     try {
-      const legacyDir = path.join(paths.root, 'metahuman-runs', fallbackDate);
+      const legacyDir = path.join(systemPaths.root, 'metahuman-runs', fallbackDate);
       mkdirpSync(legacyDir);
       fs.copyFileSync(SUMMARY_FILE, path.join(legacyDir, 'run-summary.json'));
       fs.copyFileSync(SUMMARY_FILE, path.join(legacyDir, `run-summary-${fallbackRunLabel}.json`));
@@ -640,7 +695,7 @@ main().catch(err => {
   } catch (summaryErr) {
     console.error('Failed to write partial summary:', summaryErr);
   }
-  
+
   audit({ level: 'error', category: 'action', event: 'full_cycle_failed', details: { error: String(err), run_id: currentRunId, run_label: currentRunLabel }, actor: 'full-cycle' });
   process.exit(1);
 });

@@ -177,16 +177,67 @@ export function mergePersonaDraft(
     });
   }
 
-  // Merge goals
+  // Merge goals (transform string arrays to goal objects)
   if (draft.goals) {
     const oldGoals = updated.goals || {};
 
+    // Transform extracted goals (string arrays) to core.json format (object arrays)
+    const transformedGoals: any = {};
+
+    if (draft.goals.shortTerm) {
+      if (Array.isArray(draft.goals.shortTerm)) {
+        // Check if items are already objects with 'goal' property
+        const firstItem = draft.goals.shortTerm[0];
+        if (firstItem && typeof firstItem === 'object' && 'goal' in firstItem) {
+          // Already in correct format, pass through
+          transformedGoals.shortTerm = draft.goals.shortTerm;
+        } else {
+          // Transform string array to objects
+          transformedGoals.shortTerm = draft.goals.shortTerm.map(g => ({ goal: g, status: 'active' }));
+        }
+      } else if (typeof draft.goals.shortTerm === 'string') {
+        transformedGoals.shortTerm = [{ goal: draft.goals.shortTerm, status: 'active' }];
+      } else {
+        transformedGoals.shortTerm = draft.goals.shortTerm;
+      }
+    }
+
+    if (draft.goals.midTerm) {
+      if (Array.isArray(draft.goals.midTerm)) {
+        const firstItem = draft.goals.midTerm[0];
+        if (firstItem && typeof firstItem === 'object' && 'goal' in firstItem) {
+          transformedGoals.midTerm = draft.goals.midTerm;
+        } else {
+          transformedGoals.midTerm = draft.goals.midTerm.map(g => ({ goal: g, status: 'planning' }));
+        }
+      } else if (typeof draft.goals.midTerm === 'string') {
+        transformedGoals.midTerm = [{ goal: draft.goals.midTerm, status: 'planning' }];
+      } else {
+        transformedGoals.midTerm = draft.goals.midTerm;
+      }
+    }
+
+    if (draft.goals.longTerm) {
+      if (Array.isArray(draft.goals.longTerm)) {
+        const firstItem = draft.goals.longTerm[0];
+        if (firstItem && typeof firstItem === 'object' && 'goal' in firstItem) {
+          transformedGoals.longTerm = draft.goals.longTerm;
+        } else {
+          transformedGoals.longTerm = draft.goals.longTerm.map(g => ({ goal: g, status: 'aspirational' }));
+        }
+      } else if (typeof draft.goals.longTerm === 'string') {
+        transformedGoals.longTerm = [{ goal: draft.goals.longTerm, status: 'aspirational' }];
+      } else {
+        transformedGoals.longTerm = draft.goals.longTerm;
+      }
+    }
+
     if (strategy === 'replace') {
-      updated.goals = draft.goals;
+      updated.goals = transformedGoals;
     } else {
       updated.goals = {
         ...oldGoals,
-        ...draft.goals,
+        ...transformedGoals,
       };
     }
 
@@ -210,14 +261,29 @@ export function mergePersonaDraft(
     });
   }
 
-  // Add current focus if present
+  // Add current focus if present (ensure it's an array of strings, not characters)
   if (draft.currentFocus && draft.currentFocus.length > 0) {
-    const oldFocus = updated.currentFocus || [];
+    const oldFocus = Array.isArray(updated.currentFocus) ? updated.currentFocus : (updated.currentFocus ? [updated.currentFocus] : []);
+
+    // Ensure currentFocus is an array of strings, not a string split into characters
+    let normalizedFocus: string[];
+    if (typeof draft.currentFocus === 'string') {
+      // LLM returned a string instead of array - wrap it
+      normalizedFocus = [draft.currentFocus];
+    } else if (Array.isArray(draft.currentFocus)) {
+      // Filter out any accidental single-character entries (likely from string splitting)
+      normalizedFocus = draft.currentFocus.filter(item =>
+        typeof item === 'string' && item.length > 1
+      );
+    } else {
+      normalizedFocus = [];
+    }
 
     if (strategy === 'replace') {
-      updated.currentFocus = draft.currentFocus;
+      updated.currentFocus = normalizedFocus;
     } else {
-      updated.currentFocus = [...new Set([...oldFocus, ...draft.currentFocus])];
+      // Combine and deduplicate, preserving order
+      updated.currentFocus = [...new Set([...oldFocus, ...normalizedFocus])];
     }
 
     changes.push({

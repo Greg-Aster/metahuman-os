@@ -85,6 +85,39 @@
   // Persona facet state
   let activeFacet: string = 'default';
   let facets: Record<string, any> = {};
+  let personaFacetTooltip = '';
+
+  $: personaFacetTooltip = (() => {
+    const info = facets?.[activeFacet];
+    const currentLabel =
+      activeFacet === 'inactive'
+        ? 'Persona disabled'
+        : info?.name || activeFacet || 'default';
+
+    const lines = [
+      'Click to cycle persona facet',
+      '',
+      `Current: ${currentLabel}`,
+    ];
+
+    if (activeFacet === 'inactive') {
+      lines.push('Persona context disabled - responses use the base model without identity scaffolding.');
+    } else if (info?.description) {
+      lines.push(info.description);
+    }
+
+    if (info?.resolvedPath) {
+      lines.push('');
+      lines.push(`Persona file: ${info.resolvedPath}`);
+    } else if (activeFacet === 'inactive') {
+      lines.push('');
+      lines.push('Persona file: (none)');
+    }
+
+    lines.push('');
+    lines.push('Progression: inactive → default → poet → thinker → friend → antagonist → inactive');
+    return lines.join('\n');
+  })();
 
   // Subscribe to the shared status store
   let statusSubscription = null;
@@ -757,7 +790,7 @@
           <span class="status-value">
             <button
               class="persona-badge persona-facet-{activeFacet} clickable"
-              title="Click to cycle persona facet\n\nCurrent: {activeFacet === 'inactive' ? 'Persona disabled' : (facets[activeFacet]?.name || activeFacet)}\n{activeFacet !== 'inactive' && facets[activeFacet]?.description ? facets[activeFacet].description : ''}\n\nProgression: inactive → default → poet → thinker → friend → antagonist → inactive"
+              title={personaFacetTooltip}
               on:click={cyclePersonaFacet}
             >
               {activeFacet === 'inactive' ? 'inactive' : (facets[activeFacet]?.name || activeFacet)}
