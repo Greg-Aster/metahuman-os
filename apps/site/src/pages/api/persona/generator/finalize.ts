@@ -107,6 +107,9 @@ const handler: APIRoute = async ({ request }) => {
 
     // Save summary to interviews/<sessionId>/summary.json
     const sessionDir = path.join(pathResult.path, sessionId);
+    if (!fs.existsSync(sessionDir)) {
+      fs.mkdirSync(sessionDir, { recursive: true });
+    }
     const summaryPath = path.join(sessionDir, 'summary.json');
     const summary = {
       sessionId,

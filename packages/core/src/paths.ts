@@ -52,8 +52,8 @@ export function getProfilePaths(username: string) {
     personaDecisionRules: path.join(profileRoot, 'persona', 'decision-rules.json'),
     personaFacets: path.join(profileRoot, 'persona', 'facets.json'),
     personaFacetsDir: path.join(profileRoot, 'persona', 'facets'),
-    personaInterviews: path.join(profileRoot, 'persona', 'interviews'),
-    personaInterviewsIndex: path.join(profileRoot, 'persona', 'interviews', 'index.json'),
+    personaInterviews: path.join(profileRoot, 'persona', 'therapy'),
+    personaInterviewsIndex: path.join(profileRoot, 'persona', 'therapy', 'index.json'),
 
     // Memory directories
     episodic: path.join(profileRoot, 'memory', 'episodic'),
@@ -196,8 +196,8 @@ export const paths = new Proxy({} as ReturnType<typeof getProfilePaths> & typeof
       personaDecisionRules: path.join(ROOT, 'persona', 'decision-rules.json'),
       personaFacets: path.join(ROOT, 'persona', 'facets.json'),
       personaFacetsDir: path.join(ROOT, 'persona', 'facets'),
-      personaInterviews: path.join(ROOT, 'persona', 'interviews'),
-      personaInterviewsIndex: path.join(ROOT, 'persona', 'interviews', 'index.json'),
+      personaInterviews: path.join(ROOT, 'persona', 'therapy'),
+      personaInterviewsIndex: path.join(ROOT, 'persona', 'therapy', 'index.json'),
 
       // Memory directories
       episodic: path.join(ROOT, 'memory', 'episodic'),

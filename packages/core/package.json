@@ -40,7 +40,10 @@
     "./persona/question-generator": "./src/persona/question-generator.ts",
     "./persona/extractor": "./src/persona/extractor.ts",
     "./persona/merger": "./src/persona/merger.ts",
-    "./persona/cleanup": "./src/persona/cleanup.ts"
+    "./persona/cleanup": "./src/persona/cleanup.ts",
+    "./curator-prompts": "./src/curator-prompts.ts",
+    "./user-data-collector": "./src/user-data-collector.ts",
+    "./user-resolver": "./src/user-resolver.ts"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

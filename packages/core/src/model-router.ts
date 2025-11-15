@@ -86,8 +86,11 @@ function getContextualCognitiveMode(explicitMode: string | undefined): string | 
  */
 function buildPersonaContext(): string {
   try {
-    const persona = loadPersonaWithFacet();
     const activeFacet = getActiveFacet();
+    if (activeFacet === 'inactive') {
+      return '';
+    }
+    const persona = loadPersonaWithFacet();
 
     // Build a concise summary of identity, values, and goals
     const parts: string[] = [];
@@ -160,6 +163,14 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
     } catch {
       // If registry can't be loaded, default to true for backward compatibility
       shouldIncludePersona = true;
+    }
+
+    try {
+      if (getActiveFacet() === 'inactive') {
+        shouldIncludePersona = false;
+      }
+    } catch {
+      // ignore
     }
   }
 

@@ -1,754 +1,355 @@
 /**
- * Adapter Builder Agent
- * Curates high-quality instruction→response pairs from recent memories for LoRA fine-tuning.
- * Filters by quality, consent, groundedness, and voice relevance.
+ * User-Aware Adapter Builder Agent with Curator Integration
+ *
+ * Builds high-quality curated instruction→response pairs from user-specific data:
+ * - Therapy sessions (highest priority)
+ * - Episodic memories
+ * - Chat conversations
+ *
+ * Uses configurable curator model to evaluate, filter, and improve training samples.
  */
-import fs from 'node:fs'
-import path from 'node:path'
-import { paths, audit, loadPersonaCore } from '../../packages/core/src/index.js'
 
-type Memory = {
-  id: string;
-  timestamp: string;
-  content: string;
-  type?: string;
-  tags?: string[];
-  entities?: string[];
-  metadata?: {
-    processed?: boolean;
-    trainingConsent?: boolean;
-    [key: string]: any;
+import fs from 'node:fs';
+import path from 'node:path';
+import { audit, callLLM, systemPaths } from '../../packages/core/src/index.js';
+import { getUserContext } from '../../packages/core/src/context.js';
+import {
+  collectAllUserData,
+  loadPersonaData,
+  type RawTrainingSample,
+} from '../../packages/core/src/user-data-collector.js';
+import {
+  CURATOR_SYSTEM_PROMPT,
+  buildBatchCurationPrompt,
+  buildPersonaSummary,
+  type CurationCriteria,
+  type CuratedSample,
+} from '../../packages/core/src/curator-prompts.js';
+
+// Batch processing configuration
+const CURATOR_BATCH_SIZE = 50; // Process 50 samples at a time
+const QUALITY_THRESHOLD = 6.0; // Minimum weighted quality score (0-10 scale)
+const CURATOR_TEMPERATURE = 0.3; // Low temperature for consistent evaluation
+
+/**
+ * Statistics for curation process
+ */
+interface CurationStats {
+  totalReviewed: number;
+  totalFiltered: number;
+  totalKept: number;
+  averageQuality: number;
+  bySource: Record<string, { count: number; avgQuality: number }>;
+}
+
+/**
+ * Curate a batch of training samples using the curator model
+ *
+ * Sends samples to curator with comprehensive instructions,
+ * receives back quality-scored and improved samples.
+ */
+async function curateBatch(
+  samples: RawTrainingSample[],
+  personaSummary: string
+): Promise<CuratedSample[]> {
+  if (samples.length === 0) {
+    return [];
+  }
+
+  // Build curator prompt with batch of samples
+  const batchPrompt = buildBatchCurationPrompt(samples, personaSummary);
+
+  try {
+    // Call curator model (configurable via status widget)
+    const response = await callLLM({
+      role: 'curator',
+      messages: [
+        { role: 'system', content: CURATOR_SYSTEM_PROMPT },
+        { role: 'user', content: batchPrompt },
+      ],
+      options: {
+        temperature: CURATOR_TEMPERATURE,
+        response_format: { type: 'json_object' },
+      },
+    });
+
+    // Parse curator's response
+    const result = JSON.parse(response.content);
+
+    if (!result.samples || !Array.isArray(result.samples)) {
+      console.warn('[adapter-builder] Curator returned invalid format, using original samples');
+      // Fallback: return samples with default quality scores
+      return samples.map((s) => ({
+        ...s,
+        qualityScore: 5.0,
+        criteriaScores: {
+          authenticity: 5,
+          specificity: 5,
+          consistency: 5,
+          behavioral: 5,
+          density: 5,
+        },
+        improvementsMade: [],
+        curatorNotes: 'Curator failed to process',
+      }));
+    }
+
+    return result.samples as CuratedSample[];
+  } catch (error) {
+    console.error('[adapter-builder] Curator error:', error);
+    console.warn('[adapter-builder] Using original samples without curation');
+
+    // Fallback: return samples with default quality scores
+    return samples.map((s) => ({
+      ...s,
+      qualityScore: 5.0,
+      criteriaScores: {
+        authenticity: 5,
+        specificity: 5,
+        consistency: 5,
+        behavioral: 5,
+        density: 5,
+      },
+      improvementsMade: [],
+      curatorNotes: 'Curator unavailable',
+    }));
+  }
+}
+
+/**
+ * Process all user data through curator in batches
+ */
+async function curateAllData(
+  rawSamples: RawTrainingSample[],
+  personaSummary: string
+): Promise<{ curated: CuratedSample[]; stats: CurationStats }> {
+  const stats: CurationStats = {
+    totalReviewed: 0,
+    totalFiltered: 0,
+    totalKept: 0,
+    averageQuality: 0,
+    bySource: {},
   };
-  response?: string;
-  links?: Array<{ type: string; target: string }>;
-}
 
-type BuilderConfig = {
-  days: number;
-  max: number;
-  requireProcessed: boolean;
-  minContentLength: number;
-  requireTagsOrEntities: boolean;
-  allowedTypes: string[];
-  useTimeWeighting: boolean;  // Enable exponential decay for older memories
-  decayHalfLife: number;       // Days until a memory's weight is halved (14 = aggressive, 90 = gentle)
-}
+  const allCurated: CuratedSample[] = [];
 
-const OUTPUT_WORD_LIMIT = 160
-const INPUT_WORD_LIMIT = 140
-const INSTRUCTION_WORD_LIMIT = 48
+  console.log(`[adapter-builder] Starting curation of ${rawSamples.length} samples...`);
 
-type InstructionPair = {
-  instruction: string;
-  input?: string;
-  output: string;
-  meta: Record<string, any>;
-}
+  // Process in batches
+  for (let i = 0; i < rawSamples.length; i += CURATOR_BATCH_SIZE) {
+    const batch = rawSamples.slice(i, i + CURATOR_BATCH_SIZE);
+    console.log(`[adapter-builder] Curating batch ${Math.floor(i / CURATOR_BATCH_SIZE) + 1}/${Math.ceil(rawSamples.length / CURATOR_BATCH_SIZE)} (${batch.length} samples)...`);
 
-function stripChainOfThought(raw: string | undefined | null): string {
-  if (!raw) return ''
-  let text = String(raw)
+    const curated = await curateBatch(batch, personaSummary);
+    allCurated.push(...curated);
 
-  text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
-  text = text.replace(/```(?:thought|thinking|plan)?[\s\S]*?```/gi, '').trim()
+    stats.totalReviewed += batch.length;
+  }
 
-  const markers = [
-    '**Final Answer**:',
-    '**Final Answer**',
-    'Final Answer:',
-    'Final answer:',
-    'User-facing response:',
-    'User-Facing Response:',
-    'Answer:',
-    'Response:',
-  ]
-  for (const marker of markers) {
-    const idx = text.lastIndexOf(marker)
-    if (idx !== -1) {
-      text = text.slice(idx + marker.length).trim()
-      break
+  // Filter by quality threshold
+  const kept: CuratedSample[] = [];
+  let totalQuality = 0;
+
+  for (const sample of allCurated) {
+    const score = sample.qualityScore || 0;
+
+    // Always keep therapy sessions (highest quality data source)
+    // Apply threshold to other sources
+    const isTherapy = sample.metadata?.source === 'therapy_session';
+    const meetsThreshold = score >= QUALITY_THRESHOLD;
+
+    if (isTherapy || meetsThreshold) {
+      kept.push(sample);
+      totalQuality += score;
+
+      // Track by source
+      const source = sample.metadata?.source || 'unknown';
+      if (!stats.bySource[source]) {
+        stats.bySource[source] = { count: 0, avgQuality: 0 };
+      }
+      stats.bySource[source].count++;
     }
   }
 
-  return text.trim()
-}
+  stats.totalKept = kept.length;
+  stats.totalFiltered = stats.totalReviewed - stats.totalKept;
+  stats.averageQuality = stats.totalKept > 0 ? totalQuality / stats.totalKept : 0;
 
-function normalizeWhitespace(text: string): string {
-  return text.replace(/\s+/g, ' ').trim()
-}
-
-function wordLimit(text: string, limit: number): string {
-  const words = text.split(/\s+/)
-  if (words.length <= limit) return text
-  return `${words.slice(0, limit).join(' ')}…`
-}
-
-function ensureSentenceEnding(text: string): string {
-  const trimmed = text.trim()
-  if (!trimmed) return ''
-  if (/[.!?…”'»)]$/.test(trimmed)) return trimmed
-  return `${trimmed}.`
-}
-
-function sanitizeInstruction(text: string): string {
-  if (!text) return ''
-  const cleaned = ensureSentenceEnding(normalizeWhitespace(text))
-  return wordLimit(cleaned, INSTRUCTION_WORD_LIMIT)
-}
-
-function sanitizeInput(text: string | undefined): string {
-  if (!text) return ''
-  const cleaned = normalizeWhitespace(stripChainOfThought(text))
-  return wordLimit(cleaned, INPUT_WORD_LIMIT)
-}
-
-function sanitizeOutput(text: string): string {
-  if (!text) return ''
-  let cleaned = stripChainOfThought(text)
-  cleaned = cleaned.replace(/^\*\*\s*/g, '').replace(/\s*\*\*$/g, '').trim()
-  cleaned = cleaned.replace(/```[\s\S]*?```/g, '').trim()
-  cleaned = normalizeWhitespace(cleaned)
-  cleaned = ensureSentenceEnding(cleaned)
-  return wordLimit(cleaned, OUTPUT_WORD_LIMIT)
-}
-
-function finalizePair(pair: InstructionPair | null): InstructionPair | null {
-  if (!pair) return null
-  const instruction = sanitizeInstruction(pair.instruction)
-  const input = sanitizeInput(pair.input)
-  const output = sanitizeOutput(pair.output)
-  if (!output) return null
-  return {
-    instruction,
-    input,
-    output,
-    meta: pair.meta,
+  // Calculate average quality by source
+  for (const source of Object.keys(stats.bySource)) {
+    const sourceSamples = kept.filter((s) => s.metadata?.source === source);
+    const sourceTotal = sourceSamples.reduce((sum, s) => sum + (s.qualityScore || 0), 0);
+    stats.bySource[source].avgQuality = sourceTotal / sourceSamples.length;
   }
-}
 
-function loadConfig(): BuilderConfig {
-  const cfgPath = path.join(paths.etc, 'adapter-builder.json')
-  const defaults: BuilderConfig = {
-    days: 999999,  // Use ALL memories (no time cutoff)
-    max: 500,
-    requireProcessed: false,
-    minContentLength: 20,
-    requireTagsOrEntities: true,
-    allowedTypes: ['conversation', 'inner_dialogue', 'reflection', 'reflection_summary', 'chat', 'observation', 'dream', 'audio', 'action', 'journal'],
-    useTimeWeighting: true,   // Enable exponential time decay
-    decayHalfLife: 30,        // Memories lose half their weight every 30 days
-  }
-  try {
-    if (fs.existsSync(cfgPath)) {
-      const raw = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
-      return { ...defaults, ...raw }
-    }
-  } catch {}
-  return defaults
-}
-
-function extractReflectionTheme(content: string | undefined): string {
-  if (!content) return 'recent experiences'
-
-  const paragraphs = content
-    .split(/\n+/)
-    .map(p => p.trim())
-    .filter(Boolean)
-
-  const firstParagraph = paragraphs[0] || content.trim()
-  if (!firstParagraph) return 'recent experiences'
-
-  const sentences = firstParagraph
-    .split(/(?<=[.!?])\s+/)
-    .map(sentence => sentence.trim())
-    .filter(Boolean)
-
-  let candidate = sentences.find(sentence => sentence.length >= 12) || firstParagraph.trim()
-  if (!candidate) return 'recent experiences'
-
-  return candidate.length > 180 ? `${candidate.slice(0, 177).trim()}...` : candidate
+  return { curated: kept, stats };
 }
 
 /**
- * Calculate time weight for a memory using exponential decay
- * Recent memories have weight ~1.0, older memories decay exponentially
- *
- * Formula: weight = 2^(-age_in_days / halfLife)
- *
- * Examples with halfLife=30:
- *   0 days old: weight = 1.0 (100%)
- *  30 days old: weight = 0.5 (50%)
- *  60 days old: weight = 0.25 (25%)
- *  90 days old: weight = 0.125 (12.5%)
+ * Write curated dataset to JSONL format
  */
-function calculateTimeWeight(timestamp: string, halfLife: number): number {
-  const ageMs = Date.now() - new Date(timestamp).getTime()
-  const ageDays = ageMs / (24 * 3600 * 1000)
-  return Math.pow(2, -ageDays / halfLife)
-}
+function writeCuratedDataset(
+  samples: CuratedSample[],
+  outputDir: string,
+  stats: CurationStats
+): string {
+  fs.mkdirSync(outputDir, { recursive: true });
 
-/**
- * Read ALL memories with time-weighted sampling
- * Uses exponential decay to favor recent memories while still including old ones
- */
-function readRecentMemories(days = 7, max = 200): Memory[] {
-  const out: Memory[] = []
-  const root = paths.episodic
-  if (!fs.existsSync(root)) return out
-
-  const allowMissingTags = new Set(['dream', 'reflection_summary'])
-  const cfg = loadConfig()
-  const cutoff = cfg.useTimeWeighting ? 0 : Date.now() - days * 24 * 3600 * 1000
-
-  const walk = (dir: string) => {
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, e.name)
-      if (e.isDirectory()) walk(full)
-      else if (e.isFile() && e.name.endsWith('.json')) {
-        try {
-          const raw = fs.readFileSync(full, 'utf8')
-          const obj = JSON.parse(raw)
-          const t = new Date(obj.timestamp).getTime()
-          if (!isNaN(t) && t >= cutoff) {
-            out.push({
-              id: obj.id,
-              timestamp: obj.timestamp,
-              content: obj.content,
-              type: obj.type,
-              tags: obj.tags,
-              entities: obj.entities,
-              metadata: obj.metadata,
-              response: obj.response,
-              links: obj.links,
-            })
-          }
-        } catch {}
-      }
-    }
-  }
-
-  for (const year of fs.readdirSync(root)) {
-    const dir = path.join(root, year)
-    if (fs.statSync(dir).isDirectory()) walk(dir)
-  }
-
-  out.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1))
-
-  // Apply quality filters
-  const strictFiltered = out.filter(mem => {
-    const type = mem.type || ''
-    if (!cfg.allowedTypes.includes(type)) return false
-    if (cfg.requireProcessed && !mem.metadata?.processed) return false
-    if ((mem.content || '').length < cfg.minContentLength) return false
-    if (cfg.requireTagsOrEntities && !allowMissingTags.has(type) && !mem.tags?.length && !mem.entities?.length) return false
-    if (mem.metadata?.trainingConsent === false) return false
-    return true
-  })
-
-  // Relaxed rules for voice-strong types if strict yields too few
-  let filtered = strictFiltered
-  let relaxed = false
-  if (filtered.length === 0) {
-    relaxed = true
-    filtered = out.filter(mem => {
-      const type = mem.type || ''
-      const voiceType = ['reflection', 'inner_dialogue', 'chat', 'conversation'].includes(type)
-      if (!voiceType) return false
-      if ((mem.content || '').length < cfg.minContentLength) return false
-      if (mem.metadata?.trainingConsent === false) return false
-      return true
+  // Write instructions.jsonl (training format)
+  const instructionsPath = path.join(outputDir, 'instructions.jsonl');
+  const lines = samples.map((s) =>
+    JSON.stringify({
+      instruction: s.instruction,
+      input: s.input || '',
+      output: s.output,
     })
-  }
+  );
+  fs.writeFileSync(instructionsPath, lines.join('\n'), 'utf-8');
 
-  console.log(`[adapter-builder] Found ${out.length} total memories, ${filtered.length} passed filters`)
-
-  // Time-weighted sampling if enabled
-  if (cfg.useTimeWeighting && filtered.length > 0) {
-    // Calculate weights for each memory
-    const weighted = filtered.map(mem => ({
-      memory: mem,
-      weight: calculateTimeWeight(mem.timestamp, cfg.decayHalfLife)
-    }))
-
-    // Sort by weight (highest first) to prioritize recent memories
-    weighted.sort((a, b) => b.weight - a.weight)
-
-    // Calculate statistics
-    const avgAge = filtered.reduce((sum, m) => {
-      const ageDays = (Date.now() - new Date(m.timestamp).getTime()) / (24 * 3600 * 1000)
-      return sum + ageDays
-    }, 0) / filtered.length
-
-    const avgWeight = weighted.reduce((sum, w) => sum + w.weight, 0) / weighted.length
-
-    console.log(`[adapter-builder] Time-weighted sampling (halfLife=${cfg.decayHalfLife}d):`)
-    console.log(`  Average memory age: ${avgAge.toFixed(1)} days`)
-    console.log(`  Average weight: ${avgWeight.toFixed(3)}`)
-    console.log(`  Oldest memory weight: ${weighted[weighted.length - 1].weight.toFixed(4)}`)
-    console.log(`  Newest memory weight: ${weighted[0].weight.toFixed(4)}`)
-
-    // Take top N weighted memories
-    const selected = weighted.slice(0, Math.max(1, Math.min(max, cfg.max))).map(w => w.memory)
-
-    const selectedAvgAge = selected.reduce((sum, m) => {
-      const ageDays = (Date.now() - new Date(m.timestamp).getTime()) / (24 * 3600 * 1000)
-      return sum + ageDays
-    }, 0) / selected.length
-
-    console.log(`[adapter-builder] Selected ${selected.length} memories (avg age: ${selectedAvgAge.toFixed(1)}d)`)
-
-    return selected
-  }
-
-  // Non-weighted sampling (old behavior)
-  console.log(`[adapter-builder] Using top ${Math.min(max, cfg.max)} most recent memories (no time weighting)`)
-  return filtered.slice(0, Math.max(1, Math.min(max, cfg.max)))
-}
-
-/**
- * Convert memory to instruction pair
- * Uses different formats based on memory type for better training signal
- */
-function toInstructionPair(mem: Memory) {
-  const type = mem.type || 'unknown'
-
-  const deriveSourcePath = () => `memory/episodic/${new Date(mem.timestamp).getFullYear()}/${mem.id}.json`
-
-  const normalizeUserUtterance = (content: string | undefined): string => {
-    if (!content) return ''
-    const trimmed = content.trim()
-    const quoted = trimmed.match(/^Me:\s*[\"“](.*)[\"”]\s*$/s)
-    if (quoted && quoted[1]) return quoted[1].trim()
-    const colonSplit = trimmed.startsWith('Me:') ? trimmed.slice(3).trim() : trimmed
-    return colonSplit.replace(/^["“]|["”]$/g, '').trim()
-  }
-
-  // Reflections are high-confidence Greg voice
-  if (type === 'reflection') {
-    const theme = extractReflectionTheme(mem.content)
-    return finalizePair({
-      instruction: 'Write a reflection in Greg\'s voice on this theme:',
-      input: theme,
-      output: mem.content || '',
-      meta: {
-        source: mem.id,
-        sourcePath: deriveSourcePath(),
-        confidence: 'high',
-        type: 'reflection',
-        tags: mem.tags || [],
-        entities: mem.entities || [],
-        theme,
-      }
-    })
-  }
-  if (type === 'reflection_summary') {
-    let reflectionContent = ''
-    let linkedReflectionPath: string | undefined
-    const link = mem.links?.find((l) => ['reflection', 'source', 'summary_of'].includes(l.type))
-    if (link) {
-      const absolutePath = path.isAbsolute(link.target) ? link.target : path.join(paths.root, link.target)
-      try {
-        const linked = JSON.parse(fs.readFileSync(absolutePath, 'utf-8'))
-        if (typeof linked?.content === 'string') {
-          reflectionContent = linked.content
-          linkedReflectionPath = link.target
-        }
-      } catch (err) {
-        console.warn(`[adapter-builder] Failed to load linked reflection at ${link.target}: ${(err as Error).message}`)
-      }
-    }
-    if (!reflectionContent) return null
-    const theme = extractReflectionTheme(reflectionContent)
-    const isExtended = mem.tags?.includes('extended')
-    const instruction = isExtended
-      ? 'Provide a medium-length conclusion drawn from this reflection:'
-      : 'Provide a concise takeaway from this reflection:'
-    const meta: Record<string, any> = {
-      source: mem.id,
-      sourcePath: deriveSourcePath(),
-      confidence: 'high',
-      type: 'reflection_summary',
-      tags: mem.tags || [],
-      entities: mem.entities || [],
-      theme,
-    }
-    if (linkedReflectionPath) meta.summaryOf = linkedReflectionPath
-
-    return finalizePair({
-      instruction,
-      input: reflectionContent,
-      output: mem.content || '',
-      meta,
-    })
-  }
-
-  // Conversations and inner dialogue
-  if (type === 'conversation' || type === 'chat') {
-    // Only use conversation memories that include a response field
-    if (!mem.response || mem.response.trim().length === 0) return null
-    const output = mem.response
-
-    return finalizePair({
-      instruction: 'Respond in Greg\'s conversational style:',
-      input: normalizeUserUtterance(mem.content),
-      output: output,
-      meta: {
-        source: mem.id,
-        sourcePath: deriveSourcePath(),
-        confidence: 'medium',
-        type: 'conversation',
-        tags: mem.tags || [],
-        entities: mem.entities || [],
-        responseLength: output.length,
-      }
-    })
-  }
-
-  if (type === 'inner_dialogue') {
-    return finalizePair({
-      instruction: 'Think through this in Greg\'s inner voice:',
-      input: mem.content,
-      output: mem.response || mem.content || '',
-      meta: {
-        source: mem.id,
-        sourcePath: deriveSourcePath(),
-        confidence: 'high',
-        type: 'inner_dialogue',
-        tags: mem.tags || [],
-        entities: mem.entities || [],
-      }
-    })
-  }
-
-  if (type === 'dream') {
-    const theme = extractReflectionTheme(mem.content)
-    return finalizePair({
-      instruction: 'Describe this dream from Greg\'s perspective:',
-      input: theme,
-      output: mem.content || '',
-      meta: {
-        source: mem.id,
-        sourcePath: deriveSourcePath(),
-        confidence: 'medium',
-        type: 'dream',
-        tags: mem.tags || [],
-        entities: mem.entities || [],
-        theme,
-      }
-    })
-  }
-
-  if (type === 'audio') {
-    const theme = extractReflectionTheme(mem.content)
-    return finalizePair({
-      instruction: 'Respond in Greg\'s voice to this audio summary:',
-      input: theme,
-      output: mem.content || '',
-      meta: {
-        source: mem.id,
-        sourcePath: deriveSourcePath(),
-        confidence: 'medium',
-        type: 'audio',
-        tags: mem.tags || [],
-        entities: mem.entities || [],
-        theme,
-      }
-    })
-  }
-
-  if (type === 'action') {
-    const theme = extractReflectionTheme(mem.content)
-    return finalizePair({
-      instruction: 'Explain this recent action you took:',
-      input: theme,
-      output: mem.content || '',
-      meta: {
-        source: mem.id,
-        sourcePath: deriveSourcePath(),
-        confidence: 'medium',
-        type: 'action',
-        tags: mem.tags || [],
-        entities: mem.entities || [],
-        theme,
-      }
-    })
-  }
-
-  if (type === 'observation' || type === 'journal') {
-    const theme = extractReflectionTheme(mem.content)
-    return finalizePair({
-      instruction: 'Share your thoughts on this observation:',
-      input: theme,
-      output: mem.content || '',
-      meta: {
-        source: mem.id,
-        sourcePath: deriveSourcePath(),
-        confidence: 'medium',
-        type,
-        tags: mem.tags || [],
-        entities: mem.entities || [],
-        theme,
-      }
-    })
-  }
-
-  // Fallback for other types
-  return finalizePair({
-    instruction: 'Respond in Greg\'s style:',
-    input: mem.content || '',
-    output: mem.content || '',
-    meta: {
-      source: mem.id,
-      sourcePath: deriveSourcePath(),
-      confidence: 'low',
-      type: type,
-      tags: mem.tags || [],
-      entities: mem.entities || [],
-    }
-  })
-}
-
-/**
- * Read reflections from audit logs (recent days)
- */
-function readReflectionsFromAudit(days: number): Memory[] {
-  const out: Memory[] = []
-  try {
-    for (let i = 0; i < days; i++) {
-      const date = new Date(Date.now() - i * 24 * 3600 * 1000).toISOString().slice(0, 10)
-      const file = path.join(paths.logs, 'audit', `${date}.ndjson`)
-      if (!fs.existsSync(file)) continue
-      const lines = fs.readFileSync(file, 'utf-8').trim().split('\n')
-      for (const line of lines) {
-        try {
-          const obj = JSON.parse(line)
-          // Match reflector insights
-          if (
-            obj && obj.actor === 'reflector' &&
-            (obj.event === 'Reflector generated new insight' || obj.event === 'reflector_insight') &&
-            obj.details && (obj.details.reflection || obj.metadata?.reflection)
-          ) {
-            const content: string = obj.details.reflection || obj.metadata.reflection
-            out.push({
-              id: `refl-${date}-${out.length}`,
-              timestamp: obj.timestamp || new Date().toISOString(),
-              content,
-              type: 'reflection',
-              tags: Array.isArray(obj.details?.tags) ? obj.details.tags : ['reflection'],
-              entities: [],
-            })
-          }
-        } catch {}
-      }
-    }
-  } catch {}
-  return out
-}
-
-function writeJsonl(pairs: any[], destDir: string): string {
-  fs.mkdirSync(destDir, { recursive: true })
-  const file = path.join(destDir, 'instructions.jsonl')
-  const lines = pairs.map(p => JSON.stringify(p))
-  fs.writeFileSync(file, lines.join('\n'))
-
-  // Write metadata file
-  const stats = {
-    pairCount: pairs.length,
+  // Write metadata with quality scores
+  const metadataPath = path.join(outputDir, 'metadata.json');
+  const metadata = {
+    pairCount: samples.length,
     createdAt: new Date().toISOString(),
-    byType: {} as Record<string, number>,
-    byConfidence: {} as Record<string, number>,
-    avgInputLength: 0,
-    avgOutputLength: 0,
+    qualityThreshold: QUALITY_THRESHOLD,
+    averageQuality: stats.averageQuality,
+    bySource: stats.bySource,
+    samples: samples.map((s) => ({
+      instruction: s.instruction.substring(0, 100),
+      qualityScore: s.qualityScore,
+      criteriaScores: s.criteriaScores,
+      improvementsMade: s.improvementsMade,
+      source: s.metadata?.source,
+      category: s.metadata?.category,
+    })),
+  };
+  fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+
+  // Write curation statistics
+  const statsPath = path.join(outputDir, 'curation-stats.json');
+  fs.writeFileSync(statsPath, JSON.stringify(stats, null, 2), 'utf-8');
+
+  console.log(`\n[adapter-builder] Curation Statistics:`);
+  console.log(`  Reviewed: ${stats.totalReviewed} samples`);
+  console.log(`  Filtered out: ${stats.totalFiltered} samples (${((stats.totalFiltered / stats.totalReviewed) * 100).toFixed(1)}%)`);
+  console.log(`  Kept: ${stats.totalKept} samples`);
+  console.log(`  Average quality score: ${stats.averageQuality.toFixed(2)}/10`);
+  console.log(`\n  Breakdown by source:`);
+  for (const [source, data] of Object.entries(stats.bySource)) {
+    console.log(`    - ${source}: ${data.count} samples (avg quality: ${data.avgQuality.toFixed(2)})`);
   }
 
-  let totalInputLen = 0
-  let totalOutputLen = 0
-
-  for (const pair of pairs) {
-    const type = pair.meta?.type || 'unknown'
-    const confidence = pair.meta?.confidence || 'unknown'
-
-    stats.byType[type] = (stats.byType[type] || 0) + 1
-    stats.byConfidence[confidence] = (stats.byConfidence[confidence] || 0) + 1
-
-    totalInputLen += pair.input?.length || 0
-    totalOutputLen += pair.output?.length || 0
-  }
-
-  // Guard against divide-by-zero when no pairs are generated
-  if (pairs.length > 0) {
-    stats.avgInputLength = Math.round(totalInputLen / pairs.length)
-    stats.avgOutputLength = Math.round(totalOutputLen / pairs.length)
-  } else {
-    stats.avgInputLength = 0
-    stats.avgOutputLength = 0
-  }
-
-  fs.writeFileSync(
-    path.join(destDir, 'metadata.json'),
-    JSON.stringify(stats, null, 2)
-  )
-
-  return file
+  return instructionsPath;
 }
 
-type PairRecord = {
-  pair: any;
-  order: number;
-}
-
-function rebalancePairs(records: PairRecord[]): PairRecord[] {
-  const reflections = records.filter(r => r.pair?.meta?.type === 'reflection')
-  const others = records.filter(r => r.pair?.meta?.type !== 'reflection')
-
-  if (reflections.length === 0) {
-    return records
-  }
-
-  const targetRatio = 0.6
-
-  if (others.length === 0) {
-    return reflections.slice(0, Math.min(reflections.length, 200)).sort((a, b) => a.order - b.order)
-  }
-
-  const baseLimit = Math.ceil((targetRatio * others.length) / (1 - targetRatio))
-  const maxReflections = Math.min(reflections.length, Math.max(baseLimit, 40))
-
-  if (reflections.length <= maxReflections) {
-    return [...others, ...reflections].sort((a, b) => a.order - b.order)
-  }
-
-  const trimmedReflections = reflections.slice(0, maxReflections)
-  const combined = [...others, ...trimmedReflections]
-  combined.sort((a, b) => a.order - b.order)
-  return combined
-}
-
+/**
+ * Main adapter builder entry point
+ */
 async function main() {
-  audit({ level: 'info', category: 'action', event: 'adapter_builder_started', actor: 'adapter-builder' })
-  const cfg = loadConfig()
-  const mems = readRecentMemories(cfg.days, cfg.max)
-  const refl = readReflectionsFromAudit(cfg.days)
+  const ctx = getUserContext();
 
-  if (mems.length === 0) {
-    console.warn('[adapter-builder] No memories passed quality filters.')
-    console.warn('[adapter-builder] Ensure you have processed memories (run organizer agent).')
-    console.warn('[adapter-builder] Memories must be: processed, dialogue-type, ≥20 chars, with tags/entities.')
-    audit({ level: 'warn', category: 'action', event: 'adapter_builder_no_data', details: { reason: 'no_qualified_memories' }, actor: 'adapter-builder' })
-    process.exit(1)
+  if (!ctx) {
+    console.error('[adapter-builder] ERROR: No user context found.');
+    console.error('[adapter-builder] This agent must be run with user context.');
+    console.error('[adapter-builder] Use: withUserContext(userInfo, async () => { ... })');
+    process.exit(1);
   }
 
-  // Build pairs from recent memories + reflections
-  const pairRecords: PairRecord[] = []
-  mems.forEach((mem, idx) => {
-    const pair = toInstructionPair(mem)
-    if (pair) pairRecords.push({ pair, order: idx })
-  })
+  console.log(`[adapter-builder] Building curated dataset for user: ${ctx.username}`);
 
-  const offset = pairRecords.length
-  refl.forEach((mem, idx) => {
-    const pair = toInstructionPair(mem)
-    if (pair) pairRecords.push({ pair, order: offset + idx })
-  })
+  await audit({
+    level: 'info',
+    category: 'action',
+    event: 'adapter_builder_started',
+    actor: ctx.username,
+    details: { userId: ctx.userId, username: ctx.username },
+  });
 
-  // Curated highlights (if present)
-  try {
-    const curatedRoot = path.join(paths.semantic, 'curated')
-    if (fs.existsSync(curatedRoot)) {
-      for (const entry of fs.readdirSync(curatedRoot)) {
-        if (!entry.endsWith('.highlights.json')) continue
-        const base = entry.replace(/\.highlights\.json$/, '')
-        const metaPath = path.join(curatedRoot, `${base}.meta.json`)
-        const hlPath = path.join(curatedRoot, entry)
-        try {
-          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
-          const highs: string[] = JSON.parse(fs.readFileSync(hlPath, 'utf-8'))
-          const title = String(meta?.title || base)
-          for (const h of highs.slice(0, 20)) {
-            const pair = finalizePair({
-              instruction: 'Write in Greg\'s style about this highlight:',
-              input: title,
-              output: h,
-              meta: { source: `curated:${base}`, type: 'curated_highlight', confidence: 'medium', tags: meta?.tags || [] }
-            })
-            if (pair) {
-              pairRecords.push({ pair: pair as any, order: pairRecords.length + 1 })
-            }
-          }
-        } catch {}
-      }
-    }
-  } catch {}
+  // Collect all user data
+  const profileRoot = path.dirname(ctx.profilePaths.personaCore);
+  const rawSamples = collectAllUserData(profileRoot, {
+    maxDays: 999999, // Use all time (no cutoff)
+    maxSamplesPerSource: 1000, // Up to 1000 per source
+  });
 
-  // Inject a small, high-quality Self Profile slice so core persona is learned by the adapter
-  try {
-    const persona = loadPersonaCore() as any
-    const name: string = persona?.identity?.name || 'Greg'
-    const aliases: string[] = Array.isArray(persona?.identity?.aliases) ? persona.identity.aliases : []
-    const values: string[] = Array.isArray(persona?.values?.core) ? persona.values.core.map((v: any) => v.value) : []
-    const narrativeStyle: string = persona?.personality?.narrativeStyle || ''
-    const toneCfg = persona?.personality?.communicationStyle || {}
-    const tones = Array.isArray(toneCfg?.tone) ? toneCfg.tone.join(', ') : (toneCfg?.tone || 'clear, friendly')
+  if (rawSamples.length === 0) {
+    console.warn('[adapter-builder] No training data found.');
+    console.warn('[adapter-builder] Ensure user has:');
+    console.warn('[adapter-builder]   - Therapy sessions in persona/therapy/');
+    console.warn('[adapter-builder]   - Episodic memories in memory/episodic/');
+    console.warn('[adapter-builder]   - Chat conversations in memory/training/');
 
-    const selfPairsRaw = [
-      {
-        instruction: 'Introduce yourself in your own voice (first person).',
-        input: '',
-        output: `I am ${name}. I speak in the first person, and I keep my answers aligned with my values: ${values.join(', ')}.`,
-        meta: { source: 'self_profile', type: 'self_profile', confidence: 'high' }
-      },
-      {
-        instruction: 'Answer this greet in your signature style: "Hello"',
-        input: 'Hello',
-        output: `Hi — I’m ${name}. What’s on your mind?`,
-        meta: { source: 'self_profile', type: 'self_profile', confidence: 'high' }
-      },
-      {
-        instruction: 'State your name briefly (first person).',
-        input: '',
-        output: `I’m ${name}.`,
-        meta: { source: 'self_profile', type: 'self_profile', confidence: 'high' }
-      },
-      {
-        instruction: 'Respond concisely in your style to: "Say yes in one word"',
-        input: 'Say yes in one word',
-        output: 'Yes',
-        meta: { source: 'self_profile', type: 'self_profile', confidence: 'high' }
-      },
-      {
-        instruction: 'Explain your communication tone and narrative preference in one or two sentences (first person).',
-        input: '',
-        output: `I keep my tone ${tones}. ${narrativeStyle ? narrativeStyle : ''}`.trim(),
-        meta: { source: 'self_profile', type: 'self_profile', confidence: 'high' }
-      },
-    ]
+    await audit({
+      level: 'warn',
+      category: 'action',
+      event: 'adapter_builder_no_data',
+      actor: ctx.username,
+      details: { reason: 'no_data_found' },
+    });
 
-    const selfPairs = selfPairsRaw
-      .map(pair => finalizePair(pair as InstructionPair))
-      .filter((pair): pair is InstructionPair => Boolean(pair))
-
-    // Add self-profile pairs WITHOUT duplication
-    // These are high-quality anchor examples that teach core personality
-    // NO duplication - each example appears exactly once
-    selfPairs.reverse().forEach((pair, idx) => {
-      pairRecords.unshift({ pair, order: -1 * (idx + 1) })
-    })
-  } catch (e) {
-    console.warn('[adapter-builder] Failed to add self-profile pairs:', (e as Error).message)
+    process.exit(1);
   }
 
-  const balanced = rebalancePairs(pairRecords)
-  const pairs = balanced.map(record => record.pair)
+  // Load persona for curator context
+  const personaData = loadPersonaData(profileRoot);
+  const personaSummary = buildPersonaSummary(personaData);
 
-  const stamp = new Date().toISOString().split('T')[0]
-  const outDir = path.join(paths.out, 'adapters', stamp)
-  const jsonlPath = writeJsonl(pairs, outDir)
-  audit({ level: 'info', category: 'action', event: 'adapter_builder_completed', details: { count: pairs.length, path: jsonlPath }, actor: 'adapter-builder' })
-  console.log(`Adapter dataset written: ${jsonlPath} (${pairs.length} pairs)`)
+  console.log(`[adapter-builder] Collected ${rawSamples.length} raw training samples`);
+  console.log(`[adapter-builder] Starting curation process with curator model...`);
+
+  // Curate data in batches
+  const { curated, stats } = await curateAllData(rawSamples, personaSummary);
+
+  if (curated.length === 0) {
+    console.error('[adapter-builder] ERROR: No samples passed quality threshold.');
+    console.error('[adapter-builder] Quality threshold: ${QUALITY_THRESHOLD}/10');
+
+    await audit({
+      level: 'error',
+      category: 'action',
+      event: 'adapter_builder_failed',
+      actor: ctx.username,
+      details: { reason: 'all_samples_filtered', threshold: QUALITY_THRESHOLD },
+    });
+
+    process.exit(1);
+  }
+
+  // Write curated dataset to user-specific output directory
+  const timestamp = new Date().toISOString().split('T')[0];
+  const outputDir = path.join(profileRoot, 'out', 'adapters', timestamp);
+  const datasetPath = writeCuratedDataset(curated, outputDir, stats);
+
+  await audit({
+    level: 'info',
+    category: 'action',
+    event: 'adapter_builder_completed',
+    actor: ctx.username,
+    details: {
+      userId: ctx.userId,
+      username: ctx.username,
+      sampleCount: curated.length,
+      datasetPath,
+      averageQuality: stats.averageQuality,
+      outputDir,
+    },
+  });
+
+  console.log(`\n[adapter-builder] SUCCESS: Curated dataset written to:`);
+  console.log(`  ${datasetPath}`);
+  console.log(`\n[adapter-builder] Dataset contains ${curated.length} high-quality samples`);
+  console.log(`[adapter-builder] Ready for LoRA training!`);
 }
 
-main().catch(err => {
-  console.error('adapter-builder failed:', err)
-  audit({ level: 'error', category: 'action', event: 'adapter_builder_failed', details: { error: String(err) }, actor: 'adapter-builder' })
-  process.exit(1)
-})
+// Run main
+main().catch((err) => {
+  console.error('[adapter-builder] Fatal error:', err);
+  audit({
+    level: 'error',
+    category: 'action',
+    event: 'adapter_builder_failed',
+    actor: 'adapter-builder',
+    details: { error: String(err), stack: err.stack },
+  });
+  process.exit(1);
+});

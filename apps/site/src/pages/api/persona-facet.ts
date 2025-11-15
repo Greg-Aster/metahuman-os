@@ -9,6 +9,44 @@ import { paths } from '@metahuman/core/paths';
 import { audit } from '@metahuman/core/audit';
 import { withUserContext } from '../../middleware/userContext';
 
+const INACTIVE_FACET = {
+  name: 'Persona Off',
+  description: 'Disable persona context and use the raw model behavior',
+  personaFile: null,
+  enabled: true,
+  color: 'gray',
+};
+
+function buildFacetResponse(
+  facetsPath: string,
+  facets: Record<string, any>
+): Record<string, any> {
+  const personasDir = path.dirname(facetsPath);
+  const augmented = { ...facets };
+  if (!augmented.inactive) {
+    augmented.inactive = { ...INACTIVE_FACET };
+  }
+
+  return Object.fromEntries(
+    Object.entries(augmented).map(([key, config]) => {
+      const personaFile = config.personaFile ?? null;
+      const resolvedPath =
+        personaFile && typeof personaFile === 'string'
+          ? path.join(personasDir, personaFile)
+          : null;
+
+      return [
+        key,
+        {
+          ...config,
+          personaFile,
+          resolvedPath,
+        },
+      ];
+    })
+  );
+}
+
 const getHandler: APIRoute = async () => {
   try {
     // Use context-aware paths.personaFacets which resolves to user profile
@@ -19,24 +57,33 @@ const getHandler: APIRoute = async () => {
     } catch (error) {
       // Anonymous user without profile - return default
       return new Response(
-        JSON.stringify({ activeFacet: 'default', facets: {} }),
+        JSON.stringify({
+          activeFacet: 'default',
+          facets: { inactive: { ...INACTIVE_FACET, resolvedPath: null } },
+        }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
     if (!fs.existsSync(facetsPath)) {
       return new Response(
-        JSON.stringify({ activeFacet: 'default', facets: {} }),
+        JSON.stringify({
+          activeFacet: 'default',
+          facets: buildFacetResponse(facetsPath, {}),
+        }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
     const facetsData = JSON.parse(fs.readFileSync(facetsPath, 'utf-8'));
+    if (!facetsData.facets) {
+      facetsData.facets = {};
+    }
 
     return new Response(
       JSON.stringify({
         activeFacet: facetsData.activeFacet || 'default',
-        facets: facetsData.facets || {},
+        facets: buildFacetResponse(facetsPath, facetsData.facets),
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
@@ -83,6 +130,10 @@ const postHandler: APIRoute = async ({ request }) => {
     }
 
     const facetsData = JSON.parse(fs.readFileSync(facetsPath, 'utf-8'));
+    facetsData.facets = facetsData.facets || {};
+    if (!facetsData.facets.inactive) {
+      facetsData.facets.inactive = { ...INACTIVE_FACET };
+    }
 
     // Validate facet exists and is enabled
     if (!facetsData.facets[facet]) {

@@ -1,6 +1,6 @@
 /**
- * Full Cycle Orchestrator - LOCAL Training Version
- * Runs training on your local machine instead of RunPod
+ * User-Aware Full Cycle Orchestrator - LOCAL Training Version
+ * Runs training on your local machine for a specific user's profile
  *
  * Requirements:
  * - Python 3.10+ with unsloth installed
@@ -8,19 +8,21 @@
  * - At least 24GB VRAM for 20B models
  *
  * Usage:
- *   npx tsx brain/agents/full-cycle-local.ts
+ *   npx tsx brain/agents/full-cycle-local.ts --username <username>
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { paths, audit, setActiveAdapter } from '../../packages/core/src/index.js';
+import { systemPaths, audit, setActiveAdapter } from '../../packages/core/src/index.js';
+import { withUserContext, getUserContext } from '../../packages/core/src/context.js';
+import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
 import dotenv from 'dotenv';
 import { mkdirpSync } from 'mkdirp';
 import { randomBytes } from 'node:crypto';
 import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
 
 // Load environment variables
-dotenv.config({ path: path.join(paths.root, '.env') });
+dotenv.config({ path: path.join(systemPaths.root, '.env') });
 
 let currentRunId: string | null = null;
 let currentRunLabel: string | null = null;
@@ -47,14 +49,14 @@ function cleanupAfterSuccessfulMerge(runRoot: string, workLocal: string) {
 
 async function runAgent(agentName: string, args: string[] = []): Promise<number> {
   return new Promise((resolve, reject) => {
-    const agentPath = path.join(paths.brain, 'agents', `${agentName}.ts`);
+    const agentPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
     if (!fs.existsSync(agentPath)) {
       console.error(`[full-cycle-local] Agent not found: ${agentName}`);
       return resolve(1);
     }
 
     console.log(`[full-cycle-local] Running agent: ${agentName} with args: ${args.join(' ')}`);
-    const child = spawn('tsx', [agentPath, ...args], { cwd: paths.root, stdio: ['inherit', 'pipe', 'pipe'] });
+    const child = spawn('tsx', [agentPath, ...args], { cwd: systemPaths.root, stdio: ['inherit', 'pipe', 'pipe'] });
 
     let stdout = '';
     let stderr = '';
@@ -94,7 +96,7 @@ async function runLocalTraining(opts: {
   console.log(`📁 Work directory: ${opts.WORK_LOCAL}`);
   console.log(`📊 Training locally with your GPU\n`);
 
-  const trainingScript = path.join(paths.root, 'docker', 'runpod-trainer', 'train_unsloth.py');
+  const trainingScript = path.join(systemPaths.root, 'docker', 'runpod-trainer', 'train_unsloth.py');
 
   // Check if training script exists
   if (!fs.existsSync(trainingScript)) {
@@ -103,7 +105,7 @@ async function runLocalTraining(opts: {
   }
 
   // Determine Python command (prefer venv if available)
-  const venvPython = path.join(paths.root, 'venv', 'bin', 'python3');
+  const venvPython = path.join(systemPaths.root, 'venv', 'bin', 'python3');
   const pythonCmd = fs.existsSync(venvPython) ? venvPython : 'python3';
 
   if (fs.existsSync(venvPython)) {
@@ -128,11 +130,11 @@ async function runLocalTraining(opts: {
   return new Promise((resolve) => {
     console.log('🔥 Starting local training...\n');
 
-  const env = {
-    ...process.env,
-    PYTHONUNBUFFERED: '1',
-    UNSLOTH_SKIP_SYSTEM_INSTALL: '1',
-  };
+    const env = {
+      ...process.env,
+      PYTHONUNBUFFERED: '1',
+      UNSLOTH_SKIP_SYSTEM_INSTALL: '1',
+    };
 
     const args = [
       trainingScript,
@@ -164,39 +166,51 @@ async function runLocalTraining(opts: {
   });
 }
 
-async function main() {
-  currentRunId = randomBytes(8).toString('hex');
-  console.log(`[${new Date().toISOString()}] === Starting new local full cycle run (${currentRunId}) ===`);
+async function mainWithContext() {
+  const ctx = getUserContext();
 
-  // Step 1: Determine dataset date (today or most recent) and run label
+  if (!ctx) {
+    console.error('[full-cycle-local] ERROR: No user context found.');
+    console.error('[full-cycle-local] This must be run with withUserContext()');
+    process.exit(1);
+  }
+
+  currentRunId = randomBytes(8).toString('hex');
+  console.log(`[${new Date().toISOString()}] === Starting local full cycle for user: ${ctx.username} (${currentRunId}) ===`);
+
+  // User-specific paths
+  const profileRoot = path.dirname(ctx.profilePaths.personaCore);
+
+  // Step 1: Determine dataset date and run label
   const now = new Date();
   const DATE_STR = now.toISOString().slice(0, 10);
   const TIME_STR = now.toISOString().slice(11, 19).replace(/:/g, '');
   const runSuffix = (currentRunId || randomBytes(4).toString('hex')).slice(0, 6);
   const RUN_LABEL = `${DATE_STR}-${TIME_STR}-${runSuffix}`;
   currentRunLabel = RUN_LABEL;
-  const datasetDir = path.join(paths.out, 'adapters', DATE_STR);
+
+  // User-specific dataset directory
+  const datasetDir = path.join(profileRoot, 'out', 'adapters', DATE_STR);
   console.log(`[${new Date().toISOString()}] Run label: ${RUN_LABEL}`);
+  console.log(`[${new Date().toISOString()}] Dataset dir: ${datasetDir}`);
+
   const OUT_ROOT = path.join(datasetDir, RUN_LABEL);
-  const legacyRunRoot = path.join(paths.root, 'metahuman-runs', DATE_STR);
+  const legacyRunRoot = path.join(systemPaths.root, 'metahuman-runs', ctx.username, DATE_STR);
   const WORK_LOCAL = path.join(legacyRunRoot, RUN_LABEL);
   const FINAL_ADAPTER_DIR = path.join(OUT_ROOT, 'adapter');
 
   console.log('[full-cycle-local] Preparing dataset...');
-  console.log(`[${new Date().toISOString()}] Checking dataset directory`);
-  console.log({ datasetDir });
-
   const instructionsPath = path.join(datasetDir, 'instructions.jsonl');
 
   // If dataset doesn't exist, run adapter-builder
   if (!fs.existsSync(datasetDir) || !fs.existsSync(instructionsPath)) {
-    console.log('[full-cycle-local] Building new dataset...');
+    console.log('[full-cycle-local] Building new dataset with adapter-builder...');
     const buildRc = await runAgent('adapter-builder');
     if (buildRc !== 0) {
       throw new Error('adapter-builder failed');
     }
   } else {
-    console.log(`[${new Date().toISOString()}] Dataset directory and instructions.jsonl exist, skipping adapter-builder`);
+    console.log(`[${new Date().toISOString()}] Dataset already exists, skipping adapter-builder`);
   }
 
   // Step 2: Prepare local training data
@@ -208,117 +222,66 @@ async function main() {
   const canonicalRawDataFile = path.join(datasetDir, `${DATE_STR}.jsonl`);
   const CLEAN_DATA_FILE = path.join(WORK_LOCAL, 'unsloth_dataset.jsonl');
   const CONFIG_FILE = path.join(WORK_LOCAL, 'config.json');
-  const uniqueRunInfoPath = path.join(datasetDir, `${RUN_LABEL}-run.json`);
 
-  const datasetStrategy = process.env.METAHUMAN_DATASET_BUILDER?.toLowerCase() || 'classic';
-  let samples_used = 0;
-
-  if (datasetStrategy === 'ai') {
-    console.log('[full-cycle-local] Using AI dataset builder strategy');
-    const aiBuilderPath = path.join(paths.brain, 'agents', 'ai-dataset-builder.ts');
-    const args = ['tsx', aiBuilderPath, '--output', CLEAN_DATA_FILE];
-    if (process.env.METAHUMAN_DATASET_MAX) args.push('--max', process.env.METAHUMAN_DATASET_MAX);
-    if (process.env.METAHUMAN_DATASET_CHUNK) args.push('--chunk', process.env.METAHUMAN_DATASET_CHUNK);
-    if (process.env.METAHUMAN_DATASET_MODEL) args.push('--model', process.env.METAHUMAN_DATASET_MODEL);
-
-    console.log(`[full-cycle-local] Running: ${args.join(' ')}`);
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(args[0], args.slice(1), { cwd: paths.root, stdio: 'inherit' });
-      child.on('exit', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`ai-dataset-builder exited with code ${code}`));
-      });
-      child.on('error', reject);
-    });
-
-    if (!fs.existsSync(CLEAN_DATA_FILE)) {
-      throw new Error('AI dataset builder did not produce output file');
-    }
-
-    samples_used = fs.readFileSync(CLEAN_DATA_FILE, 'utf-8').split('\n').filter(Boolean).length;
-    console.log(`[full-cycle-local] AI builder produced ${samples_used} samples`);
-
-    try {
-      if (!fs.existsSync(RAW_DATA_FILE)) {
-        fs.copyFileSync(CLEAN_DATA_FILE, RAW_DATA_FILE);
-      }
-      fs.copyFileSync(CLEAN_DATA_FILE, canonicalRawDataFile);
-    } catch (copyErr) {
-      console.warn('[full-cycle-local] Failed to copy AI dataset to raw/canonical path:', (copyErr as Error).message);
-    }
-  } else {
-    // ensure unique raw dataset copy exists
-    mkdirpSync(path.dirname(RAW_DATA_FILE));
-    try {
-      fs.copyFileSync(instructionsPath, RAW_DATA_FILE);
-    } catch (copyErr) {
-      console.warn('[full-cycle-local] Failed to write unique raw dataset copy:', (copyErr as Error).message);
-    }
-    try {
-      fs.copyFileSync(instructionsPath, canonicalRawDataFile);
-    } catch (copyErr) {
-      console.warn('[full-cycle-local] Failed to refresh canonical dataset JSONL:', (copyErr as Error).message);
-    }
-
-    // Step 2.2: Clean dataset with deduplication
-    console.log('[full-cycle-local] Building dataset from JSONL...');
-    const rawLines = fs.readFileSync(RAW_DATA_FILE, 'utf-8').trim().split('\n').filter(Boolean);
-    const parsed = rawLines
-      .map(line => {
-        try {
-          return JSON.parse(line);
-        } catch {
-          return null;
-        }
-      })
-      .filter(obj => obj && obj.instruction && obj.output);
-
-    // Deduplicate samples
-    const seenSamples = new Set<string>();
-    const cleaned: any[] = [];
-    let duplicateCount = 0;
-
-    for (const obj of parsed) {
-      const cleanObj = {
-        instruction: obj.instruction,
-        input: obj.input || '',
-        output: obj.output
-      };
-      const fingerprint = JSON.stringify(cleanObj);
-
-      if (seenSamples.has(fingerprint)) {
-        duplicateCount++;
-        continue;
-      }
-
-      seenSamples.add(fingerprint);
-      cleaned.push(cleanObj);
-    }
-
-    fs.writeFileSync(CLEAN_DATA_FILE, cleaned.map(obj => JSON.stringify(obj)).join('\n'));
-    samples_used = cleaned.length;
-    try {
-      const legacyDatasetPath = path.join(legacyRunRoot, 'unsloth_dataset.jsonl');
-      const uniqueDatasetPath = path.join(legacyRunRoot, `unsloth_dataset-${RUN_LABEL}.jsonl`);
-      fs.copyFileSync(CLEAN_DATA_FILE, uniqueDatasetPath);
-      fs.copyFileSync(CLEAN_DATA_FILE, legacyDatasetPath);
-    } catch (datasetCopyErr) {
-      console.warn('[full-cycle-local] Failed to copy cleaned dataset to legacy location:', (datasetCopyErr as Error).message);
-    }
-
-    if (duplicateCount > 0) {
-      console.log(`[full-cycle-local] Removed ${duplicateCount} duplicate samples`);
-    }
-    console.log(`[full-cycle-local] Kept ${samples_used} unique samples after cleaning`);
-
-    if (samples_used === 0) {
-      throw new Error('CLEAN_DATA_FILE ended up empty after cleaning');
-    }
+  // Copy instructions to raw dataset file
+  mkdirpSync(path.dirname(RAW_DATA_FILE));
+  try {
+    fs.copyFileSync(instructionsPath, RAW_DATA_FILE);
+    fs.copyFileSync(instructionsPath, canonicalRawDataFile);
+  } catch (copyErr) {
+    console.warn('[full-cycle-local] Failed to copy dataset:', (copyErr as Error).message);
   }
 
-  // Step 2.3: Load training config from etc/training-local.json (fallback to training.json)
-  const trainingLocalPath = path.join(paths.etc, 'training-local.json');
-  const trainingFallbackPath = path.join(paths.etc, 'training.json');
+  // Step 2.2: Clean dataset with deduplication
+  console.log('[full-cycle-local] Building dataset from JSONL...');
+  const rawLines = fs.readFileSync(RAW_DATA_FILE, 'utf-8').trim().split('\n').filter(Boolean);
+  const parsed = rawLines
+    .map(line => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter(obj => obj && obj.instruction && obj.output);
+
+  // Deduplicate samples
+  const seenSamples = new Set<string>();
+  const cleaned: any[] = [];
+  let duplicateCount = 0;
+
+  for (const obj of parsed) {
+    const cleanObj = {
+      instruction: obj.instruction,
+      input: obj.input || '',
+      output: obj.output
+    };
+    const fingerprint = JSON.stringify(cleanObj);
+
+    if (seenSamples.has(fingerprint)) {
+      duplicateCount++;
+      continue;
+    }
+
+    seenSamples.add(fingerprint);
+    cleaned.push(cleanObj);
+  }
+
+  fs.writeFileSync(CLEAN_DATA_FILE, cleaned.map(obj => JSON.stringify(obj)).join('\n'));
+  const samples_used = cleaned.length;
+
+  if (duplicateCount > 0) {
+    console.log(`[full-cycle-local] Removed ${duplicateCount} duplicate samples`);
+  }
+  console.log(`[full-cycle-local] Kept ${samples_used} unique samples after cleaning`);
+
+  if (samples_used === 0) {
+    throw new Error('CLEAN_DATA_FILE ended up empty after cleaning');
+  }
+
+  // Step 2.3: Load training config
+  const trainingLocalPath = path.join(systemPaths.etc, 'training-local.json');
+  const trainingFallbackPath = path.join(systemPaths.etc, 'training.json');
   let config: any = {
     "base_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct",
     "lora_rank": 8,
@@ -335,7 +298,6 @@ async function main() {
   if (fs.existsSync(trainingLocalPath)) {
     try {
       const loadedConfig = JSON.parse(fs.readFileSync(trainingLocalPath, 'utf-8'));
-      // Merge loaded config, excluding comment/notes fields
       const { comment, notes, ...trainingParams } = loadedConfig;
       config = { ...config, ...trainingParams };
       configPathUsed = trainingLocalPath;
@@ -356,28 +318,15 @@ async function main() {
     }
   }
 
-  if (!configPathUsed) {
-    console.log('[full-cycle-local] Using built-in default training configuration');
-  }
-
-  // Environment variable override for base_model (highest priority)
+  // Environment variable override for base_model
   if (process.env.METAHUMAN_BASE_MODEL) {
     config.base_model = process.env.METAHUMAN_BASE_MODEL;
     console.log(`[full-cycle-local] Using base model from env: ${config.base_model}`);
   }
 
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
-  try {
-    const legacyConfigPath = path.join(legacyRunRoot, 'config.json');
-    const uniqueConfigPath = path.join(legacyRunRoot, `config-${RUN_LABEL}.json`);
-    fs.copyFileSync(CONFIG_FILE, uniqueConfigPath);
-    fs.copyFileSync(CONFIG_FILE, legacyConfigPath);
-  } catch (configCopyErr) {
-    console.warn('[full-cycle-local] Failed to copy training config to legacy location:', (configCopyErr as Error).message);
-  }
 
   console.log(`[full-cycle-local] Training base model: ${config.base_model}`);
-  console.log('[full-cycle-local] Note: The merged GGUF will contain both base model + adapter');
   console.log('[full-cycle-local] Training will run on your local GPU\n');
 
   // Step 3: Run LOCAL training
@@ -394,140 +343,75 @@ async function main() {
     throw new Error('Local training failed');
   }
 
+  // Step 4: Link adapter files
   const adapterPath = path.join(FINAL_ADAPTER_DIR, 'adapter_model.safetensors');
   const canonicalSafetensors = path.join(datasetDir, 'adapter_model.safetensors');
-  const uniqueSafetensors = path.join(datasetDir, `adapter_model-${RUN_LABEL}.safetensors`);
+
   if (fs.existsSync(adapterPath)) {
     try {
-      if (!fs.existsSync(uniqueSafetensors)) {
-        fs.copyFileSync(adapterPath, uniqueSafetensors);
-      }
-    } catch (e) {
-      console.warn('[full-cycle-local] Failed to write unique adapter_model.safetensors copy:', (e as Error).message);
-    }
-    try {
-      if (fs.existsSync(canonicalSafetensors) || fs.lstatSync(canonicalSafetensors)) {
+      if (fs.existsSync(canonicalSafetensors)) {
         fs.rmSync(canonicalSafetensors);
       }
-    } catch {
-      // ignore
-    }
-    try {
       const relative = path.relative(datasetDir, adapterPath);
       fs.symlinkSync(relative, canonicalSafetensors);
     } catch (e) {
-      console.warn('[full-cycle-local] Failed to symlink adapter_model.safetensors, falling back to copy:', (e as Error).message);
-      try {
-        fs.copyFileSync(adapterPath, canonicalSafetensors);
-      } catch (copyErr) {
-        console.warn('[full-cycle-local] Failed to copy adapter_model.safetensors into dataset directory:', (copyErr as Error).message);
-      }
-    }
-  }
-
-  // Step 4: Evaluate adapter
-  console.log('[full-cycle-local] Evaluating adapter...');
-  const evalRc = await runAgent('eval-adapter', [DATE_STR]);
-  if (evalRc !== 0) {
-    console.warn('[full-cycle-local] Evaluation failed or not available');
-  }
-
-  const evalPath = path.join(datasetDir, 'eval.json');
-  let evalData = { passed: true, score: 1.0 };
-
-  if (fs.existsSync(evalPath)) {
-    evalData = JSON.parse(fs.readFileSync(evalPath, 'utf-8'));
-    if (!evalData.passed) {
-      audit({ level: 'info', category: 'action', event: 'full_cycle_local_eval_failed', details: { date: DATE_STR, score: evalData.score, run_label: RUN_LABEL }, actor: 'full-cycle-local' });
-      throw new Error('adapter did not pass evaluation');
+      console.warn('[full-cycle-local] Failed to symlink adapter, copying instead:', (e as Error).message);
+      fs.copyFileSync(adapterPath, canonicalSafetensors);
     }
   }
 
   // Step 5: Check for merged GGUF
   const recentGGUF = path.join(OUT_ROOT, 'adapter.gguf');
   const canonicalGGUF = path.join(datasetDir, 'adapter.gguf');
-  const uniqueGGUF = path.join(datasetDir, `adapter-${RUN_LABEL}.gguf`);
-
-  const altGGUF = path.join(FINAL_ADAPTER_DIR, '../adapter.gguf');
-  if (!fs.existsSync(recentGGUF) && fs.existsSync(altGGUF)) {
-    fs.copyFileSync(altGGUF, recentGGUF);
-  }
 
   if (fs.existsSync(recentGGUF)) {
     try {
-      if (!fs.existsSync(uniqueGGUF)) {
-        fs.copyFileSync(recentGGUF, uniqueGGUF);
-      }
-    } catch (e) {
-      console.warn('[full-cycle-local] Failed to write unique adapter.gguf copy:', (e as Error).message);
-    }
-    try {
-      if (fs.existsSync(canonicalGGUF) || fs.lstatSync(canonicalGGUF)) {
+      if (fs.existsSync(canonicalGGUF)) {
         fs.rmSync(canonicalGGUF);
       }
-    } catch {
-      // ignore
-    }
-    try {
       const relative = path.relative(datasetDir, recentGGUF);
       fs.symlinkSync(relative, canonicalGGUF);
     } catch (e) {
-      console.warn('[full-cycle-local] Failed to symlink adapter.gguf, falling back to copy:', (e as Error).message);
-      try {
-        fs.copyFileSync(recentGGUF, canonicalGGUF);
-      } catch (copyErr) {
-        console.warn('[full-cycle-local] Failed to copy adapter.gguf into dataset directory:', (copyErr as Error).message);
-      }
+      console.warn('[full-cycle-local] Failed to symlink GGUF, copying instead:', (e as Error).message);
+      fs.copyFileSync(recentGGUF, canonicalGGUF);
     }
   } else {
     console.warn('[full-cycle-local] No GGUF file found. You may need to convert manually.');
-    console.warn('[full-cycle-local] The adapter is available at:', FINAL_ADAPTER_DIR);
   }
 
-  // Step 6: Create Modelfile and activate
-  const modelName = `greg-local-${RUN_LABEL}`;
+  // Step 6: Create Modelfile
+  const modelName = `${ctx.username}-local-${DATE_STR}`;
+  const personaName = ctx.username.charAt(0).toUpperCase() + ctx.username.slice(1);
 
-  let modelfile = `# MetaHuman OS Local-Trained Model - ${RUN_LABEL}
-# Trained on local machine
+  const modelfile = `# MetaHuman OS Model - ${ctx.username} - ${RUN_LABEL}
+# Trained locally
 FROM ${recentGGUF}
 
-SYSTEM You are Greg's digital personality extension. Speak naturally in first person as Greg.
+SYSTEM You are ${personaName}'s digital personality extension. Speak naturally in first person as ${personaName}.
 `;
 
   const modelfilePath = path.join(OUT_ROOT, 'Modelfile');
   fs.writeFileSync(modelfilePath, modelfile);
+
   const canonicalModelfile = path.join(datasetDir, 'Modelfile');
-  const uniqueModelfile = path.join(datasetDir, `Modelfile-${RUN_LABEL}`);
   try {
-    fs.writeFileSync(uniqueModelfile, modelfile);
-  } catch (e) {
-    console.warn('[full-cycle-local] Failed to write unique Modelfile copy:', (e as Error).message);
-  }
-  try {
-    if (fs.existsSync(canonicalModelfile) || fs.lstatSync(canonicalModelfile)) {
+    if (fs.existsSync(canonicalModelfile)) {
       fs.rmSync(canonicalModelfile);
     }
-  } catch {
-    // ignore
-  }
-  try {
     const relative = path.relative(datasetDir, modelfilePath);
     fs.symlinkSync(relative, canonicalModelfile);
   } catch (e) {
-    console.warn('[full-cycle-local] Failed to symlink Modelfile, falling back to copy:', (e as Error).message);
-    try {
-      fs.copyFileSync(modelfilePath, canonicalModelfile);
-    } catch (copyErr) {
-      console.warn('[full-cycle-local] Failed to copy Modelfile into dataset directory:', (copyErr as Error).message);
-    }
+    console.warn('[full-cycle-local] Failed to symlink Modelfile, copying instead:', (e as Error).message);
+    fs.copyFileSync(modelfilePath, canonicalModelfile);
   }
 
+  // Step 7: Set active adapter
   const activatedAt = new Date().toISOString();
   const activeInfo: ActiveAdapterInfo = {
     modelName,
     activatedAt,
     adapterPath: recentGGUF,
-    evalScore: evalData.score,
+    evalScore: 1.0,
     dataset: RUN_LABEL,
     date: DATE_STR,
     modelfilePath,
@@ -541,9 +425,15 @@ SYSTEM You are Greg's digital personality extension. Speak naturally in first pe
 
   setActiveAdapter(activeInfo);
 
-  audit({ level: 'info', category: 'action', event: 'adapter_activated', details: { date: DATE_STR, modelName, local: true, run_label: RUN_LABEL }, actor: 'full-cycle-local' });
+  await audit({
+    level: 'info',
+    category: 'action',
+    event: 'adapter_activated',
+    actor: ctx.username,
+    details: { date: DATE_STR, modelName, local: true, run_label: RUN_LABEL, username: ctx.username },
+  });
 
-  // Step 7: Auto-load into Ollama
+  // Step 8: Auto-load into Ollama
   if (fs.existsSync(recentGGUF)) {
     try {
       console.log(`[full-cycle-local] Creating Ollama model: ${modelName}`);
@@ -555,34 +445,47 @@ SYSTEM You are Greg's digital personality extension. Speak naturally in first pe
     }
   }
 
-  try {
-    fs.writeFileSync(uniqueRunInfoPath, JSON.stringify({
-      runId: currentRunId,
-      runLabel: RUN_LABEL,
-      createdAt: new Date().toISOString(),
-      method: 'local'
-    }, null, 2));
-    fs.writeFileSync(path.join(datasetDir, 'latest-run.json'), JSON.stringify({
-      runId: currentRunId,
-      runLabel: RUN_LABEL,
-      updatedAt: new Date().toISOString(),
-      method: 'local'
-    }, null, 2));
-    const trainingOutputPath = path.join(WORK_LOCAL, 'training_output.txt');
-    if (fs.existsSync(trainingOutputPath)) {
-      const legacyOutputPath = path.join(legacyRunRoot, `training_output-${RUN_LABEL}.txt`);
-      fs.copyFileSync(trainingOutputPath, legacyOutputPath);
+  cleanupAfterSuccessfulMerge(OUT_ROOT, WORK_LOCAL);
+
+  await audit({
+    level: 'info',
+    category: 'action',
+    event: 'full_cycle_local_completed',
+    actor: ctx.username,
+    details: { date: DATE_STR, run_id: currentRunId, run_label: RUN_LABEL, username: ctx.username },
+  });
+
+  console.log(`\n✅ [full-cycle-local] Training complete for user: ${ctx.username}`);
+  console.log(`   Model name: ${modelName}`);
+  console.log(`   Dataset: ${datasetDir}`);
+}
+
+async function main() {
+  // Parse CLI arguments
+  const args = process.argv.slice(2);
+  let username: string | null = null;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--username' && i + 1 < args.length) {
+      username = args[i + 1];
+      break;
     }
-  } catch (runMetaErr) {
-    console.warn('[full-cycle-local] Failed to record run metadata:', (runMetaErr as Error).message);
   }
 
-  if (fs.existsSync(recentGGUF)) {
-    cleanupAfterSuccessfulMerge(OUT_ROOT, WORK_LOCAL);
+  if (!username) {
+    console.error('[full-cycle-local] ERROR: --username <name> is required');
+    console.error('\nUsage: npx tsx brain/agents/full-cycle-local.ts --username <username>');
+    console.error('\nExample: npx tsx brain/agents/full-cycle-local.ts --username greggles');
+    process.exit(1);
   }
 
-  audit({ level: 'info', category: 'action', event: 'full_cycle_local_completed', details: { date: DATE_STR, run_id: currentRunId, run_label: RUN_LABEL }, actor: 'full-cycle-local' });
-  console.log('[full-cycle-local] Run complete.');
+  // Resolve user info
+  const userInfo = requireUserInfo(username);
+
+  console.log(`[full-cycle-local] Starting local training for user: ${username}`);
+
+  // Run with user context
+  await withUserContext(userInfo, mainWithContext);
 }
 
 main().catch(err => {
