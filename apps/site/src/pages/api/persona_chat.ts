@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { loadPersonaCore, loadPersonaWithFacet, getActiveFacet, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, type RouterMessage, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, pruneHistory, type Message, getUserContext, getConversationBufferPath } from '@metahuman/core';
 import { loadCognitiveMode, getModeDefinition, canWriteMemory as modeAllowsMemoryWrites, canUseOperator } from '@metahuman/core/cognitive-mode';
 import { canWriteMemory as policyCanWriteMemory } from '@metahuman/core/memory-policy';
+import { loadChatSettings } from '@metahuman/core/chat-settings';
 import { readFileSync, existsSync, appendFileSync, writeFileSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { initializeSkills } from '../../../../../brain/skills/index';
@@ -439,6 +440,9 @@ async function getRelevantContext(
   opts?: { usingLora?: boolean; includePersonaSummary?: boolean; replyToMessage?: string }
 ): Promise<{ context: string; usedSemantic: boolean; contextPackage: any }> {
   try {
+    // Load chat settings to configure context retrieval
+    const chatSettings = loadChatSettings();
+
     // Load cognitive mode to enforce mode-specific retrieval behavior
     const cognitiveContext = getCognitiveModeContext();
     const cognitiveMode = cognitiveContext.mode;
@@ -453,7 +457,9 @@ async function getRelevantContext(
 
     // Lower similarity threshold when asking about dreams/reflections
     // Dreams often have abstract/poetic language that doesn't match literal queries well
-    const threshold = (askingAboutDreams || askingAboutReflections) ? 0.55 : 0.62;
+    // Use configured threshold as baseline, with special handling for dreams/reflections
+    const baseThreshold = chatSettings.semanticSearchThreshold;
+    const threshold = (askingAboutDreams || askingAboutReflections) ? Math.max(0.45, baseThreshold - 0.1) : baseThreshold;
 
     // HYBRID SEARCH: When asking about dreams/reflections, add metadata filter
     // This ensures we get the right type of memories, not just semantically similar chat messages
@@ -471,7 +477,7 @@ async function getRelevantContext(
       similarityThreshold: effectiveThreshold,  // Skip threshold when filtering by metadata
       // Let memory-policy enforce per-role caps instead of pinning to 2
       maxMemories: undefined,
-      maxContextChars: 900,           // Matching old character limit
+      maxContextChars: chatSettings.maxContextChars,  // Use configured context limit
       metadataFilters,                // Hybrid search: filter by type when user explicitly asks
       filterInnerDialogue: true,      // Matching old filtering
       filterReflections: shouldFilterReflections,  // Smart filter: allow dreams/reflections when user asks for them
@@ -1263,16 +1269,26 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
   // Note: Context already retrieved earlier (line 525) and available as contextInfo, usedSemantic, contextPackage
 
+  // Load chat settings to configure response behavior
+  const chatSettings = loadChatSettings();
+
   // Add user message and context to history
   // NOTE: The context is added as a separate system message to make it clear to the model what is the user's message and what is context.
   // Appending the context to the user's message can confuse the model and cause it to repeat the context.
   if (contextInfo) {
-    pushMessage(m, { role: 'system', content: `## Context\n${contextInfo}` }, sessionId);
+    pushMessage(m, { role: 'system', content: `## Background Context\n${contextInfo}` }, sessionId);
   }
+
+  // Add user input priority instruction if enabled
+  if (chatSettings.userInputPriority && contextInfo) {
+    pushMessage(m, { role: 'system', content: `**Priority**: Answer the user's direct question below. Use personality and context to inform your response, but focus on what they're actually asking.` }, sessionId);
+  }
+
   pushMessage(m, { role: 'user', content: message }, sessionId);
 
   try {
-    const temperature = m === 'inner' ? 0.5 : 0.6;
+    // Use configured temperature (with slight reduction for inner dialogue)
+    const temperature = m === 'inner' ? Math.max(0.1, chatSettings.temperature - 0.1) : chatSettings.temperature;
     // Merge LLM options from request (clamped)
     const llmOpts: Record<string, number> = {};
     try {

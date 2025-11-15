@@ -43,7 +43,8 @@
     "./persona/cleanup": "./src/persona/cleanup.ts",
     "./curator-prompts": "./src/curator-prompts.ts",
     "./user-data-collector": "./src/user-data-collector.ts",
-    "./user-resolver": "./src/user-resolver.ts"
+    "./user-resolver": "./src/user-resolver.ts",
+    "./chat-settings": "./src/chat-settings.ts"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

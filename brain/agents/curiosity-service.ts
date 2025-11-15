@@ -307,23 +307,29 @@ async function generateUserQuestion(username: string): Promise<boolean> {
   const persona = loadPersonaCore();
   const memoriesText = recentMemories.map((m, i) => `${i + 1}. ${m.content}`).join('\n');
 
-  const systemPrompt = `
-You are ${persona.identity.name}'s curiosity engine. Based on recent memories, ask ONE thoughtful question that could deepen understanding or uncover interesting connections.
+  // Build personality context from persona
+  const tone = persona.personality?.communicationStyle?.tone || 'conversational';
+  const archetypes = persona.personality?.archetypes ? persona.personality.archetypes.join(', ') : '';
+  const topValues = persona.values?.core ?
+    persona.values.core.slice(0, 3).map((v: any) => v.value).join(', ') : '';
 
-Guidelines:
-- Keep questions open-ended and engaging
-- Focus on "why" and "how" over "what"
-- Connect memories to broader patterns
-- Avoid yes/no questions
-- Keep under 100 words
-- Be genuinely curious, not formulaic
+  const systemPrompt = `
+You are ${persona.identity.name}. ${persona.identity.role || ''}
+
+Your communication style: ${tone}
+${archetypes ? `Your nature: ${archetypes}` : ''}
+${topValues ? `What matters to you: ${topValues}` : ''}
+
+Looking back at these recent memories, you're genuinely curious about something. Ask ${persona.identity.humanName || 'the user'} ONE natural, conversational question that reflects your authentic curiosity.
+
+Be yourself - ask in your own voice, not like an AI. Keep it under 20 words and make it feel like a real question you'd ask a friend.
   `.trim();
 
   const userPrompt = `
-Recent memories:
+Recent experiences you're reflecting on:
 ${memoriesText}
 
-What thoughtful question could deepen ${persona.identity.humanName || 'your'} understanding of these experiences or patterns?
+What are you genuinely curious about? Ask one natural question.
   `.trim();
 
   const messages: RouterMessage[] = [
@@ -335,7 +341,7 @@ What thoughtful question could deepen ${persona.identity.humanName || 'your'} un
     const response = await callLLM({
       role: 'persona',
       messages,
-      options: { temperature: 0.8 }
+      options: { temperature: 0.6 }
     });
 
     const question = response.content.trim();
@@ -349,8 +355,8 @@ What thoughtful question could deepen ${persona.identity.humanName || 'your'} un
     const askedAt = new Date().toISOString();
     const seedMemories = recentMemories.map(m => m.__file).filter(Boolean);
 
-    // Format question for display
-    const questionText = `💭 I'm curious: ${question}`;
+    // Format question for display (natural, conversational)
+    const questionText = `💭 ${question}`;
 
     // Emit chat_assistant audit event so SSE stream picks it up
     // Questions are NOT saved to episodic memory until user replies

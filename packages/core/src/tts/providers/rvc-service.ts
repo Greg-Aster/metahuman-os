@@ -23,6 +23,7 @@ import type {
 
 export class RVCService implements ITextToSpeechService {
   private fallbackService?: ITextToSpeechService;
+  private serverStartPromise: Promise<boolean> | null = null;
 
   constructor(
     private config: RVCConfig,
@@ -322,7 +323,7 @@ export class RVCService implements ITextToSpeechService {
     // Try HTTP server first if enabled (default: true)
     const useServer = this.config.useServer ?? true;
     if (useServer) {
-      const serverAvailable = await this._checkServerAvailable();
+      const serverAvailable = await this._ensureServerReady();
       if (serverAvailable) {
         console.log('[RVCService] Server available, using HTTP API for fast inference');
         try {
@@ -332,8 +333,8 @@ export class RVCService implements ITextToSpeechService {
           // Fall through to process spawning method below
         }
       } else {
-        console.log('[RVCService] Server not available, using process spawning (slow)');
-      }
+      console.log('[RVCService] Server not available, using process spawning (slow)');
+    }
     }
 
     // Fallback to process spawning (original slow method)
@@ -553,6 +554,124 @@ export class RVCService implements ITextToSpeechService {
 
   clearCache(): void {
     clearCache(this.cacheConfig);
+  }
+
+  private _getServerUrl(): URL {
+    try {
+      return new URL(this.config.serverUrl || 'http://127.0.0.1:9881');
+    } catch {
+      return new URL('http://127.0.0.1:9881');
+    }
+  }
+
+  private async _ensureServerReady(): Promise<boolean> {
+    const available = await this._checkServerAvailable();
+    if (available) return true;
+
+    if (this.config.autoStartServer === false) {
+      return false;
+    }
+
+    if (!this.serverStartPromise) {
+      this.serverStartPromise = this._startRvcServerProcess()
+        .catch((error) => {
+          console.error('[RVCService] Auto-start server failed:', error);
+          return false;
+        })
+        .finally(() => {
+          this.serverStartPromise = null;
+        });
+    }
+
+    const started = await this.serverStartPromise;
+    if (!started) {
+      return false;
+    }
+
+    return this._checkServerAvailable();
+  }
+
+  private async _startRvcServerProcess(): Promise<boolean> {
+    const autoStart = this.config.autoStartServer ?? true;
+    if (!autoStart) {
+      return false;
+    }
+
+    const rvcDir = path.join(paths.root, 'external', 'applio-rvc');
+    const pythonBin = path.join(rvcDir, 'venv', 'bin', 'python3');
+    const serverScript = path.join(rvcDir, 'server.py');
+
+    if (!fs.existsSync(pythonBin) || !fs.existsSync(serverScript)) {
+      console.warn('[RVCService] Cannot auto-start server: missing python env or server.py');
+      return false;
+    }
+
+    if (!this.config.modelsDir || !fs.existsSync(this.config.modelsDir)) {
+      console.warn('[RVCService] Cannot auto-start server: models directory missing');
+      return false;
+    }
+
+    const url = this._getServerUrl();
+    const port = Number(url.port) || 9881;
+    const device = this.config.device || 'cuda';
+    const speaker = this.config.speakerId || 'default';
+    const logFile = path.join(paths.run, 'rvc-server.log');
+
+    try {
+      fs.mkdirSync(path.dirname(logFile), { recursive: true });
+      const logFd = fs.openSync(logFile, 'a');
+
+      const child = spawn(
+        pythonBin,
+        [
+          serverScript,
+          '--port', String(port),
+          '--device', device,
+          '--speaker', speaker,
+          '--models-dir', this.config.modelsDir,
+        ],
+        {
+          cwd: rvcDir,
+          detached: true,
+          stdio: ['ignore', logFd, logFd],
+        }
+      );
+
+      child.unref();
+      fs.closeSync(logFd);
+
+      audit({
+        level: 'info',
+        category: 'system',
+        event: 'rvc_server_auto_start',
+        details: { port, device, speaker },
+        actor: 'system',
+      });
+
+      const timeout = this.config.serverStartupTimeoutMs ?? 8000;
+      const pollInterval = 500;
+      const start = Date.now();
+
+      while (Date.now() - start < timeout) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        if (await this._checkServerAvailable()) {
+          audit({
+            level: 'info',
+            category: 'system',
+            event: 'rvc_server_auto_started',
+            details: { port },
+            actor: 'system',
+          });
+          return true;
+        }
+      }
+
+      console.warn('[RVCService] RVC server failed to become healthy within timeout');
+      return false;
+    } catch (error) {
+      console.error('[RVCService] Failed to start RVC server process:', error);
+      return false;
+    }
   }
 
   /**

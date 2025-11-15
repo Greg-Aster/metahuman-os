@@ -77,6 +77,8 @@ export interface RVCConfig {
   // Server configuration
   serverUrl?: string;         // HTTP server URL for persistent inference (default: http://127.0.0.1:9881)
   useServer?: boolean;        // Prefer server over process spawning (default: true if server is available)
+  autoStartServer?: boolean;  // Automatically start the RVC HTTP server when needed (default: true)
+  serverStartupTimeoutMs?: number; // How long to wait for the server to become healthy (default: 8000ms)
   // Inference parameters for voice quality tuning
   indexRate?: number;        // Voice retrieval strength (0.0-1.0, default: 1.0)
   volumeEnvelope?: number;    // RMS mix rate (0.0-1.0, default: 0.0)

@@ -18,6 +18,7 @@
   import SystemSettings from './SystemSettings.svelte';
   import SecuritySettings from './SecuritySettings.svelte';
   import NetworkSettings from './NetworkSettings.svelte';
+  import ChatSettings from './ChatSettings.svelte';
   import MemoryEditor from './MemoryEditor.svelte';
   import PersonaGenerator from './PersonaGenerator.svelte';
 
@@ -57,7 +58,7 @@ let eventsError: string | null = null
 let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'setup' | 'datasets' | 'monitor' | 'adapters' = 'datasets'
-let systemTab: 'persona' | 'generator' | 'lifeline' | 'settings' = 'persona'
+let systemTab: 'persona' | 'generator' | 'chat' | 'lifeline' | 'settings' = 'persona'
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
 
 // Legacy expansion state (no longer used but kept to prevent errors)
@@ -1082,6 +1083,7 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
         <div class="tab-group">
           <button class="tab-button" class:active={systemTab==='persona'} on:click={() => systemTab='persona'}>Persona</button>
           <button class="tab-button" class:active={systemTab==='generator'} on:click={() => systemTab='generator'}>Generator</button>
+          <button class="tab-button" class:active={systemTab==='chat'} on:click={() => systemTab='chat'}>Chat</button>
           <button class="tab-button" class:active={systemTab==='settings'} on:click={() => systemTab='settings'}>Settings</button>
           <button class="tab-button" class:active={systemTab==='lifeline'} on:click={() => systemTab='lifeline'}>Lifeline</button>
         </div>
@@ -1187,6 +1189,8 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
           </div>
         {:else if systemTab === 'generator'}
           <PersonaGenerator />
+        {:else if systemTab === 'chat'}
+          <ChatSettings />
         {:else if systemTab === 'settings'}
           <SystemSettings />
         {:else if systemTab === 'lifeline'}

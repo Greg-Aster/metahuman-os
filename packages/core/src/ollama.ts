@@ -275,7 +275,62 @@ export class OllamaClient {
 
     return response.json();
   }
+
+  /**
+   * Get Ollama health status including model availability
+   * Returns status object with running state and available models
+   */
+  async getHealthStatus(): Promise<{
+    running: boolean;
+    hasModels: boolean;
+    modelCount: number;
+    models: string[];
+    error?: string;
+  }> {
+    try {
+      const running = await this.isRunning();
+      if (!running) {
+        return {
+          running: false,
+          hasModels: false,
+          modelCount: 0,
+          models: [],
+          error: 'Ollama service is not running',
+        };
+      }
+
+      const models = await this.listModels();
+      return {
+        running: true,
+        hasModels: models.length > 0,
+        modelCount: models.length,
+        models: models.map(m => m.name),
+      };
+    } catch (error) {
+      return {
+        running: false,
+        hasModels: false,
+        modelCount: 0,
+        models: [],
+        error: String(error),
+      };
+    }
+  }
 }
 
 // Singleton instance
 export const ollama = new OllamaClient();
+
+/**
+ * Quick health check for Ollama - returns status object
+ * Suitable for use in API endpoints and UI health checks
+ */
+export async function checkOllamaHealth(): Promise<{
+  running: boolean;
+  hasModels: boolean;
+  modelCount: number;
+  models: string[];
+  error?: string;
+}> {
+  return ollama.getHealthStatus();
+}

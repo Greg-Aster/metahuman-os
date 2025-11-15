@@ -1570,6 +1570,17 @@ export function startRVCTraining(
     fs.mkdirSync(modelOutputDir, { recursive: true });
   }
 
+  // Delete old model file to prevent false completion detection
+  const finalModelPath = path.join(modelOutputDir, `${speakerId}.pth`);
+  if (fs.existsSync(finalModelPath)) {
+    try {
+      fs.unlinkSync(finalModelPath);
+      console.log('[RVC Training] Deleted old model file to prevent false completion');
+    } catch (error) {
+      console.warn('[RVC Training] Warning: Could not delete old model file:', error);
+    }
+  }
+
   // RVC experiment directory (where preprocessing outputs will be stored)
   const rvcExperimentDir = path.join(rvcDir, 'logs', speakerId);
   if (!fs.existsSync(rvcExperimentDir)) {
@@ -1679,9 +1690,7 @@ export function startRVCTraining(
       if (startResult.status === 0) {
         console.log('[RVC Training] Ollama service restarted via systemctl');
       } else {
-        // Fallback to direct spawn
-        spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' }).unref();
-        console.log('[RVC Training] Ollama started via spawn');
+        console.warn('[RVC Training] Warning: Failed to restart Ollama service. You may need to start it manually: systemctl start ollama');
       }
     } catch (e) {
       console.error('[RVC Training] Failed to restart Ollama:', e);
@@ -1704,9 +1713,7 @@ export function startRVCTraining(
       if (startResult.status === 0) {
         console.log('[RVC Training] Ollama service restarted via systemctl');
       } else {
-        // Fallback to direct spawn
-        spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' }).unref();
-        console.log('[RVC Training] Ollama started via spawn');
+        console.warn('[RVC Training] Warning: Failed to restart Ollama service. You may need to start it manually: systemctl start ollama');
       }
     } catch (e) {
       console.error('[RVC Training] Failed to restart Ollama:', e);
@@ -1838,49 +1845,9 @@ export function startRVCTraining(
       }
     }
 
-    // Check if training completed
-    const modelPath = path.join(modelOutputDir, `${speakerId}.pth`);
-    if (fs.existsSync(modelPath) && status.status === 'running') {
-      status.status = 'completed';
-      status.progress = 100;
-      status.endTime = Date.now();
-      status.message = 'Training completed successfully!';
-      status.modelPath = modelPath;
-      writeRVCTrainingStatus(status);
-
-      // Generate FAISS index file for improved voice retrieval
-      console.log('[RVC Training] Generating FAISS index for voice retrieval...');
-      const indexSuccess = generateRVCIndex(speakerId, rvcExperimentDir);
-      if (indexSuccess) {
-        console.log('[RVC Training] Index file generated successfully');
-      } else {
-        console.log('[RVC Training] Warning: Index generation failed, but model is still usable');
-      }
-
-      // Cleanup intermediate training checkpoints to free disk space
-      console.log('[RVC Training] Cleaning up intermediate training checkpoints...');
-      const cleanupSuccess = cleanupRVCCheckpoints(speakerId, rvcExperimentDir);
-      if (cleanupSuccess) {
-        console.log('[RVC Training] Checkpoint cleanup completed successfully');
-      } else {
-        console.log('[RVC Training] Warning: Checkpoint cleanup failed, but model is still usable');
-      }
-
-      audit({
-        level: 'info',
-        category: 'action',
-        event: 'rvc_training_completed',
-        details: {
-          speakerId,
-          modelPath,
-          duration: status.endTime - (status.startTime || 0),
-          epochs: status.totalEpochs,
-        },
-        actor: 'system',
-      });
-
-      clearInterval(monitorInterval);
-    }
+    // Check if training completed - ONLY if process has exited
+    // Do NOT check for model file existence here, as old files cause false positives
+    // The process exit handler will handle actual completion
 
     // Stop monitoring if failed or completed
     if (status.status === 'failed' || status.status === 'completed') {
@@ -1898,9 +1865,27 @@ export function startRVCTraining(
         status.progress = 100;
         status.message = 'Training completed successfully!';
 
-        const modelPath = path.join(modelOutputDir, `${speakerId}.pth`);
-        if (fs.existsSync(modelPath)) {
-          status.modelPath = modelPath;
+        // Copy final model from RVC experiment directory to output directory
+        // RVC saves models in experiment_dir with pattern: {model_name}_{epoch}e_{step}s.pth
+        const finalModelPath = path.join(modelOutputDir, `${speakerId}.pth`);
+
+        try {
+          // Find the best epoch model (has "best_epoch" in filename)
+          const experimentFiles = fs.readdirSync(rvcExperimentDir);
+          const bestEpochFile = experimentFiles.find(f =>
+            f.includes('best_epoch') && f.endsWith('.pth')
+          );
+
+          if (bestEpochFile) {
+            const sourcePath = path.join(rvcExperimentDir, bestEpochFile);
+            fs.copyFileSync(sourcePath, finalModelPath);
+            status.modelPath = finalModelPath;
+            console.log(`[RVC Training] Copied best model from ${bestEpochFile} to ${finalModelPath}`);
+          } else {
+            console.warn('[RVC Training] Warning: No best_epoch model found, training may have failed');
+          }
+        } catch (error) {
+          console.error('[RVC Training] Failed to copy final model:', error);
         }
 
         // Generate FAISS index file for improved voice retrieval
@@ -1944,9 +1929,7 @@ export function startRVCTraining(
         if (startResult.status === 0) {
           console.log('[RVC Training] Ollama service restarted via systemctl');
         } else {
-          // Fallback to direct spawn
-          spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' }).unref();
-          console.log('[RVC Training] Ollama started via spawn');
+          console.warn('[RVC Training] Warning: Failed to restart Ollama service. You may need to start it manually: systemctl start ollama');
         }
       } catch (error) {
         console.error('[RVC Training] Failed to restart Ollama:', error);
