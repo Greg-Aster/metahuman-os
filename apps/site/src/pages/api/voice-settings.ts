@@ -52,6 +52,33 @@ function getAvailableVoices(voicesDir: string): VoiceModel[] {
   return voices;
 }
 
+function loadKokoroVoices(rootDir: string): Array<{id: string; name: string; lang: string; gender: string; quality: string}> {
+  const kokoroDir = path.join(rootDir, 'external', 'kokoro');
+  const voicesFile = path.join(kokoroDir, 'VOICES.md');
+  if (!fs.existsSync(voicesFile)) {
+    return [];
+  }
+
+  const content = fs.readFileSync(voicesFile, 'utf-8');
+  const voices: Array<{id: string; name: string; lang: string; gender: string; quality: string}> = [];
+  const lines = content.split('\n');
+  for (const line of lines) {
+    const match = line.match(/`([a-z_]+)`\s*-?\s*([^,]+),?\s*(Male|Female|Neutral)?,?\s*(High|Medium|Low)?/i);
+    if (match) {
+      const [, id, langInfo, gender, quality] = match;
+      const displayName = id.trim().replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      voices.push({
+        id: id.trim(),
+        name: displayName,
+        lang: langInfo.trim(),
+        gender: gender?.trim() || 'Neutral',
+        quality: quality?.trim() || 'Medium',
+      });
+    }
+  }
+  return voices;
+}
+
 type VoiceConfig = {
   tts: {
     provider: string;
@@ -83,6 +110,15 @@ type VoiceConfig = {
       device?: 'cuda' | 'cpu';
       outputFormat?: string;
       pauseOllamaDuringInference?: boolean;
+    };
+    kokoro?: {
+      langCode: string;
+      voice: string;
+      speed: number;
+      autoFallbackToPiper: boolean;
+      useCustomVoicepack: boolean;
+      customVoicepackPath?: string;
+      voices?: Array<{id: string; name: string; lang: string; gender: string; quality: string}>;
     };
   };
   stt: Record<string, any>;
@@ -135,6 +171,14 @@ function buildDefaultVoiceConfig(
         f0Method: 'rmvpe',
         device: 'cuda',
         pauseOllamaDuringInference: true,
+      },
+      kokoro: {
+        langCode: 'a',
+        voice: 'af_heart',
+        speed: 1.0,
+        autoFallbackToPiper: true,
+        useCustomVoicepack: false,
+        customVoicepackPath: path.join(profileRoot, 'out', 'voices', 'kokoro-voicepacks', 'default.pt'),
       },
     },
     stt: {
@@ -290,6 +334,26 @@ function ensureVoiceConfig(
     console.warn('[voice-settings] Unable to ensure RVC directories:', error);
   }
 
+  // Ensure Kokoro config exists
+  if (!config.tts.kokoro) {
+    config.tts.kokoro = {
+      langCode: 'a',
+      voice: 'af_heart',
+      speed: 1.0,
+      autoFallbackToPiper: true,
+      useCustomVoicepack: false,
+      customVoicepackPath: path.join(profileRoot, 'out', 'voices', 'kokoro-voicepacks', 'default.pt'),
+    };
+  }
+
+  config.tts.kokoro.langCode = config.tts.kokoro.langCode || 'a';
+  config.tts.kokoro.voice = config.tts.kokoro.voice || 'af_heart';
+  config.tts.kokoro.speed = typeof config.tts.kokoro.speed === 'number'
+    ? clamp(config.tts.kokoro.speed, 0.5, 2.0)
+    : 1.0;
+  config.tts.kokoro.autoFallbackToPiper = config.tts.kokoro.autoFallbackToPiper ?? true;
+  config.tts.kokoro.useCustomVoicepack = config.tts.kokoro.useCustomVoicepack ?? false;
+
   // Ensure cache directory exists
   config.cache = config.cache ?? {
     enabled: true,
@@ -367,6 +431,8 @@ const getHandler: APIRoute = async () => {
 
     const providerForUI = config.tts.provider === 'gpt-sovits' ? 'sovits' : config.tts.provider;
 
+    const kokoroVoices = loadKokoroVoices(rootDir);
+
     return new Response(
       JSON.stringify({
         provider: providerForUI,
@@ -392,6 +458,14 @@ const getHandler: APIRoute = async () => {
           protect: config.tts.rvc?.protect ?? 0.15,
           f0Method: config.tts.rvc?.f0Method || 'rmvpe',
           device: config.tts.rvc?.device || 'cuda',
+        },
+        kokoro: {
+          langCode: config.tts.kokoro?.langCode || 'a',
+          voice: config.tts.kokoro?.voice || 'af_heart',
+          speed: config.tts.kokoro?.speed || 1.0,
+          autoFallbackToPiper: config.tts.kokoro?.autoFallbackToPiper ?? true,
+          useCustomVoicepack: config.tts.kokoro?.useCustomVoicepack ?? false,
+          voices: kokoroVoices,
         },
       }),
       {

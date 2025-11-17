@@ -216,10 +216,19 @@ let reasoningStages: ReasoningStage[] = [];
   }
 
   function startThinkingTrace() {
-    thinkingStatusLabel = reasoningDepth > 0 ? '🧠 Operator planning…' : '🤔 Thinking…';
+    // Detect cognitive mode to show appropriate status
+    const cogMode = $currentMode || 'dual';
+
+    if (cogMode === 'emulation') {
+      thinkingStatusLabel = '🤔 Processing...';
+      thinkingTrace = ['Generating response...'];
+    } else {
+      thinkingStatusLabel = reasoningDepth > 0 ? '🧠 Operator planning…' : '🤔 Thinking…';
+      thinkingTrace = ['Awaiting operator telemetry…'];
+    }
+
     thinkingActive = true;
     thinkingPlaceholderActive = true;
-    thinkingTrace = ['Awaiting operator telemetry…'];
     ensureAuditStream();
   }
 
@@ -482,22 +491,60 @@ let reasoningStages: ReasoningStage[] = [];
     updateReasoningDepth(Number(target.value), true);
   }
 
-  // Lightweight local session cache to keep assistant replies visible between navigations
-  function sessionKey() { return `chatSession:${mode}`; }
-  function saveSession() {
+  // Server-first conversation buffer management
+  async function loadMessagesFromServer(): Promise<typeof messages | null> {
     try {
-      const toSave = messages.slice(-100); // keep last 100
-      localStorage.setItem(sessionKey(), JSON.stringify(toSave));
-    } catch {}
-  }
-  function loadSessionFromStorage(): typeof messages | null {
-    try {
-      const raw = localStorage.getItem(sessionKey());
-      if (!raw) return null;
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) return arr;
-    } catch {}
+      const response = await fetch(`/api/conversation-buffer?mode=${mode}`);
+      if (!response.ok) return null;
+
+      const data = await response.json();
+      if (Array.isArray(data.messages)) {
+        console.log(`[ChatInterface] Loaded ${data.messages.length} messages from server (mode: ${mode})`);
+        return data.messages;
+      }
+    } catch (error) {
+      console.error('[ChatInterface] Failed to load messages from server:', error);
+    }
     return null;
+  }
+
+  async function saveMessageToServer(message: ChatMessage): Promise<boolean> {
+    try {
+      const response = await fetch('/api/conversation-buffer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, message }),
+      });
+
+      if (!response.ok) {
+        console.error('[ChatInterface] Failed to save message to server');
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('[ChatInterface] Error saving message to server:', error);
+      return false;
+    }
+  }
+
+  async function clearServerBuffer(): Promise<boolean> {
+    try {
+      const response = await fetch(`/api/conversation-buffer?mode=${mode}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        console.error('[ChatInterface] Failed to clear server buffer');
+        return false;
+      }
+
+      console.log(`[ChatInterface] Cleared server buffer (mode: ${mode})`);
+      return true;
+    } catch (error) {
+      console.error('[ChatInterface] Error clearing server buffer:', error);
+      return false;
+    }
   }
 
   async function checkOllamaStatus() {
@@ -517,7 +564,7 @@ let reasoningStages: ReasoningStage[] = [];
     }
   }
 
-  onMount(() => {
+  onMount(async () => {
     loadChatPrefs();
     if (ttsEnabled) {
       prefetchVoiceResources();
@@ -538,6 +585,13 @@ let reasoningStages: ReasoningStage[] = [];
     } catch (e) {
       // Fallback if localStorage unavailable
       conversationSessionId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+
+    // Load messages from server (server-first architecture)
+    const serverMessages = await loadMessagesFromServer();
+    if (serverMessages && serverMessages.length > 0) {
+      messages = serverMessages;
+      console.log(`[ChatInterface] Hydrated ${messages.length} messages from server`);
     }
 
     const observer = new IntersectionObserver(
@@ -706,10 +760,12 @@ let reasoningStages: ReasoningStage[] = [];
       const back = messages.slice(-3);
       if (back.some(m => m.role === role && (m.content || '').trim() === trimmed)) return;
     }
-    messages = [
-      ...messages,
-      { role, content: trimmed, timestamp: Date.now(), relPath, meta },
-    ];
+
+    const newMessage = { role, content: trimmed, timestamp: Date.now(), relPath, meta };
+    messages = [...messages, newMessage];
+
+    // Save to server (async, don't await - fire and forget)
+    void saveMessageToServer(newMessage);
   }
 
   async function sendMessage() {
@@ -928,10 +984,6 @@ let reasoningStages: ReasoningStage[] = [];
     messages = [];
     reasoningStages = [];
     stopThinkingTrace();
-    // Clear localStorage session cache
-    try {
-      localStorage.removeItem(sessionKey());
-    } catch {}
 
     // Generate new conversation session ID
     try {
@@ -958,6 +1010,14 @@ let reasoningStages: ReasoningStage[] = [];
       }
     } catch (error) {
       console.warn('Error clearing audit logs:', error);
+    }
+
+    // CRITICAL: Clear server-side conversation buffer
+    const serverCleared = await clearServerBuffer();
+    if (serverCleared) {
+      console.log('[ChatInterface] Server buffer cleared successfully');
+    } else {
+      console.warn('[ChatInterface] Failed to clear server buffer');
     }
   }
 
@@ -1538,6 +1598,30 @@ let reasoningStages: ReasoningStage[] = [];
 
   .message-assistant[data-facet="default"] .message-content {
     border-left: 3px solid rgba(139,92,246,0.6);
+  }
+
+  /* System message styling - distinct from user/assistant */
+  .message-system .message-content {
+    background: rgba(107, 114, 128, 0.1);
+    border-left: 3px solid rgba(107, 114, 128, 0.4);
+    font-size: 0.9em;
+    color: rgba(107, 114, 128, 0.9);
+    font-style: italic;
+  }
+
+  :global(.dark) .message-system .message-content {
+    background: rgba(75, 85, 99, 0.15);
+    border-left: 3px solid rgba(107, 114, 128, 0.5);
+    color: rgba(156, 163, 175, 0.95);
+  }
+
+  .message-system .message-role {
+    color: rgba(107, 114, 128, 0.7);
+    font-size: 0.85em;
+  }
+
+  :global(.dark) .message-system .message-role {
+    color: rgba(156, 163, 175, 0.8);
   }
 
   /* Message interaction styles */

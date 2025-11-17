@@ -1,6 +1,6 @@
 /**
  * Text-to-Speech Service (Refactored with Provider Architecture)
- * Supports multiple TTS providers: Piper, GPT-SoVITS
+ * Supports multiple TTS providers: Piper, GPT-SoVITS, RVC, Kokoro
  */
 
 import fs from 'node:fs';
@@ -12,6 +12,7 @@ import { audit } from './audit.js';
 import { PiperService } from './tts/providers/piper-service.js';
 import { SoVITSService } from './tts/providers/gpt-sovits-service.js';
 import { RVCService } from './tts/providers/rvc-service.js';
+import { KokoroService } from './tts/providers/kokoro-service.js';
 import type { ITextToSpeechService, TTSConfig, CacheConfig, TTSSynthesizeOptions, TTSStatus } from './tts/interface.js';
 
 // Re-export types for external use
@@ -89,6 +90,9 @@ function loadUserConfig(username?: string): VoiceConfig {
     if (userConfig.tts?.rvc) {
       merged.tts.rvc = { ...merged.tts.rvc, ...userConfig.tts.rvc };
     }
+    if (userConfig.tts?.kokoro) {
+      merged.tts.kokoro = { ...merged.tts.kokoro, ...userConfig.tts.kokoro };
+    }
 
     // Merge cache settings
     if (userConfig.cache) {
@@ -162,6 +166,11 @@ function resolveConfigPaths(rawConfig: VoiceConfig, username?: string): VoiceCon
     resolved.tts.rvc.modelsDir = resolvePath(resolved.tts.rvc.modelsDir)!;
   }
 
+  // Resolve Kokoro paths
+  if (resolved.tts?.kokoro) {
+    resolved.tts.kokoro.customVoicepackPath = resolvePath(resolved.tts.kokoro.customVoicepackPath)!;
+  }
+
   // Resolve cache path
   if (resolved.cache) {
     resolved.cache.directory = resolvePath(resolved.cache.directory)!;
@@ -174,7 +183,7 @@ function resolveConfigPaths(rawConfig: VoiceConfig, username?: string): VoiceCon
  * Create TTS service for specified provider
  * Uses current user context for profile-aware path resolution
  */
-export function createTTSService(provider?: 'piper' | 'gpt-sovits' | 'rvc', username?: string): ITextToSpeechService {
+export function createTTSService(provider?: 'piper' | 'gpt-sovits' | 'rvc' | 'kokoro', username?: string): ITextToSpeechService {
   // Get user context if not explicitly provided
   const userContext = getUserContext();
   const activeUsername = username || userContext?.username || 'anonymous';
@@ -223,6 +232,19 @@ export function createTTSService(provider?: 'piper' | 'gpt-sovits' | 'rvc', user
 
     const piperService = new PiperService(cfg.tts.piper, cfg.cache);
     service = new RVCService(cfg.tts.rvc, cfg.cache, piperService);
+  } else if (selectedProvider === 'kokoro') {
+    // Check if Kokoro config exists
+    if (!cfg.tts.kokoro) {
+      console.error('[TTS] Kokoro config missing. Config keys:', Object.keys(cfg.tts));
+      throw new Error('Kokoro not configured. Please install the addon via System Settings.');
+    }
+
+    // Create Piper fallback if auto-fallback is enabled
+    const piperService = cfg.tts.kokoro.autoFallbackToPiper && cfg.tts.piper
+      ? new PiperService(cfg.tts.piper, cfg.cache)
+      : undefined;
+
+    service = new KokoroService(cfg.tts.kokoro, cfg.cache, piperService);
   } else {
     // Default to Piper
     if (!cfg.tts.piper) {
@@ -242,7 +264,7 @@ export function createTTSService(provider?: 'piper' | 'gpt-sovits' | 'rvc', user
  */
 export async function generateSpeech(
   text: string,
-  options?: TTSSynthesizeOptions & { provider?: 'piper' | 'gpt-sovits' | 'rvc'; username?: string }
+  options?: TTSSynthesizeOptions & { provider?: 'piper' | 'gpt-sovits' | 'rvc' | 'kokoro'; username?: string }
 ): Promise<Buffer> {
   const { provider, username, ...synthesizeOptions } = options || {};
 

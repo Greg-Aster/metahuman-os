@@ -251,6 +251,20 @@
       "metadata": {
         "source": "ollama-discovery"
       }
+    },
+    "ollama.gpt-oss:latest": {
+      "provider": "ollama",
+      "model": "gpt-oss:latest",
+      "roles": [
+        "orchestrator",
+        "persona"
+      ],
+      "adapters": [],
+      "description": "Imported from Ollama tag gpt-oss:latest",
+      "options": {},
+      "metadata": {
+        "source": "ollama-discovery"
+      }
     }
   },
   "roleHierarchy": {
@@ -311,8 +325,8 @@
       "description": "Lightweight assistant mode"
     },
     "emulation": {
-      "orchestrator": null,
-      "persona": "default.persona",
+      "orchestrator": "default.orchestrator",
+      "persona": "default.orchestrator",
       "description": "Read-only personality snapshot"
     }
   },

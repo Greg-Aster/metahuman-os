@@ -73,14 +73,14 @@
     "curiosity": {
       "id": "curiosity",
       "enabled": true,
-      "type": "interval",
+      "type": "activity",
       "priority": "low",
       "agentPath": "curiosity-service.ts",
-      "interval": 60,
+      "inactivityThreshold": 900,
       "runOnBoot": false,
-      "autoRestart": true,
+      "autoRestart": false,
       "maxRetries": 2,
-      "comment": "Checks every minute if it should ask a question. Actual question frequency controlled by per-user curiosity.json questionIntervalSeconds setting."
+      "comment": "Triggers only after conversation inactivity. Threshold (900s = 15min) controlled by questionIntervalSeconds in curiosity.json."
     },
     "curiosity-researcher": {
       "id": "curiosity-researcher",

@@ -1,0 +1,228 @@
+import type { APIRoute } from 'astro';
+import fs from 'node:fs';
+import path from 'node:path';
+import {
+  copyToKokoroDataset,
+  deleteKokoroSample,
+  getKokoroTrainingReadiness,
+  getKokoroTrainingStatus,
+  getReferenceSamples,
+  listKokoroSamples,
+  startKokoroVoicepackTraining,
+  tryResolveProfilePath,
+  systemPaths,
+} from '@metahuman/core';
+import { withUserContext } from '../../middleware/userContext';
+
+/**
+ * Kokoro Voice Training API
+ * Handles dataset management and StyleTTS2-style voicepack training.
+ */
+
+const getHandler: APIRoute = async ({ request }) => {
+  const url = new URL(request.url);
+  const action = url.searchParams.get('action');
+  const speakerId = url.searchParams.get('speakerId') || 'default';
+
+  const pathResult = tryResolveProfilePath('voiceTraining');
+  if (!pathResult.ok) {
+    return new Response(
+      JSON.stringify({ error: 'Authentication required for voice training' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  try {
+    switch (action) {
+      case 'training-readiness': {
+        const readiness = getKokoroTrainingReadiness(speakerId);
+        return new Response(JSON.stringify(readiness), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      case 'list-samples': {
+        const samples = listKokoroSamples(speakerId);
+        return new Response(JSON.stringify({ samples }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      case 'training-status': {
+        const status = getKokoroTrainingStatus(speakerId);
+        return new Response(JSON.stringify(status), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      case 'training-logs': {
+        const logPath = path.join(systemPaths.logs, 'run', `kokoro-training-${speakerId}.log`);
+
+        if (!fs.existsSync(logPath)) {
+          return new Response(JSON.stringify({ logs: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        try {
+          const content = fs.readFileSync(logPath, 'utf-8');
+          const lines = content.split('\n').filter(line => line.trim());
+
+          // Return last 100 lines to avoid overwhelming the UI
+          const recentLines = lines.slice(-100);
+
+          return new Response(JSON.stringify({ logs: recentLines }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        } catch (error) {
+          console.error('[kokoro-training] Error reading log file:', error);
+          return new Response(JSON.stringify({ logs: [], error: 'Failed to read logs' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
+      default:
+        return new Response(
+          JSON.stringify({ error: 'Invalid action' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+    }
+  } catch (error) {
+    console.error('[kokoro-training] GET error:', error);
+    return new Response(
+      JSON.stringify({ error: 'Failed to process request' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+};
+
+const postHandler: APIRoute = async ({ request }) => {
+  const pathResult = tryResolveProfilePath('voiceTraining');
+  if (!pathResult.ok) {
+    return new Response(
+      JSON.stringify({ error: 'Authentication required for voice training' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  try {
+    const body = await request.json();
+    const {
+      action,
+      speakerId = 'default',
+      sampleIds,
+      sampleId,
+      minQuality = 0.75,
+      langCode,
+      baseVoice,
+      epochs,
+      learningRate,
+      regularization,
+      device,
+      maxSamples,
+    } = body;
+
+    switch (action) {
+      case 'copy-samples': {
+        if (!sampleIds || !Array.isArray(sampleIds)) {
+          return new Response(
+            JSON.stringify({ error: 'sampleIds array required' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const copied = copyToKokoroDataset(sampleIds, speakerId);
+        return new Response(JSON.stringify({
+          success: true,
+          message: `Copied ${copied} samples to Kokoro dataset`,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      case 'auto-export': {
+        const samples = getReferenceSamples(minQuality);
+        if (samples.length === 0) {
+          return new Response(
+            JSON.stringify({ error: 'No suitable samples found. Need high-quality recordings.' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const ids = samples.map(s => s.id);
+        const copied = copyToKokoroDataset(ids, speakerId);
+        return new Response(JSON.stringify({
+          success: true,
+          message: `Auto-exported ${copied} samples to Kokoro dataset`,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      case 'delete-sample': {
+        if (!sampleId) {
+          return new Response(
+            JSON.stringify({ error: 'sampleId required' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        deleteKokoroSample(speakerId, sampleId);
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      case 'start-training': {
+        const result = startKokoroVoicepackTraining(speakerId, {
+          langCode,
+          baseVoice,
+          epochs,
+          learningRate,
+          regularization,
+          device,
+          maxSamples,
+        });
+
+        if (!result.success) {
+          return new Response(
+            JSON.stringify({ error: result.error || 'Failed to start training' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: result.message || 'Voicepack training started',
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      default:
+        return new Response(
+          JSON.stringify({ error: 'Invalid action' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+    }
+  } catch (error) {
+    console.error('[kokoro-training] POST error:', error);
+    return new Response(
+      JSON.stringify({ error: 'Failed to process request' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+};
+
+// Wrap handlers with user context middleware
+export const GET = withUserContext(getHandler);
+export const POST = withUserContext(postHandler);
