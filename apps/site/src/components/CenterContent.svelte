@@ -21,6 +21,7 @@
   import ChatSettings from './ChatSettings.svelte';
   import MemoryEditor from './MemoryEditor.svelte';
   import PersonaGenerator from './PersonaGenerator.svelte';
+  import PersonaEditor from './PersonaEditor.svelte';
 
   // Memory/Events (loaded from /api/memories)
   type EventItem = {
@@ -71,43 +72,7 @@ let editorOpen = false
 let editorRelPath = ''
 let editorMemoryType = 'Memory'
 
-type PersonaForm = {
-  name: string
-  humanName: string
-  email: string
-  role: string
-  purpose: string
-  avatar: string
-  aliases: string
-  tone: string
-  humor: string
-  formality: string
-  verbosity: string
-  narrativeStyle: string
-  boundaries: string
-}
-
-let personaForm: PersonaForm = {
-  name: '',
-  humanName: '',
-  email: '',
-  role: '',
-  purpose: '',
-  avatar: '',
-  aliases: '',
-  tone: '',
-  humor: '',
-  formality: '',
-  verbosity: '',
-  narrativeStyle: '',
-  boundaries: '',
-}
-
-let personaLoading = false
-let personaLoaded = false
-let personaError: string | null = null
-let personaSaving = false
-let personaSuccess: string | null = null
+// Persona form removed - now using PersonaEditor component
 
 async function loadVoiceProvider() {
   try {
@@ -219,89 +184,7 @@ $: if ($activeView !== 'system') {
   systemTab = 'persona';
 }
 
-async function loadPersonaCore() {
-  personaLoading = true;
-  personaError = null;
-  try {
-    const res = await fetch('/api/persona-core');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (!data.success || !data.persona) throw new Error(data.error || 'Failed to load persona');
-    const persona = data.persona;
-    const identity = persona.identity || {};
-    const communication = persona.personality?.communicationStyle || {};
-    personaForm = {
-      name: identity.name || '',
-      humanName: identity.humanName || '',
-      email: identity.email || '',
-      role: identity.role || '',
-      purpose: identity.purpose || '',
-      avatar: identity.avatar || '',
-      aliases: Array.isArray(identity.aliases) ? identity.aliases.join(', ') : '',
-      tone: Array.isArray(communication.tone) ? communication.tone.join(', ') : '',
-      humor: communication.humor || '',
-      formality: communication.formality || '',
-      verbosity: communication.verbosity || '',
-      narrativeStyle: persona.personality?.narrativeStyle || '',
-      boundaries: Array.isArray(persona.values?.boundaries) ? persona.values.boundaries.join('\n') : '',
-    };
-    personaLoaded = true;
-  } catch (error) {
-    console.error('Failed to load persona core:', error);
-    personaError = (error as Error).message;
-  } finally {
-    personaLoading = false;
-  }
-}
-
-async function savePersonaCore() {
-  if (personaSaving) return;
-  personaSaving = true;
-  personaError = null;
-  personaSuccess = null;
-  try {
-    const payload = {
-      identity: {
-        name: personaForm.name,
-        humanName: personaForm.humanName,
-        email: personaForm.email,
-        role: personaForm.role,
-        purpose: personaForm.purpose,
-        avatar: personaForm.avatar,
-        aliases: personaForm.aliases.split(',').map((s) => s.trim()).filter(Boolean),
-      },
-      personality: {
-        communicationStyle: {
-          tone: personaForm.tone.split(',').map((s) => s.trim()).filter(Boolean),
-          humor: personaForm.humor,
-          formality: personaForm.formality,
-          verbosity: personaForm.verbosity,
-        },
-        narrativeStyle: personaForm.narrativeStyle,
-      },
-      values: {
-        boundaries: personaForm.boundaries.split('\n').map((s) => s.trim()).filter(Boolean),
-      },
-    };
-    const res = await fetch('/api/persona-core', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data?.error || 'Failed to save persona');
-    }
-    personaSuccess = 'Persona settings saved successfully.';
-    personaLoaded = false;
-    setTimeout(() => { personaSuccess = null; }, 4000);
-  } catch (error) {
-    console.error('Failed to save persona core:', error);
-    personaError = (error as Error).message;
-  } finally {
-    personaSaving = false;
-  }
-}
+// loadPersonaCore and savePersonaCore removed - now using PersonaEditor component
 
 function getEventKey(item: { relPath?: string; id?: string; name?: string }): string | null {
   if (item.relPath) return item.relPath;
@@ -372,9 +255,7 @@ async function loadMemoryContent(relPath: string) {
   }
 }
 
-$: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && !personaLoading) {
-  loadPersonaCore();
-}
+// Removed reactive persona loading - now handled by PersonaEditor component
 
   // Memory validation
   let saving: Record<string, boolean> = {}
@@ -1088,105 +969,7 @@ $: if ($activeView === 'system' && systemTab === 'persona' && !personaLoaded && 
           <button class="tab-button" class:active={systemTab==='lifeline'} on:click={() => systemTab='lifeline'}>Lifeline</button>
         </div>
         {#if systemTab === 'persona'}
-          <div class="persona-panel">
-            {#if personaLoading && !personaLoaded}
-              <p class="muted">Loading persona settings…</p>
-            {:else if personaError && !personaLoaded}
-              <div class="persona-alert error">
-                <div>
-                  <strong>Failed to load persona settings.</strong>
-                  <div>{personaError}</div>
-                </div>
-                <button class="retry-button" on:click={loadPersonaCore}>Retry</button>
-              </div>
-            {:else}
-              {#if personaError}
-                <div class="persona-alert error inline">
-                  <div>{personaError}</div>
-                </div>
-              {/if}
-              {#if personaSuccess}
-                <div class="persona-alert success">
-                  {personaSuccess}
-                </div>
-              {/if}
-              <form class="persona-form" on:submit|preventDefault={savePersonaCore}>
-                <section class="persona-section">
-                  <h4>Identity</h4>
-                  <div class="form-grid">
-                    <label class="field">
-                      <span>AI Name</span>
-                      <input type="text" bind:value={personaForm.name} placeholder="Destroyer of Worlds" />
-                    </label>
-                    <label class="field">
-                      <span>Human Name</span>
-                      <input type="text" bind:value={personaForm.humanName} placeholder="MeatPerson" />
-                    </label>
-                    <label class="field">
-                      <span>Email</span>
-                      <input type="email" bind:value={personaForm.email} placeholder="Robot@destroy-all-humans.io" />
-                    </label>
-                    <label class="field">
-                      <span>Avatar Path / URL</span>
-                      <input type="text" bind:value={personaForm.avatar} placeholder="/profiles/username/avatar.png" />
-                    </label>
-                    <label class="field">
-                      <span>Role</span>
-                      <input type="text" bind:value={personaForm.role} placeholder="Digital persona…" />
-                    </label>
-                    <label class="field">
-                      <span>Aliases (comma separated)</span>
-                      <input type="text" bind:value={personaForm.aliases} placeholder="MetaHuman, IwanTthEMeThatIsinsideYOU" />
-                    </label>
-                  </div>
-                  <label class="field">
-                    <span>Purpose</span>
-                    <textarea rows="3" bind:value={personaForm.purpose}></textarea>
-                  </label>
-                </section>
-
-                <section class="persona-section">
-                  <h4>Communication Style</h4>
-                  <div class="form-grid">
-                    <label class="field">
-                      <span>Tone (comma separated)</span>
-                      <input type="text" bind:value={personaForm.tone} placeholder="direct, friendly, pragmatic" />
-                    </label>
-                    <label class="field">
-                      <span>Humor</span>
-                      <input type="text" bind:value={personaForm.humor} placeholder="dry, occasional" />
-                    </label>
-                    <label class="field">
-                      <span>Formality</span>
-                      <input type="text" bind:value={personaForm.formality} placeholder="casual-professional" />
-                    </label>
-                    <label class="field">
-                      <span>Verbosity</span>
-                      <input type="text" bind:value={personaForm.verbosity} placeholder="concise with detail when needed" />
-                    </label>
-                  </div>
-                  <label class="field">
-                    <span>Narrative Style</span>
-                    <textarea rows="3" bind:value={personaForm.narrativeStyle}></textarea>
-                  </label>
-                </section>
-
-                <section class="persona-section">
-                  <h4>Boundaries</h4>
-                  <label class="field">
-                    <span>Core Boundaries (one per line)</span>
-                    <textarea rows="4" bind:value={personaForm.boundaries} placeholder="No deceptive communication&#10;Respect privacy of others"></textarea>
-                  </label>
-                </section>
-
-                <div class="persona-actions">
-                  <button type="submit" class="save-button" disabled={personaSaving}>
-                    {personaSaving ? 'Saving…' : 'Save Persona'}
-                  </button>
-                </div>
-              </form>
-            {/if}
-          </div>
+          <PersonaEditor />
         {:else if systemTab === 'generator'}
           <PersonaGenerator />
         {:else if systemTab === 'chat'}

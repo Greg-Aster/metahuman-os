@@ -105,6 +105,17 @@
       "autoRestart": true,
       "maxRetries": 2,
       "comment": "Generates self-directed questions and answers them using local memory. Saves as inner_dialogue (never shows in chat)."
+    },
+    "psychoanalyzer": {
+      "id": "psychoanalyzer",
+      "enabled": true,
+      "type": "manual",
+      "priority": "normal",
+      "agentPath": "psychoanalyzer.ts",
+      "runOnBoot": false,
+      "autoRestart": false,
+      "maxRetries": 1,
+      "comment": "Manual-run agent that reviews recent memories with psychotherapist model and incrementally updates persona. Run via: ./bin/mh agent run psychoanalyzer"
     }
   }
 }

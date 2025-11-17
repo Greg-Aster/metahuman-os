@@ -78,8 +78,8 @@ Welcome to the MetaHuman OS User Guide. This guide is organized into the followi
 25. **[Voice System (Text-to-Speech)](23-voice-system.md)**
     *   **Local Voice Cloning & TTS**: Comprehensive guide to MetaHuman's three TTS providers: Piper (fast synthetic voices), GPT-SoVITS (instant voice cloning with 5-10 second samples), and RVC (highest quality trained voice conversion). Includes training workflows, configurable parameters, troubleshooting, and best practices for voice quality.
 
-26. **[Persona Generation System](25-persona-generation.md)**
-    *   **Guided Persona Creation**: Learn about the interactive interview process that helps you create a high-fidelity persona profile for your MetaHuman OS, guided by a specialized "psychotherapist" language model.
+26. **[Persona Management System](25-persona-generation.md)**
+    *   **Complete Persona Lifecycle**: Learn about the three complementary tools for creating and maintaining your digital persona: PersonaGenerator (therapist interview), PersonaEditor (manual editing), and Psychoanalyzer (automatic evolution from memories). Each serves a distinct purpose in keeping your personality profile accurate and current.
 
 27. **[Graceful Failure & Guidance Learning](26-graceful-failure-and-guidance-learning.md)**
     *   **Resilient Operator Behavior**: Understand how the MetaHuman OS operator handles errors gracefully, asks for your guidance, and learns from your input to prevent similar issues in the future.

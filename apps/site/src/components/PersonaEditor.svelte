@@ -320,9 +320,9 @@
               </label>
               <label>
                 <span>Aliases (one per line)</span>
-                <textarea rows="3" bind:value={personaCore.identity.aliases} on:change={(e) => {
+                <textarea rows="3" value={personaCore.identity.aliases.join('\n')} on:input={(e) => {
                   personaCore.identity.aliases = e.currentTarget.value.split('\n').map(s => s.trim()).filter(Boolean);
-                }}>{personaCore.identity.aliases.join('\n')}</textarea>
+                }}></textarea>
               </label>
             </section>
 
@@ -332,9 +332,9 @@
               <div class="form-grid">
                 <label>
                   <span>Tone (one per line)</span>
-                  <textarea rows="3" bind:value={personaCore.personality.communicationStyle.tone} on:change={(e) => {
+                  <textarea rows="3" value={personaCore.personality.communicationStyle.tone.join('\n')} on:input={(e) => {
                     personaCore.personality.communicationStyle.tone = e.currentTarget.value.split('\n').map(s => s.trim()).filter(Boolean);
-                  }}>{personaCore.personality.communicationStyle.tone.join('\n')}</textarea>
+                  }}></textarea>
                 </label>
                 <label>
                   <span>Humor</span>
@@ -399,21 +399,21 @@
               <h3>Other Personality Traits</h3>
               <label>
                 <span>Archetypes (one per line)</span>
-                <textarea rows="3" bind:value={personaCore.personality.archetypes} on:change={(e) => {
+                <textarea rows="3" value={personaCore.personality.archetypes?.join('\n') || ''} on:input={(e) => {
                   personaCore.personality.archetypes = e.currentTarget.value.split('\n').map(s => s.trim()).filter(Boolean);
-                }}>{personaCore.personality.archetypes?.join('\n') || ''}</textarea>
+                }}></textarea>
               </label>
               <label>
                 <span>Aesthetic (one per line)</span>
-                <textarea rows="3" bind:value={personaCore.personality.aesthetic} on:change={(e) => {
+                <textarea rows="3" value={personaCore.personality.aesthetic?.join('\n') || ''} on:input={(e) => {
                   personaCore.personality.aesthetic = e.currentTarget.value.split('\n').map(s => s.trim()).filter(Boolean);
-                }}>{personaCore.personality.aesthetic?.join('\n') || ''}</textarea>
+                }}></textarea>
               </label>
               <label>
                 <span>Interests (one per line)</span>
-                <textarea rows="3" bind:value={personaCore.personality.interests} on:change={(e) => {
+                <textarea rows="3" value={personaCore.personality.interests?.join('\n') || ''} on:input={(e) => {
                   personaCore.personality.interests = e.currentTarget.value.split('\n').map(s => s.trim()).filter(Boolean);
-                }}>{personaCore.personality.interests?.join('\n') || ''}</textarea>
+                }}></textarea>
               </label>
             </section>
 
@@ -449,9 +449,9 @@
               <h3>Boundaries</h3>
               <label>
                 <span>Boundaries (one per line)</span>
-                <textarea rows="5" bind:value={personaCore.values.boundaries} on:change={(e) => {
+                <textarea rows="5" value={personaCore.values.boundaries.join('\n')} on:input={(e) => {
                   personaCore.values.boundaries = e.currentTarget.value.split('\n').map(s => s.trim()).filter(Boolean);
-                }}>{personaCore.values.boundaries.join('\n')}</textarea>
+                }}></textarea>
               </label>
             </section>
 
@@ -549,10 +549,10 @@
               <h3>Domains</h3>
               <label>
                 <span>Domains of Expertise (one per line)</span>
-                <textarea rows="4" bind:value={personaCore.context.domains} on:change={(e) => {
+                <textarea rows="4" value={personaCore.context?.domains?.join('\n') || ''} on:input={(e) => {
                   if (!personaCore.context) personaCore.context = { domains: [], projects: [], currentFocus: [] };
                   personaCore.context.domains = e.currentTarget.value.split('\n').map(s => s.trim()).filter(Boolean);
-                }}>{personaCore.context?.domains?.join('\n') || ''}</textarea>
+                }}></textarea>
               </label>
             </section>
 
@@ -589,10 +589,10 @@
               <h3>Current Focus</h3>
               <label>
                 <span>Current Focus Areas (one per line)</span>
-                <textarea rows="4" bind:value={personaCore.context.currentFocus} on:change={(e) => {
+                <textarea rows="4" value={personaCore.context?.currentFocus?.join('\n') || ''} on:input={(e) => {
                   if (!personaCore.context) personaCore.context = { domains: [], projects: [], currentFocus: [] };
                   personaCore.context.currentFocus = e.currentTarget.value.split('\n').map(s => s.trim()).filter(Boolean);
-                }}>{personaCore.context?.currentFocus?.join('\n') || ''}</textarea>
+                }}></textarea>
               </label>
             </section>
 
@@ -630,10 +630,10 @@
                 </label>
                 <label>
                   <span>Motifs (one per line)</span>
-                  <textarea rows="3" bind:value={personaCore.writingStyle.motifs} on:change={(e) => {
+                  <textarea rows="3" value={personaCore.writingStyle.motifs?.join('\n') || ''} on:input={(e) => {
                     if (!personaCore.writingStyle) personaCore.writingStyle = { structure: '', motifs: [], defaultMantra: '' };
                     personaCore.writingStyle.motifs = e.currentTarget.value.split('\n').map(s => s.trim()).filter(Boolean);
-                  }}>{personaCore.writingStyle.motifs?.join('\n') || ''}</textarea>
+                  }}></textarea>
                 </label>
                 <label>
                   <span>Default Mantra</span>
@@ -704,9 +704,9 @@
                 </div>
                 <label>
                   <span>Usage Hints (one per line)</span>
-                  <textarea rows="2" bind:value={facet.usageHints} on:change={(e) => {
+                  <textarea rows="2" value={facet.usageHints?.join('\n') || ''} on:input={(e) => {
                     facet.usageHints = e.currentTarget.value.split('\n').map(s => s.trim()).filter(Boolean);
-                  }}>{facet.usageHints?.join('\n') || ''}</textarea>
+                  }}></textarea>
                 </label>
               </div>
             </div>
