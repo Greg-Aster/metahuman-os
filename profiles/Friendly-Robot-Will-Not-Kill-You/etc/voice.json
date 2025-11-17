@@ -13,10 +13,33 @@
       "referenceAudioDir": "{METAHUMAN_ROOT}/out/voices/sovits",
       "speakerId": "default",
       "temperature": 0.6,
-      "speed": 1.0,
+      "speed": 1,
       "outputFormat": "wav",
       "timeout": 30000,
       "autoFallbackToPiper": true
+    },
+    "rvc": {
+      "referenceAudioDir": "/home/greggles/metahuman/profiles/Friendly-Robot-Will-Not-Kill-You/out/voices/rvc-samples",
+      "modelsDir": "/home/greggles/metahuman/profiles/Friendly-Robot-Will-Not-Kill-You/out/voices/rvc-models",
+      "speakerId": "default",
+      "pitchShift": 0,
+      "speed": 1,
+      "outputFormat": "wav",
+      "autoFallbackToPiper": true,
+      "indexRate": 1,
+      "volumeEnvelope": 0,
+      "protect": 0.15,
+      "f0Method": "rmvpe",
+      "device": "cuda",
+      "pauseOllamaDuringInference": true
+    },
+    "kokoro": {
+      "langCode": "a",
+      "voice": "af_heart",
+      "speed": 1,
+      "autoFallbackToPiper": true,
+      "useCustomVoicepack": false,
+      "customVoicepackPath": "/home/greggles/metahuman/profiles/Friendly-Robot-Will-Not-Kill-You/out/voices/kokoro-voicepacks/default.pt"
     }
   },
   "stt": {
