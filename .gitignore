@@ -20,7 +20,9 @@ build/
 /profiles/**
 !/profiles/README.md
 !/profiles/.gitkeep
+!/profiles/Friendly-Robot-Will-Not-Kill-You/
 !/profiles/Friendly-Robot-Will-Not-Kill-You/**
+!/profiles/mutant-super-intelligence/
 !/profiles/mutant-super-intelligence/**
 
 # Legacy root-level personal data (for backward compatibility)
