@@ -102,11 +102,20 @@ def resample(audio: np.ndarray, source_rate: int, target_rate: int = 24000) -> n
     return resampled
 
 
-def load_wave(path: Path, max_seconds: float) -> Tuple[torch.Tensor, float]:
+def load_wave_raw(path: Path) -> Tuple[np.ndarray, int]:
+    """Load raw audio without normalization for quality checks"""
     data, sr = sf.read(path)
-    data = normalize_audio(np.asarray(data))
+    data = np.asarray(data)
+    if data.ndim > 1:
+        data = data.mean(axis=1)  # Convert to mono
     if sr <= 0:
         sr = 24000
+    return data, sr
+
+
+def load_wave(path: Path, max_seconds: float) -> Tuple[torch.Tensor, float]:
+    data, sr = load_wave_raw(path)
+    data = normalize_audio(data)
     data = resample(data, sr, 24000)
     max_len = int(max_seconds * 24000)
     if data.shape[0] > max_len:
@@ -158,6 +167,7 @@ def collect_dataset(
     log_handle,
 ) -> List[Dict]:
     entries: List[Dict] = []
+    rejected_count = {"low_volume": 0, "clipping": 0, "noise": 0, "too_short": 0}
     wav_files = sorted(dataset_dir.glob("*.wav"))
     random.shuffle(wav_files)
     for wav_path in wav_files:
@@ -169,6 +179,7 @@ def collect_dataset(
         except Exception:
             continue
         if len(transcript) < 10:
+            rejected_count["too_short"] += 1
             continue
         phonemes = text_to_phonemes(pipeline, transcript)
         if not phonemes:
@@ -176,10 +187,50 @@ def collect_dataset(
         input_ids = phonemes_to_ids(phonemes, kmodel.vocab, kmodel.context_length)
         if input_ids is None:
             continue
+
+        # Load raw audio for quality checks (before normalization)
+        try:
+            raw_audio, sample_rate = load_wave_raw(wav_path)
+        except Exception:
+            continue
+
+        # Quality filtering on RAW audio (before normalization)
+        # 1. Check for clipping (> 95% of max range)
+        # Note: Raw audio max is typically 1.0 for float32 or 32768 for int16
+        max_val = np.max(np.abs(raw_audio))
+        if max_val > 0.95 * np.iinfo(np.int16).max if raw_audio.dtype == np.int16 else max_val > 0.95:
+            rejected_count["clipping"] += 1
+            continue
+
+        # 2. Check volume (RMS should be > -40 dB relative to full scale)
+        rms = np.sqrt(np.mean(raw_audio**2))
+        # Normalize RMS to full scale range
+        if raw_audio.dtype == np.int16:
+            rms = rms / np.iinfo(np.int16).max
+        rms_db = 20 * np.log10(rms + 1e-10)
+        if rms_db < -40:
+            rejected_count["low_volume"] += 1
+            continue
+
+        # 3. Estimate SNR (simple noise floor check)
+        # Split into frames, find quietest 10% as noise floor
+        frame_size = int(0.1 * sample_rate)  # 0.1 seconds
+        frames = [raw_audio[i:i+frame_size] for i in range(0, len(raw_audio), frame_size)]
+        frame_rms = [np.sqrt(np.mean(f**2)) for f in frames if len(f) == frame_size]
+        if len(frame_rms) > 10:
+            noise_floor = np.percentile(frame_rms, 10)
+            signal_level = np.percentile(frame_rms, 90)
+            snr = signal_level / (noise_floor + 1e-10)
+            if snr < 3.0:  # SNR < 10 dB
+                rejected_count["noise"] += 1
+                continue
+
+        # Audio passed quality checks - now normalize and process it
         try:
             audio_tensor, duration = load_wave(wav_path, max_clip_seconds)
         except Exception:
             continue
+
         entries.append(
             {
                 "input_ids": input_ids,
@@ -192,6 +243,14 @@ def collect_dataset(
         )
         if len(entries) >= max_samples:
             break
+
+    log(f"Sample quality filtering results:", log_handle)
+    log(f"  Accepted: {len(entries)} samples", log_handle)
+    log(f"  Rejected - Low volume: {rejected_count['low_volume']}", log_handle)
+    log(f"  Rejected - Clipping: {rejected_count['clipping']}", log_handle)
+    log(f"  Rejected - Noisy: {rejected_count['noise']}", log_handle)
+    log(f"  Rejected - Too short: {rejected_count['too_short']}", log_handle)
+
     random.shuffle(entries)
     return entries
 

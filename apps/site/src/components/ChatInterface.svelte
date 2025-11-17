@@ -6,6 +6,7 @@
   import { canUseOperator, currentMode } from '../stores/security-policy';
   import { triggerClearAuditStream } from '../stores/clear-events';
   import { yoloModeStore } from '../stores/navigation';
+  import { calculateVoiceVolume } from '../lib/audio-utils.js';
 
 type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'dream' | 'reasoning';
 
@@ -575,6 +576,7 @@ let reasoningStages: ReasoningStage[] = [];
 
   onMount(async () => {
     loadChatPrefs();
+    loadVADSettings(); // Load VAD settings from voice config
     if (ttsEnabled) {
       prefetchVoiceResources();
     }
@@ -1051,6 +1053,31 @@ let reasoningStages: ReasoningStage[] = [];
   let micAnalyser: AnalyserNode | null = null;
   let micAudioCtx: AudioContext | null = null;
   let micSilenceTimer: number | null = null;
+  let micSpeaking = false; // VAD speaking state
+
+  // VAD settings (loaded from user profile)
+  let MIC_VOICE_THRESHOLD = 12; // Sensitivity 0-100
+  let MIC_SILENCE_DELAY = 5000; // 5 seconds of silence before auto-stop
+  let MIC_MIN_DURATION = 500; // Don't send if recording is less than 500ms
+
+  // Load VAD settings from voice config
+  async function loadVADSettings() {
+    try {
+      const response = await fetch('/api/voice-settings');
+      if (response.ok) {
+        const config = await response.json();
+        if (config.stt?.vad) {
+          MIC_VOICE_THRESHOLD = config.stt.vad.voiceThreshold ?? 12;
+          MIC_SILENCE_DELAY = config.stt.vad.silenceDelay ?? 5000;
+          MIC_MIN_DURATION = config.stt.vad.minDuration ?? 500;
+          console.log('[chat-mic] Loaded VAD settings:', { MIC_VOICE_THRESHOLD, MIC_SILENCE_DELAY, MIC_MIN_DURATION });
+        }
+      }
+    } catch (error) {
+      console.error('[chat-mic] Failed to load VAD settings:', error);
+      // Keep defaults
+    }
+  }
 
   async function startMic() {
     if (micRecording) return;
@@ -1087,6 +1114,7 @@ let reasoningStages: ReasoningStage[] = [];
     try { micRecorder && micRecorder.state !== 'inactive' && micRecorder.stop(); } catch {}
     if (micSilenceTimer) { clearTimeout(micSilenceTimer); micSilenceTimer = null; }
     micRecording = false;
+    micSpeaking = false; // Reset speaking state
     try { micStream?.getTracks().forEach(t => t.stop()); } catch {}
     micStream = null;
     try { micAudioCtx?.close(); } catch {}
@@ -1096,8 +1124,15 @@ let reasoningStages: ReasoningStage[] = [];
   async function finalizeMic() {
     try {
       const blob = new Blob(micChunks, { type: 'audio/webm' });
-      const buf = await blob.arrayBuffer();
       const dur = micStartedAt ? (Date.now() - micStartedAt) : 0;
+
+      // Ignore recordings that are too short (likely accidental clicks)
+      if (dur < MIC_MIN_DURATION) {
+        console.log(`[chat-mic] Recording too short (${dur}ms), ignoring`);
+        return;
+      }
+
+      const buf = await blob.arrayBuffer();
       const res = await fetch(`/api/stt?format=webm&collect=1&dur=${dur}`, { method: 'POST', body: buf });
       if (res.ok) {
         const data = await res.json();
@@ -1115,21 +1150,35 @@ let reasoningStages: ReasoningStage[] = [];
 
   function runMicVAD() {
     const analyser = micAnalyser; if (!analyser) return;
-    const data = new Uint8Array(analyser.frequencyBinCount);
-    const THRESH = 12; // similar to Voice tab default
-    const STOP_MS = 3000; // ms of silence to stop (3 seconds - allows natural pauses)
-    let speaking = false;
+
     const tickVAD = () => {
       if (!micRecording || !micAnalyser) return;
-      analyser.getByteFrequencyData(data);
-      const avg = data.reduce((a, b) => a + b, 0) / data.length;
-      const vol = Math.min(100, (avg / 255) * 100);
-      if (vol > THRESH) {
-        speaking = true;
-        if (micSilenceTimer) { clearTimeout(micSilenceTimer); micSilenceTimer = null; }
-      } else if (speaking && !micSilenceTimer) {
-        micSilenceTimer = window.setTimeout(() => { stopMic(); }, STOP_MS);
+
+      // Use shared audio utility for voice-frequency-focused volume calculation
+      const vol = calculateVoiceVolume(analyser, 150);
+
+      // Voice detected
+      if (vol > MIC_VOICE_THRESHOLD) {
+        if (!micSpeaking) {
+          console.log('[chat-mic] Speech started');
+          micSpeaking = true;
+        }
+        // Clear silence timer (user is still speaking)
+        if (micSilenceTimer) {
+          clearTimeout(micSilenceTimer);
+          micSilenceTimer = null;
+        }
       }
+      // Silence detected while we were speaking
+      else if (micSpeaking && !micSilenceTimer) {
+        // Start silence timer
+        micSilenceTimer = window.setTimeout(() => {
+          console.log('[chat-mic] Silence detected, stopping');
+          micSpeaking = false; // Reset speaking state
+          stopMic();
+        }, MIC_SILENCE_DELAY);
+      }
+
       requestAnimationFrame(tickVAD);
     };
     requestAnimationFrame(tickVAD);

@@ -5,7 +5,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, systemPaths } from './paths.js';
+import { paths, systemPaths, tryResolveProfilePath } from './paths.js';
 import { spawn, spawnSync, execSync } from 'node:child_process';
 import { audit } from './audit.js';
 import { clearCache } from './tts/cache.js';
@@ -76,9 +76,13 @@ let config: VoiceTrainingConfig | null = null;
 function loadConfig(): VoiceTrainingConfig {
   // Always read fresh so runtime updates to etc/voice.json take effect immediately
   try {
-    const configPath = paths.voiceConfig;
-    const voiceConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    config = voiceConfig.training || null;
+    const result = tryResolveProfilePath('voiceConfig');
+    if (result.ok) {
+      const voiceConfig = JSON.parse(fs.readFileSync(result.path, 'utf-8'));
+      config = voiceConfig.training || null;
+    } else {
+      config = null;
+    }
   } catch {
     config = null;
   }
@@ -97,8 +101,15 @@ function loadConfig(): VoiceTrainingConfig {
 /**
  * Get voice training data directory
  */
-function getTrainingDir(): string {
-  const dir = paths.voiceTraining;
+function getTrainingDir(): string | null {
+  // Use safe path resolution to handle anonymous users
+  const result = tryResolveProfilePath('voiceTraining');
+  if (!result.ok) {
+    console.warn('[voice-training] Cannot access voice training directory: user not authenticated');
+    return null;
+  }
+
+  const dir = result.path;
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -159,6 +170,12 @@ export function saveVoiceSample(
   const id = `voice-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
   const trainingDir = getTrainingDir();
+
+  // If no training directory available (user not authenticated), skip saving
+  if (!trainingDir) {
+    console.log('[voice-training] Cannot save voice sample: user not authenticated');
+    return null;
+  }
   let audioPath = path.join(trainingDir, `${id}.wav`);
   const transcriptPath = path.join(trainingDir, `${id}.txt`);
 
@@ -171,7 +188,17 @@ export function saveVoiceSample(
       try {
         const tempWebm = path.join(trainingDir, `${id}.webm`);
         fs.writeFileSync(tempWebm, audioBuffer);
-        const res = spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', tempWebm, '-ac', '1', '-ar', '22050', audioPath], {
+        // Convert to mono 22.05kHz WAV with volume normalization
+        // -af "loudnorm=I=-16:TP=-1.5:LRA=11" normalizes to -16 LUFS (broadcast standard)
+        // This fixes low volume issues from browser MediaRecorder
+        const res = spawnSync('ffmpeg', [
+          '-y', '-hide_banner', '-loglevel', 'error',
+          '-i', tempWebm,
+          '-ac', '1',                                    // mono
+          '-ar', '22050',                                // 22.05kHz sample rate
+          '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',       // normalize volume to -16 LUFS
+          audioPath
+        ], {
           cwd: paths.root,
         });
         if (res.status !== 0) {
@@ -246,7 +273,7 @@ export function getTrainingProgress(): {
   const cfg = loadConfig();
   const trainingDir = getTrainingDir();
 
-  if (!fs.existsSync(trainingDir)) {
+  if (!trainingDir || !fs.existsSync(trainingDir)) {
     return {
       samplesCollected: 0,
       totalDuration: 0,
@@ -294,7 +321,7 @@ export function getTrainingProgress(): {
 export function listVoiceSamples(limit?: number): VoiceSample[] {
   const trainingDir = getTrainingDir();
 
-  if (!fs.existsSync(trainingDir)) {
+  if (!trainingDir || !fs.existsSync(trainingDir)) {
     return [];
   }
 
@@ -327,6 +354,11 @@ export function listVoiceSamples(limit?: number): VoiceSample[] {
  */
 export function deleteVoiceSample(id: string): boolean {
   const trainingDir = getTrainingDir();
+
+  if (!trainingDir) {
+    console.warn('[voice-training] Cannot delete sample: user not authenticated');
+    return false;
+  }
 
   try {
     const audioPath = path.join(trainingDir, `${id}.wav`);
@@ -363,7 +395,16 @@ export function deleteVoiceSample(id: string): boolean {
  */
 export function exportTrainingDataset(): string {
   const trainingDir = getTrainingDir();
-  const exportDir = paths.voiceDataset;
+
+  if (!trainingDir) {
+    throw new Error('Cannot export dataset: user not authenticated');
+  }
+
+  const datasetResult = tryResolveProfilePath('voiceDataset');
+  if (!datasetResult.ok) {
+    throw new Error('Cannot export dataset: user not authenticated');
+  }
+  const exportDir = datasetResult.path;
 
   if (!fs.existsSync(exportDir)) {
     fs.mkdirSync(exportDir, { recursive: true });
@@ -411,7 +452,11 @@ export function getVoiceTrainingStatus(): { enabled: boolean } {
  * Set voice training enabled state
  */
 export function setVoiceTrainingEnabled(enabled: boolean): { enabled: boolean } {
-  const configPath = paths.voiceConfig;
+  const result = tryResolveProfilePath('voiceConfig');
+  if (!result.ok) {
+    throw new Error('Cannot update voice training settings: user not authenticated');
+  }
+  const configPath = result.path;
 
   try {
     let voiceConfig: any = {};
@@ -476,8 +521,9 @@ export function purgeVoiceTrainingData(): { deletedCount: number } {
     }
 
     // Also clean up exported datasets
-    const exportDir = paths.voiceDataset;
-    if (fs.existsSync(exportDir)) {
+    const datasetResult = tryResolveProfilePath('voiceDataset');
+    if (datasetResult.ok && fs.existsSync(datasetResult.path)) {
+      const exportDir = datasetResult.path;
       const files = fs.readdirSync(exportDir);
       for (const file of files) {
         try {
@@ -531,7 +577,10 @@ export function getReferenceSamples(minQuality = 0.8): VoiceSample[] {
  * Copies selected high-quality samples to the SoVITS reference directory
  */
 export function exportSoVITSDataset(speakerId: string = 'default'): string {
-  const recordingsDir = paths.voiceTraining;
+  const recordingsDir = getTrainingDir();
+  if (!recordingsDir) {
+    throw new Error('Cannot export SoVITS dataset: user not authenticated');
+  }
   const sovitsRefDir = path.join(paths.sovitsReference, speakerId);
 
   // Create SoVITS reference directory
@@ -622,7 +671,10 @@ export function exportSoVITSDataset(speakerId: string = 'default'): string {
  * IMPORTANT: Clears existing reference audio first, then copies only selected samples
  */
 export function copyToSoVITS(sampleIds: string[], speakerId: string = 'default'): number {
-  const recordingsDir = paths.voiceTraining;
+  const recordingsDir = getTrainingDir();
+  if (!recordingsDir) {
+    throw new Error('Cannot copy to SoVITS: user not authenticated');
+  }
   const sovitsRefDir = path.join(paths.sovitsReference, speakerId);
 
   // Create SoVITS reference directory if it doesn't exist
@@ -755,27 +807,33 @@ export function copyToSoVITS(sampleIds: string[], speakerId: string = 'default')
   // Clear TTS cache since reference audio has changed
   // This ensures next TTS generation uses the new voice profile
   try {
-    const voiceConfig = JSON.parse(fs.readFileSync(paths.voiceConfig, 'utf-8'));
-    if (voiceConfig?.cache?.enabled) {
-      const cacheDir = voiceConfig.cache.directory || path.join(paths.out, 'voice-cache');
-      const cacheConfig = {
-        enabled: true,
-        directory: cacheDir,
-        maxSizeMB: voiceConfig.cache.maxSizeMB || 500,
-      };
-      const clearedCount = clearCache(cacheConfig);
+    const configResult = tryResolveProfilePath('voiceConfig');
+    if (configResult.ok) {
+      const voiceConfig = JSON.parse(fs.readFileSync(configResult.path, 'utf-8'));
+      if (voiceConfig?.cache?.enabled) {
+        const outResult = tryResolveProfilePath('out');
+        const cacheDir = voiceConfig.cache.directory || (outResult.ok ? path.join(outResult.path, 'voice-cache') : null);
+        if (cacheDir) {
+          const cacheConfig = {
+            enabled: true,
+            directory: cacheDir,
+            maxSizeMB: voiceConfig.cache.maxSizeMB || 500,
+          };
+          const clearedCount = clearCache(cacheConfig);
 
-      audit({
-        level: 'info',
-        category: 'action',
-        event: 'tts_cache_auto_cleared',
-        details: {
-          reason: 'Reference audio updated',
-          speakerId,
-          filesCleared: clearedCount,
-        },
-        actor: 'system',
-      });
+          audit({
+            level: 'info',
+            category: 'action',
+            event: 'tts_cache_auto_cleared',
+            details: {
+              reason: 'Reference audio updated',
+              speakerId,
+              filesCleared: clearedCount,
+            },
+            actor: 'system',
+          });
+        }
+      }
     }
   } catch (error) {
     // If cache clearing fails, log but don't throw - reference audio copy still succeeded
@@ -975,7 +1033,10 @@ export function clearRVCDirectory(speakerId: string = 'default'): number {
  * IMPORTANT: This function clears the directory before copying to prevent duplicates
  */
 export function copyToRVC(sampleIds: string[], speakerId: string = 'default'): number {
-  const recordingsDir = paths.voiceTraining;
+  const recordingsDir = getTrainingDir();
+  if (!recordingsDir) {
+    throw new Error('Cannot copy to RVC: user not authenticated');
+  }
   const rvcRefDir = path.join(paths.rvcReference, speakerId);
 
   // Create RVC directory if it doesn't exist
@@ -1168,7 +1229,10 @@ function clearKokoroDataset(speakerId: string = 'default'): number {
 }
 
 export function copyToKokoroDataset(sampleIds: string[], speakerId: string = 'default'): number {
-  const srcDir = paths.voiceTraining;
+  const srcDir = getTrainingDir();
+  if (!srcDir) {
+    throw new Error('Cannot copy to Kokoro dataset: user not authenticated');
+  }
   const destDir = getKokoroDatasetDir(speakerId);
 
   clearKokoroDataset(speakerId);

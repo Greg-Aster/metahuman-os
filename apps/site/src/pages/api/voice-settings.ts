@@ -53,30 +53,57 @@ function getAvailableVoices(voicesDir: string): VoiceModel[] {
   return voices;
 }
 
-function loadKokoroVoices(rootDir: string): Array<{id: string; name: string; lang: string; gender: string; quality: string}> {
+function loadKokoroVoices(rootDir: string, profileRoot: string): Array<{id: string; name: string; lang: string; gender: string; quality: string; isCustom?: boolean; voicepackPath?: string}> {
   const kokoroDir = path.join(rootDir, 'external', 'kokoro');
   const voicesFile = path.join(kokoroDir, 'VOICES.md');
-  if (!fs.existsSync(voicesFile)) {
-    return [];
-  }
+  const voices: Array<{id: string; name: string; lang: string; gender: string; quality: string; isCustom?: boolean; voicepackPath?: string}> = [];
 
-  const content = fs.readFileSync(voicesFile, 'utf-8');
-  const voices: Array<{id: string; name: string; lang: string; gender: string; quality: string}> = [];
-  const lines = content.split('\n');
-  for (const line of lines) {
-    const match = line.match(/`([a-z_]+)`\s*-?\s*([^,]+),?\s*(Male|Female|Neutral)?,?\s*(High|Medium|Low)?/i);
-    if (match) {
-      const [, id, langInfo, gender, quality] = match;
-      const displayName = id.trim().replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-      voices.push({
-        id: id.trim(),
-        name: displayName,
-        lang: langInfo.trim(),
-        gender: gender?.trim() || 'Neutral',
-        quality: quality?.trim() || 'Medium',
-      });
+  // Load built-in voices from VOICES.md
+  if (fs.existsSync(voicesFile)) {
+    const content = fs.readFileSync(voicesFile, 'utf-8');
+    const lines = content.split('\n');
+    for (const line of lines) {
+      const match = line.match(/`([a-z_]+)`\s*-?\s*([^,]+),?\s*(Male|Female|Neutral)?,?\s*(High|Medium|Low)?/i);
+      if (match) {
+        const [, id, langInfo, gender, quality] = match;
+        const displayName = id.trim().replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        voices.push({
+          id: id.trim(),
+          name: displayName,
+          lang: langInfo.trim(),
+          gender: gender?.trim() || 'Neutral',
+          quality: quality?.trim() || 'Medium',
+          isCustom: false,
+        });
+      }
     }
   }
+
+  // Load custom voicepacks from profile
+  const voicepacksDir = path.join(profileRoot, 'out', 'voices', 'kokoro-voicepacks');
+  if (fs.existsSync(voicepacksDir)) {
+    try {
+      const files = fs.readdirSync(voicepacksDir);
+      const voicepackFiles = files.filter(f => f.endsWith('.pt'));
+
+      for (const file of voicepackFiles) {
+        const voicepackName = file.replace('.pt', '');
+        const voicepackPath = path.join(voicepacksDir, file);
+        voices.push({
+          id: `custom_${voicepackName}`,
+          name: `Custom: ${voicepackName.charAt(0).toUpperCase() + voicepackName.slice(1)}`,
+          lang: 'Custom Trained',
+          gender: 'Custom',
+          quality: 'User Trained',
+          isCustom: true,
+          voicepackPath,
+        });
+      }
+    } catch (error) {
+      console.warn('[voice-settings] Failed to scan custom voicepacks:', error);
+    }
+  }
+
   return voices;
 }
 
@@ -383,8 +410,25 @@ function ensureVoiceConfig(
       device: 'cpu',
       computeType: 'int8',
       language: 'en',
+      vad: {
+        voiceThreshold: 12,
+        silenceDelay: 5000,
+        minDuration: 500,
+      },
     },
   };
+
+  // Ensure VAD defaults if not present
+  if (!config.stt.whisper) {
+    config.stt.whisper = {} as any;
+  }
+  if (!config.stt.whisper.vad) {
+    config.stt.whisper.vad = {
+      voiceThreshold: 12,
+      silenceDelay: 5000,
+      minDuration: 500,
+    };
+  }
 
   config.webSocket = config.webSocket ?? {
     path: '/voice-stream',
@@ -435,8 +479,8 @@ const getHandler: APIRoute = async () => {
     const currentVoiceFile = path.basename(currentModelPath, '.onnx');
 
     const providerForUI = config.tts.provider === 'gpt-sovits' ? 'sovits' : config.tts.provider;
-
-    const kokoroVoices = loadKokoroVoices(rootDir);
+    const profileRoot = path.resolve(path.dirname(voiceConfigPath), '..');
+    const kokoroVoices = loadKokoroVoices(rootDir, profileRoot);
 
     // Check Whisper server status
     let whisperServerStatus = 'unknown';
@@ -480,7 +524,10 @@ const getHandler: APIRoute = async () => {
         },
         kokoro: {
           langCode: config.tts.kokoro?.langCode || 'a',
-          voice: config.tts.kokoro?.voice || 'af_heart',
+          // If using custom voicepack, prepend 'custom_' to the voice ID for the dropdown
+          voice: config.tts.kokoro?.useCustomVoicepack
+            ? `custom_${config.tts.kokoro.voice || 'default'}`
+            : (config.tts.kokoro?.voice || 'af_heart'),
           speed: config.tts.kokoro?.speed || 1.0,
           autoFallbackToPiper: config.tts.kokoro?.autoFallbackToPiper ?? true,
           useCustomVoicepack: config.tts.kokoro?.useCustomVoicepack ?? false,
@@ -495,6 +542,11 @@ const getHandler: APIRoute = async () => {
           useServer: config.stt?.whisper?.server?.useServer ?? true,
           autoStart: config.stt?.whisper?.server?.autoStart ?? true,
           serverStatus: whisperServerStatus,
+          vad: {
+            voiceThreshold: config.stt?.whisper?.vad?.voiceThreshold ?? 12,
+            silenceDelay: config.stt?.whisper?.vad?.silenceDelay ?? 5000,
+            minDuration: config.stt?.whisper?.vad?.minDuration ?? 500,
+          },
         },
       }),
       {
@@ -613,7 +665,26 @@ const postHandler: APIRoute = async ({ request }) => {
     if (kokoro) {
       config.tts.kokoro = config.tts.kokoro || {} as any;
       if (kokoro.langCode) config.tts.kokoro.langCode = kokoro.langCode;
-      if (kokoro.voice) config.tts.kokoro.voice = kokoro.voice;
+
+      // Handle voice selection (detect custom voicepacks)
+      if (kokoro.voice) {
+        if (kokoro.voice.startsWith('custom_')) {
+          // Custom voicepack selected
+          const voicepackName = kokoro.voice.replace('custom_', '');
+          const profileRoot = path.resolve(path.dirname(voiceConfigPath), '..');
+          const voicepackPath = path.join(profileRoot, 'out', 'voices', 'kokoro-voicepacks', `${voicepackName}.pt`);
+
+          config.tts.kokoro.useCustomVoicepack = true;
+          config.tts.kokoro.customVoicepackPath = voicepackPath;
+          // Keep the voice ID without the custom_ prefix for display
+          config.tts.kokoro.voice = voicepackName;
+        } else {
+          // Built-in voice selected
+          config.tts.kokoro.voice = kokoro.voice;
+          config.tts.kokoro.useCustomVoicepack = false;
+        }
+      }
+
       const parsedSpeed = Number(kokoro.speed);
       if (Number.isFinite(parsedSpeed)) {
         config.tts.kokoro.speed = clamp(parsedSpeed, 0.5, 2.0);
@@ -621,10 +692,11 @@ const postHandler: APIRoute = async ({ request }) => {
       if (typeof kokoro.autoFallbackToPiper === 'boolean') {
         config.tts.kokoro.autoFallbackToPiper = kokoro.autoFallbackToPiper;
       }
-      if (typeof kokoro.useCustomVoicepack === 'boolean') {
+      if (typeof kokoro.useCustomVoicepack === 'boolean' && !kokoro.voice?.startsWith('custom_')) {
+        // Only allow manual override if not using custom voice from dropdown
         config.tts.kokoro.useCustomVoicepack = kokoro.useCustomVoicepack;
       }
-      if (kokoro.customVoicepackPath) {
+      if (kokoro.customVoicepackPath && !kokoro.voice?.startsWith('custom_')) {
         config.tts.kokoro.customVoicepackPath = kokoro.customVoicepackPath;
       }
       if (kokoro.device === 'cuda' || kokoro.device === 'cpu') {
@@ -638,6 +710,7 @@ const postHandler: APIRoute = async ({ request }) => {
       config.stt = config.stt || { provider: 'whisper', whisper: {} };
       config.stt.whisper = config.stt.whisper || {};
       config.stt.whisper.server = config.stt.whisper.server || { useServer: true, url: 'http://127.0.0.1:9883', autoStart: true, port: 9883 };
+      config.stt.whisper.vad = config.stt.whisper.vad || { voiceThreshold: 12, silenceDelay: 5000, minDuration: 500 };
 
       // Update model
       if (stt.model && ['tiny.en', 'base.en', 'small.en', 'medium.en'].includes(stt.model)) {
@@ -671,6 +744,19 @@ const postHandler: APIRoute = async ({ request }) => {
 
       if (typeof stt.autoStart === 'boolean') {
         config.stt.whisper.server.autoStart = stt.autoStart;
+      }
+
+      // Update VAD settings
+      if (stt.vad) {
+        if (typeof stt.vad.voiceThreshold === 'number') {
+          config.stt.whisper.vad.voiceThreshold = clamp(stt.vad.voiceThreshold, 0, 100);
+        }
+        if (typeof stt.vad.silenceDelay === 'number') {
+          config.stt.whisper.vad.silenceDelay = clamp(stt.vad.silenceDelay, 1000, 30000);
+        }
+        if (typeof stt.vad.minDuration === 'number') {
+          config.stt.whisper.vad.minDuration = clamp(stt.vad.minDuration, 100, 5000);
+        }
       }
     }
 

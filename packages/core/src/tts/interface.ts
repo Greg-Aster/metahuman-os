@@ -102,6 +102,7 @@ export interface KokoroConfig {
   splitPattern: string;       // Regex pattern for splitting long text (default: '\n+')
   useCustomVoicepack: boolean; // Use custom trained voicepack instead of built-in voice
   customVoicepackPath: string; // Path to custom .pt voicepack file
+  normalizeCustomVoicepacks?: boolean; // Auto-normalize custom voicepack volume to -3dB peak (default: true)
   autoFallbackToPiper: boolean; // Fallback to Piper if Kokoro fails
   outputFormat: 'wav';
   device?: 'cuda' | 'cpu';    // Device for inference (default: "cpu")

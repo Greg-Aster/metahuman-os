@@ -34,6 +34,7 @@ class SynthesizeRequest(BaseModel):
     voice: str = "af_heart"
     speed: float = 1.0
     custom_voicepack: Optional[str] = None
+    normalize: bool = False
 
 
 @app.on_event("startup")
@@ -76,6 +77,16 @@ async def synthesize(request: SynthesizeRequest):
         # Determine which voice to use
         voice_to_use = request.custom_voicepack if (request.custom_voicepack and Path(request.custom_voicepack).exists()) else request.voice
 
+        # Debug logging
+        print(f"[Kokoro Server] Synthesize request:")
+        print(f"  text: {request.text[:50]}...")
+        print(f"  voice: {request.voice}")
+        print(f"  custom_voicepack: {request.custom_voicepack}")
+        print(f"  voice_to_use: {voice_to_use}")
+        print(f"  lang_code: {request.lang_code}")
+        print(f"  speed: {request.speed}")
+        print(f"  normalize: {request.normalize}")
+
         # Generate audio - pipeline returns a generator of Result objects
         gen = pipeline(
             request.text,
@@ -97,6 +108,16 @@ async def synthesize(request: SynthesizeRequest):
         import numpy as np
         audio = np.concatenate(audio_chunks) if len(audio_chunks) > 1 else audio_chunks[0]
 
+        # Normalize audio if requested (typically for custom voicepacks)
+        # Target peak of -3 dB (0.707 of max range)
+        if request.normalize:
+            max_val = np.abs(audio).max()
+            if max_val > 0:
+                target_peak = 0.707  # -3 dB
+                gain = target_peak / max_val
+                audio = audio * gain
+                print(f"[Kokoro Server] Applied normalization: gain={gain:.3f}x")
+
         # Kokoro uses 24kHz sample rate
         sr = 24000
 
@@ -105,12 +126,17 @@ async def synthesize(request: SynthesizeRequest):
         sf.write(buffer, audio, sr, format='WAV')
         buffer.seek(0)
 
+        print(f"[Kokoro Server] Successfully generated {len(audio)} samples")
+
         return Response(
             content=buffer.read(),
             media_type="audio/wav"
         )
 
     except Exception as e:
+        import traceback
+        print(f"[Kokoro Server] ERROR: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Synthesis failed: {str(e)}")
 
 

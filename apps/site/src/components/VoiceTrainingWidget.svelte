@@ -1110,8 +1110,45 @@
             </div>
             <div class="setting-group">
               <label for="kokoro-base">Base Voice</label>
-              <input id="kokoro-base" type="text" bind:value={kokoroConfig.baseVoice} />
-              <div class="setting-note">Start from any Kokoro built-in voice ID (e.g., af_heart, af_sarah, am_adam).</div>
+              <select id="kokoro-base" bind:value={kokoroConfig.baseVoice}>
+                <optgroup label="American English - Male">
+                  <option value="am_adam">Adam (Low pitch)</option>
+                  <option value="am_echo">Echo (Low pitch)</option>
+                  <option value="am_eric">Eric (Low pitch)</option>
+                  <option value="am_fenrir">Fenrir (Medium pitch)</option>
+                  <option value="am_liam">Liam (Low pitch)</option>
+                  <option value="am_michael" selected>Michael (Medium pitch) - Recommended</option>
+                  <option value="am_onyx">Onyx (Low pitch)</option>
+                  <option value="am_puck">Puck (Medium pitch)</option>
+                  <option value="am_santa">Santa (Low pitch)</option>
+                </optgroup>
+                <optgroup label="American English - Female">
+                  <option value="af_heart">Heart (High pitch)</option>
+                  <option value="af_alloy">Alloy (Medium pitch)</option>
+                  <option value="af_aoede">Aoede (Medium pitch)</option>
+                  <option value="af_bella">Bella (High pitch)</option>
+                  <option value="af_jessica">Jessica (Low pitch)</option>
+                  <option value="af_kore">Kore (Medium pitch)</option>
+                  <option value="af_nicole">Nicole (Medium pitch)</option>
+                  <option value="af_nova">Nova (Medium pitch)</option>
+                  <option value="af_river">River (Low pitch)</option>
+                  <option value="af_sarah">Sarah (Medium pitch)</option>
+                  <option value="af_sky">Sky (Medium pitch)</option>
+                </optgroup>
+                <optgroup label="British English - Male">
+                  <option value="bm_daniel">Daniel (Medium pitch)</option>
+                  <option value="bm_fable">Fable (Medium pitch)</option>
+                  <option value="bm_george">George (Medium pitch)</option>
+                  <option value="bm_lewis">Lewis (Medium pitch)</option>
+                </optgroup>
+                <optgroup label="British English - Female">
+                  <option value="bf_alice">Alice (Medium pitch)</option>
+                  <option value="bf_emma">Emma (Medium pitch)</option>
+                  <option value="bf_isabella">Isabella (Medium pitch)</option>
+                  <option value="bf_lily">Lily (Medium pitch)</option>
+                </optgroup>
+              </select>
+              <div class="setting-note">Choose a base voice that matches your gender and approximate pitch. Training will adapt this voice to sound like you.</div>
             </div>
             <div class="setting-group">
               <label for="kokoro-epochs">Epochs</label>
