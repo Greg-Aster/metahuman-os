@@ -5,6 +5,7 @@
   import ModelSelector from './ModelSelector.svelte';
   import BoredomControl from './BoredomControl.svelte';
   import AgentMonitor from './AgentMonitor.svelte';
+  import ServerStatus from './ServerStatus.svelte';
 
   let activeTab = 'monitor';
   let useEnhancedAudit = true; // Toggle between old and new audit stream (default: grouped mode)
@@ -35,6 +36,7 @@
   const tabs: Tab[] = [
     { id: 'audit', label: 'Audit Stream', icon: '📋' },
     { id: 'monitor', label: 'Agent Monitor', icon: '🤖' },
+    { id: 'servers', label: 'Server Status', icon: '🖥️' },
   ];
 
   // Ollama options (persisted)
@@ -270,6 +272,10 @@
       <div class="monitor-container">
         <AgentMonitor compact={true} />
       </div>
+    {:else if activeTab === 'servers'}
+      <div class="servers-container">
+        <ServerStatus />
+      </div>
     {/if}
   </div>
 </div>
@@ -356,6 +362,7 @@
 
   .audit-container,
   .monitor-container,
+  .servers-container,
   .settings-container {
     padding: 1rem;
   }
@@ -372,6 +379,12 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
+  }
+
+  .servers-container {
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
   }
 
   .section-title {
