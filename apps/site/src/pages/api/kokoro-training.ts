@@ -182,7 +182,7 @@ const postHandler: APIRoute = async ({ request }) => {
       }
 
       case 'start-training': {
-        const result = startKokoroVoicepackTraining(speakerId, {
+        const result = await startKokoroVoicepackTraining(speakerId, {
           langCode,
           baseVoice,
           epochs,
@@ -206,6 +206,37 @@ const postHandler: APIRoute = async ({ request }) => {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
+      }
+
+      case 'cancel-training': {
+        // Kill the training process by finding and terminating it
+        try {
+          const { execSync } = await import('node:child_process');
+          // Find and kill the build_voicepack.py process
+          execSync('pkill -9 -f "build_voicepack.py"', { stdio: 'ignore' });
+
+          // Clean up status file
+          const statusPath = path.join(systemPaths.logs, 'run', `kokoro-training-${speakerId}.json`);
+          if (fs.existsSync(statusPath)) {
+            fs.unlinkSync(statusPath);
+          }
+
+          return new Response(JSON.stringify({
+            success: true,
+            message: 'Training cancelled successfully',
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        } catch (error) {
+          console.error('[kokoro-training] Failed to cancel training:', error);
+          return new Response(JSON.stringify({
+            error: 'Failed to cancel training',
+          }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
       }
 
       default:

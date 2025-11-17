@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { getUserContext } from '@metahuman/core/context';
 import { withUserContext } from '../../middleware/userContext';
 import { startSovitsServer, stopSovitsServer } from '../../lib/sovits-server';
+import { stopServer } from '@metahuman/core/tts/server-manager';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -118,6 +119,7 @@ type VoiceConfig = {
       autoFallbackToPiper: boolean;
       useCustomVoicepack: boolean;
       customVoicepackPath?: string;
+      device?: 'cuda' | 'cpu';
       voices?: Array<{id: string; name: string; lang: string; gender: string; quality: string}>;
     };
   };
@@ -179,6 +181,7 @@ function buildDefaultVoiceConfig(
         autoFallbackToPiper: true,
         useCustomVoicepack: false,
         customVoicepackPath: path.join(profileRoot, 'out', 'voices', 'kokoro-voicepacks', 'default.pt'),
+        device: 'cpu',
       },
     },
     stt: {
@@ -343,6 +346,7 @@ function ensureVoiceConfig(
       autoFallbackToPiper: true,
       useCustomVoicepack: false,
       customVoicepackPath: path.join(profileRoot, 'out', 'voices', 'kokoro-voicepacks', 'default.pt'),
+      device: 'cpu',
     };
   }
 
@@ -353,6 +357,7 @@ function ensureVoiceConfig(
     : 1.0;
   config.tts.kokoro.autoFallbackToPiper = config.tts.kokoro.autoFallbackToPiper ?? true;
   config.tts.kokoro.useCustomVoicepack = config.tts.kokoro.useCustomVoicepack ?? false;
+  config.tts.kokoro.device = config.tts.kokoro.device === 'cuda' ? 'cuda' : 'cpu';
 
   // Ensure cache directory exists
   config.cache = config.cache ?? {
@@ -433,6 +438,20 @@ const getHandler: APIRoute = async () => {
 
     const kokoroVoices = loadKokoroVoices(rootDir);
 
+    // Check Whisper server status
+    let whisperServerStatus = 'unknown';
+    if (config.stt?.whisper?.server?.useServer) {
+      try {
+        const whisperUrl = config.stt.whisper.server.url || 'http://127.0.0.1:9883';
+        const response = await fetch(`${whisperUrl}/health`, { signal: AbortSignal.timeout(1000) });
+        whisperServerStatus = response.ok ? 'running' : 'stopped';
+      } catch {
+        whisperServerStatus = 'stopped';
+      }
+    } else {
+      whisperServerStatus = 'disabled';
+    }
+
     return new Response(
       JSON.stringify({
         provider: providerForUI,
@@ -465,7 +484,17 @@ const getHandler: APIRoute = async () => {
           speed: config.tts.kokoro?.speed || 1.0,
           autoFallbackToPiper: config.tts.kokoro?.autoFallbackToPiper ?? true,
           useCustomVoicepack: config.tts.kokoro?.useCustomVoicepack ?? false,
+          device: config.tts.kokoro?.device || 'cpu',
           voices: kokoroVoices,
+        },
+        stt: {
+          model: config.stt?.whisper?.model || 'base.en',
+          device: config.stt?.whisper?.device || 'cpu',
+          computeType: config.stt?.whisper?.computeType || 'int8',
+          language: config.stt?.whisper?.language || 'en',
+          useServer: config.stt?.whisper?.server?.useServer ?? true,
+          autoStart: config.stt?.whisper?.server?.autoStart ?? true,
+          serverStatus: whisperServerStatus,
         },
       }),
       {
@@ -496,9 +525,9 @@ const postHandler: APIRoute = async ({ request }) => {
     }
 
     const body = await request.json();
-    const { provider, piper, sovits, rvc } = body;
+    const { provider, piper, sovits, rvc, kokoro, stt } = body;
 
-    console.log('[voice-settings POST] Received body:', { provider, hasPiper: !!piper, hasSovits: !!sovits, hasRvc: !!rvc });
+    console.log('[voice-settings POST] Received body:', { provider, hasPiper: !!piper, hasSovits: !!sovits, hasRvc: !!rvc, hasKokoro: !!kokoro, hasStt: !!stt });
 
     const voiceConfigPath = context.profilePaths.voiceConfig;
     const voicesDir = context.systemPaths.voiceModels;
@@ -506,6 +535,8 @@ const postHandler: APIRoute = async ({ request }) => {
     const voices = getAvailableVoices(voicesDir);
     const config = ensureVoiceConfig(voiceConfigPath, voicesDir, rootDir, voices);
     const previousProvider = config.tts.provider;
+    const previousRvcDevice = config.tts.rvc?.device;
+    const previousKokoroDevice = config.tts.kokoro?.device;
 
     console.log('[voice-settings POST] Previous provider:', previousProvider, '→ New provider:', provider);
 
@@ -578,12 +609,80 @@ const postHandler: APIRoute = async ({ request }) => {
       }
     }
 
+    // Update Kokoro settings
+    if (kokoro) {
+      config.tts.kokoro = config.tts.kokoro || {} as any;
+      if (kokoro.langCode) config.tts.kokoro.langCode = kokoro.langCode;
+      if (kokoro.voice) config.tts.kokoro.voice = kokoro.voice;
+      const parsedSpeed = Number(kokoro.speed);
+      if (Number.isFinite(parsedSpeed)) {
+        config.tts.kokoro.speed = clamp(parsedSpeed, 0.5, 2.0);
+      }
+      if (typeof kokoro.autoFallbackToPiper === 'boolean') {
+        config.tts.kokoro.autoFallbackToPiper = kokoro.autoFallbackToPiper;
+      }
+      if (typeof kokoro.useCustomVoicepack === 'boolean') {
+        config.tts.kokoro.useCustomVoicepack = kokoro.useCustomVoicepack;
+      }
+      if (kokoro.customVoicepackPath) {
+        config.tts.kokoro.customVoicepackPath = kokoro.customVoicepackPath;
+      }
+      if (kokoro.device === 'cuda' || kokoro.device === 'cpu') {
+        config.tts.kokoro.device = kokoro.device;
+      }
+    }
+
+    // Update STT (Whisper) settings
+    if (stt) {
+      // Ensure stt.whisper structure exists
+      config.stt = config.stt || { provider: 'whisper', whisper: {} };
+      config.stt.whisper = config.stt.whisper || {};
+      config.stt.whisper.server = config.stt.whisper.server || { useServer: true, url: 'http://127.0.0.1:9883', autoStart: true, port: 9883 };
+
+      // Update model
+      if (stt.model && ['tiny.en', 'base.en', 'small.en', 'medium.en'].includes(stt.model)) {
+        config.stt.whisper.model = stt.model;
+      }
+
+      // Update device
+      if (stt.device === 'cpu' || stt.device === 'cuda') {
+        config.stt.whisper.device = stt.device;
+
+        // Auto-adjust compute type based on device
+        if (stt.device === 'cuda' && config.stt.whisper.computeType === 'int8') {
+          config.stt.whisper.computeType = 'float16';
+        }
+      }
+
+      // Update compute type
+      if (stt.computeType && ['int8', 'float16', 'float32'].includes(stt.computeType)) {
+        config.stt.whisper.computeType = stt.computeType;
+      }
+
+      // Update language
+      if (stt.language && typeof stt.language === 'string') {
+        config.stt.whisper.language = stt.language;
+      }
+
+      // Update server settings
+      if (typeof stt.useServer === 'boolean') {
+        config.stt.whisper.server.useServer = stt.useServer;
+      }
+
+      if (typeof stt.autoStart === 'boolean') {
+        config.stt.whisper.server.autoStart = stt.autoStart;
+      }
+    }
+
     // Save configuration
     fs.writeFileSync(voiceConfigPath, JSON.stringify(config, null, 2), 'utf8');
 
     // Handle provider switching and service orchestration
     try {
-      await syncTTSBackends(previousProvider, config.tts.provider, config);
+      await syncTTSBackends(previousProvider, config.tts.provider, config, {
+        previousRvcDevice,
+        previousKokoroDevice,
+      });
 
       const responseProvider = config.tts.provider === 'gpt-sovits' ? 'sovits' : config.tts.provider;
       return new Response(
@@ -630,49 +729,114 @@ const postHandler: APIRoute = async ({ request }) => {
 async function syncTTSBackends(
   previousProvider: string,
   nextProvider: string,
-  config: VoiceConfig
+  config: VoiceConfig,
+  previousDeviceSettings?: {
+    previousRvcDevice?: 'cuda' | 'cpu';
+    previousKokoroDevice?: 'cuda' | 'cpu';
+  }
 ): Promise<void> {
   const normalize = (provider: string) => provider === 'sovits' || provider === 'gpt-sovits' ? 'gpt-sovits' : provider;
   const prev = normalize(previousProvider);
   const next = normalize(nextProvider);
 
-  if (prev === next) {
+  // Check for device changes within the same provider
+  const rvcDeviceChanged = previousDeviceSettings?.previousRvcDevice &&
+    config.tts.rvc?.device &&
+    previousDeviceSettings.previousRvcDevice !== config.tts.rvc.device;
+
+  const kokoroDeviceChanged = previousDeviceSettings?.previousKokoroDevice &&
+    config.tts.kokoro?.device &&
+    previousDeviceSettings.previousKokoroDevice !== config.tts.kokoro.device;
+
+  // If provider didn't change and no device changes, nothing to do
+  if (prev === next && !rvcDeviceChanged && !kokoroDeviceChanged) {
     return;
   }
 
-  console.log(`[voice-settings] Provider switch: ${previousProvider} → ${nextProvider}`);
+  if (prev !== next) {
+    console.log(`[voice-settings] Provider switch: ${previousProvider} → ${nextProvider}`);
+  }
 
-  // Stop previous provider's services
-  if (prev === 'gpt-sovits') {
+  if (rvcDeviceChanged) {
+    console.log(`[voice-settings] RVC device changed: ${previousDeviceSettings?.previousRvcDevice} → ${config.tts.rvc?.device}`);
+  }
+
+  if (kokoroDeviceChanged) {
+    console.log(`[voice-settings] Kokoro device changed: ${previousDeviceSettings?.previousKokoroDevice} → ${config.tts.kokoro?.device}`);
+  }
+
+  // Handle device changes for active providers (restart servers)
+  if (rvcDeviceChanged && next === 'rvc') {
     try {
-      console.log('[voice-settings] Stopping SoVITS server...');
-      await stopSovitsServer();
+      console.log('[voice-settings] Restarting RVC server with new device...');
+      await stopServer('rvc');
+      // The RVC server will auto-start with new device settings on next TTS request
+      // via the server-manager in createTTSService()
+      console.log('[voice-settings] RVC server stopped. Will restart with new device on next use.');
     } catch (error) {
-      console.error('[voice-settings] Failed to stop SoVITS server:', error);
+      console.error('[voice-settings] Failed to restart RVC server:', error);
     }
   }
 
-  // RVC and Piper don't have background services, just stop SoVITS if switching away
-
-  // Start new provider's services
-  if (next === 'gpt-sovits') {
-    const port = extractSovitsPort(config);
+  if (kokoroDeviceChanged && next === 'kokoro') {
     try {
-      console.log(`[voice-settings] Starting SoVITS server on port ${port}...`);
-      const result = await startSovitsServer(port);
-      if (!result.success) {
-        console.error('[voice-settings] Failed to start SoVITS server:', result.error);
-        throw new Error(result.error || 'Failed to start SoVITS server');
-      }
-      console.log(`[voice-settings] SoVITS server started successfully`);
+      console.log('[voice-settings] Restarting Kokoro server with new device...');
+      await stopServer('kokoro');
+      // The Kokoro server will auto-start with new device settings on next TTS request
+      // via the server-manager in createTTSService()
+      console.log('[voice-settings] Kokoro server stopped. Will restart with new device on next use.');
     } catch (error) {
-      console.error('[voice-settings] Error starting SoVITS server:', error);
-      throw error; // Propagate error so user knows the server didn't start
+      console.error('[voice-settings] Failed to restart Kokoro server:', error);
     }
-  } else if (nextProvider === 'rvc') {
-    console.log('[voice-settings] Switched to RVC (no background service needed)');
-  } else if (nextProvider === 'piper') {
-    console.log('[voice-settings] Switched to Piper (no background service needed)');
+  }
+
+  // Stop previous provider's services (only if provider actually changed)
+  if (prev !== next) {
+    if (prev === 'gpt-sovits') {
+      try {
+        console.log('[voice-settings] Stopping SoVITS server...');
+        await stopSovitsServer();
+      } catch (error) {
+        console.error('[voice-settings] Failed to stop SoVITS server:', error);
+      }
+    } else if (prev === 'rvc') {
+      try {
+        console.log('[voice-settings] Stopping RVC server...');
+        await stopServer('rvc');
+      } catch (error) {
+        console.error('[voice-settings] Failed to stop RVC server:', error);
+      }
+    } else if (prev === 'kokoro') {
+      try {
+        console.log('[voice-settings] Stopping Kokoro server...');
+        await stopServer('kokoro');
+      } catch (error) {
+        console.error('[voice-settings] Failed to stop Kokoro server:', error);
+      }
+    }
+
+    // Start new provider's services
+    if (next === 'gpt-sovits') {
+      const port = extractSovitsPort(config);
+      try {
+        console.log(`[voice-settings] Starting SoVITS server on port ${port}...`);
+        const result = await startSovitsServer(port);
+        if (!result.success) {
+          console.error('[voice-settings] Failed to start SoVITS server:', result.error);
+          throw new Error(result.error || 'Failed to start SoVITS server');
+        }
+        console.log(`[voice-settings] SoVITS server started successfully`);
+      } catch (error) {
+        console.error('[voice-settings] Error starting SoVITS server:', error);
+        throw error; // Propagate error so user knows the server didn't start
+      }
+    } else if (next === 'rvc') {
+      console.log('[voice-settings] Switched to RVC (server will auto-start on next use)');
+    } else if (next === 'kokoro') {
+      console.log('[voice-settings] Switched to Kokoro (server will auto-start on next use)');
+    } else if (next === 'piper') {
+      console.log('[voice-settings] Switched to Piper (no background service needed)');
+    }
   }
 }
 

@@ -206,6 +206,7 @@ async function startServer(args: string[]): Promise<void> {
   // Parse arguments
   let port = 9882;
   let lang = 'a';
+  let device = 'cpu'; // Default to CPU for Kokoro
 
   const portIndex = args.indexOf('--port');
   if (portIndex !== -1 && args[portIndex + 1]) {
@@ -217,6 +218,11 @@ async function startServer(args: string[]): Promise<void> {
     lang = args[langIndex + 1];
   }
 
+  const deviceIndex = args.indexOf('--device');
+  if (deviceIndex !== -1 && args[deviceIndex + 1]) {
+    device = args[deviceIndex + 1];
+  }
+
   const pythonBin = path.join(KOKORO_DIR, 'venv', 'bin', 'python3');
   const serverScript = path.join(KOKORO_DIR, 'kokoro_server.py');
 
@@ -226,16 +232,19 @@ async function startServer(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  console.log(`Starting Kokoro server on port ${port}...`);
+  console.log(`Starting Kokoro server on port ${port} (device: ${device})...`);
 
   const logFile = path.join(paths.logs, 'run', 'kokoro-server.log');
-  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+  const logFd = fs.openSync(logFile, 'a');
 
-  const server = spawn(pythonBin, [serverScript, '--port', port.toString(), '--lang', lang], {
+  const server = spawn(pythonBin, [serverScript, '--port', port.toString(), '--lang', lang, '--device', device], {
     cwd: KOKORO_DIR,
     detached: true,
-    stdio: ['ignore', logStream, logStream],
+    stdio: ['ignore', logFd, logFd],
   });
+
+  // Close log file descriptor after spawn (child process has its own reference)
+  fs.closeSync(logFd);
 
   // Save PID
   fs.writeFileSync(SERVER_PID_FILE, server.pid!.toString());

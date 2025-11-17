@@ -15,7 +15,7 @@ export function createDefaultKokoroConfig(): KokoroTrainingConfig {
     baseVoice: 'af_heart',
     epochs: 120,
     learningRate: 0.0005,
-    device: 'auto',
+    device: 'cpu', // Default to CPU to avoid VRAM issues (16GB GPU not enough for 13B model + training)
     maxSamples: 200,
   };
 }

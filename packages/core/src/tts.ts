@@ -13,10 +13,12 @@ import { PiperService } from './tts/providers/piper-service.js';
 import { SoVITSService } from './tts/providers/gpt-sovits-service.js';
 import { RVCService } from './tts/providers/rvc-service.js';
 import { KokoroService } from './tts/providers/kokoro-service.js';
+import { stopServer, getRunningServers, cleanupStalePidFiles } from './tts/server-manager.js';
 import type { ITextToSpeechService, TTSConfig, CacheConfig, TTSSynthesizeOptions, TTSStatus } from './tts/interface.js';
 
-// Re-export types for external use
+// Re-export types and utilities for external use
 export type { TTSConfig, CacheConfig, TTSSynthesizeOptions, TTSStatus };
+export { stopServer, stopAllServers, getRunningServers, cleanupStalePidFiles } from './tts/server-manager.js';
 
 interface VoiceConfig {
   tts: TTSConfig;
@@ -201,6 +203,44 @@ export function createTTSService(provider?: 'piper' | 'gpt-sovits' | 'rvc' | 'ko
     rvcReferenceAudioDir: cfg.tts.rvc?.referenceAudioDir,
     rvcModelsDir: cfg.tts.rvc?.modelsDir
   });
+
+  // IMPORTANT: Stop servers for inactive providers to prevent VRAM conflicts
+  // This ensures only the selected provider's server is running
+  cleanupStalePidFiles();
+  const runningServers = getRunningServers();
+
+  if (runningServers.length > 0) {
+    console.log('[TTS] Running servers detected:', runningServers);
+
+    // Stop servers that don't match the selected provider
+    const serversToStop = runningServers.filter(p => p !== selectedProvider);
+
+    if (serversToStop.length > 0) {
+      console.log(`[TTS] Stopping inactive servers: ${serversToStop.join(', ')}`);
+
+      // Stop servers asynchronously (don't block service creation)
+      Promise.all(serversToStop.map(p => stopServer(p)))
+        .then(results => {
+          const stoppedCount = results.filter(r => r).length;
+          console.log(`[TTS] Stopped ${stoppedCount}/${serversToStop.length} inactive server(s)`);
+
+          audit({
+            level: 'info',
+            category: 'system',
+            event: 'tts_provider_switched',
+            details: {
+              newProvider: selectedProvider,
+              stoppedServers: serversToStop,
+              stoppedCount
+            },
+            actor: 'system',
+          });
+        })
+        .catch(error => {
+          console.error('[TTS] Error stopping inactive servers:', error);
+        });
+    }
+  }
 
   // Always create fresh service (no caching) to ensure per-user paths are respected
   let service: ITextToSpeechService;

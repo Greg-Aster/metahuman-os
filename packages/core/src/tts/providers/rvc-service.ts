@@ -13,6 +13,7 @@ import path from 'node:path';
 import { paths } from '../../paths.js';
 import { audit } from '../../audit.js';
 import { getCachedAudio, cacheAudio, getCacheStats, clearCache } from '../cache.js';
+import { stopServer } from '../server-manager.js';
 import type {
   ITextToSpeechService,
   TTSSynthesizeOptions,
@@ -743,5 +744,13 @@ export class RVCService implements ITextToSpeechService {
       console.error('[RVCService] Failed to resume Ollama:', error);
       // Non-fatal - Ollama will auto-resume on next request
     }
+  }
+
+  /**
+   * Shutdown RVC server and cleanup resources
+   */
+  async shutdown(): Promise<void> {
+    console.log('[RVCService] Shutting down RVC server...');
+    await stopServer('rvc');
   }
 }

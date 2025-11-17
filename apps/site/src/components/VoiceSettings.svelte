@@ -51,6 +51,16 @@
       autoFallbackToPiper: boolean;
       useCustomVoicepack: boolean;
       voices?: KokoroVoice[];
+      device?: 'cuda' | 'cpu';
+    };
+    stt?: {
+      model: string;
+      device: 'cpu' | 'cuda';
+      computeType: 'int8' | 'float16' | 'float32';
+      language: string;
+      useServer: boolean;
+      autoStart: boolean;
+      serverStatus?: string;
     };
   }
 
@@ -110,6 +120,21 @@
         config.rvc.protect = config.rvc.protect ?? 0.15;
         config.rvc.f0Method = config.rvc.f0Method || 'rmvpe';
         config.rvc.device = config.rvc.device || 'cuda';
+      }
+
+      if (config && config.kokoro) {
+        config.kokoro.device = config.kokoro.device || 'cpu';
+      }
+
+      // Set STT defaults if not present
+      if (config && config.stt) {
+        config.stt.model = config.stt.model || 'base.en';
+        config.stt.device = config.stt.device || 'cpu';
+        config.stt.computeType = config.stt.computeType || 'int8';
+        config.stt.language = config.stt.language || 'en';
+        config.stt.useServer = config.stt.useServer ?? true;
+        config.stt.autoStart = config.stt.autoStart ?? true;
+        config.stt.serverStatus = config.stt.serverStatus || 'unknown';
       }
 
       error = null;
@@ -732,6 +757,19 @@
         </div>
 
         <div class="setting-group">
+          <label for="kokoro-device">Device for Inference</label>
+          <select
+            id="kokoro-device"
+            bind:value={config.kokoro.device}
+            disabled={saving}
+          >
+            <option value="cpu">CPU - Fast & no GPU conflicts</option>
+            <option value="cuda">GPU (CUDA) - Faster (requires GPU)</option>
+          </select>
+          <p class="hint">Kokoro is optimized for CPU inference. GPU recommended only if CPU is slow.</p>
+        </div>
+
+        <div class="setting-group">
           <label class="checkbox-label">
             <input type="checkbox" bind:checked={config.kokoro.useCustomVoicepack} disabled={saving} />
             Use custom trained voicepack (not yet implemented)
@@ -764,6 +802,87 @@
             {testingVoice ? '🔊 Playing...' : '▶️ Test Kokoro'}
           </button>
         </div>
+      </div>
+    {/if}
+
+    <!-- STT (Speech-to-Text) Settings -->
+    {#if config.stt}
+      <div class="stt-section">
+        <h4 class="subsection-title">🎤 Speech-to-Text (Whisper)</h4>
+
+        <div class="setting-group">
+          <label>Model Size</label>
+          <select bind:value={config.stt.model} disabled={saving}>
+            <option value="tiny.en">Tiny (~75MB, fastest)</option>
+            <option value="base.en">Base (~140MB, balanced)</option>
+            <option value="small.en">Small (~460MB, more accurate)</option>
+            <option value="medium.en">Medium (~1.5GB, most accurate)</option>
+          </select>
+          <p class="hint">Smaller models are faster but less accurate. GPU recommended for medium/large models.</p>
+        </div>
+
+        <div class="setting-group">
+          <label>Processing Device</label>
+          <select bind:value={config.stt.device} disabled={saving}>
+            <option value="cpu">CPU</option>
+            <option value="cuda">GPU (CUDA)</option>
+          </select>
+          <p class="hint">GPU processing is 10-50x faster than CPU. Requires NVIDIA GPU with CUDA support.</p>
+        </div>
+
+        <div class="setting-group">
+          <label>Compute Type</label>
+          <select bind:value={config.stt.computeType} disabled={saving}>
+            <option value="int8">INT8 (fastest, CPU-friendly)</option>
+            <option value="float16">FLOAT16 (balanced, GPU-optimized)</option>
+            <option value="float32">FLOAT32 (highest precision)</option>
+          </select>
+          <p class="hint">Use INT8 for CPU, FLOAT16 for GPU. FLOAT32 only if precision is critical.</p>
+        </div>
+
+        <div class="setting-group">
+          <label>Language</label>
+          <select bind:value={config.stt.language} disabled={saving}>
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="it">Italian</option>
+            <option value="pt">Portuguese</option>
+            <option value="ja">Japanese</option>
+            <option value="ko">Korean</option>
+            <option value="zh">Chinese</option>
+          </select>
+        </div>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" bind:checked={config.stt.useServer} disabled={saving} />
+            Use persistent Whisper server (recommended)
+          </label>
+          <p class="hint">Persistent server keeps model in memory for instant transcription (~1-3 second speedup per request)</p>
+        </div>
+
+        {#if config.stt.useServer}
+          <div class="setting-group">
+            <label class="checkbox-label">
+              <input type="checkbox" bind:checked={config.stt.autoStart} disabled={saving} />
+              Auto-start server on boot
+            </label>
+            <p class="hint">Automatically start Whisper server when MetaHuman starts</p>
+          </div>
+
+          <div class="setting-group">
+            <label>Server Status</label>
+            <ServerStatusIndicator
+              serverName="Whisper STT"
+              statusEndpoint="/api/whisper-server"
+              controlEndpoint="/api/whisper-server"
+              autoRefresh={true}
+              refreshInterval={15000}
+            />
+          </div>
+        {/if}
       </div>
     {/if}
 
@@ -1210,5 +1329,30 @@
 
   .quality-tips li {
     margin: 0.25rem 0;
+  }
+
+  /* STT Section Styles */
+  .stt-section {
+    margin-top: 2rem;
+    padding: 1.5rem;
+    background: #f9fafb;
+    border: 2px solid #e5e7eb;
+    border-radius: 0.75rem;
+  }
+
+  :global(.dark) .stt-section {
+    background: #1f2937;
+    border-color: #374151;
+  }
+
+  .subsection-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #1f2937;
+    margin: 0 0 1.25rem 0;
+  }
+
+  :global(.dark) .subsection-title {
+    color: #f3f4f6;
   }
 </style>

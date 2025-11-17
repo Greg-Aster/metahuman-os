@@ -2220,10 +2220,10 @@ export function startRVCTraining(
   return { success: true };
 }
 
-export function startKokoroVoicepackTraining(
+export async function startKokoroVoicepackTraining(
   speakerId: string = 'default',
   options?: KokoroTrainingOptions
-): { success: boolean; error?: string; message?: string } {
+): Promise<{ success: boolean; error?: string; message?: string }> {
   const existingStatus = getKokoroTrainingStatus(speakerId);
   if (existingStatus.status === 'running') {
     return {
@@ -2273,7 +2273,13 @@ export function startKokoroVoicepackTraining(
 
   const preferredDevice = options?.device ?? 'auto';
   const shouldPauseOllama = preferredDevice !== 'cpu';
+
+  // Stop Ollama to free VRAM for training (if using GPU)
   const ollamaPaused = shouldPauseOllama ? pauseOllamaForKokoroTraining() : false;
+  if (ollamaPaused && shouldPauseOllama) {
+    // Wait for VRAM to be fully freed
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
 
   const args: string[] = [
     trainerScript,
@@ -2391,42 +2397,59 @@ export function startKokoroVoicepackTraining(
 }
 
 function pauseOllamaForKokoroTraining(): boolean {
+  console.log('[Kokoro Training] Stopping Ollama to free GPU VRAM...');
   try {
-    execSync('pgrep -f ollama', { stdio: 'pipe' });
-  } catch {
-    return false;
-  }
+    // Try systemctl first (if Ollama is a service)
+    const systemctlResult = spawnSync('systemctl', ['stop', 'ollama'], { stdio: 'pipe' });
 
-  try {
-    execSync('pkill -STOP -f ollama', { stdio: 'ignore' });
-    waitSync(500);
-    audit({
-      level: 'info',
-      category: 'system',
-      event: 'ollama_paused_for_kokoro',
-      details: { reason: 'Free GPU VRAM for Kokoro training' },
-      actor: 'system',
-    });
-    return true;
+    if (systemctlResult.status === 0) {
+      console.log('[Kokoro Training] Stopped Ollama service via systemctl');
+      audit({
+        level: 'info',
+        category: 'system',
+        event: 'ollama_stopped_for_kokoro',
+        details: { reason: 'Free GPU VRAM for Kokoro training', method: 'systemctl' },
+        actor: 'system',
+      });
+      return true;
+    } else {
+      // Fallback to pkill if systemctl fails
+      console.warn('[Kokoro Training] systemctl failed, trying pkill...');
+      execSync('pkill -9 ollama', { stdio: 'ignore' });
+      waitSync(1000); // Wait for process to fully terminate and VRAM to be freed
+      audit({
+        level: 'info',
+        category: 'system',
+        event: 'ollama_killed_for_kokoro',
+        details: { reason: 'Free GPU VRAM for Kokoro training', method: 'pkill' },
+        actor: 'system',
+      });
+      return true;
+    }
   } catch (error) {
-    console.error('[KokoroTraining] Failed to pause Ollama:', error);
+    console.error('[Kokoro Training] Failed to stop Ollama:', error);
     return false;
   }
 }
 
 function resumeOllamaAfterKokoroTraining(): void {
+  console.log('[Kokoro Training] Restarting Ollama...');
   try {
-    execSync('pkill -CONT -f ollama', { stdio: 'ignore' });
-    waitSync(500);
-    audit({
-      level: 'info',
-      category: 'system',
-      event: 'ollama_resumed_after_kokoro',
-      details: { message: 'Ollama resumed after Kokoro training' },
-      actor: 'system',
-    });
+    const startResult = spawnSync('systemctl', ['start', 'ollama'], { stdio: 'pipe' });
+    if (startResult.status === 0) {
+      console.log('[Kokoro Training] Ollama service restarted via systemctl');
+      audit({
+        level: 'info',
+        category: 'system',
+        event: 'ollama_restarted_after_kokoro',
+        details: { message: 'Ollama restarted after Kokoro training' },
+        actor: 'system',
+      });
+    } else {
+      console.warn('[Kokoro Training] Warning: Failed to restart Ollama service. You may need to start it manually: systemctl start ollama');
+    }
   } catch (error) {
-    console.error('[KokoroTraining] Failed to resume Ollama:', error);
+    console.error('[Kokoro Training] Failed to restart Ollama:', error);
   }
 }
 

@@ -564,6 +564,15 @@ let reasoningStages: ReasoningStage[] = [];
     }
   }
 
+  // Stub functions for legacy session management (no longer used - server-first architecture)
+  function loadSessionFromStorage(): any {
+    return null; // Messages now loaded from server
+  }
+
+  function saveSession(): void {
+    // No-op: Messages are automatically saved to episodic memory by server
+  }
+
   onMount(async () => {
     loadChatPrefs();
     if (ttsEnabled) {

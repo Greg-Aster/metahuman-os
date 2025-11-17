@@ -44,11 +44,13 @@ async def startup():
     parser.add_argument("--lang", default="a", help="Default language code")
     parser.add_argument("--voices-dir", type=Path, help="Custom voices directory")
     parser.add_argument("--port", type=int, default=9882)
+    parser.add_argument("--device", default="cpu", help="Device to use: cpu or cuda")
     args, _ = parser.parse_known_args()
 
     voices_dir = args.voices_dir
-    pipeline = KPipeline(lang_code=args.lang)
-    print(f"✓ Kokoro pipeline initialized (lang_code={args.lang})")
+    device = args.device if args.device in ['cpu', 'cuda'] else 'cpu'
+    pipeline = KPipeline(lang_code=args.lang, device=device)
+    print(f"✓ Kokoro pipeline initialized (lang_code={args.lang}, device={device})")
 
 
 @app.get("/health")
@@ -132,6 +134,7 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=9882)
     parser.add_argument("--lang", default="a")
     parser.add_argument("--voices-dir", type=Path)
+    parser.add_argument("--device", default="cpu", help="Device to use: cpu or cuda")
     args = parser.parse_args()
 
     uvicorn.run(
