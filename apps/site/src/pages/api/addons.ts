@@ -74,6 +74,11 @@ async function checkAddonInstalled(addonId: string, addon: any): Promise<boolean
       const rvcDir = path.join(rootPath, 'external', 'applio-rvc');
       return fs.existsSync(rvcDir);
     }
+    case 'kokoro': {
+      const kokoroDir = path.join(rootPath, 'external', 'kokoro');
+      const venvExists = fs.existsSync(path.join(kokoroDir, 'venv'));
+      return fs.existsSync(kokoroDir) && venvExists;
+    }
     case 'whisper-stt': {
       // Check if whisper binary exists
       const whisperBin = path.join(rootPath, 'bin', 'whisper');

@@ -62,8 +62,8 @@ async function toggleAddonConfiguration(addonId: string, enabled: boolean): Prom
   const rootPath = path.resolve(process.cwd(), '../..');
   const voiceConfigPath = path.join(rootPath, 'etc', 'voice.json');
 
-  // Handle TTS provider addons (gpt-sovits, rvc, piper)
-  const ttsProviders = ['gpt-sovits', 'rvc'];
+  // Handle TTS provider addons (gpt-sovits, rvc, kokoro)
+  const ttsProviders = ['gpt-sovits', 'rvc', 'kokoro'];
 
   if (ttsProviders.includes(addonId)) {
     if (!fs.existsSync(voiceConfigPath)) {
@@ -74,17 +74,32 @@ async function toggleAddonConfiguration(addonId: string, enabled: boolean): Prom
     const providerMap: Record<string, string> = {
       'gpt-sovits': 'sovits',
       'rvc': 'rvc',
+      'kokoro': 'kokoro',
     };
 
     if (!enabled && voiceConfig.tts?.provider === providerMap[addonId]) {
+      // Fallback to Piper when disabling
       voiceConfig.tts.provider = 'piper';
       fs.writeFileSync(voiceConfigPath, JSON.stringify(voiceConfig, null, 2));
 
+      // Stop servers if needed
       if (addonId === 'gpt-sovits') {
         try {
           await stopSovitsServer();
         } catch (error) {
           console.error('[API /addons/toggle] Failed to stop SoVITS server:', error);
+        }
+      } else if (addonId === 'kokoro') {
+        // Stop Kokoro server if running
+        const pidFile = path.join(rootPath, 'logs', 'run', 'kokoro-server.pid');
+        if (fs.existsSync(pidFile)) {
+          try {
+            const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
+            process.kill(pid, 'SIGTERM');
+            fs.unlinkSync(pidFile);
+          } catch (error) {
+            console.error('[API /addons/toggle] Failed to stop Kokoro server:', error);
+          }
         }
       }
     }

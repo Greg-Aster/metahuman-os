@@ -53,6 +53,7 @@ import { personaCommand } from './commands/persona.js';
 import { adapterCommand } from './commands/adapter.js';
 import { sovitsCommand } from './commands/sovits.js';
 import { rvcCommand } from './commands/rvc.js';
+import { kokoroCommand } from './commands/kokoro.js';
 
 const agentScriptOverrides: Record<string, string> = {
   curiosity: 'curiosity-service.ts',
@@ -1944,6 +1945,9 @@ async function main() {
         break;
       case 'rvc':
         await rvcCommand(args);
+        break;
+      case 'kokoro':
+        await kokoroCommand(args);
         break;
       case 'voice':
         voiceCmd(args);

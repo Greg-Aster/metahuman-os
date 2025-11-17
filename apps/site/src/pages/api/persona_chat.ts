@@ -793,12 +793,23 @@ async function synthesizeOperatorAnswer(model: string, userMessage: string, oper
   console.log(`[synthesizeOperatorAnswer] Using persona facet: ${activeFacet}`);
 
   // Build persona-aware instructions that incorporate the facet's personality
+  const tonePref = persona?.personality?.communicationStyle?.tone;
+  const toneList = Array.isArray(tonePref)
+    ? tonePref
+    : tonePref
+      ? [tonePref]
+      : ['adaptive'];
+
+  const coreValues = Array.isArray(persona?.values?.core)
+    ? persona.values.core.map((v: any) => (typeof v === 'string' ? v : v?.value || '')).filter(Boolean)
+    : [];
+
   const personaContext = `You are ${persona.identity.name}.
 Your role: ${persona.identity.role}
 Your purpose: ${persona.identity.purpose}
 
-Your communication style: ${persona.personality.communicationStyle.tone.join(', ')}
-Your values: ${persona.values.core.map((v: any) => v.value).join(', ')}`;
+Your communication style: ${toneList.join(', ')}
+Your values: ${coreValues.join(', ')}`;
 
   const instructions = `${personaContext}
 
@@ -1272,18 +1283,8 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   // Load chat settings to configure response behavior
   const chatSettings = loadChatSettings();
 
-  // Add user message and context to history
-  // NOTE: The context is added as a separate system message to make it clear to the model what is the user's message and what is context.
-  // Appending the context to the user's message can confuse the model and cause it to repeat the context.
-  if (contextInfo) {
-    pushMessage(m, { role: 'system', content: `## Background Context\n${contextInfo}` }, sessionId);
-  }
-
-  // Add user input priority instruction if enabled
-  if (chatSettings.userInputPriority && contextInfo) {
-    pushMessage(m, { role: 'system', content: `**Priority**: Answer the user's direct question below. Use personality and context to inform your response, but focus on what they're actually asking.` }, sessionId);
-  }
-
+  // Add user message to history (NOT context - we'll inject that per-request)
+  // This keeps history clean with only user/assistant turns
   pushMessage(m, { role: 'user', content: message }, sessionId);
 
   try {
@@ -1532,14 +1533,36 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               };
             } else {
               // === ORIGINAL CODE PATH ===
-              // Let the model work naturally without extra instructions
+              // Build messages for this LLM call with ephemeral context injection
+              const messagesForLLM = histories[m].map(h => ({
+                role: h.role as 'system' | 'user' | 'assistant',
+                content: h.content
+              }));
+
+              // Inject context ONLY for this call (not saved to history)
+              // Insert after system prompt but before conversation
+              if (contextInfo) {
+                const systemPromptIndex = messagesForLLM.findIndex(msg => msg.role === 'system');
+                const insertIndex = systemPromptIndex >= 0 ? systemPromptIndex + 1 : 0;
+
+                messagesForLLM.splice(insertIndex, 0, {
+                  role: 'system',
+                  content: `## Background Context\n${contextInfo}`
+                });
+
+                // Add priority instruction if enabled
+                if (chatSettings.userInputPriority) {
+                  messagesForLLM.push({
+                    role: 'system',
+                    content: `**Priority**: Answer the user's direct question. Use personality and context to inform your response, but focus on what they're actually asking.`
+                  });
+                }
+              }
+
               // Use role-based routing for persona responses
               llmResponse = await callLLM({
                 role: 'persona' as ModelRole,
-                messages: histories[m].map(h => ({
-                  role: h.role as 'system' | 'user' | 'assistant',
-                  content: h.content
-                })),
+                messages: messagesForLLM,
                 cognitiveMode,
                 options: {
                   temperature,
@@ -1728,6 +1751,9 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               // Continue anyway - refinement failures don't block responses
             }
           }
+
+          // Send response to client via EventSource stream
+          push('content', { content: assistantResponse });
 
           // Store history
           histories[m].pop();

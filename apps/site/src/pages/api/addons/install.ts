@@ -101,16 +101,36 @@ async function installAddon(addonId: string, addon: any): Promise<{ success: boo
       }
     }
 
+    case 'kokoro': {
+      // Run Kokoro installation script
+      const scriptPath = path.join(rootPath, 'bin', 'install-kokoro.sh');
+
+      if (!fs.existsSync(scriptPath)) {
+        return { success: false, error: 'Kokoro installation script not found' };
+      }
+
+      try {
+        await runScriptWithArgs(scriptPath, ['--yes']);
+        return { success: true, message: 'Kokoro TTS installed successfully' };
+      } catch (error) {
+        return { success: false, error: String(error) };
+      }
+    }
+
     default:
       return { success: false, error: 'Addon installation not implemented' };
   }
 }
 
 function runScript(scriptPath: string): Promise<void> {
+  return runScriptWithArgs(scriptPath, []);
+}
+
+function runScriptWithArgs(scriptPath: string, args: string[]): Promise<void> {
   const rootPath = path.resolve(process.cwd(), '../..');
 
   return new Promise((resolve, reject) => {
-    const proc = spawn('bash', [scriptPath], {
+    const proc = spawn('bash', [scriptPath, ...args], {
       cwd: rootPath,
       stdio: 'pipe',
     });
@@ -120,17 +140,19 @@ function runScript(scriptPath: string): Promise<void> {
 
     proc.stdout?.on('data', (data) => {
       stdout += data.toString();
+      console.log('[Install Script]', data.toString().trim());
     });
 
     proc.stderr?.on('data', (data) => {
       stderr += data.toString();
+      console.error('[Install Script Error]', data.toString().trim());
     });
 
     proc.on('close', (code) => {
       if (code === 0) {
         resolve();
       } else {
-        reject(new Error(`Script failed with code ${code}: ${stderr}`));
+        reject(new Error(`Script failed with code ${code}: ${stderr || stdout}`));
       }
     });
 

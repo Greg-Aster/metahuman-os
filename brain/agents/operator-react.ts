@@ -978,7 +978,7 @@ async function checkCompletion(context: ReActContext): Promise<boolean> {
   // This saves 50-100ms per obvious case
 
   // Rule 1: conversational_response skill is always terminal (produces final answer)
-  if (lastStep.action === 'conversational_response' && lastStep.observation.startsWith('Success')) {
+  if (lastStep.action === 'conversational_response' && !lastStep.observation.startsWith('Error:')) {
     audit({
       level: 'info',
       category: 'action',
@@ -1116,7 +1116,8 @@ Respond with ONLY a JSON object:
       },
     });
 
-    const parsed = JSON.parse(response.content);
+    const jsonBlock = extractJsonBlock(response.content);
+    const parsed = JSON.parse(jsonBlock);
 
     audit({
       level: 'info',
@@ -1142,6 +1143,22 @@ Respond with ONLY a JSON object:
       },
       actor: 'operator-react',
     });
+
+    const lastStep = context.steps[context.steps.length - 1];
+    if (lastStep?.action === 'conversational_response' && !lastStep.observation.startsWith('Error:')) {
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'react_completion_fastpath',
+        details: {
+          rule: 'conversational_response_terminal_fallback',
+          complete: true,
+          savedLatency: 'LLM parse error bypass',
+        },
+        actor: 'operator-react',
+      });
+      return true;
+    }
 
     // On error, assume not complete and continue
     return false;

@@ -541,21 +541,54 @@ These parameters control voice conversion quality and can be fine-tuned to fix g
 
 ## Choosing a Provider
 
-| Feature | Piper | GPT-SoVITS | RVC |
-|---------|-------|------------|-----|
-| **Setup Time** | Instant | 1 minute | 1-3 hours |
-| **Training Required** | No | No | Yes |
-| **Sample Count** | 0 | 1 (5-10 sec) | 50+ |
-| **Voice Quality** | Good | Very Good | Excellent |
-| **Generation Speed** | Very Fast | Fast | Fast |
-| **GPU Required** | No | No | Yes (training only) |
-| **Resource Usage** | Minimal | Low | High (training) |
-| **Use Your Voice** | No | Yes | Yes |
+### 4. Kokoro (StyleTTS2 Voicepacks)
+
+**Best For**: Studio-grade multilingual synthesis + optional voice cloning
+
+Kokoro is a StyleTTS2-based provider bundled with 50+ high-quality voices across eight languages. It can also train custom “voicepacks” using your curated recordings.
+
+**Features:**
+- **Built-in Voices**: Select from curated voices (`af_heart`, `am_adam`, `bf_emma`, etc.).
+- **Custom Voicepacks**: Train `.pt` packs from ≥5 minutes of cleaned recordings + transcripts.
+- **Server Mode**: FastAPI server (`./bin/mh kokoro serve start`) handles requests over HTTP.
+- **Device Flexibility**: Works on CPU, CUDA, or Apple MPS. When training on GPU, Kokoro auto-pauses Ollama to free VRAM and resumes it afterwards.
+- **Fallback Support**: Enable “Auto-fallback to Piper” for resilience if the Kokoro server or voicepack fails.
+
+**Workflow:**
+1. **Install** via `./bin/install-kokoro.sh`.
+2. **Start Server** with `./bin/mh kokoro serve start` (or the Voice Settings server controls).
+3. **Select Voice** in Voice Settings (choose stock voice or toggle “Use custom voicepack”).
+4. **Collect Samples** in Voice Clone Training (same shared recording pipeline as Piper/RVC).
+5. **Export Dataset** to Kokoro via “Auto-Export Best Samples” or manual selection (writes to `profiles/<user>/out/voices/kokoro-datasets/<speaker>`).
+6. **Train Voicepack** using “🎵 Train Kokoro Voicepack” or CLI `./bin/mh kokoro train-voicepack --speaker default`.
+7. **Monitor** logs in `logs/run/kokoro-training-<speaker>.log` and status JSON in `logs/run/kokoro-training-<speaker>.json`.
+8. **Activate** the generated `.pt` path in Voice Settings.
+
+**Troubleshooting:**
+- *CUDA out of memory*: Close other GPU workloads or switch Kokoro’s device to CPU before training.
+- *Server not running*: Check `external/kokoro/kokoro_server.py` log (`logs/run/kokoro-server.log`) and start with `./bin/mh kokoro serve start`.
+- *503 from /api/kokoro-training*: Ensure you’re logged in and have at least 10 exported samples (≥2 minutes) in the Kokoro dataset.
+- *“Unsupported provider: kokoro”*: Use the Kokoro tab in the training UI; don’t call the SoVITS endpoint with the Kokoro provider.
+
+---
+
+## Choosing a Provider
+
+| Feature | Piper | GPT-SoVITS | RVC | Kokoro |
+|---------|-------|------------|-----|--------|
+| **Setup Time** | Instant | 1 minute | 1-3 hours | < 10 minutes |
+| **Training Required** | No | No | Yes | Optional (voicepacks) |
+| **Sample Count** | 0 | 1 (5-10 sec) | 50+ (10-15 min) | 30+ curated clips |
+| **Voice Quality** | Good | Very Good | Excellent | Studio-grade |
+| **Generation Speed** | Very Fast | Fast | Fast | Fast (server) |
+| **GPU Required** | No | No | Yes (training only) | Optional (training/inference faster on GPU) |
+| **Resource Usage** | Minimal | Low | High (training) | Medium |
+| **Use Your Voice** | No | Yes | Yes | Yes (built-in or custom) |
 
 **Recommended Path:**
 1. **Start with Piper** - Get familiar with the system
 2. **Try GPT-SoVITS** - Quick voice cloning with minimal effort
-3. **Graduate to RVC** - Best quality when you have time and samples
+3. **Graduate to RVC or Kokoro** - Best quality when you have time and samples
 
 ---
 
@@ -564,8 +597,8 @@ These parameters control voice conversion quality and can be fine-tuned to fix g
 Access via the left sidebar → Voice Settings:
 
 **Provider Selection:**
-- Dropdown to choose Piper, GPT-SoVITS, or RVC
-- Auto-starts services when switching providers
+- Dropdown to choose Piper, GPT-SoVITS, RVC, or Kokoro
+- Auto-starts services when switching providers (Kokoro server can also be started manually)
 
 **Piper Settings:**
 - Voice selector (browse available voices)
@@ -584,6 +617,14 @@ Access via the left sidebar → Voice Settings:
 - Speed adjustment
 - Auto-fallback to Piper toggle
 
+**Kokoro Settings:**
+- Built-in voice chooser (54+ voices)
+- Language code selector + speed slider
+- Toggle for “Use custom voicepack” with path picker
+- Server controls (start/stop/status)
+- Auto-fallback to Piper toggle
+- Advanced training card (base voice, epochs, learning rate, device, max samples)
+
 **Test Panel:**
 - Test text input
 - "Test Voice" button
@@ -600,6 +641,7 @@ Access via the left sidebar → Voice Clone Training:
 - Piper (for reference)
 - GPT-SoVITS (quick cloning)
 - RVC (full training)
+- Kokoro (dataset export + voicepack training)
 
 **Sample Management:**
 - View all recorded samples with quality scores
@@ -616,7 +658,11 @@ Access via the left sidebar → Voice Clone Training:
 **Export Actions:**
 - "Select Samples" - Manual selection interface
 - "Auto-Export Best Samples" - Automatically selects high-quality samples
-- "Copy Selected Samples" - Copies chosen samples to training directory
+- "Copy Selected Samples" - Copies chosen samples to training directory (RVC + Kokoro datasets)
+
+**Training Actions:**
+- RVC: "🎭 Train RVC Model" (with advanced parameter toggle)
+- Kokoro: "🎵 Train Kokoro Voicepack" (uses the current Kokoro training settings)
 
 **RVC Training Controls:**
 - "⚙️ Show/Hide Training Settings" - Toggle parameter panel
@@ -657,6 +703,7 @@ All TTS providers support audio caching to improve performance:
 - Piper: `piper:<voice>:<rate>`
 - SoVITS: `sovits:<speakerId>:<temperature>:<speed>`
 - RVC: `rvc:<speakerId>:<pitchShift>`
+- Kokoro: `kokoro:<langCode>:<voiceOrVoicepack>:<speed>`
 
 ### Multi-Voice Setup
 
@@ -744,7 +791,7 @@ Response: WAV audio file (binary)
 - Enable caching for frequently used phrases
 - Use Piper for non-critical voice output
 - Reserve RVC for important conversations
-- Close Ollama during RVC training to free VRAM
+- Close Ollama during RVC training to free VRAM (Kokoro training auto-pauses/resumes Ollama when running on GPU)
 
 **Maintenance:**
 - Periodically review and delete low-quality samples

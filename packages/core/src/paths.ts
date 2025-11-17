@@ -95,6 +95,11 @@ export function getProfilePaths(username: string) {
     // RVC voice models (profile-specific)
     rvcReference: path.join(profileRoot, 'out', 'voices', 'rvc'),
     rvcModels: path.join(profileRoot, 'out', 'voices', 'rvc-models'),
+
+    // Kokoro TTS (profile-specific)
+    kokoroReference: path.join(profileRoot, 'out', 'voices', 'kokoro'),
+    kokoroVoicepacks: path.join(profileRoot, 'out', 'voices', 'kokoro-voicepacks'),
+    kokoroDatasets: path.join(profileRoot, 'out', 'voices', 'kokoro-datasets'),
   };
 }
 

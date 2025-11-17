@@ -36,12 +36,12 @@
 
   const curiosityLevelDescriptions = [
     'Curiosity disabled - no questions will be asked',
-    'Gentle - Questions every ~60 minutes during idle time',
-    'Moderate - Questions every ~30 minutes during idle time',
-    'Active - Questions every ~15 minutes during idle time',
-    'Chatty - Questions every ~5 minutes during idle time',
-    'Very Active - Questions every ~2 minutes during idle time',
-    'Intense - Questions every minute during idle time'
+    'Gentle - Questions after 60 minutes of conversation inactivity',
+    'Moderate - Questions after 30 minutes of conversation inactivity',
+    'Active - Questions after 15 minutes of conversation inactivity',
+    'Chatty - Questions after 5 minutes of conversation inactivity',
+    'Very Active - Questions after 2 minutes of conversation inactivity',
+    'Intense - Questions after 1 minute of conversation inactivity'
   ];
 
   // Map curiosity levels to intervals (in seconds)

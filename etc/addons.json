@@ -79,6 +79,49 @@
       },
       "note": "Requires 10-15 minutes of training audio. Two-stage synthesis: Piper generates base audio, RVC applies voice conversion."
     },
+    "kokoro": {
+      "name": "Kokoro TTS",
+      "description": "StyleTTS2-based neural voice synthesis with 54 pre-built voices across 8 languages. Supports custom voice pack training with Apache 2.0 licensed weights.",
+      "category": "tts",
+      "enabled": true,
+      "installed": true,
+      "size": "~1.5 GB",
+      "requirements": {
+        "python": ">=3.9",
+        "gpu": "optional",
+        "vram": "2GB+ recommended"
+      },
+      "dependencies": {
+        "pip": [
+          "kokoro>=0.9.4",
+          "soundfile>=0.12.0",
+          "misaki[en]",
+          "misaki[ja]",
+          "misaki[zh]",
+          "espeakng",
+          "fastapi>=0.104.0",
+          "uvicorn>=0.24.0"
+        ],
+        "system": [
+          "espeak-ng",
+          "ffmpeg"
+        ]
+      },
+      "installation": {
+        "script": "bin/install-kokoro.sh",
+        "commands": [
+          "mh kokoro install"
+        ]
+      },
+      "configuration": {
+        "file": "etc/voice.json",
+        "ui": "VoiceSettings"
+      },
+      "status": {
+        "command": "mh kokoro status"
+      },
+      "note": "82M parameter StyleTTS2 model. Includes 54 voices (English, Japanese, Chinese, etc.). Custom voice packs require 5+ minutes of curated speech."
+    },
     "whisper-stt": {
       "name": "Whisper Speech-to-Text",
       "description": "High-quality speech recognition using OpenAI's Whisper model. Supports multiple languages and accents.",

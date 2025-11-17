@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import ReferenceAudioSelector from './ReferenceAudioSelector.svelte';
   import DirectVoiceRecorder from './DirectVoiceRecorder.svelte';
+  import { createDefaultKokoroConfig, startKokoroTrainingRequest } from '../lib/kokoro-training';
 
   export let provider: 'piper' | 'sovits' | 'rvc' | 'kokoro' = 'rvc';
 
@@ -55,12 +56,7 @@
   let copying = false;
   let training = false;
   let kokoroTraining = false;
-  let kokoroLangCode = 'a';
-  let kokoroBaseVoice = 'af_heart';
-  let kokoroEpochs = 120;
-  let kokoroLearningRate = 0.0005;
-  let kokoroDevice: 'auto' | 'cpu' | 'cuda' = 'auto';
-  let kokoroMaxSamples = 200;
+  let kokoroConfig = createDefaultKokoroConfig();
   let trainingStatus: {
     status: 'idle' | 'running' | 'completed' | 'failed';
     progress: number;
@@ -98,6 +94,18 @@
   ];
   let currentRobotMessage = "";
   let robotMessageInterval: ReturnType<typeof setInterval> | null = null;
+  let trainingLogs: string[] = [];
+  let showLogs = false; // Toggle between robot messages and logs
+  let logsContainer: HTMLDivElement | null = null;
+
+  // Auto-scroll logs to bottom when new logs arrive
+  $: if (logsContainer && trainingLogs.length > 0) {
+    setTimeout(() => {
+      if (logsContainer) {
+        logsContainer.scrollTop = logsContainer.scrollHeight;
+      }
+    }, 100);
+  }
 
   // Training parameters for RVC
   let totalEpochs = 300;
@@ -120,6 +128,20 @@
     if (robotMessageInterval) {
       clearInterval(robotMessageInterval);
       robotMessageInterval = null;
+    }
+  }
+
+  async function fetchTrainingLogs() {
+    if (provider !== 'kokoro') return;
+
+    try {
+      const response = await fetch('/api/kokoro-training?action=training-logs&speakerId=default');
+      if (!response.ok) return;
+
+      const data = await response.json();
+      trainingLogs = data.logs || [];
+    } catch (e) {
+      console.error('[VoiceTrainingWidget] Error fetching training logs:', e);
     }
   }
 
@@ -355,25 +377,32 @@
 
       const running = status.status === 'running';
       if (running) {
-        if (provider === 'rvc' && !showTrainingModal) {
+        if ((provider === 'rvc' || provider === 'kokoro') && !showTrainingModal) {
           showTrainingModal = true;
           startRobotMessages();
         }
         if (!trainingPollInterval) {
           trainingPollInterval = setInterval(pollTrainingStatus, 5000);
         }
+        // Fetch training logs for Kokoro
+        if (provider === 'kokoro') {
+          await fetchTrainingLogs();
+        }
       }
 
       if (!running && trainingPollInterval) {
         clearInterval(trainingPollInterval);
         trainingPollInterval = null;
-        if (provider === 'rvc') {
+        if (provider === 'rvc' || provider === 'kokoro') {
           showTrainingModal = false;
           stopRobotMessages();
         }
 
         if (status.status === 'completed') {
-          alert(`Training completed successfully! ${provider === 'rvc' ? 'Model saved to: ' + (status.modelPath || 'model directory') : 'Voicepack ready.'}`);
+          const successMsg = provider === 'rvc'
+            ? `Model saved to: ${status.modelPath || 'model directory'}`
+            : `Voicepack saved to: ${status.voicepackPath || 'out/voices/kokoro-voicepacks'}`;
+          alert(`Training completed successfully! ${successMsg}`);
           await fetchReadiness();
         } else if (status.status === 'failed') {
           alert(`Training failed: ${status.error || 'Unknown error'}`);
@@ -436,30 +465,19 @@
     }
 
     kokoroTraining = true;
-    try {
-      const response = await fetch('/api/kokoro-training', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'start-training',
-          speakerId: 'default',
-          langCode: kokoroLangCode,
-          baseVoice: kokoroBaseVoice,
-          epochs: kokoroEpochs,
-          learningRate: kokoroLearningRate,
-          device: kokoroDevice,
-          maxSamples: kokoroMaxSamples,
-        })
-      });
+    showTrainingModal = true;
+    showLogs = true; // Show logs by default for Kokoro
+    startRobotMessages();
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to start Kokoro training');
-      }
-      alert(data.message || 'Kokoro training started');
+    try {
+      const result = await startKokoroTrainingRequest(kokoroConfig);
+      // Don't show alert - the modal will show progress
+      console.log('[Kokoro] Training started:', result.message);
       await pollTrainingStatus();
     } catch (e) {
-      alert(String(e));
+      alert(`Failed to start Kokoro training: ${String(e)}`);
+      showTrainingModal = false;
+      stopRobotMessages();
     } finally {
       kokoroTraining = false;
     }
@@ -603,17 +621,7 @@
               class="provider-tab"
               class:active={provider === key}
               style="--provider-color: {config.color}"
-              on:click={() => {
-                provider = key as 'piper' | 'sovits' | 'rvc' | 'kokoro';
-                trainingStatus = null;
-                showTrainingModal = false;
-                stopRobotMessages();
-                if (trainingPollInterval) {
-                  clearInterval(trainingPollInterval);
-                  trainingPollInterval = null;
-                }
-                loadData();
-              }}
+              on:click={() => changeProvider(key)}
             >
               <span class="provider-tab-icon">{config.icon}</span>
               <span class="provider-tab-name">{config.name}</span>
@@ -1037,21 +1045,20 @@
               </div>
             </div>
           </div>
+          <div class="settings-info">
+            <strong>⏱️ Estimated Training Time:</strong>
+            {#if totalEpochs <= 300}
+              30-60 minutes
+            {:else if totalEpochs <= 600}
+              1-2 hours
+            {:else if totalEpochs <= 1000}
+              2-3 hours
+            {:else}
+              3+ hours
+            {/if}
+            (GPU recommended for faster training)
+          </div>
         </div>
-        <div class="settings-info">
-          <strong>⏱️ Estimated Training Time:</strong>
-          {#if totalEpochs <= 300}
-            30-60 minutes
-          {:else if totalEpochs <= 600}
-            1-2 hours
-          {:else if totalEpochs <= 1000}
-            2-3 hours
-          {:else}
-            3+ hours
-          {/if}
-          (GPU recommended for faster training)
-        </div>
-      </div>
       {/if}
 
       {#if provider === 'kokoro'}
@@ -1060,7 +1067,7 @@
           <div class="settings-grid">
             <div class="setting-group">
               <label for="kokoro-lang">Language Code</label>
-              <select id="kokoro-lang" bind:value={kokoroLangCode}>
+              <select id="kokoro-lang" bind:value={kokoroConfig.langCode}>
                 <option value="a">American English (a)</option>
                 <option value="b">British English (b)</option>
                 <option value="e">Spanish (es)</option>
@@ -1074,20 +1081,20 @@
             </div>
             <div class="setting-group">
               <label for="kokoro-base">Base Voice</label>
-              <input id="kokoro-base" type="text" bind:value={kokoroBaseVoice} />
+              <input id="kokoro-base" type="text" bind:value={kokoroConfig.baseVoice} />
               <div class="setting-note">Start from any Kokoro built-in voice ID (e.g., af_heart, af_sarah, am_adam).</div>
             </div>
             <div class="setting-group">
               <label for="kokoro-epochs">Epochs</label>
-              <input id="kokoro-epochs" type="number" min="60" max="400" bind:value={kokoroEpochs} />
+              <input id="kokoro-epochs" type="number" min="60" max="400" bind:value={kokoroConfig.epochs} />
             </div>
             <div class="setting-group">
               <label for="kokoro-lr">Learning Rate</label>
-              <input id="kokoro-lr" type="number" step="0.0001" bind:value={kokoroLearningRate} />
+              <input id="kokoro-lr" type="number" step="0.0001" bind:value={kokoroConfig.learningRate} />
             </div>
             <div class="setting-group">
               <label for="kokoro-device">Device</label>
-              <select id="kokoro-device" bind:value={kokoroDevice}>
+              <select id="kokoro-device" bind:value={kokoroConfig.device}>
                 <option value="auto">Auto (GPU if available)</option>
                 <option value="cuda">CUDA</option>
                 <option value="cpu">CPU</option>
@@ -1095,7 +1102,7 @@
             </div>
             <div class="setting-group">
               <label for="kokoro-max">Max Samples</label>
-              <input id="kokoro-max" type="number" min="50" max="400" bind:value={kokoroMaxSamples} />
+              <input id="kokoro-max" type="number" min="50" max="400" bind:value={kokoroConfig.maxSamples} />
             </div>
           </div>
           <p class="kokoro-hint">
@@ -1154,9 +1161,15 @@
   <!-- Training Modal Overlay -->
   {#if showTrainingModal}
     <div class="training-modal-overlay">
-      <div class="training-modal">
+      <div class="training-modal" class:kokoro-modal={provider === 'kokoro'}>
         <div class="modal-header">
-          <h2>⚡ RVC Model Training in Progress ⚡</h2>
+          <h2>
+            {#if provider === 'kokoro'}
+              🎵 Kokoro Voicepack Training in Progress 🎵
+            {:else}
+              ⚡ RVC Model Training in Progress ⚡
+            {/if}
+          </h2>
           <div class="warning-banner">
             ⚠️ DO NOT NAVIGATE AWAY - Training will be interrupted! ⚠️
           </div>
@@ -1180,32 +1193,76 @@
               </div>
             {/if}
 
+            <!-- Dataset Info for Kokoro -->
+            {#if provider === 'kokoro' && trainingStatus.datasetSamples}
+              <div class="dataset-display">
+                <span class="dataset-label">Dataset:</span>
+                <span class="dataset-value">{trainingStatus.datasetSamples} samples ({(trainingStatus.datasetMinutes || 0).toFixed(1)} min)</span>
+              </div>
+            {/if}
+
             <!-- Status Message -->
             {#if trainingStatus.message}
               <div class="status-message">{trainingStatus.message}</div>
             {/if}
           {/if}
 
-          <!-- Robot Takeover Message -->
-          <div class="robot-message-container">
-            <div class="robot-message">
-              {currentRobotMessage}
+          <!-- Toggle between robot messages and logs -->
+          {#if provider === 'kokoro' && showLogs}
+            <!-- Training Logs View -->
+            <div class="logs-container">
+              <div class="logs-header">
+                <h3>📋 Training Logs</h3>
+                <button class="toggle-view-btn" on:click={() => showLogs = false}>
+                  Show Robot Messages
+                </button>
+              </div>
+              <div class="logs-content" bind:this={logsContainer}>
+                {#if trainingLogs.length === 0}
+                  <div class="logs-placeholder">
+                    Waiting for training logs...
+                  </div>
+                {:else}
+                  {#each trainingLogs as logLine}
+                    <div class="log-line">{logLine}</div>
+                  {/each}
+                {/if}
+              </div>
             </div>
-            <div class="robot-ascii">
-              <pre>
-  
-                   [¬º-°]¬ 
-                  /|     |\
-                  / \   / \
-              </pre>
+          {:else}
+            <!-- Robot Takeover Message -->
+            <div class="robot-message-container">
+              <div class="robot-message">
+                {currentRobotMessage}
+              </div>
+              <div class="robot-ascii">
+                <pre>
+
+            [¬º-° ]¬
+           /|     |\
+           / \   / \
+                </pre>
+              </div>
+              {#if provider === 'kokoro'}
+                <button class="toggle-view-btn" on:click={() => showLogs = true}>
+                  Show Training Logs
+                </button>
+              {/if}
             </div>
-          </div>
+          {/if}
 
           <div class="training-info">
-            <p>⏱️ Estimated time: 30-60 minutes</p>
-            <p>🔥 GPU temperature: Rising steadily</p>
-            <p>💾 System resources: Being consumed</p>
-            <p>🌐 Skynet connection: Established</p>
+            {#if provider === 'kokoro'}
+              <p>⏱️ Estimated time: 10-30 minutes</p>
+              <p>🎵 StyleTTS2 voice encoder optimization</p>
+              <p>💾 Training voicepack embeddings</p>
+              <p>🌐 Skynet connection: Established</p>
+            {:else}
+              <p>⏱️ Estimated time: 30-60 minutes</p>
+              <p>🔥 GPU temperature: Rising steadily</p>
+              <p>💾 System resources: Being consumed</p>
+              <p>🌐 Skynet connection: Established</p>
+            {/if}
           </div>
         </div>
       </div>
@@ -2266,6 +2323,15 @@
     background: linear-gradient(135deg, #0a0a1a 0%, #0d1321 100%);
   }
 
+  .training-modal.kokoro-modal {
+    border: 3px solid #f59e0b;
+    box-shadow: 0 0 40px rgba(245, 158, 11, 0.5);
+  }
+
+  :global(.dark) .training-modal.kokoro-modal {
+    background: linear-gradient(135deg, #1a1410 0%, #211813 100%);
+  }
+
   @keyframes scaleIn {
     from {
       transform: scale(0.9);
@@ -2403,6 +2469,24 @@
     color: #00d4aa;
   }
 
+  .dataset-display {
+    text-align: center;
+    font-size: 1.1rem;
+    margin: 15px 0;
+    color: #f59e0b;
+  }
+
+  .dataset-label {
+    font-weight: 600;
+    margin-right: 8px;
+  }
+
+  .dataset-value {
+    font-weight: 700;
+    font-size: 1.2rem;
+    color: #fb923c;
+  }
+
   .status-message {
     text-align: center;
     padding: 12px;
@@ -2461,6 +2545,89 @@
     50% {
       transform: translateY(-5px);
     }
+  }
+
+  .logs-container {
+    margin: 30px 0;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 2px solid #f59e0b;
+    border-radius: 12px;
+  }
+
+  .logs-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+  }
+
+  .logs-header h3 {
+    margin: 0;
+    color: #f59e0b;
+    font-size: 1.2rem;
+  }
+
+  .toggle-view-btn {
+    padding: 6px 12px;
+    background: rgba(245, 158, 11, 0.2);
+    border: 1px solid #f59e0b;
+    border-radius: 6px;
+    color: #fbbf24;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .toggle-view-btn:hover {
+    background: rgba(245, 158, 11, 0.3);
+    transform: translateY(-1px);
+  }
+
+  .logs-content {
+    max-height: 300px;
+    overflow-y: auto;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    background: rgba(0, 0, 0, 0.4);
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid rgba(245, 158, 11, 0.2);
+  }
+
+  .logs-content::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .logs-content::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+  }
+
+  .logs-content::-webkit-scrollbar-thumb {
+    background: #f59e0b;
+    border-radius: 4px;
+  }
+
+  .logs-content::-webkit-scrollbar-thumb:hover {
+    background: #fbbf24;
+  }
+
+  .log-line {
+    color: #d1d5db;
+    margin: 3px 0;
+    padding: 2px 0;
+    word-wrap: break-word;
+  }
+
+  .logs-placeholder {
+    text-align: center;
+    color: #9ca3af;
+    font-style: italic;
+    padding: 30px;
   }
 
   .training-info {

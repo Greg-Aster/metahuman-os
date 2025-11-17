@@ -10,25 +10,26 @@ import { withUserContext } from '../../middleware/userContext';
  *
  * Body: {
  *   text: string,
- *   provider?: 'piper' | 'sovits' | 'gpt-sovits' | 'rvc',  // Optional: TTS provider to use (UI may send "sovits")
- *   voiceId?: string,         // Optional: voice ID (Piper) or speaker ID (SoVITS/RVC)
+ *   provider?: 'piper' | 'sovits' | 'gpt-sovits' | 'rvc' | 'kokoro',  // Optional: TTS provider to use (UI may send "sovits")
+ *   voiceId?: string,         // Optional: voice ID (Piper/Kokoro) or speaker ID (SoVITS/RVC)
  *   model?: string,           // Optional: override voice model path (legacy)
  *   models?: string[],        // Optional: array of voice models for multi-voice (mutant mode)
  *   speakingRate?: number,    // Optional: override speaking rate (0.5 - 2.0)
  *   pitchShift?: number,      // Optional: RVC pitch shift (-12 to +12 semitones)
- *   speed?: number            // Optional: SoVITS/RVC speed (0.5 - 2.0)
+ *   speed?: number,           // Optional: SoVITS/RVC/Kokoro speed (0.5 - 2.0)
+ *   langCode?: string         // Optional: Kokoro language code ('a' for auto, 'en', 'ja', etc.)
  * }
  * Returns: audio/wav stream
  */
-const normalizeProvider = (provider?: string): 'piper' | 'gpt-sovits' | 'rvc' | undefined => {
+const normalizeProvider = (provider?: string): 'piper' | 'gpt-sovits' | 'rvc' | 'kokoro' | undefined => {
   if (!provider) return undefined;
   if (provider === 'sovits') return 'gpt-sovits';
-  return provider as 'piper' | 'gpt-sovits' | 'rvc';
+  return provider as 'piper' | 'gpt-sovits' | 'rvc' | 'kokoro';
 };
 
 const postHandler: APIRoute = async ({ request, cookies }) => {
   try {
-    const { text, provider, model, voiceId, models, config, speakingRate, pitchShift, speed } = await request.json();
+    const { text, provider, model, voiceId, models, config, speakingRate, pitchShift, speed, langCode } = await request.json();
 
     if (!text || typeof text !== 'string') {
       return new Response(JSON.stringify({ error: 'Text is required' }), {
@@ -68,8 +69,9 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
       audioBuffer = await generateSpeech(text, {
         signal: request.signal,
         voice: voiceId || model, // Use voiceId (preferred) or model (legacy)
-        speakingRate: speakingRate || speed, // speakingRate for Piper, speed for SoVITS/RVC
+        speakingRate: speakingRate || speed, // speakingRate for Piper, speed for SoVITS/RVC/Kokoro
         pitchShift, // RVC-specific
+        langCode, // Kokoro-specific language code
         provider: normalizedProvider,
         username,
       });

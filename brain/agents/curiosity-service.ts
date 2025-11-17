@@ -28,26 +28,9 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 
 /**
- * Check if user is currently active
- * TODO: Integrate with activity-ping API once available
+ * NOTE: User activity detection is now handled by the scheduler (agent-scheduler.ts).
+ * This service is only triggered after inactivityThreshold seconds of conversation inactivity.
  */
-async function isUserActive(username: string): Promise<boolean> {
-  const config = loadCuriosityConfig();
-  const stateDir = paths.state;
-  const activityFile = path.join(stateDir, 'last-activity.json');
-
-  if (!fsSync.existsSync(activityFile)) return false;
-
-  try {
-    const data = JSON.parse(await fs.readFile(activityFile, 'utf-8'));
-    const lastActivity = new Date(data.timestamp);
-    const now = new Date();
-    const elapsedSeconds = (now.getTime() - lastActivity.getTime()) / 1000;
-    return elapsedSeconds < config.inactivityThresholdSeconds;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Count recent curiosity questions (last 24 hours)
@@ -269,14 +252,12 @@ async function generateUserQuestion(username: string): Promise<boolean> {
     return false;
   }
 
-  // Check inactivity
-  const active = await isUserActive(username);
-  if (active) {
-    console.log(`[curiosity-service] User ${username} is active, skipping question`);
-    return false;
-  }
+  // NOTE: Inactivity check removed - scheduler (agent-scheduler.ts) now handles this
+  // via activity-based triggering. The scheduler only runs this service after
+  // inactivityThreshold seconds of conversation inactivity.
 
   // Check if enough time has passed since last question (frequency control)
+  // This prevents rapid-fire questions if triggered multiple times
   const questionInterval = config.questionIntervalSeconds || 1800; // Default 30 min
   const lastQuestionTime = await getLastQuestionTime();
   if (lastQuestionTime) {

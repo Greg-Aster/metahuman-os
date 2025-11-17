@@ -70,6 +70,34 @@ export const onRequest = defineMiddleware(async (context, next) => {
     }
   }
 
+  // DEVELOPMENT MODE: Auto-login as owner if no session exists
+  // This avoids needing to manually set cookies during development
+  const isDevelopment = import.meta.env.DEV;
+  const devAutoLogin = process.env.DEV_AUTO_LOGIN !== 'false'; // Default to true in dev
+  const devUsername = process.env.DEV_USERNAME || 'greggles'; // Allow override via env var
+
+  if (isDevelopment && devAutoLogin) {
+    // Try to find the specified user (defaults to 'greggles')
+    const ownerUser = getUser(devUsername);
+
+    if (ownerUser && ownerUser.role === 'owner') {
+      console.log('[middleware] DEV MODE: Auto-authenticating as', ownerUser.username);
+
+      // Set user context in locals
+      context.locals.userContext = {
+        userId: ownerUser.id,
+        username: ownerUser.username,
+        role: ownerUser.role,
+      };
+
+      // Run request with owner context
+      return await runWithUserContext(
+        { userId: ownerUser.id, username: ownerUser.username, role: ownerUser.role },
+        () => next()
+      );
+    }
+  }
+
   // SECURITY: No session - run with anonymous context
   // Set anonymous context in locals
   context.locals.userContext = {

@@ -13,7 +13,7 @@ import {
 
 function normalizeProvider(provider?: string | null): VoiceProvider {
   if (!provider) return 'gpt-sovits';
-  if (provider === 'sovits') return 'gpt-sovits';
+  if (provider === 'sovits' || provider === 'kokoro') return 'gpt-sovits';
   return provider as VoiceProvider;
 }
 

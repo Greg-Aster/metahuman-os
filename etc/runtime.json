@@ -1,7 +1,7 @@
 {
-  "headless": false,
+  "headless": true,
   "lastChangedBy": "remote",
-  "changedAt": "2025-11-10T02:43:30.915Z",
+  "changedAt": "2025-11-16T23:43:51.337Z",
   "claimedBy": null,
   "operator": {
     "reactV2": true,

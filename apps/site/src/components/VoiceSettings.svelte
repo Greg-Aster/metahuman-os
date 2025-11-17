@@ -11,8 +11,16 @@
     configPath: string;
   }
 
+  interface KokoroVoice {
+    id: string;
+    name: string;
+    lang: string;
+    gender: string;
+    quality: string;
+  }
+
   interface VoiceConfig {
-    provider: 'piper' | 'sovits' | 'rvc';
+    provider: 'piper' | 'sovits' | 'rvc' | 'kokoro';
     piper?: {
       voices: PiperVoice[];
       currentVoice: string;
@@ -35,6 +43,14 @@
       protect?: number;
       f0Method?: string;
       device?: 'cuda' | 'cpu';
+    };
+    kokoro?: {
+      langCode: string;
+      voice: string;
+      speed: number;
+      autoFallbackToPiper: boolean;
+      useCustomVoicepack: boolean;
+      voices?: KokoroVoice[];
     };
   }
 
@@ -67,6 +83,12 @@
       icon: '🎭',
       description: 'High-fidelity voice conversion with pitch control',
       color: '#8b5cf6',
+    },
+    kokoro: {
+      name: 'Kokoro TTS',
+      icon: '🫀',
+      description: '54 pre-built voices across 8 languages (StyleTTS2)',
+      color: '#f59e0b',
     },
   };
 
@@ -200,6 +222,11 @@
         requestBody.voiceId = config.rvc.speakerId;
         requestBody.pitchShift = config.rvc.pitchShift;
         requestBody.speed = config.rvc.speed;
+      } else if (providerToTest === 'kokoro' && config.kokoro) {
+        // Kokoro-specific parameters
+        requestBody.voiceId = config.kokoro.voice;  // e.g., 'af_heart', 'af_bella'
+        requestBody.langCode = config.kokoro.langCode;  // e.g., 'a' for auto-detect
+        requestBody.speed = config.kokoro.speed;  // 0.5-2.0
       }
 
       const response = await fetch('/api/tts', {
@@ -630,6 +657,111 @@
             disabled={testingVoice || saving}
           >
             {testingVoice ? '🔊 Playing...' : '▶️ Test RVC'}
+          </button>
+        </div>
+      </div>
+
+    {:else if config.provider === 'kokoro' && config.kokoro}
+      <div class="provider-settings">
+        <h4>Kokoro TTS Settings</h4>
+
+        <div class="setting-group">
+          <label>Server Status</label>
+          <ServerStatusIndicator
+            serverName="Kokoro"
+            statusEndpoint="/api/kokoro-server"
+            controlEndpoint="/api/kokoro-server"
+            autoRefresh={true}
+            refreshInterval={15000}
+          />
+        </div>
+
+        <div class="setting-group">
+          <label for="kokoro-voice">Voice</label>
+          <select id="kokoro-voice" bind:value={config.kokoro.voice} disabled={saving}>
+            {#if config.kokoro.voices && config.kokoro.voices.length > 0}
+              {#each config.kokoro.voices as voice}
+                <option value={voice.id}>
+                  {voice.name} ({voice.lang}, {voice.gender}, {voice.quality})
+                </option>
+              {/each}
+            {:else}
+              <option value="af_heart">Heart (English, Female, High)</option>
+              <option value="af_bella">Bella (English, Female, High)</option>
+              <option value="af_sarah">Sarah (English, Female, High)</option>
+              <option value="am_adam">Adam (English, Male, High)</option>
+              <option value="am_michael">Michael (English, Male, High)</option>
+            {/if}
+          </select>
+          <p class="hint">Choose from 54 built-in voices across 8 languages</p>
+        </div>
+
+        <div class="setting-group">
+          <label for="kokoro-lang">Language Code</label>
+          <select id="kokoro-lang" bind:value={config.kokoro.langCode} disabled={saving}>
+            <option value="a">Auto-detect</option>
+            <option value="en">English</option>
+            <option value="ja">Japanese</option>
+            <option value="zh">Chinese</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="ko">Korean</option>
+          </select>
+          <p class="hint">Language for text processing (auto-detect recommended)</p>
+        </div>
+
+        <div class="setting-group">
+          <label for="kokoro-speed">
+            Speed: {config.kokoro.speed.toFixed(2)}x
+          </label>
+          <input
+            id="kokoro-speed"
+            type="range"
+            min="0.5"
+            max="2.0"
+            step="0.05"
+            bind:value={config.kokoro.speed}
+            disabled={saving}
+          />
+          <div class="range-labels">
+            <span>Slower</span>
+            <span>Normal</span>
+            <span>Faster</span>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" bind:checked={config.kokoro.useCustomVoicepack} disabled={saving} />
+            Use custom trained voicepack (not yet implemented)
+          </label>
+          <p class="hint">Custom voice training requires StyleTTS2 fine-tuning</p>
+        </div>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" bind:checked={config.kokoro.autoFallbackToPiper} disabled={saving} />
+            Auto-fallback to Piper if unavailable
+          </label>
+        </div>
+
+        <!-- Kokoro Test Section -->
+        <div class="provider-test-section">
+          <label for="kokoro-test-text">Test Kokoro Voice</label>
+          <textarea
+            id="kokoro-test-text"
+            bind:value={testText}
+            rows="2"
+            placeholder="Enter text to test Kokoro synthesis..."
+            disabled={testingVoice || saving}
+          ></textarea>
+          <button
+            class="test-button kokoro-test"
+            on:click={() => testVoice('kokoro')}
+            disabled={testingVoice || saving}
+          >
+            {testingVoice ? '🔊 Playing...' : '▶️ Test Kokoro'}
           </button>
         </div>
       </div>

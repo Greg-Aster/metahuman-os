@@ -17,6 +17,22 @@
       "outputFormat": "wav",
       "timeout": 30000,
       "autoFallbackToPiper": true
+    },
+    "kokoro": {
+      "langCode": "a",
+      "voice": "af_heart",
+      "speed": 1.0,
+      "splitPattern": "\\n+",
+      "useCustomVoicepack": false,
+      "customVoicepackPath": "{PROFILE_DIR}/out/voices/kokoro-voicepacks/default.pt",
+      "outputFormat": "wav",
+      "autoFallbackToPiper": true,
+      "server": {
+        "useServer": true,
+        "url": "http://127.0.0.1:9882",
+        "autoStart": true,
+        "port": 9882
+      }
     }
   },
   "stt": {

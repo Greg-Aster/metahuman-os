@@ -34,6 +34,11 @@
   let toggling: Record<string, boolean> = {};
   let selectedCategory: string | null = null;
 
+  // Installation progress modal
+  let showInstallModal = false;
+  let installLogs: Array<{ level: string; message: string; timestamp: Date }> = [];
+  let currentInstallAddon: string | null = null;
+
   onMount(async () => {
     await loadAddons();
   });
@@ -63,29 +68,119 @@
     }
 
     try {
-      installing[addonId] = true;
-      const response = await fetch('/api/addons/install', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ addonId }),
-      });
+      // Show modal and reset logs
+      currentInstallAddon = addonId;
+      installLogs = [];
+      showInstallModal = true;
+      installing = { ...installing, [addonId]: true };
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Installation failed');
+      // Map addon to installation script
+      const scriptMap: Record<string, { script: string; args: string[] }> = {
+        'kokoro': { script: 'bin/install-kokoro.sh', args: ['--yes'] },
+        'gpt-sovits': { script: 'bin/install-sovits.sh', args: [] },
+        'rvc': { script: 'bin/install-rvc.sh', args: [] },
+      };
+
+      const installConfig = scriptMap[addonId];
+      if (!installConfig) {
+        throw new Error(`No installation script configured for ${addonId}`);
       }
 
-      const result = await response.json();
-      console.log('[AddonsManager] Installation result:', result);
+      // Use universal process streaming endpoint
+      const response = await fetch('/api/process-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command: 'bash',
+          args: [installConfig.script, ...installConfig.args],
+        }),
+      });
 
-      // Reload addon status
-      await loadAddons();
+      if (!response.ok || !response.body) {
+        throw new Error('Failed to start installation stream');
+      }
+
+      // Parse SSE stream
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          const [eventLine, dataLine] = line.split('\n');
+          if (!eventLine || !dataLine) continue;
+
+          const event = eventLine.replace('event: ', '').trim();
+          const dataStr = dataLine.replace('data: ', '').trim();
+
+          try {
+            const data = JSON.parse(dataStr);
+
+            if (event === 'start') {
+              installLogs = [...installLogs, { level: 'info', message: data.message, timestamp: new Date() }];
+            } else if (event === 'log') {
+              installLogs = [...installLogs, { level: data.level, message: data.message, timestamp: new Date() }];
+
+              // Auto-scroll to bottom
+              setTimeout(() => {
+                const logContainer = document.querySelector('.install-logs');
+                if (logContainer) {
+                  logContainer.scrollTop = logContainer.scrollHeight;
+                }
+              }, 10);
+            } else if (event === 'complete') {
+              installLogs = [...installLogs, {
+                level: data.success ? 'info' : 'error',
+                message: data.success ? data.message : data.error,
+                timestamp: new Date()
+              }];
+              installing = { ...installing, [addonId]: false };
+
+              // Mark as installed and reload addon status after success
+              if (data.success) {
+                // Update etc/addons.json
+                await fetch('/api/addons/mark-installed', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ addonId, installed: true }),
+                }).catch(err => console.error('Failed to mark addon as installed:', err));
+
+                // Reload addon list
+                await loadAddons();
+              }
+              break; // Exit while loop
+            } else if (event === 'error') {
+              installLogs = [...installLogs, { level: 'error', message: data.message, timestamp: new Date() }];
+              installing = { ...installing, [addonId]: false };
+              break; // Exit while loop
+            }
+          } catch (parseError) {
+            console.error('[AddonsManager] Failed to parse SSE data:', parseError);
+          }
+        }
+      }
+
     } catch (e) {
       error = `Installation failed: ${String(e)}`;
       console.error('[AddonsManager] Install error:', e);
-    } finally {
-      installing[addonId] = false;
+      installing = { ...installing, [addonId]: false };
+      showInstallModal = false;
     }
+  }
+
+  function closeInstallModal() {
+    showInstallModal = false;
+    currentInstallAddon = null;
+    installLogs = [];
   }
 
   async function uninstallAddon(addonId: string) {
@@ -94,7 +189,9 @@
     }
 
     try {
-      installing[addonId] = true;
+      // Trigger Svelte reactivity with object reassignment
+      installing = { ...installing, [addonId]: true };
+
       const response = await fetch('/api/addons/uninstall', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -111,13 +208,15 @@
       error = `Uninstallation failed: ${String(e)}`;
       console.error('[AddonsManager] Uninstall error:', e);
     } finally {
-      installing[addonId] = false;
+      // Trigger Svelte reactivity with object reassignment
+      installing = { ...installing, [addonId]: false };
     }
   }
 
   async function toggleAddon(addonId: string) {
     try {
-      toggling[addonId] = true;
+      // Trigger Svelte reactivity with object reassignment
+      toggling = { ...toggling, [addonId]: true };
       const newState = !addons[addonId].enabled;
 
       const response = await fetch('/api/addons/toggle', {
@@ -136,7 +235,8 @@
       error = `Toggle failed: ${String(e)}`;
       console.error('[AddonsManager] Toggle error:', e);
     } finally {
-      toggling[addonId] = false;
+      // Trigger Svelte reactivity with object reassignment
+      toggling = { ...toggling, [addonId]: false };
     }
   }
 
@@ -283,6 +383,40 @@
         <p>No addons found in this category.</p>
       </div>
     {/if}
+  {/if}
+
+  <!-- Installation Progress Modal -->
+  {#if showInstallModal && currentInstallAddon}
+    <div class="modal-overlay" on:click={closeInstallModal}>
+      <div class="modal-content" on:click|stopPropagation>
+        <div class="modal-header">
+          <h3>Installing {addons[currentInstallAddon]?.name || currentInstallAddon}</h3>
+          <button class="close-btn" on:click={closeInstallModal}>×</button>
+        </div>
+
+        <div class="install-logs">
+          {#each installLogs as log}
+            <div class="log-entry log-{log.level}">
+              <span class="log-time">{log.timestamp.toLocaleTimeString()}</span>
+              <span class="log-message">{log.message}</span>
+            </div>
+          {/each}
+          {#if installLogs.length === 0}
+            <div class="log-placeholder">Waiting for installation to start...</div>
+          {/if}
+        </div>
+
+        <div class="modal-footer">
+          {#if installing[currentInstallAddon]}
+            <div class="installing-indicator">
+              <span class="spinner">⏳</span> Installation in progress...
+            </div>
+          {:else}
+            <button class="btn btn-primary" on:click={closeInstallModal}>Close</button>
+          {/if}
+        </div>
+      </div>
+    </div>
   {/if}
 </div>
 
@@ -649,5 +783,171 @@
   :global(.dark) .error-message {
     background: #7f1d1d;
     color: #fecaca;
+  }
+
+  /* Installation Progress Modal */
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal-content {
+    background: white;
+    border-radius: 0.75rem;
+    width: 90%;
+    max-width: 800px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+  }
+
+  :global(.dark) .modal-content {
+    background: #1f2937;
+  }
+
+  .modal-header {
+    padding: 1.5rem;
+    border-bottom: 2px solid #e5e7eb;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  :global(.dark) .modal-header {
+    border-bottom-color: #374151;
+  }
+
+  .modal-header h3 {
+    margin: 0;
+    font-size: 1.25rem;
+    color: #1f2937;
+  }
+
+  :global(.dark) .modal-header h3 {
+    color: #f3f4f6;
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    font-size: 2rem;
+    line-height: 1;
+    color: #6b7280;
+    cursor: pointer;
+    padding: 0;
+    width: 2rem;
+    height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .close-btn:hover {
+    color: #1f2937;
+  }
+
+  :global(.dark) .close-btn:hover {
+    color: #f3f4f6;
+  }
+
+  .install-logs {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+    background: #f9fafb;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.875rem;
+    max-height: 500px;
+  }
+
+  :global(.dark) .install-logs {
+    background: #111827;
+  }
+
+  .log-entry {
+    padding: 0.5rem;
+    margin-bottom: 0.25rem;
+    border-radius: 0.25rem;
+    display: flex;
+    gap: 0.75rem;
+  }
+
+  .log-entry.log-info {
+    background: #eff6ff;
+    color: #1e40af;
+  }
+
+  :global(.dark) .log-entry.log-info {
+    background: #1e3a8a;
+    color: #93c5fd;
+  }
+
+  .log-entry.log-error {
+    background: #fee2e2;
+    color: #991b1b;
+  }
+
+  :global(.dark) .log-entry.log-error {
+    background: #7f1d1d;
+    color: #fecaca;
+  }
+
+  .log-time {
+    flex-shrink: 0;
+    opacity: 0.7;
+    font-weight: 600;
+  }
+
+  .log-message {
+    flex: 1;
+    word-break: break-word;
+  }
+
+  .log-placeholder {
+    text-align: center;
+    padding: 3rem;
+    color: #6b7280;
+    font-style: italic;
+  }
+
+  :global(.dark) .log-placeholder {
+    color: #9ca3af;
+  }
+
+  .modal-footer {
+    padding: 1.5rem;
+    border-top: 2px solid #e5e7eb;
+    display: flex;
+    justify-content: center;
+  }
+
+  :global(.dark) .modal-footer {
+    border-top-color: #374151;
+  }
+
+  .installing-indicator {
+    color: #7c3aed;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .spinner {
+    animation: spin 2s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
 </style>

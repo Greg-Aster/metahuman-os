@@ -1,6 +1,8 @@
 import type { APIRoute } from 'astro';
-import { loadCuriosityConfig, saveCuriosityConfig } from '@metahuman/core';
+import { loadCuriosityConfig, saveCuriosityConfig, systemPaths } from '@metahuman/core';
 import { withUserContext } from '../../middleware/userContext';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const handler: APIRoute = async ({ request }) => {
   if (request.method === 'GET') {
@@ -32,6 +34,23 @@ const handler: APIRoute = async ({ request }) => {
       };
 
       saveCuriosityConfig(newConfig);
+
+      // Also update agents.json to sync the inactivityThreshold
+      // This ensures the scheduler triggers curiosity at the right time
+      if (updates.questionIntervalSeconds !== undefined) {
+        try {
+          const agentsPath = path.join(systemPaths.etc, 'agents.json');
+          const agentsData = JSON.parse(fs.readFileSync(agentsPath, 'utf-8'));
+
+          if (agentsData.agents.curiosity) {
+            agentsData.agents.curiosity.inactivityThreshold = updates.questionIntervalSeconds;
+            fs.writeFileSync(agentsPath, JSON.stringify(agentsData, null, 2), 'utf-8');
+          }
+        } catch (agentError) {
+          console.error('[curiosity-config] Failed to update agents.json:', agentError);
+          // Don't fail the whole request if agents.json update fails
+        }
+      }
 
       return new Response(JSON.stringify({ success: true, config: newConfig }), {
         status: 200,

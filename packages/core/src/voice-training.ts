@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { paths, systemPaths } from './paths.js';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, execSync } from 'node:child_process';
 import { audit } from './audit.js';
 import { clearCache } from './tts/cache.js';
 
@@ -30,6 +30,33 @@ export interface RVCTrainingStatus {
   endTime?: number;
   pid?: number;
   modelPath?: string;
+}
+
+export interface KokoroTrainingStatus {
+  status: 'idle' | 'running' | 'completed' | 'failed';
+  speakerId: string;
+  progress: number;
+  currentEpoch?: number;
+  totalEpochs?: number;
+  message?: string;
+  error?: string;
+  startTime?: number;
+  endTime?: number;
+  pid?: number;
+  voicepackPath?: string;
+  datasetSamples?: number;
+  datasetMinutes?: number;
+}
+
+export interface KokoroTrainingOptions {
+  langCode?: string;
+  baseVoice?: string;
+  epochs?: number;
+  learningRate?: number;
+  regularization?: number;
+  device?: 'auto' | 'cpu' | 'cuda';
+  maxSamples?: number;
+  outputPath?: string;
 }
 
 export interface VoiceSample {
@@ -1079,6 +1106,135 @@ export function deleteRVCSample(speakerId: string, sampleId: string): void {
   });
 }
 
+function getKokoroDatasetDir(speakerId: string = 'default'): string {
+  const dir = path.join(paths.kokoroDatasets, speakerId);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
+export function listKokoroSamples(speakerId: string = 'default'): VoiceSample[] {
+  const dir = getKokoroDatasetDir(speakerId);
+  const files = fs.readdirSync(dir);
+  const wavs = files.filter(f => f.endsWith('.wav'));
+  const samples: VoiceSample[] = [];
+
+  for (const wav of wavs) {
+    const id = wav.replace('.wav', '');
+    const wavPath = path.join(dir, wav);
+    const txtPath = path.join(dir, `${id}.txt`);
+    const metaPath = path.join(dir, `${id}.meta.json`);
+    let duration = 0;
+    let quality = 1;
+    let timestamp = '';
+
+    if (fs.existsSync(metaPath)) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+        duration = meta.duration || 0;
+        quality = meta.quality || 1;
+        timestamp = meta.timestamp || '';
+      } catch {}
+    }
+
+    samples.push({
+      id,
+      audioPath: wavPath,
+      transcriptPath: txtPath,
+      duration,
+      timestamp,
+      quality,
+    });
+  }
+
+  return samples;
+}
+
+function clearKokoroDataset(speakerId: string = 'default'): number {
+  const dir = getKokoroDatasetDir(speakerId);
+  let deleted = 0;
+
+  for (const file of fs.readdirSync(dir)) {
+    try {
+      fs.unlinkSync(path.join(dir, file));
+      deleted++;
+    } catch (error) {
+      console.error(`[clearKokoroDataset] Failed to delete ${file}:`, error);
+    }
+  }
+
+  return deleted;
+}
+
+export function copyToKokoroDataset(sampleIds: string[], speakerId: string = 'default'): number {
+  const srcDir = paths.voiceTraining;
+  const destDir = getKokoroDatasetDir(speakerId);
+
+  clearKokoroDataset(speakerId);
+
+  let copied = 0;
+  let duration = 0;
+
+  for (const id of sampleIds) {
+    const wavSrc = path.join(srcDir, `${id}.wav`);
+    const txtSrc = path.join(srcDir, `${id}.txt`);
+    const metaSrc = path.join(srcDir, `${id}.meta.json`);
+    const wavDest = path.join(destDir, `${id}.wav`);
+    const txtDest = path.join(destDir, `${id}.txt`);
+    const metaDest = path.join(destDir, `${id}.meta.json`);
+
+    if (!fs.existsSync(wavSrc)) continue;
+
+    fs.copyFileSync(wavSrc, wavDest);
+    if (fs.existsSync(txtSrc)) {
+      fs.copyFileSync(txtSrc, txtDest);
+    }
+    if (fs.existsSync(metaSrc)) {
+      fs.copyFileSync(metaSrc, metaDest);
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaSrc, 'utf-8'));
+        duration += meta.duration || 0;
+      } catch {}
+    }
+    copied++;
+  }
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'kokoro_samples_copy',
+    details: {
+      speakerId,
+      sampleCount: copied,
+      totalDuration: duration,
+      sampleIds,
+    },
+    actor: 'system',
+  });
+
+  return copied;
+}
+
+export function deleteKokoroSample(speakerId: string, sampleId: string): void {
+  const dir = getKokoroDatasetDir(speakerId);
+  const wav = path.join(dir, `${sampleId}.wav`);
+  const txt = path.join(dir, `${sampleId}.txt`);
+  const meta = path.join(dir, `${sampleId}.meta.json`);
+
+  if (fs.existsSync(wav)) fs.unlinkSync(wav);
+  if (fs.existsSync(txt)) fs.unlinkSync(txt);
+  if (fs.existsSync(meta)) fs.unlinkSync(meta);
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'kokoro_sample_delete',
+    details: { speakerId, sampleId },
+    actor: 'system',
+  });
+}
+
 /**
  * Get RVC training readiness status
  * RVC typically needs 10-15 minutes of audio (600-900 seconds)
@@ -1132,6 +1288,64 @@ export function getRVCTrainingReadiness(speakerId: string = 'default'): {
       minSamples,
       minDuration,
       minQuality,
+    },
+  };
+}
+
+export function getKokoroTrainingReadiness(speakerId: string = 'default'): {
+  ready: boolean;
+  reason?: string;
+  samples: { total: number; duration: number; quality: number };
+  requirements: { minSamples: number; minDuration: number; minQuality: number };
+  copied?: { count: number; duration: number };
+} {
+  const samples = listVoiceSamples(1000);
+  const minSamples = 30;
+  const minDuration = 300; // 5 minutes
+  const minQuality = 0.75;
+
+  let totalDuration = 0;
+  let totalQuality = 0;
+
+  for (const sample of samples) {
+    totalDuration += sample.duration;
+    totalQuality += sample.quality;
+  }
+
+  const avgQuality = samples.length > 0 ? totalQuality / samples.length : 0;
+  const ready = samples.length >= minSamples && totalDuration >= minDuration && avgQuality >= minQuality;
+
+  let reason: string | undefined;
+  if (!ready) {
+    if (samples.length < minSamples) {
+      reason = `Need at least ${minSamples} samples (currently ${samples.length})`;
+    } else if (totalDuration < minDuration) {
+      reason = `Need at least ${Math.floor(minDuration / 60)} minutes of audio (currently ${Math.floor(totalDuration / 60)} minutes)`;
+    } else if (avgQuality < minQuality) {
+      reason = `Average quality too low (need ${(minQuality * 100).toFixed(0)}%, currently ${(avgQuality * 100).toFixed(0)}%)`;
+    }
+  }
+
+  const copiedSamples = listKokoroSamples(speakerId);
+  const copiedCount = copiedSamples.length;
+  const copiedDuration = copiedSamples.reduce((sum, s) => sum + s.duration, 0);
+
+  return {
+    ready,
+    reason,
+    samples: {
+      total: samples.length,
+      duration: totalDuration,
+      quality: avgQuality,
+    },
+    requirements: {
+      minSamples,
+      minDuration,
+      minQuality,
+    },
+    copied: {
+      count: copiedCount,
+      duration: copiedDuration,
     },
   };
 }
@@ -1196,6 +1410,43 @@ function writeRVCTrainingStatus(status: RVCTrainingStatus): void {
     fs.mkdirSync(dir, { recursive: true });
   }
 
+  fs.writeFileSync(statusPath, JSON.stringify(status, null, 2), 'utf-8');
+}
+
+function getKokoroTrainingStatusPath(speakerId: string): string {
+  return path.join(systemPaths.logs, 'run', `kokoro-training-${speakerId}.json`);
+}
+
+export function getKokoroTrainingStatus(speakerId: string = 'default'): KokoroTrainingStatus {
+  const statusPath = getKokoroTrainingStatusPath(speakerId);
+  if (!fs.existsSync(statusPath)) {
+    return {
+      status: 'idle',
+      speakerId,
+      progress: 0,
+    };
+  }
+
+  try {
+    const raw = fs.readFileSync(statusPath, 'utf-8');
+    return JSON.parse(raw) as KokoroTrainingStatus;
+  } catch (error) {
+    console.error('[getKokoroTrainingStatus] Failed to read status file:', error);
+    return {
+      status: 'idle',
+      speakerId,
+      progress: 0,
+      error: 'Status file unreadable',
+    };
+  }
+}
+
+function writeKokoroTrainingStatus(status: KokoroTrainingStatus): void {
+  const statusPath = getKokoroTrainingStatusPath(status.speakerId);
+  const dir = path.dirname(statusPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
   fs.writeFileSync(statusPath, JSON.stringify(status, null, 2), 'utf-8');
 }
 
@@ -1967,4 +2218,220 @@ export function startRVCTraining(
   });
 
   return { success: true };
+}
+
+export function startKokoroVoicepackTraining(
+  speakerId: string = 'default',
+  options?: KokoroTrainingOptions
+): { success: boolean; error?: string; message?: string } {
+  const existingStatus = getKokoroTrainingStatus(speakerId);
+  if (existingStatus.status === 'running') {
+    return {
+      success: false,
+      error: 'Kokoro training is already running for this speaker.',
+    };
+  }
+
+  const datasetSamples = listKokoroSamples(speakerId);
+  if (datasetSamples.length < 10) {
+    return {
+      success: false,
+      error: 'Not enough samples copied to the Kokoro dataset. Need at least 10 clips. Use "Auto-Export Best Samples" or "Copy Selected Samples" first.',
+    };
+  }
+
+  const totalDuration = datasetSamples.reduce((sum, s) => sum + (s.duration || 0), 0);
+  if (totalDuration < 120) {
+    return {
+      success: false,
+      error: 'Not enough recorded audio in Kokoro dataset. Need at least 2 minutes of curated samples.',
+    };
+  }
+
+  const kokoroDir = path.join(systemPaths.root, 'external', 'kokoro');
+  const pythonBin = path.join(kokoroDir, 'venv', 'bin', 'python3');
+  const trainerScript = path.join(kokoroDir, 'build_voicepack.py');
+
+  if (!fs.existsSync(pythonBin)) {
+    return { success: false, error: 'Kokoro virtual environment not found. Run ./bin/install-kokoro.sh first.' };
+  }
+  if (!fs.existsSync(trainerScript)) {
+    return { success: false, error: 'Voicepack trainer script not found. Reinstall the Kokoro addon.' };
+  }
+
+  const datasetDir = getKokoroDatasetDir(speakerId);
+  const voicepackDir = paths.kokoroVoicepacks;
+  fs.mkdirSync(voicepackDir, { recursive: true });
+  const outputPath = options?.outputPath
+    ? path.resolve(options.outputPath)
+    : path.join(voicepackDir, `${speakerId}.pt`);
+
+  const logDir = path.join(systemPaths.logs, 'run');
+  fs.mkdirSync(logDir, { recursive: true });
+  const logPath = path.join(logDir, `kokoro-training-${speakerId}.log`);
+  const statusPath = getKokoroTrainingStatusPath(speakerId);
+
+  const preferredDevice = options?.device ?? 'auto';
+  const shouldPauseOllama = preferredDevice !== 'cpu';
+  const ollamaPaused = shouldPauseOllama ? pauseOllamaForKokoroTraining() : false;
+
+  const args: string[] = [
+    trainerScript,
+    '--speaker',
+    speakerId,
+    '--dataset',
+    datasetDir,
+    '--output',
+    outputPath,
+    '--lang',
+    options?.langCode ?? 'a',
+    '--base-voice',
+    options?.baseVoice ?? 'af_heart',
+    '--epochs',
+    String(options?.epochs ?? 120),
+    '--learning-rate',
+    String(options?.learningRate ?? 5e-4),
+    '--max-samples',
+    String(options?.maxSamples ?? 200),
+    '--device',
+    options?.device ?? 'auto',
+    '--status-file',
+    statusPath,
+    '--log-file',
+    logPath,
+  ];
+
+  if (options?.regularization !== undefined) {
+    args.push('--regularization', String(options.regularization));
+  }
+
+  const logFd = fs.openSync(logPath, 'w');
+
+  const trainingProcess = spawn(
+    pythonBin,
+    args,
+    {
+      cwd: kokoroDir,
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+    }
+  );
+
+  const initialStatus: KokoroTrainingStatus = {
+    status: 'running',
+    speakerId,
+    progress: 0,
+    startTime: Date.now(),
+    message: 'Training Kokoro voicepack...',
+    pid: trainingProcess.pid ?? 0,
+    datasetSamples: datasetSamples.length,
+    datasetMinutes: totalDuration / 60,
+  };
+  writeKokoroTrainingStatus(initialStatus);
+
+  trainingProcess.on('exit', (code) => {
+    if (ollamaPaused) {
+      resumeOllamaAfterKokoroTraining();
+    }
+    const finalStatus = getKokoroTrainingStatus(speakerId);
+    if (code === 0) {
+      if (finalStatus.status === 'running') {
+        writeKokoroTrainingStatus({
+          ...finalStatus,
+          status: 'completed',
+          progress: 100,
+          message: 'Voicepack training completed',
+          endTime: Date.now(),
+        });
+      }
+    } else {
+      writeKokoroTrainingStatus({
+        speakerId,
+        status: 'failed',
+        progress: finalStatus.progress ?? 0,
+        error: `Trainer exited with code ${code}`,
+        endTime: Date.now(),
+      });
+    }
+  });
+
+  trainingProcess.on('error', (error) => {
+    if (ollamaPaused) {
+      resumeOllamaAfterKokoroTraining();
+    }
+    writeKokoroTrainingStatus({
+      speakerId,
+      status: 'failed',
+      progress: 0,
+      error: (error as Error).message,
+      endTime: Date.now(),
+    });
+  });
+
+  if (trainingProcess.unref) {
+    trainingProcess.unref();
+  }
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'kokoro_training_started',
+    details: {
+      speakerId,
+      pid: trainingProcess.pid ?? 0,
+      outputPath,
+    },
+    actor: 'system',
+  });
+
+  return {
+    success: true,
+    message: 'Kokoro voicepack training started. Monitor progress in the Voice Training tab.',
+  };
+}
+
+function pauseOllamaForKokoroTraining(): boolean {
+  try {
+    execSync('pgrep -f ollama', { stdio: 'pipe' });
+  } catch {
+    return false;
+  }
+
+  try {
+    execSync('pkill -STOP -f ollama', { stdio: 'ignore' });
+    waitSync(500);
+    audit({
+      level: 'info',
+      category: 'system',
+      event: 'ollama_paused_for_kokoro',
+      details: { reason: 'Free GPU VRAM for Kokoro training' },
+      actor: 'system',
+    });
+    return true;
+  } catch (error) {
+    console.error('[KokoroTraining] Failed to pause Ollama:', error);
+    return false;
+  }
+}
+
+function resumeOllamaAfterKokoroTraining(): void {
+  try {
+    execSync('pkill -CONT -f ollama', { stdio: 'ignore' });
+    waitSync(500);
+    audit({
+      level: 'info',
+      category: 'system',
+      event: 'ollama_resumed_after_kokoro',
+      details: { message: 'Ollama resumed after Kokoro training' },
+      actor: 'system',
+    });
+  } catch (error) {
+    console.error('[KokoroTraining] Failed to resume Ollama:', error);
+  }
+}
+
+function waitSync(ms: number) {
+  const sab = new SharedArrayBuffer(4);
+  const ia = new Int32Array(sab);
+  Atomics.wait(ia, 0, 0, ms);
 }
