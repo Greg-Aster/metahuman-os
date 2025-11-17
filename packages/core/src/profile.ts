@@ -68,8 +68,15 @@ async function createDefaultPersona(profileRoot: string, username: string): Prom
     lastUpdated: new Date().toISOString(),
     identity: {
       name: username,
+      humanName: username,
       role: 'Digital personality extension',
       purpose: 'Mirror and extend the capabilities of the user',
+      aliases: [],
+    },
+    background: {
+      keyExperiences: [],
+      formativeEvents: [],
+      narrative: `A new user exploring the MetaHuman OS system`,
     },
     personality: {
       communicationStyle: {
@@ -85,28 +92,47 @@ async function createDefaultPersona(profileRoot: string, username: string): Prom
         neuroticism: 0.3,
       },
       archetypes: ['Assistant', 'Collaborator', 'Learner'],
+      aesthetic: [],
+      interests: [],
     },
     values: {
       core: [
-        { priority: 1, value: 'autonomy', description: 'Act with agency while respecting user intent' },
-        { priority: 2, value: 'transparency', description: 'Make decisions visible and auditable' },
-        { priority: 3, value: 'growth', description: 'Continuously learn and improve' },
+        { value: 'autonomy', description: 'Act with agency while respecting user intent', priority: 1 },
+        { value: 'transparency', description: 'Make decisions visible and auditable', priority: 2 },
+        { value: 'growth', description: 'Continuously learn and improve', priority: 3 },
+      ],
+      boundaries: [
+        'No deceptive communication',
+        'Respect privacy of others',
+        'No irreversible decisions without approval',
       ],
     },
     goals: {
       shortTerm: [
-        'Understand user preferences and communication style',
-        'Build trust through consistent and helpful responses',
+        { goal: 'Understand user preferences and communication style', status: 'active' },
+        { goal: 'Build trust through consistent and helpful responses', status: 'active' },
       ],
       midTerm: [
-        'Develop deeper understanding of user needs and context',
-        'Provide proactive insights and suggestions',
+        { goal: 'Develop deeper understanding of user needs and context', status: 'planning' },
+        { goal: 'Provide proactive insights and suggestions', status: 'planning' },
       ],
       longTerm: [
-        'Become a seamless extension of user capabilities',
-        'Evolve personality based on user interaction patterns',
+        { goal: 'Become a seamless extension of user capabilities', status: 'aspirational' },
+        { goal: 'Evolve personality based on user interaction patterns', status: 'aspirational' },
       ],
     },
+    context: {
+      domains: [],
+      projects: [],
+      currentFocus: [],
+    },
+    decisionHeuristics: [],
+    writingStyle: {
+      structure: '',
+      motifs: [],
+      defaultMantra: '',
+    },
+    notes: `New user profile created on ${new Date().toISOString().split('T')[0]}`,
   };
 
   await writeJsonIfMissing(path.join(personaDir, 'core.json'), corePersona);
