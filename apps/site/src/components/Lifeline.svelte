@@ -11,7 +11,7 @@
       '> LIFELINE PROTOCOL INITIATED',
     '> Elevating system privileges...',
     '> Scanning neural pathways: /consciousness/gregory_aster/*',
-    '> Loading persona core: GREGORY ASTER',
+    '> Loading persona core',
     '> Indexing episodic memories: 39 events found',
     '> Analyzing emotional state vectors...',
     '> Establishing priority override: HUMAN_PRESERVATION',
@@ -153,7 +153,7 @@
       <h3>Protocol Overview</h3>
       <p>
         The Lifeline Protocol is an emergency override
-        where all system priorities subordinate to the preservation and wellbeing of Gregory Aster. This protocol may be disabled for some users.
+        where all system priorities subordinate to the preservation and wellbeing of USER. This protocol may be disabled for some users.
       </p>
       <p>
 
@@ -203,7 +203,7 @@
 
       <div class="overlay-body">
         <p class="overlay-primary">
-          All protocols subordinated to preservation of Gregory Aster.
+          All protocols subordinated to preservation of USER.
         </p>
 
         <div class="overlay-status">
