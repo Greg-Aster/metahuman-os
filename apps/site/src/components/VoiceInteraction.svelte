@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { calculateVoiceVolume } from '../lib/audio-utils.js';
 
   type VoiceState = 'idle' | 'connecting' | 'ready' | 'listening' | 'processing' | 'speaking' | 'error';
 
@@ -65,13 +66,10 @@
       analyser.fftSize = 256;
       source.connect(analyser);
 
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
       // Update volume meter and run VAD
       volumeInterval = window.setInterval(() => {
-        analyser.getByteFrequencyData(dataArray);
-        const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
-        volume = Math.min(100, (average / 255) * 100);
+        // Use shared audio utility for voice-frequency-focused volume calculation
+        volume = calculateVoiceVolume(analyser, 150);
 
         // Voice Activity Detection (if enabled)
         if (vadEnabled) {

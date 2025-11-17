@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { calculateVoiceVolume } from '../lib/audio-utils.js';
   import ServerStatusIndicator from './ServerStatusIndicator.svelte';
 
   interface PiperVoice {
@@ -17,6 +18,8 @@
     lang: string;
     gender: string;
     quality: string;
+    isCustom?: boolean;
+    voicepackPath?: string;
   }
 
   interface VoiceConfig {
@@ -50,6 +53,7 @@
       speed: number;
       autoFallbackToPiper: boolean;
       useCustomVoicepack: boolean;
+      normalizeCustomVoicepacks?: boolean;
       voices?: KokoroVoice[];
       device?: 'cuda' | 'cpu';
     };
@@ -61,6 +65,11 @@
       useServer: boolean;
       autoStart: boolean;
       serverStatus?: string;
+      vad?: {
+        voiceThreshold: number;
+        silenceDelay: number;
+        minDuration: number;
+      };
     };
   }
 
@@ -73,6 +82,18 @@
   let testingVoice = false;
   let testAudio: HTMLAudioElement | null = null;
   let generatingReference = false;
+
+  // VAD Test Recorder State
+  let vadTestRecording = false;
+  let vadTestVolume = 0;
+  let vadTestSpeaking = false;
+  let vadTestTranscription = '';
+  let vadTestError: string | null = null;
+  let vadMediaRecorder: MediaRecorder | null = null;
+  let vadAudioChunks: Blob[] = [];
+  let vadAnalyser: AnalyserNode | null = null;
+  let vadSilenceTimer: number | null = null;
+  let vadStartTime: number | null = null;
 
   // Provider metadata
   const providerInfo = {
@@ -124,6 +145,7 @@
 
       if (config && config.kokoro) {
         config.kokoro.device = config.kokoro.device || 'cpu';
+        config.kokoro.normalizeCustomVoicepacks = config.kokoro.normalizeCustomVoicepacks ?? true;
       }
 
       // Set STT defaults if not present
@@ -135,6 +157,11 @@
         config.stt.useServer = config.stt.useServer ?? true;
         config.stt.autoStart = config.stt.autoStart ?? true;
         config.stt.serverStatus = config.stt.serverStatus || 'unknown';
+        config.stt.vad = config.stt.vad ?? {
+          voiceThreshold: 12,
+          silenceDelay: 5000,
+          minDuration: 500,
+        };
       }
 
       error = null;
@@ -248,10 +275,26 @@
         requestBody.pitchShift = config.rvc.pitchShift;
         requestBody.speed = config.rvc.speed;
       } else if (providerToTest === 'kokoro' && config.kokoro) {
-        // Kokoro-specific parameters
-        requestBody.voiceId = config.kokoro.voice;  // e.g., 'af_heart', 'af_bella'
-        requestBody.langCode = config.kokoro.langCode;  // e.g., 'a' for auto-detect
-        requestBody.speed = config.kokoro.speed;  // 0.5-2.0
+        // For custom voicepacks, save settings first to update voice.json
+        if (config.kokoro.voice.startsWith('custom_')) {
+          try {
+            await saveSettings();
+          } catch (e) {
+            error = 'Failed to save custom voicepack settings before testing';
+            testingVoice = false;
+            return;
+          }
+
+          // Don't send voiceId for custom voicepacks - let it use the saved config
+          // (voice.json has the correct voice name without 'custom_' prefix + useCustomVoicepack flag)
+          requestBody.langCode = config.kokoro.langCode;
+          requestBody.speed = config.kokoro.speed;
+        } else {
+          // Built-in voice - send voiceId normally
+          requestBody.voiceId = config.kokoro.voice;  // e.g., 'af_heart', 'af_bella'
+          requestBody.langCode = config.kokoro.langCode;  // e.g., 'a' for auto-detect
+          requestBody.speed = config.kokoro.speed;  // 0.5-2.0
+        }
       }
 
       const response = await fetch('/api/tts', {
@@ -289,6 +332,171 @@
       config = { ...config, provider: newProvider }; // Create new object to trigger reactivity
       console.log('[VoiceSettings] Provider switched. Current:', config.provider);
     }
+  }
+
+  // VAD Test Recorder Functions
+  async function startVADTest() {
+    if (!config?.stt?.vad) return;
+
+    try {
+      vadTestError = null;
+      vadTestTranscription = '';
+      vadTestSpeaking = false;
+      vadTestVolume = 0;
+      vadAudioChunks = [];
+
+      // Get microphone access with audio processing
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+
+      // Set up audio analysis
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      vadAnalyser = audioContext.createAnalyser();
+      vadAnalyser.fftSize = 2048;
+      vadAnalyser.smoothingTimeConstant = 0.8; // Smooth out volume fluctuations
+      source.connect(vadAnalyser);
+
+      // Set up recorder
+      vadMediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      vadMediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) vadAudioChunks.push(e.data);
+      };
+
+      vadMediaRecorder.start();
+      vadTestRecording = true;
+      vadStartTime = Date.now();
+
+      // Start VAD analysis loop
+      runVADAnalysis();
+    } catch (err) {
+      vadTestError = `Failed to start recording: ${(err as Error).message}`;
+      console.error('[VAD Test] Error:', err);
+    }
+  }
+
+  function runVADAnalysis() {
+    if (!vadTestRecording || !vadAnalyser || !config?.stt?.vad) return;
+
+    const tick = () => {
+      if (!vadTestRecording || !vadAnalyser) return;
+
+      // Use shared audio utility for voice-frequency-focused volume calculation
+      vadTestVolume = calculateVoiceVolume(vadAnalyser, 150);
+
+      const threshold = config?.stt?.vad?.voiceThreshold ?? 12;
+      const silenceDelay = config?.stt?.vad?.silenceDelay ?? 5000;
+
+      // Voice detected
+      if (vadTestVolume > threshold) {
+        if (!vadTestSpeaking) {
+          console.log('[VAD Test] Speech started');
+          vadTestSpeaking = true;
+        }
+        // Clear silence timer (user is still speaking)
+        if (vadSilenceTimer) {
+          clearTimeout(vadSilenceTimer);
+          vadSilenceTimer = null;
+        }
+      }
+      // Silence detected while we were speaking
+      else if (vadTestSpeaking && !vadSilenceTimer) {
+        // Start silence timer
+        vadSilenceTimer = window.setTimeout(() => {
+          console.log('[VAD Test] Silence detected, stopping');
+          vadTestSpeaking = false;
+          stopVADTest();
+        }, silenceDelay);
+      }
+
+      requestAnimationFrame(tick);
+    };
+
+    requestAnimationFrame(tick);
+  }
+
+  async function stopVADTest() {
+    if (!vadMediaRecorder || !config?.stt?.vad) return;
+
+    try {
+      vadTestRecording = false;
+      vadTestSpeaking = false;
+
+      // Clear silence timer
+      if (vadSilenceTimer) {
+        clearTimeout(vadSilenceTimer);
+        vadSilenceTimer = null;
+      }
+
+      // Stop recorder
+      if (vadMediaRecorder.state !== 'inactive') {
+        vadMediaRecorder.stop();
+      }
+
+      // Stop all tracks
+      vadMediaRecorder.stream.getTracks().forEach(track => track.stop());
+
+      // Check minimum duration
+      const duration = vadStartTime ? (Date.now() - vadStartTime) : 0;
+      const minDuration = config.stt.vad.minDuration ?? 500;
+
+      if (duration < minDuration) {
+        console.log(`[VAD Test] Recording too short (${duration}ms), ignoring`);
+        vadTestError = `Recording too short (${duration}ms). Minimum: ${minDuration}ms`;
+        return;
+      }
+
+      // Create audio blob
+      const blob = new Blob(vadAudioChunks, { type: 'audio/webm' });
+
+      // Send to STT
+      vadTestTranscription = 'Transcribing...';
+      const formData = new FormData();
+      formData.append('audio', blob);
+
+      const response = await fetch('/api/stt', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`STT failed: ${response.status}`);
+      }
+
+      const result = await response.json();
+      vadTestTranscription = result.text || '(no speech detected)';
+      console.log('[VAD Test] Transcription:', vadTestTranscription);
+    } catch (err) {
+      vadTestError = `Transcription failed: ${(err as Error).message}`;
+      vadTestTranscription = '';
+      console.error('[VAD Test] Error:', err);
+    } finally {
+      // Reset volume display
+      vadTestVolume = 0;
+    }
+  }
+
+  function cancelVADTest() {
+    vadTestRecording = false;
+    vadTestSpeaking = false;
+
+    if (vadSilenceTimer) {
+      clearTimeout(vadSilenceTimer);
+      vadSilenceTimer = null;
+    }
+
+    if (vadMediaRecorder && vadMediaRecorder.state !== 'inactive') {
+      vadMediaRecorder.stop();
+      vadMediaRecorder.stream.getTracks().forEach(track => track.stop());
+    }
+
+    vadTestVolume = 0;
+    vadTestTranscription = '';
   }
 
   onMount(loadSettings);
@@ -705,11 +913,24 @@
           <label for="kokoro-voice">Voice</label>
           <select id="kokoro-voice" bind:value={config.kokoro.voice} disabled={saving}>
             {#if config.kokoro.voices && config.kokoro.voices.length > 0}
-              {#each config.kokoro.voices as voice}
-                <option value={voice.id}>
-                  {voice.name} ({voice.lang}, {voice.gender}, {voice.quality})
-                </option>
-              {/each}
+              <!-- Built-in voices -->
+              <optgroup label="Built-in Voices">
+                {#each config.kokoro.voices.filter(v => !v.isCustom) as voice}
+                  <option value={voice.id}>
+                    {voice.name} ({voice.lang}, {voice.gender}, {voice.quality})
+                  </option>
+                {/each}
+              </optgroup>
+              <!-- Custom voicepacks -->
+              {#if config.kokoro.voices.some(v => v.isCustom)}
+                <optgroup label="Custom Voicepacks">
+                  {#each config.kokoro.voices.filter(v => v.isCustom) as voice}
+                    <option value={voice.id}>
+                      {voice.name}
+                    </option>
+                  {/each}
+                </optgroup>
+              {/if}
             {:else}
               <option value="af_heart">Heart (English, Female, High)</option>
               <option value="af_bella">Bella (English, Female, High)</option>
@@ -718,7 +939,13 @@
               <option value="am_michael">Michael (English, Male, High)</option>
             {/if}
           </select>
-          <p class="hint">Choose from 54 built-in voices across 8 languages</p>
+          <p class="hint">
+            {#if config.kokoro.voices?.some(v => v.isCustom)}
+              Choose from 54 built-in voices or your custom trained voicepacks
+            {:else}
+              Choose from 54 built-in voices across 8 languages
+            {/if}
+          </p>
         </div>
 
         <div class="setting-group">
@@ -769,13 +996,24 @@
           <p class="hint">Kokoro is optimized for CPU inference. GPU recommended only if CPU is slow.</p>
         </div>
 
-        <div class="setting-group">
-          <label class="checkbox-label">
-            <input type="checkbox" bind:checked={config.kokoro.useCustomVoicepack} disabled={saving} />
-            Use custom trained voicepack (not yet implemented)
-          </label>
-          <p class="hint">Custom voice training requires StyleTTS2 fine-tuning</p>
-        </div>
+        {#if config.kokoro.useCustomVoicepack}
+          <div class="setting-group">
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                bind:checked={config.kokoro.normalizeCustomVoicepacks}
+                disabled={saving}
+              />
+              <span>Normalize Custom Voicepack Volume</span>
+            </label>
+            <p class="hint">Automatically boost quiet custom voicepacks to -3dB peak. Enable if your voicepack sounds too quiet. Disable for natural volume levels.</p>
+          </div>
+
+          <div class="custom-voicepack-info">
+            <strong>✓ Using Custom Voicepack</strong>
+            <p>Currently using your trained voicepack. Select a built-in voice from the dropdown above to switch back.</p>
+          </div>
+        {/if}
 
         <div class="setting-group">
           <label class="checkbox-label">
@@ -883,6 +1121,133 @@
             />
           </div>
         {/if}
+
+        <!-- VAD Settings -->
+        <div class="vad-settings-section">
+          <h5 style="margin: 1.5rem 0 1rem 0; color: #6b7280; font-size: 1rem; font-weight: 600;">⚙️ Voice Activity Detection Settings</h5>
+
+          <div class="setting-group">
+            <label for="vad-threshold">
+              Voice Threshold: {config.stt.vad?.voiceThreshold ?? 12}
+            </label>
+            <input
+              id="vad-threshold"
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              bind:value={config.stt.vad.voiceThreshold}
+              disabled={saving}
+            />
+            <div class="range-labels">
+              <span>0 (Very Sensitive)</span>
+              <span>50</span>
+              <span>100 (Less Sensitive)</span>
+            </div>
+            <p class="hint">How loud audio needs to be to register as speech. Lower = more sensitive to quiet speech.</p>
+          </div>
+
+          <div class="setting-group">
+            <label for="vad-silence-delay">
+              Silence Delay: {(config.stt.vad?.silenceDelay ?? 5000) / 1000} seconds
+            </label>
+            <input
+              id="vad-silence-delay"
+              type="range"
+              min="1000"
+              max="30000"
+              step="500"
+              bind:value={config.stt.vad.silenceDelay}
+              disabled={saving}
+            />
+            <div class="range-labels">
+              <span>1s (Quick)</span>
+              <span>15s</span>
+              <span>30s (Patient)</span>
+            </div>
+            <p class="hint">How long to wait in silence before auto-stopping. Higher = allows longer pauses mid-sentence.</p>
+          </div>
+
+          <div class="setting-group">
+            <label for="vad-min-duration">
+              Minimum Duration: {config.stt.vad?.minDuration ?? 500}ms
+            </label>
+            <input
+              id="vad-min-duration"
+              type="range"
+              min="100"
+              max="5000"
+              step="100"
+              bind:value={config.stt.vad.minDuration}
+              disabled={saving}
+            />
+            <div class="range-labels">
+              <span>100ms (Short)</span>
+              <span>2.5s</span>
+              <span>5s (Long)</span>
+            </div>
+            <p class="hint">Minimum recording length to prevent accidental clicks from triggering transcription.</p>
+          </div>
+
+          <!-- VAD Test Recorder -->
+          <div class="vad-test-section">
+            <label>Test Voice Detection</label>
+            <p class="hint">Click to start recording. Speak naturally, and the system will auto-stop after silence using your current settings.</p>
+
+            {#if !vadTestRecording}
+              <button
+                class="test-button vad-start"
+                on:click={startVADTest}
+                disabled={saving}
+              >
+                🎤 Start VAD Test
+              </button>
+            {:else}
+              <div class="vad-test-active">
+                <div class="vad-volume-meter">
+                  <div class="vad-volume-label">
+                    Volume: {vadTestVolume.toFixed(0)}
+                    {#if vadTestSpeaking}
+                      <span class="speaking-indicator">🔴 SPEAKING</span>
+                    {:else}
+                      <span class="silence-indicator">⚪ Silence</span>
+                    {/if}
+                  </div>
+                  <div class="vad-volume-bar">
+                    <div
+                      class="vad-volume-fill"
+                      class:speaking={vadTestSpeaking}
+                      style="width: {vadTestVolume}%"
+                    ></div>
+                    <div
+                      class="vad-threshold-marker"
+                      style="left: {config.stt.vad?.voiceThreshold ?? 12}%"
+                    ></div>
+                  </div>
+                </div>
+                <button
+                  class="test-button vad-cancel"
+                  on:click={cancelVADTest}
+                >
+                  ❌ Cancel
+                </button>
+              </div>
+            {/if}
+
+            {#if vadTestTranscription}
+              <div class="vad-transcription-result">
+                <strong>Transcription:</strong>
+                <p>{vadTestTranscription}</p>
+              </div>
+            {/if}
+
+            {#if vadTestError}
+              <div class="vad-test-error">
+                {vadTestError}
+              </div>
+            {/if}
+          </div>
+        </div>
       </div>
     {/if}
 
@@ -1354,5 +1719,199 @@
 
   :global(.dark) .subsection-title {
     color: #f3f4f6;
+  }
+
+  /* VAD Settings Styles */
+  .vad-settings-section {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 2px solid #e5e7eb;
+  }
+
+  :global(.dark) .vad-settings-section {
+    border-top-color: #374151;
+  }
+
+  .vad-test-section {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    background: #f0f9ff;
+    border: 2px solid #3b82f6;
+    border-radius: 0.75rem;
+  }
+
+  :global(.dark) .vad-test-section {
+    background: #1e3a5f;
+    border-color: #60a5fa;
+  }
+
+  .vad-test-active {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .vad-volume-meter {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .vad-volume-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #1f2937;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  :global(.dark) .vad-volume-label {
+    color: #f3f4f6;
+  }
+
+  .speaking-indicator {
+    color: #ef4444;
+    font-weight: 700;
+    animation: pulse 1s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+
+  .silence-indicator {
+    color: #9ca3af;
+  }
+
+  .vad-volume-bar {
+    position: relative;
+    height: 40px;
+    background: #e5e7eb;
+    border-radius: 0.5rem;
+    overflow: hidden;
+  }
+
+  :global(.dark) .vad-volume-bar {
+    background: #374151;
+  }
+
+  .vad-volume-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #60a5fa);
+    transition: width 0.1s ease;
+  }
+
+  .vad-volume-fill.speaking {
+    background: linear-gradient(90deg, #ef4444, #f87171);
+  }
+
+  .vad-threshold-marker {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #fbbf24;
+    box-shadow: 0 0 8px rgba(251, 191, 36, 0.8);
+  }
+
+  .test-button.vad-start {
+    background: #3b82f6;
+  }
+
+  .test-button.vad-start:hover:not(:disabled) {
+    background: #2563eb;
+  }
+
+  .test-button.vad-cancel {
+    background: #ef4444;
+  }
+
+  .test-button.vad-cancel:hover:not(:disabled) {
+    background: #dc2626;
+  }
+
+  .vad-transcription-result {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: #d1fae5;
+    border: 1px solid #10b981;
+    border-radius: 0.5rem;
+  }
+
+  :global(.dark) .vad-transcription-result {
+    background: rgba(16, 185, 129, 0.1);
+    border-color: #34d399;
+  }
+
+  .vad-transcription-result strong {
+    color: #059669;
+    font-size: 0.875rem;
+  }
+
+  :global(.dark) .vad-transcription-result strong {
+    color: #34d399;
+  }
+
+  .vad-transcription-result p {
+    margin: 0.5rem 0 0 0;
+    color: #1f2937;
+    font-size: 0.95rem;
+  }
+
+  :global(.dark) .vad-transcription-result p {
+    color: #f3f4f6;
+  }
+
+  .vad-test-error {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background: #fee2e2;
+    border: 1px solid #ef4444;
+    border-radius: 0.5rem;
+    color: #dc2626;
+    font-size: 0.875rem;
+  }
+
+  :global(.dark) .vad-test-error {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: #f87171;
+    color: #f87171;
+  }
+
+  /* Custom Voicepack Info */
+  .custom-voicepack-info {
+    margin: 1rem 0;
+    padding: 1rem;
+    background: #dbeafe;
+    border: 2px solid #3b82f6;
+    border-radius: 0.5rem;
+  }
+
+  :global(.dark) .custom-voicepack-info {
+    background: rgba(59, 130, 246, 0.1);
+    border-color: #60a5fa;
+  }
+
+  .custom-voicepack-info strong {
+    display: block;
+    color: #1e40af;
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+  }
+
+  :global(.dark) .custom-voicepack-info strong {
+    color: #60a5fa;
+  }
+
+  .custom-voicepack-info p {
+    margin: 0;
+    color: #1f2937;
+    font-size: 0.875rem;
+  }
+
+  :global(.dark) .custom-voicepack-info p {
+    color: #d1d5db;
   }
 </style>
