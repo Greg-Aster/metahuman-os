@@ -3,7 +3,7 @@
   import ReferenceAudioSelector from './ReferenceAudioSelector.svelte';
   import DirectVoiceRecorder from './DirectVoiceRecorder.svelte';
 
-  export let provider: 'piper' | 'sovits' | 'rvc' = 'rvc';
+  export let provider: 'piper' | 'sovits' | 'rvc' | 'kokoro' = 'rvc';
 
   interface TrainingProgress {
     samplesCollected: number;
@@ -54,6 +54,13 @@
   let selectedSampleIds: string[] = [];
   let copying = false;
   let training = false;
+  let kokoroTraining = false;
+  let kokoroLangCode = 'a';
+  let kokoroBaseVoice = 'af_heart';
+  let kokoroEpochs = 120;
+  let kokoroLearningRate = 0.0005;
+  let kokoroDevice: 'auto' | 'cpu' | 'cuda' = 'auto';
+  let kokoroMaxSamples = 200;
   let trainingStatus: {
     status: 'idle' | 'running' | 'completed' | 'failed';
     progress: number;
@@ -61,6 +68,9 @@
     totalEpochs?: number;
     message?: string;
     error?: string;
+    voicepackPath?: string;
+    datasetSamples?: number;
+    datasetMinutes?: number;
   } | null = null;
   let trainingPollInterval: ReturnType<typeof setInterval> | null = null;
   let showTrainingModal = false;
@@ -118,9 +128,15 @@
       readiness.copied.duration >= readiness.requirements.minDuration
     : false;
 
+  $: kokoroDatasetReady = provider === 'kokoro' && readiness?.copied
+    ? readiness.copied.count >= 10 && readiness.copied.duration >= 120
+    : false;
+
   $: canStartTraining = provider === 'rvc'
     ? Boolean(readiness?.ready && copiedDatasetReady)
-    : Boolean(readiness?.ready);
+    : provider === 'kokoro'
+      ? Boolean(readiness?.ready && kokoroDatasetReady)
+      : Boolean(readiness?.ready);
 
   $: copiedNeeds = provider === 'rvc' && readiness?.copied && readiness?.requirements
     ? {
@@ -158,10 +174,18 @@
       minDuration: 600, // 10 minutes
       trainingType: 'full',
     },
+    kokoro: {
+      name: 'Kokoro TTS',
+      icon: '🎵',
+      color: '#f59e0b',
+      minQuality: 0.75,
+      minSamples: 30,
+      minDuration: 300, // 5 minutes
+      trainingType: 'voicepack',
+    },
   };
 
   $: currentConfig = providerConfig[provider];
-  $: apiProvider = (provider === 'sovits' ? 'gpt-sovits' : provider) as 'piper' | 'gpt-sovits' | 'rvc';
   $: apiProvider = provider === 'sovits' ? 'gpt-sovits' : provider;
 
   async function fetchProgress() {
@@ -183,9 +207,14 @@
 
   async function fetchReadiness() {
     try {
-      const endpoint = provider === 'rvc'
-        ? `/api/rvc-training?action=training-readiness&speakerId=default`
-        : `/api/sovits-training?action=training-readiness&provider=${apiProvider}`;
+      let endpoint: string;
+      if (provider === 'rvc') {
+        endpoint = `/api/rvc-training?action=training-readiness&speakerId=default`;
+      } else if (provider === 'kokoro') {
+        endpoint = `/api/kokoro-training?action=training-readiness&speakerId=default`;
+      } else {
+        endpoint = `/api/sovits-training?action=training-readiness&provider=${apiProvider}`;
+      }
 
       const response = await fetch(endpoint);
       if (!response.ok) throw new Error('Failed to fetch training readiness');
@@ -235,7 +264,15 @@
   async function autoExportBest() {
     exporting = true;
     try {
-      const endpoint = provider === 'rvc' ? '/api/rvc-training' : '/api/sovits-training';
+      let endpoint: string;
+      if (provider === 'rvc') {
+        endpoint = '/api/rvc-training';
+      } else if (provider === 'kokoro') {
+        endpoint = '/api/kokoro-training';
+      } else {
+        endpoint = '/api/sovits-training';
+      }
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -268,7 +305,15 @@
 
     copying = true;
     try {
-      const endpoint = provider === 'rvc' ? '/api/rvc-training' : '/api/sovits-training';
+      let endpoint: string;
+      if (provider === 'rvc') {
+        endpoint = '/api/rvc-training';
+      } else if (provider === 'kokoro') {
+        endpoint = '/api/kokoro-training';
+      } else {
+        endpoint = '/api/sovits-training';
+      }
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -295,37 +340,41 @@
   }
 
   async function pollTrainingStatus() {
-    if (provider !== 'rvc') return;
+    if (provider !== 'rvc' && provider !== 'kokoro') return;
+
+    const endpoint = provider === 'rvc'
+      ? '/api/rvc-training?action=training-status&speakerId=default'
+      : '/api/kokoro-training?action=training-status&speakerId=default';
 
     try {
-      const response = await fetch('/api/rvc-training?action=training-status&speakerId=default');
+      const response = await fetch(endpoint);
       if (!response.ok) return;
 
       const status = await response.json();
       trainingStatus = status;
 
-      // Show modal if training is running
-      if (status.status === 'running') {
-        if (!showTrainingModal) {
+      const running = status.status === 'running';
+      if (running) {
+        if (provider === 'rvc' && !showTrainingModal) {
           showTrainingModal = true;
           startRobotMessages();
         }
         if (!trainingPollInterval) {
-          trainingPollInterval = setInterval(pollTrainingStatus, 5000); // Poll every 5 seconds
+          trainingPollInterval = setInterval(pollTrainingStatus, 5000);
         }
       }
 
-      // Stop polling and hide modal if training completed or failed
-      if ((status.status === 'completed' || status.status === 'failed') && trainingPollInterval) {
+      if (!running && trainingPollInterval) {
         clearInterval(trainingPollInterval);
         trainingPollInterval = null;
-        showTrainingModal = false;
-        stopRobotMessages();
+        if (provider === 'rvc') {
+          showTrainingModal = false;
+          stopRobotMessages();
+        }
 
-        // Show notification
         if (status.status === 'completed') {
-          alert(`Training completed successfully! Model saved to: ${status.modelPath || 'model directory'}`);
-          await fetchReadiness(); // Refresh readiness status
+          alert(`Training completed successfully! ${provider === 'rvc' ? 'Model saved to: ' + (status.modelPath || 'model directory') : 'Voicepack ready.'}`);
+          await fetchReadiness();
         } else if (status.status === 'failed') {
           alert(`Training failed: ${status.error || 'Unknown error'}`);
         }
@@ -377,6 +426,42 @@
       stopRobotMessages();
     } finally {
       training = false;
+    }
+  }
+
+  async function startKokoroTraining() {
+    if (!canStartTraining) {
+      alert('Copy at least 10 high-quality samples to the Kokoro dataset before training.');
+      return;
+    }
+
+    kokoroTraining = true;
+    try {
+      const response = await fetch('/api/kokoro-training', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'start-training',
+          speakerId: 'default',
+          langCode: kokoroLangCode,
+          baseVoice: kokoroBaseVoice,
+          epochs: kokoroEpochs,
+          learningRate: kokoroLearningRate,
+          device: kokoroDevice,
+          maxSamples: kokoroMaxSamples,
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to start Kokoro training');
+      }
+      alert(data.message || 'Kokoro training started');
+      await pollTrainingStatus();
+    } catch (e) {
+      alert(String(e));
+    } finally {
+      kokoroTraining = false;
     }
   }
 
@@ -471,7 +556,7 @@
     await Promise.all([fetchProgress(), fetchSamples(), fetchTrainingStatus(), fetchReadiness()]);
 
     // Check RVC training status
-    if (provider === 'rvc') {
+    if (provider === 'rvc' || provider === 'kokoro') {
       await pollTrainingStatus();
     }
 
@@ -518,7 +603,17 @@
               class="provider-tab"
               class:active={provider === key}
               style="--provider-color: {config.color}"
-              on:click={() => { provider = key; loadData(); }}
+              on:click={() => {
+                provider = key as 'piper' | 'sovits' | 'rvc' | 'kokoro';
+                trainingStatus = null;
+                showTrainingModal = false;
+                stopRobotMessages();
+                if (trainingPollInterval) {
+                  clearInterval(trainingPollInterval);
+                  trainingPollInterval = null;
+                }
+                loadData();
+              }}
             >
               <span class="provider-tab-icon">{config.icon}</span>
               <span class="provider-tab-name">{config.name}</span>
@@ -646,6 +741,45 @@
             <strong>💡 Fully Automated:</strong> Recording → Auto-copy → Test → Save. GPT-SoVITS clones your voice in real-time using reference audio. No training required!
           </div>
         </div>
+      {:else if provider === 'kokoro'}
+        <div class="workflow-guide kokoro">
+          <div class="guide-header">
+            <span class="guide-icon">🎵</span>
+            <strong>Kokoro Voicepack Workflow</strong>
+          </div>
+          <ol class="guide-steps">
+            <li>
+              <strong>Enable Training:</strong> Turn on voice training above (if not already enabled)
+            </li>
+            <li>
+              <strong>Collect Samples:</strong> Have conversations with MetaHuman - samples are automatically recorded
+              <ul>
+                <li>Need 30+ samples (5 minutes total)</li>
+                <li>Quality threshold: 75%+</li>
+              </ul>
+            </li>
+            <li>
+              <strong>Select High-Quality Samples:</strong> Click "Select Samples" below to choose the best clips
+            </li>
+            <li>
+              <strong>Export Training Data:</strong> Click "Copy Selected Samples" or "Auto-Export Best Samples" to stage your dataset
+              <ul>
+                <li>Need at least 10 curated samples (2+ minutes)</li>
+                <li>Quality threshold: 75%+</li>
+              </ul>
+            </li>
+            <li>
+              <strong>Train Voicepack:</strong> Set options below and click "Train Kokoro Voicepack"
+              <ul>
+                <li>Creates a .pt voicepack saved under <code>out/voices/kokoro-voicepacks</code></li>
+                <li>Enable "Use custom voicepack" in Voice Settings to try it instantly</li>
+              </ul>
+            </li>
+          </ol>
+          <div class="guide-note">
+            <strong>💡 Tip:</strong> You can still switch between 54 built-in Kokoro voices while your custom pack trains.
+          </div>
+        </div>
       {:else}
         <div class="workflow-guide piper">
           <div class="guide-header">
@@ -700,15 +834,15 @@
       {/if}
 
       <!-- RVC: Show copied samples status -->
-      {#if provider === 'rvc' && readiness.copied}
-        <div class="rvc-copied-status">
-          <strong>📦 Samples in RVC Training Directory:</strong>
+      {#if (provider === 'rvc' || provider === 'kokoro') && readiness.copied}
+        <div class="rvc-copied-status" class:kokoro-ready={provider === 'kokoro'}>
+          <strong>📦 Samples in {provider === 'rvc' ? 'RVC' : 'Kokoro'} Training Directory:</strong>
           {readiness.copied.count} samples ({formatDuration(readiness.copied.duration)})
           {#if readiness.copied.count === 0}
             <br><em>Click "Auto-Export Best Samples" or "Select Samples" → "Copy Selected Samples" to prepare training data</em>
           {/if}
         </div>
-        {#if readiness.ready && !copiedDatasetReady}
+        {#if provider === 'rvc' && readiness.ready && !copiedDatasetReady}
           <div class="info warning">
             {#if copiedNeeds && copiedNeeds.samples > 0}
               Need {copiedNeeds.samples} more sample{copiedNeeds.samples === 1 ? '' : 's'} in the RVC directory.
@@ -717,6 +851,10 @@
               <br>Need {formatDuration(copiedNeeds.duration)} more recorded audio for RVC training.
             {/if}
             <br>Use "Select Samples" → "Copy Selected Samples" or "Auto-Export Best Samples" before training.
+          </div>
+        {:else if provider === 'kokoro' && readiness.ready && !kokoroDatasetReady}
+          <div class="info warning">
+            Need at least 10 curated samples (2+ minutes) copied to the Kokoro dataset before training.
           </div>
         {/if}
       {/if}
@@ -765,6 +903,47 @@
         </div>
       {/if}
 
+      {#if provider === 'kokoro' && trainingStatus && trainingStatus.status !== 'idle'}
+        <div class="training-progress kokoro-progress" class:running={trainingStatus.status === 'running'} class:completed={trainingStatus.status === 'completed'} class:failed={trainingStatus.status === 'failed'}>
+          <div class="progress-header">
+            <strong>
+              {#if trainingStatus.status === 'running'}
+                🎵 Training Kokoro Voicepack
+              {:else if trainingStatus.status === 'completed'}
+                ✅ Voicepack Ready
+              {:else if trainingStatus.status === 'failed'}
+                ❌ Training Failed
+              {/if}
+            </strong>
+          </div>
+
+          <div class="progress-bar-container">
+            <div class="progress-bar" style="width: {trainingStatus.progress}%"></div>
+            <span class="progress-text">{trainingStatus.progress}%</span>
+          </div>
+
+          {#if trainingStatus.message}
+            <div class="progress-details">{trainingStatus.message}</div>
+          {/if}
+
+          {#if trainingStatus.voicepackPath}
+            <div class="progress-details small">
+              <strong>Voicepack:</strong> {trainingStatus.voicepackPath}
+            </div>
+          {/if}
+
+          {#if trainingStatus.datasetSamples}
+            <div class="progress-details small">
+              Dataset: {trainingStatus.datasetSamples} samples ({(trainingStatus.datasetMinutes || 0).toFixed(2)} minutes)
+            </div>
+          {/if}
+
+          {#if trainingStatus.error}
+            <div class="progress-error">{trainingStatus.error}</div>
+          {/if}
+        </div>
+      {/if}
+
       <!-- Direct Voice Recording Widget -->
       {#if provider === 'sovits'}
         <DirectVoiceRecorder
@@ -787,6 +966,10 @@
           </button>
           <button on:click={startTraining} disabled={training || !canStartTraining} class="train-btn">
             {training ? 'Training...' : '🎭 Train RVC Model'}
+          </button>
+        {:else if provider === 'kokoro'}
+          <button on:click={startKokoroTraining} disabled={kokoroTraining || !canStartTraining} class="train-btn kokoro-train">
+            {kokoroTraining ? 'Training...' : '🎵 Train Kokoro Voicepack'}
           </button>
         {/if}
         <button class="danger-btn" on:click={purgeAllData} disabled={purging}>
@@ -854,19 +1037,70 @@
               </div>
             </div>
           </div>
-          <div class="settings-info">
-            <strong>⏱️ Estimated Training Time:</strong>
-            {#if totalEpochs <= 300}
-              30-60 minutes
-            {:else if totalEpochs <= 600}
-              1-2 hours
-            {:else if totalEpochs <= 1000}
-              2-3 hours
-            {:else}
-              3+ hours
-            {/if}
-            (GPU recommended for faster training)
+        </div>
+        <div class="settings-info">
+          <strong>⏱️ Estimated Training Time:</strong>
+          {#if totalEpochs <= 300}
+            30-60 minutes
+          {:else if totalEpochs <= 600}
+            1-2 hours
+          {:else if totalEpochs <= 1000}
+            2-3 hours
+          {:else}
+            3+ hours
+          {/if}
+          (GPU recommended for faster training)
+        </div>
+      </div>
+      {/if}
+
+      {#if provider === 'kokoro'}
+        <div class="kokoro-training-card">
+          <h4>🎵 Kokoro Voicepack Settings</h4>
+          <div class="settings-grid">
+            <div class="setting-group">
+              <label for="kokoro-lang">Language Code</label>
+              <select id="kokoro-lang" bind:value={kokoroLangCode}>
+                <option value="a">American English (a)</option>
+                <option value="b">British English (b)</option>
+                <option value="e">Spanish (es)</option>
+                <option value="f">French (fr)</option>
+                <option value="h">Hindi (hi)</option>
+                <option value="i">Italian (it)</option>
+                <option value="p">Portuguese (pt-br)</option>
+                <option value="j">Japanese (ja)</option>
+                <option value="z">Mandarin Chinese (zh)</option>
+              </select>
+            </div>
+            <div class="setting-group">
+              <label for="kokoro-base">Base Voice</label>
+              <input id="kokoro-base" type="text" bind:value={kokoroBaseVoice} />
+              <div class="setting-note">Start from any Kokoro built-in voice ID (e.g., af_heart, af_sarah, am_adam).</div>
+            </div>
+            <div class="setting-group">
+              <label for="kokoro-epochs">Epochs</label>
+              <input id="kokoro-epochs" type="number" min="60" max="400" bind:value={kokoroEpochs} />
+            </div>
+            <div class="setting-group">
+              <label for="kokoro-lr">Learning Rate</label>
+              <input id="kokoro-lr" type="number" step="0.0001" bind:value={kokoroLearningRate} />
+            </div>
+            <div class="setting-group">
+              <label for="kokoro-device">Device</label>
+              <select id="kokoro-device" bind:value={kokoroDevice}>
+                <option value="auto">Auto (GPU if available)</option>
+                <option value="cuda">CUDA</option>
+                <option value="cpu">CPU</option>
+              </select>
+            </div>
+            <div class="setting-group">
+              <label for="kokoro-max">Max Samples</label>
+              <input id="kokoro-max" type="number" min="50" max="400" bind:value={kokoroMaxSamples} />
+            </div>
           </div>
+          <p class="kokoro-hint">
+            Voicepacks save to <code>profiles/&lt;user&gt;/out/voices/kokoro-voicepacks</code>. Use the Voice Settings tab to enable custom Kokoro voices after training.
+          </p>
         </div>
       {/if}
 
@@ -1248,9 +1482,19 @@
     border-color: #3b82f6;
   }
 
+  .workflow-guide.kokoro {
+    background: linear-gradient(135deg, #fef3c7 0%, #fed7aa 100%);
+    border-color: #f59e0b;
+  }
+
   :global(.dark) .workflow-guide.rvc {
     background: linear-gradient(135deg, #2a1a3a 0%, #1a2a3a 100%);
     border-color: #a78bfa;
+  }
+
+  :global(.dark) .workflow-guide.kokoro {
+    background: linear-gradient(135deg, #3a2a1a 0%, #3a251a 100%);
+    border-color: #fbbf24;
   }
 
   .rvc-copied-status {
@@ -1262,10 +1506,20 @@
     font-size: 0.9rem;
   }
 
+  .rvc-copied-status.kokoro-ready {
+    background: linear-gradient(135deg, #fff7e6 0%, #ffe4b5 100%);
+    border-color: #f59e0b;
+  }
+
   :global(.dark) .rvc-copied-status {
     background: linear-gradient(135deg, #2a1a3a 0%, #3a1a2a 100%);
     border-color: #a78bfa;
     color: #e0e0e0;
+  }
+
+  :global(.dark) .rvc-copied-status.kokoro-ready {
+    background: linear-gradient(135deg, #3a2a1a 0%, #4a2a1a 100%);
+    border-color: #fbbf24;
   }
 
   .rvc-copied-status em {
@@ -1300,6 +1554,11 @@
     border-color: #f44336;
   }
 
+  .training-progress.kokoro-progress {
+    background: linear-gradient(135deg, #fff7e6 0%, #ffe4b5 100%);
+    border-color: #f59e0b;
+  }
+
   :global(.dark) .training-progress.running {
     background: linear-gradient(135deg, #1a2a3a 0%, #1a3a3a 100%);
     border-color: #42a5f5;
@@ -1313,6 +1572,11 @@
   :global(.dark) .training-progress.failed {
     background: linear-gradient(135deg, #3a1a1a 0%, #3a1a2a 100%);
     border-color: #ef5350;
+  }
+
+  :global(.dark) .training-progress.kokoro-progress {
+    background: linear-gradient(135deg, #3a2a1a 0%, #4a2a1a 100%);
+    border-color: #fbbf24;
   }
 
   .progress-header {
@@ -1642,6 +1906,19 @@
     background: #7c3aed;
   }
 
+  .train-btn.kokoro-train {
+    background: #f59e0b;
+    color: #1f1f1f;
+  }
+
+  :global(.dark) .train-btn.kokoro-train {
+    color: #fff;
+  }
+
+  .train-btn.kokoro-train:hover:not(:disabled) {
+    background: #d97706;
+  }
+
   .secondary-btn {
     background: #757575;
   }
@@ -1695,6 +1972,39 @@
 
   :global(.dark) .training-settings h4 {
     color: #9f7aea;
+  }
+
+  .kokoro-training-card {
+    margin-top: 20px;
+    border: 2px solid #f59e0b;
+    border-radius: 8px;
+    padding: 20px;
+    background: #fff7e6;
+  }
+
+  :global(.dark) .kokoro-training-card {
+    background: #3a2a1a;
+    border-color: #fbbf24;
+  }
+
+  .kokoro-training-card h4 {
+    margin: 0 0 15px 0;
+    color: #b45309;
+    font-size: 1.1rem;
+  }
+
+  :global(.dark) .kokoro-training-card h4 {
+    color: #fbbf24;
+  }
+
+  .kokoro-hint {
+    font-size: 0.85rem;
+    color: #7a4c06;
+    margin-top: 10px;
+  }
+
+  :global(.dark) .kokoro-hint {
+    color: #fde68a;
   }
 
   .settings-grid {

@@ -116,8 +116,19 @@ case "$PROVIDER" in
     echo "  ✓ Piper doesn't require a server (direct binary)"
     ;;
 
+  "kokoro")
+    echo "  Starting Kokoro server..."
+    if "$REPO_ROOT/bin/mh" kokoro serve start >/dev/null 2>&1; then
+      echo -e "  ${GREEN}✓ Kokoro server started${NC}"
+      echo "    Manage via: ./bin/mh kokoro serve <start|stop>"
+    else
+      echo -e "  ${YELLOW}⚠ Kokoro server start command returned non-zero${NC}"
+      echo "    You can start it manually with: ./bin/mh kokoro serve start"
+    fi
+    ;;
+
   *)
     echo -e "  ${YELLOW}⚠ Unknown TTS provider: $PROVIDER${NC}"
-    echo "    Supported providers: rvc, gpt-sovits, piper"
+    echo "    Supported providers: rvc, gpt-sovits, piper, kokoro"
     ;;
 esac
