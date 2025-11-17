@@ -9,9 +9,24 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Determine active profile (greggles is default, could read from config later)
-PROFILE="greggles"
-VOICE_CONFIG="$REPO_ROOT/profiles/$PROFILE/etc/voice.json"
+# Determine active profile
+# Try to detect primary user from profiles directory, or fall back to global config
+if [ -f "$REPO_ROOT/etc/default-user.txt" ]; then
+  PROFILE=$(cat "$REPO_ROOT/etc/default-user.txt" 2>/dev/null || echo "")
+elif [ -d "$REPO_ROOT/profiles" ]; then
+  # Find first non-system profile (assumes single-user for now)
+  PROFILE=$(ls -1 "$REPO_ROOT/profiles" 2>/dev/null | grep -v '^\.' | head -1)
+fi
+
+# If profile found, use profile config; otherwise use global config
+if [ -n "$PROFILE" ] && [ -f "$REPO_ROOT/profiles/$PROFILE/etc/voice.json" ]; then
+  VOICE_CONFIG="$REPO_ROOT/profiles/$PROFILE/etc/voice.json"
+  echo "• Using profile: $PROFILE"
+else
+  VOICE_CONFIG="$REPO_ROOT/etc/voice.json"
+  echo "• Using global config (no profile detected)"
+  PROFILE=""
+fi
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -57,7 +72,14 @@ case "$PROVIDER" in
     RVC_DIR="$REPO_ROOT/external/applio-rvc"
     PYTHON_BIN="$RVC_DIR/venv/bin/python3"
     SERVER_SCRIPT="$RVC_DIR/server.py"
-    MODELS_DIR="$REPO_ROOT/profiles/$PROFILE/out/voices/rvc-models"
+
+    # Determine models directory (profile-specific or fallback to global)
+    if [ -n "$PROFILE" ]; then
+      MODELS_DIR="$REPO_ROOT/profiles/$PROFILE/out/voices/rvc-models"
+    else
+      MODELS_DIR="$REPO_ROOT/out/voices/rvc-models"
+    fi
+
     LOG_FILE="$REPO_ROOT/logs/run/rvc-server.log"
 
     # Verify RVC installation
@@ -118,12 +140,18 @@ case "$PROVIDER" in
 
   "kokoro")
     echo "  Starting Kokoro server..."
-    if "$REPO_ROOT/bin/mh" kokoro serve start >/dev/null 2>&1; then
+
+    # Read device setting from voice.json (default: cpu)
+    DEVICE=$(jq -r '.tts.kokoro.device // "cpu"' "$VOICE_CONFIG" 2>/dev/null || echo "cpu")
+
+    echo "  Device: $DEVICE"
+
+    if "$REPO_ROOT/bin/mh" kokoro serve start --device "$DEVICE" >/dev/null 2>&1; then
       echo -e "  ${GREEN}✓ Kokoro server started${NC}"
       echo "    Manage via: ./bin/mh kokoro serve <start|stop>"
     else
       echo -e "  ${YELLOW}⚠ Kokoro server start command returned non-zero${NC}"
-      echo "    You can start it manually with: ./bin/mh kokoro serve start"
+      echo "    You can start it manually with: ./bin/mh kokoro serve start --device $DEVICE"
     fi
     ;;
 
@@ -132,3 +160,93 @@ case "$PROVIDER" in
     echo "    Supported providers: rvc, gpt-sovits, piper, kokoro"
     ;;
 esac
+
+# Check if Whisper server should be started (independent of TTS provider)
+echo ""
+echo "• Checking STT (Whisper) configuration..."
+
+USE_WHISPER_SERVER=$(jq -r '.stt.whisper.server.useServer // false' "$VOICE_CONFIG" 2>/dev/null || echo "false")
+AUTO_START_WHISPER=$(jq -r '.stt.whisper.server.autoStart // false' "$VOICE_CONFIG" 2>/dev/null || echo "false")
+
+if [ "$USE_WHISPER_SERVER" = "true" ] && [ "$AUTO_START_WHISPER" = "true" ]; then
+  WHISPER_PID_FILE="$REPO_ROOT/logs/run/whisper-server.pid"
+
+  # Check if already running
+  if [ -f "$WHISPER_PID_FILE" ]; then
+    PID=$(cat "$WHISPER_PID_FILE" 2>/dev/null || echo "")
+    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+      echo "  ✓ Whisper server already running (PID: $PID)"
+      exit 0
+    fi
+  fi
+
+  # Check if port is already in use
+  if lsof -ti:9883 > /dev/null 2>&1; then
+    echo "  ⚠ Whisper port 9883 already in use"
+    exit 0
+  fi
+
+  # Start Whisper server
+  echo "  Starting Whisper STT server..."
+
+  WHISPER_DIR="$REPO_ROOT/external/whisper"
+  PYTHON_BIN="$REPO_ROOT/venv/bin/python3"
+  SERVER_SCRIPT="$WHISPER_DIR/whisper_server.py"
+
+  LOG_FILE="$REPO_ROOT/logs/run/whisper-server.log"
+
+  # Verify installation
+  if [ ! -f "$PYTHON_BIN" ]; then
+    echo -e "  ${RED}✗ Python environment not found at $PYTHON_BIN${NC}"
+    echo "    Install dependencies first: pnpm install"
+    exit 1
+  fi
+
+  if [ ! -f "$SERVER_SCRIPT" ]; then
+    echo -e "  ${RED}✗ Whisper server script not found at $SERVER_SCRIPT${NC}"
+    exit 1
+  fi
+
+  # Read settings from voice.json
+  WHISPER_MODEL=$(jq -r '.stt.whisper.model // "base.en"' "$VOICE_CONFIG" 2>/dev/null || echo "base.en")
+  WHISPER_DEVICE=$(jq -r '.stt.whisper.device // "cpu"' "$VOICE_CONFIG" 2>/dev/null || echo "cpu")
+  WHISPER_COMPUTE=$(jq -r '.stt.whisper.computeType // "int8"' "$VOICE_CONFIG" 2>/dev/null || echo "int8")
+  WHISPER_PORT=$(jq -r '.stt.whisper.server.port // 9883' "$VOICE_CONFIG" 2>/dev/null || echo "9883")
+
+  echo "  Model: $WHISPER_MODEL"
+  echo "  Device: $WHISPER_DEVICE"
+  echo "  Compute type: $WHISPER_COMPUTE"
+
+  # Start server in background
+  nohup "$PYTHON_BIN" "$SERVER_SCRIPT" \
+    --model "$WHISPER_MODEL" \
+    --device "$WHISPER_DEVICE" \
+    --compute-type "$WHISPER_COMPUTE" \
+    --port "$WHISPER_PORT" \
+    > "$LOG_FILE" 2>&1 &
+
+  WHISPER_PID=$!
+  echo "$WHISPER_PID" > "$WHISPER_PID_FILE"
+
+  # Wait for server to start
+  echo "  Waiting for server to initialize..."
+  sleep 3
+
+  # Verify it's running
+  if kill -0 "$WHISPER_PID" 2>/dev/null && curl -s --max-time 3 http://127.0.0.1:$WHISPER_PORT/health > /dev/null 2>&1; then
+    echo -e "  ${GREEN}✓ Whisper server started (PID: $WHISPER_PID)${NC}"
+    echo "    Logs: $LOG_FILE"
+    echo "    Endpoint: http://127.0.0.1:$WHISPER_PORT"
+  else
+    echo -e "  ${RED}✗ Whisper server failed to start${NC}"
+    echo "    Check logs: $LOG_FILE"
+    rm -f "$WHISPER_PID_FILE"
+    exit 1
+  fi
+else
+  if [ "$USE_WHISPER_SERVER" = "false" ]; then
+    echo "  ✓ Whisper configured for CLI mode (no server needed)"
+  else
+    echo "  ⊗ Whisper server auto-start disabled in config"
+  fi
+fi

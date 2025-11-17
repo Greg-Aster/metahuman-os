@@ -44,7 +44,8 @@
     "./curator-prompts": "./src/curator-prompts.ts",
     "./user-data-collector": "./src/user-data-collector.ts",
     "./user-resolver": "./src/user-resolver.ts",
-    "./chat-settings": "./src/chat-settings.ts"
+    "./chat-settings": "./src/chat-settings.ts",
+    "./tts/server-manager": "./src/tts/server-manager.ts"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

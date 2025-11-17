@@ -9,6 +9,7 @@ import path from 'node:path';
 import { paths } from '../../paths.js';
 import { audit } from '../../audit.js';
 import { getCachedAudio, cacheAudio, getCacheStats, clearCache } from '../cache.js';
+import { stopServer } from '../server-manager.js';
 import type { ITextToSpeechService, TTSSynthesizeOptions, TTSStatus, KokoroConfig, CacheConfig } from '../interface.js';
 import type { PiperService } from './piper-service.js';
 
@@ -425,5 +426,13 @@ export class KokoroService implements ITextToSpeechService {
       console.error('[KokoroService] Failed to start server process:', error);
       return false;
     }
+  }
+
+  /**
+   * Shutdown Kokoro server and cleanup resources
+   */
+  async shutdown(): Promise<void> {
+    console.log('[KokoroService] Shutting down Kokoro server...');
+    await stopServer('kokoro');
   }
 }

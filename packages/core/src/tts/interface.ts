@@ -45,6 +45,12 @@ export interface ITextToSpeechService {
    * Clear provider cache (if applicable)
    */
   clearCache?(): void;
+
+  /**
+   * Shutdown provider and cleanup resources (if applicable)
+   * For server-based providers, this stops the background server process
+   */
+  shutdown?(): Promise<void>;
 }
 
 export interface PiperConfig {
@@ -98,6 +104,7 @@ export interface KokoroConfig {
   customVoicepackPath: string; // Path to custom .pt voicepack file
   autoFallbackToPiper: boolean; // Fallback to Piper if Kokoro fails
   outputFormat: 'wav';
+  device?: 'cuda' | 'cpu';    // Device for inference (default: "cpu")
   // Server configuration
   server: {
     useServer: boolean;       // Use FastAPI server instead of direct Python calls

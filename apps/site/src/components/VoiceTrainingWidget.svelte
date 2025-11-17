@@ -483,6 +483,35 @@
     }
   }
 
+  async function cancelTraining() {
+    if (!confirm('Are you sure you want to cancel training? Progress will be lost.')) {
+      return;
+    }
+
+    try {
+      const endpoint = provider === 'kokoro' ? '/api/kokoro-training' : '/api/rvc-training';
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'cancel-training',
+          speakerId: 'default',
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to cancel training');
+      }
+
+      showTrainingModal = false;
+      stopRobotMessages();
+      trainingStatus = { status: 'idle', progress: 0 };
+      alert('Training cancelled successfully');
+    } catch (e) {
+      alert(`Failed to cancel training: ${String(e)}`);
+    }
+  }
+
   async function toggleTraining() {
     togglingTraining = true;
     const newState = trainingEnabled;
@@ -1170,6 +1199,9 @@
               ⚡ RVC Model Training in Progress ⚡
             {/if}
           </h2>
+          <button class="cancel-training-btn" on:click={cancelTraining} title="Cancel Training">
+            ✕
+          </button>
           <div class="warning-banner">
             ⚠️ DO NOT NAVIGATE AWAY - Training will be interrupted! ⚠️
           </div>
@@ -2346,6 +2378,7 @@
   .modal-header {
     text-align: center;
     margin-bottom: 30px;
+    position: relative;
   }
 
   .modal-header h2 {
@@ -2354,6 +2387,37 @@
     margin: 0 0 15px 0;
     text-shadow: 0 0 10px rgba(0, 255, 136, 0.7);
     animation: pulse 2s ease-in-out infinite;
+  }
+
+  .cancel-training-btn {
+    position: absolute;
+    top: 0;
+    right: 10px;
+    background: rgba(239, 83, 80, 0.1);
+    border: 2px solid #ef5350;
+    color: #ef5350;
+    font-size: 1.5rem;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
+  }
+
+  .cancel-training-btn:hover {
+    background: #ef5350;
+    color: white;
+    transform: scale(1.1);
+    box-shadow: 0 0 15px rgba(239, 83, 80, 0.5);
+  }
+
+  .cancel-training-btn:active {
+    transform: scale(0.95);
   }
 
   @keyframes pulse {
