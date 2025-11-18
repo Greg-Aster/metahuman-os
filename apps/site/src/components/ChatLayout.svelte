@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy, setContext } from 'svelte';
   import { writable } from 'svelte/store';
-  import { statusStore, statusRefreshTrigger } from '../stores/navigation';
+  import { statusStore, statusRefreshTrigger, nodeEditorMode } from '../stores/navigation';
   import { startPolicyPolling, fetchSecurityPolicy, policyStore, isReadOnly } from '../stores/security-policy';
   import UserMenu from './UserMenu.svelte';
   import HeadlessClaimBanner from './HeadlessClaimBanner.svelte';
+  import NodeEditorLayout from './NodeEditorLayout.svelte';
 
   // Sidebar visibility state - mobile-first defaults
   let leftSidebarOpen = false;
@@ -312,6 +313,9 @@
   }
 </script>
 
+{#if $nodeEditorMode}
+  <NodeEditorLayout />
+{:else}
 <div class="flex flex-col app-root w-screen overflow-hidden bg-white dark:bg-slate-950">
   <!-- Header Bar -->
   <header class="flex justify-between items-center px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl z-10 flex-shrink-0">
@@ -449,6 +453,17 @@
         {/if}
       </div>
       <button
+        on:click={() => nodeEditorMode.update(v => !v)}
+        class={`flex items-center justify-center p-2 border-0 bg-transparent cursor-pointer rounded-md transition-all
+                ${$nodeEditorMode ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10'}`}
+        aria-label="Toggle node editor"
+        title={$nodeEditorMode ? 'Switch to Traditional View' : 'Switch to Node Editor View'}
+      >
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
+        </svg>
+      </button>
+      <button
         on:click={toggleRightSidebar}
         class="flex items-center justify-center p-2 border-0 bg-transparent text-purple-600 dark:text-purple-400 cursor-pointer rounded-md transition-all hover:bg-gray-100 dark:hover:bg-white/10"
         aria-label="Toggle developer tools"
@@ -541,6 +556,7 @@
     {/if}
   </div>
 </div>
+{/if}
 
 <style>
   /* App root dynamic viewport height */

@@ -7,6 +7,9 @@ export const statusRefreshTrigger = writable<number>(0); // Increment to trigger
 // YOLO mode store - shared between components
 export const yoloModeStore = writable<boolean>(false);
 
+// Node editor mode toggle - when true, shows node-based visual editor instead of traditional interface
+export const nodeEditorMode = writable<boolean>(false);
+
 // Load YOLO mode from localStorage on init
 if (typeof localStorage !== 'undefined') {
   try {

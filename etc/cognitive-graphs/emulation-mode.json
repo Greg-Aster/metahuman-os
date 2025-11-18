@@ -1,0 +1,127 @@
+{
+  "version": "1.0",
+  "name": "Emulation Mode",
+  "description": "Simple chat-only pipeline with no operator or memory writes - stable personality snapshot for demos",
+  "cognitiveMode": "emulation",
+  "last_modified": "2025-11-18",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "cognitive/user_input",
+      "pos": [50, 200],
+      "size": [180, 60],
+      "properties": {
+        "message": ""
+      },
+      "title": "User Input"
+    },
+    {
+      "id": 2,
+      "type": "cognitive/session_context",
+      "pos": [50, 300],
+      "size": [180, 60],
+      "title": "Session Context\n(Read-Only)"
+    },
+    {
+      "id": 3,
+      "type": "cognitive/system_settings",
+      "pos": [50, 400],
+      "size": [180, 80],
+      "title": "System Settings"
+    },
+    {
+      "id": 4,
+      "type": "cognitive/conversation_history",
+      "pos": [280, 280],
+      "size": [200, 80],
+      "properties": {
+        "mode": "conversation",
+        "maxMessages": 20
+      },
+      "title": "Conversation History"
+    },
+    {
+      "id": 5,
+      "type": "cognitive/semantic_search",
+      "pos": [280, 400],
+      "size": [180, 80],
+      "properties": {
+        "similarityThreshold": 0.6,
+        "maxResults": 5
+      },
+      "title": "Semantic Search\n(Optional Context)"
+    },
+    {
+      "id": 6,
+      "type": "cognitive/persona_llm",
+      "pos": [540, 300],
+      "size": [180, 80],
+      "properties": {
+        "model": "default.orchestrator",
+        "temperature": 0.7
+      },
+      "title": "Persona LLM\n(Frozen Snapshot)"
+    },
+    {
+      "id": 7,
+      "type": "cognitive/stream_writer",
+      "pos": [780, 300],
+      "size": [180, 60],
+      "title": "Stream Writer\n(No Memory Save)"
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 0,
+      "type": "string"
+    },
+    {
+      "id": 2,
+      "origin_id": 1,
+      "origin_slot": 1,
+      "target_id": 2,
+      "target_slot": 0,
+      "type": "string"
+    },
+    {
+      "id": 3,
+      "origin_id": 1,
+      "origin_slot": 1,
+      "target_id": 4,
+      "target_slot": 0,
+      "type": "string"
+    },
+    {
+      "id": 4,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 0,
+      "type": "array"
+    },
+    {
+      "id": 5,
+      "origin_id": 5,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 1,
+      "type": "array",
+      "comment": "Optional memories for context"
+    },
+    {
+      "id": 6,
+      "origin_id": 6,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 0,
+      "type": "llm_response"
+    }
+  ],
+  "config": {},
+  "extra": {},
+  "groups": []
+}

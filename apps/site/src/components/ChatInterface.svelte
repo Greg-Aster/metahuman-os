@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount, afterUpdate, onDestroy } from 'svelte';
   import Thinking from './Thinking.svelte';
-  import VoiceInteraction from './VoiceInteraction.svelte';
   import ApprovalBox from './ApprovalBox.svelte';
   import { canUseOperator, currentMode } from '../stores/security-policy';
   import { triggerClearAuditStream } from '../stores/clear-events';
@@ -46,7 +45,6 @@ let reasoningStages: ReasoningStage[] = [];
   let ttsEnabled = false;
   // forceOperator removed - unified reasoning always uses operator for authenticated users
   // audience removed - focus selector obsolete with ReAct operator
-  let showMiniVoice = false;
   let boredomTtsEnabled = false; // For inner dialog voice
   let audioUnlocked = false;
   // Curiosity questions
@@ -1398,18 +1396,6 @@ let reasoningStages: ReasoningStage[] = [];
         {#if ttsEnabled}<span class="badge">On</span>{/if}
       </button>
 
-      <button
-        class={`icon-btn ${showMiniVoice ? 'active' : ''}`}
-        title={showMiniVoice ? 'Hide inline mic controls' : 'Show inline mic controls'}
-        aria-pressed={showMiniVoice}
-        on:click={() => {
-          showMiniVoice = !showMiniVoice;
-        }}>
-        <!-- Mic icon -->
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
-        {#if showMiniVoice}<span class="badge">On</span>{/if}
-      </button>
-      
       <!-- Inner dialog voice toggle (only visible in inner mode) -->
       {#if mode === 'inner'}
         <button
@@ -1433,11 +1419,6 @@ let reasoningStages: ReasoningStage[] = [];
   </div>
 
   <!-- Messages Area -->
-  {#if showMiniVoice}
-    <div class="mini-voice">
-      <VoiceInteraction />
-    </div>
-  {/if}
 
   <!-- Ollama Status Warning Banner -->
   {#if !ollamaRunning || !ollamaHasModels}
