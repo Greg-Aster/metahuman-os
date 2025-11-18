@@ -572,6 +572,300 @@ Kokoro is a StyleTTS2-based provider bundled with 50+ high-quality voices across
 
 ---
 
+## Continuous Voice Conversation
+
+MetaHuman OS features a sophisticated continuous voice conversation system that enables natural, hands-free dialog with your digital personality. This system combines Speech-to-Text (STT), Voice Activity Detection (VAD), and intelligent queue management for a seamless conversational experience.
+
+### Overview
+
+The continuous conversation system provides:
+- **Hands-Free Operation**: Speak naturally without clicking buttons
+- **Smart Queue Management**: Messages queue while LLM is thinking (no interruptions)
+- **Echo Cancellation**: Browser-level filtering prevents TTS feedback loops
+- **Natural Dialog Flow**: Talk while LLM is processing for snappy back-and-forth
+
+### How to Use
+
+**Activating Continuous Mode:**
+1. Right-click the microphone button in the chat interface
+2. The button will turn blue and show a breathing animation
+3. Start speaking - recording begins automatically when you talk
+4. Silence detection auto-sends your message after you finish
+
+**Deactivating Continuous Mode:**
+- Left-click the microphone button (turns off and closes stream)
+
+**Visual Indicators:**
+- 🎤 **Normal Mode**: Standard microphone icon (click to record once)
+- 🌊 **Waiting**: Sound wave icon (continuous mode, waiting for speech)
+- 📊 **Recording**: Animated waveform icon (capturing your voice)
+
+### Speech-to-Text (Whisper)
+
+The system uses **faster-whisper** for high-quality speech recognition.
+
+**Features:**
+- **Local Processing**: All transcription happens on your machine
+- **GPU Accelerated**: Uses CUDA for fast transcription (CPU fallback available)
+- **High Accuracy**: OpenAI Whisper models provide excellent recognition
+- **Auto-Start**: Server starts automatically when needed
+
+**Configuration** (`etc/voice.json`):
+```json
+{
+  "stt": {
+    "provider": "whisper",
+    "whisper": {
+      "model": "base.en",
+      "device": "cuda",
+      "computeType": "float16",
+      "language": "en",
+      "server": {
+        "useServer": true,
+        "url": "http://127.0.0.1:9883",
+        "autoStart": true,
+        "port": 9883
+      }
+    }
+  }
+}
+```
+
+**Available Models:**
+- `tiny.en` - Fastest, lowest accuracy (~1GB VRAM)
+- `base.en` - Good balance (recommended, ~1GB VRAM)
+- `small.en` - Higher accuracy (~2GB VRAM)
+- `medium.en` - Excellent accuracy (~5GB VRAM)
+- `large-v2` - Best accuracy, multilingual (~10GB VRAM)
+
+**Server Management:**
+The Whisper server runs in the background. Start it manually if needed:
+```bash
+./bin/mh whisper start    # Start server
+./bin/mh whisper stop     # Stop server
+./bin/mh whisper status   # Check status
+```
+
+### Voice Activity Detection (VAD)
+
+VAD automatically detects when you're speaking and when you've finished.
+
+**Configurable Settings** (`etc/voice.json`):
+```json
+{
+  "stt": {
+    "whisper": {
+      "vad": {
+        "voiceThreshold": 12,
+        "silenceDelay": 1400,
+        "minDuration": 500
+      }
+    }
+  }
+}
+```
+
+**Parameters:**
+
+**Voice Threshold** (0-100, default: 12):
+- Sensitivity for detecting speech
+- Lower = More sensitive (triggers on quieter sounds)
+- Higher = Less sensitive (requires louder speech)
+- Recommendations:
+  - Quiet environment: 8-12
+  - Normal environment: 12-20
+  - Noisy environment: 20-30
+
+**Silence Delay** (milliseconds, default: 1400):
+- How long to wait after you stop speaking before sending
+- Lower = Faster response but may cut you off mid-thought
+- Higher = More time to pause but slower response
+- Recommendations:
+  - Fast pacing: 1000ms (1 second)
+  - Normal conversation: 1400ms (1.4 seconds)
+  - Thoughtful pacing: 2000ms (2 seconds)
+
+**Minimum Duration** (milliseconds, default: 500):
+- Minimum recording length to send (filters out noise)
+- Recordings shorter than this are discarded
+- Prevents accidental triggers from coughs, clicks, etc.
+- Recommendation: Keep at 500ms
+
+**Adjusting VAD Settings:**
+1. Go to Voice Settings in the left sidebar
+2. Scroll to "Voice Activity Detection (VAD)" section
+3. Adjust sliders to your preference
+4. Click "Save" - **settings reload immediately** (no restart needed)
+5. Test in continuous mode to verify
+
+### Queue-Based Message System
+
+The continuous conversation system uses a smart queue to prevent LLM interruptions while maintaining snappy dialog.
+
+**How It Works:**
+
+```
+┌─────────────────────────────────────────────┐
+│ Normal Flow (LLM Idle)                      │
+├─────────────────────────────────────────────┤
+│ You speak → Transcribe → Send immediately   │
+│ LLM responds → You speak again → Repeat     │
+└─────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────┐
+│ Queue Flow (LLM Busy)                       │
+├─────────────────────────────────────────────┤
+│ You speak → Transcribe → Queue message      │
+│ LLM finishes → Queued message auto-sends    │
+│ LLM starts new response → Continuous flow   │
+└─────────────────────────────────────────────┘
+```
+
+**Key Features:**
+
+1. **No Interruptions**: Your speech won't stop the LLM mid-thought
+2. **Talk While Thinking**: Speak while LLM is processing your last message
+3. **Auto-Send on Completion**: Queued messages send instantly when LLM finishes
+4. **TTS Protection**: Recording pauses during TTS playback (prevents echo)
+5. **Clean Conversations**: No fragmented responses
+
+**Visual Feedback:**
+- Console logs show `[chat-queue] LLM busy, queueing message: ...`
+- Console logs show `[chat-queue] LLM finished, sending queued message: ...`
+
+### Echo Cancellation & Feedback Prevention
+
+The system prevents the microphone from recording the LLM's TTS voice.
+
+**Multi-Layer Protection:**
+
+1. **Browser Echo Cancellation**:
+   - Enabled via `echoCancellation: true` in getUserMedia
+   - Filters out speaker output from microphone input
+   - Built-in to modern browsers (Chrome, Edge, Firefox)
+
+2. **TTS Pause Detection**:
+   - VAD pauses when TTS starts playing
+   - Recording stops if TTS begins mid-recording
+   - Prevents partial recordings with echo
+
+3. **Smart Resume**:
+   - After TTS finishes, VAD resumes automatically
+   - Waits for your next speech input
+   - Seamless transition back to listening mode
+
+**If You Experience Feedback:**
+1. Increase VAD Voice Threshold (makes detection less sensitive)
+2. Lower speaker volume
+3. Use headphones (completely isolates TTS from mic)
+4. Check browser permissions (ensure echo cancellation is enabled)
+
+### Best Practices
+
+**For Optimal Recognition:**
+- Speak clearly at normal volume
+- Maintain consistent distance from microphone (6-12 inches)
+- Use a good quality microphone (built-in laptop mics work but external is better)
+- Minimize background noise (close windows, turn off fans)
+- Avoid talking over background music or TV
+
+**For Natural Conversation:**
+- Adjust Silence Delay to match your speaking pace
+- Lower for rapid-fire questions (1000ms)
+- Higher for thoughtful discussions (2000ms)
+- Use queue system to your advantage (don't wait for LLM to finish)
+
+**For Privacy:**
+- All STT processing happens locally (nothing sent to cloud)
+- Audio is transcribed in real-time and discarded
+- No recordings are saved unless you explicitly enable voice training
+- Whisper server only listens on localhost (not accessible from network)
+
+### Troubleshooting
+
+**Recording Not Starting:**
+- Check browser permissions (allow microphone access)
+- Verify HTTPS or localhost (getUserMedia requires secure context)
+- Test with left-click (single recording) to isolate continuous mode issues
+- Check console for `[chat-mic] Failed to start mic` errors
+
+**Empty/No Transcriptions:**
+- Increase voice threshold (may be too sensitive, picking up noise)
+- Check Whisper server status: `./bin/mh whisper status`
+- Verify GPU availability: `nvidia-smi` (or check CPU mode)
+- Review logs in console: `[chat-mic] STT response`
+
+**Cuts Off Mid-Sentence:**
+- Increase Silence Delay (currently stopping too fast)
+- Speak more continuously (fewer long pauses)
+- Lower VAD Voice Threshold (more aggressive speech detection)
+
+**Picks Up Background Noise:**
+- Increase Voice Threshold (makes VAD less sensitive)
+- Increase Minimum Duration (filters short noises)
+- Use headphones (isolates speaker output from mic)
+- Record in quieter environment
+
+**Messages Get Stuck in Queue:**
+- Check if LLM is actually finishing (watch thinking indicator)
+- Verify Ollama is running: `./bin/mh ollama status`
+- Check browser console for `[chat-queue]` messages
+- Hard refresh browser (Ctrl+Shift+R)
+
+**High Latency:**
+- Switch to smaller Whisper model (`tiny.en` or `base.en`)
+- Enable GPU acceleration (set `device: "cuda"` in voice.json)
+- Check GPU VRAM availability: `nvidia-smi`
+- Reduce Silence Delay (sends sooner after you stop talking)
+
+### Advanced Configuration
+
+**Using CPU-Only Mode:**
+```json
+{
+  "stt": {
+    "whisper": {
+      "model": "base.en",
+      "device": "cpu",
+      "computeType": "int8"
+    }
+  }
+}
+```
+Note: CPU mode is slower but works on machines without NVIDIA GPUs.
+
+**Custom Whisper Server URL:**
+```json
+{
+  "stt": {
+    "whisper": {
+      "server": {
+        "useServer": true,
+        "url": "http://192.168.1.100:9883"
+      }
+    }
+  }
+}
+```
+Run Whisper on a separate machine and point to it.
+
+**Fine-Tuning VAD for Your Voice:**
+1. Start with defaults
+2. Test in continuous mode
+3. If it misses quiet speech: Lower `voiceThreshold` (8-10)
+4. If it triggers on noise: Raise `voiceThreshold` (20-25)
+5. If it cuts you off: Increase `silenceDelay` (2000ms+)
+6. If it's too slow: Decrease `silenceDelay` (1000ms)
+
+### Related Features
+
+- **Voice Training**: Collected samples can train RVC/Kokoro models
+- **TTS Integration**: Responses play automatically via configured TTS provider
+- **Multi-User**: Each user has independent VAD settings
+- **Cognitive Modes**: Works in all modes (dual, agent, emulation)
+
+---
+
 ## Choosing a Provider
 
 | Feature | Piper | GPT-SoVITS | RVC | Kokoro |

@@ -1,7 +1,6 @@
 import { defineConfig } from 'astro/config';
 import tailwind from '@astrojs/tailwind';
 import svelte from '@astrojs/svelte';
-import voiceWebSocket from './src/integrations/voice-websocket.ts';
 import fs from 'fs';
 import path from 'path';
 
@@ -61,7 +60,6 @@ export default defineConfig({
   integrations: [
     tailwind({ applyBaseStyles: true }),
     svelte(),
-    voiceWebSocket(),
     requestLogger()
   ],
   server: {
