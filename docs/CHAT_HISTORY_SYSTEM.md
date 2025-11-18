@@ -130,17 +130,16 @@ onMount(async () => {
 
 ### Saving Messages
 
-Messages are automatically saved to the server when added via `pushMessage()`:
+The server now owns persistence for user/assistant turns. `pushMessage()` only updates the local UI while `/api/persona_chat` writes the canonical buffer once the request is accepted:
 
 ```typescript
 function pushMessage(role, content, relPath, meta) {
   const newMessage = { role, content, timestamp: Date.now(), relPath, meta };
   messages = [...messages, newMessage];
-
-  // Auto-save to server (fire-and-forget)
-  void saveMessageToServer(newMessage);
 }
 ```
+
+> Tip: When troubleshooting missing history, inspect the server logs for `[persona_chat]` persistence messages instead of looking for client-side POSTs.
 
 ### Clearing History
 
@@ -228,9 +227,9 @@ Check:
 ### Messages not persisting after refresh
 
 Check:
-1. `saveMessageToServer()` is being called (check network tab)
+1. `/api/persona_chat` completes without errors (Network tab → responses)
 2. No 401/403 errors (authentication required)
-3. Buffer file is writable
+3. Buffer file under `profiles/{username}/state/` is writable by the server process
 
 ### Clear button not working
 

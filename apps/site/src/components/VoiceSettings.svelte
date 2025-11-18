@@ -195,6 +195,10 @@
 
       successMessage = result.message || 'Settings saved successfully!';
       setTimeout(() => { successMessage = null; }, 5000);
+
+      // Dispatch event to notify other components (e.g., ChatInterface) that VAD settings changed
+      window.dispatchEvent(new CustomEvent('voice-settings-updated'));
+      console.log('[VoiceSettings] Dispatched voice-settings-updated event');
     } catch (e) {
       error = String(e);
       console.error('[VoiceSettings] Save error:', e);
@@ -253,7 +257,9 @@
       }
 
       console.log('[VoiceSettings] Testing voice with provider:', providerToTest);
-      let requestBody: any = { text: testText, provider: providerToTest };
+      // Add cache-busting suffix to test text to ensure fresh audio generation
+      const cacheBustedText = `${testText} [${Date.now()}]`;
+      let requestBody: any = { text: cacheBustedText, provider: providerToTest };
 
       if (providerToTest === 'piper' && config.piper) {
         const voice = config.piper.voices.find(v => v.id === config.piper!.currentVoice);

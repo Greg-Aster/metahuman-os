@@ -266,13 +266,11 @@
   async function calibrateThreshold() {
     if (!analyser) return;
     let samples = 0; let sum = 0;
-    const data = new Uint8Array(analyser.frequencyBinCount);
     const start = Date.now();
     while (Date.now() - start < 800) {
-      analyser.getByteFrequencyData(data);
-      const avg = data.reduce((a, b) => a + b, 0) / data.length;
-      const norm = Math.min(100, (avg / 255) * 100);
-      sum += norm; samples++;
+      // Use shared voice-frequency-focused volume calculation (matches actual VAD)
+      const vol = calculateVoiceVolume(analyser, 100); // Use 100% (no boost) for calibration
+      sum += vol; samples++;
       await new Promise(r => setTimeout(r, 25));
     }
     const ambient = samples ? sum / samples : 0;

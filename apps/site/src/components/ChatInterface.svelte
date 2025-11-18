@@ -500,33 +500,32 @@ let reasoningStages: ReasoningStage[] = [];
 
       const data = await response.json();
       if (Array.isArray(data.messages)) {
-        console.log(`[ChatInterface] Loaded ${data.messages.length} messages from server (mode: ${mode})`);
-        return data.messages;
+        const baseTimestamp = Date.now();
+        let fallback = 0;
+        const normalized = data.messages.map((msg: Record<string, any>) => {
+          let ts: number | undefined;
+
+          if (typeof msg.timestamp === 'number') {
+            ts = msg.timestamp;
+          } else if (typeof msg.timestamp === 'string') {
+            const parsed = Date.parse(msg.timestamp);
+            ts = Number.isNaN(parsed) ? undefined : parsed;
+          }
+
+          if (typeof ts !== 'number') {
+            ts = baseTimestamp + fallback++;
+          }
+
+          return { ...msg, timestamp: ts };
+        });
+
+        console.log(`[ChatInterface] Loaded ${normalized.length} messages from server (mode: ${mode})`);
+        return normalized;
       }
     } catch (error) {
       console.error('[ChatInterface] Failed to load messages from server:', error);
     }
     return null;
-  }
-
-  async function saveMessageToServer(message: ChatMessage): Promise<boolean> {
-    try {
-      const response = await fetch('/api/conversation-buffer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode, message }),
-      });
-
-      if (!response.ok) {
-        console.error('[ChatInterface] Failed to save message to server');
-        return false;
-      }
-
-      return true;
-    } catch (error) {
-      console.error('[ChatInterface] Error saving message to server:', error);
-      return false;
-    }
   }
 
   async function clearServerBuffer(): Promise<boolean> {
@@ -704,8 +703,16 @@ let reasoningStages: ReasoningStage[] = [];
     // They're saved as conversation events by curiosity-service agent
     // and loaded via /api/chat/history just like regular messages
 
+    // Listen for voice settings changes (triggered when user updates VAD settings in UI)
+    const handleSettingsUpdate = () => {
+      console.log('[chat-mic] Voice settings updated, reloading...');
+      loadVADSettings();
+    };
+    window.addEventListener('voice-settings-updated', handleSettingsUpdate);
+
     return () => {
       observer.disconnect();
+      window.removeEventListener('voice-settings-updated', handleSettingsUpdate);
     };
   });
 
@@ -774,9 +781,6 @@ let reasoningStages: ReasoningStage[] = [];
 
     const newMessage = { role, content: trimmed, timestamp: Date.now(), relPath, meta };
     messages = [...messages, newMessage];
-
-    // Save to server (async, don't await - fire and forget)
-    void saveMessageToServer(newMessage);
   }
 
   async function sendMessage() {
@@ -1054,10 +1058,13 @@ let reasoningStages: ReasoningStage[] = [];
   let micAudioCtx: AudioContext | null = null;
   let micSilenceTimer: number | null = null;
   let micSpeaking = false; // VAD speaking state
+  let micContinuousMode = false; // Continuous listening with auto-send
+  let micSilenceTimerStarted = false; // Track if we've already logged silence timer start
+  let queuedMessage = ''; // Message queued while LLM is busy (sends when LLM finishes)
 
   // VAD settings (loaded from user profile)
   let MIC_VOICE_THRESHOLD = 12; // Sensitivity 0-100
-  let MIC_SILENCE_DELAY = 5000; // 5 seconds of silence before auto-stop
+  let MIC_SILENCE_DELAY = 1400; // 1.4 seconds of silence before auto-stop (conversational pace)
   let MIC_MIN_DURATION = 500; // Don't send if recording is less than 500ms
 
   // Load VAD settings from voice config
@@ -1077,6 +1084,15 @@ let reasoningStages: ReasoningStage[] = [];
       console.error('[chat-mic] Failed to load VAD settings:', error);
       // Keep defaults
     }
+  }
+
+  // Watch for LLM completion and auto-send queued messages
+  $: if (!loading && queuedMessage.trim()) {
+    console.log('[chat-queue] LLM finished, sending queued message:', queuedMessage.substring(0, 50) + (queuedMessage.length > 50 ? '...' : ''));
+    const msg = queuedMessage;
+    queuedMessage = ''; // Clear queue before sending
+    input = msg;
+    void sendMessage();
   }
 
   async function startMic() {
@@ -1100,9 +1116,15 @@ let reasoningStages: ReasoningStage[] = [];
       micRecorder = new MediaRecorder(micStream, { mimeType });
       micRecorder.ondataavailable = (e) => { if (e.data?.size) micChunks.push(e.data); };
       micRecorder.onstop = () => { void finalizeMic(); };
-      micRecorder.start();
-      micRecording = true;
-      micStartedAt = Date.now();
+
+      // In continuous mode, wait for VAD to detect speech before starting recording
+      // In normal mode, start recording immediately
+      if (!micContinuousMode) {
+        micRecorder.start();
+        micRecording = true;
+        micStartedAt = Date.now();
+      }
+
       runMicVAD();
     } catch (e) {
       console.error('[chat-mic] Failed to start mic:', e);
@@ -1111,14 +1133,35 @@ let reasoningStages: ReasoningStage[] = [];
 
   function stopMic() {
     if (!micRecording) return;
-    try { micRecorder && micRecorder.state !== 'inactive' && micRecorder.stop(); } catch {}
-    if (micSilenceTimer) { clearTimeout(micSilenceTimer); micSilenceTimer = null; }
+
+    console.log('[chat-mic] Stopping recording, chunks collected:', micChunks.length);
+
+    try {
+      if (micRecorder && micRecorder.state !== 'inactive') {
+        micRecorder.stop();
+      }
+    } catch (e) {
+      console.error('[chat-mic] Error stopping recorder:', e);
+    }
+
+    if (micSilenceTimer) {
+      clearTimeout(micSilenceTimer);
+      micSilenceTimer = null;
+    }
+
     micRecording = false;
     micSpeaking = false; // Reset speaking state
-    try { micStream?.getTracks().forEach(t => t.stop()); } catch {}
-    micStream = null;
-    try { micAudioCtx?.close(); } catch {}
-    micAudioCtx = null; micAnalyser = null;
+    micSilenceTimerStarted = false;
+
+    // In continuous mode, keep the stream alive for next speech detection
+    // In normal mode, close everything
+    if (!micContinuousMode) {
+      try { micStream?.getTracks().forEach(t => t.stop()); } catch {}
+      micStream = null;
+      try { micAudioCtx?.close(); } catch {}
+      micAudioCtx = null;
+      micAnalyser = null;
+    }
   }
 
   async function finalizeMic() {
@@ -1126,9 +1169,17 @@ let reasoningStages: ReasoningStage[] = [];
       const blob = new Blob(micChunks, { type: 'audio/webm' });
       const dur = micStartedAt ? (Date.now() - micStartedAt) : 0;
 
-      // Ignore recordings that are too short (likely accidental clicks)
+      console.log('[chat-mic] Finalizing recording:', dur, 'ms, blob size:', blob.size, 'bytes');
+
+      // Ignore recordings that are too short (likely accidental clicks or noise)
       if (dur < MIC_MIN_DURATION) {
         console.log(`[chat-mic] Recording too short (${dur}ms), ignoring`);
+        return;
+      }
+
+      // Ignore recordings with no data
+      if (blob.size === 0) {
+        console.log('[chat-mic] Recording has no data (0 bytes), ignoring');
         return;
       }
 
@@ -1136,9 +1187,29 @@ let reasoningStages: ReasoningStage[] = [];
       const res = await fetch(`/api/stt?format=webm&collect=1&dur=${dur}`, { method: 'POST', body: buf });
       if (res.ok) {
         const data = await res.json();
-        if (data?.transcript) {
-          input = data.transcript;
+        console.log('[chat-mic] STT response:', data);
+
+        if (data?.transcript && data.transcript.trim()) {
+          const transcript = data.transcript.trim();
+
+          // Auto-send in continuous mode
+          if (micContinuousMode) {
+            // If LLM is busy (thinking or responding), queue the message
+            if (loading) {
+              console.log('[chat-queue] LLM busy, queueing message:', transcript.substring(0, 50) + (transcript.length > 50 ? '...' : ''));
+              queuedMessage = transcript; // Will auto-send when loading becomes false
+            } else {
+              // LLM idle, send immediately
+              console.log('[chat-mic] Transcribed & sending:', transcript.substring(0, 50) + (transcript.length > 50 ? '...' : ''));
+              input = transcript;
+              await sendMessage();
+            }
+          }
+        } else {
+          console.log('[chat-mic] No transcript detected (empty or null response)');
         }
+      } else {
+        console.error('[chat-mic] STT request failed:', res.status, res.statusText);
       }
     } catch (e) {
       console.error('[chat-mic] STT failed:', e);
@@ -1152,7 +1223,36 @@ let reasoningStages: ReasoningStage[] = [];
     const analyser = micAnalyser; if (!analyser) return;
 
     const tickVAD = () => {
-      if (!micRecording || !micAnalyser) return;
+      // Keep VAD running as long as we have an analyser (mic stream is active)
+      if (!micAnalyser) return;
+
+      // CRITICAL: Don't record while TTS is playing (prevents recording LLM's own voice)
+      if (currentAudio && !currentAudio.paused) {
+        // If we were recording, stop it (we heard TTS start mid-recording)
+        // But only if we've recorded enough data to avoid losing the recording
+        if (micRecording) {
+          const recordingDuration = micStartedAt ? (Date.now() - micStartedAt) : 0;
+          if (recordingDuration < MIC_MIN_DURATION) {
+            // Too short, let it continue until min duration
+            // Just pause VAD checking while TTS plays
+            micSpeaking = false;
+            if (micSilenceTimer) {
+              clearTimeout(micSilenceTimer);
+              micSilenceTimer = null;
+              micSilenceTimerStarted = false;
+            }
+          } else {
+            // Long enough, safe to stop
+            console.log('[chat-mic] TTS started, stopping recording (had', recordingDuration, 'ms)');
+            stopMic();
+          }
+        } else {
+          // Not recording, just reset state
+          micSpeaking = false;
+        }
+        requestAnimationFrame(tickVAD);
+        return;
+      }
 
       // Use shared audio utility for voice-frequency-focused volume calculation
       const vol = calculateVoiceVolume(analyser, 150);
@@ -1162,21 +1262,59 @@ let reasoningStages: ReasoningStage[] = [];
         if (!micSpeaking) {
           console.log('[chat-mic] Speech started');
           micSpeaking = true;
+          micSilenceTimerStarted = false; // Reset flag
+
+          // In continuous mode, start recording when speech is detected
+          if (micContinuousMode && !micRecording && micStream) {
+            // Double-check recorder state before starting
+            if (micRecorder && micRecorder.state === 'recording') {
+              console.log('[chat-mic] WARNING: Recorder already recording, skipping start');
+              micRecording = true; // Sync state
+              return;
+            }
+
+            console.log('[chat-mic] Auto-starting recording (continuous mode)');
+            // Recreate MediaRecorder for each recording session
+            const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+            micChunks = [];
+            micRecorder = new MediaRecorder(micStream, { mimeType });
+            micRecorder.ondataavailable = (e) => { if (e.data?.size) micChunks.push(e.data); };
+            micRecorder.onstop = () => { void finalizeMic(); };
+
+            try {
+              micRecorder.start();
+              micRecording = true;
+              micStartedAt = Date.now();
+            } catch (e) {
+              console.error('[chat-mic] Failed to start recorder:', e);
+              micRecording = false;
+            }
+          }
         }
         // Clear silence timer (user is still speaking)
         if (micSilenceTimer) {
           clearTimeout(micSilenceTimer);
           micSilenceTimer = null;
+          micSilenceTimerStarted = false;
         }
       }
       // Silence detected while we were speaking
-      else if (micSpeaking && !micSilenceTimer) {
-        // Start silence timer
-        micSilenceTimer = window.setTimeout(() => {
-          console.log('[chat-mic] Silence detected, stopping');
-          micSpeaking = false; // Reset speaking state
-          stopMic();
-        }, MIC_SILENCE_DELAY);
+      else if (micSpeaking && micRecording && !micSilenceTimer) {
+        // Only start silence timer if we've been recording for at least the minimum duration
+        const recordingDuration = micStartedAt ? (Date.now() - micStartedAt) : 0;
+        if (recordingDuration >= MIC_MIN_DURATION) {
+          if (!micSilenceTimerStarted) {
+            console.log('[chat-mic] Silence detected, starting timer...');
+            micSilenceTimerStarted = true;
+          }
+          micSilenceTimer = window.setTimeout(() => {
+            console.log('[chat-mic] Silence timer expired, stopping recording');
+            micSpeaking = false; // Reset speaking state
+            micSilenceTimerStarted = false;
+            stopMic();
+          }, MIC_SILENCE_DELAY);
+        }
+        // Don't log every frame when recording is too short - just wait
       }
 
       requestAnimationFrame(tickVAD);
@@ -1507,14 +1645,52 @@ let reasoningStages: ReasoningStage[] = [];
             </button>
           {/if}
           <button
-            class="mic-btn {micRecording ? 'recording' : ''}"
-            title={micRecording ? 'Listening… click to stop' : 'Click to speak'}
-            on:click={() => micRecording ? stopMic() : startMic()}
+            class="mic-btn {micRecording ? 'recording' : ''} {micContinuousMode ? 'continuous' : ''}"
+            title={micContinuousMode ? (micRecording ? 'Listening continuously…' : 'Continuous mode active') : (micRecording ? 'Listening… click to stop' : 'Click to speak')}
+            on:click={() => {
+              if (micContinuousMode) {
+                // Stop continuous mode and clean up
+                micContinuousMode = false;
+                if (micRecording) stopMic();
+                // Clean up the stream
+                try { micStream?.getTracks().forEach(t => t.stop()); } catch {}
+                micStream = null;
+                try { micAudioCtx?.close(); } catch {}
+                micAudioCtx = null;
+                micAnalyser = null;
+              } else {
+                micRecording ? stopMic() : startMic();
+              }
+            }}
+            on:contextmenu|preventDefault={() => {
+              // Right-click to toggle continuous mode
+              micContinuousMode = !micContinuousMode;
+              if (micContinuousMode && !micRecording) {
+                startMic();
+              }
+            }}
             disabled={loading}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zM19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
-            </svg>
+            {#if micContinuousMode && micRecording}
+              <!-- Recording: Waveform icon -->
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="recording-icon">
+                <rect x="2" y="8" width="2" height="8" rx="1"/>
+                <rect x="6" y="4" width="2" height="16" rx="1"/>
+                <rect x="10" y="10" width="2" height="4" rx="1"/>
+                <rect x="14" y="6" width="2" height="12" rx="1"/>
+                <rect x="18" y="9" width="2" height="6" rx="1"/>
+              </svg>
+            {:else if micContinuousMode}
+              <!-- Waiting: Sound waves icon -->
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="waiting-icon">
+                <path d="M9 9c-.5-.5-1.5-1-3-1M9 15c-.5.5-1.5 1-3 1M15 9c.5-.5 1.5-1 3-1M15 15c.5.5 1.5 1 3 1M12 12v.01"/>
+              </svg>
+            {:else}
+              <!-- Normal: Microphone icon -->
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zM19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
+              </svg>
+            {/if}
           </button>
           <button
             class="send-btn"
@@ -1629,6 +1805,49 @@ let reasoningStages: ReasoningStage[] = [];
     border-radius: 0.75rem;
     animation: pulseMic 1.2s infinite ease-out;
     pointer-events: none;
+  }
+
+  .mic-btn {
+    position: relative;
+  }
+
+  .mic-btn.continuous {
+    background: rgba(59, 130, 246, 0.2) !important;
+    border-color: rgba(59, 130, 246, 0.6) !important;
+  }
+
+  .mic-btn.continuous:not(.recording) {
+    animation: breathe 2s ease-in-out infinite;
+  }
+
+  @keyframes breathe {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+
+  .recording-icon {
+    color: #ef4444 !important;
+    animation: recordingBounce 0.8s ease-in-out infinite;
+  }
+
+  @keyframes recordingBounce {
+    0%, 100% { transform: scaleY(1); }
+    25% { transform: scaleY(1.2); }
+    50% { transform: scaleY(0.8); }
+    75% { transform: scaleY(1.1); }
+  }
+
+  .waiting-icon {
+    animation: soundWave 2s ease-in-out infinite;
+  }
+
+  @keyframes soundWave {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  .input-actions {
+    position: relative;
   }
 
   @keyframes pulseMic {

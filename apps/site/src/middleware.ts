@@ -7,7 +7,7 @@
 import { defineMiddleware } from 'astro:middleware';
 import { withUserContext as runWithUserContext } from '@metahuman/core/context';
 import { validateSession } from '@metahuman/core/sessions';
-import { getUser } from '@metahuman/core/users';
+import { getUser, getUserByUsername } from '@metahuman/core/users';
 
 export const onRequest = defineMiddleware(async (context, next) => {
   // Only apply to API routes
@@ -27,7 +27,6 @@ export const onRequest = defineMiddleware(async (context, next) => {
       if (session.role === 'anonymous') {
         // All anonymous users use the 'guest' profile
         const activeProfile = session.metadata?.activeProfile || undefined;
-        const sourceProfile = session.metadata?.sourceProfile;
 
         // Set anonymous context in locals
         context.locals.userContext = {
@@ -78,10 +77,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   if (isDevelopment && devAutoLogin) {
     // Try to find the specified user (defaults to 'greggles')
-    const ownerUser = getUser(devUsername);
+    const ownerUser = getUserByUsername(devUsername);
 
     if (ownerUser && ownerUser.role === 'owner') {
-      console.log('[middleware] DEV MODE: Auto-authenticating as', ownerUser.username);
 
       // Set user context in locals
       context.locals.userContext = {

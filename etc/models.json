@@ -55,9 +55,9 @@
       "description": "Default persona model for conversational responses",
       "options": {
         "contextWindow": 8192,
-        "temperature": 0.7,
-        "topP": 0.9,
-        "repeatPenalty": 1.2
+        "temperature": 0.8,
+        "topP": 0.95,
+        "repeatPenalty": 1.4
       },
       "metadata": {
         "priority": "high",
@@ -80,9 +80,9 @@
       "description": "Persona model with LoRA adapter for voice tuning",
       "options": {
         "contextWindow": 8192,
-        "temperature": 0.7,
-        "topP": 0.9,
-        "repeatPenalty": 1.2
+        "temperature": 0.8,
+        "topP": 0.95,
+        "repeatPenalty": 1.4
       },
       "metadata": {
         "priority": "high",
@@ -243,11 +243,18 @@
       "provider": "ollama",
       "model": "qwen3:30b",
       "roles": [
-        "psychotherapist"
+        "psychotherapist",
+        "orchestrator",
+        "persona"
       ],
       "adapters": [],
       "description": "Imported from Ollama tag qwen3:30b",
-      "options": {},
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.7,
+        "topP": 0.95,
+        "repeatPenalty": 1.5
+      },
       "metadata": {
         "source": "ollama-discovery"
       }
@@ -261,6 +268,19 @@
       ],
       "adapters": [],
       "description": "Imported from Ollama tag gpt-oss:latest",
+      "options": {},
+      "metadata": {
+        "source": "ollama-discovery"
+      }
+    },
+    "ollama.qwen3:0.6b": {
+      "provider": "ollama",
+      "model": "qwen3:0.6b",
+      "roles": [
+        "orchestrator"
+      ],
+      "adapters": [],
+      "description": "Imported from Ollama tag qwen3:0.6b",
       "options": {},
       "metadata": {
         "source": "ollama-discovery"
@@ -325,7 +345,7 @@
       "description": "Lightweight assistant mode"
     },
     "emulation": {
-      "orchestrator": "default.orchestrator",
+      "orchestrator": "ollama.qwen3:0.6b",
       "persona": "default.orchestrator",
       "description": "Read-only personality snapshot"
     }

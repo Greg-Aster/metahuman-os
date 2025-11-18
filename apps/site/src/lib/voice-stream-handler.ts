@@ -15,7 +15,7 @@ interface VoiceMessage {
 /**
  * Handle voice stream WebSocket connection
  */
-export async function handleVoiceStream(ws: WebSocket): Promise<void> {
+export async function handleVoiceStream(ws: WebSocket, username?: string, sessionCookie?: string): Promise<void> {
   let audioChunks: Buffer[] = [];
   let isProcessing = false;
   let firstChunkAt: number | null = null;
@@ -53,7 +53,7 @@ export async function handleVoiceStream(ws: WebSocket): Promise<void> {
           if (audioChunks.length > 0 && !isProcessing) {
             isProcessing = true;
             const durationSec = firstChunkAt && lastChunkAt ? Math.max(0.1, (lastChunkAt - firstChunkAt) / 1000) : undefined;
-            await processAudioChunks(ws, audioChunks, durationSec);
+            await processAudioChunks(ws, audioChunks, durationSec, username, sessionCookie);
             audioChunks = [];
             firstChunkAt = null;
             lastChunkAt = null;
@@ -98,7 +98,7 @@ export async function handleVoiceStream(ws: WebSocket): Promise<void> {
 /**
  * Process accumulated audio chunks
  */
-async function processAudioChunks(ws: WebSocket, chunks: Buffer[], measuredDuration?: number): Promise<void> {
+async function processAudioChunks(ws: WebSocket, chunks: Buffer[], measuredDuration?: number, username?: string, sessionCookie?: string): Promise<void> {
   try {
     // Combine all chunks into single buffer
     const audioBuffer = Buffer.concat(chunks);
@@ -146,10 +146,10 @@ async function processAudioChunks(ws: WebSocket, chunks: Buffer[], measuredDurat
     saveVoiceSample(audioBuffer, transcript, estimatedDuration, quality, 'webm');
 
     // Step 2: Get LLM response (using persona_chat logic)
-    const response = await getPersonaResponse(transcript);
+    const response = await getPersonaResponse(transcript, username, sessionCookie);
 
-    // Step 3: Generate TTS audio
-    const audioResponse = await generateSpeech(response);
+    // Step 3: Generate TTS audio using user's voice settings
+    const audioResponse = await generateSpeech(response, { username });
 
     // Step 4: Send audio back to client (as base64)
     sendMessage(ws, {
@@ -192,15 +192,20 @@ async function processAudioChunks(ws: WebSocket, chunks: Buffer[], measuredDurat
  * Get persona response from LLM
  * (Reuses existing persona_chat logic)
  */
-async function getPersonaResponse(userMessage: string): Promise<string> {
+async function getPersonaResponse(userMessage: string, username?: string, sessionCookie?: string): Promise<string> {
   // Import persona chat logic
   const { default: fetch } = await import('node-fetch');
 
   try {
-    // Call the existing persona_chat API endpoint
+    // Call the existing persona_chat API endpoint with session cookie for user context
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (sessionCookie) {
+      headers['Cookie'] = sessionCookie;
+    }
+
     const response = await fetch('http://localhost:4321/api/persona_chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         message: userMessage,
         mode: 'conversation',

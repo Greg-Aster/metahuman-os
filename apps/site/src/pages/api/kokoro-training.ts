@@ -127,6 +127,8 @@ const postHandler: APIRoute = async ({ request }) => {
       regularization,
       device,
       maxSamples,
+      continueFromCheckpoint,
+      pureTraining,
     } = body;
 
     switch (action) {
@@ -190,6 +192,8 @@ const postHandler: APIRoute = async ({ request }) => {
           regularization,
           device,
           maxSamples,
+          continueFromCheckpoint,
+          pureTraining,
         });
 
         if (!result.success) {

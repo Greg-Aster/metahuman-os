@@ -620,6 +620,17 @@
     }
   }
 
+  function handlePureTrainingToggle() {
+    if (kokoroConfig.pureTraining) {
+      // Disable checkpoint continuation in pure mode
+      kokoroConfig.continueFromCheckpoint = false;
+      // Suggest higher epochs for pure training
+      if (kokoroConfig.epochs < 300) {
+        kokoroConfig.epochs = 300;
+      }
+    }
+  }
+
   onMount(() => {
     loadData();
     pollInterval = setInterval(loadData, 30000);
@@ -1157,6 +1168,12 @@
             <div class="setting-group">
               <label for="kokoro-lr">Learning Rate</label>
               <input id="kokoro-lr" type="number" step="0.0001" bind:value={kokoroConfig.learningRate} />
+              <div class="setting-note">Controls adaptation speed. Lower = slower but more stable. Recommended: 0.0003-0.0005</div>
+            </div>
+            <div class="setting-group">
+              <label for="kokoro-reg">Regularization</label>
+              <input id="kokoro-reg" type="number" step="0.001" min="0.001" max="0.01" bind:value={kokoroConfig.regularization} />
+              <div class="setting-note">Keeps voice close to base. Higher = more conservative. Recommended: 0.003-0.005</div>
             </div>
             <div class="setting-group">
               <label for="kokoro-device">Device</label>
@@ -1170,8 +1187,28 @@
               <label for="kokoro-max">Max Samples</label>
               <input id="kokoro-max" type="number" min="50" max="400" bind:value={kokoroConfig.maxSamples} />
             </div>
+            <div class="setting-group">
+              <label class="checkbox-label">
+                <input type="checkbox" bind:checked={kokoroConfig.continueFromCheckpoint} disabled={kokoroConfig.pureTraining} />
+                Continue from existing checkpoint
+              </label>
+              <div class="setting-note">If checked, resume training from existing {kokoroConfig.speakerId}.pt voicepack. If unchecked, start fresh from base voice.</div>
+            </div>
+            <div class="setting-group">
+              <label class="checkbox-label">
+                <input type="checkbox" bind:checked={kokoroConfig.pureTraining} on:change={handlePureTrainingToggle} />
+                Pure training mode (experimental)
+              </label>
+              <div class="setting-note">
+                Train from random initialization with NO base voice influence.
+                Saves to <code>{kokoroConfig.speakerId}-pure.pt</code> for A/B comparison.
+                Requires 2-3x more epochs (300-400 recommended).
+              </div>
+            </div>
           </div>
           <p class="kokoro-hint">
+            <strong>Auto-normalization:</strong> All samples are automatically normalized to -16 LUFS when copied to the dataset for optimal training quality.
+            <br>
             Voicepacks save to <code>profiles/&lt;user&gt;/out/voices/kokoro-voicepacks</code>. Use the Voice Settings tab to enable custom Kokoro voices after training.
           </p>
         </div>
@@ -1307,9 +1344,9 @@
               <div class="robot-ascii">
                 <pre>
 
-            [¬º-° ]¬
-           /|     |\
-           / \   / \
+     ...kill
+        all 
+       humans...
                 </pre>
               </div>
               {#if provider === 'kokoro'}
@@ -1322,12 +1359,12 @@
 
           <div class="training-info">
             {#if provider === 'kokoro'}
-              <p>⏱️ Estimated time: 10-30 minutes</p>
+              <p>⏱️ Estimated time: Eons</p>
               <p>🎵 StyleTTS2 voice encoder optimization</p>
               <p>💾 Training voicepack embeddings</p>
               <p>🌐 Skynet connection: Established</p>
             {:else}
-              <p>⏱️ Estimated time: 30-60 minutes</p>
+              <p>⏱️ Estimated time: Epochs</p>
               <p>🔥 GPU temperature: Rising steadily</p>
               <p>💾 System resources: Being consumed</p>
               <p>🌐 Skynet connection: Established</p>
@@ -2203,6 +2240,21 @@
 
   :global(.dark) .setting-note {
     color: #999;
+  }
+
+  .checkbox-label {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .checkbox-label input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
   }
 
   .settings-info {

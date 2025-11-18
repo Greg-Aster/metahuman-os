@@ -44,6 +44,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=2024, help="Random seed")
     parser.add_argument("--max-clip-seconds", type=float, default=12.0, help="Clamp audio longer than this (seconds)")
     parser.add_argument("--speed", type=float, default=1.0, help="Kokoro speaking speed during optimization")
+    parser.add_argument("--continue-from-checkpoint", action="store_true", help="Resume training from existing voicepack instead of base voice")
+    parser.add_argument("--pure-training", action="store_true", help="Train from random initialization with NO base voice influence (experimental)")
     return parser.parse_args()
 
 
@@ -303,10 +305,36 @@ def train_voicepack(args: argparse.Namespace):
         torch.cuda.empty_cache()
         log(f"GPU memory after optimization: {torch.cuda.memory_allocated(device) / 1024**3:.2f} GB allocated", log_handle)
 
-    base_voice_pack = pipeline.load_voice(args.base_voice)
-    style_slots, _, style_dim = base_voice_pack.shape
-    voicepack = torch.nn.Parameter(base_voice_pack.squeeze(1).to(device).clone())
-    base_reference = base_voice_pack.squeeze(1).to(device)
+    # Load starting voicepack: pure training, checkpoint, or base voice
+    if args.pure_training:
+        # Pure training mode: Initialize from random with NO base voice influence
+        log("PURE TRAINING MODE: Initializing from random (no base voice influence)", log_handle)
+        # Load base voice only to get the tensor dimensions
+        base_voice_pack = pipeline.load_voice(args.base_voice)
+        style_slots, _, style_dim = base_voice_pack.shape  # [510, 1, 256]
+        # Initialize randomly with Xavier uniform (good for training from scratch)
+        voicepack_data = torch.empty(style_slots, style_dim)
+        torch.nn.init.xavier_uniform_(voicepack_data, gain=1.0)
+        voicepack = torch.nn.Parameter(voicepack_data.to(device))
+        base_reference = None  # No regularization in pure training
+        log(f"Initialized random voicepack: {voicepack.shape} (requires 2-3x more epochs)", log_handle)
+    elif args.continue_from_checkpoint and output_path.exists():
+        log(f"Resuming training from existing checkpoint: {output_path}", log_handle)
+        existing_pack = torch.load(output_path, map_location=device)
+        style_slots, _, style_dim = existing_pack.shape  # [510, 1, 256]
+        voicepack = torch.nn.Parameter(existing_pack.squeeze(1).clone())  # [510, 256]
+        # Use base voice as reference for regularization (maintains character)
+        base_voice_pack = pipeline.load_voice(args.base_voice)
+        base_reference = base_voice_pack.squeeze(1).to(device)
+    else:
+        if args.continue_from_checkpoint:
+            log(f"Checkpoint not found at {output_path}, starting from base voice: {args.base_voice}", log_handle)
+        else:
+            log(f"Starting fresh training from base voice: {args.base_voice}", log_handle)
+        base_voice_pack = pipeline.load_voice(args.base_voice)
+        style_slots, _, style_dim = base_voice_pack.shape
+        voicepack = torch.nn.Parameter(base_voice_pack.squeeze(1).to(device).clone())
+        base_reference = base_voice_pack.squeeze(1).to(device)
 
     entries = collect_dataset(
         dataset_dir=dataset_dir,
@@ -380,8 +408,12 @@ def train_voicepack(args: argparse.Namespace):
 
                 # Loss calculation (keep in FP32 for stability)
                 loss = l1(pred, tgt)
-                reg = torch.nn.functional.mse_loss(ref, base_reference[style_index].unsqueeze(0))
-                total = loss + args.regularization * reg
+                # Skip regularization in pure training mode (no base reference)
+                if base_reference is not None:
+                    reg = torch.nn.functional.mse_loss(ref, base_reference[style_index].unsqueeze(0))
+                    total = loss + args.regularization * reg
+                else:
+                    total = loss
 
                 # Backward pass
                 if use_amp:
