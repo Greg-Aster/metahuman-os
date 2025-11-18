@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './paths';
+import { tryResolveProfilePath } from './paths';
 import { audit } from './audit';
 
 export type CognitiveModeId = 'dual' | 'agent' | 'emulation';
@@ -28,9 +28,14 @@ export interface CognitiveModeConfig {
 /**
  * Get the path to the cognitive mode config file for the current user context.
  * This must be a function call (not a constant) to resolve user context at runtime.
+ * Returns null if the user is anonymous and has no profile.
  */
-function getModeConfigPath(): string {
-  return path.join(paths.persona, 'cognitive-mode.json');
+function getModeConfigPath(): string | null {
+  const result = tryResolveProfilePath('persona');
+  if (!result.ok) {
+    return null; // Anonymous user or no context
+  }
+  return path.join(result.path, 'cognitive-mode.json');
 }
 
 const MODE_DEFINITIONS: Record<CognitiveModeId, CognitiveModeDefinition> = {
@@ -86,6 +91,16 @@ const MODE_DEFINITIONS: Record<CognitiveModeId, CognitiveModeDefinition> = {
 
 function ensureConfig(): CognitiveModeConfig {
   const configPath = getModeConfigPath();
+
+  // If path is null (anonymous user), return default config
+  if (!configPath) {
+    return {
+      currentMode: 'dual',
+      lastChanged: new Date().toISOString(),
+      history: [{ mode: 'dual', changedAt: new Date().toISOString(), actor: 'system' }],
+    };
+  }
+
   if (!fs.existsSync(configPath)) {
     const fallback: CognitiveModeConfig = {
       currentMode: 'dual',
@@ -116,7 +131,10 @@ function ensureConfig(): CognitiveModeConfig {
       lastChanged: new Date().toISOString(),
       history: [{ mode: 'dual', changedAt: new Date().toISOString(), actor: 'system' }],
     };
-    fs.writeFileSync(configPath, JSON.stringify(fallback, null, 2), 'utf-8');
+    // Only write if we have a valid path
+    if (configPath) {
+      fs.writeFileSync(configPath, JSON.stringify(fallback, null, 2), 'utf-8');
+    }
     return fallback;
   }
 }
@@ -134,7 +152,13 @@ export function loadCognitiveMode(): CognitiveModeConfig {
 }
 
 export function saveCognitiveMode(nextMode: CognitiveModeId, actor: string = 'system'): CognitiveModeConfig {
+  const configPath = getModeConfigPath();
   const config = ensureConfig();
+
+  // Anonymous users cannot save mode changes
+  if (!configPath) {
+    throw new Error('Cannot save cognitive mode: No authenticated user profile');
+  }
 
   // Check if mode is locked (e.g., for guest profiles)
   if (config.locked) {
@@ -167,7 +191,7 @@ export function saveCognitiveMode(nextMode: CognitiveModeId, actor: string = 'sy
     ],
   };
 
-  fs.writeFileSync(getModeConfigPath(), JSON.stringify(updated, null, 2), 'utf-8');
+  fs.writeFileSync(configPath, JSON.stringify(updated, null, 2), 'utf-8');
 
   audit({
     level: 'info',

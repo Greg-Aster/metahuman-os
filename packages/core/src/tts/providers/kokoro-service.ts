@@ -26,7 +26,11 @@ export class KokoroService implements ITextToSpeechService {
     const langCode = options?.langCode || this.config.langCode;
     const voice = options?.voice || this.config.voice;
     const speed = options?.speakingRate || this.config.speed;
-    const useCustom = this.config.useCustomVoicepack;
+
+    // Override useCustom if a built-in voice is explicitly requested via options
+    // Built-in voices follow pattern: af_*, am_*, bf_*, bm_*, etc.
+    const isBuiltInVoice = options?.voice && /^[a-z]{2}_[a-z]+$/.test(options.voice);
+    const useCustom = isBuiltInVoice ? false : this.config.useCustomVoicepack;
     const customPath = this.config.customVoicepackPath;
 
     console.log('[KokoroService] synthesize called:', {

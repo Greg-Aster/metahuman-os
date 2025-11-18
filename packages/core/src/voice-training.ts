@@ -57,6 +57,8 @@ export interface KokoroTrainingOptions {
   device?: 'auto' | 'cpu' | 'cuda';
   maxSamples?: number;
   outputPath?: string;
+  continueFromCheckpoint?: boolean;
+  pureTraining?: boolean;
 }
 
 export interface VoiceSample {
@@ -1250,7 +1252,23 @@ export function copyToKokoroDataset(sampleIds: string[], speakerId: string = 'de
 
     if (!fs.existsSync(wavSrc)) continue;
 
-    fs.copyFileSync(wavSrc, wavDest);
+    // Copy and normalize WAV file using ffmpeg loudnorm filter
+    // Target: -16 LUFS (broadcast standard) for optimal training quality
+    const normalizeResult = spawnSync('ffmpeg', [
+      '-y', '-hide_banner', '-loglevel', 'error',
+      '-i', wavSrc,
+      '-ar', '22050',  // Kokoro training uses 22.05kHz
+      '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
+      wavDest
+    ], {
+      cwd: paths.root,
+    });
+
+    if (normalizeResult.status !== 0) {
+      // Fallback to direct copy if normalization fails
+      fs.copyFileSync(wavSrc, wavDest);
+    }
+
     if (fs.existsSync(txtSrc)) {
       fs.copyFileSync(txtSrc, txtDest);
     }
@@ -1273,6 +1291,8 @@ export function copyToKokoroDataset(sampleIds: string[], speakerId: string = 'de
       sampleCount: copied,
       totalDuration: duration,
       sampleIds,
+      normalized: true,
+      targetLoudness: '-16 LUFS',
     },
     actor: 'system',
   });
@@ -2326,9 +2346,16 @@ export async function startKokoroVoicepackTraining(
   const datasetDir = getKokoroDatasetDir(speakerId);
   const voicepackDir = paths.kokoroVoicepacks;
   fs.mkdirSync(voicepackDir, { recursive: true });
-  const outputPath = options?.outputPath
-    ? path.resolve(options.outputPath)
-    : path.join(voicepackDir, `${speakerId}.pt`);
+
+  // Determine output path: pure training saves to {speakerId}-pure.pt for A/B comparison
+  let outputPath: string;
+  if (options?.outputPath) {
+    outputPath = path.resolve(options.outputPath);
+  } else if (options?.pureTraining) {
+    outputPath = path.join(voicepackDir, `${speakerId}-pure.pt`);
+  } else {
+    outputPath = path.join(voicepackDir, `${speakerId}.pt`);
+  }
 
   const logDir = path.join(systemPaths.logs, 'run');
   fs.mkdirSync(logDir, { recursive: true });
@@ -2373,6 +2400,14 @@ export async function startKokoroVoicepackTraining(
 
   if (options?.regularization !== undefined) {
     args.push('--regularization', String(options.regularization));
+  }
+
+  if (options?.continueFromCheckpoint) {
+    args.push('--continue-from-checkpoint');
+  }
+
+  if (options?.pureTraining) {
+    args.push('--pure-training');
   }
 
   const logFd = fs.openSync(logPath, 'w');

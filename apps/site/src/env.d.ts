@@ -5,7 +5,7 @@ declare namespace App {
     userContext?: {
       userId: string;
       username: string;
-      role: 'owner' | 'guest' | 'anonymous';
+      role: 'owner' | 'standard' | 'guest' | 'anonymous';
       activeProfile?: string;
     };
   }

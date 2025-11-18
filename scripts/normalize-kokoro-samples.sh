@@ -92,6 +92,7 @@ for WAV_FILE in "$DATASET_DIR"/*.wav; do
   # Apply loudnorm filter (same as voice-training.ts)
   if ffmpeg -y -hide_banner -loglevel error \
     -i "$WAV_FILE" \
+    -ar 22050 \
     -af "loudnorm=I=-16:TP=-1.5:LRA=11" \
     "$TEMP_FILE" 2>&1; then
 

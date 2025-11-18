@@ -11,7 +11,7 @@ import { getProfilePaths, systemPaths } from './paths.js';
 export interface UserContext {
   userId: string;
   username: string;
-  role: 'owner' | 'guest' | 'anonymous';
+  role: 'owner' | 'standard' | 'guest' | 'anonymous';
   profilePaths: ReturnType<typeof getProfilePaths>;
   systemPaths: typeof systemPaths;
   activeProfile?: string; // Selected profile for guest users
@@ -54,7 +54,7 @@ export function withUserContext<T>(
   const context: UserContext = {
     userId: user.userId,
     username: user.username,
-    role: user.role as 'owner' | 'guest' | 'anonymous',
+    role: user.role as 'owner' | 'standard' | 'guest' | 'anonymous',
     profilePaths,
     systemPaths,
     activeProfile: user.activeProfile,
@@ -82,7 +82,7 @@ export function withUserContext<T>(
 export function setUserContext(
   userId: string,
   username: string,
-  role: 'owner' | 'guest' | 'anonymous'
+  role: 'owner' | 'standard' | 'guest' | 'anonymous'
 ): void {
   const profilePaths = getProfilePaths(username);
   const context: UserContext = {

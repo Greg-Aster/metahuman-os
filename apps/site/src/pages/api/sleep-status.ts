@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths, isLocked } from '@metahuman/core'
+import { tryResolveProfilePath, isLocked } from '@metahuman/core'
 
 type SleepState = 'awake' | 'sleeping' | 'dreaming'
 
@@ -17,19 +17,24 @@ export const GET: APIRoute = async () => {
     let learningsFile: string | null = null
     let learningsContent: string | null = null
 
-    const overnightDir = paths.proceduralOvernight
-    if (fs.existsSync(overnightDir)) {
-      const files = fs.readdirSync(overnightDir)
-        .filter(file => file.startsWith('overnight-learnings-') && file.endsWith('.md'))
-        .sort()
-        .reverse()
+    // Try to resolve path - gracefully handle anonymous users
+    const pathResult = tryResolveProfilePath('proceduralOvernight')
+    if (pathResult.ok) {
+      const overnightDir = pathResult.path
+      if (fs.existsSync(overnightDir)) {
+        const files = fs.readdirSync(overnightDir)
+          .filter(file => file.startsWith('overnight-learnings-') && file.endsWith('.md'))
+          .sort()
+          .reverse()
 
-      if (files.length > 0) {
-        learningsFile = files[0]
-        const filepath = path.join(overnightDir, learningsFile)
-        learningsContent = fs.readFileSync(filepath, 'utf-8')
+        if (files.length > 0) {
+          learningsFile = files[0]
+          const filepath = path.join(overnightDir, learningsFile)
+          learningsContent = fs.readFileSync(filepath, 'utf-8')
+        }
       }
     }
+    // If path resolution fails (anonymous user), just return status without learnings
 
     const payload = {
       status,

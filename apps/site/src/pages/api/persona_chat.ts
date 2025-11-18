@@ -11,6 +11,7 @@ import { withUserContext } from '../../middleware/userContext';
 
 type Role = 'system' | 'user' | 'assistant';
 type Mode = 'inner' | 'conversation';
+type ConversationMessage = { role: Role; content: string; meta?: any; timestamp?: number };
 
 // Ensure skill registry is ready for any inline tool invocations from persona_chat.
 initializeSkills();
@@ -84,7 +85,7 @@ const ENABLE_BLOCKING_MODE = process.env.ENABLE_BLOCKING_MODE === 'true';
 
 // In-memory message histories per mode
 // NOTE: These are automatically pruned to stay within token limits (max 20 messages / ~8k tokens)
-const histories: Record<Mode, Array<{ role: Role; content: string; meta?: any }>> = {
+const histories: Record<Mode, ConversationMessage[]> = {
   inner: [],
   conversation: [],
 };
@@ -99,6 +100,40 @@ const bufferMeta: Record<Mode, { lastSummarizedIndex: number | null }> = {
   conversation: { lastSummarizedIndex: null }
 };
 
+function metadataScore(message: ConversationMessage): number {
+  const metaKeys = message.meta && typeof message.meta === 'object'
+    ? Object.keys(message.meta).length
+    : 0;
+  const hasTimestamp = typeof message.timestamp === 'number' ? 1 : 0;
+  return metaKeys * 2 + hasTimestamp;
+}
+
+function dedupeConversationMessages(
+  messages: ConversationMessage[]
+): { deduped: ConversationMessage[]; removed: number } {
+  const deduped: ConversationMessage[] = [];
+  let removed = 0;
+
+  for (const msg of messages) {
+    const last = deduped[deduped.length - 1];
+    if (
+      last &&
+      last.role === msg.role &&
+      last.content === msg.content
+    ) {
+      removed++;
+      if (metadataScore(msg) > metadataScore(last)) {
+        deduped[deduped.length - 1] = msg;
+      }
+      continue;
+    }
+
+    deduped.push(msg);
+  }
+
+  return { deduped, removed };
+}
+
 function getBufferPath(mode: Mode): string | null {
   try {
     return getConversationBufferPath(mode);
@@ -108,24 +143,28 @@ function getBufferPath(mode: Mode): string | null {
   }
 }
 
-function loadPersistedBuffer(mode: Mode): Array<{ role: Role; content: string; meta?: any }> {
+function loadPersistedBuffer(mode: Mode): ConversationMessage[] {
   const bufferPath = getBufferPath(mode);
   if (!bufferPath || !existsSync(bufferPath)) return [];
 
   try {
     const raw = readFileSync(bufferPath, 'utf-8');
     const parsed = JSON.parse(raw);
-    const persistedMessages: Array<{ role: Role; content: string; meta?: any }> = Array.isArray(parsed.messages)
+    const persistedMessages: ConversationMessage[] = Array.isArray(parsed.messages)
       ? parsed.messages
       : [];
-    const persistedSummaryMarkers: Array<{ role: Role; content: string; meta?: any }> = Array.isArray(parsed.summaryMarkers)
+    const persistedSummaryMarkers: ConversationMessage[] = Array.isArray(parsed.summaryMarkers)
       ? parsed.summaryMarkers
       : persistedMessages.filter(msg => msg.meta?.summaryMarker);
 
     // Remove any summary markers from the main messages array to avoid duplication
     const conversationMessages = persistedMessages.filter(msg => !msg.meta?.summaryMarker);
+    const { deduped, removed } = dedupeConversationMessages(conversationMessages);
+    if (removed > 0) {
+      console.log(`[persona_chat] Removed ${removed} duplicate ${mode} messages from persisted buffer`);
+    }
 
-    const combined = [...conversationMessages];
+    const combined = [...deduped];
     if (persistedSummaryMarkers.length > 0) {
       if (
         combined.length > 0 &&
@@ -149,6 +188,25 @@ function loadPersistedBuffer(mode: Mode): Array<{ role: Role; content: string; m
             : null);
 
     bufferMeta[mode].lastSummarizedIndex = derivedLastSummarized ?? null;
+
+    if (removed > 0) {
+      try {
+        const payload = JSON.stringify(
+          {
+            summaryMarkers: persistedSummaryMarkers,
+            messages: deduped,
+            lastSummarizedIndex: bufferMeta[mode].lastSummarizedIndex,
+            lastUpdated: new Date().toISOString(),
+          },
+          null,
+          2
+        );
+        writeFileSync(bufferPath, payload);
+      } catch (error) {
+        console.warn('[persona_chat] Failed to persist deduplicated buffer:', error);
+      }
+    }
+
     return combined;
   } catch (error) {
     console.warn('[persona_chat] Failed to load conversation buffer:', error);
@@ -190,6 +248,7 @@ function ensureHistoryLoaded(mode: Mode): void {
 
   histories[mode] = loadPersistedBuffer(mode);
   historyLoadedForUser[mode] = userId;
+  ensureSystemPrompt(mode);
 }
 
 function upsertSummaryMarker(
@@ -202,7 +261,14 @@ function upsertSummaryMarker(
   const createdAt = new Date().toISOString();
   const marker = {
     role: 'system' as Role,
-    content: `Conversation summary (messages 0-${rangeEnd}): ${summary.summary}`,
+    content: [
+      '## Context Summary (read-only)',
+      `Messages covered: 0-${rangeEnd}`,
+      '',
+      summary.summary,
+      '',
+      '_Use this summary only for background. Always prioritize the most recent user messages when responding._'
+    ].join('\n'),
     meta: {
       summaryMarker: true,
       sessionId: summary.sessionId,
@@ -232,16 +298,19 @@ function upsertSummaryMarker(
  * Add message to history and automatically prune to stay within limits
  * Triggers auto-summarization when pruning occurs (Phase 3: Memory Continuity)
  */
-function pushMessage(mode: Mode, message: { role: Role; content: string; meta?: any }, sessionId?: string): void {
+function pushMessage(mode: Mode, message: ConversationMessage, sessionId?: string): void {
+  const normalized: ConversationMessage =
+    typeof message.timestamp === 'number' ? message : { ...message, timestamp: Date.now() };
+
   const beforeCount = histories[mode].length;
-  histories[mode].push(message);
+  histories[mode].push(normalized);
 
   // Auto-prune to stay within token/message limits
   histories[mode] = pruneHistory(histories[mode] as Message[], {
     maxTokens: 8000,
     maxMessages: 20,
     preserveSystemMessages: true,
-  }) as Array<{ role: Role; content: string; meta?: any }>;
+  }) as ConversationMessage[];
 
   const afterCount = histories[mode].length;
   if (beforeCount + 1 !== afterCount) {
@@ -472,6 +541,7 @@ async function getRelevantContext(
     const effectiveThreshold = metadataFilters ? 0.0 : threshold;
 
     // Build context package using context builder
+    // NOTE: Memories are NOT auto-retrieved - operator uses search_index skill on-demand
     const contextPackage = await buildContextPackage(userMessage, cognitiveMode, {
       searchDepth: 'normal',          // 8 results (matching old topK: 8)
       similarityThreshold: effectiveThreshold,  // Skip threshold when filtering by metadata
@@ -485,7 +555,7 @@ async function getRelevantContext(
       includePersonaCache: opts?.includePersonaSummary !== false,
       includeTaskContext: wantsTasks, // Only include tasks if mentioned
       detectPatterns: false,          // Skip pattern detection for now
-      forceSemanticSearch: cognitiveMode === 'dual', // Dual mode requires semantic
+      forceSemanticSearch: false,     // FIXED: Don't auto-inject memories - let operator decide via search_index skill
       usingLoRA: opts?.usingLora || false,
       conversationId: sessionId
     });
@@ -576,17 +646,31 @@ function initializeChat(mode: Mode, reason = false, usingLora = false, includePe
   persistBuffer(mode);
 }
 
+function ensureSystemPrompt(mode: Mode, includePersonaSummary = true): void {
+  if (histories[mode].length === 0) {
+    initializeChat(mode, false, false, includePersonaSummary);
+    return;
+  }
+
+  if (histories[mode][0].role !== 'system') {
+    histories[mode].unshift({
+      role: 'system',
+      content: buildSystemPrompt(mode, includePersonaSummary)
+    });
+    persistBuffer(mode);
+  }
+}
+
 /**
  * Update the system prompt with current facet (refreshes persona without clearing history)
  */
 function refreshSystemPrompt(mode: Mode, includePersonaSummary = true): void {
-  if (histories[mode].length > 0 && histories[mode][0].role === 'system') {
-    // Update existing system prompt
-    histories[mode][0].content = buildSystemPrompt(mode, includePersonaSummary);
-  } else {
-    // No history yet, initialize it
-    initializeChat(mode, false, false, includePersonaSummary);
+  if (histories[mode].length === 0 || histories[mode][0].role !== 'system') {
+    ensureSystemPrompt(mode, includePersonaSummary);
+    return;
   }
+
+  histories[mode][0].content = buildSystemPrompt(mode, includePersonaSummary);
   persistBuffer(mode);
 }
 
@@ -1206,12 +1290,14 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
             await appendResponseToEvent(userEventPath, synthesized);
           }
 
-          push('answer', { response: synthesized });
+          const activeFacet = getActiveFacet();
+          push('answer', { response: synthesized, facet: activeFacet });
 
           pushMessage(m, {
             role: 'assistant',
             content: synthesized,
             meta: {
+              facet: activeFacet,
               operatorReport: result,
               operatorSummary: formattedResult,
               operatorGoal: message,
@@ -1754,11 +1840,12 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
           // Send response to client via EventSource stream
           push('content', { content: assistantResponse });
+          const activeFacet = getActiveFacet();
 
           // Store history
           histories[m].pop();
           pushMessage(m, { role: 'user', content: message }, sessionId);
-          pushMessage(m, { role: 'assistant', content: assistantResponse }, sessionId);
+          pushMessage(m, { role: 'assistant', content: assistantResponse, meta: { facet: activeFacet } }, sessionId);
 
           // Capture event and audit (if user is authenticated)
           // Note: cognitiveMode and allowMemoryWrites are already loaded at function start
@@ -1823,8 +1910,6 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
             });
 
             // Get active facet for color-coding
-            const activeFacet = getActiveFacet();
-
             // Stream the final answer with save confirmation
             push('answer', { response: assistantResponse, saved: { userRelPath }, facet: activeFacet });
           } else {
@@ -1838,8 +1923,6 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
             });
 
             // Get active facet for color-coding
-            const activeFacet = getActiveFacet();
-
             // Stream the final answer without save confirmation
             push('answer', { response: assistantResponse, facet: activeFacet });
           }
