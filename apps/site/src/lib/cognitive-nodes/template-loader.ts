@@ -86,43 +86,19 @@ export function templateToLiteGraph(template: CognitiveGraphTemplate): any {
 
   const nodeMap = new Map<number, any>();
 
+  // Build nodes - DON'T include inputs/outputs as they'll be created by constructors
+  // When LiteGraph calls createNode(), the node constructor will add inputs/outputs
   template.nodes.forEach(node => {
     const clone = {
       ...node,
-      inputs: Array.isArray(node.inputs) ? node.inputs.map(i => ({ ...i })) : [],
-      outputs: Array.isArray(node.outputs) ? node.outputs.map(o => ({ ...o })) : [],
+      // Remove inputs/outputs - let the node constructor create them
+      inputs: undefined,
+      outputs: undefined,
     };
     nodeMap.set(node.id, clone);
   });
 
-  normalizedLinks.forEach(link => {
-    const originNode = nodeMap.get(link.origin_id);
-    const targetNode = nodeMap.get(link.target_id);
-    if (!originNode || !targetNode) return;
-
-    originNode.outputs = originNode.outputs || [];
-    const outputSlot = originNode.outputs[link.origin_slot] || {
-      name: '',
-      type: link.type || 'string',
-      links: [],
-    };
-    outputSlot.type = outputSlot.type || link.type || 'string';
-    outputSlot.links = outputSlot.links || [];
-    if (!outputSlot.links.includes(link.id)) {
-      outputSlot.links.push(link.id);
-    }
-    originNode.outputs[link.origin_slot] = outputSlot;
-
-    targetNode.inputs = targetNode.inputs || [];
-    const inputSlot = targetNode.inputs[link.target_slot] || {
-      name: '',
-      type: link.type || 'string',
-      link: null,
-    };
-    inputSlot.type = inputSlot.type || link.type || 'string';
-    inputSlot.link = link.id;
-    targetNode.inputs[link.target_slot] = inputSlot;
-  });
+  // Don't pre-populate input/output link references - let LiteGraph handle it
 
   const litegraphLinks = normalizedLinks.map(link => [
     link.id,
@@ -135,7 +111,13 @@ export function templateToLiteGraph(template: CognitiveGraphTemplate): any {
 
   const orderedNodes = template.nodes.map(node => nodeMap.get(node.id));
 
-  return {
+  // Debug: Log a sample node to verify structure
+  if (orderedNodes.length > 0) {
+    console.log('[TemplateLoader] Sample node after processing:', orderedNodes[0]);
+    console.log('[TemplateLoader] Total nodes:', orderedNodes.length, 'Total links:', litegraphLinks.length);
+  }
+
+  const result = {
     last_node_id: Math.max(...template.nodes.map(n => n.id), 0),
     last_link_id: normalizedLinks.length ? Math.max(...normalizedLinks.map(l => l.id || 0)) : 0,
     nodes: orderedNodes,
@@ -145,6 +127,15 @@ export function templateToLiteGraph(template: CognitiveGraphTemplate): any {
     extra: template.extra || {},
     version: 0.4,
   };
+
+  console.log('[TemplateLoader] Converted template:', {
+    nodeCount: result.nodes.length,
+    linkCount: result.links.length,
+    firstNodeHasInputs: result.nodes[0]?.inputs?.length > 0,
+    firstNodeHasOutputs: result.nodes[0]?.outputs?.length > 0,
+  });
+
+  return result;
 }
 
 /**

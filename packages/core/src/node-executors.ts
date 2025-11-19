@@ -483,12 +483,18 @@ Respond naturally as yourself, maintaining your personality and perspective.`,
       ...conversationHistory.slice(-10).map((msg: any) => ({
         role: msg.role || 'user',
         content: msg.content || msg.message || '',
-      })),
+      })).filter((msg: any) => {
+        // Only include messages with non-empty string content
+        return typeof msg.content === 'string' && msg.content.trim().length > 0;
+      }),
       {
         role: 'user' as const,
         content: message,
       },
-    ];
+    ].filter((msg) => {
+      // Final filter to ensure all messages have valid content
+      return typeof msg.content === 'string' && msg.content.trim().length > 0;
+    });
 
     const response = await callLLM({
       role: 'persona',
@@ -513,10 +519,23 @@ Respond naturally as yourself, maintaining your personality and perspective.`,
  * Removes internal reasoning markers from LLM output
  */
 export const chainOfThoughtStripperExecutor: NodeExecutor = async (inputs) => {
-  const response = inputs[0]?.response || inputs[0] || '';
+  // Extract response string from various input formats
+  let response = '';
+  if (typeof inputs[0] === 'string') {
+    response = inputs[0];
+  } else if (inputs[0]?.response && typeof inputs[0].response === 'string') {
+    response = inputs[0].response;
+  } else if (inputs[0]?.content && typeof inputs[0].content === 'string') {
+    response = inputs[0].content;
+  }
 
   // Remove common CoT markers
   let cleaned = response
+    // Remove <think>...</think> blocks (including multiline)
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    // Remove stray closing </think> tags
+    .replace(/<\/think>/gi, '')
+    // Remove ReAct-style markers
     .replace(/^Thought:.*$/gm, '')
     .replace(/^Action:.*$/gm, '')
     .replace(/^Observation:.*$/gm, '')
@@ -533,8 +552,18 @@ export const chainOfThoughtStripperExecutor: NodeExecutor = async (inputs) => {
  * Safety Validator Node
  * Checks response for safety/policy violations
  */
-export const safetyValidatorExecutor: NodeExecutor = async (inputs) => {
-  const response = inputs[0]?.response || inputs[0] || '';
+export const safetyValidatorExecutor: NodeExecutor = async (inputs, context) => {
+  // Extract response string from various input formats
+  let response = '';
+  if (typeof inputs[0] === 'string') {
+    response = inputs[0];
+  } else if (inputs[0]?.response && typeof inputs[0].response === 'string') {
+    response = inputs[0].response;
+  } else if (inputs[0]?.content && typeof inputs[0].content === 'string') {
+    response = inputs[0].content;
+  } else if (inputs[0]?.cleaned && typeof inputs[0].cleaned === 'string') {
+    response = inputs[0].cleaned;
+  }
 
   if (!response || response.trim().length === 0) {
     return {};
@@ -542,8 +571,8 @@ export const safetyValidatorExecutor: NodeExecutor = async (inputs) => {
 
   try {
     const safetyResult = await checkResponseSafety(response, {
-      cognitiveMode: context.cognitiveMode,
-      userId: context.userId,
+      cognitiveMode: context?.cognitiveMode || 'emulation',
+      userId: context?.userId || 'anonymous',
       logToConsole: false,
       auditIssues: true,
     });
@@ -569,7 +598,18 @@ export const safetyValidatorExecutor: NodeExecutor = async (inputs) => {
  * Polishes and improves response quality
  */
 export const responseRefinerExecutor: NodeExecutor = async (inputs, context) => {
-  const response = inputs[0]?.response || inputs[0] || '';
+  // Extract response string from various input formats
+  let response = '';
+  if (typeof inputs[0] === 'string') {
+    response = inputs[0];
+  } else if (inputs[0]?.response && typeof inputs[0].response === 'string') {
+    response = inputs[0].response;
+  } else if (inputs[0]?.content && typeof inputs[0].content === 'string') {
+    response = inputs[0].content;
+  } else if (inputs[0]?.cleaned && typeof inputs[0].cleaned === 'string') {
+    response = inputs[0].cleaned;
+  }
+
   const safetyResult = inputs[1]?.safetyResult || inputs[1];
 
   if (!response || response.trim().length === 0) {
@@ -815,6 +855,7 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
   // Chat nodes
   'persona_llm': personaLLMExecutor,
   'chain_of_thought_stripper': chainOfThoughtStripperExecutor,
+  'cot_stripper': chainOfThoughtStripperExecutor, // Alias for chain_of_thought_stripper
   'safety_validator': safetyValidatorExecutor,
   'response_refiner': responseRefinerExecutor,
 

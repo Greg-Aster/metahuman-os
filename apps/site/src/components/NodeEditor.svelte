@@ -52,9 +52,48 @@
 
       if (templateGraph) {
         console.log(`[NodeEditor] Loading template: ${templateName}`, templateGraph);
+
+        // IMPORTANT: Save links array BEFORE configure() mutates it
+        const linksArray = Array.isArray(templateGraph.links) ? [...templateGraph.links] : [];
+        console.log(`[NodeEditor] Saved ${linksArray.length} links before configure`);
+
         graph.configure(templateGraph);
-        ensureTemplateLinks(templateGraph);
-        console.log(`[NodeEditor] Template loaded successfully. Nodes: ${templateGraph.nodes.length}, Links: ${templateGraph.links.length}`);
+
+        // Debug: Check node structure after configure
+        const nodes = graph._nodes || [];
+        console.log(`[NodeEditor] After configure: ${nodes.length} nodes in graph`);
+        if (nodes.length > 0) {
+          const firstNode = nodes[0];
+          console.log('[NodeEditor] First node after configure:', {
+            id: firstNode.id,
+            type: firstNode.type,
+            inputsCount: firstNode.inputs?.length || 0,
+            outputsCount: firstNode.outputs?.length || 0,
+            inputs: firstNode.inputs,
+            outputs: firstNode.outputs,
+          });
+        }
+
+        // Manually connect nodes using the saved links array
+        console.log(`[NodeEditor] Manually connecting ${linksArray.length} links...`);
+        linksArray.forEach((link: any, index: number) => {
+          const [linkId, originId, originSlot, targetId, targetSlot] = link;
+          const originNode = graph.getNodeById(originId);
+          const targetNode = graph.getNodeById(targetId);
+
+          if (originNode && targetNode) {
+            try {
+              originNode.connect(originSlot, targetNode, targetSlot);
+              console.log(`[NodeEditor] Connected link ${index + 1}/${linksArray.length}: node ${originId}.${originSlot} -> node ${targetId}.${targetSlot}`);
+            } catch (error) {
+              console.warn(`[NodeEditor] Failed to connect link ${linkId}:`, error);
+            }
+          } else {
+            console.warn(`[NodeEditor] Skipping link ${linkId} - nodes not found (origin: ${!!originNode}, target: ${!!targetNode})`);
+          }
+        });
+
+        console.log(`[NodeEditor] Template loaded successfully. Nodes: ${nodes.length}, Links: ${linksArray.length}`);
       } else {
         console.warn(`[NodeEditor] Template ${templateName} not found, creating default graph`);
         createDefaultGraph();
@@ -95,9 +134,23 @@
       return;
     }
 
+    console.log('[NodeEditor] About to register nodes. LiteGraph object:', {
+      type: typeof LiteGraph,
+      hasRegisterMethod: typeof LiteGraph?.registerNodeType,
+      registeredTypes: LiteGraph?.registered_node_types ? Object.keys(LiteGraph.registered_node_types).length : 'N/A',
+      keys: Object.keys(LiteGraph).slice(0, 20), // Show first 20 keys
+    });
+
     // Register all cognitive nodes with LiteGraph instance
     // Use the default export as LiteGraph, and LGraphNode from it
-    registerCognitiveNodes(LiteGraph, LGraphNode);
+    try {
+      registerCognitiveNodes(LiteGraph, LGraphNode);
+      console.log('[NodeEditor] Registration completed. Registered types:',
+        LiteGraph?.registered_node_types ? Object.keys(LiteGraph.registered_node_types).length : 'N/A'
+      );
+    } catch (error) {
+      console.error('[NodeEditor] Registration failed:', error);
+    }
 
     // LiteGraph's context menu expects a global helper called getNodeTypesCategories.
     // Recent versions don't expose it, so polyfill a minimal version that inspects
@@ -118,6 +171,9 @@
 
     // Create the graph
     graph = new LGraph();
+
+    // Disable automatic execution (we'll trigger manually when needed)
+    graph.runningtime = 0;
 
     // Enable undo/redo support (if available in this version of LiteGraph)
     if (typeof graph.setSupportForUndo === 'function') {
@@ -146,8 +202,8 @@
       await loadCognitiveTemplate();
     }
 
-    // Start the graph
-    graph.start();
+    // DON'T auto-start the graph - only execute when user explicitly runs it
+    // graph.start();
 
     // Initialize execution monitor
     executionMonitor = new ExecutionMonitor(graph);
@@ -188,42 +244,58 @@
 
   // Create a simple default graph for testing
   function createDefaultGraph() {
-    // Create a simple demo graph showing the basic flow
+    if (!LiteGraph || !graph) {
+      console.error('[NodeEditor] Cannot create default graph: LiteGraph or graph not initialized');
+      return;
+    }
 
-    // Input: User message
-    const userInput = LiteGraph.createNode('cognitive/user_input');
-    userInput.pos = [50, 100];
-    graph.add(userInput);
+    console.log('[NodeEditor] Creating default graph...');
 
-    // Get system settings
-    const systemSettings = LiteGraph.createNode('cognitive/system_settings');
-    systemSettings.pos = [50, 250];
-    graph.add(systemSettings);
+    try {
+      // Input: User message
+      const userInput = LiteGraph.createNode('cognitive/user_input');
+      if (!userInput) {
+        console.error('[NodeEditor] Failed to create user_input node - node type not registered?');
+        return;
+      }
+      userInput.pos = [50, 100];
+      graph.add(userInput);
 
-    // Route based on cognitive mode
-    const modeRouter = LiteGraph.createNode('cognitive/cognitive_mode_router');
-    modeRouter.pos = [350, 150];
-    graph.add(modeRouter);
+      // Get system settings
+      const systemSettings = LiteGraph.createNode('cognitive/system_settings');
+      systemSettings.pos = [50, 250];
+      graph.add(systemSettings);
 
-    // Conversational response (for simple queries)
-    const conversationalResponse = LiteGraph.createNode('cognitive/skill_conversational_response');
-    conversationalResponse.pos = [650, 100];
-    graph.add(conversationalResponse);
+      // Route based on cognitive mode
+      const modeRouter = LiteGraph.createNode('cognitive/cognitive_mode_router');
+      modeRouter.pos = [350, 150];
+      graph.add(modeRouter);
 
-    // Stream output
-    const streamWriter = LiteGraph.createNode('cognitive/stream_writer');
-    streamWriter.pos = [950, 100];
-    graph.add(streamWriter);
+      // Conversational response (for simple queries)
+      const conversationalResponse = LiteGraph.createNode('cognitive/skill_conversational_response');
+      conversationalResponse.pos = [650, 100];
+      graph.add(conversationalResponse);
 
-    // Connect the nodes
-    userInput.connect(0, modeRouter, 1); // message -> router
-    systemSettings.connect(0, modeRouter, 0); // cognitiveMode -> router
+      // Stream output
+      const streamWriter = LiteGraph.createNode('cognitive/stream_writer');
+      streamWriter.pos = [950, 100];
+      graph.add(streamWriter);
 
-    conversationalResponse.connect(0, streamWriter, 0); // response -> stream
+      // Connect the nodes
+      userInput.connect(0, modeRouter, 1); // message -> router
+      systemSettings.connect(0, modeRouter, 0); // cognitiveMode -> router
+      conversationalResponse.connect(0, streamWriter, 0); // response -> stream
 
-    // Center the view
-    canvas.ds.offset = [-100, -50];
-    canvas.ds.scale = 1.0;
+      // Center the view (only if canvas is initialized)
+      if (canvas && canvas.ds) {
+        canvas.ds.offset = [-100, -50];
+        canvas.ds.scale = 1.0;
+      }
+
+      console.log('[NodeEditor] Default graph created successfully');
+    } catch (error) {
+      console.error('[NodeEditor] Error creating default graph:', error);
+    }
   }
 
   /**

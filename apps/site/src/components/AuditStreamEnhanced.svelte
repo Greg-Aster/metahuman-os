@@ -41,6 +41,9 @@
   let selectedLevel: string = 'all';
   let searchQuery: string = '';
 
+  // Context menu state
+  let contextMenu: { x: number; y: number; group?: TaskGroup; event?: AuditEvent } | null = null;
+
   // Limit for group rotation to prevent unbounded growth
   const MAX_GROUPS = 200;
 
@@ -208,10 +211,15 @@
     };
   });
 
+  onMount(() => {
+    window.addEventListener('keydown', handleKeyDown);
+  });
+
   onDestroy(() => {
     eventSource?.close();
     observer?.disconnect();
     observer = null;
+    window.removeEventListener('keydown', handleKeyDown);
   });
 
   // Helper functions
@@ -273,6 +281,83 @@
     alert('Copied to clipboard!');
   }
 
+  function copyEvent(event: AuditEvent) {
+    navigator.clipboard.writeText(JSON.stringify(event, null, 2));
+  }
+
+  function copyEventMessage(event: AuditEvent) {
+    const msg = `[${new Date(event.timestamp).toLocaleTimeString()}] ${event.event} by ${event.actor}`;
+    navigator.clipboard.writeText(msg);
+  }
+
+  function copyAllGroups() {
+    const allText = filteredGroups.map(g =>
+      g.events.map(e => `[${new Date(e.timestamp).toLocaleTimeString()}] ${e.event} by ${e.actor}`).join('\n')
+    ).join('\n---\n');
+    navigator.clipboard.writeText(allText);
+  }
+
+  function saveAsJSON(data: any, filename: string) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function showContextMenu(e: MouseEvent, group?: TaskGroup, event?: AuditEvent) {
+    e.preventDefault();
+    contextMenu = { x: e.clientX, y: e.clientY, group, event };
+  }
+
+  function closeContextMenu() {
+    contextMenu = null;
+  }
+
+  function handleContextAction(action: string) {
+    if (!contextMenu) return;
+
+    const { group, event } = contextMenu;
+
+    switch (action) {
+      case 'copy-message':
+        if (event) {
+          copyEventMessage(event);
+        } else if (group) {
+          const text = group.events.map(e => `[${new Date(e.timestamp).toLocaleTimeString()}] ${e.event} by ${e.actor}`).join('\n');
+          navigator.clipboard.writeText(text);
+        }
+        break;
+      case 'copy-all':
+        copyAllGroups();
+        break;
+      case 'save-json':
+        if (event) {
+          saveAsJSON(event, `audit-event-${Date.now()}.json`);
+        } else if (group) {
+          saveAsJSON(group.events, `audit-group-${Date.now()}.json`);
+        }
+        break;
+      case 'save-all-json':
+        saveAsJSON(filteredGroups.flatMap(g => g.events), `audit-all-${Date.now()}.json`);
+        break;
+      case 'clear':
+        clear();
+        break;
+    }
+
+    closeContextMenu();
+  }
+
+  // Close context menu on ESC key
+  function handleKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && contextMenu) {
+      closeContextMenu();
+    }
+  }
+
   // Filtered groups
   $: filteredGroups = groups.filter(g => {
     if (selectedCategory !== 'all' && g.category !== selectedCategory) return false;
@@ -300,47 +385,54 @@
   }
 </script>
 
-<div class="audit-stream-container h-full flex flex-col bg-white dark:bg-gray-900">
+<div class="audit-stream-container h-full flex flex-col bg-white dark:bg-gray-900" on:click={closeContextMenu}>
   <!-- Header -->
-  <div class="p-3 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-    <h3 class="font-semibold text-gray-900 dark:text-white">Audit Stream (Grouped)</h3>
-    <div class="flex items-center gap-2">
-      <div class="w-2 h-2 rounded-full {connectionStatus === 'Connected' ? 'bg-green-500' : 'bg-yellow-500'}"></div>
-      <span class="text-xs text-gray-500 dark:text-gray-400">{connectionStatus}</span>
-      <span class="text-xs text-gray-500 dark:text-gray-400">·</span>
-      <span class="text-xs text-gray-500 dark:text-gray-400">{filteredGroups.length} groups</span>
+  <div class="p-2 border-b border-gray-200 dark:border-gray-700">
+    <div class="flex justify-between items-center mb-2">
+      <h3 class="font-semibold text-gray-900 dark:text-white text-sm">Audit Stream</h3>
+      <div class="flex items-center gap-2">
+        <div class="w-2 h-2 rounded-full {connectionStatus === 'Connected' ? 'bg-green-500' : 'bg-yellow-500'}"></div>
+        <span class="text-xs text-gray-500 dark:text-gray-400">{connectionStatus}</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">·</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">{filteredGroups.length}</span>
+      </div>
     </div>
-  </div>
 
-  <!-- Filters & Search -->
-  <div class="p-3 border-b border-gray-200 dark:border-gray-700 flex gap-2 flex-wrap items-center">
-    <input
-      type="text"
-      bind:value={searchQuery}
-      placeholder="Search tasks..."
-      class="px-3 py-1 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white flex-1 min-w-[150px]"
-    />
-    <select
-      bind:value={selectedCategory}
-      class="px-3 py-1 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-    >
-      <option value="all">All Categories</option>
-      <option value="system">System</option>
-      <option value="decision">Decision</option>
-      <option value="action">Action</option>
-      <option value="security">Security</option>
-      <option value="data">Data</option>
-    </select>
-    <select
-      bind:value={selectedLevel}
-      class="px-3 py-1 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-    >
-      <option value="all">All Levels</option>
-      <option value="info">Info</option>
-      <option value="warn">Warn</option>
-      <option value="error">Error</option>
-      <option value="critical">Critical</option>
-    </select>
+    <!-- Filter Pills -->
+    <div class="flex gap-1 flex-wrap">
+      <button
+        class="filter-pill {selectedLevel === 'all' ? 'active' : ''}"
+        on:click={() => selectedLevel = 'all'}
+      >
+        All
+      </button>
+      <button
+        class="filter-pill error {selectedLevel === 'error' || selectedLevel === 'critical' ? 'active' : ''}"
+        on:click={() => selectedLevel = selectedLevel === 'error' ? 'all' : 'error'}
+      >
+        Err
+      </button>
+      <button
+        class="filter-pill warn {selectedLevel === 'warn' ? 'active' : ''}"
+        on:click={() => selectedLevel = selectedLevel === 'warn' ? 'all' : 'warn'}
+      >
+        Warn
+      </button>
+      <button
+        class="filter-pill info {selectedLevel === 'info' ? 'active' : ''}"
+        on:click={() => selectedLevel = selectedLevel === 'info' ? 'all' : 'info'}
+      >
+        Info
+      </button>
+      <div class="flex-1"></div>
+      <button
+        class="filter-pill"
+        on:click={clear}
+        title="Clear all messages"
+      >
+        Clear
+      </button>
+    </div>
   </div>
 
   <!-- Groups List -->
@@ -357,6 +449,7 @@
         <button
           class="w-full px-4 py-3 flex items-start gap-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left"
           on:click={() => toggleExpand(group)}
+          on:contextmenu={(e) => showContextMenu(e, group)}
         >
           <span class="mt-0.5 {getStatusColor(group.status)} text-lg">
             {getStatusIcon(group.status)}
@@ -382,13 +475,7 @@
               {new Date(group.lastTimestamp).toLocaleTimeString()}
             </div>
           </div>
-          <div class="flex items-center gap-2">
-            <button
-              class="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-              on:click|stopPropagation={() => openDetail(group)}
-            >
-              JSON
-            </button>
+          <div class="flex items-center">
             <span class="text-gray-400 dark:text-gray-600">
               {group.expanded ? '▼' : '▶'}
             </span>
@@ -399,7 +486,10 @@
         {#if group.expanded}
           <div transition:slide={{ duration: 200 }} class="bg-gray-50 dark:bg-gray-800/50 px-4 py-3 space-y-2">
             {#each group.events as event}
-              <div class="text-xs border-l-2 border-gray-300 dark:border-gray-600 pl-3 py-1">
+              <div
+                class="text-[10px] border-l-2 border-gray-300 dark:border-gray-600 pl-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700/50 cursor-context-menu"
+                on:contextmenu={(e) => showContextMenu(e, group, event)}
+              >
                 <div class="flex items-center gap-2 mb-1">
                   <span class="font-mono text-gray-500 dark:text-gray-400">
                     {new Date(event.timestamp).toLocaleTimeString()}
@@ -416,7 +506,7 @@
                     <summary class="cursor-pointer text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400">
                       Details
                     </summary>
-                    <pre class="mt-1 text-[10px] bg-gray-100 dark:bg-gray-900 p-2 rounded overflow-x-auto text-gray-700 dark:text-gray-300">{JSON.stringify(event.details, null, 2)}</pre>
+                    <pre class="mt-1 text-[9px] bg-gray-100 dark:bg-gray-900 p-2 rounded overflow-x-auto text-gray-700 dark:text-gray-300">{JSON.stringify(event.details, null, 2)}</pre>
                   </details>
                 {/if}
               </div>
@@ -428,6 +518,38 @@
     <div bind:this={bottomSentinel} style="height: 1px;"></div>
   </div>
 </div>
+
+<!-- Context Menu -->
+{#if contextMenu}
+  <!-- Backdrop to capture clicks outside -->
+  <div
+    class="context-menu-backdrop"
+    on:click={closeContextMenu}
+    on:contextmenu|preventDefault={closeContextMenu}
+  ></div>
+  <div
+    class="context-menu"
+    style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
+    on:click|stopPropagation
+  >
+    <button class="context-menu-item" on:click={() => handleContextAction('copy-message')}>
+      📋 Copy Message
+    </button>
+    <button class="context-menu-item" on:click={() => handleContextAction('copy-all')}>
+      📋 Copy All Messages
+    </button>
+    <button class="context-menu-item" on:click={() => handleContextAction('save-json')}>
+      💾 Save Message as JSON
+    </button>
+    <button class="context-menu-item" on:click={() => handleContextAction('save-all-json')}>
+      💾 Save All as JSON
+    </button>
+    <div class="context-menu-divider"></div>
+    <button class="context-menu-item" on:click={() => handleContextAction('clear')}>
+      🗑️ Clear Messages
+    </button>
+  </div>
+{/if}
 
 <!-- Detail Drawer (Modal) -->
 {#if showDetailDrawer && selectedGroup}
@@ -469,6 +591,122 @@
 <style>
   /* Minimal custom styles - using Tailwind mostly */
   .audit-stream-container {
-    font-size: 0.875rem;
+    font-size: 0.75rem;
+  }
+
+  /* Filter Pills */
+  .filter-pill {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.7rem;
+    border-radius: 0.25rem;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    background: transparent;
+    color: rgb(107 114 128);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  :global(.dark) .filter-pill {
+    border-color: rgba(255, 255, 255, 0.1);
+    color: rgb(156 163 175);
+  }
+
+  .filter-pill:hover {
+    background: rgba(0, 0, 0, 0.05);
+  }
+
+  :global(.dark) .filter-pill:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .filter-pill.active {
+    background: rgb(124 58 237);
+    color: white;
+    border-color: rgb(124 58 237);
+  }
+
+  :global(.dark) .filter-pill.active {
+    background: rgb(167 139 250);
+    color: rgb(17 24 39);
+    border-color: rgb(167 139 250);
+  }
+
+  .filter-pill.error.active {
+    background: rgb(220 38 38);
+    border-color: rgb(220 38 38);
+    color: white;
+  }
+
+  .filter-pill.warn.active {
+    background: rgb(234 179 8);
+    border-color: rgb(234 179 8);
+    color: white;
+  }
+
+  .filter-pill.info.active {
+    background: rgb(37 99 235);
+    border-color: rgb(37 99 235);
+    color: white;
+  }
+
+  /* Context Menu */
+  .context-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9998;
+    background: transparent;
+  }
+
+  .context-menu {
+    position: fixed;
+    z-index: 9999;
+    background: white;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    border-radius: 0.375rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    padding: 0.25rem;
+    min-width: 180px;
+  }
+
+  :global(.dark) .context-menu {
+    background: rgb(31 41 55);
+    border-color: rgba(255, 255, 255, 0.15);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  }
+
+  .context-menu-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.75rem;
+    border: none;
+    background: transparent;
+    color: rgb(17 24 39);
+    cursor: pointer;
+    border-radius: 0.25rem;
+    transition: background 0.15s;
+  }
+
+  :global(.dark) .context-menu-item {
+    color: rgb(243 244 246);
+  }
+
+  .context-menu-item:hover {
+    background: rgba(0, 0, 0, 0.05);
+  }
+
+  :global(.dark) .context-menu-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .context-menu-divider {
+    height: 1px;
+    background: rgba(0, 0, 0, 0.1);
+    margin: 0.25rem 0;
+  }
+
+  :global(.dark) .context-menu-divider {
+    background: rgba(255, 255, 255, 0.1);
   }
 </style>

@@ -150,7 +150,7 @@ function getConversationHistorySnapshot(mode: Mode): Array<{ role: Role; content
 
 function streamGraphAnswer(mode: Mode, message: string, sessionId: string, response: string) {
   const stream = new ReadableStream({
-    start(controller) {
+    async start(controller) {
       const encoder = new TextEncoder();
       let closed = false;
       const push = (type: string, data: any) => {
@@ -169,6 +169,9 @@ function streamGraphAnswer(mode: Mode, message: string, sessionId: string, respo
       pushMessage(mode, { role: 'user', content: message }, sessionId);
       pushMessage(mode, { role: 'assistant', content: response, meta: { facet, graphPipeline: true } }, sessionId);
       lastAssistantReplies[mode].push(response);
+
+      // Close stream asynchronously to ensure client receives the data
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       closed = true;
       try {

@@ -225,7 +225,22 @@ export class OllamaClient {
     });
 
     if (!response.ok) {
-      throw new Error(`Chat request failed: ${response.status}`);
+      let errorMsg = `Chat request failed: ${response.status}`;
+      try {
+        const errorData = await response.json();
+        if (errorData.error) {
+          errorMsg += ` - ${errorData.error}`;
+        }
+        console.error('[Ollama] Chat error response:', errorData);
+      } catch {
+        // If error response isn't JSON, try text
+        const errorText = await response.text().catch(() => '');
+        if (errorText) {
+          errorMsg += ` - ${errorText}`;
+          console.error('[Ollama] Chat error text:', errorText);
+        }
+      }
+      throw new Error(errorMsg);
     }
 
     return response.json();

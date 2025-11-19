@@ -18,9 +18,15 @@
   let bottomSentinel: HTMLDivElement;
   let observer: IntersectionObserver | null = null;
   let eventSource: EventSource | null = null;
-  
+
   // Limit for log rotation to prevent unbounded growth
   const MAX_LOGS = 500;
+
+  // Context menu state
+  let contextMenu: { x: number; y: number; log?: LogEntry } | null = null;
+
+  // Level filter
+  let levelFilter: 'all' | 'error' | 'warn' | 'info' = 'all';
 
   // Auto-scroll to bottom
   $: if (logs.length > 0 && autoScroll && bottomSentinel) {
@@ -40,6 +46,8 @@
       );
       observer.observe(bottomSentinel);
     }
+
+    window.addEventListener('keydown', handleKeyDown);
 
     eventSource = new EventSource('/api/stream');
 
@@ -75,6 +83,7 @@
     eventSource?.close();
     observer?.disconnect();
     observer = null;
+    window.removeEventListener('keydown', handleKeyDown);
   });
 
   function getLevelColor(level: LogEntry['level']) {
@@ -127,15 +136,136 @@
   $: if ($clearAuditStreamTrigger > 0) {
     clear();
   }
+
+  function copyLogMessage(log: LogEntry) {
+    const msg = `[${new Date(log.timestamp).toLocaleTimeString()}] ${log.event || log.message || 'Unknown'} (${log.actor} via ${log.category})`;
+    navigator.clipboard.writeText(msg);
+  }
+
+  function copyLogJSON(log: LogEntry) {
+    navigator.clipboard.writeText(JSON.stringify(log, null, 2));
+  }
+
+  function copyAllLogs() {
+    const allText = filteredLogs.map(l =>
+      `[${new Date(l.timestamp).toLocaleTimeString()}] ${l.event || l.message || 'Unknown'} (${l.actor} via ${l.category})`
+    ).join('\n');
+    navigator.clipboard.writeText(allText);
+  }
+
+  function saveAsJSON(data: any, filename: string) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function showContextMenu(e: MouseEvent, log?: LogEntry) {
+    e.preventDefault();
+    contextMenu = { x: e.clientX, y: e.clientY, log };
+  }
+
+  function closeContextMenu() {
+    contextMenu = null;
+  }
+
+  function handleContextAction(action: string) {
+    if (!contextMenu) return;
+
+    const { log } = contextMenu;
+
+    switch (action) {
+      case 'copy-message':
+        if (log) {
+          copyLogMessage(log);
+        }
+        break;
+      case 'copy-all':
+        copyAllLogs();
+        break;
+      case 'save-json':
+        if (log) {
+          saveAsJSON(log, `audit-log-${Date.now()}.json`);
+        }
+        break;
+      case 'save-all-json':
+        saveAsJSON(filteredLogs, `audit-all-${Date.now()}.json`);
+        break;
+      case 'clear':
+        clear();
+        break;
+    }
+
+    closeContextMenu();
+  }
+
+  // Close context menu on ESC key
+  function handleKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && contextMenu) {
+      closeContextMenu();
+    }
+  }
+
+  // Filtered logs based on level
+  $: filteredLogs = logs.filter(log => {
+    if (levelFilter === 'all') return true;
+    if (levelFilter === 'error') return log.level === 'error';
+    if (levelFilter === 'warn') return log.level === 'warn';
+    if (levelFilter === 'info') return log.level === 'info';
+    return true;
+  });
 </script>
 
-<div class="log-stream-container h-full flex flex-col bg-black font-mono text-sm">
+<div class="log-stream-container h-full flex flex-col bg-black font-mono text-[10px]" on:click={closeContextMenu}>
   <!-- Header -->
-  <div class="p-3 border-b border-gray-700 flex justify-between items-center">
-    <h3 class="font-semibold text-white">Live Audit Stream</h3>
-    <div class="flex items-center gap-2">
-      <div class="w-3 h-3 rounded-full {connectionStatus === 'Connected' ? 'bg-green-500' : 'bg-yellow-500'}"></div>
-      <span class="text-xs text-gray-400">{connectionStatus}</span>
+  <div class="p-2 border-b border-gray-700">
+    <div class="flex justify-between items-center mb-2">
+      <h3 class="font-semibold text-white text-sm">Audit Stream</h3>
+      <div class="flex items-center gap-2">
+        <div class="w-2 h-2 rounded-full {connectionStatus === 'Connected' ? 'bg-green-500' : 'bg-yellow-500'}"></div>
+        <span class="text-xs text-gray-400">{connectionStatus}</span>
+        <span class="text-xs text-gray-400">·</span>
+        <span class="text-xs text-gray-400">{filteredLogs.length}</span>
+      </div>
+    </div>
+
+    <!-- Filter Pills -->
+    <div class="flex gap-1 flex-wrap">
+      <button
+        class="filter-pill {levelFilter === 'all' ? 'active' : ''}"
+        on:click={() => levelFilter = 'all'}
+      >
+        All
+      </button>
+      <button
+        class="filter-pill error {levelFilter === 'error' ? 'active' : ''}"
+        on:click={() => levelFilter = levelFilter === 'error' ? 'all' : 'error'}
+      >
+        Err
+      </button>
+      <button
+        class="filter-pill warn {levelFilter === 'warn' ? 'active' : ''}"
+        on:click={() => levelFilter = levelFilter === 'warn' ? 'all' : 'warn'}
+      >
+        Warn
+      </button>
+      <button
+        class="filter-pill info {levelFilter === 'info' ? 'active' : ''}"
+        on:click={() => levelFilter = levelFilter === 'info' ? 'all' : 'info'}
+      >
+        Info
+      </button>
+      <div class="flex-1"></div>
+      <button
+        class="filter-pill"
+        on:click={clear}
+        title="Clear all messages"
+      >
+        Clear
+      </button>
     </div>
   </div>
 
@@ -154,22 +284,59 @@
 
   <!-- Log Output -->
   <div bind:this={logContainer} class="flex-1 overflow-y-auto p-4 min-h-0">
-    {#if logs.length === 0}
-      <div class="text-gray-500">Awaiting real-time system events...</div>
+    {#if filteredLogs.length === 0}
+      <div class="text-gray-500">
+        {levelFilter === 'all' ? 'Awaiting real-time system events...' : 'No matching messages'}
+      </div>
     {/if}
-    {#each logs as log}
-      <div class="log-entry mb-2">
+    {#each filteredLogs as log}
+      <div
+        class="log-entry mb-2 hover:bg-gray-900 cursor-context-menu px-2 py-1 rounded"
+        on:contextmenu={(e) => showContextMenu(e, log)}
+      >
         <span class="text-gray-500">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
         <span class="font-bold mx-2 {getLevelColor(log.level)}">{log.event || log.message || 'Unknown'}</span>
         <span class="text-gray-400">({log.actor} via {log.category})</span>
         {#if log.details || log.metadata}
-          <pre class="text-xs text-gray-500 mt-1 ml-4 whitespace-pre-wrap break-words overflow-x-auto opacity-70">{JSON.stringify(log.details || log.metadata, null, 2)}</pre>
+          <pre class="text-[9px] text-gray-500 mt-1 ml-4 whitespace-pre-wrap break-words overflow-x-auto opacity-70">{JSON.stringify(log.details || log.metadata, null, 2)}</pre>
         {/if}
       </div>
     {/each}
     <div bind:this={bottomSentinel} style="height: 1px;"></div>
   </div>
 </div>
+
+<!-- Context Menu -->
+{#if contextMenu}
+  <!-- Backdrop to capture clicks outside -->
+  <div
+    class="context-menu-backdrop"
+    on:click={closeContextMenu}
+    on:contextmenu|preventDefault={closeContextMenu}
+  ></div>
+  <div
+    class="context-menu"
+    style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
+    on:click|stopPropagation
+  >
+    <button class="context-menu-item" on:click={() => handleContextAction('copy-message')}>
+      📋 Copy Message
+    </button>
+    <button class="context-menu-item" on:click={() => handleContextAction('copy-all')}>
+      📋 Copy All Messages
+    </button>
+    <button class="context-menu-item" on:click={() => handleContextAction('save-json')}>
+      💾 Save Message as JSON
+    </button>
+    <button class="context-menu-item" on:click={() => handleContextAction('save-all-json')}>
+      💾 Save All as JSON
+    </button>
+    <div class="context-menu-divider"></div>
+    <button class="context-menu-item" on:click={() => handleContextAction('clear')}>
+      🗑️ Clear Messages
+    </button>
+  </div>
+{/if}
 
 <style>
   .stage { display: inline-flex; align-items: center; gap: 0.35rem; }
@@ -180,4 +347,87 @@
   .dot.failed { background: #ef4444; }
   .dot.idle { background: #6b7280; }
   @keyframes pulse { 0% { transform: scale(0.9); opacity: 0.8 } 50% { transform: scale(1.1); opacity: 0.3 } 100% { transform: scale(0.9); opacity: 0.8 } }
+
+  /* Filter Pills */
+  .filter-pill {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.7rem;
+    border-radius: 0.25rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: transparent;
+    color: rgb(156 163 175);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .filter-pill:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .filter-pill.active {
+    background: rgb(167 139 250);
+    color: rgb(17 24 39);
+    border-color: rgb(167 139 250);
+  }
+
+  .filter-pill.error.active {
+    background: rgb(220 38 38);
+    border-color: rgb(220 38 38);
+    color: white;
+  }
+
+  .filter-pill.warn.active {
+    background: rgb(234 179 8);
+    border-color: rgb(234 179 8);
+    color: rgb(17 24 39);
+  }
+
+  .filter-pill.info.active {
+    background: rgb(37 99 235);
+    border-color: rgb(37 99 235);
+    color: white;
+  }
+
+  /* Context Menu */
+  .context-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9998;
+    background: transparent;
+  }
+
+  .context-menu {
+    position: fixed;
+    z-index: 9999;
+    background: rgb(31 41 55);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 0.375rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    padding: 0.25rem;
+    min-width: 180px;
+  }
+
+  .context-menu-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.75rem;
+    border: none;
+    background: transparent;
+    color: rgb(243 244 246);
+    cursor: pointer;
+    border-radius: 0.25rem;
+    transition: background 0.15s;
+  }
+
+  .context-menu-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .context-menu-divider {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.1);
+    margin: 0.25rem 0;
+  }
 </style>
