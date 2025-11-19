@@ -5,57 +5,80 @@
  * and implements their execution logic.
  */
 
-// @ts-ignore - LiteGraph doesn't have proper TypeScript definitions
-import { LiteGraph, LGraphNode } from 'litegraph.js';
-import { nodeSchemas, type NodeSchema } from './node-schemas';
+// LiteGraph will be passed as a parameter to avoid SSR issues
+// @ts-ignore
+let LiteGraph: any;
+// @ts-ignore
+let LGraphNode: any;
+import {
+  nodeSchemas,
+  type NodeSchema,
+  ConversationHistoryNode,
+  ObservationFormatterNode,
+  CompletionCheckerNode,
+  ResponseSynthesizerNode,
+  ChainOfThoughtStripperNode,
+  SafetyValidatorNode,
+  ResponseRefinerNode,
+  ModelRouterNode,
+  AuditLoggerNode,
+  FsWriteNode,
+  FsListNode,
+  TaskCreateNode,
+  TaskUpdateNode,
+  SearchIndexNode,
+  WebSearchNode
+} from './node-schemas';
 
 /**
- * Base class for all cognitive nodes
+ * Factory function to create the base CognitiveNode class
+ * This is called after LGraphNode is available
  */
-class CognitiveNode extends LGraphNode {
-  schema: NodeSchema;
+function createCognitiveNodeClass(LGraphNodeRef: any) {
+  return class CognitiveNode extends LGraphNodeRef {
+    schema: NodeSchema;
 
-  constructor(schema: NodeSchema) {
-    super();
-    this.schema = schema;
-    this.title = schema.name;
-    this.desc = schema.description;
-    this.color = schema.color;
-    this.bgcolor = schema.bgColor;
+    constructor(schema: NodeSchema) {
+      super();
+      this.schema = schema;
+      this.title = schema.name;
+      this.desc = schema.description;
+      this.color = schema.color;
+      this.bgcolor = schema.bgColor;
 
-    // Add inputs
-    schema.inputs.forEach((input) => {
-      this.addInput(input.name, input.type);
-    });
+      // Add inputs
+      schema.inputs.forEach((input: any) => {
+        this.addInput(input.name, input.type);
+      });
 
-    // Add outputs
-    schema.outputs.forEach((output) => {
-      this.addOutput(output.name, output.type);
-    });
+      // Add outputs
+      schema.outputs.forEach((output: any) => {
+        this.addOutput(output.name, output.type);
+      });
 
-    // Initialize properties
-    if (schema.properties) {
-      this.properties = { ...schema.properties };
+      // Initialize properties
+      if (schema.properties) {
+        this.properties = { ...schema.properties };
+      }
     }
-  }
 
-  /**
-   * Execute the node logic
-   * Override this in subclasses for custom behavior
-   */
-  onExecute() {
-    // Default: pass through first input to first output
-    if (this.inputs.length > 0 && this.outputs.length > 0) {
-      const value = this.getInputData(0);
-      this.setOutputData(0, value);
+    /**
+     * Execute the node logic
+     * Override this in subclasses for custom behavior
+     */
+    onExecute() {
+      // Default: pass through first input to first output
+      if (this.inputs.length > 0 && this.outputs.length > 0) {
+        const value = this.getInputData(0);
+        this.setOutputData(0, value);
+      }
     }
-  }
 
-  /**
-   * Helper to get all input data as an object
-   */
-  getInputsData(): Record<string, any> {
-    const data: Record<string, any> = {};
+    /**
+     * Helper to get all input data as an object
+     */
+    getInputsData(): Record<string, any> {
+      const data: Record<string, any> = {};
     this.schema.inputs.forEach((input, index) => {
       data[input.name] = this.getInputData(index);
     });
@@ -88,20 +111,33 @@ class CognitiveNode extends LGraphNode {
   getTitle(): string {
     return this.schema.name;
   }
+  };
 }
 
 // ============================================================================
-// INPUT NODE IMPLEMENTATIONS
+// NODE IMPLEMENTATION FACTORY
 // ============================================================================
 
-class UserInputNodeImpl extends CognitiveNode {
+/**
+ * Creates all node implementation classes dynamically
+ * This must be called after LGraphNode is available
+ */
+function createNodeImplementations(CognitiveNodeBase: any) {
+
+  // ============================================================================
+  // INPUT NODE IMPLEMENTATIONS
+  // ============================================================================
+
+  class UserInputNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'user_input')!;
 
   constructor() {
     super(UserInputNodeImpl.schema);
-    this.addWidget('text', 'message', this.properties.message, (value: string) => {
-      this.properties.message = value;
-    });
+    if (typeof (this as any).addWidget === 'function') {
+      this.addWidget('text', 'message', this.properties.message, (value: string) => {
+        this.properties.message = value;
+      });
+    }
   }
 
   onExecute() {
@@ -110,7 +146,7 @@ class UserInputNodeImpl extends CognitiveNode {
   }
 }
 
-class SessionContextNodeImpl extends CognitiveNode {
+class SessionContextNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'session_context')!;
 
   constructor() {
@@ -125,7 +161,7 @@ class SessionContextNodeImpl extends CognitiveNode {
   }
 }
 
-class SystemSettingsNodeImpl extends CognitiveNode {
+class SystemSettingsNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'system_settings')!;
 
   constructor() {
@@ -144,7 +180,7 @@ class SystemSettingsNodeImpl extends CognitiveNode {
 // ROUTER NODE IMPLEMENTATIONS
 // ============================================================================
 
-class CognitiveModeRouterNodeImpl extends CognitiveNode {
+class CognitiveModeRouterNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'cognitive_mode_router')!;
 
   constructor() {
@@ -161,7 +197,7 @@ class CognitiveModeRouterNodeImpl extends CognitiveNode {
   }
 }
 
-class AuthCheckNodeImpl extends CognitiveNode {
+class AuthCheckNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'auth_check')!;
 
   constructor() {
@@ -176,7 +212,7 @@ class AuthCheckNodeImpl extends CognitiveNode {
   }
 }
 
-class OperatorEligibilityNodeImpl extends CognitiveNode {
+class OperatorEligibilityNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'operator_eligibility')!;
 
   constructor() {
@@ -206,7 +242,7 @@ class OperatorEligibilityNodeImpl extends CognitiveNode {
 // CONTEXT NODE IMPLEMENTATIONS
 // ============================================================================
 
-class ContextBuilderNodeImpl extends CognitiveNode {
+class ContextBuilderNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'context_builder')!;
 
   constructor() {
@@ -229,7 +265,7 @@ class ContextBuilderNodeImpl extends CognitiveNode {
   }
 }
 
-class SemanticSearchNodeImpl extends CognitiveNode {
+class SemanticSearchNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'semantic_search')!;
 
   constructor() {
@@ -251,7 +287,7 @@ class SemanticSearchNodeImpl extends CognitiveNode {
 // OPERATOR NODE IMPLEMENTATIONS
 // ============================================================================
 
-class ReActPlannerNodeImpl extends CognitiveNode {
+class ReActPlannerNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'react_planner')!;
 
   constructor() {
@@ -269,7 +305,7 @@ class ReActPlannerNodeImpl extends CognitiveNode {
   }
 }
 
-class SkillExecutorNodeImpl extends CognitiveNode {
+class SkillExecutorNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'skill_executor')!;
 
   constructor() {
@@ -296,7 +332,7 @@ class SkillExecutorNodeImpl extends CognitiveNode {
 // CHAT NODE IMPLEMENTATIONS
 // ============================================================================
 
-class PersonaLLMNodeImpl extends CognitiveNode {
+class PersonaLLMNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'persona_llm')!;
 
   constructor() {
@@ -318,7 +354,7 @@ class PersonaLLMNodeImpl extends CognitiveNode {
 // MODEL NODE IMPLEMENTATIONS
 // ============================================================================
 
-class ModelResolverNodeImpl extends CognitiveNode {
+class ModelResolverNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'model_resolver')!;
 
   constructor() {
@@ -344,7 +380,7 @@ class ModelResolverNodeImpl extends CognitiveNode {
 // OUTPUT NODE IMPLEMENTATIONS
 // ============================================================================
 
-class MemoryCaptureNodeImpl extends CognitiveNode {
+class MemoryCaptureNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'memory_capture')!;
 
   constructor() {
@@ -361,7 +397,7 @@ class MemoryCaptureNodeImpl extends CognitiveNode {
   }
 }
 
-class StreamWriterNodeImpl extends CognitiveNode {
+class StreamWriterNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'stream_writer')!;
 
   constructor() {
@@ -383,7 +419,7 @@ class StreamWriterNodeImpl extends CognitiveNode {
 // SKILL NODE IMPLEMENTATIONS
 // ============================================================================
 
-class FsReadNodeImpl extends CognitiveNode {
+class FsReadNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'skill_fs_read')!;
 
   constructor() {
@@ -404,7 +440,7 @@ class FsReadNodeImpl extends CognitiveNode {
   }
 }
 
-class TaskListNodeImpl extends CognitiveNode {
+class TaskListNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'skill_task_list')!;
 
   constructor() {
@@ -421,7 +457,7 @@ class TaskListNodeImpl extends CognitiveNode {
   }
 }
 
-class ConversationalResponseNodeImpl extends CognitiveNode {
+class ConversationalResponseNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'skill_conversational_response')!;
 
   constructor() {
@@ -441,48 +477,178 @@ class ConversationalResponseNodeImpl extends CognitiveNode {
 }
 
 // ============================================================================
+// Additional Node Implementations
+// ============================================================================
+
+class ConversationHistoryNodeImpl extends CognitiveNodeBase {
+  constructor() { super(ConversationHistoryNode); }
+}
+
+class ObservationFormatterNodeImpl extends CognitiveNodeBase {
+  constructor() { super(ObservationFormatterNode); }
+}
+
+class CompletionCheckerNodeImpl extends CognitiveNodeBase {
+  constructor() { super(CompletionCheckerNode); }
+}
+
+class ResponseSynthesizerNodeImpl extends CognitiveNodeBase {
+  constructor() { super(ResponseSynthesizerNode); }
+}
+
+class ChainOfThoughtStripperNodeImpl extends CognitiveNodeBase {
+  constructor() { super(ChainOfThoughtStripperNode); }
+}
+
+class SafetyValidatorNodeImpl extends CognitiveNodeBase {
+  constructor() { super(SafetyValidatorNode); }
+}
+
+class ResponseRefinerNodeImpl extends CognitiveNodeBase {
+  constructor() { super(ResponseRefinerNode); }
+}
+
+class ModelRouterNodeImpl extends CognitiveNodeBase {
+  constructor() { super(ModelRouterNode); }
+}
+
+class AuditLoggerNodeImpl extends CognitiveNodeBase {
+  constructor() { super(AuditLoggerNode); }
+}
+
+class FsWriteNodeImpl extends CognitiveNodeBase {
+  constructor() { super(FsWriteNode); }
+}
+
+class FsListNodeImpl extends CognitiveNodeBase {
+  constructor() { super(FsListNode); }
+}
+
+class TaskCreateNodeImpl extends CognitiveNodeBase {
+  constructor() { super(TaskCreateNode); }
+}
+
+class TaskUpdateNodeImpl extends CognitiveNodeBase {
+  constructor() { super(TaskUpdateNode); }
+}
+
+class SearchIndexNodeImpl extends CognitiveNodeBase {
+  constructor() { super(SearchIndexNode); }
+}
+
+class WebSearchNodeImpl extends CognitiveNodeBase {
+  constructor() { super(WebSearchNode); }
+}
+
+  // Return all node implementation classes
+  return {
+    UserInputNodeImpl,
+    SessionContextNodeImpl,
+    SystemSettingsNodeImpl,
+    CognitiveModeRouterNodeImpl,
+    AuthCheckNodeImpl,
+    OperatorEligibilityNodeImpl,
+    ContextBuilderNodeImpl,
+    SemanticSearchNodeImpl,
+    ConversationHistoryNodeImpl,
+    ReActPlannerNodeImpl,
+    SkillExecutorNodeImpl,
+    ObservationFormatterNodeImpl,
+    CompletionCheckerNodeImpl,
+    ResponseSynthesizerNodeImpl,
+    PersonaLLMNodeImpl,
+    ChainOfThoughtStripperNodeImpl,
+    SafetyValidatorNodeImpl,
+    ResponseRefinerNodeImpl,
+    ModelResolverNodeImpl,
+    ModelRouterNodeImpl,
+    MemoryCaptureNodeImpl,
+    AuditLoggerNodeImpl,
+    StreamWriterNodeImpl,
+    FsReadNodeImpl,
+    FsWriteNodeImpl,
+    FsListNodeImpl,
+    TaskCreateNodeImpl,
+    TaskListNodeImpl,
+    TaskUpdateNodeImpl,
+    SearchIndexNodeImpl,
+    WebSearchNodeImpl,
+    ConversationalResponseNodeImpl,
+  };
+}
+
+// ============================================================================
 // REGISTRATION FUNCTION
 // ============================================================================
 
 /**
  * Register all cognitive nodes with LiteGraph
  * Call this before creating the graph
+ * @param LiteGraphRef - The LiteGraph library instance
  */
-export function registerCognitiveNodes() {
+export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) {
+  // Set the global references for this module
+  if (LiteGraphRef) {
+    LiteGraph = LiteGraphRef;
+    LGraphNode = LGraphNodeRef;
+  }
+
+  // Create the base class and all node implementations
+  const CognitiveNodeBase = createCognitiveNodeClass(LGraphNode);
+  const nodeImpls = createNodeImplementations(CognitiveNodeBase);
+
   // Input nodes
-  LiteGraph.registerNodeType('cognitive/user_input', UserInputNodeImpl);
-  LiteGraph.registerNodeType('cognitive/session_context', SessionContextNodeImpl);
-  LiteGraph.registerNodeType('cognitive/system_settings', SystemSettingsNodeImpl);
+  LiteGraph.registerNodeType('cognitive/user_input', nodeImpls.UserInputNodeImpl);
+  LiteGraph.registerNodeType('cognitive/session_context', nodeImpls.SessionContextNodeImpl);
+  LiteGraph.registerNodeType('cognitive/system_settings', nodeImpls.SystemSettingsNodeImpl);
 
   // Router nodes
-  LiteGraph.registerNodeType('cognitive/cognitive_mode_router', CognitiveModeRouterNodeImpl);
-  LiteGraph.registerNodeType('cognitive/auth_check', AuthCheckNodeImpl);
-  LiteGraph.registerNodeType('cognitive/operator_eligibility', OperatorEligibilityNodeImpl);
+  LiteGraph.registerNodeType('cognitive/cognitive_mode_router', nodeImpls.CognitiveModeRouterNodeImpl);
+  LiteGraph.registerNodeType('cognitive/auth_check', nodeImpls.AuthCheckNodeImpl);
+  LiteGraph.registerNodeType('cognitive/operator_eligibility', nodeImpls.OperatorEligibilityNodeImpl);
 
   // Context nodes
-  LiteGraph.registerNodeType('cognitive/context_builder', ContextBuilderNodeImpl);
-  LiteGraph.registerNodeType('cognitive/semantic_search', SemanticSearchNodeImpl);
+  LiteGraph.registerNodeType('cognitive/context_builder', nodeImpls.ContextBuilderNodeImpl);
+  LiteGraph.registerNodeType('cognitive/semantic_search', nodeImpls.SemanticSearchNodeImpl);
+  LiteGraph.registerNodeType('cognitive/conversation_history', nodeImpls.ConversationHistoryNodeImpl);
 
   // Operator nodes
-  LiteGraph.registerNodeType('cognitive/react_planner', ReActPlannerNodeImpl);
-  LiteGraph.registerNodeType('cognitive/skill_executor', SkillExecutorNodeImpl);
+  LiteGraph.registerNodeType('cognitive/react_planner', nodeImpls.ReActPlannerNodeImpl);
+  LiteGraph.registerNodeType('cognitive/skill_executor', nodeImpls.SkillExecutorNodeImpl);
+  LiteGraph.registerNodeType('cognitive/observation_formatter', nodeImpls.ObservationFormatterNodeImpl);
+  LiteGraph.registerNodeType('cognitive/completion_checker', nodeImpls.CompletionCheckerNodeImpl);
+  LiteGraph.registerNodeType('cognitive/response_synthesizer', nodeImpls.ResponseSynthesizerNodeImpl);
 
   // Chat nodes
-  LiteGraph.registerNodeType('cognitive/persona_llm', PersonaLLMNodeImpl);
+  LiteGraph.registerNodeType('cognitive/persona_llm', nodeImpls.PersonaLLMNodeImpl);
+  LiteGraph.registerNodeType('cognitive/chain_of_thought_stripper', nodeImpls.ChainOfThoughtStripperNodeImpl);
+  LiteGraph.registerNodeType('cognitive/safety_validator', nodeImpls.SafetyValidatorNodeImpl);
+  LiteGraph.registerNodeType('cognitive/response_refiner', nodeImpls.ResponseRefinerNodeImpl);
 
   // Model nodes
-  LiteGraph.registerNodeType('cognitive/model_resolver', ModelResolverNodeImpl);
+  LiteGraph.registerNodeType('cognitive/model_resolver', nodeImpls.ModelResolverNodeImpl);
+  LiteGraph.registerNodeType('cognitive/model_router', nodeImpls.ModelRouterNodeImpl);
 
   // Output nodes
-  LiteGraph.registerNodeType('cognitive/memory_capture', MemoryCaptureNodeImpl);
-  LiteGraph.registerNodeType('cognitive/stream_writer', StreamWriterNodeImpl);
+  LiteGraph.registerNodeType('cognitive/memory_capture', nodeImpls.MemoryCaptureNodeImpl);
+  LiteGraph.registerNodeType('cognitive/audit_logger', nodeImpls.AuditLoggerNodeImpl);
+  LiteGraph.registerNodeType('cognitive/stream_writer', nodeImpls.StreamWriterNodeImpl);
 
   // Skill nodes
-  LiteGraph.registerNodeType('cognitive/skill_fs_read', FsReadNodeImpl);
-  LiteGraph.registerNodeType('cognitive/skill_task_list', TaskListNodeImpl);
-  LiteGraph.registerNodeType('cognitive/skill_conversational_response', ConversationalResponseNodeImpl);
+  LiteGraph.registerNodeType('cognitive/skill_fs_read', nodeImpls.FsReadNodeImpl);
+  LiteGraph.registerNodeType('cognitive/skill_fs_write', nodeImpls.FsWriteNodeImpl);
+  LiteGraph.registerNodeType('cognitive/skill_fs_list', nodeImpls.FsListNodeImpl);
+  LiteGraph.registerNodeType('cognitive/skill_task_create', nodeImpls.TaskCreateNodeImpl);
+  LiteGraph.registerNodeType('cognitive/skill_task_list', nodeImpls.TaskListNodeImpl);
+  LiteGraph.registerNodeType('cognitive/skill_task_update', nodeImpls.TaskUpdateNodeImpl);
+  LiteGraph.registerNodeType('cognitive/skill_search_index', nodeImpls.SearchIndexNodeImpl);
+  LiteGraph.registerNodeType('cognitive/skill_web_search', nodeImpls.WebSearchNodeImpl);
+  LiteGraph.registerNodeType('cognitive/skill_conversational_response', nodeImpls.ConversationalResponseNodeImpl);
 
-  console.log('[CognitiveNodes] Registered', Object.keys(LiteGraph.registered_node_types).filter(k => k.startsWith('cognitive/')).length, 'node types');
+  const registeredTypes = LiteGraph?.registered_node_types
+    ? Object.keys(LiteGraph.registered_node_types).filter(k => k.startsWith('cognitive/'))
+    : [];
+  console.log('[CognitiveNodes] Registered', registeredTypes.length, 'node types');
 }
 
 /**

@@ -60,6 +60,11 @@ export * from './users';
 export * from './sessions';
 export * from './profile';
 
+// Node Editor - Graph Execution
+export * from './cognitive-graph-schema';
+export * from './graph-executor';
+export * from './node-executors';
+
 // Version
 export const VERSION = '0.1.0';
 export const PHASE = 'Phase 1-2: Intelligence & Autonomy (Multi-User)';

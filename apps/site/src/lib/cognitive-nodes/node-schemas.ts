@@ -355,6 +355,7 @@ export const ChainOfThoughtStripperNode: NodeSchema = {
   ],
   outputs: [
     { name: 'cleaned', type: 'string', description: 'Response with <think> blocks removed' },
+    { name: 'response', type: 'string', description: 'Alias for cleaned output', optional: true },
   ],
   description: 'Removes internal reasoning blocks',
 };
@@ -368,8 +369,10 @@ export const SafetyValidatorNode: NodeSchema = {
     { name: 'response', type: 'string' },
   ],
   outputs: [
+    { name: 'response', type: 'string' },
     { name: 'isSafe', type: 'boolean' },
     { name: 'issues', type: 'array', optional: true },
+    { name: 'safetyResult', type: 'object', optional: true },
   ],
   properties: {
     threshold: 0.7,
@@ -384,10 +387,11 @@ export const ResponseRefinerNode: NodeSchema = {
   ...categoryColors.chat,
   inputs: [
     { name: 'response', type: 'string' },
-    { name: 'issues', type: 'array' },
+    { name: 'safetyResult', type: 'object', optional: true },
   ],
   outputs: [
-    { name: 'refined', type: 'string' },
+    { name: 'response', type: 'string' },
+    { name: 'refined', type: 'boolean', optional: true },
   ],
   description: 'Refines response to address safety issues',
 };

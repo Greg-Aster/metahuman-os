@@ -345,7 +345,7 @@
       "description": "Lightweight assistant mode"
     },
     "emulation": {
-      "orchestrator": "ollama.qwen3:0.6b",
+      "orchestrator": "default.orchestrator",
       "persona": "default.orchestrator",
       "description": "Read-only personality snapshot"
     }

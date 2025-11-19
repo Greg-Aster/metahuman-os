@@ -45,7 +45,9 @@
     "./user-data-collector": "./src/user-data-collector.ts",
     "./user-resolver": "./src/user-resolver.ts",
     "./chat-settings": "./src/chat-settings.ts",
-    "./tts/server-manager": "./src/tts/server-manager.ts"
+    "./tts/server-manager": "./src/tts/server-manager.ts",
+    "./cognitive-graph-schema": "./src/cognitive-graph-schema.ts",
+    "./graph-executor": "./src/graph-executor.ts"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
