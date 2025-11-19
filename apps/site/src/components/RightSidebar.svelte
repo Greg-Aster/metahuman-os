@@ -10,17 +10,29 @@
   let activeTab = 'monitor';
   let useEnhancedAudit = true; // Toggle between old and new audit stream (default: grouped mode)
 
-  // Load preference from localStorage
+  // Load preferences from localStorage
   onMount(() => {
     try {
-      const saved = localStorage.getItem('mh_use_enhanced_audit');
-      if (saved !== null) {
-        useEnhancedAudit = saved === 'true';
+      const savedTab = localStorage.getItem('mh_right_sidebar_tab');
+      if (savedTab !== null) {
+        activeTab = savedTab;
+      }
+
+      const savedAudit = localStorage.getItem('mh_use_enhanced_audit');
+      if (savedAudit !== null) {
+        useEnhancedAudit = savedAudit === 'true';
       }
     } catch {}
   });
 
-  // Save preference to localStorage
+  // Save active tab to localStorage
+  $: if (typeof activeTab !== 'undefined') {
+    try {
+      localStorage.setItem('mh_right_sidebar_tab', activeTab);
+    } catch {}
+  }
+
+  // Save audit preference to localStorage
   $: if (typeof useEnhancedAudit !== 'undefined') {
     try {
       localStorage.setItem('mh_use_enhanced_audit', String(useEnhancedAudit));

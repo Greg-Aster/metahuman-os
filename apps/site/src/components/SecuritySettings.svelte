@@ -1226,7 +1226,7 @@
 
     <!-- Danger Zone -->
     <div class="card danger-card">
-      <h2>⚠️ Delete Zone</h2>
+      <h2>⚠️ Danger Zone</h2>
       <p class="danger-description">
         Critical operations that can permanently affect your account, data, and system configuration. Proceed with caution.
       </p>

@@ -593,62 +593,85 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
     LGraphNode = LGraphNodeRef;
   }
 
+  console.log('[CognitiveNodes] Registration starting...', {
+    hasLiteGraph: !!LiteGraph,
+    hasLGraphNode: !!LGraphNode,
+    hasRegisterMethod: typeof LiteGraph?.registerNodeType === 'function'
+  });
+
   // Create the base class and all node implementations
   const CognitiveNodeBase = createCognitiveNodeClass(LGraphNode);
   const nodeImpls = createNodeImplementations(CognitiveNodeBase);
 
-  // Input nodes
-  LiteGraph.registerNodeType('cognitive/user_input', nodeImpls.UserInputNodeImpl);
-  LiteGraph.registerNodeType('cognitive/session_context', nodeImpls.SessionContextNodeImpl);
-  LiteGraph.registerNodeType('cognitive/system_settings', nodeImpls.SystemSettingsNodeImpl);
+  console.log('[CognitiveNodes] Created node implementations:', Object.keys(nodeImpls).length);
 
-  // Router nodes
-  LiteGraph.registerNodeType('cognitive/cognitive_mode_router', nodeImpls.CognitiveModeRouterNodeImpl);
-  LiteGraph.registerNodeType('cognitive/auth_check', nodeImpls.AuthCheckNodeImpl);
-  LiteGraph.registerNodeType('cognitive/operator_eligibility', nodeImpls.OperatorEligibilityNodeImpl);
+  try {
+    // Test registration with first node
+    console.log('[CognitiveNodes] Testing registration with user_input node...');
+    console.log('[CognitiveNodes] Before registration, registered_node_types:', LiteGraph.registered_node_types);
+    LiteGraph.registerNodeType('cognitive/user_input', nodeImpls.UserInputNodeImpl);
+    console.log('[CognitiveNodes] After first registration, registered_node_types:', LiteGraph.registered_node_types);
 
-  // Context nodes
-  LiteGraph.registerNodeType('cognitive/context_builder', nodeImpls.ContextBuilderNodeImpl);
-  LiteGraph.registerNodeType('cognitive/semantic_search', nodeImpls.SemanticSearchNodeImpl);
-  LiteGraph.registerNodeType('cognitive/conversation_history', nodeImpls.ConversationHistoryNodeImpl);
+    // Input nodes
+    LiteGraph.registerNodeType('cognitive/session_context', nodeImpls.SessionContextNodeImpl);
+    LiteGraph.registerNodeType('cognitive/system_settings', nodeImpls.SystemSettingsNodeImpl);
 
-  // Operator nodes
-  LiteGraph.registerNodeType('cognitive/react_planner', nodeImpls.ReActPlannerNodeImpl);
-  LiteGraph.registerNodeType('cognitive/skill_executor', nodeImpls.SkillExecutorNodeImpl);
-  LiteGraph.registerNodeType('cognitive/observation_formatter', nodeImpls.ObservationFormatterNodeImpl);
-  LiteGraph.registerNodeType('cognitive/completion_checker', nodeImpls.CompletionCheckerNodeImpl);
-  LiteGraph.registerNodeType('cognitive/response_synthesizer', nodeImpls.ResponseSynthesizerNodeImpl);
+    // Router nodes
+    LiteGraph.registerNodeType('cognitive/cognitive_mode_router', nodeImpls.CognitiveModeRouterNodeImpl);
+    LiteGraph.registerNodeType('cognitive/auth_check', nodeImpls.AuthCheckNodeImpl);
+    LiteGraph.registerNodeType('cognitive/operator_eligibility', nodeImpls.OperatorEligibilityNodeImpl);
 
-  // Chat nodes
-  LiteGraph.registerNodeType('cognitive/persona_llm', nodeImpls.PersonaLLMNodeImpl);
-  LiteGraph.registerNodeType('cognitive/chain_of_thought_stripper', nodeImpls.ChainOfThoughtStripperNodeImpl);
-  LiteGraph.registerNodeType('cognitive/safety_validator', nodeImpls.SafetyValidatorNodeImpl);
-  LiteGraph.registerNodeType('cognitive/response_refiner', nodeImpls.ResponseRefinerNodeImpl);
+    // Context nodes
+    LiteGraph.registerNodeType('cognitive/context_builder', nodeImpls.ContextBuilderNodeImpl);
+    LiteGraph.registerNodeType('cognitive/semantic_search', nodeImpls.SemanticSearchNodeImpl);
+    LiteGraph.registerNodeType('cognitive/conversation_history', nodeImpls.ConversationHistoryNodeImpl);
 
-  // Model nodes
-  LiteGraph.registerNodeType('cognitive/model_resolver', nodeImpls.ModelResolverNodeImpl);
-  LiteGraph.registerNodeType('cognitive/model_router', nodeImpls.ModelRouterNodeImpl);
+    // Operator nodes
+    LiteGraph.registerNodeType('cognitive/react_planner', nodeImpls.ReActPlannerNodeImpl);
+    LiteGraph.registerNodeType('cognitive/skill_executor', nodeImpls.SkillExecutorNodeImpl);
+    LiteGraph.registerNodeType('cognitive/observation_formatter', nodeImpls.ObservationFormatterNodeImpl);
+    LiteGraph.registerNodeType('cognitive/completion_checker', nodeImpls.CompletionCheckerNodeImpl);
+    LiteGraph.registerNodeType('cognitive/response_synthesizer', nodeImpls.ResponseSynthesizerNodeImpl);
 
-  // Output nodes
-  LiteGraph.registerNodeType('cognitive/memory_capture', nodeImpls.MemoryCaptureNodeImpl);
-  LiteGraph.registerNodeType('cognitive/audit_logger', nodeImpls.AuditLoggerNodeImpl);
-  LiteGraph.registerNodeType('cognitive/stream_writer', nodeImpls.StreamWriterNodeImpl);
+    // Chat nodes
+    LiteGraph.registerNodeType('cognitive/persona_llm', nodeImpls.PersonaLLMNodeImpl);
+    LiteGraph.registerNodeType('cognitive/chain_of_thought_stripper', nodeImpls.ChainOfThoughtStripperNodeImpl);
+    LiteGraph.registerNodeType('cognitive/safety_validator', nodeImpls.SafetyValidatorNodeImpl);
+    LiteGraph.registerNodeType('cognitive/response_refiner', nodeImpls.ResponseRefinerNodeImpl);
 
-  // Skill nodes
-  LiteGraph.registerNodeType('cognitive/skill_fs_read', nodeImpls.FsReadNodeImpl);
-  LiteGraph.registerNodeType('cognitive/skill_fs_write', nodeImpls.FsWriteNodeImpl);
-  LiteGraph.registerNodeType('cognitive/skill_fs_list', nodeImpls.FsListNodeImpl);
-  LiteGraph.registerNodeType('cognitive/skill_task_create', nodeImpls.TaskCreateNodeImpl);
-  LiteGraph.registerNodeType('cognitive/skill_task_list', nodeImpls.TaskListNodeImpl);
-  LiteGraph.registerNodeType('cognitive/skill_task_update', nodeImpls.TaskUpdateNodeImpl);
-  LiteGraph.registerNodeType('cognitive/skill_search_index', nodeImpls.SearchIndexNodeImpl);
-  LiteGraph.registerNodeType('cognitive/skill_web_search', nodeImpls.WebSearchNodeImpl);
-  LiteGraph.registerNodeType('cognitive/skill_conversational_response', nodeImpls.ConversationalResponseNodeImpl);
+    // Model nodes
+    LiteGraph.registerNodeType('cognitive/model_resolver', nodeImpls.ModelResolverNodeImpl);
+    LiteGraph.registerNodeType('cognitive/model_router', nodeImpls.ModelRouterNodeImpl);
+
+    // Output nodes
+    LiteGraph.registerNodeType('cognitive/memory_capture', nodeImpls.MemoryCaptureNodeImpl);
+    LiteGraph.registerNodeType('cognitive/audit_logger', nodeImpls.AuditLoggerNodeImpl);
+    LiteGraph.registerNodeType('cognitive/stream_writer', nodeImpls.StreamWriterNodeImpl);
+
+    // Skill nodes
+    LiteGraph.registerNodeType('cognitive/skill_fs_read', nodeImpls.FsReadNodeImpl);
+    LiteGraph.registerNodeType('cognitive/skill_fs_write', nodeImpls.FsWriteNodeImpl);
+    LiteGraph.registerNodeType('cognitive/skill_fs_list', nodeImpls.FsListNodeImpl);
+    LiteGraph.registerNodeType('cognitive/skill_task_create', nodeImpls.TaskCreateNodeImpl);
+    LiteGraph.registerNodeType('cognitive/skill_task_list', nodeImpls.TaskListNodeImpl);
+    LiteGraph.registerNodeType('cognitive/skill_task_update', nodeImpls.TaskUpdateNodeImpl);
+    LiteGraph.registerNodeType('cognitive/skill_search_index', nodeImpls.SearchIndexNodeImpl);
+    LiteGraph.registerNodeType('cognitive/skill_web_search', nodeImpls.WebSearchNodeImpl);
+    LiteGraph.registerNodeType('cognitive/skill_conversational_response', nodeImpls.ConversationalResponseNodeImpl);
+
+    console.log('[CognitiveNodes] Registration completed successfully');
+  } catch (error) {
+    console.error('[CognitiveNodes] Registration error:', error);
+    throw error;
+  }
 
   const registeredTypes = LiteGraph?.registered_node_types
     ? Object.keys(LiteGraph.registered_node_types).filter(k => k.startsWith('cognitive/'))
     : [];
   console.log('[CognitiveNodes] Registered', registeredTypes.length, 'node types');
+  console.log('[CognitiveNodes] All registered types:',
+    LiteGraph?.registered_node_types ? Object.keys(LiteGraph.registered_node_types) : 'N/A'
+  );
 }
 
 /**

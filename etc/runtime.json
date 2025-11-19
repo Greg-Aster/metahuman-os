@@ -7,5 +7,10 @@
     "reactV2": true,
     "useReasoningService": false,
     "useContextPackage": true
+  },
+  "cognitive": {
+    "useNodePipeline": true,
+    "changedAt": "2025-11-19T18:10:09.803Z",
+    "changedBy": "greggles"
   }
 }
