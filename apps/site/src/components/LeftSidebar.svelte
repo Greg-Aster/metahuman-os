@@ -14,15 +14,11 @@
   const menuItems: MenuItem[] = [
     { id: 'chat', label: 'Chat', icon: '💬', description: 'Conversation interface' },
     { id: 'dashboard', label: 'Dashboard', icon: '📊', description: 'System overview' },
-    { id: 'tasks', label: 'Tasks', icon: '✓', description: 'Task management' },
-    { id: 'approvals', label: 'Approvals', icon: '✋', description: 'Skill execution queue' },
-    { id: 'memory', label: 'Memory', icon: '🧩', description: 'Events & insights' },
+    { id: 'persona', label: 'Persona', icon: '👤', description: 'Identity & personality' },
     { id: 'voice', label: 'Voice', icon: '🎤', description: 'Audio & training' },
     { id: 'training', label: 'AI Training', icon: '🧠', description: 'LoRA adapters' },
     { id: 'terminal', label: 'Terminal', icon: '💻', description: 'Command line' },
     { id: 'system', label: 'System', icon: '⚙️', description: 'Settings & tools' },
-    { id: 'network', label: 'Network', icon: '🌐', description: 'Cloudflare & connectivity' },
-    { id: 'security', label: 'Security', icon: '🔒', description: 'User & authentication' },
   ];
 
   // Current user state
@@ -671,26 +667,17 @@
   <!-- Menu Items -->
   <nav class="menu">
     {#each menuItems as item}
-      {@const isSecurityTab = item.id === 'security'}
-      {@const isDisabled = isSecurityTab && (!currentUser || (currentUser.role !== 'owner' && currentUser.role !== 'standard'))}
       <button
         class="menu-item"
         class:active={$activeView === item.id}
-        class:disabled={isDisabled}
-        on:click={() => !isDisabled && selectView(item.id)}
-        disabled={isDisabled}
-        title={isDisabled ? 'Authentication required for security settings' : item.description}
+        on:click={() => selectView(item.id)}
+        title={item.description}
       >
         <span class="menu-icon">{item.icon}</span>
         <div class="menu-text">
           <div class="menu-label">
             {item.label}
-            {#if isDisabled}
-              <svg class="w-3 h-3 inline ml-1 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-              </svg>
-            {/if}
-            {#if item.id === 'approvals' && pendingApprovals > 0}
+            {#if item.id === 'dashboard' && pendingApprovals > 0}
               <span class="approval-badge">{pendingApprovals}</span>
             {/if}
           </div>
@@ -1764,17 +1751,4 @@
     box-shadow: 0 0 16px rgba(248,113,113,0.3);
   }
 
-  /* Disabled menu item styles */
-  .menu-item.disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .menu-item.disabled:hover {
-    background: transparent !important;
-  }
-
-  :global(.dark) .menu-item.disabled:hover {
-    background: transparent !important;
-  }
 </style>

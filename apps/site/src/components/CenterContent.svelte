@@ -22,6 +22,8 @@
   import MemoryEditor from './MemoryEditor.svelte';
   import PersonaGenerator from './PersonaGenerator.svelte';
   import PersonaEditor from './PersonaEditor.svelte';
+  import AddonsManager from './AddonsManager.svelte';
+  import BoredomControl from './BoredomControl.svelte';
 
   // Memory/Events (loaded from /api/memories)
   type EventItem = {
@@ -56,11 +58,37 @@ let functionMemories: Array<{
 }> = []
 let loadingEvents = false
 let eventsError: string | null = null
+let personaTab: 'editor' | 'memory' | 'behavior' | 'generator' = 'editor'
 let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'setup' | 'datasets' | 'monitor' | 'adapters' = 'datasets'
-let systemTab: 'persona' | 'generator' | 'chat' | 'lifeline' | 'settings' = 'persona'
+let systemTab: 'chat' | 'lifeline' | 'settings' | 'security' | 'network' | 'addons' = 'settings'
+let dashboardTab: 'overview' | 'tasks' | 'approvals' = 'overview'
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
+
+// Curiosity config (for Behavior tab)
+let curiosityLevel = 1
+let curiosityResearchMode: 'off' | 'local' | 'web' = 'local'
+
+const curiosityLevelDescriptions = [
+  'Curiosity disabled - no questions will be asked',
+  'Gentle - Questions after 60 minutes of conversation inactivity',
+  'Moderate - Questions after 30 minutes of conversation inactivity',
+  'Active - Questions after 15 minutes of conversation inactivity',
+  'Chatty - Questions after 5 minutes of conversation inactivity',
+  'Very Active - Questions after 2 minutes of conversation inactivity',
+  'Intense - Questions after 1 minute of conversation inactivity'
+]
+
+const curiosityIntervals = [
+  0,     // Level 0: Off
+  3600,  // Level 1: 60 minutes
+  1800,  // Level 2: 30 minutes
+  900,   // Level 3: 15 minutes
+  300,   // Level 4: 5 minutes
+  120,   // Level 5: 2 minutes
+  60     // Level 6: 1 minute
+]
 
 // Legacy expansion state (no longer used but kept to prevent errors)
 let expanded: Record<string, boolean> = {}
@@ -86,8 +114,38 @@ async function loadVoiceProvider() {
   }
 }
 
+async function loadCuriositySettings() {
+  try {
+    const res = await fetch('/api/curiosity-config');
+    if (res.ok) {
+      const data = await res.json();
+      curiosityLevel = data.maxOpenQuestions;
+      curiosityResearchMode = data.researchMode || 'local';
+    }
+  } catch (err) {
+    console.error('[CenterContent] Error loading curiosity config:', err);
+  }
+}
+
+async function saveCuriositySettings() {
+  try {
+    const res = await fetch('/api/curiosity-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        maxOpenQuestions: curiosityLevel,
+        researchMode: curiosityResearchMode,
+        questionIntervalSeconds: curiosityIntervals[curiosityLevel]
+      })
+    });
+    if (!res.ok) throw new Error('Failed to save curiosity settings');
+  } catch (err) {
+    console.error('[CenterContent] Error saving curiosity config:', err);
+  }
+}
+
 async function loadEvents() {
-  if ($activeView !== 'memory') return;
+  if ($activeView !== 'persona' || personaTab !== 'memory') return;
 
   loadingEvents = true;
   eventsError = null;
@@ -162,9 +220,13 @@ async function loadFunctions() {
   }
 }
 
-$: if ($activeView === 'memory') {
+$: if ($activeView === 'persona' && personaTab === 'memory') {
   loadEvents();
   loadFunctions();
+}
+
+$: if ($activeView === 'persona' && personaTab === 'behavior') {
+  loadCuriositySettings();
 }
 
 $: if ($activeView === 'voice' && voiceTab === 'training') {
@@ -172,6 +234,10 @@ $: if ($activeView === 'voice' && voiceTab === 'training') {
 }
 
 // Reset sub-tabs when navigating away from parent views
+$: if ($activeView !== 'persona') {
+  personaTab = 'editor';
+}
+
 $: if ($activeView !== 'voice') {
   voiceTab = 'upload';
 }
@@ -181,7 +247,11 @@ $: if ($activeView !== 'training') {
 }
 
 $: if ($activeView !== 'system') {
-  systemTab = 'persona';
+  systemTab = 'settings';
+}
+
+$: if ($activeView !== 'dashboard') {
+  dashboardTab = 'overview';
 }
 
 // loadPersonaCore and savePersonaCore removed - now using PersonaEditor component
@@ -314,54 +384,113 @@ async function loadMemoryContent(relPath: string) {
     <div class="view-container">
       <div class="view-header">
         <h2 class="view-title">📊 Dashboard</h2>
-        <p class="view-subtitle">System overview and status</p>
+        <p class="view-subtitle">Overview, tasks & approvals</p>
       </div>
       <div class="view-content">
-        <Dashboard />
-      </div>
-    </div>
-  {:else if $activeView === 'tasks'}
-    <div class="view-container">
-      <div class="view-header">
-        <h2 class="view-title">✓ Tasks</h2>
-        <p class="view-subtitle">Manage your tasks and goals</p>
-      </div>
-      <div class="view-content">
-        <TaskManager />
-      </div>
-    </div>
-  {:else if $activeView === 'approvals'}
-    <div class="view-container">
-      <div class="view-header">
-        <h2 class="view-title">✋ Approval Queue</h2>
-        <p class="view-subtitle">Review and approve skill executions</p>
-      </div>
-      <div class="view-content">
-        <ApprovalQueue />
-      </div>
-    </div>
-  {:else if $activeView === 'memory'}
-    <div class="view-container">
-      <div class="view-header">
-        <h2 class="view-title">🧩 Memory</h2>
-        <p class="view-subtitle">Episodic events and experiences</p>
-      </div>
-      <div class="view-content">
-        <div class="memory-section">
-          <MemoryControls on:captured={loadEvents} />
-        </div>
         <div class="tab-group">
-          <button class="tab-button" class:active={memoryTab==='episodic'} on:click={() => memoryTab='episodic'}>Episodic</button>
-          <button class="tab-button" class:active={memoryTab==='reflections'} on:click={() => memoryTab='reflections'}>Reflections</button>
-          <button class="tab-button" class:active={memoryTab==='tasks'} on:click={() => memoryTab='tasks'}>Tasks</button>
-          <button class="tab-button" class:active={memoryTab==='curated'} on:click={() => memoryTab='curated'}>Curated</button>
-          <button class="tab-button" class:active={memoryTab==='ai-ingestor'} on:click={() => memoryTab='ai-ingestor'}>AI Ingestor</button>
-          <button class="tab-button" class:active={memoryTab==='audio'} on:click={() => memoryTab='audio'}>Audio</button>
-          <button class="tab-button" class:active={memoryTab==='dreams'} on:click={() => memoryTab='dreams'}>Dreams 💭</button>
-          <button class="tab-button" class:active={memoryTab==='curiosity'} on:click={() => memoryTab='curiosity'}>Curiosity ❓</button>
-          <button class="tab-button" class:active={memoryTab==='functions'} on:click={() => memoryTab='functions'}>Functions 🔧</button>
+          <button class="tab-button" class:active={dashboardTab === 'overview'} on:click={() => dashboardTab = 'overview'}>Overview</button>
+          <button class="tab-button" class:active={dashboardTab === 'tasks'} on:click={() => dashboardTab = 'tasks'}>Tasks</button>
+          <button class="tab-button" class:active={dashboardTab === 'approvals'} on:click={() => dashboardTab = 'approvals'}>Approvals</button>
         </div>
-        {#if loadingEvents}
+        {#if dashboardTab === 'overview'}
+          <Dashboard />
+        {:else if dashboardTab === 'tasks'}
+          <TaskManager />
+        {:else if dashboardTab === 'approvals'}
+          <ApprovalQueue />
+        {/if}
+      </div>
+    </div>
+  {:else if $activeView === 'voice'}
+    <div class="view-container">
+      <div class="view-header">
+        <h2 class="view-title">🎤 Voice</h2>
+        <p class="view-subtitle">Audio upload, transcription & voice training</p>
+      </div>
+      <div class="view-content">
+        <div class="tab-group">
+          <button class="tab-button" class:active={voiceTab === 'upload'} on:click={() => voiceTab = 'upload'}>Upload & Transcribe</button>
+          <button class="tab-button" class:active={voiceTab === 'training'} on:click={() => { voiceTab = 'training'; loadVoiceProvider(); }}>Voice Clone Training</button>
+          <button class="tab-button" class:active={voiceTab === 'settings'} on:click={() => voiceTab = 'settings'}>Voice Settings</button>
+        </div>
+        {#if voiceTab === 'upload'}
+          <div class="audio-grid">
+            <AudioUpload />
+            <AudioRecorder />
+          </div>
+        {:else if voiceTab === 'training'}
+          <VoiceTrainingWidget provider={currentVoiceProvider} />
+        {:else if voiceTab === 'settings'}
+          <VoiceSettings />
+        {/if}
+      </div>
+    </div>
+  {:else if $activeView === 'training'}
+    <div class="view-container">
+      <div class="view-header">
+        <h2 class="view-title">🧠 AI Training</h2>
+        <p class="view-subtitle">LoRA datasets, training & adapters</p>
+      </div>
+      <div class="view-content">
+        <div class="tab-group">
+          <button class="tab-button" class:active={trainingTab === 'setup'} on:click={() => trainingTab = 'setup'}>🧭 Setup Wizard</button>
+          <button class="tab-button" class:active={trainingTab === 'datasets'} on:click={() => trainingTab = 'datasets'}>Datasets</button>
+          <button class="tab-button" class:active={trainingTab === 'monitor'} on:click={() => trainingTab = 'monitor'}>Training Monitor</button>
+          <button class="tab-button" class:active={trainingTab === 'adapters'} on:click={() => trainingTab = 'adapters'}>Adapters</button>
+        </div>
+        {#if trainingTab === 'setup'}
+          <div class="onboarding-wrapper">
+            <OnboardingWizard onComplete={() => {
+              trainingTab = 'datasets';
+              alert('Onboarding completed! Your data has been saved.');
+            }} />
+          </div>
+        {:else if trainingTab === 'datasets'}
+          <AdapterDashboard />
+        {:else if trainingTab === 'monitor'}
+          <TrainingMonitor />
+        {:else if trainingTab === 'adapters'}
+          <div class="empty-state">
+            <div class="empty-icon">🧠</div>
+            <div class="empty-title">Active Adapters</div>
+            <div class="empty-description">
+              Adapter management interface coming soon. Check the Settings tab in the right sidebar for current adapter status.
+            </div>
+          </div>
+        {/if}
+      </div>
+    </div>
+  {:else if $activeView === 'persona'}
+    <div class="view-container">
+      <div class="view-header">
+        <h2 class="view-title">👤 Persona</h2>
+        <p class="view-subtitle">Identity, personality & memory</p>
+      </div>
+      <div class="view-content">
+        <div class="tab-group">
+          <button class="tab-button" class:active={personaTab==='editor'} on:click={() => personaTab='editor'}>Editor</button>
+          <button class="tab-button" class:active={personaTab==='memory'} on:click={() => personaTab='memory'}>Memory</button>
+          <button class="tab-button" class:active={personaTab==='behavior'} on:click={() => personaTab='behavior'}>Behavior</button>
+          <button class="tab-button" class:active={personaTab==='generator'} on:click={() => personaTab='generator'}>Generator</button>
+        </div>
+        {#if personaTab === 'editor'}
+          <PersonaEditor />
+        {:else if personaTab === 'memory'}
+          <div class="memory-section">
+            <MemoryControls on:captured={loadEvents} />
+          </div>
+          <div class="tab-group">
+            <button class="tab-button" class:active={memoryTab==='episodic'} on:click={() => memoryTab='episodic'}>Episodic</button>
+            <button class="tab-button" class:active={memoryTab==='reflections'} on:click={() => memoryTab='reflections'}>Reflections</button>
+            <button class="tab-button" class:active={memoryTab==='tasks'} on:click={() => memoryTab='tasks'}>Tasks</button>
+            <button class="tab-button" class:active={memoryTab==='curated'} on:click={() => memoryTab='curated'}>Curated</button>
+            <button class="tab-button" class:active={memoryTab==='ai-ingestor'} on:click={() => memoryTab='ai-ingestor'}>AI Ingestor</button>
+            <button class="tab-button" class:active={memoryTab==='audio'} on:click={() => memoryTab='audio'}>Audio</button>
+            <button class="tab-button" class:active={memoryTab==='dreams'} on:click={() => memoryTab='dreams'}>Dreams 💭</button>
+            <button class="tab-button" class:active={memoryTab==='curiosity'} on:click={() => memoryTab='curiosity'}>Curiosity ❓</button>
+            <button class="tab-button" class:active={memoryTab==='functions'} on:click={() => memoryTab='functions'}>Functions 🔧</button>
+          </div>
+          {#if loadingEvents}
           <div class="loading-state">Loading memories...</div>
         {:else if eventsError}
           <div class="empty-state">
@@ -737,7 +866,7 @@ async function loadMemoryContent(relPath: string) {
             {/if}
           </div>
         {:else if memoryTab === 'dreams'}
-        <div class="events-list"> 
+        <div class="events-list">
 
             {#if dreamMemories.length > 0}
               {#each dreamMemories as event (event.id)}
@@ -813,7 +942,7 @@ async function loadMemoryContent(relPath: string) {
                   {question.question}
                 </div>
                 <div class="event-card-footer">
-                  <button class="btn-view" on:click={() => openEditor(question.relPath, 'Question')}>
+                  <button class="btn-view" on:click={() => openMemoryEditor(question.relPath, 'Question')}>
                     View Details
                   </button>
                   {#if question.status === 'pending'}
@@ -893,64 +1022,59 @@ async function loadMemoryContent(relPath: string) {
             {/if}
           </div>
         {/if}
-      </div>
-    </div>
-  {:else if $activeView === 'voice'}
-    <div class="view-container">
-      <div class="view-header">
-        <h2 class="view-title">🎤 Voice</h2>
-        <p class="view-subtitle">Audio upload, transcription & voice training</p>
-      </div>
-      <div class="view-content">
-        <div class="tab-group">
-          <button class="tab-button" class:active={voiceTab === 'upload'} on:click={() => voiceTab = 'upload'}>Upload & Transcribe</button>
-          <button class="tab-button" class:active={voiceTab === 'training'} on:click={() => { voiceTab = 'training'; loadVoiceProvider(); }}>Voice Clone Training</button>
-          <button class="tab-button" class:active={voiceTab === 'settings'} on:click={() => voiceTab = 'settings'}>Voice Settings</button>
-        </div>
-        {#if voiceTab === 'upload'}
-          <div class="audio-grid">
-            <AudioUpload />
-            <AudioRecorder />
-          </div>
-        {:else if voiceTab === 'training'}
-          <VoiceTrainingWidget provider={currentVoiceProvider} />
-        {:else if voiceTab === 'settings'}
-          <VoiceSettings />
-        {/if}
-      </div>
-    </div>
-  {:else if $activeView === 'training'}
-    <div class="view-container">
-      <div class="view-header">
-        <h2 class="view-title">🧠 AI Training</h2>
-        <p class="view-subtitle">LoRA datasets, training & adapters</p>
-      </div>
-      <div class="view-content">
-        <div class="tab-group">
-          <button class="tab-button" class:active={trainingTab === 'setup'} on:click={() => trainingTab = 'setup'}>🧭 Setup Wizard</button>
-          <button class="tab-button" class:active={trainingTab === 'datasets'} on:click={() => trainingTab = 'datasets'}>Datasets</button>
-          <button class="tab-button" class:active={trainingTab === 'monitor'} on:click={() => trainingTab = 'monitor'}>Training Monitor</button>
-          <button class="tab-button" class:active={trainingTab === 'adapters'} on:click={() => trainingTab = 'adapters'}>Adapters</button>
-        </div>
-        {#if trainingTab === 'setup'}
-          <div class="onboarding-wrapper">
-            <OnboardingWizard onComplete={() => {
-              trainingTab = 'datasets';
-              alert('Onboarding completed! Your data has been saved.');
-            }} />
-          </div>
-        {:else if trainingTab === 'datasets'}
-          <AdapterDashboard />
-        {:else if trainingTab === 'monitor'}
-          <TrainingMonitor />
-        {:else if trainingTab === 'adapters'}
-          <div class="empty-state">
-            <div class="empty-icon">🧠</div>
-            <div class="empty-title">Active Adapters</div>
-            <div class="empty-description">
-              Adapter management interface coming soon. Check the Settings tab in the right sidebar for current adapter status.
+        {:else if personaTab === 'behavior'}
+          <div class="behavior-section">
+            <!-- Mind Wandering Control -->
+            <div class="setting-group">
+              <label class="setting-label" for="mind-wandering-control">Mind Wandering</label>
+              <div id="mind-wandering-control">
+                <BoredomControl />
+              </div>
+            </div>
+
+            <!-- Curiosity Level Control -->
+            <div class="setting-group">
+              <label class="setting-label">Curiosity Level</label>
+              <div class="curiosity-control-container">
+                <div class="curiosity-slider-wrapper">
+                  <input
+                    type="range"
+                    min="0"
+                    max="6"
+                    bind:value={curiosityLevel}
+                    on:change={saveCuriositySettings}
+                    class="curiosity-slider"
+                  />
+                  <div class="curiosity-labels">
+                    <span>Off</span>
+                    <span>Gentle</span>
+                    <span>Moderate</span>
+                    <span>Active</span>
+                    <span>Chatty</span>
+                    <span>Very</span>
+                    <span>Intense</span>
+                  </div>
+                </div>
+                <p class="curiosity-description">
+                  {curiosityLevelDescriptions[curiosityLevel]}
+                </p>
+
+                <!-- Research Mode Toggle -->
+                {#if curiosityLevel > 0}
+                  <div class="research-mode-controls">
+                    <label class="field-label" for="research-mode-select">Research Mode</label>
+                    <select id="research-mode-select" bind:value={curiosityResearchMode} on:change={saveCuriositySettings} class="logging-select">
+                      <option value="off">Off - Questions only</option>
+                      <option value="local">Local - Use existing memories</option>
+                      <option value="web">Web - Allow web searches</option>
+                    </select>
+                  </div>
+                {/if}
+              </div>
             </div>
           </div>
+        {:else if personaTab === 'generator'}
+          <PersonaGenerator />
         {/if}
       </div>
     </div>
@@ -958,24 +1082,27 @@ async function loadMemoryContent(relPath: string) {
     <div class="view-container" class:terminal-view={systemTab === 'terminal'}>
       <div class="view-header">
         <h2 class="view-title">⚙️ System</h2>
-        <p class="view-subtitle">Persona, tools & settings</p>
+        <p class="view-subtitle">Tools & settings</p>
       </div>
       <div class="view-content">
         <div class="tab-group">
-          <button class="tab-button" class:active={systemTab==='persona'} on:click={() => systemTab='persona'}>Persona</button>
-          <button class="tab-button" class:active={systemTab==='generator'} on:click={() => systemTab='generator'}>Generator</button>
           <button class="tab-button" class:active={systemTab==='chat'} on:click={() => systemTab='chat'}>Chat</button>
           <button class="tab-button" class:active={systemTab==='settings'} on:click={() => systemTab='settings'}>Settings</button>
+          <button class="tab-button" class:active={systemTab==='security'} on:click={() => systemTab='security'}>Security</button>
+          <button class="tab-button" class:active={systemTab==='network'} on:click={() => systemTab='network'}>Network</button>
+          <button class="tab-button" class:active={systemTab==='addons'} on:click={() => systemTab='addons'}>Addons</button>
           <button class="tab-button" class:active={systemTab==='lifeline'} on:click={() => systemTab='lifeline'}>Lifeline</button>
         </div>
-        {#if systemTab === 'persona'}
-          <PersonaEditor />
-        {:else if systemTab === 'generator'}
-          <PersonaGenerator />
-        {:else if systemTab === 'chat'}
+        {#if systemTab === 'chat'}
           <ChatSettings />
         {:else if systemTab === 'settings'}
           <SystemSettings />
+        {:else if systemTab === 'security'}
+          <SecuritySettings />
+        {:else if systemTab === 'network'}
+          <NetworkSettings />
+        {:else if systemTab === 'addons'}
+          <AddonsManager />
         {:else if systemTab === 'lifeline'}
           <Lifeline />
         {/if}
@@ -990,14 +1117,6 @@ async function loadMemoryContent(relPath: string) {
       <div class="view-content">
         <Terminal />
       </div>
-    </div>
-  {:else if $activeView === 'network'}
-    <div class="view-container network-view">
-      <NetworkSettings />
-    </div>
-  {:else if $activeView === 'security'}
-    <div class="view-container security-view">
-      <SecuritySettings />
     </div>
   {/if}
 </div>
@@ -1434,6 +1553,99 @@ async function loadMemoryContent(relPath: string) {
   :global(.dark) .skill-tag {
     background: #374151;
     color: #d1d5db;
+  }
+
+  /* Behavior Section Styles */
+  .behavior-section {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding: 1.5rem 0;
+  }
+
+  .curiosity-control-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .curiosity-slider-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .curiosity-slider {
+    width: 100%;
+    accent-color: #7c3aed;
+    cursor: pointer;
+  }
+
+  .curiosity-labels {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    font-size: 0.7rem;
+    color: #6b7280;
+    padding: 0 0.25rem;
+    text-align: center;
+  }
+
+  :global(.dark) .curiosity-labels {
+    color: #9ca3af;
+  }
+
+  .curiosity-description {
+    font-size: 0.875rem;
+    color: #4b5563;
+    margin: 0;
+    padding: 0.75rem;
+    background: rgba(124, 58, 237, 0.05);
+    border-radius: 0.375rem;
+    border-left: 3px solid #7c3aed;
+  }
+
+  :global(.dark) .curiosity-description {
+    color: #9ca3af;
+    background: rgba(167, 139, 250, 0.08);
+    border-left-color: #a78bfa;
+  }
+
+  .research-mode-controls {
+    margin-top: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .field-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #4b5563;
+  }
+
+  :global(.dark) .field-label {
+    color: #9ca3af;
+  }
+
+  .logging-select {
+    padding: 0.5rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    background: white;
+    color: #1f2937;
+  }
+
+  :global(.dark) .logging-select {
+    background: #1f2937;
+    border-color: #374151;
+    color: #f3f4f6;
+  }
+
+  .logging-select:focus {
+    outline: none;
+    border-color: #7c3aed;
+    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
   }
 </style>
 
