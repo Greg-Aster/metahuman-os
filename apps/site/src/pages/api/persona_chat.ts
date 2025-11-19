@@ -8,6 +8,7 @@ import path from 'node:path';
 import { initializeSkills } from '../../../../../brain/skills/index';
 import { getAvailableSkills, executeSkill, type SkillManifest } from '@metahuman/core/skills';
 import { withUserContext } from '../../middleware/userContext';
+import { resolveNodePipelineFlag } from '../../utils/node-pipeline';
 
 type Role = 'system' | 'user' | 'assistant';
 type Mode = 'inner' | 'conversation';
@@ -82,7 +83,6 @@ const ENABLE_RESPONSE_REFINEMENT = process.env.ENABLE_RESPONSE_REFINEMENT !== 'f
 // IMPORTANT: Only enable after validating refinement quality in Phase 4.3 logs
 // Default: false (non-blocking mode, explicit opt-in required for safety)
 const ENABLE_BLOCKING_MODE = process.env.ENABLE_BLOCKING_MODE === 'true';
-const USE_NODE_PIPELINE = process.env.USE_NODE_PIPELINE === 'true';
 
 // In-memory message histories per mode
 // NOTE: These are automatically pruned to stay within token limits (max 20 messages / ~8k tokens)
@@ -1227,7 +1227,8 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     cognitiveMode = isAuthenticated ? cognitiveContext.mode : 'emulation';
     allowMemoryWrites = isAuthenticated ? cognitiveContext.allowMemoryWrites : false;
 
-    graphEnabled = typeof graphPipelineOverride === 'boolean' ? graphPipelineOverride : USE_NODE_PIPELINE;
+    const pipelineFlag = resolveNodePipelineFlag();
+    graphEnabled = typeof graphPipelineOverride === 'boolean' ? graphPipelineOverride : pipelineFlag;
   } catch (error) {
     console.error('[persona_chat] Fatal: Failed to initialize chat context:', error);
     return new Response(JSON.stringify({ error: 'Failed to initialize chat context: ' + (error as Error).message }), { status: 500 });

@@ -1,8 +1,9 @@
 # Node Editor Rollback – November 2025
 
 ## Status
-- **Node pipeline disabled:** `USE_NODE_PIPELINE` now defaults to `false` again inside `apps/site/src/pages/api/persona_chat.ts`. Requests fall back to the legacy imperative pipeline until we explicitly set `USE_NODE_PIPELINE=true` via the environment.
+- **Node pipeline disabled:** `USE_NODE_PIPELINE` now defaults to `false` again inside `apps/site/src/pages/api/persona_chat.ts`. Requests fall back to the legacy imperative pipeline until we explicitly set `USE_NODE_PIPELINE=true` via the environment or the System Settings toggle.
 - **Reason:** LiteGraph templates still show rendering/connection regressions. To avoid impacting live chats, we’re pausing the graph executor rollout while we finish the editor fixes.
+- **New Toggle:** System Settings → Developer Settings now exposes a "Node Pipeline" switch that writes to `etc/runtime.json`. This lets owners re-enable the graph executor without editing env files (unless the env var explicitly locks it).
 
 ## Next Steps
 1. **Finish template rendering fixes**

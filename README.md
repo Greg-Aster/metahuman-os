@@ -144,7 +144,7 @@ MetaHuman OS ships with a pre-configured demo persona to get you started:
 
 **Easter Egg:** When there are 2+ public profiles, a special "Mutant Super Intelligence" profile appears that combines multiple personas!
 
-**Security Note:** Change the demo password in production! The default is `dem123456 or passwordo`.
+**Security Note:** Change the demo password in production! The default is `123456 or password`.
 
 ### Python Virtual Environment
 MetaHuman OS requires a Python virtual environment for its extensive ML/AI dependencies:

@@ -1,7 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import BoredomControl from './BoredomControl.svelte';
-  import AddonsManager from './AddonsManager.svelte';
   import GPUMonitor from './GPUMonitor.svelte';
 
   // Welcome modal toggle
@@ -27,41 +25,65 @@
   let logSlowRequests = true;
   let savingLogging = false;
 
-  // Factory reset
-  let resettingFactory = false;
-
-  // Curiosity config
-  let curiosityLevel = 1;
-  let curiosityResearchMode: 'off' | 'local' | 'web' = 'local';
-
-  const curiosityLevelDescriptions = [
-    'Curiosity disabled - no questions will be asked',
-    'Gentle - Questions after 60 minutes of conversation inactivity',
-    'Moderate - Questions after 30 minutes of conversation inactivity',
-    'Active - Questions after 15 minutes of conversation inactivity',
-    'Chatty - Questions after 5 minutes of conversation inactivity',
-    'Very Active - Questions after 2 minutes of conversation inactivity',
-    'Intense - Questions after 1 minute of conversation inactivity'
-  ];
-
-  // Map curiosity levels to intervals (in seconds)
-  const curiosityIntervals = [
-    0,     // Level 0: Off
-    3600,  // Level 1: 60 minutes
-    1800,  // Level 2: 30 minutes
-    900,   // Level 3: 15 minutes
-    300,   // Level 4: 5 minutes
-    120,   // Level 5: 2 minutes
-    60     // Level 6: 1 minute
-  ];
+  // Node pipeline state
+  let nodePipelineEnabled = false;
+  let nodePipelineLocked = false;
+  let nodePipelineLoading = false;
+  let nodePipelineSaving = false;
 
   onMount(async () => {
     loadWelcomeModalSetting();
     loadModelInfo();
     loadLoraState();
     loadLoggingConfig();
-    loadCuriositySettings();
+    loadNodePipelineState();
   });
+
+  async function loadNodePipelineState() {
+    nodePipelineLoading = true;
+    try {
+      const res = await fetch('/api/node-pipeline');
+      if (res.ok) {
+        const data = await res.json();
+        nodePipelineEnabled = !!data.enabled;
+        nodePipelineLocked = !!data.locked;
+      }
+    } catch (err) {
+      console.error('[SystemSettings] Error loading node pipeline state:', err);
+    } finally {
+      nodePipelineLoading = false;
+    }
+  }
+
+  async function handleNodePipelineToggle(event: Event) {
+    if (nodePipelineLocked || nodePipelineSaving) {
+      event?.preventDefault();
+      return;
+    }
+    const target = event.currentTarget as HTMLInputElement | null;
+    const desired = target?.checked ?? !nodePipelineEnabled;
+    nodePipelineSaving = true;
+    try {
+      const res = await fetch('/api/node-pipeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: desired })
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Failed to update node pipeline state');
+      }
+      const data = await res.json();
+      nodePipelineEnabled = !!data.enabled;
+      nodePipelineLocked = !!data.locked;
+    } catch (err) {
+      console.error('[SystemSettings] Error updating node pipeline state:', err);
+      nodePipelineEnabled = !desired;
+      alert(`Failed to update node pipeline state: ${(err as Error).message}`);
+    } finally {
+      nodePipelineSaving = false;
+    }
+  }
 
   function loadWelcomeModalSetting() {
     const stored = localStorage.getItem('showWelcomeModal');
@@ -178,55 +200,6 @@
       savingLogging = false;
     }
   }
-
-  async function loadCuriositySettings() {
-    try {
-      const res = await fetch('/api/curiosity-config');
-      if (res.ok) {
-        const data = await res.json();
-        curiosityLevel = data.maxOpenQuestions;
-        curiosityResearchMode = data.researchMode || 'local';
-      }
-    } catch (err) {
-      console.error('[SystemSettings] Error loading curiosity config:', err);
-    }
-  }
-
-  async function saveCuriositySettings() {
-    try {
-      const res = await fetch('/api/curiosity-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          maxOpenQuestions: curiosityLevel,
-          researchMode: curiosityResearchMode,
-          questionIntervalSeconds: curiosityIntervals[curiosityLevel]
-        })
-      });
-      if (!res.ok) throw new Error('Failed to save curiosity settings');
-    } catch (err) {
-      console.error('[SystemSettings] Error saving curiosity config:', err);
-    }
-  }
-
-  async function resetFactorySettings() {
-    if (resettingFactory) return;
-    const confirmed = window.confirm('This will erase all memories, logs, and conversations, and restore factory defaults. This action cannot be undone. Continue?');
-    if (!confirmed) return;
-
-    resettingFactory = true;
-    try {
-      const res = await fetch('/api/factory-reset', { method: 'POST' });
-      if (!res.ok) throw new Error('Factory reset failed');
-      alert('Factory reset complete. The page will now reload.');
-      window.location.reload();
-    } catch (err) {
-      console.error('[SystemSettings] Factory reset error:', err);
-      alert(`Factory reset failed: ${(err as Error).message}`);
-    } finally {
-      resettingFactory = false;
-    }
-  }
 </script>
 
 <div class="system-settings">
@@ -273,6 +246,45 @@
   </div>
 
   <h3 class="section-title" style="margin-top: 2rem;">Developer Settings</h3>
+
+  <!-- Node Pipeline Toggle -->
+  <div class="setting-group">
+    <label class="setting-label">Node Pipeline</label>
+    <div class="lora-toggle-container">
+      <div class="lora-toggle-header">
+        <span class="setting-label">
+          {#if nodePipelineLocked}
+            Locked by environment
+          {:else}
+            Toggle graph executor
+          {/if}
+        </span>
+        <label
+          class="toggle-switch"
+          for="node-pipeline-toggle"
+          aria-label="Toggle cognitive node pipeline"
+        >
+          <input
+            id="node-pipeline-toggle"
+            type="checkbox"
+            bind:checked={nodePipelineEnabled}
+            disabled={nodePipelineLocked || nodePipelineLoading || nodePipelineSaving}
+            on:change={handleNodePipelineToggle}
+          />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <p class="lora-toggle-description">
+        {#if nodePipelineLocked}
+          Node pipeline controlled by server environment. Contact an administrator to change it.
+        {:else if nodePipelineEnabled}
+          Graph executor is active. Chats will use the node-based cognitive pipeline.
+        {:else}
+          Legacy pipeline is active. Enable to route chats through the node graph.
+        {/if}
+      </p>
+    </div>
+  </div>
 
   <!-- Active Model Info -->
   {#if modelInfo}
@@ -372,55 +384,6 @@
     </div>
   {/if}
 
-  <!-- Mind Wandering Control -->
-  <div class="setting-group">
-    <label class="setting-label" for="mind-wandering-control">Mind Wandering</label>
-    <div id="mind-wandering-control">
-      <BoredomControl />
-    </div>
-  </div>
-
-  <!-- Curiosity Level Control -->
-  <div class="setting-group">
-    <label class="setting-label">Curiosity Level</label>
-    <div class="curiosity-control-container">
-      <div class="curiosity-slider-wrapper">
-        <input
-          type="range"
-          min="0"
-          max="6"
-          bind:value={curiosityLevel}
-          on:change={saveCuriositySettings}
-          class="curiosity-slider"
-        />
-        <div class="curiosity-labels">
-          <span>Off</span>
-          <span>Gentle</span>
-          <span>Moderate</span>
-          <span>Active</span>
-          <span>Chatty</span>
-          <span>Very</span>
-          <span>Intense</span>
-        </div>
-      </div>
-      <p class="curiosity-description">
-        {curiosityLevelDescriptions[curiosityLevel]}
-      </p>
-
-      <!-- Research Mode Toggle -->
-      {#if curiosityLevel > 0}
-        <div class="research-mode-controls">
-          <label class="field-label" for="research-mode-select">Research Mode</label>
-          <select id="research-mode-select" bind:value={curiosityResearchMode} on:change={saveCuriositySettings} class="logging-select">
-            <option value="off">Off - Questions only</option>
-            <option value="local">Local - Use existing memories</option>
-            <option value="web">Web - Allow web searches</option>
-          </select>
-        </div>
-      {/if}
-    </div>
-  </div>
-
   <!-- Logging Configuration -->
   <div class="setting-group">
     <label class="setting-label">Logging Configuration</label>
@@ -466,17 +429,6 @@
     </div>
   </div>
 
-  <!-- Danger Zone -->
-  <div class="setting-group danger-zone">
-    <div class="setting-label">Danger Zone</div>
-    <p class="danger-description">
-      Delete all memories, conversations, and logs, and restore the default GPT‑OSS base model. This action is permanent.
-    </p>
-    <button class="danger-button" on:click={resetFactorySettings} disabled={resettingFactory}>
-      {resettingFactory ? 'Resetting…' : 'Reset to Factory Settings'}
-    </button>
-  </div>
-
   <!-- GPU Monitoring -->
   <div class="setting-group">
     <label class="setting-label">GPU Memory Status</label>
@@ -498,11 +450,6 @@
     </div>
   </div>
 
-  <!-- Addons System -->
-  <div class="setting-group">
-    <h3>Addons</h3>
-    <AddonsManager />
-  </div>
 </div>
 
 <style>
@@ -733,16 +680,6 @@
     cursor: not-allowed;
   }
 
-  .danger-description {
-    font-size: 0.875rem;
-    color: #6b7280;
-    margin: 0 0 0.75rem 0;
-  }
-
-  :global(.dark) .danger-description {
-    color: #9ca3af;
-  }
-
   /* Resources Section */
   .resources-container {
     display: flex;
@@ -808,60 +745,5 @@
 
   :global(.dark) .resource-description {
     color: #9ca3af;
-  }
-
-  /* Curiosity Controls */
-  .curiosity-control-container {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .curiosity-slider-wrapper {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .curiosity-slider {
-    width: 100%;
-    accent-color: #7c3aed;
-    cursor: pointer;
-  }
-
-  .curiosity-labels {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    font-size: 0.7rem;
-    color: #6b7280;
-    padding: 0 0.25rem;
-    text-align: center;
-  }
-
-  :global(.dark) .curiosity-labels {
-    color: #9ca3af;
-  }
-
-  .curiosity-description {
-    font-size: 0.875rem;
-    color: #4b5563;
-    margin: 0;
-    padding: 0.75rem;
-    background: rgba(124, 58, 237, 0.05);
-    border-radius: 0.375rem;
-    border-left: 3px solid #7c3aed;
-  }
-
-  :global(.dark) .curiosity-description {
-    color: #9ca3af;
-    background: rgba(167, 139, 250, 0.08);
-    border-left-color: #a78bfa;
-  }
-
-  .research-mode-controls {
-    margin-top: 0.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
   }
 </style>

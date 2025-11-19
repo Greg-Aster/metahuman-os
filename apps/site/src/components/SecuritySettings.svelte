@@ -65,6 +65,9 @@
   // Reference to ProfileDangerZone component for refreshing
   let profileDangerZone: any;
 
+  // Factory reset state
+  let resettingFactory = false;
+
   onMount(async () => {
     await fetchCurrentUser();
     await loadTrustLevel();
@@ -588,6 +591,25 @@
       console.error(err);
     });
   }
+
+  async function resetFactorySettings() {
+    if (resettingFactory) return;
+    const confirmed = window.confirm('This will erase all memories, logs, and conversations, and restore factory defaults. This action cannot be undone. Continue?');
+    if (!confirmed) return;
+
+    resettingFactory = true;
+    try {
+      const res = await fetch('/api/factory-reset', { method: 'POST' });
+      if (!res.ok) throw new Error('Factory reset failed');
+      alert('Factory reset complete. The page will now reload.');
+      window.location.reload();
+    } catch (err) {
+      console.error('[SecuritySettings] Factory reset error:', err);
+      alert(`Factory reset failed: ${(err as Error).message}`);
+    } finally {
+      resettingFactory = false;
+    }
+  }
 </script>
 
 <div class="security-container">
@@ -895,45 +917,6 @@
       {/if}
     </div>
 
-    <!-- Profile Visibility -->
-    <div class="card">
-      <h2>🌍 Profile Visibility</h2>
-      <p>Control who can view your profile as a guest user</p>
-
-      <div class="form-group">
-        <select
-          bind:value={profileVisibility}
-          on:change={saveVisibility}
-          disabled={savingVisibility}
-          class="visibility-select"
-        >
-          <option value="private">🔒 Private - Owner only</option>
-          <option value="public">🌍 Public - Anyone (including anonymous)</option>
-        </select>
-      </div>
-
-      {#if profileVisibility === 'public'}
-        <div class="warning-box">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path
-              d="M8 1L1 14h14L8 1z"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linejoin="round"
-            />
-            <path d="M8 6v3M8 11v1" stroke="currentColor" stroke-width="2" />
-          </svg>
-          <div>
-            <strong>Public Profile Warning</strong>
-            <p>
-              Guest users will be able to interact with your persona in read-only
-              emulation mode. They cannot modify your data or access private information.
-            </p>
-          </div>
-        </div>
-      {/if}
-    </div>
-
     <!-- Remote Access Controls -->
     <div class="card">
       <h2>🌐 Remote Access</h2>
@@ -1236,17 +1219,79 @@
       </div>
     {/if}
 
-    <!-- Profile Creation (Owner Only) -->
-    {#if currentUser.role === 'owner'}
+     <!-- Profile Creation (Owner Only) remobved but im a hoarder so i dont delete -->
+     <!-- {#if currentUser.role === 'owner'}
       <ProfileCreation onProfileCreated={() => profileDangerZone?.refreshProfiles()} />
-    {/if}
+    {/if}  -->
 
-    <!-- Profile Deletion / Account Removal -->
-    {#if currentUser.role === 'owner'}
-      <ProfileDangerZone bind:this={profileDangerZone} />
-    {:else if currentUser.role === 'standard'}
-      <ProfileDangerZone />
-    {/if}
+    <!-- Danger Zone -->
+    <div class="card danger-card">
+      <h2>⚠️ Delete Zone</h2>
+      <p class="danger-description">
+        Critical operations that can permanently affect your account, data, and system configuration. Proceed with caution.
+      </p>
+
+      <!-- Profile Visibility -->
+      <div class="danger-section">
+        <h3>🌍 Profile Visibility</h3>
+        <p>Control who can view your profile as a guest user</p>
+
+        <div class="form-group">
+          <select
+            bind:value={profileVisibility}
+            on:change={saveVisibility}
+            disabled={savingVisibility}
+            class="visibility-select"
+          >
+            <option value="private">🔒 Private - Owner only</option>
+            <option value="public">🌍 Public - Anyone (including anonymous)</option>
+          </select>
+        </div>
+
+        {#if profileVisibility === 'public'}
+          <div class="warning-box">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M8 1L1 14h14L8 1z"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linejoin="round"
+              />
+              <path d="M8 6v3M8 11v1" stroke="currentColor" stroke-width="2" />
+            </svg>
+            <div>
+              <strong>Public Profile Warning</strong>
+              <p>
+                Guest users will be able to interact with your persona in read-only
+                emulation mode. They cannot modify your data or access private information.
+              </p>
+            </div>
+          </div>
+        {/if}
+      </div>
+
+      <!-- Profile Deletion / Account Removal -->
+      <div class="danger-section">
+        {#if currentUser.role === 'owner'}
+          <ProfileDangerZone bind:this={profileDangerZone} />
+        {:else if currentUser.role === 'standard'}
+          <ProfileDangerZone />
+        {/if}
+      </div>
+
+      <!-- Factory Reset (Owner Only) -->
+      {#if currentUser.role === 'owner'}
+        <div class="danger-section">
+          <h3>⚠️ Factory Reset</h3>
+          <p class="danger-description">
+            Delete all memories, conversations, and logs, and restore the default GPT-OSS base model. This action is permanent and cannot be undone.
+          </p>
+          <button class="btn btn-danger" on:click={resetFactorySettings} disabled={resettingFactory}>
+            {resettingFactory ? 'Resetting…' : 'Reset to Factory Settings'}
+          </button>
+        </div>
+      {/if}
+    </div>
 
     <!-- Security Information -->
     <div class="card info-card">
@@ -2282,5 +2327,90 @@
 
   :global(.dark) .code-value {
     color: rgb(196 181 253);
+  }
+
+  /* Danger Card Styles */
+  .danger-card {
+    background: rgb(254 242 242);
+    border: 2px solid rgb(239 68 68);
+  }
+
+  :global(.dark) .danger-card {
+    background: rgb(127 29 29 / 0.2);
+    border-color: rgb(220 38 38);
+  }
+
+  .danger-card h2 {
+    color: rgb(153 27 27);
+  }
+
+  :global(.dark) .danger-card h2 {
+    color: rgb(254 226 226);
+  }
+
+  .danger-description {
+    font-size: 0.875rem;
+    color: rgb(153 27 27);
+    margin: 0 0 1rem 0;
+  }
+
+  :global(.dark) .danger-description {
+    color: rgb(252 165 165);
+  }
+
+  .btn-danger {
+    background: rgb(220 38 38);
+    color: white;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background: rgb(185 28 28);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(220, 38, 38, 0.4);
+  }
+
+  .btn-danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Danger Section Dividers */
+  .danger-section {
+    padding: 1.5rem 0;
+    border-bottom: 1px solid rgba(239, 68, 68, 0.3);
+  }
+
+  :global(.dark) .danger-section {
+    border-bottom-color: rgba(220, 38, 38, 0.3);
+  }
+
+  .danger-section:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  .danger-section:first-child {
+    padding-top: 0;
+  }
+
+  .danger-section h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: rgb(153 27 27);
+    margin: 0 0 0.75rem 0;
+  }
+
+  :global(.dark) .danger-section h3 {
+    color: rgb(254 226 226);
+  }
+
+  .danger-section p {
+    font-size: 0.875rem;
+    color: rgb(153 27 27);
+    margin: 0 0 1rem 0;
+  }
+
+  :global(.dark) .danger-section p {
+    color: rgb(252 165 165);
   }
 </style>
