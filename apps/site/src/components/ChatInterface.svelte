@@ -1202,6 +1202,10 @@ let reasoningStages: ReasoningStage[] = [];
               input = transcript;
               await sendMessage();
             }
+          } else {
+            // Normal mode: put transcript in input field for user to review/edit
+            console.log('[chat-mic] Transcribed:', transcript.substring(0, 50) + (transcript.length > 50 ? '...' : ''));
+            input = transcript;
           }
         } else {
           console.log('[chat-mic] No transcript detected (empty or null response)');

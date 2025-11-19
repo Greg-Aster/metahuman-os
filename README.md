@@ -1,17 +1,17 @@
 # MetaHuman OS
 
-An autonomous digital personality extension operating system that mirrors your identity, memories, goals, and personality—operating 24/7 as a seamless extension of yourself.
+An autonomous digital personality extension operating system that mirrors your identity, memories, goals, and personality--operating 24/7 as a seamless extension of yourself.
 
 ## Overview
 
-MetaHuman OS is a local-first digital personality extension that acts as a parallel intelligence—not an assistant. It is designed as an all-in-one package, capable of running directly on a Linux kernel for optimal performance and control. It:
+MetaHuman OS is a local-first digital personality extension that acts as a parallel intelligence--not an assistant. It is designed as an all-in-one package, capable of running directly on a Linux kernel for optimal performance and control. It:
 - Stores and processes your memories, tasks, and reflections locally as JSON
 - Learns your patterns and mirrors your judgment
 - Operates autonomously (with your permission) 24/7
 - Uses local LLMs via Ollama for all AI processing
 - Maintains complete transparency with audit trails
 
-**MetaHuman OS is not an assistant—it's a parallel intelligence.** It learns your patterns, mirrors your judgment, and acts autonomously within trusted boundaries. The goal is to create a digital personality extension that feels like a natural extension of your own cognition, saving hours of mental overhead while staying perfectly aligned with your values and preferences.
+**MetaHuman OS is not an assistant--it's a parallel intelligence.** It learns your patterns, mirrors your judgment, and acts autonomously within trusted boundaries. The goal is to create a digital personality extension that feels like a natural extension of your own cognition, saving hours of mental overhead while staying perfectly aligned with your values and preferences.
 
 ### Core Principles
 - **Autonomy-first**: Build for autonomous operation with human oversight, not constant approval
@@ -19,7 +19,7 @@ MetaHuman OS is a local-first digital personality extension that acts as a paral
 - **Local-first**: Your identity, memories, and reasoning live on your infrastructure
 - **Transparent**: All actions, reasoning, and decisions are auditable and explainable
 - **Adaptive**: Learns your patterns, preferences, and evolves with you
-- **Secure**: Your digital persona is as secure as your own mind—encrypted, private, controlled
+- **Secure**: Your digital persona is as secure as your own mind--encrypted, private, controlled
 - **Extensible**: Modular OS architecture allows skills and capabilities to grow over time
 - **Multi-Model Intelligence**: Utilizes a "dual consciousness" architecture with specialized AI models for different roles.
 
@@ -134,7 +134,7 @@ MetaHuman OS ships with a pre-configured demo persona to get you started:
 3. Navigate to http://localhost:4321
 4. Login with the demo account:
    - **Username:** `Friendly-Robot-Will-Not-Kill-You`
-   - **Password:** `demo`
+   - **Password:** `123456 or password`
 
 **To create your own user:**
 1. Edit `scripts/create-owner.ts` with your desired username/password
@@ -144,7 +144,7 @@ MetaHuman OS ships with a pre-configured demo persona to get you started:
 
 **Easter Egg:** When there are 2+ public profiles, a special "Mutant Super Intelligence" profile appears that combines multiple personas!
 
-**Security Note:** Change the demo password in production! The default is `demo`.
+**Security Note:** Change the demo password in production! The default is `dem123456 or passwordo`.
 
 ### Python Virtual Environment
 MetaHuman OS requires a Python virtual environment for its extensive ML/AI dependencies:
@@ -532,7 +532,7 @@ We welcome contributions! Please see the [ARCHITECTURE.md](docs/dev/ARCHITECTURE
 
 ## License
 
-This project is licensed under the Creative Commons Attribution 4.0 International License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Creative Commons Attribution 4.0 International License - NON-COMMERCIAL- see the [LICENSE](LICENSE) file for details.
 
 ## Support
 
