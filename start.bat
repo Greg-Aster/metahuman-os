@@ -1,6 +1,8 @@
 @echo off
 title MetaHuman OS Startup
 
+setlocal EnableDelayedExpansion
+
 REM MetaHuman OS Startup Script for Windows
 REM This script initializes and starts the MetaHuman OS web interface
 
@@ -12,6 +14,22 @@ echo.
 REM Get the directory where this script is located
 set SCRIPT_DIR=%~dp0
 set REPO_ROOT=%SCRIPT_DIR:~0,-1%
+
+if exist "%REPO_ROOT%\.start-config" (
+    for /f "usebackq tokens=1* delims==" %%A in ("%REPO_ROOT%\.start-config") do (
+        set "key=%%A"
+        set "val=%%B"
+        if not "!key!"=="" (
+            if not "!key:~0,1!"=="#" (
+                if not defined !key! set !key!=!val!
+            )
+        )
+    )
+)
+
+if not defined SKIP_DEP_INSTALL set SKIP_DEP_INSTALL=0
+if not defined SKIP_PYTHON_DEPS set SKIP_PYTHON_DEPS=%SKIP_DEP_INSTALL%
+if not defined SKIP_NODE_DEPS set SKIP_NODE_DEPS=%SKIP_DEP_INSTALL%
 
 echo Repository root: %REPO_ROOT%
 echo.
@@ -106,7 +124,10 @@ if !ERRORLEVEL! neq 0 (
 echo.
 
 REM Install Python dependencies if requirements.txt exists
-if exist "%REPO_ROOT%\requirements.txt" (
+if "%SKIP_PYTHON_DEPS%"=="1" (
+    echo WARNING: Skipping Python dependency installation (SKIP_PYTHON_DEPS=1)
+    echo.
+) else if exist "%REPO_ROOT%\requirements.txt" (
     echo Checking Python dependencies...
     set REQUIREMENTS_FILE=%REPO_ROOT%\requirements.txt
     set INSTALLED_MARKER=%VENV_PATH%\installed_packages
@@ -125,10 +146,10 @@ if exist "%REPO_ROOT%\requirements.txt" (
         echo.
     ) else (
         REM Compare timestamps to see if requirements.txt is newer
-        for /f %%i in ('powershell -command "(Get-Item '%REQUIREMENTS_FILE%').LastWriteTime.Ticks"') do set REQ_TIME=%%i
-        for /f %%i in ('powershell -command "(Get-Item '%INSTALLED_MARKER%').LastWriteTime.Ticks"') do set MARKER_TIME=%%i
+        for /f %%i in ('powershell -command "(Get-Item ''%REQUIREMENTS_FILE%'').LastWriteTime.Ticks"') do set REQ_TIME=%%i
+        for /f %%i in ('powershell -command "(Get-Item ''%INSTALLED_MARKER%'').LastWriteTime.Ticks"') do set MARKER_TIME=%%i
         
-        if %REQ_TIME% gtr %MARKER_TIME% (
+        if !REQ_TIME! gtr !MARKER_TIME! (
             echo Updating Python dependencies from requirements.txt...
             python -m pip install -r "%REQUIREMENTS_FILE%"
             if !ERRORLEVEL! neq 0 (
@@ -170,10 +191,33 @@ if %ERRORLEVEL% neq 0 (
 
 REM Check if we need to install dependencies
 echo Checking for Node.js dependencies...
-if not exist "%REPO_ROOT%\node_modules" (
+set LOCK_FILE=%REPO_ROOT%\pnpm-lock.yaml
+set STAMP_FILE=%REPO_ROOT%\node_modules\.install-stamp
+set NEED_INSTALL=0
+
+if not exist "%REPO_ROOT%\node_modules" set NEED_INSTALL=1
+if not exist "%REPO_ROOT%\apps\site\node_modules" set NEED_INSTALL=1
+
+if %NEED_INSTALL%==0 (
+    if exist "%LOCK_FILE%" (
+        if not exist "%STAMP_FILE%" (
+            set NEED_INSTALL=1
+        ) else (
+            for /f %%i in ('powershell -NoProfile -Command "(Get-Item ''%LOCK_FILE%'').LastWriteTimeUtc.Ticks"') do set LOCK_TIME=%%i
+            for /f %%i in ('powershell -NoProfile -Command "(Get-Item ''%STAMP_FILE%'').LastWriteTimeUtc.Ticks"') do set STAMP_TIME=%%i
+            if %LOCK_TIME% GTR %STAMP_TIME% (
+                set NEED_INSTALL=1
+            )
+        )
+    )
+)
+
+if %NEED_INSTALL%==1 (
     echo Installing Node.js dependencies...
     cd /d "%REPO_ROOT%"
     call pnpm install
+    if not exist "%REPO_ROOT%\node_modules" mkdir "%REPO_ROOT%\node_modules" >nul 2>&1
+    type nul > "%STAMP_FILE%"
     echo âœ“ Dependencies installed
     echo.
 ) else (
@@ -202,6 +246,8 @@ echo Starting MetaHuman OS web interface...
 echo.
 
 cd /d "%REPO_ROOT%\apps\site"
+
+start "" powershell -NoProfile -WindowStyle Hidden -Command "while (-not (Test-NetConnection localhost -Port 4321 -InformationLevel Quiet)) { Start-Sleep 1 } ; Start-Process 'http://localhost:4321'" >nul 2>&1
 
 echo ==================================
 echo   MetaHuman OS Web Interface     
