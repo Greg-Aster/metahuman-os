@@ -854,7 +854,44 @@ let reasoningStages: ReasoningStage[] = [];
         try {
           const { type, data } = JSON.parse(event.data);
 
-          if (type === 'reasoning') {
+          if (type === 'progress') {
+            // Real-time progress updates from graph execution
+            if (data && data.message) {
+              thinkingActive = true;
+              thinkingPlaceholderActive = true;
+
+              // Update the thinking trace with progress messages
+              const progressMsg = data.message;
+              if (data.step === 'loading_graph') {
+                thinkingStatusLabel = '📋 Loading workflow...';
+                thinkingTrace = [progressMsg];
+              } else if (data.step === 'graph_loaded') {
+                thinkingStatusLabel = '⚙️ Executing pipeline...';
+                thinkingTrace = [progressMsg];
+              } else if (data.step === 'node_executing') {
+                thinkingStatusLabel = '🔄 Processing...';
+                // Add to trace, keep last 10 items
+                thinkingTrace = [...thinkingTrace, `▸ ${progressMsg}`].slice(-10);
+              } else if (data.step === 'thinking') {
+                // Show actual AI thoughts from scratchpad
+                thinkingStatusLabel = '🧠 Thinking...';
+                thinkingTrace = [...thinkingTrace, progressMsg].slice(-10);
+              } else if (data.step === 'node_error') {
+                thinkingStatusLabel = '⚠️ Error detected...';
+                thinkingTrace = [...thinkingTrace, `✗ ${progressMsg}`].slice(-10);
+              } else {
+                // Generic progress update
+                thinkingTrace = [...thinkingTrace, progressMsg].slice(-10);
+              }
+            }
+          } else if (type === 'cancelled') {
+            // Request was cancelled by user
+            stopThinkingTrace();
+            pushMessage('system', data.message || '⏸️ Request cancelled');
+            loading = false;
+            reasoningStages = [];
+            chatResponseStream?.close();
+          } else if (type === 'reasoning') {
             stopThinkingTrace();
             if (typeof data === 'string') {
               reasoningStages = [
@@ -933,6 +970,35 @@ let reasoningStages: ReasoningStage[] = [];
       reasoningStages = [];
     }
   }
+
+  /**
+   * Stop/cancel the current request
+   */
+  async function stopRequest() {
+    if (!loading || !conversationSessionId) return;
+
+    try {
+      console.log('[stop-request] Cancelling session:', conversationSessionId);
+
+      const response = await fetch('/api/cancel-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: conversationSessionId,
+          reason: 'User clicked stop button'
+        })
+      });
+
+      if (!response.ok) {
+        console.error('[stop-request] Failed to cancel:', await response.text());
+      } else {
+        console.log('[stop-request] Cancellation requested successfully');
+      }
+    } catch (error) {
+      console.error('[stop-request] Error cancelling request:', error);
+    }
+  }
+
   // Activity tracking for sleep service
   let activityTimeout: number | null = null;
 
@@ -1466,14 +1532,14 @@ let reasoningStages: ReasoningStage[] = [];
           {/if}
         </p>
         <div class="welcome-suggestions">
-          <button class="suggestion" on:click={() => { input = "What are my current goals?"; }}>
-            What are my current goals?
+          <button class="suggestion" on:click={() => { input = "Tell me how you will take over the world?"; }}>
+            Tell me how you will take over the world?
           </button>
-          <button class="suggestion" on:click={() => { input = "What tasks do I have?"; }}>
-            What tasks do I have?
+          <button class="suggestion" on:click={() => { input = "Wimmy wham wham wozzle!?"; }}>
+            Wimmy wham wham wozzle!?
           </button>
-          <button class="suggestion" on:click={() => { input = "Tell me about yourself"; }}>
-            Tell me about yourself
+          <button class="suggestion" on:click={() => { input = "Tell me about yourself in the most technical way possible"; }}>
+            Tell me about yourself in the most technical way possible.
           </button>
         </div>
       </div>
@@ -1614,6 +1680,19 @@ let reasoningStages: ReasoningStage[] = [];
           disabled={loading}
         />
         <div class="input-actions">
+          <!-- Stop thinking button - only visible when thinking -->
+          {#if loading}
+            <button
+              class="input-stop-btn stop-thinking"
+              title="Stop thinking"
+              on:click={stopRequest}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="2"/>
+              </svg>
+              <span class="stop-text">Stop</span>
+            </button>
+          {/if}
           <!-- Stop button - only visible when audio is playing -->
           {#if currentAudio}
             <button
@@ -1947,6 +2026,40 @@ let reasoningStages: ReasoningStage[] = [];
   :global(.dark) .msg-mic-btn:hover {
     background: rgba(167, 139, 250, 0.3) !important;
     color: rgba(167, 139, 250, 1) !important;
+  }
+
+  /* Stop button styling */
+  .input-stop-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(239, 68, 68, 0.1);
+    color: rgba(239, 68, 68, 1);
+    border: none;
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+
+  .input-stop-btn:hover {
+    background: rgba(239, 68, 68, 0.2);
+    transform: scale(1.05);
+  }
+
+  :global(.dark) .input-stop-btn {
+    background: rgba(248, 113, 113, 0.15);
+    color: rgba(248, 113, 113, 1);
+  }
+
+  :global(.dark) .input-stop-btn:hover {
+    background: rgba(248, 113, 113, 0.25);
+  }
+
+  .input-stop-btn .stop-text {
+    display: inline;
   }
 
   /* Reply indicator styling */

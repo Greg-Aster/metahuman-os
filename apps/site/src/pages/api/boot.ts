@@ -21,6 +21,38 @@ const ALWAYS_AGENTS = ['headless-watcher'] as const
 const CONDITIONAL_AGENTS = ['boredom-service', 'audio-organizer'] as const
 
 export const GET: APIRoute = async ({ cookies }) => {
+  // SECURITY: Agent management requires owner role
+  // Anonymous users should not be able to start/stop system agents
+  try {
+    const { getAuthenticatedUser } = await import('@metahuman/core');
+    const user = getAuthenticatedUser(cookies);
+
+    if (user.role !== 'owner') {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Owner role required to manage agents',
+          started: [],
+          already: [],
+          missing: []
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  } catch (error) {
+    // No valid session = anonymous user, block access
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'Authentication required',
+        started: [],
+        already: [],
+        missing: []
+      }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   const started: string[] = []
   const already: string[] = []
   const missing: string[] = []

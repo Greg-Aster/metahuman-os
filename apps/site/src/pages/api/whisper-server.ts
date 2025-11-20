@@ -1,25 +1,26 @@
 import type { APIRoute } from 'astro';
-import { withUserContext } from '../../middleware/userContext';
-import { getUserContext } from '@metahuman/core/context';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { getAuthenticatedUser, getProfilePaths, getUserOrAnonymous, systemPaths } from '@metahuman/core';
 
 /**
  * GET: Check Whisper server status
  * POST: Start/stop Whisper server
  */
-const getHandler: APIRoute = async () => {
+const getHandler: APIRoute = async ({ cookies }) => {
   try {
-    const context = getUserContext();
-    if (!context) {
+    const user = getUserOrAnonymous(cookies);
+    if (user.role === 'anonymous') {
       return new Response(
-        JSON.stringify({ error: 'Context not available' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Authentication required' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    const voiceConfigPath = context.profilePaths.voiceConfig;
+    const profilePaths = getProfilePaths(user.username);
+    const rootPaths = systemPaths;
+    const voiceConfigPath = profilePaths.voiceConfig;
     if (!fs.existsSync(voiceConfigPath)) {
       return new Response(
         JSON.stringify({ running: false, error: 'Voice config not found' }),
@@ -31,8 +32,8 @@ const getHandler: APIRoute = async () => {
     const serverUrl = config.stt?.whisper?.server?.url || 'http://127.0.0.1:9883';
 
     // Check if faster-whisper is installed
-    const pythonBin = path.join(context.systemPaths.root, 'venv', 'bin', 'python3');
-    const serverScript = path.join(context.systemPaths.root, 'external', 'whisper', 'whisper_server.py');
+    const pythonBin = path.join(rootPaths.root, 'venv', 'bin', 'python3');
+    const serverScript = path.join(rootPaths.root, 'external', 'whisper', 'whisper_server.py');
     const installed = fs.existsSync(pythonBin) && fs.existsSync(serverScript);
 
     // Check if server is running
@@ -69,21 +70,16 @@ const getHandler: APIRoute = async () => {
   }
 };
 
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ request, cookies }) => {
   try {
-    const context = getUserContext();
-    if (!context || context.username === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    const user = getAuthenticatedUser(cookies);
 
     const body = await request.json();
     const { action } = body;
 
-    const rootDir = context.systemPaths.root;
-    const voiceConfigPath = context.profilePaths.voiceConfig;
+    const rootDir = systemPaths.root;
+    const profilePaths = getProfilePaths(user.username);
+    const voiceConfigPath = profilePaths.voiceConfig;
 
     if (!fs.existsSync(voiceConfigPath)) {
       return new Response(
@@ -222,5 +218,6 @@ const postHandler: APIRoute = async ({ request }) => {
   }
 };
 
-export const GET = withUserContext(getHandler);
-export const POST = withUserContext(postHandler);
+// MIGRATED: explicit authentication (GET/POST require authenticated user)
+export const GET = getHandler;
+export const POST = postHandler;

@@ -12,7 +12,6 @@ import {
   tryResolveProfilePath,
   systemPaths,
 } from '@metahuman/core';
-import { withUserContext } from '../../middleware/userContext';
 
 /**
  * Kokoro Voice Training API
@@ -103,7 +102,7 @@ const getHandler: APIRoute = async ({ request }) => {
   }
 };
 
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   const pathResult = tryResolveProfilePath('voiceTraining');
   if (!pathResult.ok) {
     return new Response(
@@ -259,5 +258,7 @@ const postHandler: APIRoute = async ({ request }) => {
 };
 
 // Wrap handlers with user context middleware
-export const GET = withUserContext(getHandler);
-export const POST = withUserContext(postHandler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const GET = getHandler;
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const POST = postHandler;

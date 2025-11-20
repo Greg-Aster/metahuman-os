@@ -679,8 +679,42 @@ Cognitive modes are implemented through:
 - **Config File**: `persona/cognitive-mode.json`
 - **Chat Integration**: `apps/site/src/pages/api/persona_chat.ts`
 - **UI Controls**: Mode selector in `ChatLayout.svelte` header
+- **Node Graphs**: Visual workflows in `etc/cognitive-graphs/<mode>-mode.json`
 
 All mode switches are fully audited with actor tracking (user vs. system).
+
+#### Node-Based Execution
+
+Each cognitive mode is implemented as a **visual node graph** that defines its exact processing pipeline:
+
+```
+etc/cognitive-graphs/
+├── emulation-mode.json  (v1.1, 13 nodes - chat-only)
+├── dual-mode.json       (v1.1, 16 nodes - full ReAct)
+└── agent-mode.json      (v1.0, 16 nodes - heuristic routing)
+```
+
+**Key Advantages**:
+- 🔍 **Transparency**: See exactly how messages are processed
+- ⚙️ **Customization**: Edit workflows without code changes
+- 🧩 **Modularity**: Compose from reusable node components
+- 🐛 **Debugging**: Inspect each step's inputs/outputs
+- 🔄 **Hot-Reload**: Changes take effect immediately
+
+**Example Execution Log**:
+```
+[graph-pipeline] 🚀 Starting execution: Dual Consciousness Mode v1.1
+[graph-pipeline]    Nodes: 16, Links: 25
+[graph-pipeline]    ➤ Node 1 (user_input) START
+[graph-pipeline]    ✓ Node 1 (user_input) DONE (5ms)
+[graph-pipeline]    ➤ Node 5 (operator_eligibility) START
+[graph-pipeline]    ✓ Node 5 (operator_eligibility) DONE (120ms)
+...
+[graph-pipeline] ✅ COMPLETE: 16 nodes in 4520ms
+```
+
+For complete details on the node system, available nodes, and creating custom workflows, see:
+**[Node-Based Cognitive System Guide](28-node-based-cognitive-system.md)**
 
 ### 10. 3-Layer Cognitive Architecture (Phase 4)
 

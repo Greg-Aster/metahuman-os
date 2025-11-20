@@ -1,13 +1,12 @@
 import type { APIRoute } from 'astro';
 import { listFunctions } from '@metahuman/core/function-memory';
-import { withUserContext } from '../../../middleware/userContext';
 
 /**
  * GET /api/functions/stats
  *
  * Get statistics and insights about function memory
  */
-const getHandler: APIRoute = async () => {
+const getHandler: APIRoute = async ({ cookies }) => {
   try {
     // Get all functions
     const allFunctions = await listFunctions();
@@ -130,4 +129,5 @@ const getHandler: APIRoute = async () => {
 };
 
 // Wrap with user context middleware
-export const GET = withUserContext(getHandler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const GET = getHandler;

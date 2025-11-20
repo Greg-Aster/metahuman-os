@@ -5,9 +5,7 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '@metahuman/core/paths';
-import { audit } from '@metahuman/core/audit';
-import { withUserContext } from '../../middleware/userContext';
+import { audit, getAuthenticatedUser, getProfilePaths, getUserOrAnonymous } from '@metahuman/core';
 
 const INACTIVE_FACET = {
   name: 'Persona Off',
@@ -47,15 +45,11 @@ function buildFacetResponse(
   );
 }
 
-const getHandler: APIRoute = async () => {
+const getHandler: APIRoute = async ({ cookies }) => {
   try {
-    // Use context-aware paths.personaFacets which resolves to user profile
-    // For anonymous users without a profile, return default
-    let facetsPath: string;
-    try {
-      facetsPath = paths.personaFacets;
-    } catch (error) {
-      // Anonymous user without profile - return default
+    const user = getUserOrAnonymous(cookies);
+
+    if (user.role === 'anonymous') {
       return new Response(
         JSON.stringify({
           activeFacet: 'default',
@@ -64,6 +58,9 @@ const getHandler: APIRoute = async () => {
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
+
+    const profilePaths = getProfilePaths(user.username);
+    const facetsPath = profilePaths.personaFacets;
 
     if (!fs.existsSync(facetsPath)) {
       return new Response(
@@ -96,8 +93,9 @@ const getHandler: APIRoute = async () => {
   }
 };
 
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
+    const user = getAuthenticatedUser(cookies);
     const body = await request.json();
     const { facet } = body;
 
@@ -108,18 +106,8 @@ const postHandler: APIRoute = async ({ request }) => {
       );
     }
 
-    // Use context-aware paths.personaFacets which resolves to user profile
-    // For anonymous users, deny write access
-    let facetsPath: string;
-    try {
-      facetsPath = paths.personaFacets;
-    } catch (error) {
-      // Anonymous user without profile - deny write
-      return new Response(
-        JSON.stringify({ error: 'Authentication required to change facets' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    const profilePaths = getProfilePaths(user.username);
+    const facetsPath = profilePaths.personaFacets;
 
     // Load current facets config
     if (!fs.existsSync(facetsPath)) {
@@ -156,6 +144,7 @@ const postHandler: APIRoute = async ({ request }) => {
     facetsData.lastUpdated = new Date().toISOString();
 
     // Write updated config
+    fs.mkdirSync(path.dirname(facetsPath), { recursive: true });
     fs.writeFileSync(facetsPath, JSON.stringify(facetsData, null, 2));
 
     // Audit the change
@@ -169,7 +158,7 @@ const postHandler: APIRoute = async ({ request }) => {
         facetName: facetsData.facets[facet].name,
         facetDescription: facetsData.facets[facet].description,
       },
-      actor: 'web_ui',
+      actor: user.username,
     });
 
     return new Response(
@@ -190,6 +179,6 @@ const postHandler: APIRoute = async ({ request }) => {
   }
 };
 
-// Wrap with user context middleware for automatic profile path resolution
-export const GET = withUserContext(getHandler);
-export const POST = withUserContext(postHandler);
+// MIGRATED: explicit authentication (GET allows anonymous defaults; POST requires auth)
+export const GET = getHandler;
+export const POST = postHandler;

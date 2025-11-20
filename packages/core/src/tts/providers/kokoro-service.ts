@@ -33,15 +33,6 @@ export class KokoroService implements ITextToSpeechService {
     const useCustom = isBuiltInVoice ? false : this.config.useCustomVoicepack;
     const customPath = this.config.customVoicepackPath;
 
-    console.log('[KokoroService] synthesize called:', {
-      text: text.substring(0, 50),
-      voice,
-      langCode,
-      speed,
-      useCustom,
-      customPath,
-      serverMode: this.config.server.useServer,
-    });
 
     // Build cache key
     const voiceKey = useCustom ? `custom:${path.basename(customPath)}` : voice;
@@ -50,7 +41,6 @@ export class KokoroService implements ITextToSpeechService {
     // Check cache first
     const cached = getCachedAudio(this.cacheConfig, text, cacheKey, speed);
     if (cached) {
-      console.log('[KokoroService] Returning cached audio:', cached.length, 'bytes');
       return cached;
     }
 
@@ -388,7 +378,6 @@ export class KokoroService implements ITextToSpeechService {
 
           // Create PID file
           fs.writeFileSync(pidFile, pid.toString());
-          console.log(`[KokoroService] Repaired missing PID file (PID: ${pid})`);
         }
       }
     } catch (error) {

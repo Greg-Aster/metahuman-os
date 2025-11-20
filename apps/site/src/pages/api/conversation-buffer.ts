@@ -1,6 +1,5 @@
 import type { APIRoute } from 'astro';
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
-import { withUserContext } from '../../middleware/userContext';
 import { tryResolveProfilePath } from '@metahuman/core/paths';
 import { audit } from '@metahuman/core';
 
@@ -122,7 +121,7 @@ function deleteBuffer(mode: Mode): boolean {
 }
 
 // GET: Fetch conversation buffer
-export const GET: APIRoute = withUserContext(async ({ request }) => {
+const getHandler: APIRoute = async ({ cookies, request }) => {
   const url = new URL(request.url);
   const mode = (url.searchParams.get('mode') || 'conversation') as Mode;
 
@@ -152,10 +151,10 @@ export const GET: APIRoute = withUserContext(async ({ request }) => {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   });
-});
+};
 
 // POST: Append message to buffer
-export const POST: APIRoute = withUserContext(async ({ request }) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   const body = await request.json();
   const { mode, message } = body;
 
@@ -209,10 +208,10 @@ export const POST: APIRoute = withUserContext(async ({ request }) => {
     JSON.stringify({ success: true, messageCount: buffer.messages.length }),
     { status: 200, headers: { 'Content-Type': 'application/json' } }
   );
-});
+};
 
 // DELETE: Clear conversation buffer
-export const DELETE: APIRoute = withUserContext(async ({ request }) => {
+const deleteHandler: APIRoute = async ({ cookies, request }) => {
   const url = new URL(request.url);
   const mode = (url.searchParams.get('mode') || 'conversation') as Mode;
 
@@ -237,4 +236,9 @@ export const DELETE: APIRoute = withUserContext(async ({ request }) => {
     JSON.stringify({ success: deleted, mode }),
     { status: deleted ? 200 : 500, headers: { 'Content-Type': 'application/json' } }
   );
-});
+};
+
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const GET = getHandler;
+export const POST = postHandler;
+export const DELETE = deleteHandler;

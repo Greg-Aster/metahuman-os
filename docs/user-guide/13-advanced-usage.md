@@ -1451,6 +1451,33 @@ auditDataChange({
 });
 ```
 
+### Extending with Skills and Agents
+
+MetaHuman OS is designed for extensibility, allowing users to define custom behaviors and automations. This is primarily done by adding **Skills** and **Agents**.
+
+#### Adding a Skill
+
+Skills are executable actions that MetaHuman OS can perform. They are defined in the `brain/skills` directory.
+
+1.  **Create a Skill Manifest:** Create a new manifest file (e.g., `my-skill.json`) under `brain/skills/`.
+2.  **Register the Skill:** Implement the skill logic within your codebase, consuming `@metahuman/core` helpers as needed.
+3.  **Policy Enforcement:** Policies automatically enforce trust levels and audit every skill registration and execution for safety.
+
+#### Adding an Agent
+
+Agents are background scripts that perform autonomous routines. They reside in the `brain/agents` directory.
+
+1.  **Create an ESM Script:** Place an ECMAScript Module (ESM) script (e.g., `my-agent.ts`) in `brain/agents/`.
+2.  **Import Core Modules:** Your agent script can import necessary modules from `@metahuman/core` (e.g., memory, LLM, audit, locks) to interact with the system.
+3.  **Register and Manage:** The CLI and Web UI can manage the lifecycle and logs of registered agents, making it easy to monitor their operation.
+
+#### Extending the Web UI
+
+You can also extend the web user interface to interact with your custom features.
+
+1.  **Use Astro Routes:** Astro routes in `apps/site` can directly import any core helper.
+2.  **Feature Parity:** This ensures that new features can have full parity across all user surfaces (CLI, agents, and web UI).
+
 #### Benefits of This Architecture
 
 ✅ **Single Source of Truth** - All components use same data layer

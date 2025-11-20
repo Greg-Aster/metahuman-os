@@ -1,10 +1,8 @@
 import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths, audit } from '@metahuman/core'
+import { systemPaths, audit, getAuthenticatedUser } from '@metahuman/core'
 import { OllamaClient } from '@metahuman/core/ollama'
-import { getUserContext } from '@metahuman/core/context'
-import { withUserContext } from '../../middleware/userContext'
 import { invalidateModelCache } from '@metahuman/core/model-resolver'
 
 /**
@@ -17,7 +15,7 @@ import { invalidateModelCache } from '@metahuman/core/model-resolver'
 
 function readModelRegistry() {
   try {
-    const p = path.join(paths.etc, 'models.json')
+    const p = path.join(systemPaths.etc, 'models.json')
     return JSON.parse(fs.readFileSync(p, 'utf-8'))
   } catch {
     return { globalSettings: {}, defaults: {}, models: {}, cognitiveModeMappings: {}, roleHierarchy: {} }
@@ -25,7 +23,7 @@ function readModelRegistry() {
 }
 
 async function writeModelRegistry(registry: any) {
-  const p = path.join(paths.etc, 'models.json')
+  const p = path.join(systemPaths.etc, 'models.json')
   fs.mkdirSync(path.dirname(p), { recursive: true })
   fs.writeFileSync(p, JSON.stringify(registry, null, 2))
   // Invalidate both caches to force reload
@@ -61,13 +59,15 @@ function isTrainingArtifact(modelName: string): boolean {
 const ALL_ROLES = ['persona', 'orchestrator', 'coder', 'planner', 'curator', 'summarizer', 'fallback'];
 
 // GET: Retrieve model registry information
-const getHandler: APIRoute = async () => {
+const getHandler: APIRoute = async ({ cookies }) => {
   try {
-    const ctx = getUserContext()
-    if (!ctx || ctx.role === 'anonymous') {
+    // SECURITY FIX: 2025-11-20 - Require owner role for system configuration access
+    const user = getAuthenticatedUser(cookies);
+
+    if (user.role !== 'owner') {
       return new Response(
-        JSON.stringify({ success: false, error: 'Authentication required to view model registry.' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ success: false, error: 'Owner role required to access system model registry' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
       )
     }
 
@@ -133,10 +133,10 @@ const getHandler: APIRoute = async () => {
       category: 'action',
       level: 'info',
       action: 'model_registry_view',
-      actor: ctx.username,
+      actor: user.username,
       context: {
-        userId: ctx.userId,
-        profilePath: paths.etc
+        userId: user.id,
+        profilePath: systemPaths.etc
       }
     })
 
@@ -160,13 +160,15 @@ const getHandler: APIRoute = async () => {
 }
 
 // POST: Update role assignments
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
-    const ctx = getUserContext()
-    if (!ctx || ctx.role === 'anonymous') {
+    // SECURITY FIX: 2025-11-20 - Require owner role for system configuration changes
+    const user = getAuthenticatedUser(cookies);
+
+    if (user.role !== 'owner') {
       return new Response(
-        JSON.stringify({ success: false, error: 'Authentication required to update model registry.' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ success: false, error: 'Owner role required to modify system model registry' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
       )
     }
 
@@ -233,13 +235,13 @@ const postHandler: APIRoute = async ({ request }) => {
       category: 'data_change',
       level: 'info',
       action: 'model_role_updated',
-      actor: ctx.username,
+      actor: user.username,
       context: {
-        userId: ctx.userId,
+        userId: user.id,
         role,
         modelId,
         cognitiveMode: cognitiveMode || 'default',
-        profilePath: paths.etc
+        profilePath: systemPaths.etc
       }
     })
 
@@ -264,13 +266,15 @@ const postHandler: APIRoute = async ({ request }) => {
 }
 
 // PUT: Update global settings
-const putHandler: APIRoute = async ({ request }) => {
+const putHandler: APIRoute = async ({ cookies, request }) => {
   try {
-    const ctx = getUserContext()
-    if (!ctx || ctx.role === 'anonymous') {
+    // SECURITY FIX: 2025-11-20 - Require owner role for system configuration changes
+    const user = getAuthenticatedUser(cookies);
+
+    if (user.role !== 'owner') {
       return new Response(
-        JSON.stringify({ success: false, error: 'Authentication required to update global settings.' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ success: false, error: 'Owner role required to modify global settings' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
       )
     }
 
@@ -298,11 +302,11 @@ const putHandler: APIRoute = async ({ request }) => {
       category: 'data_change',
       level: 'info',
       action: 'model_global_settings_updated',
-      actor: ctx.username,
+      actor: user.username,
       context: {
-        userId: ctx.userId,
+        userId: user.id,
         settings: globalSettings,
-        profilePath: paths.etc
+        profilePath: systemPaths.etc
       }
     })
 
@@ -322,6 +326,8 @@ const putHandler: APIRoute = async ({ request }) => {
   }
 }
 
-export const GET = withUserContext(getHandler)
-export const POST = withUserContext(postHandler)
-export const PUT = withUserContext(putHandler)
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// SECURITY FIX: 2025-11-20 - All handlers require owner role for system config access
+export const GET = getHandler
+export const POST = postHandler
+export const PUT = putHandler

@@ -7,7 +7,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './paths';
+import { paths } from './paths.js';
+import { getProfilePaths } from './path-builder.js';
 import { audit } from './audit';
 import { getUserContext } from './context.js';
 import { filterToolOutputs } from './memory-policy.js';
@@ -657,8 +658,7 @@ export async function executeSkill(
  */
 export function loadTrustLevel(): TrustLevel {
   try {
-    const decisionRulesPath = paths.personaDecisionRules;
-    const data = fs.readFileSync(decisionRulesPath, 'utf-8');
+    const data = fs.readFileSync(paths.personaDecisionRules, 'utf-8');
     const rules = JSON.parse(data);
     // Handle both trustLevel and trust_level for compatibility
     return (rules.trustLevel || rules.trust_level || 'observe') as TrustLevel;

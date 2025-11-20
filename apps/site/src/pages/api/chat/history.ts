@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths } from '@metahuman/core'
+import { getProfilePaths, getUserOrAnonymous, systemPaths } from '@metahuman/core'
 
 type ChatRole = 'user' | 'assistant'
 
@@ -13,8 +13,8 @@ function readJSON(p: string): any | null {
 const historyCache = new Map<string, { data: any; timestamp: number; episodicMtime: number; auditMtime: number }>();
 const CACHE_TTL = 30000; // 30 seconds
 
-function getCacheKey(mode: string, limit: number, maxDays: number): string {
-  return `${mode}-${limit}-${maxDays}`;
+function getCacheKey(username: string | undefined, mode: string, limit: number, maxDays: number): string {
+  return `${username ?? 'anonymous'}-${mode}-${limit}-${maxDays}`;
 }
 
 function getLatestMtime(dir: string, pattern?: RegExp): number {
@@ -33,22 +33,33 @@ function getLatestMtime(dir: string, pattern?: RegExp): number {
   }
 }
 
-export const GET: APIRoute = async ({ request }) => {
+export const GET: APIRoute = async ({ request, cookies }) => {
   try {
+    const user = getUserOrAnonymous(cookies);
+
     const url = new URL(request.url)
     const mode = (url.searchParams.get('mode') === 'inner') ? 'inner' : 'conversation'
     const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit') || '80')))
     // Reduced from 30 to 7 days for faster boot - users can request more via query param
     const maxDays = Math.max(1, Math.min(365, Number(url.searchParams.get('days') || '7')))
 
+    if (user.role === 'anonymous') {
+      return new Response(JSON.stringify({ messages: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    const profilePaths = getProfilePaths(user.username);
+
     // Check cache
-    const cacheKey = getCacheKey(mode, limit, maxDays);
+    const cacheKey = getCacheKey(user.username, mode, limit, maxDays);
     const now = Date.now();
     const cached = historyCache.get(cacheKey);
 
     // Get latest modification times for cache invalidation
-    const episodicMtime = getLatestMtime(paths.episodic);
-    const auditMtime = getLatestMtime(path.join(paths.logs, 'audit'), /\d{4}-\d{2}-\d{2}\.ndjson$/);
+    const episodicMtime = getLatestMtime(profilePaths.episodic);
+    const auditMtime = getLatestMtime(path.join(profilePaths.logs, 'audit'), /\d{4}-\d{2}-\d{2}\.ndjson$/);
 
     // Return cached if fresh and files haven't changed
     if (cached &&
@@ -79,16 +90,16 @@ export const GET: APIRoute = async ({ request }) => {
           const c: string = String(obj.content)
           // Heuristics: map stored capture events to chat roles (only user side from memory)
           if (c.startsWith('Me: "')) {
-            items.push({ ts: Date.parse(obj.timestamp), role: 'user', content: c.replace(/^Me: \"|\"$/g, ''), relPath: path.relative(paths.root, p) })
+            items.push({ ts: Date.parse(obj.timestamp), role: 'user', content: c.replace(/^Me: \"|\"$/g, ''), relPath: path.relative(systemPaths.root, p) })
           }
         }
       }
     }
 
-    walk(paths.episodic)
+    walk(profilePaths.episodic)
     // Merge assistant replies and idle thoughts from audit logs (up to maxDays)
     try {
-      const auditDir = path.join(paths.logs, 'audit')
+      const auditDir = path.join(profilePaths.logs, 'audit')
       const files = fs.existsSync(auditDir)
         ? fs.readdirSync(auditDir).filter(f => /\d{4}-\d{2}-\d{2}\.ndjson$/.test(f)).sort().reverse()
         : []

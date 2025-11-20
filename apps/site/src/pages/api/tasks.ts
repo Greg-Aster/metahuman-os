@@ -1,10 +1,25 @@
+/**
+ * Tasks API - Manage tasks
+ * MIGRATED: 2025-11-20 - Explicit authentication pattern
+ */
+
 import type { APIRoute } from 'astro';
+import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
 import { listActiveTasks, listCompletedTasks, createTask, updateTaskStatus } from '@metahuman/core/memory';
 import { auditDataChange } from '@metahuman/core/audit';
 import { requireWriteMode } from '../../middleware/cognitiveModeGuard';
-import { withUserContext } from '../../middleware/userContext';
 
-const getHandler: APIRoute = async ({ request }) => {
+const getHandler: APIRoute = async ({ cookies, request }) => {
+  // Explicit auth - allow anonymous to see empty task list
+  const user = getUserOrAnonymous(cookies);
+
+  // Anonymous users see empty task lists
+  if (user.role === 'anonymous') {
+    return new Response(
+      JSON.stringify({ tasks: [], completedTasks: [], status: 'all' as const }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
   try {
     const url = new URL(request.url);
     const status = url.searchParams.get('status');
@@ -47,7 +62,10 @@ const getHandler: APIRoute = async ({ request }) => {
   }
 };
 
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
+  // Explicit auth - require authentication for writes
+  const user = getAuthenticatedUser(cookies);
+
   try {
     const body = await request.json();
     const { title, description, priority, tags } = body;
@@ -66,12 +84,12 @@ const postHandler: APIRoute = async ({ request }) => {
 
     const filepath = createTask(title, { description, priority, tags });
 
-    // Audit the creation
+    // Audit the creation with actual username
     auditDataChange({
       type: 'create',
       resource: 'task',
       path: filepath,
-      actor: 'human',
+      actor: user.username,
       details: { title },
     });
 
@@ -97,7 +115,10 @@ const postHandler: APIRoute = async ({ request }) => {
   }
 };
 
-const patchHandler: APIRoute = async ({ request }) => {
+const patchHandler: APIRoute = async ({ cookies, request }) => {
+  // Explicit auth - require authentication for writes
+  const user = getAuthenticatedUser(cookies);
+
   try {
     const body = await request.json();
     const { taskId, status } = body;
@@ -116,12 +137,12 @@ const patchHandler: APIRoute = async ({ request }) => {
 
     updateTaskStatus(taskId, status);
 
-    // Audit the update
+    // Audit the update with actual username
     auditDataChange({
       type: 'update',
       resource: 'task',
       path: taskId,
-      actor: 'human',
+      actor: user.username,
       details: { status },
     });
 
@@ -147,7 +168,8 @@ const patchHandler: APIRoute = async ({ request }) => {
   }
 };
 
-// Wrap with user context middleware and cognitive mode guard
-export const GET = withUserContext(getHandler);
-export const POST = withUserContext(requireWriteMode(postHandler));
-export const PATCH = withUserContext(requireWriteMode(patchHandler));
+// Export handlers - no withUserContext wrapper needed
+// Security policy guards still enforced on POST and PATCH
+export const GET = getHandler;
+export const POST = requireWriteMode(postHandler);
+export const PATCH = requireWriteMode(patchHandler);

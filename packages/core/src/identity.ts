@@ -4,10 +4,6 @@ import { paths } from './paths.js';
 
 /**
  * Identity Module - User Profile Management
- *
- * All functions in this module automatically use context-aware paths.
- * When user context is set, paths resolve to profiles/{username}/persona/
- * When no context is set, paths resolve to root-level persona/ (backward compatible)
  */
 
 export interface PersonaCore {
@@ -111,7 +107,6 @@ export function setTrustLevel(level: string): void {
  */
 export function loadPersonaWithFacet(): PersonaCore {
   try {
-    // Try to access paths.persona - will throw for anonymous users without profile
     const facetsPath = path.join(paths.persona, 'facets.json');
 
     // If no facets config, use core persona

@@ -6,7 +6,7 @@
  */
 
 import { AsyncLocalStorage } from 'async_hooks';
-import { getProfilePaths, systemPaths } from './paths.js';
+import { getProfilePaths, systemPaths } from './path-builder.js';
 
 export interface UserContext {
   userId: string;
@@ -61,7 +61,8 @@ export function withUserContext<T>(
   };
 
   return contextStorage.run(context, async () => {
-    return await fn();
+    const result = await fn();
+    return result;
   });
 }
 

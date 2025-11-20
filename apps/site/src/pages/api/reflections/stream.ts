@@ -66,11 +66,11 @@ export const GET: APIRoute = ({ request }) => {
                   // The following block has been removed:
                   // - Reflection streaming (was: entry.actor === 'reflector')
 
-                  // Send dream events
+                  // Send dream events (both initial and continuation dreams)
                   if (
                     entry.actor === 'dreamer' &&
                     entry.category === 'decision' &&
-                    entry.message === 'Dreamer generated new dream' &&
+                    (entry.event === 'dream_generated' || entry.event === 'dream_continuation_generated') &&
                     entry.metadata?.dream
                   ) {
                     sendEvent({

@@ -1,10 +1,17 @@
+/**
+ * Capture API - Creates new memory events
+ * MIGRATED: 2025-11-20 - Explicit authentication pattern
+ */
+
 import type { APIRoute } from 'astro'
-import { captureEvent } from '@metahuman/core'
+import { getAuthenticatedUser, captureEvent } from '@metahuman/core'
 import { requireWriteMode } from '../../middleware/cognitiveModeGuard'
 import { getSecurityPolicy } from '@metahuman/core/security-policy'
-import { withUserContext } from '../../middleware/userContext'
 
 const handler: APIRoute = async (context) => {
+  // Explicit auth - require authentication for writes
+  // Throws UNAUTHORIZED error which middleware converts to 401
+  const user = getAuthenticatedUser(context.cookies);
   try {
     const body = await context.request.json()
     const { content, tags = [], entities = [], type = 'observation' } = body || {}
@@ -30,6 +37,6 @@ const handler: APIRoute = async (context) => {
   }
 }
 
-// Wrap with user context (sets user profile paths) and cognitive mode guard (checks permissions)
-export const POST = withUserContext(requireWriteMode(handler))
+// Export with security policy guard - no withUserContext wrapper needed
+export const POST = requireWriteMode(handler)
 

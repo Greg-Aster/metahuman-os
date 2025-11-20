@@ -22,23 +22,15 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getUserContext, withUserContext } from '@metahuman/core';
+import { getAuthenticatedUser, getProfilePaths } from '@metahuman/core';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import path from 'path';
 
 export const GET: APIRoute = async ({ url, cookies }) => {
   try {
     // Authentication check
-    const activeUserId = cookies.get('mh_active_user')?.value;
-    if (!activeUserId) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: 'Authentication required'
-        }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    const user = getAuthenticatedUser(cookies);
+    const profilePaths = getProfilePaths(user.username);
 
     // Get session ID from query params
     const sessionId = url.searchParams.get('sessionId');
@@ -57,13 +49,8 @@ export const GET: APIRoute = async ({ url, cookies }) => {
     let summaryText: string | null = null;
     let summaryMetadata: any = null;
 
-    await withUserContext(activeUserId, async () => {
-      const ctx = getUserContext();
-      if (!ctx) return;
-
-      const episodicDir = ctx.profilePaths.episodic;
-      if (!existsSync(episodicDir)) return;
-
+    const episodicDir = profilePaths.episodic;
+    if (existsSync(episodicDir)) {
       // Look back 7 days for summaries
       const today = new Date();
       const lookbackDays = 7;
@@ -112,7 +99,7 @@ export const GET: APIRoute = async ({ url, cookies }) => {
           }
         }
       }
-    });
+    }
 
     // Return response
     return new Response(

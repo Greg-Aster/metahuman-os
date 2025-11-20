@@ -15,10 +15,9 @@ import {
   getChatSettingsScope,
   type ChatSettings,
 } from '@metahuman/core/chat-settings';
-import { withUserContext } from '../../middleware/userContext';
-import { getUserContext } from '@metahuman/core/context';
+import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
 
-const getHandler: APIRoute = async () => {
+const getHandler: APIRoute = async ({ cookies }) => {
   try {
     const settings = loadChatSettings();
     const config = getChatSettingsConfig();
@@ -44,9 +43,9 @@ const getHandler: APIRoute = async () => {
   }
 };
 
-const putHandler: APIRoute = async ({ request }) => {
+const putHandler: APIRoute = async ({ cookies, request }) => {
   try {
-    const ctx = getUserContext();
+    const user = getUserOrAnonymous(cookies);
     const actor = ctx?.username || 'anonymous';
 
     const body = await request.json();
@@ -84,9 +83,9 @@ const putHandler: APIRoute = async ({ request }) => {
   }
 };
 
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
-    const ctx = getUserContext();
+    const user = getUserOrAnonymous(cookies);
     const actor = ctx?.username || 'anonymous';
 
     const body = await request.json();
@@ -124,6 +123,9 @@ const postHandler: APIRoute = async ({ request }) => {
   }
 };
 
-export const GET = withUserContext(getHandler);
-export const PUT = withUserContext(putHandler);
-export const POST = withUserContext(postHandler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const GET = getHandler;
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const PUT = putHandler;
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const POST = postHandler;

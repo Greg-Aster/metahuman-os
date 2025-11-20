@@ -1,19 +1,11 @@
 import type { APIRoute } from 'astro';
-import { getUserContext } from '@metahuman/core/context';
-import { withUserContext } from '../../../../middleware/userContext';
+import { getAuthenticatedUser } from '@metahuman/core';
 import { loadSession, saveSession } from '@metahuman/core/persona/session-manager';
 import { tryResolveProfilePath } from '@metahuman/core/paths';
 
-const handler: APIRoute = async ({ request }) => {
+const handler: APIRoute = async ({ cookies, request }) => {
   try {
-    const ctx = getUserContext();
-
-    if (!ctx || ctx.role === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    const user = getAuthenticatedUser(cookies);
 
     const pathResult = tryResolveProfilePath('personaInterviews');
     if (!pathResult.ok) {
@@ -33,7 +25,7 @@ const handler: APIRoute = async ({ request }) => {
       );
     }
 
-    const session = await loadSession(ctx.username, sessionId);
+    const session = await loadSession(user.username, sessionId);
     if (!session) {
       return new Response(
         JSON.stringify({ error: 'Session not found' }),
@@ -41,7 +33,7 @@ const handler: APIRoute = async ({ request }) => {
       );
     }
 
-    if (session.userId !== ctx.userId) {
+    if (session.userId !== user.userId) {
       return new Response(
         JSON.stringify({ error: 'Access denied' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }
@@ -59,7 +51,7 @@ const handler: APIRoute = async ({ request }) => {
     session.answers[answerIndex].content = content;
     session.answers[answerIndex].editedAt = new Date().toISOString();
 
-    await saveSession(ctx.username, session);
+    await saveSession(user.username, session);
 
     return new Response(
       JSON.stringify({
@@ -79,4 +71,6 @@ const handler: APIRoute = async ({ request }) => {
   }
 };
 
-export const POST = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// POST requires authentication for persona generation
+export const POST = handler;

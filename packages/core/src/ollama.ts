@@ -285,7 +285,8 @@ export class OllamaClient {
     });
 
     if (!response.ok) {
-      throw new Error(`Embeddings request failed: ${response.status}`);
+      const body = await response.text().catch(() => '');
+      throw new Error(`Embeddings request failed: ${response.status}${body ? ` - ${body}` : ''}`);
     }
 
     return response.json();

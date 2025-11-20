@@ -132,17 +132,38 @@ export function validateCognitiveGraph(graph: any): CognitiveGraph {
     });
   }
 
-  // Check for circular dependencies (simple check)
-  if (Array.isArray(graph.links) && graph.links.length > 0) {
-    const linkMap = new Map<number, number[]>();
+  // Check for circular dependencies (allowing conditional_router back-edges)
+  if (Array.isArray(graph.links) && graph.links.length > 0 && Array.isArray(graph.nodes)) {
+    // Identify conditional_router nodes
+    const routerNodes = graph.nodes
+      .filter((n: any) => n.type === 'conditional_router' || n.type === 'cognitive/conditional_router')
+      .map((n: any) => n.id);
+    const routerSet = new Set(routerNodes);
+
+    // Identify back-edges (loops from conditional_router)
+    const backEdges = new Set<string>();
     graph.links.forEach((link: any) => {
-      if (!linkMap.has(link.origin_id)) {
-        linkMap.set(link.origin_id, []);
+      if (routerSet.has(link.origin_id)) {
+        // Slot 1 = loop back path (false branch)
+        if (link.origin_slot === 1 || link.comment?.includes('loop') || link.comment?.includes('BACK-EDGE')) {
+          backEdges.add(`${link.origin_id}->${link.target_id}`);
+        }
       }
-      linkMap.get(link.origin_id)!.push(link.target_id);
     });
 
-    // Simple cycle detection using DFS
+    // Build link map excluding back-edges
+    const linkMap = new Map<number, number[]>();
+    graph.links.forEach((link: any) => {
+      const edgeKey = `${link.origin_id}->${link.target_id}`;
+      if (!backEdges.has(edgeKey)) {
+        if (!linkMap.has(link.origin_id)) {
+          linkMap.set(link.origin_id, []);
+        }
+        linkMap.get(link.origin_id)!.push(link.target_id);
+      }
+    });
+
+    // Cycle detection using DFS (excluding allowed back-edges)
     const visited = new Set<number>();
     const recursionStack = new Set<number>();
 
@@ -164,7 +185,7 @@ export function validateCognitiveGraph(graph: any): CognitiveGraph {
 
     for (const nodeId of linkMap.keys()) {
       if (hasCycle(nodeId)) {
-        errors.push('Graph contains circular dependencies');
+        errors.push('Graph contains invalid circular dependencies (excluding allowed conditional_router back-edges)');
         break;
       }
     }

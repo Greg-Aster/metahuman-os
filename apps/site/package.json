@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "../../bin/run-with-agents astro dev --silent",
-    "dev:no-hmr": "DISABLE_HMR=true ../../bin/run-with-agents astro dev --silent",
+    "dev": "../../bin/run-with-agents astro dev",
+    "dev:no-hmr": "DISABLE_HMR=true ../../bin/run-with-agents astro dev",
     "build": "astro build",
     "preview": "../../bin/run-with-agents astro preview"
   },

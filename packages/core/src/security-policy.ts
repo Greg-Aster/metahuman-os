@@ -128,8 +128,9 @@ function computeSecurityPolicy(
 
   // Determine permissions based on mode + role + admin status
   const policy: SecurityPolicy = {
-    // Memory reads: any authenticated user (not anonymous)
-    canReadMemory: role !== 'anonymous',
+    // Memory reads: authenticated users only (not anonymous or guest)
+    // Guests should only chat, not access personal data
+    canReadMemory: role !== 'anonymous' && role !== 'guest',
 
     // Memory writes: any authenticated user (not anonymous or guest)
     // NOTE: Changed to save memories in ALL modes (dual, agent, emulation) when logged in
@@ -139,8 +140,9 @@ function computeSecurityPolicy(
     // Operator: dual or agent mode AND authenticated user (owner or standard, not guest/anonymous, not emulation)
     canUseOperator: canUseOperator(mode) && (role === 'owner' || role === 'standard'),
 
-    // Mode changes: owner only (regardless of current mode)
-    canChangeMode: role === 'owner',
+    // Mode changes: authenticated users (not guests or anonymous)
+    // Users should be able to control their own cognitive mode
+    canChangeMode: role === 'owner' || role === 'standard',
 
     // Trust changes: owner only
     canChangeTrust: role === 'owner',

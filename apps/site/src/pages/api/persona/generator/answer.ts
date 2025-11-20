@@ -6,8 +6,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getUserContext } from '@metahuman/core/context';
-import { withUserContext } from '../../../../middleware/userContext';
+import { getAuthenticatedUser } from '@metahuman/core';
 import {
   loadSession,
   recordAnswer,
@@ -23,17 +22,10 @@ interface AnswerRequest {
   answer: string;
 }
 
-const handler: APIRoute = async ({ request }) => {
+const handler: APIRoute = async ({ cookies, request }) => {
   try {
-    const ctx = getUserContext();
-
-    // Check authentication
-    if (!ctx || ctx.role === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    // Explicit auth - require authentication for persona generation
+    const user = getAuthenticatedUser(cookies);
 
     // Verify write access
     const pathResult = tryResolveProfilePath('personaInterviews');
@@ -56,7 +48,7 @@ const handler: APIRoute = async ({ request }) => {
     }
 
     // Load session
-    const session = await loadSession(ctx.username, sessionId);
+    const session = await loadSession(user.username, sessionId);
     if (!session) {
       return new Response(
         JSON.stringify({ error: 'Session not found' }),
@@ -65,7 +57,7 @@ const handler: APIRoute = async ({ request }) => {
     }
 
     // Verify ownership
-    if (session.userId !== ctx.userId) {
+    if (session.userId !== user.userId) {
       return new Response(
         JSON.stringify({ error: 'Access denied - session belongs to another user' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }
@@ -81,10 +73,10 @@ const handler: APIRoute = async ({ request }) => {
     }
 
     // Record the answer
-    await recordAnswer(ctx.username, sessionId, questionId, answer);
+    await recordAnswer(user.username, sessionId, questionId, answer);
 
     // Reload session to get updated coverage
-    const updatedSession = await loadSession(ctx.username, sessionId);
+    const updatedSession = await loadSession(user.username, sessionId);
     if (!updatedSession) {
       throw new Error('Failed to reload session after recording answer');
     }
@@ -102,14 +94,14 @@ const handler: APIRoute = async ({ request }) => {
 
         if (result) {
           // Add question to session
-          await addQuestion(ctx.username, sessionId, result.question);
+          await addQuestion(user.username, sessionId, result.question);
           nextQuestion = result.question;
           reasoning = result.reasoning;
         } else {
           // Question generator returned null (interview complete)
           status.isComplete = true;
           updatedSession.status = 'completed';
-          await saveSession(ctx.username, updatedSession);
+          await saveSession(user.username, updatedSession);
         }
       } catch (error) {
         console.error('[persona/generator/answer] Error generating next question:', error);
@@ -127,7 +119,7 @@ const handler: APIRoute = async ({ request }) => {
     } else {
       // Interview complete - mark session as completed
       updatedSession.status = 'completed';
-      await saveSession(ctx.username, updatedSession);
+      await saveSession(user.username, updatedSession);
     }
 
     return new Response(
@@ -156,4 +148,6 @@ const handler: APIRoute = async ({ request }) => {
   }
 };
 
-export const POST = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// POST requires authentication for persona generation
+export const POST = handler;

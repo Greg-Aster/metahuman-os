@@ -40,12 +40,42 @@ export interface ExecutionEvent {
 export type ExecutionEventHandler = (event: ExecutionEvent) => void;
 
 /**
+ * Identify back-edges (edges that would create cycles)
+ * These are allowed ONLY from conditional_router nodes
+ */
+function identifyBackEdges(graph: CognitiveGraph): Set<string> {
+  const backEdges = new Set<string>();
+
+  // Find all conditional_router nodes
+  const routerNodes = graph.nodes.filter(n => n.type === 'conditional_router' || n.type === 'cognitive/conditional_router');
+  const routerIds = new Set(routerNodes.map(n => n.id));
+
+  // For each router, identify which of its output links are "loop back" links
+  graph.links.forEach(link => {
+    if (routerIds.has(link.origin_id)) {
+      // Check if this link creates a cycle (target comes before origin in dependency order)
+      // We'll mark links that might loop back based on slot naming or link properties
+      // Slot 0 = "true path" (exit/continue), Slot 1 = "false path" (loop back)
+      if (link.origin_slot === 1 || link.comment?.includes('loop') || link.comment?.includes('back')) {
+        backEdges.add(`${link.origin_id}->${link.target_id}`);
+      }
+    }
+  });
+
+  return backEdges;
+}
+
+/**
  * Topological sort for determining execution order
+ * Supports conditional loops via conditional_router nodes
  */
 function topologicalSort(graph: CognitiveGraph): number[] {
   const nodeIds = graph.nodes.map(n => n.id);
   const adjacencyList = new Map<number, number[]>();
   const inDegree = new Map<number, number>();
+
+  // Identify back-edges (loop edges from conditional_router)
+  const backEdges = identifyBackEdges(graph);
 
   // Initialize
   nodeIds.forEach(id => {
@@ -53,10 +83,13 @@ function topologicalSort(graph: CognitiveGraph): number[] {
     inDegree.set(id, 0);
   });
 
-  // Build adjacency list and in-degree map
+  // Build adjacency list and in-degree map (excluding back-edges)
   graph.links.forEach(link => {
-    adjacencyList.get(link.origin_id)?.push(link.target_id);
-    inDegree.set(link.target_id, (inDegree.get(link.target_id) || 0) + 1);
+    const edgeKey = `${link.origin_id}->${link.target_id}`;
+    if (!backEdges.has(edgeKey)) {
+      adjacencyList.get(link.origin_id)?.push(link.target_id);
+      inDegree.set(link.target_id, (inDegree.get(link.target_id) || 0) + 1);
+    }
   });
 
   // Find nodes with no incoming edges
@@ -81,9 +114,10 @@ function topologicalSort(graph: CognitiveGraph): number[] {
     });
   }
 
-  // Check for cycles
+  // Check for cycles (excluding allowed back-edges)
   if (sorted.length !== nodeIds.length) {
-    throw new Error('Graph contains cycles - cannot execute');
+    const missing = nodeIds.filter(id => !sorted.includes(id));
+    throw new Error(`Graph contains invalid cycles. Missing nodes: ${missing.join(', ')}`);
   }
 
   return sorted;
@@ -110,15 +144,36 @@ function getNodeInputs(
       const targetNodeDef = graph.nodes.find(n => n.id === nodeId);
 
       if (sourceNodeDef && targetNodeDef) {
-        // For now, use a simple mapping based on slot index
-        // In a real implementation, this would use the node schema
-        const value = sourceNode.outputs[link.origin_slot] || sourceNode.outputs;
+        // Handle slot-based outputs
+        let value;
+
+        // Special handling for conditional_router: extract routedData for all slots
+        if (sourceNode.outputs.routedData !== undefined) {
+          value = sourceNode.outputs.routedData;
+        }
+        // Try numeric slot access first (for array-based outputs)
+        else if (sourceNode.outputs[link.origin_slot] !== undefined) {
+          value = sourceNode.outputs[link.origin_slot];
+        }
+        // Fallback: use entire output object
+        else {
+          value = sourceNode.outputs;
+        }
+
         inputs[link.target_slot] = value;
       }
     }
   });
 
-  return inputs;
+  // Convert sparse object to array for executor compatibility
+  // Node executors expect inputs as an array-like structure
+  const maxSlot = Math.max(-1, ...Object.keys(inputs).map(k => parseInt(k, 10)).filter(n => !isNaN(n)));
+  const inputArray: any[] = [];
+  for (let i = 0; i <= maxSlot; i++) {
+    inputArray[i] = inputs[i];
+  }
+
+  return inputArray.length > 0 ? inputArray : inputs;
 }
 
 /**
@@ -233,17 +288,34 @@ async function executeNodeByType(
 
   // In Node.js (or forced server mode): Import the real node executors
   log.debug(`     Server mode: Using real executor for ${nodeType}`);
-  const { getNodeExecutor } = await import('./node-executors.js');
+  const { getNodeExecutor } = await import('./node-executors/index.js');
 
   // Get the executor for this node type
   const executor = getNodeExecutor(nodeType);
 
   if (executor) {
     try {
-      // Execute with real implementation
-      return await executor(inputs, context, node.properties);
+      // Execute with timeout protection (30 seconds)
+      const startTime = Date.now();
+      if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting at ${new Date().toISOString()}`);
+
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`⏱️ TIMEOUT: Node ${node.id} (${nodeType}) exceeded 30 second execution limit`));
+        }, 30000);
+      });
+
+      const executionPromise = executor(inputs, context, node.properties);
+
+      const result = await Promise.race([executionPromise, timeoutPromise]);
+
+      const duration = Date.now() - startTime;
+      if (process.env.DEBUG_GRAPH) console.log(`[EXEC_END] Node ${node.id} (${nodeType}) completed in ${duration}ms`);
+
+      return result as Record<string, any>;
     } catch (error) {
-      console.error(`[Node:${nodeType}] Execution error:`, error);
+      console.error(`[Node:${nodeType}] ❌ EXECUTION FAILED:`, error);
+      console.error(`[Node:${nodeType}] Stack trace:`, (error as Error).stack);
       throw error;
     }
   }
@@ -254,13 +326,65 @@ async function executeNodeByType(
 }
 
 /**
+ * Get nodes reachable from a conditional router's loop-back edge
+ */
+function getLoopNodes(routerId: number, graph: CognitiveGraph, backEdges: Set<string>): number[] {
+  const loopTargets: number[] = [];
+
+  // Find all back-edges from this router
+  graph.links.forEach(link => {
+    if (link.origin_id === routerId) {
+      const edgeKey = `${link.origin_id}->${link.target_id}`;
+      if (backEdges.has(edgeKey)) {
+        loopTargets.push(link.target_id);
+      }
+    }
+  });
+
+  if (loopTargets.length === 0) return [];
+
+  // Find all nodes between loop target and router (the loop body)
+  const loopBody = new Set<number>();
+  const visited = new Set<number>();
+  const queue = [...loopTargets];
+
+  while (queue.length > 0) {
+    const nodeId = queue.shift()!;
+    if (visited.has(nodeId) || nodeId === routerId) continue;
+
+    visited.add(nodeId);
+    loopBody.add(nodeId);
+
+    // Find downstream nodes
+    graph.links.forEach(link => {
+      if (link.origin_id === nodeId && link.target_id !== routerId) {
+        const edgeKey = `${link.origin_id}->${link.target_id}`;
+        if (!backEdges.has(edgeKey)) {
+          queue.push(link.target_id);
+        }
+      }
+    });
+  }
+
+  return Array.from(loopBody).sort((a, b) => a - b);
+}
+
+/**
  * Execute an entire graph
+ * Supports conditional loops via conditional_router nodes
  */
 export async function executeGraph(
   graph: CognitiveGraph,
   contextData: Record<string, any>,
   eventHandler?: ExecutionEventHandler
 ): Promise<GraphExecutionState> {
+  console.log(`[🎯 EXEC_GRAPH_ENTRY] Function called at ${new Date().toISOString()}`);
+  console.log(`[🎯 EXEC_GRAPH_ENTRY] Graph: ${graph?.name}, Nodes: ${graph?.nodes?.length}`);
+  const timeoutMs = typeof contextData?.timeoutMs === 'number' ? contextData.timeoutMs : 30000;
+  console.log(`[🎯 EXEC_GRAPH_ENTRY] Timeout set to ${timeoutMs}ms`);
+  let timedOut = false;
+  const timeoutError = new Error(`Graph execution timed out after ${timeoutMs}ms`);
+
   const executionState = new Map<number, NodeExecutionState>();
   const graphState: GraphExecutionState = {
     nodes: executionState,
@@ -268,20 +392,102 @@ export async function executeGraph(
     status: 'running',
   };
 
+  const timeoutHandle = setTimeout(() => {
+    timedOut = true;
+    log.warn(`[GraphExecutor] Timeout fired after ${timeoutMs}ms for graph "${graph.name}"`);
+    if (eventHandler) {
+      eventHandler({
+        type: 'graph_error',
+        data: { error: timeoutError.message },
+        timestamp: Date.now(),
+      });
+    }
+  }, timeoutMs);
+
   log.info(`🚀 Starting execution: ${graph.name} v${graph.version}`);
   log.debug(`   Nodes: ${graph.nodes.length}, Links: ${graph.links.length}`);
   log.debug(`   Cognitive Mode: ${graph.cognitiveMode || 'default'}`);
   log.debug(`   Context: userId=${contextData.userId}, sessionId=${contextData.sessionId}`);
 
   try {
-    // Get execution order
+    // Identify back-edges for conditional loops
+    const backEdges = identifyBackEdges(graph);
+    if (backEdges.size > 0) {
+      log.debug(`   Detected ${backEdges.size} conditional loop edge(s)`);
+    }
+
+    // Get initial execution order (excluding back-edges)
     const executionOrder = topologicalSort(graph);
     log.debug(`   Execution Order: ${executionOrder.length} nodes`);
 
-    // Execute nodes in order
-    for (const nodeId of executionOrder) {
+    // Dynamic execution queue (supports re-execution for loops)
+    const executionQueue: number[] = [...executionOrder];
+    const executedCount = new Map<number, number>(); // Track iteration count per node
+    const maxIterations = 20; // Safety limit
+
+    while (executionQueue.length > 0) {
+      const nodeId = executionQueue.shift()!;
+
+      // Track iteration count (prevent infinite loops)
+      const iterCount = (executedCount.get(nodeId) || 0) + 1;
+      executedCount.set(nodeId, iterCount);
+
+      if (iterCount > maxIterations) {
+        throw new Error(`Node ${nodeId} exceeded maximum iterations (${maxIterations}). Possible infinite loop.`);
+      }
+
+       if (timedOut) {
+        throw timeoutError;
+      }
+
       graphState.currentNodeId = nodeId;
+
+      // Execute the node
       await executeNode(nodeId, graph, executionState, contextData, eventHandler);
+
+      // Check if this node is a conditional_router
+      const node = graph.nodes.find(n => n.id === nodeId);
+      if (node && (node.type === 'conditional_router' || node.type === 'cognitive/conditional_router')) {
+        const nodeState = executionState.get(nodeId);
+        const outputs = nodeState?.outputs;
+
+        console.log(`[GraphExecutor] ========== ROUTER DECISION HANDLING ==========`);
+        console.log(`[GraphExecutor] Router node ${nodeId} executed (iteration ${iterCount})`);
+        console.log(`[GraphExecutor] Outputs:`, JSON.stringify(outputs, null, 2));
+        console.log(`[GraphExecutor] Branch: ${outputs?.branch}`);
+        console.log(`[GraphExecutor] Routing Decision: ${outputs?.routingDecision}`);
+
+        if (outputs && outputs.branch === 'false') {
+          // Router decided to loop back
+          log.debug(`   🔄 Loop triggered by router ${nodeId} (iteration ${iterCount})`);
+          console.log(`[GraphExecutor] 🔄 LOOPING BACK - Branch is FALSE`);
+
+          // Get the loop body nodes and re-add them to execution queue
+          const loopNodes = getLoopNodes(nodeId, graph, backEdges);
+
+          console.log(`[GraphExecutor] Loop body nodes to re-execute: ${loopNodes.join(', ')}`);
+
+          if (loopNodes.length > 0) {
+            // Clear execution state for loop body nodes ONLY
+            // DON'T clear router state yet - loop body needs to read its outputs via back-edge!
+            // Router state will be naturally overwritten when it re-executes
+            loopNodes.forEach(id => executionState.delete(id));
+
+            // Add loop nodes back to queue, then re-queue router at the end
+            executionQueue.unshift(...loopNodes);
+            executionQueue.push(nodeId);  // Router runs after loop body
+            log.debug(`   🔄 Re-queued ${loopNodes.length} nodes + router for iteration`);
+            console.log(`[GraphExecutor] Re-queued ${loopNodes.length} loop body nodes + router (node ${nodeId}). Queue size: ${executionQueue.length}`);
+          } else {
+            console.log(`[GraphExecutor] ⚠️  WARNING: No loop body nodes found! Loop cannot continue.`);
+          }
+        } else {
+          log.debug(`   ✅ Router ${nodeId} exited loop (branch: ${outputs?.branch})`);
+          console.log(`[GraphExecutor] ✅ EXITING LOOP - Branch is TRUE or other value`);
+          console.log(`[GraphExecutor] Continuing with remaining ${executionQueue.length} nodes in queue`);
+        }
+        console.log(`[GraphExecutor] ================================================`);
+      }
     }
 
     graphState.status = 'completed';
@@ -289,19 +495,25 @@ export async function executeGraph(
 
     // Log execution summary
     const duration = graphState.endTime - graphState.startTime;
-    const nodeTypes = executionOrder
-      .map(id => graph.nodes.find(n => n.id === id)?.type.replace('cognitive/', ''))
-      .filter(Boolean);
-    log.info(`✅ COMPLETE: ${nodeTypes.length} nodes in ${duration}ms`);
-    log.info(`   Pipeline: ${nodeTypes.join(' → ')}`);
+    const totalExecutions = Array.from(executedCount.values()).reduce((a, b) => a + b, 0);
+    log.info(`✅ COMPLETE: ${totalExecutions} total node executions in ${duration}ms`);
+
+    // Show iteration counts for looped nodes
+    const loopedNodes = Array.from(executedCount.entries()).filter(([_, count]) => count > 1);
+    if (loopedNodes.length > 0) {
+      log.info(`   Iterations: ${loopedNodes.map(([id, count]) => `node${id}×${count}`).join(', ')}`);
+    }
 
     if (eventHandler) {
       eventHandler({
         type: 'graph_complete',
-        data: { duration: graphState.endTime - graphState.startTime },
+        data: { duration: graphState.endTime - graphState.startTime, iterations: totalExecutions },
         timestamp: Date.now(),
       });
     }
+
+    // Return the successful execution state
+    return graphState;
 
   } catch (error) {
     graphState.status = 'failed';
@@ -314,9 +526,10 @@ export async function executeGraph(
         timestamp: Date.now(),
       });
     }
+    return graphState;
+  } finally {
+    clearTimeout(timeoutHandle);
   }
-
-  return graphState;
 }
 
 /**

@@ -1,9 +1,8 @@
 import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
-import { tryResolveProfilePath, systemPaths } from '@metahuman/core'
+import { getAuthenticatedUser, getProfilePaths, systemPaths } from '@metahuman/core'
 import { getSecurityPolicy } from '../../../../../packages/core/src/security-policy.js'
-import { withUserContext } from '../../middleware/userContext'
 
 type EventItem = {
   id: string
@@ -16,10 +15,12 @@ type EventItem = {
   validation?: { status?: 'correct' | 'incorrect'; by?: string; timestamp?: string }
 }
 
-const handler: APIRoute = async (context) => {
+const handler: APIRoute = async ({ cookies }) => {
   try {
+    const user = getAuthenticatedUser(cookies)
+
     // Require authentication to access memory data
-    const policy = getSecurityPolicy(context);
+    const policy = getSecurityPolicy({ cookies });
     if (!policy.canReadMemory) {
       return new Response(
         JSON.stringify({ error: 'Access not permitted. Please log in to view memories.' }),
@@ -27,15 +28,16 @@ const handler: APIRoute = async (context) => {
       );
     }
 
-    const result = tryResolveProfilePath('episodic');
-    if (!result.ok) {
+    const profilePaths = getProfilePaths(user.username);
+    const root = profilePaths.episodic;
+
+    if (!fs.existsSync(root)) {
       return new Response(
         JSON.stringify({ events: [] }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    const root = result.path;
     const items: EventItem[] = [];
 
     const walk = (dir: string) => {
@@ -81,5 +83,5 @@ const handler: APIRoute = async (context) => {
   }
 }
 
-// Wrap with user context middleware for automatic profile path resolution
-export const GET = withUserContext(handler)
+// MIGRATED: explicit authentication (auth required for memory access)
+export const GET = handler

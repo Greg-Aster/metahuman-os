@@ -386,11 +386,12 @@ async function updateConversationBufferSummary(
  */
 async function summarizeSession(
   sessionId: string,
-  options: { bufferMode?: 'conversation' | 'inner' } = {}
+  options: { bufferMode?: 'conversation' | 'inner'; username?: string; profilePaths?: any } = {}
 ): Promise<ConversationSummary | null> {
-  const ctx = getUserContext();
+  // Support explicit username (new pattern) or fall back to getUserContext (legacy CLI usage)
+  const ctx = options.username ? undefined : getUserContext();
   const userId = ctx?.userId;
-  const username = ctx?.username || 'anonymous';
+  const username = options.username || ctx?.username || 'anonymous';
 
   console.log(`[summarizer] Analyzing session: ${sessionId}`);
 

@@ -7,8 +7,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getUserContext } from '@metahuman/core/context';
-import { withUserContext } from '../../../../middleware/userContext';
+import { getAuthenticatedUser } from '@metahuman/core';
 import { tryResolveProfilePath } from '@metahuman/core/paths';
 import {
   loadSession,
@@ -30,17 +29,10 @@ interface ApplyRequest {
   strategy: MergeStrategy; // 'replace' | 'merge' | 'append'
 }
 
-const handler: APIRoute = async ({ request }) => {
+const handler: APIRoute = async ({ cookies, request }) => {
   try {
-    const ctx = getUserContext();
-
-    // Check authentication
-    if (!ctx || ctx.role === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    // Explicit auth - require authentication for persona generation
+    const user = getAuthenticatedUser(cookies);
 
     // Verify write access
     const pathResult = tryResolveProfilePath('personaInterviews');
@@ -78,7 +70,7 @@ const handler: APIRoute = async ({ request }) => {
     }
 
     // Load session
-    const session = await loadSession(ctx.username, sessionId);
+    const session = await loadSession(user.username, sessionId);
     if (!session) {
       return new Response(
         JSON.stringify({ error: 'Session not found' }),
@@ -87,7 +79,7 @@ const handler: APIRoute = async ({ request }) => {
     }
 
     // Verify ownership
-    if (session.userId !== ctx.userId) {
+    if (session.userId !== user.userId) {
       return new Response(
         JSON.stringify({ error: 'Access denied - session belongs to another user' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }
@@ -139,19 +131,19 @@ const handler: APIRoute = async ({ request }) => {
     session.status = 'applied';
     session.appliedAt = new Date().toISOString();
     session.appliedStrategy = strategy;
-    await saveSession(ctx.username, session);
+    await saveSession(user.username, session);
 
     // Audit application
     await audit('data_change', 'info', {
       action: 'persona_draft_applied',
       sessionId,
-      userId: ctx.userId,
-      username: ctx.username,
+      userId: user.userId,
+      username: user.username,
       strategy,
       diffSummary: diff.summary,
       backupPath,
       personaPath: personaCoreResult.path,
-      actor: ctx.username,
+      actor: user.username,
     });
 
     return new Response(
@@ -182,4 +174,6 @@ const handler: APIRoute = async ({ request }) => {
   }
 };
 
-export const POST = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// POST requires authentication for persona generation
+export const POST = handler;

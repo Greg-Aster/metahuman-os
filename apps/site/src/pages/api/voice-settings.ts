@@ -1,6 +1,5 @@
 import type { APIRoute } from 'astro';
-import { getUserContext } from '@metahuman/core/context';
-import { withUserContext } from '../../middleware/userContext';
+import { getUserOrAnonymous, getProfilePaths, systemPaths } from '@metahuman/core';
 import { startSovitsServer, stopSovitsServer } from '../../lib/sovits-server';
 import { stopServer } from '@metahuman/core/tts/server-manager';
 import fs from 'node:fs';
@@ -454,22 +453,23 @@ function ensureVoiceConfig(
  * GET: Return available voices and current settings
  * POST: Update voice settings
  */
-const getHandler: APIRoute = async () => {
+const getHandler: APIRoute = async ({ cookies }) => {
   try {
-    const context = getUserContext();
-    if (!context) {
-      return new Response(
-        JSON.stringify({ error: 'Context not available' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    // Get user (never throws, returns anonymous if not authenticated)
+    const user = getUserOrAnonymous(cookies);
+
+    // Get profile paths (explicit)
+    const profilePaths = user.role !== 'anonymous'
+      ? getProfilePaths(user.username)
+      : null;
 
     // Allow anonymous/guest users to view voice settings (read-only)
-    // They just can't change them via POST
+    // They return default config. Authenticated users get their profile config.
 
-    const voiceConfigPath = context.profilePaths.voiceConfig;
-    const voicesDir = context.systemPaths.voiceModels;
-    const rootDir = context.systemPaths.root;
+    // For anonymous users, use system defaults
+    const voiceConfigPath = profilePaths?.voiceConfig || path.join(systemPaths.etc, 'voice.json');
+    const voicesDir = systemPaths.voiceModels;
+    const rootDir = systemPaths.root;
     const voices = getAvailableVoices(voicesDir);
 
     const config = ensureVoiceConfig(voiceConfigPath, voicesDir, rootDir, voices);
@@ -566,10 +566,11 @@ const getHandler: APIRoute = async () => {
   }
 };
 
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ request, cookies }) => {
   try {
-    const context = getUserContext();
-    if (!context || context.username === 'anonymous') {
+    // Explicit auth check - throws 401 if not authenticated
+    const user = getUserOrAnonymous(cookies);
+    if (user.role === 'anonymous') {
       return new Response(
         JSON.stringify({ error: 'Authentication required' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -581,9 +582,11 @@ const postHandler: APIRoute = async ({ request }) => {
 
     console.log('[voice-settings POST] Received body:', { provider, hasPiper: !!piper, hasSovits: !!sovits, hasRvc: !!rvc, hasKokoro: !!kokoro, hasStt: !!stt });
 
-    const voiceConfigPath = context.profilePaths.voiceConfig;
-    const voicesDir = context.systemPaths.voiceModels;
-    const rootDir = context.systemPaths.root;
+    // Get profile paths explicitly
+    const profilePaths = getProfilePaths(user.username);
+    const voiceConfigPath = profilePaths.voiceConfig;
+    const voicesDir = systemPaths.voiceModels;
+    const rootDir = systemPaths.root;
     const voices = getAvailableVoices(voicesDir);
     const config = ensureVoiceConfig(voiceConfigPath, voicesDir, rootDir, voices);
     const previousProvider = config.tts.provider;
@@ -941,5 +944,5 @@ function extractSovitsPort(config: VoiceConfig): number {
   }
 }
 
-export const GET = withUserContext(getHandler);
-export const POST = withUserContext(postHandler);
+export const GET = getHandler;
+export const POST = postHandler;

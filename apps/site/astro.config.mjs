@@ -12,7 +12,7 @@ export default defineConfig({
   },
   output: 'server',
   vite: {
-    logLevel: 'silent', // Completely silent - no request logs at all
+    logLevel: 'warn', // Show warnings and errors, allow console.log from API handlers
     clearScreen: false, // Don't clear terminal on restart
     server: {
       allowedHosts: [

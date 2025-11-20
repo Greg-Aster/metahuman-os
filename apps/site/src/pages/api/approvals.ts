@@ -4,18 +4,17 @@ import {
   approveSkillExecution,
   rejectSkillExecution,
 } from '@metahuman/core/skills';
-import { getUserContext } from '@metahuman/core/context';
-import { withUserContext } from '../../middleware/userContext';
+import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
 
 /**
  * GET /api/approvals
  * Returns all pending approval items
  */
-const getHandler: APIRoute = async (context) => {
+const getHandler: APIRoute = async ({ cookies }) => {
   try {
-    const ctx = getUserContext();
-    if (!ctx || ctx.role === 'anonymous') {
+    const user = getUserOrAnonymous(cookies);
+    if (user.role === 'anonymous') {
       return new Response(
         JSON.stringify({ error: 'Authentication required to view approvals.' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -40,17 +39,17 @@ const getHandler: APIRoute = async (context) => {
  * Approve or reject a skill execution
  * Body: { id: string, action: 'approve' | 'reject' }
  */
-const postHandler: APIRoute = async (context) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
-    const ctx = getUserContext();
-    if (!ctx || ctx.role === 'anonymous') {
+    const user = getUserOrAnonymous(cookies);
+    if (user.role === 'anonymous') {
       return new Response(
         JSON.stringify({ error: 'Authentication required to modify approvals.' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    const policy = getSecurityPolicy(context);
+    const policy = getSecurityPolicy({ cookies });
     try {
       policy.requireOwner();
     } catch (error) {
@@ -60,7 +59,7 @@ const postHandler: APIRoute = async (context) => {
       );
     }
 
-    const body = await context.request.json();
+    const body = await request.json();
     const { id, action } = body;
 
     if (!id || !action) {
@@ -105,5 +104,7 @@ const postHandler: APIRoute = async (context) => {
   }
 };
 
-export const GET = withUserContext(getHandler);
-export const POST = withUserContext(postHandler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const GET = getHandler;
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const POST = postHandler;

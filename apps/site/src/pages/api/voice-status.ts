@@ -1,22 +1,22 @@
 import type { APIRoute } from 'astro';
-import { getTTSStatus } from '@metahuman/core';
-import { getUserContext } from '@metahuman/core/context';
-import { getProfilePaths } from '@metahuman/core/paths';
-import { withUserContext } from '../../middleware/userContext';
+import { getTTSStatus, getUserOrAnonymous, getProfilePaths } from '@metahuman/core';
 import fs from 'node:fs';
 import path from 'node:path';
 
 /**
  * GET /api/voice-status
  * Get voice system status including active provider and training metrics
+ * MIGRATED: 2025-11-20 - Explicit authentication pattern
  */
-const handler: APIRoute = async () => {
+const handler: APIRoute = async ({ cookies }) => {
   try {
-    const ctx = getUserContext();
-    const username = ctx?.username || 'anonymous';
+    // Explicit auth - allow anonymous users to view TTS status (limited data)
+    const user = getUserOrAnonymous(cookies);
+    const username = user.username;
 
     // Get TTS status (provider, server availability)
     const ttsStatus = await getTTSStatus();
+    console.log('[voice-status] TTS Status:', JSON.stringify(ttsStatus, null, 2));
 
     // Get voice training metrics
     let trainingMetrics: any = {
@@ -111,4 +111,7 @@ const handler: APIRoute = async () => {
   }
 };
 
-export const GET = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// Anonymous users allowed (TTS status only, no training metrics)
+// Authenticated users see training metrics
+export const GET = handler;

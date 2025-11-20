@@ -5,15 +5,14 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getUserContext } from '@metahuman/core/context';
-import { withUserContext } from '../../../middleware/userContext';
+import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
 import { completeOnboarding, getOnboardingState } from '@metahuman/core/onboarding';
 
 /**
  * POST /api/onboarding/complete
  * Marks onboarding as complete for the current user
  */
-const handler: APIRoute = async () => {
+const handler: APIRoute = async ({ cookies }) => {
   try {
     const context = getUserContext();
 
@@ -61,4 +60,5 @@ const handler: APIRoute = async () => {
   }
 };
 
-export const POST = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const POST = handler;

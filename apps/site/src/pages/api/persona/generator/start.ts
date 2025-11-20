@@ -6,19 +6,17 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getUserContext } from '@metahuman/core/context';
-import { withUserContext } from '../../../../middleware/userContext';
+import { getAuthenticatedUser, systemPaths } from '@metahuman/core';
 import { startSession, addQuestion, type Question } from '@metahuman/core/persona/session-manager';
 import { tryResolveProfilePath } from '@metahuman/core/paths';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '@metahuman/core/paths';
 
 /**
  * Load baseline questions from configuration
  */
 function loadBaselineQuestions(): Question[] {
-  const configPath = path.join(paths.root, 'etc', 'persona-generator.json');
+  const configPath = path.join(systemPaths.root, 'etc', 'persona-generator.json');
   const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
   return config.baselineQuestions.map((q: any) => ({
     id: q.id,
@@ -28,17 +26,10 @@ function loadBaselineQuestions(): Question[] {
   }));
 }
 
-const handler: APIRoute = async ({ request }) => {
+const handler: APIRoute = async ({ cookies, request }) => {
   try {
-    const ctx = getUserContext();
-
-    // Check authentication
-    if (!ctx || ctx.role === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    // Explicit auth - require authentication for persona generation
+    const user = getAuthenticatedUser(cookies);
 
     // Verify write access (not in emulation mode)
     const pathResult = tryResolveProfilePath('personaInterviews');
@@ -50,7 +41,7 @@ const handler: APIRoute = async ({ request }) => {
     }
 
     // Create new session
-    const session = await startSession(ctx.userId, ctx.username);
+    const session = await startSession(user.userId, user.username);
 
     // Load first question from baseline questions
     const baselineQuestions = loadBaselineQuestions();
@@ -64,7 +55,7 @@ const handler: APIRoute = async ({ request }) => {
     const firstQuestion = baselineQuestions[0];
 
     // Add first question to session
-    await addQuestion(ctx.username, session.sessionId, firstQuestion);
+    await addQuestion(user.username, session.sessionId, firstQuestion);
 
     return new Response(
       JSON.stringify({
@@ -89,4 +80,6 @@ const handler: APIRoute = async ({ request }) => {
   }
 };
 
-export const POST = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// POST requires authentication for persona generation
+export const POST = handler;

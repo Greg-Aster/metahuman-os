@@ -6,8 +6,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getUserContext } from '@metahuman/core/context';
-import { withUserContext } from '../../../middleware/userContext';
+import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
 import {
   getOnboardingState,
   updateOnboardingState,
@@ -19,7 +18,7 @@ import {
  * GET /api/onboarding/state
  * Returns current onboarding progress
  */
-const getHandler: APIRoute = async () => {
+const getHandler: APIRoute = async ({ cookies }) => {
   try {
     const context = getUserContext();
 
@@ -64,7 +63,7 @@ const getHandler: APIRoute = async () => {
  * Update onboarding state
  * Body: { updates: Partial<OnboardingState> }
  */
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
     const context = getUserContext();
 
@@ -121,5 +120,7 @@ const postHandler: APIRoute = async ({ request }) => {
   }
 };
 
-export const GET = withUserContext(getHandler);
-export const POST = withUserContext(postHandler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const GET = getHandler;
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const POST = postHandler;

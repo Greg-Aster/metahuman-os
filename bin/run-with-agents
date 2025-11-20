@@ -40,4 +40,6 @@ fi
 
 cd "$REPO_ROOT/apps/site"
 
-"$@"
+echo ""
+# Filter out request logs ([200], [304], etc.) but keep everything else
+"$@" 2>&1 | grep --line-buffered -v '\[20[0-9]\] \|[30[0-9]\] \|[40[0-9]\] \|[50[0-9]\] ' || true

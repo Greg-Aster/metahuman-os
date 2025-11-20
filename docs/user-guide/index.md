@@ -86,3 +86,6 @@ Welcome to the MetaHuman OS User Guide. This guide is organized into the followi
 
 28. **[Cognitive Architecture: Multi-Layer Intelligence System](27-cognitive-architecture.md)**
     *   **Authentic Personality Emulation**: Explore the new multi-layer cognitive architecture that mimics human consciousness, enabling more authentic personality emulation while maintaining computational efficiency and scalability.
+
+29. **[Node-Based Cognitive System: Visual Programming for AI Workflows](28-node-based-cognitive-system.md)**
+    *   **Visual Workflow Design**: Learn about the revolutionary node-based architecture that lets you view, edit, and customize cognitive workflows as visual graphs. Understand how nodes compose into complete cognitive pipelines, explore modular ReAct components, and create custom workflows tailored to your needs.

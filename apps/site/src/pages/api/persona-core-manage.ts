@@ -1,22 +1,23 @@
 /**
  * API endpoint to read and write the complete core.json file
  * This allows editing the entire persona configuration
+ *
+ * MIGRATED: 2025-11-20 - Explicit authentication pattern
  */
 
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
-import { tryResolveProfilePath } from '@metahuman/core/paths';
+import { getAuthenticatedUser, getUserOrAnonymous, getProfilePaths } from '@metahuman/core';
 import { audit } from '@metahuman/core/audit';
-import { withUserContext } from '../../middleware/userContext';
 import { requireWriteMode } from '../../middleware/cognitiveModeGuard';
 
-const getHandler: APIRoute = async () => {
+const getHandler: APIRoute = async ({ cookies }) => {
   try {
-    // Use safe path resolution
-    const result = tryResolveProfilePath('personaCore');
+    // Explicit auth - allow anonymous users to see default
+    const user = getUserOrAnonymous(cookies);
 
-    if (!result.ok) {
-      // Anonymous user - return minimal default structure
+    // Anonymous users see minimal default structure
+    if (user.role === 'anonymous') {
       return new Response(
         JSON.stringify({
           success: true,
@@ -88,7 +89,9 @@ const getHandler: APIRoute = async () => {
       );
     }
 
-    const personaPath = result.path;
+    // Authenticated user - get their paths explicitly
+    const paths = getProfilePaths(user.username);
+    const personaPath = paths.personaCore;
 
     if (!fs.existsSync(personaPath)) {
       return new Response(
@@ -118,8 +121,12 @@ const getHandler: APIRoute = async () => {
   }
 };
 
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
+    // Explicit auth - require authentication for writes
+    // Throws UNAUTHORIZED error which middleware converts to 401
+    const user = getAuthenticatedUser(cookies);
+
     const body = await request.json();
     const { persona } = body;
 
@@ -130,17 +137,9 @@ const postHandler: APIRoute = async ({ request }) => {
       );
     }
 
-    // Use safe path resolution - require authentication for writes
-    const result = tryResolveProfilePath('personaCore');
-
-    if (!result.ok) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'Authentication required to save persona' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const personaPath = result.path;
+    // Get paths for authenticated user
+    const paths = getProfilePaths(user.username);
+    const personaPath = paths.personaCore;
 
     // Preserve $schema and version from original if not provided
     let existingData = {};
@@ -159,7 +158,7 @@ const postHandler: APIRoute = async ({ request }) => {
     // Write the updated persona
     fs.writeFileSync(personaPath, JSON.stringify(updatedPersona, null, 2));
 
-    // Audit the change
+    // Audit the change with actual username
     audit({
       level: 'info',
       category: 'data_change',
@@ -168,8 +167,9 @@ const postHandler: APIRoute = async ({ request }) => {
         identityName: updatedPersona.identity?.name,
         hasGoals: !!(updatedPersona.goals),
         hasValues: !!(updatedPersona.values),
+        username: user.username,
       },
-      actor: 'web_ui',
+      actor: user.username,
     });
 
     return new Response(
@@ -188,6 +188,7 @@ const postHandler: APIRoute = async ({ request }) => {
   }
 };
 
-// Wrap with user context middleware and cognitive mode guard for automatic profile path resolution
-export const GET = withUserContext(getHandler);
-export const POST = withUserContext(requireWriteMode(postHandler));
+// Export handlers - no withUserContext wrapper needed (global middleware handles context)
+// Security policy guard (requireWriteMode) still enforced on POST
+export const GET = getHandler;
+export const POST = requireWriteMode(postHandler);
