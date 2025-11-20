@@ -10,29 +10,40 @@
   let executionMonitor: ExecutionMonitor | null = null;
   let isExecuting = false;
   let executionError = '';
+  let templateWatcherSource: EventSource | null = null;
+  let autoReloadEnabled = true; // Can be toggled via UI
 
   // Dynamic imports to avoid SSR issues
   let LGraph: any;
   let LGraphCanvas: any;
+  let LGraphNode: any;
   let LiteGraph: any;
 
   export let graphData: any = null; // Optional graph data to load
   export let onExecute: ((graph: any) => Promise<void>) | null = null; // Callback for execution
+  export let cognitiveMode: string | null | undefined = null; // Cognitive mode to load template for
 
   // Load the template for the current cognitive mode
   async function loadCognitiveTemplate() {
     try {
-      // Fetch current cognitive mode
-      const modeResponse = await fetch('/api/cognitive-mode');
-      if (!modeResponse.ok) {
-        console.warn('[NodeEditor] Could not fetch cognitive mode, using dual-mode');
-        await loadTemplateByName('dual-mode');
-        return;
-      }
+      // Use passed cognitive mode if available, otherwise fetch from API
+      let currentMode: string;
 
-      const modeData = await modeResponse.json();
-      const currentMode = modeData.currentMode || 'dual';
-      console.log(`[NodeEditor] Current cognitive mode: ${currentMode}`);
+      if (cognitiveMode) {
+        currentMode = cognitiveMode;
+        console.log(`[NodeEditor] Using passed cognitive mode: ${currentMode}`);
+      } else {
+        const modeResponse = await fetch('/api/cognitive-mode');
+        if (!modeResponse.ok) {
+          console.warn('[NodeEditor] Could not fetch cognitive mode, using dual-mode');
+          await loadTemplateByName('dual-mode');
+          return;
+        }
+
+        const modeData = await modeResponse.json();
+        currentMode = modeData.currentMode || 'dual';
+        console.log(`[NodeEditor] Fetched cognitive mode from API: ${currentMode}`);
+      }
 
       // Load template for this mode
       const templateName = `${currentMode}-mode`;
@@ -94,6 +105,13 @@
         });
 
         console.log(`[NodeEditor] Template loaded successfully. Nodes: ${nodes.length}, Links: ${linksArray.length}`);
+
+        // Force canvas to redraw connections
+        if (canvas) {
+          canvas.setDirty(true, true);
+          graph.setDirtyCanvas(true, true);
+          console.log('[NodeEditor] Forced canvas redraw to show connections');
+        }
       } else {
         console.warn(`[NodeEditor] Template ${templateName} not found, creating default graph`);
         createDefaultGraph();
@@ -111,12 +129,28 @@
     // Use the module build so Vite doesn't try to SSR it
     // @ts-ignore - LiteGraph typings are incomplete
     const litegraphModule = await import('litegraph.js/dist/litegraph.module.js');
+
+    console.log('[NodeEditor] Raw litegraph module:', {
+      keys: Object.keys(litegraphModule).slice(0, 20),
+      hasLITEGRAPH: 'LITEGRAPH' in litegraphModule,
+      hasDefault: 'default' in litegraphModule,
+      LITEGRAPHtype: typeof litegraphModule.LITEGRAPH,
+      defaultType: typeof litegraphModule.default,
+    });
+
     const lgModule = litegraphModule?.LITEGRAPH || litegraphModule?.default || litegraphModule;
+
+    console.log('[NodeEditor] Selected lgModule:', {
+      type: typeof lgModule,
+      keys: Object.keys(lgModule).slice(0, 30),
+      hasRegisterNodeType: typeof lgModule.registerNodeType,
+      hasRegisteredNodeTypes: 'registered_node_types' in lgModule,
+    });
 
     LiteGraph = lgModule;
     LGraph = lgModule?.LGraph;
     LGraphCanvas = lgModule?.LGraphCanvas;
-    const LGraphNode = lgModule?.LGraphNode;
+    LGraphNode = lgModule?.LGraphNode;
 
     console.log('[NodeEditor] LiteGraph loaded:', {
       hasLiteGraph: !!LiteGraph,
@@ -194,9 +228,21 @@
     canvas.allow_searchbox = true;
     canvas.show_info = true;
 
+    // Additional canvas options for better context menu support
+    canvas.allow_dragcanvas = true;
+    canvas.allow_dragnodes = true;
+    canvas.allow_interaction = true;
+
     // Load graph data if provided
     if (graphData) {
       graph.configure(graphData);
+
+      // Force canvas to redraw connections
+      if (canvas) {
+        canvas.setDirty(true, true);
+        graph.setDirtyCanvas(true, true);
+        console.log('[NodeEditor] Forced canvas redraw after initial graph load');
+      }
     } else {
       // Auto-load template for current cognitive mode
       await loadCognitiveTemplate();
@@ -208,15 +254,64 @@
     // Initialize execution monitor
     executionMonitor = new ExecutionMonitor(graph);
 
+    // Set up template watcher for hot-reload
+    if (autoReloadEnabled) {
+      setupTemplateWatcher();
+    }
+
     // Resize canvas to fit container
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
   });
 
+  // Set up EventSource connection for template watching
+  function setupTemplateWatcher() {
+    try {
+      templateWatcherSource = new EventSource('/api/template-watch');
+
+      templateWatcherSource.addEventListener('connected', (e) => {
+        const data = JSON.parse(e.data);
+        console.log('[NodeEditor] Template watcher connected:', data.clientId);
+      });
+
+      templateWatcherSource.addEventListener('template-changed', async (e) => {
+        const data = JSON.parse(e.data);
+        console.log('[NodeEditor] Template changed:', data.templateName);
+
+        if (autoReloadEnabled) {
+          console.log('[NodeEditor] Auto-reloading template...');
+          const success = await reloadTemplate();
+          if (success) {
+            console.log('[NodeEditor] Template auto-reloaded successfully!');
+          }
+        }
+      });
+
+      templateWatcherSource.onerror = (error) => {
+        console.error('[NodeEditor] Template watcher error:', error);
+        // Reconnect after 5 seconds
+        setTimeout(() => {
+          if (templateWatcherSource) {
+            templateWatcherSource.close();
+          }
+          if (autoReloadEnabled) {
+            setupTemplateWatcher();
+          }
+        }, 5000);
+      };
+    } catch (error) {
+      console.error('[NodeEditor] Failed to setup template watcher:', error);
+    }
+  }
+
   // Cleanup when component is destroyed
   onDestroy(() => {
     if (graph) {
       graph.stop();
+    }
+    if (templateWatcherSource) {
+      templateWatcherSource.close();
+      templateWatcherSource = null;
     }
     window.removeEventListener('resize', resizeCanvas);
   });
@@ -336,7 +431,37 @@
   // Load graph data
   export function loadGraph(data: any) {
     if (graph && data) {
+      // IMPORTANT: Save links array BEFORE configure() mutates it
+      const linksArray = Array.isArray(data.links) ? [...data.links] : [];
+      console.log(`[NodeEditor] loadGraph: Saved ${linksArray.length} links before configure`);
+
       graph.configure(data);
+
+      // Manually reconnect nodes using the saved links array
+      console.log(`[NodeEditor] loadGraph: Manually connecting ${linksArray.length} links...`);
+      linksArray.forEach((link: any, index: number) => {
+        const [linkId, originId, originSlot, targetId, targetSlot] = link;
+        const originNode = graph.getNodeById(originId);
+        const targetNode = graph.getNodeById(targetId);
+
+        if (originNode && targetNode) {
+          try {
+            originNode.connect(originSlot, targetNode, targetSlot);
+            console.log(`[NodeEditor] loadGraph: Connected link ${index + 1}/${linksArray.length}: node ${originId}.${originSlot} -> node ${targetId}.${targetSlot}`);
+          } catch (error) {
+            console.warn(`[NodeEditor] loadGraph: Failed to connect link ${linkId}:`, error);
+          }
+        } else {
+          console.warn(`[NodeEditor] loadGraph: Skipping link ${linkId} - nodes not found (origin: ${!!originNode}, target: ${!!targetNode})`);
+        }
+      });
+
+      // Force canvas to redraw connections
+      if (canvas) {
+        canvas.setDirty(true, true);
+        graph.setDirtyCanvas(true, true);
+        console.log('[NodeEditor] Forced canvas redraw after loadGraph');
+      }
     }
   }
 
@@ -415,21 +540,139 @@
     };
   }
 
+  // Reload current template (hot-reload support)
+  export async function reloadTemplate() {
+    if (!graph) {
+      console.error('[NodeEditor] Cannot reload: graph not initialized');
+      return false;
+    }
+
+    try {
+      // Determine which template is currently loaded
+      const modeResponse = await fetch('/api/cognitive-mode');
+      const modeData = await modeResponse.json();
+      const currentMode = modeData.currentMode || 'dual';
+      const templateName = `${currentMode}-mode`;
+
+      console.log(`[NodeEditor] Reloading template: ${templateName}`);
+
+      // Fetch the latest version of the template
+      const response = await fetch(`/api/template/${templateName}`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch template: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      if (!data.success || !data.template) {
+        throw new Error('Invalid template response');
+      }
+
+      // Convert to LiteGraph format
+      const { templateToLiteGraph } = await import('../lib/cognitive-nodes/template-loader');
+      const templateGraph = templateToLiteGraph(data.template);
+
+      if (!templateGraph) {
+        throw new Error('Failed to convert template');
+      }
+
+      console.log(`[NodeEditor] Template reloaded, clearing graph...`);
+
+      // Clear current graph
+      graph.clear();
+
+      // Save links array before configure
+      const linksArray = Array.isArray(templateGraph.links) ? [...templateGraph.links] : [];
+
+      // Load new template
+      graph.configure(templateGraph);
+
+      // Manually reconnect nodes
+      linksArray.forEach((link: any) => {
+        const [linkId, originId, originSlot, targetId, targetSlot] = link;
+        const originNode = graph.getNodeById(originId);
+        const targetNode = graph.getNodeById(targetId);
+
+        if (originNode && targetNode) {
+          try {
+            originNode.connect(originSlot, targetNode, targetSlot);
+          } catch (error) {
+            console.warn(`[NodeEditor] Failed to reconnect link ${linkId}:`, error);
+          }
+        }
+      });
+
+      // Force canvas to redraw connections
+      if (canvas) {
+        canvas.setDirty(true, true);
+        graph.setDirtyCanvas(true, true);
+        console.log('[NodeEditor] Forced canvas redraw after template reload');
+      }
+
+      console.log(`[NodeEditor] Template reloaded successfully!`);
+      return true;
+    } catch (error) {
+      console.error('[NodeEditor] Error reloading template:', error);
+      return false;
+    }
+  }
+
+  // Toggle auto-reload feature
+  export function setAutoReload(enabled: boolean) {
+    autoReloadEnabled = enabled;
+
+    if (enabled && !templateWatcherSource) {
+      setupTemplateWatcher();
+    } else if (!enabled && templateWatcherSource) {
+      templateWatcherSource.close();
+      templateWatcherSource = null;
+    }
+
+    console.log(`[NodeEditor] Auto-reload ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
+  // Get auto-reload status
+  export function isAutoReloadEnabled() {
+    return autoReloadEnabled;
+  }
+
   // Add a node to the graph (called from palette)
   export function addNode(nodeType: string) {
+    console.log('[NodeEditor] addNode called with:', nodeType);
+
     if (!graph) {
       console.error('[NodeEditor] Cannot add node: graph not initialized');
       return;
     }
 
+    // Test if createNode works with a known type
+    console.log('[NodeEditor] Testing createNode with user_input...');
     try {
-      const node = LiteGraph.createNode(nodeType);
-      if (node) {
-        // Position at canvas center (or slightly offset)
-        const offset = Math.floor(Math.random() * 50);
-        node.pos = [100 + offset, 100 + offset];
-        graph.add(node);
-        console.log(`[NodeEditor] Added node: ${nodeType}`);
+      const testNode = LiteGraph.createNode('cognitive/user_input');
+      console.log('[NodeEditor] Test createNode result:', !!testNode, testNode?.constructor?.name);
+
+      if (testNode) {
+        // Successfully created test node - now try the requested type
+        console.log('[NodeEditor] Test succeeded! Now trying requested type:', nodeType);
+        const node = LiteGraph.createNode(nodeType);
+        console.log('[NodeEditor] Requested createNode result:', !!node, node?.constructor?.name);
+
+        if (node) {
+          // Position at canvas center (or slightly offset)
+          const offset = Math.floor(Math.random() * 50);
+          node.pos = [100 + offset, 100 + offset];
+          console.log('[NodeEditor] Adding node to graph at position:', node.pos);
+          graph.add(node);
+          console.log(`[NodeEditor] Successfully added node: ${nodeType}`);
+
+          // Force canvas redraw
+          if (canvas) {
+            canvas.setDirty(true, true);
+          }
+        } else {
+          console.error('[NodeEditor] createNode returned null/undefined for:', nodeType);
+        }
+      } else {
+        console.error('[NodeEditor] Even test node (user_input) failed to create!');
       }
     } catch (e) {
       console.error(`[NodeEditor] Failed to create node ${nodeType}:`, e);

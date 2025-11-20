@@ -96,17 +96,29 @@ const graphCache: Record<string, GraphCacheEntry | null> = {};
 
 async function readGraphFromFile(filePath: string): Promise<CognitiveGraph | null> {
   try {
+    console.log(`[readGraphFromFile] Reading: ${filePath}`);
     const raw = await fs.readFile(filePath, 'utf-8');
+    console.log(`[readGraphFromFile] File size: ${raw.length} bytes`);
     const parsed = JSON.parse(raw);
-    return validateCognitiveGraph(parsed);
+    console.log(`[readGraphFromFile] JSON parsed: ${parsed.nodes?.length || 0} nodes`);
+    const validated = validateCognitiveGraph(parsed);
+    console.log(`[readGraphFromFile] Validation PASSED`);
+    return validated;
   } catch (error) {
-    console.warn('[persona_chat] Invalid cognitive graph:', error);
+    console.error('[readGraphFromFile] ERROR:', error);
+    if (error instanceof Error) {
+      console.error('[readGraphFromFile] Error message:', error.message);
+      console.error('[readGraphFromFile] Error stack:', error.stack);
+    }
     return null;
   }
 }
 
 async function loadGraphForMode(graphKey: string): Promise<{ graph: CognitiveGraph; source: string } | null> {
-  if (!graphKey) return null;
+  if (!graphKey) {
+    console.log('[loadGraphForMode] No graphKey provided');
+    return null;
+  }
   const normalizedKey = graphKey.toLowerCase();
   const baseName = `${normalizedKey}-mode`;
   const pathsToCheck = [
@@ -114,28 +126,42 @@ async function loadGraphForMode(graphKey: string): Promise<{ graph: CognitiveGra
     path.join(ROOT, 'etc', 'cognitive-graphs', `${baseName}.json`),
   ];
 
+  console.log(`[loadGraphForMode] Looking for graph: "${graphKey}" (normalized: "${normalizedKey}")`);
+  console.log(`[loadGraphForMode] Paths to check:`, pathsToCheck);
+
   for (const filePath of pathsToCheck) {
     try {
-      if (!existsSync(filePath)) continue;
+      console.log(`[loadGraphForMode] Checking: ${filePath}`);
+      if (!existsSync(filePath)) {
+        console.log(`[loadGraphForMode] ❌ File not found: ${filePath}`);
+        continue;
+      }
+      console.log(`[loadGraphForMode] ✅ File exists: ${filePath}`);
       const stats = await fs.stat(filePath);
       const cached = graphCache[normalizedKey];
       if (cached && cached.source === filePath && cached.mtimeMs === stats.mtimeMs) {
+        console.log(`[loadGraphForMode] 🎯 Using cached graph from ${filePath}`);
         return { graph: cached.graph, source: filePath };
       }
+      console.log(`[loadGraphForMode] 📖 Reading graph file (not cached or stale)`);
       const graph = await readGraphFromFile(filePath);
       if (graph) {
+        console.log(`[loadGraphForMode] ✅ Graph loaded successfully: ${graph.nodes.length} nodes, ${graph.links.length} links`);
         graphCache[normalizedKey] = {
           source: filePath,
           mtimeMs: stats.mtimeMs,
           graph,
         };
         return { graph, source: filePath };
+      } else {
+        console.warn(`[loadGraphForMode] ❌ readGraphFromFile returned null for ${filePath}`);
       }
     } catch (error) {
-      console.warn(`[persona_chat] Failed to load graph ${filePath}:`, error);
+      console.error(`[loadGraphForMode] ❌ Failed to load graph ${filePath}:`, error);
     }
   }
 
+  console.warn(`[loadGraphForMode] ❌ No valid graph found for "${graphKey}"`);
   return null;
 }
 
@@ -1600,7 +1626,13 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
   const conversationHistorySnapshot = getConversationHistorySnapshot(m);
 
+  // ============================================================================
+  // PRIORITY 1: Try graph-based node pipeline (for all modes when enabled)
+  // ============================================================================
+  console.log(`[persona_chat] graphEnabled=${graphEnabled}, cognitiveMode=${cognitiveMode}, useOperator=${useOperator}`);
+
   if (graphEnabled) {
+    console.log(`[persona_chat] 🔄 Attempting graph pipeline for mode: ${cognitiveMode}`);
     const graphResult = await tryExecuteGraphPipeline({
       mode: m,
       message,
@@ -1615,21 +1647,28 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     });
 
     if (graphResult) {
-      console.log(`[persona_chat] Graph pipeline executed using ${graphResult.graphSource}`);
+      console.log(`[persona_chat] ✅ Graph pipeline SUCCESS using ${graphResult.graphSource} - bypassing legacy operator`);
       return streamGraphAnswer(m, message, sessionId, graphResult.response);
     } else {
+      console.warn(`[persona_chat] ⚠️  Graph pipeline returned null - falling back to legacy ${useOperator ? 'operator' : 'chat'}`);
       audit({
         level: 'warn',
         category: 'system',
         event: 'graph_pipeline_fallback',
         details: {
           mode: m,
+          cognitiveMode,
           message: message.substring(0, 160),
+          useOperator,
         },
         actor: currentCtx?.userId || 'anonymous',
       });
     }
   }
+
+  // ============================================================================
+  // PRIORITY 2 (FALLBACK): Legacy operator or chat-only
+  // ============================================================================
 
   if (m === 'conversation' && audience && forceOperator) {
     pushMessage(m, { role: 'system', content: `Audience/context: ${audience}` }, sessionId);

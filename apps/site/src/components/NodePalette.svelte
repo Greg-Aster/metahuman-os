@@ -54,7 +54,10 @@
   }
 
   function handleNodeClick(nodeId: string) {
-    onNodeSelected(`cognitive/${nodeId}`);
+    console.log('[NodePalette] Node clicked:', nodeId);
+    const fullType = `cognitive/${nodeId}`;
+    console.log('[NodePalette] Calling onNodeSelected with:', fullType);
+    onNodeSelected(fullType);
   }
 </script>
 

@@ -5,14 +5,16 @@
  * integrating with the MetaHuman OS cognitive system (LLM, skills, memory, etc.)
  */
 
-import { executeSkill, listSkills, getSkill, type TrustLevel } from './skills.js';
+import { executeSkill, listSkills, type TrustLevel } from './skills.js';
 import { callLLM } from './model-router.js';
 import { queryIndex } from './vector-index.js';
-import { captureEvent, searchMemory, createTask, listActiveTasks, updateTaskStatus } from './memory.js';
-import { loadCognitiveMode } from './cognitive-mode.js';
+import { captureEvent, searchMemory } from './memory.js';
+import { loadCognitiveMode, type CognitiveModeId } from './cognitive-mode.js';
 import { loadPersonaCore } from './identity.js';
 import { audit } from './audit.js';
 import { checkResponseSafety, refineResponseSafely } from './cognitive-layers/index.js';
+import { transcribeAudio } from './stt.js';
+import { canWriteMemory, shouldCaptureTool } from './memory-policy.js';
 
 // ============================================================================
 // Type Definitions
@@ -42,12 +44,124 @@ export type NodeExecutor = (
 // ============================================================================
 
 /**
+ * Text Input Node
+ * Gateway to chat interface text input - reads from context.userMessage
+ */
+export const textInputExecutor: NodeExecutor = async (inputs, context, properties) => {
+  const text = context.userMessage || '';
+  const hasTextInput = !!text;
+
+  return {
+    text,
+    hasTextInput,
+  };
+};
+
+/**
+ * Mic Input Node
+ * Captures audio input from microphone (client-side, provides audio buffer)
+ */
+export const micInputExecutor: NodeExecutor = async (inputs, context, properties) => {
+  const audioBuffer = context.audioBuffer || properties?.audioBuffer;
+  const audioFormat = context.audioFormat || properties?.audioFormat || 'wav';
+
+  return {
+    audioBuffer,
+    audioFormat,
+    hasMicInput: !!audioBuffer,
+    timestamp: new Date().toISOString(),
+  };
+};
+
+/**
+ * Speech to Text Node
+ * Transcribes audio buffer to text using Whisper
+ */
+export const speechToTextExecutor: NodeExecutor = async (inputs, context, properties) => {
+  const audioBuffer = inputs[0]?.audioBuffer || context.audioBuffer;
+  const audioFormat = inputs[0]?.audioFormat || context.audioFormat || properties?.audioFormat || 'wav';
+
+  if (!audioBuffer) {
+    return {
+      text: '',
+      transcribed: false,
+      error: 'No audio buffer provided',
+    };
+  }
+
+  try {
+    const text = await transcribeAudio(audioBuffer, audioFormat as 'wav' | 'webm' | 'mp3');
+
+    audit({
+      level: 'info',
+      category: 'system',
+      event: 'speech_transcribed',
+      details: {
+        textLength: text.length,
+        audioFormat,
+      },
+    });
+
+    return {
+      text,
+      transcribed: true,
+      audioFormat,
+    };
+  } catch (error) {
+    console.error('[SpeechToText] Error:', error);
+    return {
+      text: '',
+      transcribed: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
  * User Input Node
- * Provides the user's message and session information
+ * Unified input node - prioritizes chat interface by default, can accept text/speech from nodes
+ * Has a "prioritizeChatInterface" property to control behavior
  */
 export const userInputExecutor: NodeExecutor = async (inputs, context, properties) => {
+  let message = '';
+  let inputSource = 'chat';
+
+  // Check the prioritizeChatInterface property (default: true)
+  const prioritizeChatInterface = properties?.prioritizeChatInterface !== false;
+
+  if (prioritizeChatInterface) {
+    // Priority: chat interface (context.userMessage)
+    message = context.userMessage || properties?.message || '';
+    inputSource = 'chat';
+  } else {
+    // Priority order when NOT prioritizing chat interface:
+    // 1. Speech input from speech_to_text node (inputs.speech)
+    // 2. Text input from text_input node (inputs.text)
+    // 3. Fallback to context.userMessage
+    // 4. Final fallback to properties.message
+
+    if (inputs.speech?.text && inputs.speech?.transcribed) {
+      // From speech_to_text node
+      message = inputs.speech.text;
+      inputSource = 'speech';
+    } else if (inputs.text) {
+      // From text_input node
+      message = inputs.text;
+      inputSource = 'text';
+    } else if (context.userMessage) {
+      // Fallback to chat interface
+      message = context.userMessage;
+      inputSource = 'chat';
+    } else {
+      // Final fallback to properties
+      message = properties?.message || '';
+      inputSource = 'chat';
+    }
+  }
+
   return {
-    message: context.userMessage || properties?.message || '',
+    message,
+    inputSource, // 'text', 'speech', or 'chat'
     sessionId: context.sessionId || `session-${Date.now()}`,
     userId: context.userId || 'anonymous',
     timestamp: new Date().toISOString(),
@@ -76,19 +190,73 @@ export const sessionContextExecutor: NodeExecutor = async (inputs, context) => {
  */
 export const systemSettingsExecutor: NodeExecutor = async (inputs, context) => {
   try {
+    // Load cognitive mode
     const cognitiveMode = loadCognitiveMode();
+    const mode = cognitiveMode.currentMode || context.cognitiveMode || 'dual';
+
+    // Load chat settings
+    let chatSettings = null;
+    try {
+      const { loadChatSettings } = await import('./chat-settings.js');
+      chatSettings = loadChatSettings();
+    } catch (error) {
+      console.warn('[SystemSettings] Could not load chat settings:', error);
+    }
+
+    // Load active facet for UI color-coding
+    let activeFacet = null;
+    try {
+      const { getActiveFacet } = await import('./identity.js');
+      activeFacet = getActiveFacet();
+    } catch (error) {
+      console.warn('[SystemSettings] Could not load active facet:', error);
+    }
+
+    // Load memory policy
+    let memoryPolicy = null;
+    try {
+      const { canWriteMemory } = await import('./cognitive-mode.js');
+      const canWrite = canWriteMemory(mode);
+      memoryPolicy = {
+        canWriteConversation: canWrite,
+        canWriteInnerDialogue: canWrite,
+      };
+    } catch (error) {
+      console.warn('[SystemSettings] Could not load memory policy:', error);
+    }
+
     return {
-      cognitiveMode: cognitiveMode.currentMode || context.cognitiveMode || 'dual',
+      cognitiveMode: mode,
+      chatSettings: chatSettings || {
+        temperature: 0.7,
+        maxContextChars: 8000,
+        semanticSearchThreshold: 0.6,
+      },
+      activeFacet: activeFacet || 'default',
+      memoryPolicy: memoryPolicy || {
+        canWriteConversation: mode !== 'emulation',
+        canWriteInnerDialogue: mode !== 'emulation',
+      },
       trustLevel: 'supervised_auto',
       settings: {
-        recordingEnabled: true,
-        proactiveAgents: false,
+        recordingEnabled: mode !== 'emulation',
+        proactiveAgents: mode === 'dual',
       },
     };
   } catch (error) {
-    console.error('[SystemSettings] Error loading cognitive mode:', error);
+    console.error('[SystemSettings] Error loading settings:', error);
     return {
       cognitiveMode: context.cognitiveMode || 'dual',
+      chatSettings: {
+        temperature: 0.7,
+        maxContextChars: 8000,
+        semanticSearchThreshold: 0.6,
+      },
+      activeFacet: 'default',
+      memoryPolicy: {
+        canWriteConversation: true,
+        canWriteInnerDialogue: true,
+      },
       trustLevel: 'supervised_auto',
       settings: {},
     };
@@ -121,7 +289,15 @@ export const cognitiveModeRouterExecutor: NodeExecutor = async (inputs, context)
  * Determines if message should use operator or simple chat
  */
 export const operatorEligibilityExecutor: NodeExecutor = async (inputs, context) => {
-  const message = inputs[0] || context.userMessage || '';
+  // Extract message string from inputs (could be string or object with .message property)
+  let message = '';
+  if (typeof inputs[2] === 'object' && inputs[2]?.message) {
+    message = inputs[2].message;
+  } else if (typeof inputs[0] === 'string') {
+    message = inputs[0];
+  } else if (context.userMessage) {
+    message = context.userMessage;
+  }
 
   // Heuristic: action words indicate operator usage
   const actionWords = ['create', 'write', 'update', 'delete', 'run', 'execute', 'search', 'find', 'list', 'show', 'get'];
@@ -199,15 +375,63 @@ export const semanticSearchExecutor: NodeExecutor = async (inputs, context, prop
 
 /**
  * Conversation History Node
- * Retrieves recent conversation messages
+ * Retrieves recent conversation messages from persisted buffer
  */
 export const conversationHistoryExecutor: NodeExecutor = async (inputs, context, properties) => {
   const limit = properties?.limit || 20;
-  const history = context.conversationHistory || [];
+  const mode = context.mode || context.dialogueType || 'conversation';
+
+  // First, try to load from persisted buffer files
+  let messages = context.conversationHistory || [];
+  let summaryMarkers: any[] = [];
+  let loadedFromBuffer = false;
+
+  try {
+    const { loadPersistedBuffer } = await import('./conversation-buffer.js');
+    const bufferData = loadPersistedBuffer(mode as 'inner' | 'conversation');
+
+    if (bufferData.messages.length > 0) {
+      messages = bufferData.messages;
+      summaryMarkers = bufferData.summaryMarkers;
+      loadedFromBuffer = true;
+      console.log(`[ConversationHistory] Loaded ${messages.length} messages from persisted ${mode} buffer`);
+    }
+  } catch (error) {
+    console.warn('[ConversationHistory] Could not load persisted buffer, using context:', error);
+  }
+
+  // Auto-prune to stay within limits (max 20 messages, ~8000 tokens)
+  const maxMessages = limit;
+  let pruned = false;
+
+  if (messages.length > maxMessages) {
+    // Keep system messages and summary markers at the beginning
+    const systemAndMarkers = messages.filter(
+      msg => msg.role === 'system' || msg.meta?.summaryMarker
+    );
+    const conversationMessages = messages.filter(
+      msg => msg.role !== 'system' && !msg.meta?.summaryMarker
+    );
+
+    // Keep most recent conversation messages
+    const recentConversation = conversationMessages.slice(-maxMessages);
+    messages = [...systemAndMarkers, ...recentConversation];
+    pruned = true;
+    console.log(`[ConversationHistory] Pruned history from ${messages.length + conversationMessages.length - recentConversation.length} to ${messages.length} messages`);
+  }
+
+  // Estimate token count (rough: 4 chars per token)
+  const totalChars = messages.reduce((sum, msg) => sum + (msg.content?.length || 0), 0);
+  const estimatedTokens = Math.ceil(totalChars / 4);
 
   return {
-    messages: history.slice(-limit),
-    count: history.length,
+    messages,
+    summaryMarkers,
+    count: messages.length,
+    pruned,
+    loadedFromBuffer,
+    estimatedTokens,
+    mode,
   };
 };
 
@@ -294,6 +518,11 @@ What should I do next?`,
       role: 'orchestrator',
       messages,
       cognitiveMode: context.cognitiveMode,
+      options: {
+        maxTokens: 1024,
+        repeatPenalty: 1.15,
+        temperature: 0.5,
+      },
     });
 
     return {
@@ -308,7 +537,7 @@ What should I do next?`,
 
 /**
  * Skill Executor Node
- * Executes a specific skill based on the plan
+ * Executes a specific skill based on the plan and captures tool invocations to memory
  */
 export const skillExecutorExecutor: NodeExecutor = async (inputs, context) => {
   if (context.useOperator === false) {
@@ -316,6 +545,8 @@ export const skillExecutorExecutor: NodeExecutor = async (inputs, context) => {
   }
 
   const plan = inputs[0] || '';
+  const maxRetries = 2; // Maximum retry attempts per skill execution
+  const retryCount = context.retryCount || 0;
 
   // Parse the plan to extract skill_id and inputs
   // This is a simplified parser - in production you'd want more robust parsing
@@ -341,25 +572,109 @@ export const skillExecutorExecutor: NodeExecutor = async (inputs, context) => {
     }
   }
 
+  const startTime = Date.now();
+  let result;
+  let error: string | undefined;
+  let errorRecoveryAnalysis: any = null;
+
   try {
     const trustLevel: TrustLevel = 'supervised_auto';
-    const result = await executeSkill(skillId, skillInputs, trustLevel);
+    result = await executeSkill(skillId, skillInputs, trustLevel);
+    error = result.error;
 
-    return {
-      success: result.success,
-      outputs: result.outputs || {},
-      error: result.error,
-      skillId,
-    };
-  } catch (error) {
-    console.error('[SkillExecutor] Error executing skill:', error);
-    return {
+    // If execution failed and we haven't exhausted retries, analyze error for recovery
+    if (!result.success && result.error && retryCount < maxRetries) {
+      console.log(`[SkillExecutor] Skill ${skillId} failed (retry ${retryCount}/${maxRetries}), analyzing error...`);
+
+      // Call error recovery executor to categorize and determine if we should retry
+      errorRecoveryAnalysis = await errorRecoveryExecutor(
+        [{ error: result.error, skillId, retryCount }],
+        context,
+        { maxRetries }
+      );
+
+      if (errorRecoveryAnalysis.shouldRetry) {
+        console.log(`[SkillExecutor] Error type: ${errorRecoveryAnalysis.errorType}, retrying...`);
+        console.log(`[SkillExecutor] Suggestions: ${errorRecoveryAnalysis.suggestions.join(', ')}`);
+
+        // Wait briefly before retry (exponential backoff)
+        const delayMs = Math.min(1000 * Math.pow(2, retryCount), 5000);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+
+        // Retry the skill execution
+        const retryResult = await executeSkill(skillId, skillInputs, trustLevel);
+
+        if (retryResult.success) {
+          console.log(`[SkillExecutor] ✓ Retry succeeded for ${skillId}`);
+          result = retryResult;
+          error = undefined;
+        } else {
+          console.log(`[SkillExecutor] ✗ Retry failed for ${skillId}: ${retryResult.error}`);
+          result = retryResult;
+          error = retryResult.error;
+        }
+      } else {
+        console.log(`[SkillExecutor] Error type ${errorRecoveryAnalysis.errorType} is not retryable`);
+      }
+    }
+  } catch (err) {
+    console.error('[SkillExecutor] Error executing skill:', err);
+    result = {
       success: false,
-      error: (error as Error).message,
       outputs: {},
-      skillId,
+      error: (err as Error).message,
     };
+    error = (err as Error).message;
   }
+
+  const executionTimeMs = Date.now() - startTime;
+
+  // Capture tool invocation to memory (if enabled)
+  const cognitiveMode = (context.cognitiveMode || 'dual') as CognitiveModeId;
+  const allowMemoryWrites = context.allowMemoryWrites !== false;
+  const canWrite = canWriteMemory(cognitiveMode, 'tool_invocation');
+  const shouldCapture = shouldCaptureTool(cognitiveMode, skillId);
+
+  if (allowMemoryWrites && canWrite && shouldCapture) {
+    try {
+      captureEvent(`Invoked skill: ${skillId}`, {
+        type: 'tool_invocation',
+        metadata: {
+          cognitiveMode,
+          sessionId: context.sessionId,
+          conversationId: context.conversationId,
+          parentEventId: context.parentEventId,
+          toolName: skillId,
+          toolInputs: skillInputs,
+          toolOutputs: result.outputs || {},
+          success: result.success !== false,
+          error,
+          executionTimeMs,
+          iterationNumber: context.iterationNumber,
+        },
+        tags: ['tool', skillId, 'operator', 'react'],
+      });
+
+      console.log(`[SkillExecutor] ✓ Captured tool_invocation: ${skillId} (${executionTimeMs}ms)`);
+    } catch (captureError) {
+      console.error('[SkillExecutor] Failed to capture tool invocation:', captureError);
+      // Don't fail the execution if memory capture fails
+    }
+  }
+
+  return {
+    success: result.success,
+    outputs: result.outputs || {},
+    error,
+    skillId,
+    executionTimeMs,
+    retryCount,
+    errorRecovery: errorRecoveryAnalysis ? {
+      errorType: errorRecoveryAnalysis.errorType,
+      suggestions: errorRecoveryAnalysis.suggestions,
+      wasRetried: errorRecoveryAnalysis.shouldRetry,
+    } : undefined,
+  };
 };
 
 /**
@@ -378,6 +693,20 @@ export const observationFormatterExecutor: NodeExecutor = async (inputs) => {
     observation = `Observation: ${JSON.stringify(skillResult.outputs, null, 2)}`;
   } else {
     observation = `Observation: Error - ${skillResult.error}`;
+
+    // Include error recovery suggestions if available
+    if (skillResult.errorRecovery) {
+      const { errorType, suggestions, wasRetried } = skillResult.errorRecovery;
+      observation += `\nError Type: ${errorType}`;
+
+      if (wasRetried) {
+        observation += ` (auto-retry attempted)`;
+      }
+
+      if (suggestions && suggestions.length > 0) {
+        observation += `\nSuggestions:\n${suggestions.map((s: string) => `  - ${s}`).join('\n')}`;
+      }
+    }
   }
 
   return {
@@ -407,29 +736,68 @@ export const completionCheckerExecutor: NodeExecutor = async (inputs) => {
 
 /**
  * Response Synthesizer Node
- * Synthesizes final response from scratchpad
+ * Synthesizes final response from loop controller output or scratchpad
  */
 export const responseSynthesizerExecutor: NodeExecutor = async (inputs, context) => {
-  if (context.useOperator === false) {
-    return {};
+  // Extract loop result or scratchpad
+  const loopResult = inputs[0] || inputs.loopResult || {};
+  const userMessage = inputs[1] || inputs.userMessage || context.userMessage || '';
+
+  // Handle loop controller output format
+  let scratchpad: any[] = [];
+  let finalResponse = '';
+
+  if (loopResult.scratchpad && Array.isArray(loopResult.scratchpad)) {
+    // Loop controller format: extract scratchpad and finalResponse
+    scratchpad = loopResult.scratchpad;
+    finalResponse = loopResult.finalResponse || '';
+  } else if (Array.isArray(loopResult)) {
+    // Direct scratchpad array
+    scratchpad = loopResult;
+  } else if (loopResult.iterations && Array.isArray(loopResult.iterations)) {
+    // Use iterations as scratchpad fallback
+    scratchpad = loopResult.iterations;
+    finalResponse = loopResult.finalResponse || '';
   }
 
-  const scratchpad = inputs[0] || [];
-  const contextData = inputs[1]?.context || {};
+  // If loop controller already has a finalResponse, use it directly
+  if (finalResponse && finalResponse.trim().length > 0) {
+    console.log('[ResponseSynthesizer] Using final response from loop controller');
+    return {
+      response: finalResponse,
+      loopComplete: loopResult.completed,
+      iterations: loopResult.iterationCount,
+    };
+  }
+
+  // Otherwise synthesize from scratchpad
+  console.log('[ResponseSynthesizer] Synthesizing from scratchpad:', scratchpad.length, 'steps');
+
+  if (scratchpad.length === 0) {
+    console.warn('[ResponseSynthesizer] No scratchpad data available');
+    return {
+      response: 'I was unable to process your request.',
+      error: 'Empty scratchpad',
+    };
+  }
 
   const messages = [
     {
       role: 'system' as const,
-      content: 'You are a response synthesizer. Create a natural, conversational response based on the observations gathered.',
+      content: 'You are a response synthesizer. Create a natural, conversational response based on the observations gathered during task execution.',
     },
     {
       role: 'user' as const,
-      content: `Original Query: ${contextData.query || context.userMessage}
+      content: `Original Query: ${userMessage}
 
-Observations:
-${scratchpad.map((s: any) => s.observation || s.plan || '').join('\n\n')}
+Execution Steps:
+${scratchpad.map((s: any, i: number) => `Step ${i + 1}:
+Thought: ${s.thought || s.plan || 'N/A'}
+Action: ${s.action || 'none'}
+Observation: ${s.observation || 'N/A'}
+`).join('\n')}
 
-Provide a clear, helpful response to the user:`,
+Based on these execution steps, provide a clear, helpful response to the user's original query:`,
     },
   ];
 
@@ -438,15 +806,22 @@ Provide a clear, helpful response to the user:`,
       role: 'persona',
       messages,
       cognitiveMode: context.cognitiveMode,
+      options: {
+        maxTokens: 2048,
+        repeatPenalty: 1.15,
+        temperature: 0.7,
+      },
     });
 
     return {
       response: response.content,
+      loopComplete: loopResult.completed,
+      iterations: scratchpad.length,
     };
   } catch (error) {
     console.error('[ResponseSynthesizer] Error:', error);
     return {
-      response: 'I encountered an error while processing your request.',
+      response: finalResponse || 'I encountered an error while processing your request.',
       error: (error as Error).message,
     };
   }
@@ -465,8 +840,10 @@ export const personaLLMExecutor: NodeExecutor = async (inputs, context) => {
     return {};
   }
 
-  const message = inputs[0]?.message || inputs[0] || context.userMessage || '';
-  const conversationHistory = inputs[1]?.messages || context.conversationHistory || [];
+  // inputs[0] = conversation history (from conversation_history node)
+  // inputs[1] = memories (from semantic_search node)
+  const conversationHistory = inputs[0]?.messages || context.conversationHistory || [];
+  const message = context.userMessage || '';
 
   try {
     const persona = loadPersonaCore();
@@ -496,10 +873,20 @@ Respond naturally as yourself, maintaining your personality and perspective.`,
       return typeof msg.content === 'string' && msg.content.trim().length > 0;
     });
 
+    // Adjust temperature for inner dialogue (-0.1 for more focused responses)
+    const mode = context.mode || context.dialogueType || 'conversation';
+    const baseTemperature = 0.7;
+    const temperature = mode === 'inner' ? baseTemperature - 0.1 : baseTemperature;
+
     const response = await callLLM({
       role: 'persona',
       messages,
       cognitiveMode: context.cognitiveMode,
+      options: {
+        maxTokens: 2048,
+        repeatPenalty: 1.15,
+        temperature,
+      },
     });
 
     return {
@@ -676,6 +1063,11 @@ export const modelRouterExecutor: NodeExecutor = async (inputs, context) => {
       role,
       messages,
       cognitiveMode: context.cognitiveMode,
+      options: {
+        maxTokens: 2048,
+        repeatPenalty: 1.15,
+        temperature: 0.7,
+      },
     });
 
     return {
@@ -728,8 +1120,19 @@ export const createSkillExecutor = (skillId: string): NodeExecutor => {
  * Saves conversation to episodic memory
  */
 export const memoryCaptureExecutor: NodeExecutor = async (inputs, context) => {
-  const response = inputs[0]?.response || inputs[0] || '';
-  const message = context.userMessage || '';
+  // Extract user message (slot 0)
+  const message = typeof inputs[0] === 'string' ? inputs[0] : (context.userMessage || '');
+
+  // Extract response (slot 1) - handle both string and object formats
+  let response = '';
+  if (typeof inputs[1] === 'string') {
+    response = inputs[1];
+  } else if (inputs[1]?.response && typeof inputs[1].response === 'string') {
+    response = inputs[1].response;
+  } else if (inputs[0]?.response && typeof inputs[0].response === 'string') {
+    // Fallback: check inputs[0] if inputs[1] doesn't have response
+    response = inputs[0].response;
+  }
 
   if (!response || response.trim().length === 0) {
     return {
@@ -808,7 +1211,23 @@ export const auditLoggerExecutor: NodeExecutor = async (inputs, context) => {
  * Outputs response (terminal node)
  */
 export const streamWriterExecutor: NodeExecutor = async (inputs, context) => {
-  const response = inputs[0]?.response || inputs[0] || '';
+  // Extract response string from various input formats
+  let response = '';
+  if (typeof inputs[0] === 'string') {
+    response = inputs[0];
+  } else if (inputs[0]?.response && typeof inputs[0].response === 'string') {
+    response = inputs[0].response;
+  } else if (inputs[0]?.content && typeof inputs[0].content === 'string') {
+    response = inputs[0].content;
+  } else if (inputs[0]?.cleaned && typeof inputs[0].cleaned === 'string') {
+    response = inputs[0].cleaned;
+  } else if (inputs[0]?.text && typeof inputs[0].text === 'string') {
+    response = inputs[0].text;
+  } else if (typeof inputs[0] === 'object' && inputs[0] !== null) {
+    // If it's an object without recognized fields, stringify it as fallback
+    console.warn('[StreamWriter] Received unexpected object format:', Object.keys(inputs[0]));
+    response = JSON.stringify(inputs[0]);
+  }
 
   if (!response || response.trim().length === 0) {
     return {
@@ -817,12 +1236,1816 @@ export const streamWriterExecutor: NodeExecutor = async (inputs, context) => {
     };
   }
 
-  console.log('[StreamWriter]', response);
+  console.log('[StreamWriter]', response.substring(0, 100) + (response.length > 100 ? '...' : ''));
 
   return {
     output: response,
     completed: true,
   };
+};
+
+/**
+ * Chat View Node
+ * Displays chat messages visually in the node editor
+ */
+export const chatViewExecutor: NodeExecutor = async (inputs, context, properties) => {
+  const mode = properties?.mode || 'direct';
+  const directMessage = inputs.message || inputs[0];
+  const trigger = inputs.trigger || inputs[1];
+
+  if (mode === 'direct' && directMessage) {
+    // Direct mode: display the message passed in
+    return {
+      displayed: true,
+      message: directMessage,
+      mode: 'direct',
+    };
+  } else if (mode === 'trigger' && trigger) {
+    // Trigger mode: fetch from conversation history
+    const conversationHistory = context.conversationHistory || [];
+    const maxMessages = properties?.maxMessages || 5;
+    const recentMessages = conversationHistory.slice(-maxMessages);
+
+    // Format messages for display
+    const formattedMessages = recentMessages
+      .map((msg: any) => `${msg.role}: ${msg.content}`)
+      .join('\n\n');
+
+    return {
+      displayed: true,
+      message: formattedMessages,
+      messageCount: recentMessages.length,
+      mode: 'trigger',
+    };
+  }
+
+  return {
+    displayed: false,
+    message: '',
+    mode,
+  };
+};
+
+/**
+ * TTS Node
+ * Triggers text-to-speech playback
+ * Note: Actual audio playback happens in browser via visual node implementation
+ */
+export const ttsExecutor: NodeExecutor = async (inputs, context, properties) => {
+  const text = inputs.text || inputs[0];
+
+  if (!text || typeof text !== 'string') {
+    return {
+      played: false,
+      error: 'No text provided',
+    };
+  }
+
+  // In server-side execution, we can't play audio
+  // The browser-side node implementation handles actual playback
+  // This executor just passes through the data for logging/tracking
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'tts_triggered',
+    details: {
+      textLength: text.length,
+      provider: properties?.provider || 'default',
+      autoPlay: properties?.autoPlay !== false,
+    },
+    actor: 'system',
+  });
+
+  return {
+    played: true,
+    text,
+    provider: properties?.provider || 'default',
+  };
+};
+
+// ============================================================================
+// Control Flow Nodes
+// ============================================================================
+
+/**
+ * Loop Controller Node
+ * Implements iterative ReAct execution with max iterations and completion detection
+ *
+ * This executor hard-codes the ReAct loop structure for Phase 1:
+ * - Plan (reactPlanner)
+ * - Execute (skillExecutor)
+ * - Observe (observationFormatter)
+ * - Check Completion (completionChecker)
+ *
+ * Manages scratchpad state across iterations and handles graceful completion.
+ */
+export const loopControllerExecutor: NodeExecutor = async (inputs, context, properties) => {
+  const maxIterations = properties?.maxIterations || 10;
+
+  // Extract message string from inputs (multiple possible formats)
+  let userMessage = '';
+  if (typeof inputs[1] === 'object' && inputs[1]?.message) {
+    userMessage = inputs[1].message;
+  } else if (typeof inputs[0] === 'string') {
+    userMessage = inputs[0];
+  } else if (inputs.userMessage) {
+    userMessage = inputs.userMessage;
+  } else if (inputs.message) {
+    userMessage = inputs.message;
+  } else if (context.userMessage) {
+    userMessage = context.userMessage;
+  }
+
+  if (!userMessage || typeof userMessage !== 'string') {
+    console.error('[LoopController] No message found. inputs:', inputs);
+    return {
+      error: 'No user message provided to loop controller',
+      iterations: [],
+      completed: false,
+    };
+  }
+
+  // Initialize loop state
+  const iterations: any[] = [];
+  let scratchpad = context.scratchpad || [];
+  let completed = false;
+  let iteration = 0;
+  let finalResponse = '';
+  let stuckReason: string | null = null;
+
+  console.log(`[LoopController] Starting ReAct loop for: "${userMessage.substring(0, 80)}..."`);
+
+  while (iteration < maxIterations && !completed && !stuckReason) {
+    iteration++;
+    console.log(`[LoopController] === Iteration ${iteration}/${maxIterations} ===`);
+
+    try {
+      // STEP 1: Plan next action
+      const planResult = await reactPlannerExecutor(
+        { userMessage, scratchpad },
+        { ...context, scratchpad, iterationNumber: iteration },
+        properties
+      );
+
+      if (!planResult || !planResult.plan) {
+        stuckReason = 'Planning failed - no plan generated';
+        break;
+      }
+
+      const plan = planResult.plan;
+      console.log(`[LoopController] Plan: ${plan.substring(0, 150)}...`);
+
+      // Update scratchpad with planning result
+      scratchpad = planResult.scratchpad || scratchpad;
+
+      // STEP 2: Check for completion before executing
+      const preCheckResult = await completionCheckerExecutor(
+        { userMessage, observation: plan },
+        { ...context, scratchpad, iterationNumber: iteration },
+        properties
+      );
+
+      if (preCheckResult?.complete === true) {
+        console.log(`[LoopController] ✓ Completion detected in plan`);
+        completed = true;
+        finalResponse = plan;
+
+        iterations.push({
+          iteration,
+          thought: plan,
+          action: null,
+          observation: null,
+          complete: true,
+        });
+        break;
+      }
+
+      // STEP 3: Execute skill (if action present in plan)
+      const skillResult = await skillExecutorExecutor(
+        { plan },
+        { ...context, scratchpad, iterationNumber: iteration },
+        properties
+      );
+
+      if (!skillResult) {
+        stuckReason = 'Skill execution failed - no result returned';
+        break;
+      }
+
+      console.log(`[LoopController] Skill executed: ${skillResult.success ? '✓' : '✗'}`);
+
+      // STEP 4: Format observation
+      const observationResult = await observationFormatterExecutor(
+        { skillResult },
+        { ...context, scratchpad, iterationNumber: iteration },
+        properties
+      );
+
+      const observation = observationResult?.observation || JSON.stringify(skillResult);
+      console.log(`[LoopController] Observation: ${observation.substring(0, 150)}...`);
+
+      // STEP 5: Check for completion after execution
+      const postCheckResult = await completionCheckerExecutor(
+        { userMessage, observation },
+        { ...context, scratchpad, iterationNumber: iteration },
+        properties
+      );
+
+      completed = postCheckResult?.complete === true;
+
+      if (completed) {
+        console.log(`[LoopController] ✓ Task completed after ${iteration} iterations`);
+        finalResponse = observation;
+      }
+
+      // Track this iteration
+      iterations.push({
+        iteration,
+        thought: plan,
+        action: skillResult.skillId || null,
+        observation,
+        complete: completed,
+        success: skillResult.success !== false,
+      });
+
+      // Update scratchpad with this step
+      scratchpad.push({
+        iteration,
+        thought: plan.substring(0, 500), // Truncate for token efficiency
+        action: skillResult.skillId || 'none',
+        observation: observation.substring(0, 500),
+        complete: completed,
+      });
+
+      // Trim scratchpad to last 10 steps (token management)
+      if (scratchpad.length > 10) {
+        scratchpad = scratchpad.slice(-10);
+      }
+
+      // STEP 6: Check for stuck state (failure loops)
+      if (!completed && iteration >= 3) {
+        const stuckAnalysis = await stuckDetectorExecutor(
+          [{ scratchpad }],
+          { ...context, scratchpad, iterationNumber: iteration },
+          { threshold: 3 }
+        );
+
+        if (stuckAnalysis.isStuck) {
+          console.warn(`[LoopController] ⚠️  Stuck detected: ${stuckAnalysis.diagnosis}`);
+          stuckReason = `${stuckAnalysis.diagnosis}. Suggestion: ${stuckAnalysis.suggestion}`;
+          break;
+        }
+      }
+
+    } catch (error) {
+      console.error(`[LoopController] Error in iteration ${iteration}:`, error);
+      stuckReason = `Exception in iteration ${iteration}: ${(error as Error).message}`;
+
+      iterations.push({
+        iteration,
+        thought: null,
+        action: null,
+        observation: null,
+        complete: false,
+        error: (error as Error).message,
+      });
+      break;
+    }
+  }
+
+  // Handle stuck state
+  if (!completed && iteration >= maxIterations) {
+    stuckReason = `Max iterations (${maxIterations}) reached without completion`;
+  }
+
+  if (stuckReason) {
+    console.warn(`[LoopController] ❌ Stuck: ${stuckReason}`);
+  }
+
+  // If no final response, synthesize from last observation
+  if (!finalResponse && iterations.length > 0) {
+    const lastIteration = iterations[iterations.length - 1];
+    finalResponse = lastIteration.observation || lastIteration.thought || '';
+  }
+
+  return {
+    iterations,
+    finalResponse,
+    completed,
+    iterationCount: iteration,
+    scratchpad,
+    stuck: !completed && !!stuckReason,
+    stuckReason: stuckReason || undefined,
+  };
+};
+
+/**
+ * Conditional Branch Node
+ * Routes execution based on a condition (if/else logic)
+ */
+export const conditionalBranchExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const condition = properties?.condition || 'value'; // Field to check
+  const operator = properties?.operator || '=='; // Comparison operator
+  const compareValue = properties?.compareValue; // Value to compare against
+
+  const inputValue = inputs[0]?.[condition] ?? inputs[0];
+  let conditionMet = false;
+
+  switch (operator) {
+    case '==':
+    case 'equals':
+      conditionMet = inputValue === compareValue;
+      break;
+    case '!=':
+    case 'not_equals':
+      conditionMet = inputValue !== compareValue;
+      break;
+    case '>':
+    case 'greater_than':
+      conditionMet = Number(inputValue) > Number(compareValue);
+      break;
+    case '<':
+    case 'less_than':
+      conditionMet = Number(inputValue) < Number(compareValue);
+      break;
+    case 'exists':
+      conditionMet = inputValue !== null && inputValue !== undefined;
+      break;
+    case 'not_exists':
+      conditionMet = inputValue === null || inputValue === undefined;
+      break;
+    case 'truthy':
+      conditionMet = Boolean(inputValue);
+      break;
+    case 'falsy':
+      conditionMet = !Boolean(inputValue);
+      break;
+    default:
+      conditionMet = Boolean(inputValue);
+  }
+
+  return {
+    conditionMet,
+    value: inputValue,
+    // Route to different output slots based on condition
+    trueOutput: conditionMet ? inputs[0] : null,
+    falseOutput: !conditionMet ? inputs[0] : null,
+  };
+};
+
+/**
+ * Switch Node
+ * Multi-way routing based on a value (like cognitive mode router)
+ */
+export const switchExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const switchField = properties?.switchField || 'mode'; // Field to switch on
+  const cases = properties?.cases || {}; // Map of case values to output slots
+  const defaultCase = properties?.defaultCase || 'default';
+
+  const switchValue = inputs[0]?.[switchField] ?? inputs[0];
+  const matchedCase = cases[switchValue] || defaultCase;
+
+  return {
+    switchValue,
+    matchedCase,
+    output: inputs[0],
+    // Create output for each case
+    ...Object.keys(cases).reduce((acc, caseKey) => {
+      acc[`output_${caseKey}`] = switchValue === caseKey ? inputs[0] : null;
+      return acc;
+    }, {} as Record<string, any>),
+    output_default: matchedCase === defaultCase ? inputs[0] : null,
+  };
+};
+
+/**
+ * For Each Node
+ * Iterates over an array, executing logic for each element
+ */
+export const forEachExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const arrayField = properties?.arrayField || 'items'; // Field containing array
+  // TODO: bodyGraph property (sub-graph to execute for each item) not yet implemented
+
+  const inputArray = inputs[0]?.[arrayField] || [];
+  const results: any[] = [];
+
+  // In a real implementation, we'd execute bodyGraph for each item
+  // For now, just collect items with index
+  for (let i = 0; i < inputArray.length; i++) {
+    results.push({
+      index: i,
+      item: inputArray[i],
+      // In production, this would be the result of executing bodyGraph with this item
+    });
+  }
+
+  return {
+    results,
+    count: results.length,
+    items: inputArray,
+  };
+};
+
+// ============================================================================
+// Memory Curation Nodes
+// ============================================================================
+
+/**
+ * Weighted Sampler Node
+ * Samples memories using exponential decay weighting (used by reflector, dreamer, curiosity)
+ */
+export const weightedSamplerExecutor: NodeExecutor = async (_inputs, _context, properties) => {
+  const decayFactor = properties?.decayFactor || 14; // Days for 50% weight reduction
+  const sampleSize = properties?.sampleSize || 5;
+  // TODO: const memoryType = properties?.memoryType; // Optional filter (not yet implemented)
+
+  try {
+    // Get all memories - searchMemory returns file paths
+    const memoryPaths = searchMemory('');
+
+    // For now, return paths with mock weighting
+    // In production, this would load each memory file and apply real weighting
+    const sampled = memoryPaths.slice(0, sampleSize);
+
+    return {
+      memoryPaths: sampled,
+      count: sampled.length,
+      decayFactor,
+      // TODO: Implement actual memory loading and exponential decay weighting
+      note: 'Mock implementation - needs memory file loading',
+    };
+  } catch (error) {
+    console.error('[WeightedSampler] Error:', error);
+    return {
+      memoryPaths: [],
+      count: 0,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Associative Chain Node
+ * Follows keyword connections between memories to build associative chains
+ */
+export const associativeChainExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const chainLength = properties?.chainLength || 5;
+  const startMemory = inputs[0]?.memory || inputs[0];
+
+  if (!startMemory) {
+    return { chain: [], keywords: [] };
+  }
+
+  try {
+    const chain = [startMemory];
+    const usedKeywords: string[] = [];
+
+    for (let i = 1; i < chainLength; i++) {
+      const lastMemory = chain[chain.length - 1];
+
+      // Extract keywords from last memory (tags, entities, or content keywords)
+      const keywords = [
+        ...(lastMemory.tags || []),
+        ...(lastMemory.entities || []).map((e: any) => e.name || e),
+      ];
+
+      if (keywords.length === 0) break;
+
+      // Pick a random keyword
+      const keyword = keywords[Math.floor(Math.random() * keywords.length)];
+      usedKeywords.push(keyword);
+
+      // Search for memories containing this keyword (returns file paths)
+      const resultPaths = searchMemory(keyword);
+
+      // For now, just return paths (in production, would load and filter)
+      const results = resultPaths.slice(0, 10);
+
+      // Filter out already used memory paths
+      const unused = results.filter(
+        (path: string) => !chain.some((c: any) => c === path || c.path === path)
+      );
+
+      if (unused.length === 0) break;
+
+      // Pick a random memory path from results
+      const nextPath = unused[Math.floor(Math.random() * unused.length)];
+      chain.push(nextPath);
+    }
+
+    return {
+      chain,
+      chainLength: chain.length,
+      keywords: usedKeywords,
+    };
+  } catch (error) {
+    console.error('[AssociativeChain] Error:', error);
+    return {
+      chain: [startMemory],
+      chainLength: 1,
+      keywords: [],
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Memory Filter Node
+ * Filters memories by type, tags, date range, or other criteria
+ */
+export const memoryFilterExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const memories = inputs[0]?.memories || inputs[0] || [];
+  const filterType = properties?.filterType; // e.g., 'conversation', 'inner_dialogue'
+  const filterTags = properties?.filterTags || []; // Array of required tags
+  const startDate = properties?.startDate; // ISO date string
+  const endDate = properties?.endDate; // ISO date string
+  const limit = properties?.limit || 100;
+
+  try {
+    let filtered = Array.isArray(memories) ? memories : [];
+
+    // Filter by type
+    if (filterType) {
+      filtered = filtered.filter((m: any) => m.type === filterType);
+    }
+
+    // Filter by tags (memory must have ALL specified tags)
+    if (filterTags.length > 0) {
+      filtered = filtered.filter((m: any) => {
+        const memoryTags = m.tags || [];
+        return filterTags.every((tag: string) => memoryTags.includes(tag));
+      });
+    }
+
+    // Filter by date range
+    if (startDate || endDate) {
+      filtered = filtered.filter((m: any) => {
+        const memoryDate = new Date(m.timestamp).getTime();
+        const start = startDate ? new Date(startDate).getTime() : 0;
+        const end = endDate ? new Date(endDate).getTime() : Date.now();
+        return memoryDate >= start && memoryDate <= end;
+      });
+    }
+
+    // Apply limit
+    filtered = filtered.slice(0, limit);
+
+    return {
+      memories: filtered,
+      count: filtered.length,
+      filtered: true,
+    };
+  } catch (error) {
+    console.error('[MemoryFilter] Error:', error);
+    return {
+      memories: [],
+      count: 0,
+      error: (error as Error).message,
+    };
+  }
+};
+
+// ============================================================================
+// Utility Nodes
+// ============================================================================
+
+/**
+ * JSON Parser Node
+ * Extracts JSON from text (useful for parsing LLM responses)
+ */
+export const jsonParserExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const text = inputs[0]?.text || inputs[0]?.response || inputs[0] || '';
+  const fallback = properties?.fallback || null; // Value to return if parsing fails
+
+  try {
+    // Try to extract JSON from text
+    // Look for JSON between code fences first
+    let jsonText = text;
+    const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (fenceMatch) {
+      jsonText = fenceMatch[1];
+    } else {
+      // Try to find JSON object/array
+      const jsonMatch = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+      if (jsonMatch) {
+        jsonText = jsonMatch[1];
+      }
+    }
+
+    const parsed = JSON.parse(jsonText);
+
+    return {
+      data: parsed,
+      success: true,
+      raw: text,
+    };
+  } catch (error) {
+    console.warn('[JSONParser] Failed to parse JSON:', (error as Error).message);
+    return {
+      data: fallback,
+      success: false,
+      raw: text,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Text Template Node
+ * String interpolation with variable substitution
+ */
+export const textTemplateExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const template = properties?.template || '';
+  const variables = inputs[0] || {};
+
+  try {
+    // Simple variable substitution: {{variableName}}
+    let result = template;
+
+    // Replace {{key}} with values from inputs
+    const matches = template.match(/\{\{([^}]+)\}\}/g) || [];
+    for (const match of matches) {
+      const key = match.replace(/\{\{|\}\}/g, '').trim();
+      const value = variables[key] ?? '';
+      result = result.replace(match, String(value));
+    }
+
+    return {
+      text: result,
+      template,
+      variables,
+    };
+  } catch (error) {
+    console.error('[TextTemplate] Error:', error);
+    return {
+      text: template,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Data Transform Node
+ * Map/filter/reduce operations on arrays
+ */
+export const dataTransformExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const data = inputs[0] || [];
+  const operation = properties?.operation || 'map'; // map, filter, reduce
+  const field = properties?.field; // Field to extract/filter
+  const condition = properties?.condition; // For filter
+  const initialValue = properties?.initialValue; // For reduce
+
+  try {
+    if (!Array.isArray(data)) {
+      throw new Error('Input must be an array');
+    }
+
+    let result: any;
+
+    switch (operation) {
+      case 'map':
+        // Extract a specific field from each item
+        result = field
+          ? data.map((item: any) => item[field])
+          : data;
+        break;
+
+      case 'filter':
+        // Filter items based on a condition
+        if (condition) {
+          result = data.filter((item: any) => {
+            // Simple equality check: {field: value}
+            const [key, value] = Object.entries(condition)[0] || [];
+            return item[key] === value;
+          });
+        } else {
+          // Filter out null/undefined/empty
+          result = data.filter((item: any) => item != null && item !== '');
+        }
+        break;
+
+      case 'reduce':
+        // Simple reduce: sum, count, concat
+        const reduceOp = properties?.reduceOperation || 'count';
+        if (reduceOp === 'count') {
+          result = data.length;
+        } else if (reduceOp === 'sum' && field) {
+          result = data.reduce((sum: number, item: any) => sum + (Number(item[field]) || 0), 0);
+        } else if (reduceOp === 'concat' && field) {
+          result = data.map((item: any) => item[field]).join(', ');
+        } else {
+          result = initialValue || 0;
+        }
+        break;
+
+      case 'unique':
+        // Remove duplicates
+        result = [...new Set(data)];
+        break;
+
+      case 'sort':
+        // Sort by field
+        result = field
+          ? [...data].sort((a: any, b: any) => {
+              const aVal = a[field];
+              const bVal = b[field];
+              if (aVal < bVal) return -1;
+              if (aVal > bVal) return 1;
+              return 0;
+            })
+          : [...data].sort();
+        break;
+
+      default:
+        result = data;
+    }
+
+    return {
+      result,
+      operation,
+      count: Array.isArray(result) ? result.length : 1,
+    };
+  } catch (error) {
+    console.error('[DataTransform] Error:', error);
+    return {
+      result: data,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Cache Node
+ * Stores intermediate results with TTL
+ */
+const cacheStore = new Map<string, { value: any; expiry: number }>();
+
+export const cacheExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const key = properties?.key || 'default';
+  const ttl = properties?.ttl || 60000; // Default 1 minute
+  const operation = properties?.operation || 'get'; // get, set, clear
+
+  try {
+    switch (operation) {
+      case 'set':
+        const value = inputs[0];
+        cacheStore.set(key, {
+          value,
+          expiry: Date.now() + ttl,
+        });
+        return {
+          cached: true,
+          key,
+          ttl,
+        };
+
+      case 'get':
+        const cached = cacheStore.get(key);
+        if (cached && cached.expiry > Date.now()) {
+          return {
+            value: cached.value,
+            hit: true,
+            key,
+          };
+        } else {
+          cacheStore.delete(key);
+          return {
+            value: null,
+            hit: false,
+            key,
+          };
+        }
+
+      case 'clear':
+        cacheStore.delete(key);
+        return {
+          cleared: true,
+          key,
+        };
+
+      case 'clear_all':
+        cacheStore.clear();
+        return {
+          cleared: true,
+          count: 0,
+        };
+
+      default:
+        return {
+          error: `Unknown operation: ${operation}`,
+        };
+    }
+  } catch (error) {
+    console.error('[Cache] Error:', error);
+    return {
+      error: (error as Error).message,
+    };
+  }
+};
+
+// ============================================================================
+// Advanced Operator Nodes (ReAct Enhancement)
+// ============================================================================
+
+/**
+ * Plan Parser Node
+ * Parses ReAct-style planning output into structured components
+ */
+export const planParserExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const format = properties?.format || 'react'; // react, json, freeform
+  const planText = inputs[0]?.plan || inputs[0] || '';
+
+  try {
+    if (format === 'react') {
+      // Parse ReAct format: "Thought: ... Action: ... Action Input: ..."
+      const thoughtMatch = planText.match(/Thought:\s*([\s\S]*?)(?=\n(?:Action|Final Answer):|$)/i);
+      const actionMatch = planText.match(/Action:\s*(\w+)/i);
+      const actionInputMatch = planText.match(/Action Input:\s*({[\s\S]*?}|\S+)/i);
+      const finalAnswerMatch = planText.match(/Final Answer:\s*([\s\S]*)/i);
+
+      return {
+        thought: thoughtMatch?.[1]?.trim() || '',
+        action: actionMatch?.[1]?.trim() || null,
+        actionInput: actionInputMatch?.[1]?.trim() || '{}',
+        respond: finalAnswerMatch?.[1]?.trim() || null,
+        parsed: true,
+        format: 'react',
+      };
+    } else if (format === 'json') {
+      // Parse JSON format
+      const parsed = JSON.parse(planText);
+      return {
+        ...parsed,
+        parsed: true,
+        format: 'json',
+      };
+    } else {
+      // Freeform - just return as-is
+      return {
+        text: planText,
+        parsed: true,
+        format: 'freeform',
+      };
+    }
+  } catch (error) {
+    console.error('[PlanParser] Error:', error);
+    return {
+      thought: '',
+      action: null,
+      respond: null,
+      parsed: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Scratchpad Manager Node
+ * Manages ReAct scratchpad state (thought, action, observation history)
+ */
+export const scratchpadManagerExecutor: NodeExecutor = async (inputs, context, properties) => {
+  const operation = properties?.operation || 'append'; // append, get, clear, trim
+  const maxSteps = properties?.maxSteps || 10;
+  const sessionId = context.sessionId || 'default';
+
+  // Store scratchpad in context (persists across node executions within same graph run)
+  const scratchpadKey = `scratchpad_${sessionId}`;
+
+  try {
+    switch (operation) {
+      case 'append':
+        // Add new step to scratchpad
+        const scratchpad = (context[scratchpadKey] || []) as any[];
+        const newStep = inputs[0] || {};
+        scratchpad.push(newStep);
+        context[scratchpadKey] = scratchpad;
+
+        return {
+          scratchpad,
+          stepCount: scratchpad.length,
+          appended: true,
+        };
+
+      case 'get':
+        // Retrieve current scratchpad
+        const current = (context[scratchpadKey] || []) as any[];
+        return {
+          scratchpad: current,
+          stepCount: current.length,
+        };
+
+      case 'clear':
+        // Clear scratchpad
+        context[scratchpadKey] = [];
+        return {
+          scratchpad: [],
+          stepCount: 0,
+          cleared: true,
+        };
+
+      case 'trim':
+        // Trim to last N steps
+        const full = (context[scratchpadKey] || []) as any[];
+        const trimmed = full.slice(-maxSteps);
+        context[scratchpadKey] = trimmed;
+        return {
+          scratchpad: trimmed,
+          stepCount: trimmed.length,
+          trimmed: true,
+        };
+
+      default:
+        return {
+          error: `Unknown operation: ${operation}`,
+        };
+    }
+  } catch (error) {
+    console.error('[ScratchpadManager] Error:', error);
+    return {
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Error Recovery Node
+ * Provides smart retry suggestions based on error type and context
+ */
+export const errorRecoveryExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const error = inputs[0]?.error || inputs[0] || '';
+  const skillId = inputs[0]?.skillId || '';
+  const maxRetries = properties?.maxRetries || 3;
+  const retryCount = inputs[0]?.retryCount || 0;
+
+  try {
+    // Categorize error type
+    let errorType = 'UNKNOWN';
+    let suggestions: string[] = [];
+
+    const errorStr = String(error).toLowerCase();
+
+    if (errorStr.includes('not found') || errorStr.includes('enoent')) {
+      errorType = 'FILE_NOT_FOUND';
+      suggestions = [
+        `Try using fs_list to check what files are available`,
+        `Verify the file path is correct`,
+        `Check if the file exists in a different directory`,
+      ];
+    } else if (errorStr.includes('permission') || errorStr.includes('eacces')) {
+      errorType = 'PERMISSION_DENIED';
+      suggestions = [
+        `Check file permissions`,
+        `Try accessing with different user privileges`,
+        `Verify you have write access to the directory`,
+      ];
+    } else if (errorStr.includes('invalid') || errorStr.includes('parse')) {
+      errorType = 'INVALID_ARGS';
+      suggestions = [
+        `Check the format of your input arguments`,
+        `Verify JSON syntax if passing JSON data`,
+        `Review the skill's required parameters`,
+      ];
+    } else if (errorStr.includes('timeout')) {
+      errorType = 'TIMEOUT';
+      suggestions = [
+        `Retry the operation`,
+        `Break the task into smaller steps`,
+        `Check if the service is responsive`,
+      ];
+    } else if (errorStr.includes('network') || errorStr.includes('connection')) {
+      errorType = 'NETWORK_ERROR';
+      suggestions = [
+        `Check network connectivity`,
+        `Retry after a brief delay`,
+        `Verify the service endpoint is accessible`,
+      ];
+    }
+
+    // Determine if we should retry
+    const shouldRetry = retryCount < maxRetries && (
+      errorType === 'TIMEOUT' ||
+      errorType === 'NETWORK_ERROR' ||
+      errorType === 'INVALID_ARGS'
+    );
+
+    return {
+      errorType,
+      suggestions,
+      shouldRetry,
+      retryCount: retryCount + 1,
+      error,
+      skillId,
+    };
+  } catch (err) {
+    console.error('[ErrorRecovery] Error:', err);
+    return {
+      errorType: 'UNKNOWN',
+      suggestions: [],
+      shouldRetry: false,
+      retryCount,
+      error: (err as Error).message,
+    };
+  }
+};
+
+/**
+ * Stuck Detector Node
+ * Detects failure loops and repeated unsuccessful actions
+ */
+export const stuckDetectorExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const threshold = properties?.threshold || 3; // Number of consecutive failures to consider "stuck"
+  const scratchpad = inputs[0]?.scratchpad || inputs[0] || [];
+
+  try {
+    // Analyze scratchpad for patterns
+    let consecutiveFailures = 0;
+    const recentActions: string[] = [];
+
+    // Count consecutive failures from the end
+    for (let i = scratchpad.length - 1; i >= 0; i--) {
+      const step = scratchpad[i];
+      const observation = step.observation || '';
+      const action = step.action || '';
+
+      if (observation.toLowerCase().includes('error') || observation.toLowerCase().includes('failed')) {
+        consecutiveFailures++;
+        if (action) recentActions.push(action);
+      } else {
+        break; // Stop at first success
+      }
+    }
+
+    // Check for repeated actions (same action attempted multiple times)
+    const actionCounts = recentActions.reduce((acc, action) => {
+      acc[action] = (acc[action] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const maxRepeats = Math.max(...Object.values(actionCounts), 0);
+    const isRepeating = maxRepeats >= 2;
+
+    // Determine if stuck
+    const isStuck = consecutiveFailures >= threshold;
+
+    let diagnosis = '';
+    let suggestion = '';
+
+    if (isStuck) {
+      if (isRepeating) {
+        diagnosis = `Detected ${consecutiveFailures} consecutive failures with repeated action attempts`;
+        suggestion = `Try a different approach - the current action is not working`;
+      } else {
+        diagnosis = `Detected ${consecutiveFailures} consecutive failures`;
+        suggestion = `Review the error messages and adjust your strategy`;
+      }
+    }
+
+    return {
+      isStuck,
+      consecutiveFailures,
+      isRepeating,
+      diagnosis,
+      suggestion,
+      threshold,
+    };
+  } catch (error) {
+    console.error('[StuckDetector] Error:', error);
+    return {
+      isStuck: false,
+      consecutiveFailures: 0,
+      isRepeating: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+// ============================================================================
+// Agent-Specific Nodes
+// ============================================================================
+
+/**
+ * Memory Loader Node
+ * Loads unprocessed episodic memories for agent processing
+ */
+export const memoryLoaderExecutor: NodeExecutor = async (_inputs, _context, properties) => {
+  const limit = properties?.limit || 10;
+  const onlyUnprocessed = properties?.onlyUnprocessed !== false; // Default true
+
+  try {
+    const memories = searchMemory(''); // Get all memory file paths
+    const fs = await import('fs');
+    const path = await import('path');
+
+    const loadedMemories: any[] = [];
+
+    for (const memoryPath of memories.slice(0, limit * 2)) { // Load extra to account for filtering
+      try {
+        const content = fs.readFileSync(memoryPath, 'utf-8');
+        const memory = JSON.parse(content);
+
+        // Filter based on processed status
+        if (onlyUnprocessed && memory.metadata?.processed) {
+          continue;
+        }
+
+        loadedMemories.push({
+          path: memoryPath,
+          id: path.basename(memoryPath, '.json'),
+          ...memory,
+        });
+
+        if (loadedMemories.length >= limit) {
+          break;
+        }
+      } catch (error) {
+        console.warn(`[MemoryLoader] Failed to load ${memoryPath}:`, error);
+      }
+    }
+
+    return {
+      memories: loadedMemories,
+      count: loadedMemories.length,
+      hasMore: memories.length > loadedMemories.length,
+    };
+  } catch (error) {
+    console.error('[MemoryLoader] Error:', error);
+    return {
+      memories: [],
+      count: 0,
+      hasMore: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Memory Saver Node
+ * Saves enriched memory data back to file
+ */
+export const memorySaverExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const memory = inputs[0];
+  const updateOnly = properties?.updateOnly !== false; // Default true (don't create new files)
+
+  if (!memory || !memory.path) {
+    return {
+      success: false,
+      error: 'Memory path required',
+    };
+  }
+
+  try {
+    const fs = await import('fs');
+
+    // Read existing file if updateOnly
+    let existingData = {};
+    if (updateOnly) {
+      try {
+        const content = fs.readFileSync(memory.path, 'utf-8');
+        existingData = JSON.parse(content);
+      } catch (error) {
+        console.warn('[MemorySaver] Could not read existing file:', error);
+      }
+    }
+
+    // Merge with new data (preserve path info but don't write it)
+    const { path: _path, ...dataToSave } = memory;
+    const mergedData = { ...existingData, ...dataToSave };
+
+    // Write back to file
+    fs.writeFileSync(memory.path, JSON.stringify(mergedData, null, 2), 'utf-8');
+
+    return {
+      success: true,
+      path: memory.path,
+      updated: true,
+    };
+  } catch (error) {
+    console.error('[MemorySaver] Error:', error);
+    return {
+      success: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * LLM Enricher Node
+ * Calls LLM to extract tags and entities from memory content
+ */
+export const llmEnricherExecutor: NodeExecutor = async (inputs, context, properties) => {
+  const memory = inputs[0];
+  const promptTemplate = properties?.promptTemplate || `Analyze this memory and extract relevant tags and entities.
+
+Memory: {content}
+
+Return a JSON object with:
+- tags: array of relevant keyword tags (3-7 tags)
+- entities: array of entities mentioned (people, places, things)
+
+Format: {"tags": [...], "entities": [...]}`;
+
+  if (!memory || !memory.content) {
+    return {
+      success: false,
+      error: 'Memory content required',
+    };
+  }
+
+  try {
+    const { callLLM } = await import('./model-router.js');
+
+    // Build prompt
+    const prompt = promptTemplate.replace('{content}', memory.content);
+
+    const response = await callLLM({
+      role: 'curator',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a memory curator. Extract structured metadata from memory content.',
+        },
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
+      cognitiveMode: context.cognitiveMode || 'dual',
+      options: {
+        maxTokens: 512,
+        repeatPenalty: 1.15,
+        temperature: 0.3,
+      },
+    });
+
+    // Parse JSON response
+    let enrichment = { tags: [], entities: [] };
+    try {
+      // Try to extract JSON from response
+      const jsonMatch = response.content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        enrichment = JSON.parse(jsonMatch[0]);
+      }
+    } catch (parseError) {
+      console.warn('[LLMEnricher] Failed to parse JSON:', parseError);
+    }
+
+    // Return enriched memory
+    return {
+      success: true,
+      memory: {
+        ...memory,
+        tags: enrichment.tags || [],
+        entities: enrichment.entities || [],
+        metadata: {
+          ...memory.metadata,
+          processed: true,
+          processedAt: new Date().toISOString(),
+        },
+      },
+    };
+  } catch (error) {
+    console.error('[LLMEnricher] Error:', error);
+    return {
+      success: false,
+      error: (error as Error).message,
+      memory, // Return original memory
+    };
+  }
+};
+
+/**
+ * Agent Timer Node
+ * Provides timing information for scheduled agents
+ */
+export const agentTimerExecutor: NodeExecutor = async (_inputs, _context, properties) => {
+  const intervalMs = properties?.intervalMs || 60000; // Default 1 minute
+
+  return {
+    currentTime: Date.now(),
+    interval: intervalMs,
+    nextRun: Date.now() + intervalMs,
+  };
+};
+
+// ============================================================================
+// Configuration Management Nodes
+// ============================================================================
+
+/**
+ * Persona Loader Node
+ * Loads persona core configuration
+ */
+export const personaLoaderExecutor: NodeExecutor = async (_inputs, _context, _properties) => {
+  try {
+    const { loadPersonaCore } = await import('./identity.js');
+    const persona = loadPersonaCore();
+
+    return {
+      success: true,
+      persona,
+      identity: persona.identity,
+      personality: persona.personality,
+      values: persona.values,
+      goals: persona.goals,
+    };
+  } catch (error) {
+    console.error('[PersonaLoader] Error:', error);
+    return {
+      success: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Persona Saver Node
+ * Saves persona core configuration
+ */
+export const personaSaverExecutor: NodeExecutor = async (inputs, _context, _properties) => {
+  const persona = inputs[0];
+
+  if (!persona) {
+    return {
+      success: false,
+      error: 'Persona data required',
+    };
+  }
+
+  try {
+    const { savePersonaCore } = await import('./identity.js');
+    savePersonaCore(persona);
+
+    return {
+      success: true,
+      saved: true,
+      timestamp: new Date().toISOString(),
+    };
+  } catch (error) {
+    console.error('[PersonaSaver] Error:', error);
+    return {
+      success: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Trust Level Reader Node
+ * Gets current trust level from decision rules
+ */
+export const trustLevelReaderExecutor: NodeExecutor = async (_inputs, _context, _properties) => {
+  try {
+    const { loadDecisionRules } = await import('./identity.js');
+    const rules = loadDecisionRules();
+
+    return {
+      success: true,
+      trustLevel: rules.trustLevel,
+      availableModes: rules.availableModes,
+      description: rules.modeDescription?.[rules.trustLevel] || '',
+    };
+  } catch (error) {
+    console.error('[TrustLevelReader] Error:', error);
+    return {
+      success: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Trust Level Writer Node
+ * Sets trust level in decision rules
+ */
+export const trustLevelWriterExecutor: NodeExecutor = async (inputs, _context, _properties) => {
+  const trustLevel = inputs[0]?.trustLevel || inputs[0];
+
+  if (!trustLevel) {
+    return {
+      success: false,
+      error: 'Trust level required',
+    };
+  }
+
+  try {
+    const { setTrustLevel } = await import('./identity.js');
+    setTrustLevel(trustLevel);
+
+    return {
+      success: true,
+      trustLevel,
+      updated: true,
+      timestamp: new Date().toISOString(),
+    };
+  } catch (error) {
+    console.error('[TrustLevelWriter] Error:', error);
+    return {
+      success: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Decision Rules Loader Node
+ * Loads decision rules configuration
+ */
+export const decisionRulesLoaderExecutor: NodeExecutor = async (_inputs, _context, _properties) => {
+  try {
+    const { loadDecisionRules } = await import('./identity.js');
+    const rules = loadDecisionRules();
+
+    return {
+      success: true,
+      rules,
+      trustLevel: rules.trustLevel,
+      hardRules: rules.hardRules,
+      softPreferences: rules.softPreferences,
+    };
+  } catch (error) {
+    console.error('[DecisionRulesLoader] Error:', error);
+    return {
+      success: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Decision Rules Saver Node
+ * Saves decision rules configuration
+ */
+export const decisionRulesSaverExecutor: NodeExecutor = async (inputs, _context, _properties) => {
+  const rules = inputs[0];
+
+  if (!rules) {
+    return {
+      success: false,
+      error: 'Decision rules required',
+    };
+  }
+
+  try {
+    const { saveDecisionRules } = await import('./identity.js');
+    saveDecisionRules(rules);
+
+    return {
+      success: true,
+      saved: true,
+      timestamp: new Date().toISOString(),
+    };
+  } catch (error) {
+    console.error('[DecisionRulesSaver] Error:', error);
+    return {
+      success: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Identity Extractor Node
+ * Extracts specific fields from persona identity
+ */
+export const identityExtractorExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const field = properties?.field || 'all';
+  const persona = inputs[0];
+
+  try {
+    let source = persona;
+
+    // If no input, load persona
+    if (!persona) {
+      const { loadPersonaCore } = await import('./identity.js');
+      source = loadPersonaCore();
+    }
+
+    if (field === 'all') {
+      return {
+        success: true,
+        ...source.identity,
+      };
+    } else {
+      return {
+        success: true,
+        field,
+        value: source.identity?.[field] || null,
+      };
+    }
+  } catch (error) {
+    console.error('[IdentityExtractor] Error:', error);
+    return {
+      success: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Value Manager Node
+ * Manages core values (read, add, remove)
+ */
+export const valueManagerExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const operation = properties?.operation || 'get'; // get, add, remove, update
+  const valueData = inputs[0];
+
+  try {
+    const { loadPersonaCore, savePersonaCore } = await import('./identity.js');
+    const persona = loadPersonaCore();
+
+    switch (operation) {
+      case 'get':
+        return {
+          success: true,
+          values: persona.values.core,
+          count: persona.values.core.length,
+        };
+
+      case 'add':
+        if (!valueData?.value) {
+          return {
+            success: false,
+            error: 'Value data required for add operation',
+          };
+        }
+        persona.values.core.push(valueData);
+        savePersonaCore(persona);
+        return {
+          success: true,
+          added: true,
+          values: persona.values.core,
+        };
+
+      case 'remove':
+        if (valueData?.value) {
+          persona.values.core = persona.values.core.filter(
+            (v: any) => v.value !== valueData.value
+          );
+          savePersonaCore(persona);
+          return {
+            success: true,
+            removed: true,
+            values: persona.values.core,
+          };
+        }
+        return {
+          success: false,
+          error: 'Value identifier required for remove operation',
+        };
+
+      case 'update':
+        if (!valueData?.value) {
+          return {
+            success: false,
+            error: 'Value data required for update operation',
+          };
+        }
+        const index = persona.values.core.findIndex(
+          (v: any) => v.value === valueData.value
+        );
+        if (index !== -1) {
+          persona.values.core[index] = { ...persona.values.core[index], ...valueData };
+          savePersonaCore(persona);
+          return {
+            success: true,
+            updated: true,
+            values: persona.values.core,
+          };
+        }
+        return {
+          success: false,
+          error: 'Value not found',
+        };
+
+      default:
+        return {
+          success: false,
+          error: `Unknown operation: ${operation}`,
+        };
+    }
+  } catch (error) {
+    console.error('[ValueManager] Error:', error);
+    return {
+      success: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Goal Manager Node
+ * Manages goals (short-term, long-term)
+ */
+export const goalManagerExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const operation = properties?.operation || 'get'; // get, add, remove, update
+  const scope = properties?.scope || 'shortTerm'; // shortTerm, longTerm
+  const goalData = inputs[0];
+
+  try {
+    const { loadPersonaCore, savePersonaCore } = await import('./identity.js');
+    const persona = loadPersonaCore();
+    const goals = persona.goals[scope] || [];
+
+    switch (operation) {
+      case 'get':
+        return {
+          success: true,
+          goals,
+          scope,
+          count: goals.length,
+        };
+
+      case 'add':
+        if (!goalData?.goal) {
+          return {
+            success: false,
+            error: 'Goal data required for add operation',
+          };
+        }
+        goals.push(goalData);
+        persona.goals[scope] = goals;
+        savePersonaCore(persona);
+        return {
+          success: true,
+          added: true,
+          goals,
+        };
+
+      case 'remove':
+        if (goalData?.goal) {
+          const filtered = goals.filter((g: any) => g.goal !== goalData.goal);
+          persona.goals[scope] = filtered;
+          savePersonaCore(persona);
+          return {
+            success: true,
+            removed: true,
+            goals: filtered,
+          };
+        }
+        return {
+          success: false,
+          error: 'Goal identifier required for remove operation',
+        };
+
+      case 'update':
+        if (!goalData?.goal) {
+          return {
+            success: false,
+            error: 'Goal data required for update operation',
+          };
+        }
+        const index = goals.findIndex((g: any) => g.goal === goalData.goal);
+        if (index !== -1) {
+          goals[index] = { ...goals[index], ...goalData };
+          persona.goals[scope] = goals;
+          savePersonaCore(persona);
+          return {
+            success: true,
+            updated: true,
+            goals,
+          };
+        }
+        return {
+          success: false,
+          error: 'Goal not found',
+        };
+
+      default:
+        return {
+          success: false,
+          error: `Unknown operation: ${operation}`,
+        };
+    }
+  } catch (error) {
+    console.error('[GoalManager] Error:', error);
+    return {
+      success: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+// ============================================================================
+// Emulation Mode Specific Nodes
+// ============================================================================
+
+/**
+ * Reply-To Handler Node
+ * Fetches reply-to context (curiosity questions or selected messages)
+ */
+export const replyToHandlerExecutor: NodeExecutor = async (inputs, context) => {
+  const replyToQuestionId = context.replyToQuestionId || inputs[0]?.replyToQuestionId;
+  const replyToContent = context.replyToContent || inputs[0]?.replyToContent;
+
+  if (!replyToQuestionId && !replyToContent) {
+    return {
+      replyToContext: null,
+      curiosityMetadata: null,
+    };
+  }
+
+  // Priority 1: Curiosity question (from audit logs)
+  if (replyToQuestionId) {
+    try {
+      const { ROOT } = await import('./paths.js');
+      const path = await import('node:path');
+      const fs = await import('node:fs');
+
+      const auditDir = path.join(ROOT, 'logs', 'audit');
+      const today = new Date().toISOString().split('T')[0];
+      const auditFile = path.join(auditDir, `${today}.ndjson`);
+
+      if (!fs.existsSync(auditFile)) {
+        console.warn(`[ReplyToHandler] Audit file not found: ${auditFile}`);
+        return {
+          replyToContext: null,
+          curiosityMetadata: null,
+        };
+      }
+
+      const auditContent = fs.readFileSync(auditFile, 'utf-8');
+      const lines = auditContent.split('\n').filter(Boolean);
+
+      // Search backwards (most recent first)
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const entry = JSON.parse(lines[i]);
+          if (
+            entry.actor === 'curiosity-service' &&
+            entry.event === 'chat_assistant' &&
+            entry.details?.curiosityQuestionId === replyToQuestionId &&
+            entry.details?.curiosityData
+          ) {
+            const questionText = entry.details.curiosityData.questionText;
+            const curiosityData = entry.details.curiosityData;
+
+            return {
+              replyToContext: `# User is Replying To\n💭 ${questionText}`,
+              curiosityMetadata: {
+                questionId: replyToQuestionId,
+                questionText,
+                ...curiosityData,
+              },
+            };
+          }
+        } catch {
+          // Skip malformed lines
+        }
+      }
+
+      console.warn(`[ReplyToHandler] Question not found: ${replyToQuestionId}`);
+    } catch (error) {
+      console.error(`[ReplyToHandler] Error retrieving curiosity question:`, error);
+    }
+  }
+
+  // Priority 2: Selected message content
+  if (replyToContent) {
+    return {
+      replyToContext: `# User is Replying To\n${replyToContent}`,
+      curiosityMetadata: null,
+    };
+  }
+
+  return {
+    replyToContext: null,
+    curiosityMetadata: null,
+  };
+};
+
+/**
+ * Buffer Manager Node
+ * Persists conversation buffer to disk
+ */
+export const bufferManagerExecutor: NodeExecutor = async (inputs, context) => {
+  const messages = inputs[0]?.messages || context.conversationHistory || [];
+  const mode = context.mode || context.dialogueType || 'conversation';
+  const sessionId = context.sessionId;
+
+  try {
+    const { persistBuffer } = await import('./conversation-buffer.js');
+
+    persistBuffer(mode as 'inner' | 'conversation', messages);
+
+    console.log(`[BufferManager] Persisted ${messages.length} messages for ${mode} mode`);
+
+    // Note: Auto-summarization is triggered asynchronously in the background
+    // when buffer size exceeds limits. This is handled by the summarization service.
+
+    return {
+      persisted: true,
+      mode,
+      messageCount: messages.length,
+      sessionId,
+    };
+  } catch (error) {
+    console.error('[BufferManager] Error persisting buffer:', error);
+    return {
+      persisted: false,
+      error: (error as Error).message,
+    };
+  }
 };
 
 // ============================================================================
@@ -831,6 +3054,9 @@ export const streamWriterExecutor: NodeExecutor = async (inputs, context) => {
 
 export const nodeExecutors: Record<string, NodeExecutor> = {
   // Input nodes
+  'text_input': textInputExecutor,
+  'mic_input': micInputExecutor,
+  'speech_to_text': speechToTextExecutor,
   'user_input': userInputExecutor,
   'session_context': sessionContextExecutor,
   'system_settings': systemSettingsExecutor,
@@ -844,6 +3070,29 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
   'semantic_search': semanticSearchExecutor,
   'conversation_history': conversationHistoryExecutor,
   'context_builder': contextBuilderExecutor,
+
+  // Control Flow nodes
+  'loop_controller': loopControllerExecutor,
+  'conditional_branch': conditionalBranchExecutor,
+  'switch': switchExecutor,
+  'for_each': forEachExecutor,
+
+  // Memory Curation nodes
+  'weighted_sampler': weightedSamplerExecutor,
+  'associative_chain': associativeChainExecutor,
+  'memory_filter': memoryFilterExecutor,
+
+  // Utility nodes
+  'json_parser': jsonParserExecutor,
+  'text_template': textTemplateExecutor,
+  'data_transform': dataTransformExecutor,
+  'cache': cacheExecutor,
+
+  // Advanced Operator nodes
+  'plan_parser': planParserExecutor,
+  'scratchpad_manager': scratchpadManagerExecutor,
+  'error_recovery': errorRecoveryExecutor,
+  'stuck_detector': stuckDetectorExecutor,
 
   // Operator nodes
   'react_planner': reactPlannerExecutor,
@@ -867,6 +3116,12 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
   'memory_capture': memoryCaptureExecutor,
   'audit_logger': auditLoggerExecutor,
   'stream_writer': streamWriterExecutor,
+  'chat_view': chatViewExecutor,
+  'tts': ttsExecutor,
+
+  // Emulation mode specific nodes
+  'reply_to_handler': replyToHandlerExecutor,
+  'buffer_manager': bufferManagerExecutor,
 
   // Skill nodes (dynamically created)
   'skill_conversational_response': createSkillExecutor('conversational_response'),
@@ -878,14 +3133,50 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
   'skill_task_update': createSkillExecutor('task_update'),
   'skill_search_index': createSkillExecutor('search_index'),
   'skill_memory_search': createSkillExecutor('memory_search'),
+
+  // Agent nodes (for autonomous agent workflows)
+  'memory_loader': memoryLoaderExecutor,
+  'memory_saver': memorySaverExecutor,
+  'llm_enricher': llmEnricherExecutor,
+  'agent_timer': agentTimerExecutor,
+
+  // Configuration nodes (persona management)
+  'persona_loader': personaLoaderExecutor,
+  'persona_saver': personaSaverExecutor,
+  'trust_level_reader': trustLevelReaderExecutor,
+  'trust_level_writer': trustLevelWriterExecutor,
+  'decision_rules_loader': decisionRulesLoaderExecutor,
+  'decision_rules_saver': decisionRulesSaverExecutor,
+  'identity_extractor': identityExtractorExecutor,
+  'value_manager': valueManagerExecutor,
+  'goal_manager': goalManagerExecutor,
 };
 
 /**
+ * Register a plugin executor (called by plugin system)
+ */
+export function registerPluginExecutor(pluginId: string, executor: NodeExecutor): void {
+  nodeExecutors[pluginId] = executor;
+  console.log(`[NodeExecutors] Registered plugin executor: ${pluginId}`);
+}
+
+/**
+ * Unregister a plugin executor (called when plugin is unloaded)
+ */
+export function unregisterPluginExecutor(pluginId: string): void {
+  delete nodeExecutors[pluginId];
+  console.log(`[NodeExecutors] Unregistered plugin executor: ${pluginId}`);
+}
+
+/**
  * Get executor for a node type
+ * Checks both built-in executors and registered plugins
  */
 export function getNodeExecutor(nodeType: string): NodeExecutor | null {
-  // Remove 'cognitive/' prefix if present
-  const cleanType = nodeType.replace('cognitive/', '');
+  // Remove 'cognitive/' or 'plugin/' prefix if present
+  const cleanType = nodeType.replace(/^(cognitive|plugin)\//, '');
+
+  // Check registry (includes both built-in and plugin executors)
   return nodeExecutors[cleanType] || null;
 }
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { nodeEditorMode } from '../stores/navigation';
   import NodeEditor from './NodeEditor.svelte';
   import NodePalette from './NodePalette.svelte';
@@ -7,6 +7,9 @@
 
   // Import LiteGraph.js CSS (CSS imports are safe during SSR)
   import 'litegraph.js/css/litegraph.css';
+
+  // Accept current cognitive mode from parent
+  export let cognitiveMode: string | null | undefined = null;
 
   let nodeEditorRef: any;
   let currentGraph: any = null;
@@ -42,19 +45,52 @@
   }> = [];
   let tracesLoading = false;
   let tracesError = '';
+  let loadMenuRef: HTMLDivElement;
+
+  // Update graph name when cognitive mode changes
+  $: {
+    console.log('[NodeEditorLayout] Cognitive mode prop changed:', cognitiveMode);
+    if (cognitiveMode) {
+      const template = availableTemplates.find(t => t.id === `${cognitiveMode}-mode`);
+      graphName = template?.name || `${cognitiveMode.charAt(0).toUpperCase() + cognitiveMode.slice(1)} Mode`;
+      console.log('[NodeEditorLayout] Updated graph name to:', graphName);
+    } else {
+      console.log('[NodeEditorLayout] Cognitive mode is null/undefined, keeping default name');
+    }
+  }
 
   // Load available graphs on mount
   onMount(async () => {
     // Templates are already listed
     void refreshSavedGraphs();
 
+    // NodeEditor will auto-load the template based on cognitiveMode prop
+    // No need to duplicate that logic here
+
     // Add keyboard shortcuts
     window.addEventListener('keydown', handleKeyDown);
+    // Add click-outside handler for dropdown menu
+    window.addEventListener('click', handleClickOutside);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('click', handleClickOutside);
     };
   });
+
+  onDestroy(() => {
+    window.removeEventListener('keydown', handleKeyDown);
+    window.removeEventListener('click', handleClickOutside);
+  });
+
+  function handleClickOutside(e: MouseEvent) {
+    if (!showLoadMenu) return;
+
+    // Check if click is outside the dropdown menu
+    if (loadMenuRef && !loadMenuRef.contains(e.target as Node)) {
+      showLoadMenu = false;
+    }
+  }
 
   function handleKeyDown(e: KeyboardEvent) {
     // Ignore if typing in an input field
@@ -142,22 +178,44 @@
   }
 
   async function executeGraph() {
-    if (!nodeEditorRef) return;
+    if (!nodeEditorRef || !nodeEditorRef.graph) return;
 
     isExecuting = true;
     executionError = '';
 
     try {
-      // Execute with test context data
-      const testContext = {
-        sessionId: 'test-session-' + Date.now(),
-        message: 'Test execution from node editor',
-        timestamp: new Date().toISOString(),
-      };
+      // Get the graph data from the editor
+      const graphData = nodeEditorRef.graph.serialize();
 
-      await nodeEditorRef.executeGraph(testContext);
+      console.log('[NodeEditorLayout] Sending graph to backend for REAL execution...', {
+        nodes: graphData.nodes?.length || 0,
+        links: graphData.links?.length || 0,
+      });
 
-      console.log('[NodeEditorLayout] Execution completed successfully');
+      // Send to backend for REAL execution with actual node implementations
+      const response = await fetch('/api/execute-graph', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          graph: graphData,
+          sessionId: `editor-${Date.now()}`,
+          userMessage: 'Test message from node editor',
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || `Server error: ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      console.log('[NodeEditorLayout] ✅ REAL execution completed!', {
+        durationMs: result.durationMs,
+        executedNodes: result.result?.executedNodes?.length || 0,
+      });
+
+      // TODO: Display results in UI (for now, check console)
     } catch (e: any) {
       console.error('[NodeEditorLayout] Execution error:', e);
       executionError = e.message || 'Execution failed';
@@ -173,15 +231,29 @@
 
   async function loadTemplate(templateId: string) {
     try {
+      console.log(`[NodeEditor] Loading template: ${templateId}`);
       const graphData = await loadTemplateAsGraph(templateId);
-      if (graphData && nodeEditorRef) {
-        nodeEditorRef.loadGraph(graphData);
-        const template = availableTemplates.find(t => t.id === templateId);
-        graphName = template?.name || templateId;
-        showLoadMenu = false;
+
+      if (!graphData) {
+        console.error(`[NodeEditor] Failed to load template data for ${templateId}`);
+        return;
       }
+
+      if (!nodeEditorRef) {
+        console.error(`[NodeEditor] Node editor ref not ready yet`);
+        return;
+      }
+
+      console.log(`[NodeEditor] Loading graph into editor...`);
+      nodeEditorRef.loadGraph(graphData);
+
+      const template = availableTemplates.find(t => t.id === templateId);
+      graphName = template?.name || templateId;
+      console.log(`[NodeEditor] Graph loaded successfully: ${graphName}`);
+
+      showLoadMenu = false;
     } catch (e) {
-      console.error('Failed to load template:', e);
+      console.error('[NodeEditor] Failed to load template:', e);
     }
   }
 
@@ -194,7 +266,8 @@
         throw new Error(`Server responded with ${res.status}`);
       }
       const data = await res.json();
-      savedGraphs = Array.isArray(data.graphs) ? data.graphs : [];
+      // Only show custom graphs in "Saved Graphs" - built-in templates appear in "Cognitive Mode Templates"
+      savedGraphs = Array.isArray(data.graphs) ? data.graphs.filter((g: GraphSummary) => g.scope === 'custom') : [];
     } catch (error: any) {
       console.error('[NodeEditor] Failed to fetch graphs:', error);
       graphsError = error?.message || 'Failed to load graphs';
@@ -314,11 +387,15 @@
   }
 
   function handleNodeSelected(nodeType: string) {
+    console.log('[NodeEditorLayout] handleNodeSelected called with:', nodeType);
+    console.log('[NodeEditorLayout] nodeEditorRef exists:', !!nodeEditorRef);
+
     if (!nodeEditorRef) {
       console.warn('[NodeEditorLayout] Node editor not initialized');
       return;
     }
 
+    console.log('[NodeEditorLayout] Calling nodeEditorRef.addNode');
     nodeEditorRef.addNode(nodeType);
   }
 
@@ -381,15 +458,15 @@
         New
       </button>
 
-      <div class="dropdown" style="position: relative">
-        <button class="action-button" on:click={() => showLoadMenu = !showLoadMenu}>
+      <div class="dropdown" style="position: relative" bind:this={loadMenuRef}>
+        <button class="action-button" on:click|stopPropagation={() => showLoadMenu = !showLoadMenu}>
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"/>
           </svg>
           Load Graph
         </button>
         {#if showLoadMenu}
-          <div class="dropdown-menu">
+          <div class="dropdown-menu" on:click|stopPropagation>
             <div class="dropdown-header">Saved Graphs</div>
             {#if graphsLoading}
               <div class="dropdown-item disabled">Loading...</div>
@@ -502,7 +579,7 @@
 
     <!-- Editor Area -->
     <div class="editor-area">
-      <NodeEditor bind:this={nodeEditorRef} />
+      <NodeEditor bind:this={nodeEditorRef} {cognitiveMode} />
 
       <!-- Execution Progress Overlay -->
       {#if isExecuting}

@@ -329,7 +329,11 @@ export class KokoroService implements ITextToSpeechService {
   private async _ensureServerReady(): Promise<boolean> {
     const serverUrl = this.config.server.url;
     const available = await this.checkServerHealth(serverUrl);
-    if (available) return true;
+    if (available) {
+      // Server is healthy - ensure PID file exists
+      await this._repairPidFileIfMissing();
+      return true;
+    }
 
     // Check if auto-start is disabled
     if (this.config.server.autoStart === false) {
@@ -355,6 +359,42 @@ export class KokoroService implements ITextToSpeechService {
 
     // Verify server is actually healthy
     return this.checkServerHealth(serverUrl);
+  }
+
+  /**
+   * Repair missing PID file for a running Kokoro server
+   * This handles cases where the server was started externally (e.g., by start-voice-server)
+   */
+  private async _repairPidFileIfMissing(): Promise<void> {
+    const logDir = path.join(paths.root, 'logs', 'run');
+    const pidFile = path.join(logDir, 'kokoro-server.pid');
+
+    // Check if PID file already exists
+    if (fs.existsSync(pidFile)) {
+      return;
+    }
+
+    try {
+      // Find Kokoro server process by port using lsof
+      const { execSync } = await import('node:child_process');
+      const port = this.config.server.port || 9882;
+      const output = execSync(`lsof -ti:${port}`, { encoding: 'utf-8' }).trim();
+
+      if (output) {
+        const pid = parseInt(output, 10);
+        if (!isNaN(pid)) {
+          // Ensure directory exists
+          fs.mkdirSync(logDir, { recursive: true });
+
+          // Create PID file
+          fs.writeFileSync(pidFile, pid.toString());
+          console.log(`[KokoroService] Repaired missing PID file (PID: ${pid})`);
+        }
+      }
+    } catch (error) {
+      // Silently fail - this is a best-effort repair
+      // The server is working even without the PID file
+    }
   }
 
   /**

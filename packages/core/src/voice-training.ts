@@ -9,6 +9,9 @@ import { paths, systemPaths, tryResolveProfilePath } from './paths.js';
 import { spawn, spawnSync, execSync } from 'node:child_process';
 import { audit } from './audit.js';
 import { clearCache } from './tts/cache.js';
+import { createLogger } from './logger.js';
+
+const log = createLogger('voice-training');
 
 export interface VoiceTrainingConfig {
   enabled: boolean;
@@ -130,7 +133,7 @@ export function saveVoiceSample(
 ): VoiceSample | null {
   const cfg = loadConfig();
 
-  console.log('[voice-training] saveVoiceSample called:', {
+  log.debug(' saveVoiceSample called:', {
     audioSize: audioBuffer.length,
     transcriptLength: transcript.length,
     duration,
@@ -140,30 +143,30 @@ export function saveVoiceSample(
 
   // Check if training is enabled
   if (!cfg.enabled) {
-    console.log('[voice-training] Training disabled in config');
+    log.debug(' Training disabled in config');
     return null;
   }
 
   // Validate duration (clamp overly long clips instead of rejecting)
   if (duration < cfg.minDuration) {
-    console.log('[voice-training] Duration too short:', duration, 'min:', cfg.minDuration);
+    log.debug(' Duration too short:', duration, 'min:', cfg.minDuration);
     return null;
   }
   let effectiveDuration = duration;
   if (duration > cfg.maxDuration) {
-    console.log('[voice-training] Duration exceeds max, clamping:', duration, '→', cfg.maxDuration);
+    log.debug(' Duration exceeds max, clamping:', duration, '→', cfg.maxDuration);
     effectiveDuration = cfg.maxDuration;
   }
 
   // Validate quality
   if (quality < cfg.minQuality) {
-    console.log('[voice-training] Quality too low:', quality, 'min:', cfg.minQuality);
+    log.debug(' Quality too low:', quality, 'min:', cfg.minQuality);
     return null;
   }
 
   // Validate transcript (must have actual words)
   if (!transcript || transcript.trim().length < 10) {
-    console.log('[voice-training] Transcript too short:', transcript?.length);
+    log.debug(' Transcript too short:', transcript?.length);
     return null;
   }
 
@@ -175,7 +178,7 @@ export function saveVoiceSample(
 
   // If no training directory available (user not authenticated), skip saving
   if (!trainingDir) {
-    console.log('[voice-training] Cannot save voice sample: user not authenticated');
+    log.debug(' Cannot save voice sample: user not authenticated');
     return null;
   }
   let audioPath = path.join(trainingDir, `${id}.wav`);
@@ -233,7 +236,7 @@ export function saveVoiceSample(
     };
     fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
 
-    console.log('[voice-training] Sample saved successfully:', id);
+    log.debug(' Sample saved successfully:', id);
 
     audit({
       level: 'info',

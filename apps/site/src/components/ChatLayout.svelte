@@ -314,7 +314,7 @@
 </script>
 
 {#if $nodeEditorMode}
-  <NodeEditorLayout />
+  <NodeEditorLayout cognitiveMode={cognitiveMode?.id} />
 {:else}
 <div class="flex flex-col app-root w-screen overflow-hidden bg-white dark:bg-slate-950">
   <!-- Header Bar -->
