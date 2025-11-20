@@ -9,6 +9,18 @@ set -e  # Exit on any error
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 
+# Optional per-user config
+START_CONFIG_FILE="$REPO_ROOT/.start-config"
+if [ -f "$START_CONFIG_FILE" ]; then
+    # shellcheck disable=SC1090
+    source "$START_CONFIG_FILE"
+fi
+
+# Optional skips (can be provided via env or .start-config)
+SKIP_DEP_INSTALL=${SKIP_DEP_INSTALL:-0}
+SKIP_PYTHON_DEPS=${SKIP_PYTHON_DEPS:-$SKIP_DEP_INSTALL}
+SKIP_NODE_DEPS=${SKIP_NODE_DEPS:-$SKIP_DEP_INSTALL}
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -109,7 +121,10 @@ echo
 # Install Python dependencies if requirements.txt exists
 if [ -f "$REPO_ROOT/requirements.txt" ]; then
     echo "Checking Python dependencies..."
-    if [ ! -f "$VENV_PATH/installed_packages" ] || [ "$REPO_ROOT/requirements.txt" -nt "$VENV_PATH/installed_packages" ]; then
+    if [ "$SKIP_PYTHON_DEPS" = "1" ]; then
+        print_warning "Skipping Python dependency installation (SKIP_PYTHON_DEPS=1)"
+        echo
+    elif [ ! -f "$VENV_PATH/installed_packages" ] || [ "$REPO_ROOT/requirements.txt" -nt "$VENV_PATH/installed_packages" ]; then
         echo "Installing Python dependencies from requirements.txt..."
         pip install --upgrade pip setuptools wheel
         pip install -r "$REPO_ROOT/requirements.txt"
@@ -138,10 +153,29 @@ fi
 
 # Check if we need to install Node.js dependencies
 echo "Checking for Node.js dependencies..."
-if [ ! -d "$REPO_ROOT/node_modules" ] || [ ! -d "$REPO_ROOT/apps/site/node_modules" ]; then
-    echo "Installing Node.js dependencies..."
+LOCK_FILE="$REPO_ROOT/pnpm-lock.yaml"
+STAMP_FILE="$REPO_ROOT/node_modules/.install-stamp"
+NEED_NODE_INSTALL=false
+
+if [ "$SKIP_NODE_DEPS" = "1" ]; then
+    NEED_NODE_INSTALL=false
+elif [ ! -d "$REPO_ROOT/node_modules" ] || [ ! -d "$REPO_ROOT/apps/site/node_modules" ]; then
+    NEED_NODE_INSTALL=true
+elif [ -f "$LOCK_FILE" ]; then
+    if [ ! -f "$STAMP_FILE" ] || [ "$LOCK_FILE" -nt "$STAMP_FILE" ]; then
+        NEED_NODE_INSTALL=true
+    fi
+fi
+
+if [ "$SKIP_NODE_DEPS" = "1" ]; then
+    print_warning "Skipping Node.js dependency installation (SKIP_NODE_DEPS=1)"
+    echo
+elif [ "$NEED_NODE_INSTALL" = true ]; then
+    echo "Installing Node.js dependencies (pnpm install)..."
     cd "$REPO_ROOT"
     pnpm install
+    mkdir -p "$REPO_ROOT/node_modules"
+    touch "$STAMP_FILE"
     print_status "Dependencies installed"
     echo
 else
@@ -217,6 +251,25 @@ echo
 echo "To stop the server, press Ctrl+C"
 echo "=========================================="
 echo
+
+open_browser_when_ready() {
+  local opener="$1"
+  if [ -z "$opener" ]; then
+    return
+  fi
+  (
+    until curl -sSf "http://localhost:4321" >/dev/null 2>&1; do
+      sleep 1
+    done
+    "$opener" "http://localhost:4321" >/dev/null 2>&1
+  ) &
+}
+
+if command -v xdg-open >/dev/null 2>&1; then
+  open_browser_when_ready "xdg-open"
+elif command -v open >/dev/null 2>&1; then
+  open_browser_when_ready "open"
+fi
 
 # Start the development server
 exec pnpm dev

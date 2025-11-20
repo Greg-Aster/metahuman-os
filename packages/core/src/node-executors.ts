@@ -479,7 +479,16 @@ export const reactPlannerExecutor: NodeExecutor = async (inputs, context) => {
   }
 
   const contextData = inputs[0]?.context || inputs[0] || {};
-  const scratchpad = inputs[1] || [];
+  const scratchpadInput = inputs[1];
+  const scratchpad = Array.isArray(scratchpadInput)
+    ? scratchpadInput
+    : scratchpadInput && typeof scratchpadInput === 'string'
+      ? scratchpadInput
+          .split(/\n{2,}/)
+          .map(entry => ({ thought: entry.trim(), action: '', observation: '' }))
+      : scratchpadInput && typeof scratchpadInput === 'object'
+        ? [scratchpadInput]
+        : [];
 
   // Get available skills for planning
   const skills = listSkills();

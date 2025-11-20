@@ -11,8 +11,32 @@ import subprocess
 import platform
 import shutil
 import time
+import threading
+import socket
+import webbrowser
 from pathlib import Path
 
+def env_flag(value):
+    return str(value).lower() in ("1", "true", "yes", "on")
+
+def load_start_config(repo_root: Path):
+    config_path = repo_root / ".start-config"
+    config = {}
+    if not config_path.exists():
+        return config
+    try:
+        with config_path.open('r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if '=' not in line:
+                    continue
+                key, value = line.split('=', 1)
+                config[key.strip()] = value.strip()
+    except Exception as exc:
+        print_colored(f"! Failed to read .start-config: {exc}", "yellow")
+    return config
 def print_colored(text, color="white"):
     """Print colored text to terminal"""
     colors = {
@@ -85,14 +109,17 @@ def activate_virtual_environment(repo_root):
     print_colored("! No virtual environment found", "yellow")
     return None
 
-def install_python_dependencies(repo_root):
+def install_python_dependencies(repo_root, skip=False):
     """Install Python dependencies from requirements.txt"""
     requirements_file = repo_root / "requirements.txt"
     
     if not requirements_file.exists():
         print_colored("! requirements.txt not found - skipping Python dependency installation", "yellow")
         return True
-        
+    if skip:
+        print_colored("! Skipping Python dependency installation (SKIP_PYTHON_DEPS=1)", "yellow")
+        return True
+    
     venv_path = repo_root / "venv"
     if not venv_path.exists():
         print_colored("! Virtual environment not found - cannot install Python dependencies", "red")
@@ -193,15 +220,35 @@ def initialize_metahuman(repo_root):
         print_colored("✓ MetaHuman already initialized", "green")
         return True
 
-def install_dependencies(repo_root):
+def install_dependencies(repo_root, skip=False):
     """Install Node.js dependencies if needed"""
     node_modules = repo_root / "node_modules"
     site_node_modules = repo_root / "apps" / "site" / "node_modules"
+
+    lock_file = repo_root / "pnpm-lock.yaml"
+    stamp_file = node_modules / ".install-stamp"
+
+    need_install = False
+
+    if skip:
+        print_colored("! Skipping Node.js dependency installation (SKIP_NODE_DEPS=1)", "yellow")
+        return True
     
     if not node_modules.exists() or not site_node_modules.exists():
+        need_install = True
+    elif lock_file.exists():
+        if not stamp_file.exists():
+            need_install = True
+        else:
+            if lock_file.stat().st_mtime > stamp_file.stat().st_mtime:
+                need_install = True
+
+    if need_install:
         print_colored("Installing Node.js dependencies...", "yellow")
         try:
             subprocess.run(["pnpm", "install"], cwd=repo_root, check=True)
+            stamp_file.parent.mkdir(parents=True, exist_ok=True)
+            stamp_file.touch()
             print_colored("✓ Dependencies installed", "green")
             return True
         except subprocess.CalledProcessError:
@@ -230,6 +277,18 @@ def start_web_server(repo_root):
     print("  - Agent monitoring")
     print()
     
+    def wait_and_open():
+        for _ in range(120):
+            try:
+                with socket.create_connection(("localhost", 4321), timeout=1):
+                    webbrowser.open("http://localhost:4321")
+                    return
+            except OSError:
+                time.sleep(1)
+        # timed out without opening
+
+    threading.Thread(target=wait_and_open, daemon=True).start()
+    
     try:
         # Change to the site directory and start the dev server
         os.chdir(site_dir)
@@ -249,6 +308,11 @@ def main():
     # Get repository root
     script_path = Path(__file__).parent.absolute()
     repo_root = script_path
+
+    config_overrides = load_start_config(repo_root)
+    skip_dep_default = os.environ.get("SKIP_DEP_INSTALL", config_overrides.get("SKIP_DEP_INSTALL", "0"))
+    skip_python = env_flag(os.environ.get("SKIP_PYTHON_DEPS", config_overrides.get("SKIP_PYTHON_DEPS", skip_dep_default)))
+    skip_node = env_flag(os.environ.get("SKIP_NODE_DEPS", config_overrides.get("SKIP_NODE_DEPS", skip_dep_default)))
     
     print(f"Repository root: {repo_root}")
     print()
@@ -262,7 +326,7 @@ def main():
     
     # Install Python dependencies
     print("Installing Python dependencies...")
-    if not install_python_dependencies(repo_root):
+    if not install_python_dependencies(repo_root, skip=skip_python):
         print_colored("Warning: Could not install Python dependencies", "yellow")
     print()
     
@@ -279,7 +343,7 @@ def main():
     
     # Install dependencies
     print("Installing Node.js dependencies...")
-    if not install_dependencies(repo_root):
+    if not install_dependencies(repo_root, skip=skip_node):
         sys.exit(1)
     print()
     
