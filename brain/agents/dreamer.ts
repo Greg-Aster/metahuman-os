@@ -225,6 +225,41 @@ async function generateDream(memories: Memory[]): Promise<string | null> {
 }
 
 /**
+ * Generate a continuation dream that builds on a previous dream narrative
+ */
+async function generateContinuationDream(previousDream: string, iteration: number): Promise<string | null> {
+  if (!previousDream.trim()) return null;
+
+  const systemPrompt = `
+    You are continuing a surreal dream sequence. Use the previous dream as inspiration
+    and create the next chapter. Maintain thematic coherence, but evolve the symbols,
+    emotions, and narrative. Keep it under 200 words. Do not summarize; continue the dream.
+  `.trim();
+
+  const prompt = `Previous Dream (Part ${iteration}):
+${previousDream}
+
+Continue the dream narrative.`;
+
+  try {
+    const response = await callLLM({
+      role: 'persona',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt },
+      ],
+      options: { temperature: 0.9 },
+    });
+
+    const dream = response.content.trim();
+    return dream || null;
+  } catch (error) {
+    console.error('[dreamer] Error while generating continuation dream:', error);
+    return null;
+  }
+}
+
+/**
  * Extract preferences, heuristics, and learnings from memories
  */
 async function extractLearnings(memories: Memory[]): Promise<{
@@ -359,7 +394,10 @@ ${memoryCitations.map(id => `- ${id}`).join('\n')}
 /**
  * Generate dreams and learnings for a single user
  */
-async function generateUserDreams(username: string): Promise<{
+async function generateUserDreams(
+  username: string,
+  options: { forceRun?: boolean; config?: SleepConfig } = {}
+): Promise<{
   dreamsGenerated: number;
   memoriesCurated: number;
   preferencesExtracted: number;
@@ -371,9 +409,9 @@ async function generateUserDreams(username: string): Promise<{
   }, 15000);
 
   try {
-    const config = loadSleepConfig();
+    const config = options.config || loadSleepConfig();
 
-    if (!config.enabled) {
+    if (!config.enabled && !options.forceRun) {
       console.log(`[dreamer]   Sleep system disabled for ${username}`);
       return { dreamsGenerated: 0, memoriesCurated: 0, preferencesExtracted: 0, heuristicsExtracted: 0 };
     }
@@ -392,8 +430,11 @@ async function generateUserDreams(username: string): Promise<{
       return { dreamsGenerated: 0, memoriesCurated: curatedMemories.length, preferencesExtracted: 0, heuristicsExtracted: 0 };
     }
 
-    const dreamCount = Math.min(config.maxDreamsPerNight, Math.floor(Math.random() * 3) + 1);
+    const dreamCapacity = config.maxDreamsPerNight > 0 ? 1 : 0;
+    const dreamCount = options.forceRun ? Math.min(1, dreamCapacity || 1) : dreamCapacity;
     let dreamsGenerated = 0;
+
+    let lastDream: string | null = null;
 
     for (let i = 0; i < dreamCount; i++) {
       const dreamMemories = curatedMemories.slice(i * 5, (i + 1) * 5);
@@ -405,6 +446,7 @@ async function generateUserDreams(username: string): Promise<{
         await captureEvent(dream, { type: 'dream', sources: sourceIds, confidence: 0.7 });
         markBackgroundActivity();
         dreamsGenerated++;
+        lastDream = dream;
         console.log(`[dreamer]   Dream ${i + 1}/${dreamCount} generated for ${username}`);
 
         audit({
@@ -417,6 +459,32 @@ async function generateUserDreams(username: string): Promise<{
           actor: 'dreamer',
         });
       }
+    }
+
+    // Generate continuation dreams with 75% chance each time, using the last dream as inspiration.
+    // Limit to prevent runaway loops (max 5 continuations).
+    let continuationIndex = 0;
+    while (lastDream && continuationIndex < 5) {
+      const roll = Math.random();
+      console.log(`[dreamer] Continuation roll: ${roll.toFixed(2)} (threshold 0.75)`);
+      if (roll >= 0.75) {
+        break;
+      }
+      const continuation = await generateContinuationDream(lastDream, continuationIndex + 1);
+      if (!continuation) break;
+      lastDream = continuation;
+      continuationIndex++;
+      dreamsGenerated++;
+      await captureEvent(continuation, { type: 'dream', continuation: true, confidence: 0.6, sources: [], parentDream: lastDream });
+      audit({
+        level: 'info',
+        category: 'decision',
+        event: 'dream_continuation_generated',
+        details: { continuationIndex, length: continuation.length },
+        metadata: { dream: continuation },
+        actor: 'dreamer',
+      });
+      console.log(`[dreamer]   Continuation dream ${continuationIndex} generated for ${username}`);
     }
 
     console.log(`[dreamer]   Extracting preferences and learnings for ${username}...`);
@@ -475,6 +543,14 @@ async function run() {
   }
 
   try {
+    const globalConfig = loadSleepConfig();
+    const manualTriggerProfile = process.env.MH_TRIGGER_PROFILE || process.env.MH_TRIGGER_USERNAME || null;
+
+    if (!globalConfig.enabled && !manualTriggerProfile) {
+      console.log('[dreamer] Sleep system disabled and no manual trigger detected. Exiting.');
+      return;
+    }
+
     console.log('[dreamer] Drifting into a dream (multi-user)...');
 
     // Audit cycle start (system-level)
@@ -482,12 +558,24 @@ async function run() {
       level: 'info',
       category: 'action',
       event: 'sleep_started',
-      details: { agent: 'dreamer', mode: 'multi-user' },
+      details: {
+        agent: 'dreamer',
+        mode: manualTriggerProfile ? 'manual-single' : 'multi-user'
+      },
       actor: 'dreamer',
     });
 
-    // Get all users
-    const users = listUsers();
+    // Get all users (or targeted user if manual trigger)
+    const allUsers = listUsers();
+    const users = manualTriggerProfile
+      ? allUsers.filter(u => u.username === manualTriggerProfile || u.id === manualTriggerProfile)
+      : allUsers;
+
+    if (manualTriggerProfile && users.length === 0) {
+      console.warn(`[dreamer] Manual trigger requested for ${manualTriggerProfile} but no matching user found.`);
+      return;
+    }
+
     console.log(`[dreamer] Found ${users.length} users to process`);
 
     let totalDreams = 0;
@@ -500,9 +588,10 @@ async function run() {
       try {
         const stats = await withUserContext(
           { userId: user.id, username: user.username, role: user.role },
-          async () => {
-            return await generateUserDreams(user.username);
-          }
+          async () => generateUserDreams(user.username, {
+            forceRun: !!manualTriggerProfile,
+            config: globalConfig,
+          })
         );
 
         totalDreams += stats.dreamsGenerated;
@@ -512,6 +601,9 @@ async function run() {
       } catch (error) {
         console.error(`[dreamer] Failed to process user ${user.username}:`, (error as Error).message);
         // Continue with next user
+      }
+      if (manualTriggerProfile) {
+        break; // manual run processes only the triggering profile
       }
     }
 
@@ -524,7 +616,7 @@ async function run() {
       event: 'sleep_cycle_completed',
       details: {
         agent: 'dreamer',
-        mode: 'multi-user',
+        mode: manualTriggerProfile ? 'manual-single' : 'multi-user',
         totalDreams,
         totalMemories,
         totalPreferences,
