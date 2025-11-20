@@ -201,10 +201,12 @@ export function createTTSService(provider?: 'piper' | 'gpt-sovits' | 'rvc' | 'ko
   const userContext = getUserContext();
   const activeUsername = username || userContext?.username || 'anonymous';
 
+
   // Load user-specific config (with fallback to global) and resolve paths
   const rawConfig = loadUserConfig(activeUsername);
   const cfg = resolveConfigPaths(rawConfig, activeUsername);
   const selectedProvider = provider || cfg.tts.provider;
+
 
   log.debug(' createTTSService:', {
     selectedProvider,

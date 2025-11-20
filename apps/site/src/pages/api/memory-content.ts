@@ -1,9 +1,13 @@
+/**
+ * Memory Content API - Read and edit memory files
+ * MIGRATED: 2025-11-20 - Explicit authentication pattern
+ */
+
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, audit } from '@metahuman/core';
+import { getAuthenticatedUser, getUserOrAnonymous, paths, audit } from '@metahuman/core';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
-import { withUserContext } from '../../middleware/userContext';
 
 function resolvePath(relPath: string): string {
   const absolute = path.resolve(paths.root, relPath);
@@ -14,6 +18,9 @@ function resolvePath(relPath: string): string {
 }
 
 const getHandler: APIRoute = async (context) => {
+  // Explicit auth - security policy will enforce access rules
+  const user = getUserOrAnonymous(context.cookies);
+
   try {
     const relPath = context.url.searchParams.get('relPath');
     if (!relPath) {
@@ -77,6 +84,9 @@ const getHandler: APIRoute = async (context) => {
 };
 
 const putHandler: APIRoute = async (context) => {
+  // Explicit auth - require authentication for writes
+  const user = getAuthenticatedUser(context.cookies);
+
   try {
     // Check write permissions
     const policy = getSecurityPolicy(context);
@@ -150,6 +160,7 @@ const putHandler: APIRoute = async (context) => {
   }
 };
 
-// Wrap with user context middleware for automatic profile path resolution
-export const GET = withUserContext(getHandler);
-export const PUT = withUserContext(putHandler);
+// Export handlers - no withUserContext wrapper needed
+// Security policy enforces access control in handlers
+export const GET = getHandler;
+export const PUT = putHandler;

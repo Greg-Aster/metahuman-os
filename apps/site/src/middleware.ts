@@ -7,13 +7,53 @@
 import { defineMiddleware } from 'astro:middleware';
 import { withUserContext as runWithUserContext } from '@metahuman/core/context';
 import { validateSession } from '@metahuman/core/sessions';
-import { getUser, getUserByUsername } from '@metahuman/core/users';
+import { getUser } from '@metahuman/core/users';
 
 export const onRequest = defineMiddleware(async (context, next) => {
   // Only apply to API routes
   if (!context.url.pathname.startsWith('/api/')) {
     return next();
   }
+
+  // Error handling wrapper for auth errors
+  try {
+    return await processRequest(context, next);
+  } catch (error) {
+    // Convert auth errors to proper HTTP responses
+    const errorMessage = (error as Error).message;
+
+    if (errorMessage.startsWith('UNAUTHORIZED:')) {
+      return new Response(
+        JSON.stringify({
+          error: 'Unauthorized',
+          message: errorMessage.replace('UNAUTHORIZED: ', '')
+        }),
+        {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
+
+    if (errorMessage.startsWith('FORBIDDEN:')) {
+      return new Response(
+        JSON.stringify({
+          error: 'Forbidden',
+          message: errorMessage.replace('FORBIDDEN: ', '')
+        }),
+        {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
+
+    // Re-throw other errors
+    throw error;
+  }
+});
+
+async function processRequest(context: any, next: any) {
 
   // Try to get session cookie
   const sessionCookie = context.cookies.get('mh_session');
@@ -69,34 +109,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
     }
   }
 
-  // DEVELOPMENT MODE: Auto-login as owner if no session exists
-  // This avoids needing to manually set cookies during development
-  const isDevelopment = import.meta.env.DEV;
-  const devAutoLogin = process.env.DEV_AUTO_LOGIN !== 'false'; // Default to true in dev
-  const devUsername = process.env.DEV_USERNAME || 'greggles'; // Allow override via env var
-
-  if (isDevelopment && devAutoLogin) {
-    // Try to find the specified user (defaults to 'greggles')
-    const ownerUser = getUserByUsername(devUsername);
-
-    if (ownerUser && ownerUser.role === 'owner') {
-
-      // Set user context in locals
-      context.locals.userContext = {
-        userId: ownerUser.id,
-        username: ownerUser.username,
-        role: ownerUser.role,
-      };
-
-      // Run request with owner context
-      return await runWithUserContext(
-        { userId: ownerUser.id, username: ownerUser.username, role: ownerUser.role },
-        () => next()
-      );
-    }
-  }
-
   // SECURITY: No session - run with anonymous context
+  // NOTE: Dev auto-login removed for security (2025-11-20)
+  // Use scripts/dev-session.ts to create auth session in development
   // Set anonymous context in locals
   context.locals.userContext = {
     userId: 'anonymous',
@@ -109,4 +124,4 @@ export const onRequest = defineMiddleware(async (context, next) => {
     { userId: 'anonymous', username: 'anonymous', role: 'anonymous' },
     () => next()
   );
-});
+}

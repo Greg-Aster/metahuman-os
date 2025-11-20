@@ -6,9 +6,9 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getUserContext } from '@metahuman/core/context';
-import { withUserContext } from '../../../../middleware/userContext';
+import { getAuthenticatedUser } from '@metahuman/core';
 import { auditAction } from '@metahuman/core/audit';
+import { tryResolveProfilePath } from '@metahuman/core/paths';
 import {
   extractPersonaFromTranscript,
   type ChatMessage,
@@ -22,16 +22,9 @@ import { captureEvent } from '@metahuman/core/memory';
 import path from 'node:path';
 import fs from 'node:fs';
 
-const handler: APIRoute = async ({ request }) => {
+const handler: APIRoute = async ({ cookies, request }) => {
   try {
-    const context = getUserContext();
-
-    if (!context || context.username === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    const user = getAuthenticatedUser(cookies);
 
     const body = await request.json();
     const { notes } = body as { notes: string };
@@ -60,7 +53,14 @@ const handler: APIRoute = async ({ request }) => {
     const extracted = await extractPersonaFromTranscript(messages);
 
     // Load existing persona
-    const personaPath = context.profilePaths.personaCore;
+    const pathResult = tryResolveProfilePath('personaCore');
+    if (!pathResult.ok) {
+      return new Response(
+        JSON.stringify({ error: 'Access denied' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    const personaPath = pathResult.path;
     const currentPersona = loadExistingPersona(personaPath);
 
     // Create backup before applying changes
@@ -92,7 +92,7 @@ const handler: APIRoute = async ({ request }) => {
     // Audit the action
     await auditAction({
       action: 'persona_notes_added',
-      actor: context.username,
+      actor: user.username,
       details: {
         notesLength: notes.length,
         backupPath,
@@ -129,4 +129,6 @@ const handler: APIRoute = async ({ request }) => {
   }
 };
 
-export const POST = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// POST requires authentication for persona generation
+export const POST = handler;

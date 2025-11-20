@@ -5,16 +5,13 @@
 
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
-import { tryResolveProfilePath } from '@metahuman/core/paths';
-import { audit } from '@metahuman/core/audit';
-import { withUserContext } from '../../middleware/userContext';
+import { audit, getAuthenticatedUser, getProfilePaths, getUserOrAnonymous } from '@metahuman/core';
 
-const getHandler: APIRoute = async () => {
+const getHandler: APIRoute = async ({ cookies }) => {
   try {
-    // Use safe path resolution
-    const result = tryResolveProfilePath('personaFacets');
+    const user = getUserOrAnonymous(cookies);
 
-    if (!result.ok) {
+    if (user.role === 'anonymous') {
       // Anonymous user - return default structure
       return new Response(
         JSON.stringify({
@@ -41,7 +38,8 @@ const getHandler: APIRoute = async () => {
       );
     }
 
-    const facetsPath = result.path;
+    const profilePaths = getProfilePaths(user.username);
+    const facetsPath = profilePaths.personaFacets;
 
     if (!fs.existsSync(facetsPath)) {
       // File doesn't exist - return default structure
@@ -88,8 +86,9 @@ const getHandler: APIRoute = async () => {
   }
 };
 
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
+    const user = getAuthenticatedUser(cookies);
     const body = await request.json();
     const { facets } = body;
 
@@ -100,17 +99,8 @@ const postHandler: APIRoute = async ({ request }) => {
       );
     }
 
-    // Use safe path resolution - require authentication for writes
-    const result = tryResolveProfilePath('personaFacets');
-
-    if (!result.ok) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'Authentication required to save facets' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const facetsPath = result.path;
+    const profilePaths = getProfilePaths(user.username);
+    const facetsPath = profilePaths.personaFacets;
 
     // Update lastUpdated timestamp
     const updatedFacets = {
@@ -119,6 +109,7 @@ const postHandler: APIRoute = async ({ request }) => {
     };
 
     // Write the updated facets
+    fs.mkdirSync(profilePaths.persona, { recursive: true });
     fs.writeFileSync(facetsPath, JSON.stringify(updatedFacets, null, 2));
 
     // Audit the change
@@ -130,7 +121,7 @@ const postHandler: APIRoute = async ({ request }) => {
         activeFacet: updatedFacets.activeFacet,
         facetCount: Object.keys(updatedFacets.facets || {}).length,
       },
-      actor: 'web_ui',
+      actor: user.username,
     });
 
     return new Response(
@@ -149,6 +140,6 @@ const postHandler: APIRoute = async ({ request }) => {
   }
 };
 
-// Wrap with user context middleware for automatic profile path resolution
-export const GET = withUserContext(getHandler);
-export const POST = withUserContext(postHandler);
+// MIGRATED: explicit authentication (GET allows anonymous defaults; POST requires auth)
+export const GET = getHandler;
+export const POST = postHandler;

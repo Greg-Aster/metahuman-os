@@ -2,7 +2,6 @@ import type { APIRoute } from 'astro';
 import { loadFunction, deleteFunction } from '@metahuman/core/function-memory';
 import { auditDataChange } from '@metahuman/core/audit';
 import { requireWriteMode } from '../../../middleware/cognitiveModeGuard';
-import { withUserContext } from '../../../middleware/userContext';
 
 /**
  * GET /api/functions/:id
@@ -138,5 +137,6 @@ const deleteHandler: APIRoute = async ({ params, request }) => {
 };
 
 // Wrap with middleware
-export const GET = withUserContext(getHandler);
-export const DELETE = withUserContext(requireWriteMode(deleteHandler));
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const GET = getHandler;
+export const DELETE = requireWriteMode(deleteHandler);

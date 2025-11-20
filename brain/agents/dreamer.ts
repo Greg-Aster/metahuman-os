@@ -199,9 +199,10 @@ async function generateDream(memories: Memory[]): Promise<string | null> {
 
   const systemPrompt = `
     You are the dreamer. You are processing recent experiences into a surreal, metaphorical dream.
-    Do not be literal. Weave the following memory fragments into a short, abstract narrative.
-    Use symbolism and look for unexpected connections. The output should feel like a dream.
-    Start the dream directly, without any preamble. Keep it under 200 words.
+    Do not be literal. Weave the following memory fragments into an unbound dream narrative.
+    Use symbolism, look for unexpected connections, break logic, merge impossible things.
+    The output should feel like a dream—no rules, no structure, pure subconscious flow.
+    Start the dream directly, without any preamble. Let it be as long or short as it needs to be.
   `.trim();
 
   const prompt = `Memory Fragments:\n${memoriesText}`;
@@ -213,7 +214,7 @@ async function generateDream(memories: Memory[]): Promise<string | null> {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt },
       ],
-      options: { temperature: 0.95 },
+      options: { temperature: 1.0 },
     });
 
     const dream = response.content.trim();
@@ -231,15 +232,16 @@ async function generateContinuationDream(previousDream: string, iteration: numbe
   if (!previousDream.trim()) return null;
 
   const systemPrompt = `
-    You are continuing a surreal dream sequence. Use the previous dream as inspiration
-    and create the next chapter. Maintain thematic coherence, but evolve the symbols,
-    emotions, and narrative. Keep it under 200 words. Do not summarize; continue the dream.
+    You are continuing a surreal dream sequence. You only see the previous dream fragment—use it as inspiration,
+    but feel free to drift, fracture, merge, or completely transform. No coherence required.
+    Let the symbols mutate, emotions shift unexpectedly, logic dissolve. Dreams don't follow rules.
+    Do not summarize; let one dream bleed into another. No length limits.
   `.trim();
 
-  const prompt = `Previous Dream (Part ${iteration}):
+  const prompt = `Previous Dream Fragment:
 ${previousDream}
 
-Continue the dream narrative.`;
+Let the dream continue, building on this fragment alone.`;
 
   try {
     const response = await callLLM({
@@ -248,13 +250,13 @@ Continue the dream narrative.`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt },
       ],
-      options: { temperature: 0.9 },
+      options: { temperature: 1.0 },
     });
 
     const dream = response.content.trim();
     return dream || null;
   } catch (error) {
-    console.error('[dreamer] Error while generating continuation dream:', error);
+    console.error(`[dreamer] Error while generating continuation dream (iteration ${iteration}):`, error);
     return null;
   }
 }
@@ -461,15 +463,22 @@ async function generateUserDreams(
       }
     }
 
-    // Generate continuation dreams with 75% chance each time, using the last dream as inspiration.
+    // Generate continuation dreams with 75% chance each time, using the previous dream as inspiration.
+    // Each dream streams in after 60 seconds, building on the previous one.
     // Limit to prevent runaway loops (max 5 continuations).
     let continuationIndex = 0;
-    while (lastDream && continuationIndex < 5) {
+    while (lastDream && continuationIndex < 4) {
       const roll = Math.random();
-      console.log(`[dreamer] Continuation roll: ${roll.toFixed(2)} (threshold 0.75)`);
+      console.log(`[dreamer] Continuation roll: ${roll.toFixed(2)} (threshold 0.50)`);
       if (roll >= 0.75) {
         break;
       }
+
+      // Wait 60 seconds before generating next dream (creates streaming effect)
+      console.log(`[dreamer] Waiting 60 seconds before continuation ${continuationIndex + 1}...`);
+      await new Promise(resolve => setTimeout(resolve, 60000));
+      markBackgroundActivity(); // Keep heartbeat alive during wait
+
       const continuation = await generateContinuationDream(lastDream, continuationIndex + 1);
       if (!continuation) break;
       lastDream = continuation;

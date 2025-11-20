@@ -1,9 +1,8 @@
 import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths } from '@metahuman/core'
+import { getAuthenticatedUser, getProfilePaths, systemPaths } from '@metahuman/core'
 import { getSecurityPolicy } from '../../../../../packages/core/src/security-policy.js'
-import { withUserContext } from '../../middleware/userContext'
 
 type EpisodicItem = {
   id: string
@@ -41,7 +40,7 @@ type CuriosityQuestion = {
   answeredAt?: string
 }
 
-function listEpisodic(): EpisodicItem[] {
+function listEpisodic(profilePaths: ReturnType<typeof getProfilePaths>): EpisodicItem[] {
   const items: EpisodicItem[] = []
   const walk = (dir: string) => {
     if (!fs.existsSync(dir)) return
@@ -61,7 +60,7 @@ function listEpisodic(): EpisodicItem[] {
               tags: obj.tags || [],
               entities: Array.isArray(obj.entities) ? obj.entities : [],
               links: Array.isArray(obj.links) ? obj.links : [],
-              relPath: path.relative(paths.root, full),
+              relPath: path.relative(systemPaths.root, full),
               validation: obj.validation || undefined,
             })
           }
@@ -69,13 +68,13 @@ function listEpisodic(): EpisodicItem[] {
       }
     }
   }
-  walk(paths.episodic)
+  walk(profilePaths.episodic)
   items.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1))
   return items
 }
 
-function listActiveTasks(): TaskItem[] {
-  const dir = path.join(paths.tasks, 'active')
+function listActiveTasks(profilePaths: ReturnType<typeof getProfilePaths>): TaskItem[] {
+  const dir = path.join(profilePaths.tasks, 'active')
   const out: TaskItem[] = []
   if (!fs.existsSync(dir)) return out
   for (const f of fs.readdirSync(dir)) {
@@ -83,15 +82,15 @@ function listActiveTasks(): TaskItem[] {
     try {
       const full = path.join(dir, f)
       const obj = JSON.parse(fs.readFileSync(full, 'utf8'))
-      out.push({ id: obj.id, title: obj.title, status: obj.status, priority: obj.priority, updated: obj.updated, relPath: path.relative(paths.root, full) })
+      out.push({ id: obj.id, title: obj.title, status: obj.status, priority: obj.priority, updated: obj.updated, relPath: path.relative(systemPaths.root, full) })
     } catch {}
   }
   out.sort((a, b) => (a.updated && b.updated && a.updated < b.updated ? 1 : -1))
   return out
 }
 
-function listCurated(): CuratedItem[] {
-  const roots = [paths.semantic, paths.procedural]
+function listCurated(profilePaths: ReturnType<typeof getProfilePaths>): CuratedItem[] {
+  const roots = [profilePaths.semantic, profilePaths.procedural]
   const out: CuratedItem[] = []
   for (const root of roots) {
     if (!fs.existsSync(root)) continue
@@ -102,11 +101,11 @@ function listCurated(): CuratedItem[] {
         for (const e2 of fs.readdirSync(full, { withFileTypes: true })) {
           const fp = path.join(full, e2.name)
           if (e2.isFile() && (fp.endsWith('.md') || fp.endsWith('.mdx') || fp.endsWith('.txt'))) {
-            out.push({ name: e2.name, relPath: path.relative(paths.root, fp) })
+            out.push({ name: e2.name, relPath: path.relative(systemPaths.root, fp) })
           }
         }
       } else if (entry.isFile() && (full.endsWith('.md') || full.endsWith('.mdx') || full.endsWith('.txt'))) {
-        out.push({ name: entry.name, relPath: path.relative(paths.root, full) })
+        out.push({ name: entry.name, relPath: path.relative(systemPaths.root, full) })
       }
     }
   }
@@ -114,9 +113,9 @@ function listCurated(): CuratedItem[] {
   return out
 }
 
-function listCuriosityQuestions(): CuriosityQuestion[] {
+function listCuriosityQuestions(profilePaths: ReturnType<typeof getProfilePaths>): CuriosityQuestion[] {
   const out: CuriosityQuestion[] = []
-  const questionsDir = paths.curiosityQuestions
+  const questionsDir = path.join(profilePaths.curiosity, 'questions')
 
   if (!fs.existsSync(questionsDir)) {
     return out
@@ -142,7 +141,7 @@ function listCuriosityQuestions(): CuriosityQuestion[] {
           question: content.question,
           askedAt: content.askedAt,
           status,
-          relPath: path.relative(paths.root, fullPath),
+          relPath: path.relative(systemPaths.root, fullPath),
           seedMemories: content.seedMemories,
           answeredAt: content.answeredAt
         })
@@ -157,10 +156,12 @@ function listCuriosityQuestions(): CuriosityQuestion[] {
   return out
 }
 
-const handler: APIRoute = async (context) => {
+const handler: APIRoute = async ({ cookies }) => {
   try {
+    const user = getAuthenticatedUser(cookies)
+
     // Require authentication to access memory data
-    const policy = getSecurityPolicy(context);
+    const policy = getSecurityPolicy({ cookies });
     if (!policy.canReadMemory) {
       return new Response(
         JSON.stringify({ error: 'Access not permitted. Please log in to view memories.' }),
@@ -168,13 +169,15 @@ const handler: APIRoute = async (context) => {
       );
     }
 
-    const episodic = listEpisodic()
+    const profilePaths = getProfilePaths(user.username);
+
+    const episodic = listEpisodic(profilePaths)
     const reflections = episodic.filter(item => item.type === 'reflection')
     const dreams = episodic.filter(item => item.type === 'dream')
     const episodicFiltered = episodic.filter(item => item.type !== 'reflection' && item.type !== 'dream')
-    const tasks = listActiveTasks()
-    const curated = listCurated()
-    const curiosityQuestions = listCuriosityQuestions()
+    const tasks = listActiveTasks(profilePaths)
+    const curated = listCurated(profilePaths)
+    const curiosityQuestions = listCuriosityQuestions(profilePaths)
 
     return new Response(JSON.stringify({
       episodic: episodicFiltered,
@@ -189,5 +192,5 @@ const handler: APIRoute = async (context) => {
   }
 }
 
-// Wrap with user context middleware for automatic profile path resolution
-export const GET = withUserContext(handler)
+// MIGRATED: explicit authentication (auth required for memory overview)
+export const GET = handler

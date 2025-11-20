@@ -1,21 +1,25 @@
 import type { APIRoute } from 'astro';
 import { promises as fs } from 'node:fs';
-import { tryResolveProfilePath } from '@metahuman/core';
+import { getAuthenticatedUser, getProfilePaths, getUserOrAnonymous } from '@metahuman/core';
 import { requireWriteMode } from '../../middleware/cognitiveModeGuard';
-import { withUserContext } from '../../middleware/userContext';
 
-async function readPersonaCore() {
-  const result = tryResolveProfilePath('personaCore');
-  if (!result.ok) {
-    // Return default persona for anonymous/unauthenticated users
-    return {
-      identity: { name: 'MetaHuman', role: 'Digital Assistant' },
-      personality: {},
-      values: {},
-    };
+const DEFAULT_PERSONA = {
+  identity: { name: 'MetaHuman', role: 'Digital Assistant' },
+  personality: {},
+  values: {},
+};
+
+async function readPersonaCore(profilePaths?: ReturnType<typeof getProfilePaths>) {
+  if (!profilePaths) {
+    return DEFAULT_PERSONA;
   }
-  const raw = await fs.readFile(result.path, 'utf-8');
-  return JSON.parse(raw);
+
+  try {
+    const raw = await fs.readFile(profilePaths.personaCore, 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return DEFAULT_PERSONA;
+  }
 }
 
 function sanitizeArray(input: any, separator = ',') {
@@ -31,9 +35,11 @@ function sanitizeArray(input: any, separator = ',') {
   return [];
 }
 
-const getHandler: APIRoute = async () => {
+const getHandler: APIRoute = async ({ cookies }) => {
   try {
-    const persona = await readPersonaCore();
+    const user = getUserOrAnonymous(cookies);
+    const profilePaths = user.role === 'anonymous' ? undefined : getProfilePaths(user.username);
+    const persona = await readPersonaCore(profilePaths);
     return new Response(JSON.stringify({ success: true, persona }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -47,19 +53,13 @@ const getHandler: APIRoute = async () => {
   }
 };
 
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
-    // Check path access first for writes
-    const result = tryResolveProfilePath('personaCore');
-    if (!result.ok) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'Authentication required to modify persona' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    const user = getAuthenticatedUser(cookies);
+    const profilePaths = getProfilePaths(user.username);
 
     const body = await request.json();
-    const persona = await readPersonaCore();
+    const persona = await readPersonaCore(profilePaths);
 
     if (body.identity) {
       const identity = persona.identity || {};
@@ -99,8 +99,8 @@ const postHandler: APIRoute = async ({ request }) => {
 
     persona.lastUpdated = new Date().toISOString();
 
-    // We already checked access above, safe to use result.path
-    await fs.writeFile(result.path, JSON.stringify(persona, null, 2) + '\n', 'utf-8');
+    await fs.mkdir(profilePaths.persona, { recursive: true });
+    await fs.writeFile(profilePaths.personaCore, JSON.stringify(persona, null, 2) + '\n', 'utf-8');
 
     return new Response(JSON.stringify({ success: true, persona }), {
       status: 200,
@@ -115,6 +115,6 @@ const postHandler: APIRoute = async ({ request }) => {
   }
 };
 
-// Wrap with user context middleware and cognitive mode guard
-export const GET = withUserContext(getHandler);
-export const POST = withUserContext(requireWriteMode(postHandler));
+// MIGRATED: explicit authentication (GET allows anonymous defaults; POST requires auth)
+export const GET = getHandler;
+export const POST = requireWriteMode(postHandler);

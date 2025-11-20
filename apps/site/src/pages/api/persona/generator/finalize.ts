@@ -7,8 +7,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getUserContext } from '@metahuman/core/context';
-import { withUserContext } from '../../../../middleware/userContext';
+import { getAuthenticatedUser } from '@metahuman/core';
 import { tryResolveProfilePath } from '@metahuman/core/paths';
 import {
   loadSession,
@@ -32,17 +31,9 @@ interface FinalizeRequest {
   copyToTraining?: boolean; // Copy transcript to training data (default: false)
 }
 
-const handler: APIRoute = async ({ request }) => {
+const handler: APIRoute = async ({ cookies, request }) => {
   try {
-    const ctx = getUserContext();
-
-    // Check authentication
-    if (!ctx || ctx.role === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    const user = getAuthenticatedUser(cookies);
 
     // Verify write access
     const pathResult = tryResolveProfilePath('personaInterviews');
@@ -65,7 +56,7 @@ const handler: APIRoute = async ({ request }) => {
     }
 
     // Load session
-    const session = await loadSession(ctx.username, sessionId);
+    const session = await loadSession(user.username, sessionId);
     if (!session) {
       return new Response(
         JSON.stringify({ error: 'Session not found' }),
@@ -74,7 +65,7 @@ const handler: APIRoute = async ({ request }) => {
     }
 
     // Verify ownership
-    if (session.userId !== ctx.userId) {
+    if (session.userId !== user.userId) {
       return new Response(
         JSON.stringify({ error: 'Access denied - session belongs to another user' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }
@@ -113,8 +104,8 @@ const handler: APIRoute = async ({ request }) => {
     const summaryPath = path.join(sessionDir, 'summary.json');
     const summary = {
       sessionId,
-      userId: ctx.userId,
-      username: ctx.username,
+      userId: user.userId,
+      username: user.username,
       finalizedAt: new Date().toISOString(),
       extracted,
       diff: {
@@ -130,7 +121,7 @@ const handler: APIRoute = async ({ request }) => {
     // Mark session as finalized
     session.status = 'finalized';
     session.finalizedAt = new Date().toISOString();
-    await saveSession(ctx.username, session);
+    await saveSession(user.username, session);
 
     // Optional: Copy transcript to training data
     let trainingPath: string | null = null;
@@ -174,7 +165,7 @@ const handler: APIRoute = async ({ request }) => {
           sessionId,
           trainingPath,
           questionCount: session.questions.length,
-          actor: ctx.username,
+          actor: user.username,
         });
       } catch (error) {
         console.error('[finalize] Failed to copy to training data:', error);
@@ -186,14 +177,14 @@ const handler: APIRoute = async ({ request }) => {
     await audit('action', 'info', {
       action: 'persona_session_finalized',
       sessionId,
-      userId: ctx.userId,
-      username: ctx.username,
+      userId: user.userId,
+      username: user.username,
       questionCount: session.questions.length,
       answerCount: session.answers.length,
       confidence: extracted.confidence,
       diffSummary: diff.summary,
       trainingExported: copyToTraining,
-      actor: ctx.username,
+      actor: user.username,
     });
 
     return new Response(
@@ -226,4 +217,6 @@ const handler: APIRoute = async ({ request }) => {
   }
 };
 
-export const POST = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// POST requires authentication for persona generation
+export const POST = handler;

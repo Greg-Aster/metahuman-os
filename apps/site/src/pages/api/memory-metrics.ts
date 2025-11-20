@@ -35,7 +35,7 @@
 
 import type { APIRoute } from 'astro';
 import path from 'node:path';
-import { getUserContext, withUserContext, getMemoryMetrics } from '@metahuman/core';
+import { getAuthenticatedUser, getMemoryMetrics } from '@metahuman/core';
 
 /**
  * B3: Handler uses cache-first strategy for instant response
@@ -43,19 +43,14 @@ import { getUserContext, withUserContext, getMemoryMetrics } from '@metahuman/co
  */
 const handler: APIRoute = async (context) => {
   try {
-    const ctx = getUserContext();
-    if (!ctx) {
-      throw new Error('No user context - authentication required');
-    }
+    // Explicit auth - require authentication for memory metrics
+    const user = getAuthenticatedUser(context.cookies);
 
     // B3: Get metrics from cache (stale-but-fast)
     // Falls back to fresh computation if cache miss
     const forceFresh = context.url.searchParams.get('fresh') === 'true';
-    const profileName = ctx.profilePaths ? path.basename(ctx.profilePaths.root) : ctx.username;
-    const metrics = await getMemoryMetrics(ctx.username, {
-      forceFresh,
-      profilePaths: ctx.profilePaths,
-      profileName
+    const metrics = await getMemoryMetrics(user.username, {
+      forceFresh
     });
 
     return new Response(
@@ -84,4 +79,6 @@ const handler: APIRoute = async (context) => {
   }
 };
 
-export const GET = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// GET requires authentication for user-specific memory metrics
+export const GET = handler;

@@ -9,7 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import type { NodeExecutor } from './node-executors.js';
+import type { NodeExecutor } from './node-executors/index.js';
 import { audit } from './audit.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -58,6 +58,8 @@ export async function loadPlugin(filePath: string): Promise<LoadedPlugin | null>
 
     // Dynamic import with file:// protocol and cache-busting timestamp
     const moduleUrl = `file://${absolutePath}?t=${Date.now()}`;
+    // @ts-ignore - Vite can't analyze this dynamic import, but it's intentional for hot-reloading
+    /* @vite-ignore */
     const module = await import(moduleUrl);
 
     // Validate plugin structure
@@ -87,7 +89,7 @@ export async function loadPlugin(filePath: string): Promise<LoadedPlugin | null>
 
     // Register with node executor system
     try {
-      const { registerPluginExecutor } = await import('./node-executors.js');
+      const { registerPluginExecutor } = await import('./node-executors/index.js');
       registerPluginExecutor(definition.metadata.id, definition.executor);
     } catch (error) {
       console.warn('[PluginSystem] Could not register with node executor system:', error);
@@ -301,7 +303,7 @@ export async function unloadPlugin(pluginId: string): Promise<boolean> {
 
   // Unregister from node executor system
   try {
-    const { unregisterPluginExecutor } = await import('./node-executors.js');
+    const { unregisterPluginExecutor } = await import('./node-executors/index.js');
     unregisterPluginExecutor(pluginId);
   } catch (error) {
     console.warn('[PluginSystem] Could not unregister from node executor system:', error);

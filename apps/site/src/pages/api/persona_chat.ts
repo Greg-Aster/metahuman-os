@@ -1,13 +1,13 @@
 import type { APIRoute } from 'astro';
-import { loadPersonaCore, loadPersonaWithFacet, getActiveFacet, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, type RouterMessage, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, pruneHistory, type Message, getUserContext, getConversationBufferPath, executeGraph, getGraphOutput, type CognitiveGraph, validateCognitiveGraph } from '@metahuman/core';
+import { loadPersonaCore, loadPersonaWithFacet, getActiveFacet, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, type RouterMessage, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, pruneHistory, type Message, getConversationBufferPath, executeGraph, getGraphOutput, type CognitiveGraph, validateCognitiveGraph } from '@metahuman/core';
 import { loadCognitiveMode, getModeDefinition, canWriteMemory as modeAllowsMemoryWrites, canUseOperator } from '@metahuman/core/cognitive-mode';
 import { canWriteMemory as policyCanWriteMemory } from '@metahuman/core/memory-policy';
 import { loadChatSettings } from '@metahuman/core/chat-settings';
+import { getUserOrAnonymous, getUserPaths, getProfilePaths } from '@metahuman/core';
 import { readFileSync, existsSync, appendFileSync, writeFileSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { initializeSkills } from '../../../../../brain/skills/index';
 import { getAvailableSkills, executeSkill, type SkillManifest } from '@metahuman/core/skills';
-import { withUserContext } from '../../middleware/userContext';
 import { resolveNodePipelineFlag } from '../../utils/node-pipeline';
 
 type Role = 'system' | 'user' | 'assistant';
@@ -16,6 +16,25 @@ type ConversationMessage = { role: Role; content: string; meta?: any; timestamp?
 
 // Ensure skill registry is ready for any inline tool invocations from persona_chat.
 initializeSkills();
+
+/**
+ * Cancellation Manager
+ * Tracks active requests that can be interrupted by the user
+ */
+const activeCancellations = new Map<string, { cancelled: boolean; reason?: string }>();
+
+export function requestCancellation(requestId: string, reason: string = 'User requested stop'): void {
+  activeCancellations.set(requestId, { cancelled: true, reason });
+  console.log(`[cancellation] Request ${requestId} marked for cancellation: ${reason}`);
+}
+
+export function checkCancellation(requestId: string): { cancelled: boolean; reason?: string } {
+  return activeCancellations.get(requestId) || { cancelled: false };
+}
+
+export function clearCancellation(requestId: string): void {
+  activeCancellations.delete(requestId);
+}
 
 /**
  * Retrieve curiosity question from audit logs
@@ -174,6 +193,297 @@ function getConversationHistorySnapshot(mode: Mode): Array<{ role: Role; content
   }));
 }
 
+/**
+ * Stream graph execution with real-time progress updates
+ */
+function streamGraphExecutionWithProgress(params: GraphPipelineParams) {
+  console.log('[streamGraphExecutionWithProgress] ============ FUNCTION CALLED ============');
+  console.log('[streamGraphExecutionWithProgress] mode:', params.mode);
+  console.log('[streamGraphExecutionWithProgress] message:', params.message?.substring(0, 50));
+  console.log('[streamGraphExecutionWithProgress] cognitiveMode:', params.cognitiveMode);
+
+  const { mode, message, sessionId } = params;
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      console.log('[streamGraphExecutionWithProgress] Stream start() called');
+      const encoder = new TextEncoder();
+      let closed = false;
+      const push = (type: string, data: any) => {
+        if (closed) return;
+        try {
+          console.log(`[streamGraphExecutionWithProgress] Pushing event: ${type}`, data);
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type, data })}\n\n`));
+        } catch (err) {
+          console.error('[streamGraphExecutionWithProgress] Error pushing event:', err);
+          closed = true;
+        }
+      };
+
+      try {
+        console.log('[streamGraphExecutionWithProgress] Starting graph execution...');
+        const { cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator } = params;
+        const graphKey = cognitiveMode || mode;
+        const timeoutMs = 300000; // 5 minutes - very long timeout, user can interrupt manually
+
+        // Load graph
+        push('progress', { step: 'loading_graph', message: 'Loading cognitive workflow...' });
+        const loaded = await loadGraphForMode(graphKey);
+        if (!loaded) {
+          push('error', { message: 'Failed to load cognitive graph' });
+          if (!closed) {
+            closed = true;
+            try { controller.close(); } catch {}
+          }
+          return;
+        }
+
+        push('progress', { step: 'graph_loaded', message: `Executing ${loaded.graph.name} (${loaded.graph.nodes.length} nodes)` });
+
+        const contextData = {
+          sessionId,
+          userMessage: message,
+          cognitiveMode,
+          userId: userContext?.userId || 'anonymous',
+          username: userContext?.username,
+          userRole: userContext?.role,
+          user: userContext
+            ? { id: userContext.userId, username: userContext.username, role: userContext.role }
+            : undefined,
+          conversationHistory,
+          contextPackage,
+          contextInfo,
+          allowMemoryWrites,
+          useOperator,
+          timeoutMs,
+        };
+
+        const startedAt = Date.now();
+        const executionEvents: any[] = [];
+        let lastProgressTime = Date.now();
+        let timedOut = false;
+        let timeoutHandle: NodeJS.Timeout | null = null;
+
+        const eventHandler = (event: any) => {
+          executionEvents.push(event);
+
+          // Check for cancellation on every event
+          const cancellationStatus = checkCancellation(sessionId);
+          if (cancellationStatus.cancelled) {
+            console.warn(`[streamGraphExecutionWithProgress] Cancellation detected: ${cancellationStatus.reason}`);
+            push('cancelled', {
+              message: `⏸️ Request cancelled: ${cancellationStatus.reason}`,
+              reason: cancellationStatus.reason
+            });
+            throw new Error('CANCELLATION_REQUESTED');
+          }
+
+          const now = Date.now();
+          if (now - lastProgressTime > 200 || event.type === 'node_error' || event.type === 'graph_complete') {
+            lastProgressTime = now;
+
+            if (event.type === 'node_start') {
+              const node = loaded.graph.nodes.find(n => n.id === event.nodeId);
+              const nodeName = node?.title || node?.type || `Node ${event.nodeId}`;
+              const nodeType = node?.type || '';
+
+              let friendlyMessage = nodeName;
+              if (nodeType.includes('react_planner')) {
+                friendlyMessage = '🧠 Planning next action...';
+              } else if (nodeType.includes('skill_executor')) {
+                friendlyMessage = '⚙️ Executing skill...';
+              } else if (nodeType.includes('scratchpad_updater')) {
+                friendlyMessage = '📝 Updating scratchpad...';
+              } else if (nodeType.includes('completion_checker')) {
+                friendlyMessage = '✓ Checking completion...';
+              } else if (nodeType.includes('conditional_router')) {
+                friendlyMessage = '🔀 Routing decision...';
+              } else if (nodeType.includes('semantic_search')) {
+                friendlyMessage = '🔍 Searching memories...';
+              } else if (nodeType.includes('response_synthesizer')) {
+                friendlyMessage = '✍️ Synthesizing response...';
+              } else if (nodeType.includes('persona_llm')) {
+                friendlyMessage = '💭 Generating response...';
+              }
+
+              push('progress', {
+                step: 'node_executing',
+                message: friendlyMessage,
+                nodeId: event.nodeId,
+                nodeType,
+              });
+            } else if (event.type === 'node_error') {
+              push('progress', {
+                step: 'node_error',
+                message: `Error in node ${event.nodeId}`,
+                error: event.data?.error,
+              });
+            } else if (event.type === 'node_complete') {
+              const node = loaded.graph.nodes.find(n => n.id === event.nodeId);
+              const nodeType = node?.type || '';
+
+              // Extract and show actual thoughts from react_planner
+              if (nodeType.includes('react_planner') && event.data?.outputs) {
+                const outputs = event.data.outputs;
+                const planText = typeof outputs === 'object' ? outputs.plan : outputs;
+
+                if (planText && typeof planText === 'string') {
+                  // Extract the thought portion
+                  const thoughtMatch = planText.match(/Thought:\s*(.+?)(?=\nAction:|$)/is);
+                  if (thoughtMatch) {
+                    const thought = thoughtMatch[1].trim();
+                    push('progress', {
+                      step: 'thinking',
+                      message: `💭 ${thought}`,
+                      nodeId: event.nodeId,
+                      nodeType,
+                    });
+                  }
+                }
+              }
+            }
+          }
+        };
+
+        const graphPromise = executeGraph(loaded.graph, contextData, eventHandler);
+
+        const timeoutPromise = new Promise<null>(resolve => {
+          timeoutHandle = setTimeout(() => {
+            if (closed) {
+              resolve(null);
+              return;
+            }
+            timedOut = true;
+            console.warn(`[streamGraphExecutionWithProgress] Timeout after ${timeoutMs}ms`);
+            push('error', { message: `Graph execution timed out after ${timeoutMs}ms`, events: executionEvents.slice(-10) });
+            closed = true;
+            try {
+              controller.close();
+            } catch {}
+            resolve(null);
+          }, timeoutMs);
+        });
+
+        const raceResult = await Promise.race([
+          graphPromise.then(() => 'completed' as const).catch(() => 'failed' as const),
+          timeoutPromise.then(() => 'timeout' as const),
+        ]);
+
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+        }
+
+        if (timedOut || raceResult === 'timeout') {
+          console.log('[streamGraphExecutionWithProgress] Graph was timed out; skipping late results');
+          return;
+        }
+
+        let graphState: Awaited<ReturnType<typeof executeGraph>> | null = null;
+        try {
+          graphState = await graphPromise;
+        } catch (error) {
+          console.error('[streamGraphExecutionWithProgress] Graph execution failed:', error);
+          push('error', { message: (error as Error)?.message || 'Graph execution failed' });
+          if (!closed) {
+            closed = true;
+            try { controller.close(); } catch {}
+          }
+          return;
+        }
+
+        if (!graphState) {
+          console.error('[streamGraphExecutionWithProgress] Graph execution returned no state; aborting response');
+          push('error', { message: 'Graph execution returned no state' });
+          if (!closed) {
+            closed = true;
+            try { controller.close(); } catch {}
+          }
+          return;
+        }
+
+        const duration = Date.now() - startedAt;
+
+        // Log trace
+        try {
+          const traceLogPath = path.join(ROOT, 'logs', 'graph-traces.ndjson');
+          const traceEntry = JSON.stringify({
+            timestamp: new Date().toISOString(),
+            mode: graphKey,
+            graph: loaded.source,
+            sessionId,
+            status: graphState.status,
+            durationMs: duration,
+            eventCount: executionEvents.length,
+            events: executionEvents.slice(-50),
+          });
+          appendFileSync(traceLogPath, traceEntry + '\n', 'utf-8');
+        } catch {}
+
+        const output = getGraphOutput(graphState);
+        const responseText = output?.output || output?.response;
+
+        if (!responseText) {
+          push('error', { message: 'Graph executed but produced no response' });
+          if (!closed) {
+            closed = true;
+            try { controller.close(); } catch {}
+          }
+          return;
+        }
+
+        push('progress', {
+          step: 'graph_complete',
+          message: `Graph completed in ${duration}ms`,
+          events: executionEvents.slice(-10),
+        });
+
+        // Send final answer
+        const facet = getActiveFacet();
+        push('answer', { response: responseText, facet, saved: null, executionTime: duration });
+
+        // Update history
+        pushMessage(mode, { role: 'user', content: message }, sessionId);
+        pushMessage(mode, { role: 'assistant', content: responseText, meta: { facet, graphPipeline: true } }, sessionId);
+        lastAssistantReplies[mode].push(responseText);
+
+        // Close stream
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (!closed) {
+          closed = true;
+          try { controller.close(); } catch {}
+        }
+
+      } catch (error) {
+        console.error('[streamGraphExecutionWithProgress] Error:', error);
+
+        // Handle cancellation specially
+        if ((error as Error).message === 'CANCELLATION_REQUESTED') {
+          // Already sent cancelled event, just close gracefully
+          console.log('[streamGraphExecutionWithProgress] Request was cancelled by user');
+        } else {
+          push('error', { message: (error as Error).message });
+        }
+
+        if (!closed) {
+          closed = true;
+          try { controller.close(); } catch {}
+        }
+      } finally {
+        // Clean up cancellation tracking
+        clearCancellation(sessionId);
+      }
+    }
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
+}
+
 function streamGraphAnswer(mode: Mode, message: string, sessionId: string, response: string) {
   const stream = new ReadableStream({
     async start(controller) {
@@ -226,7 +536,7 @@ interface GraphPipelineParams {
   message: string;
   sessionId: string;
   cognitiveMode: string;
-  userContext: ReturnType<typeof getUserContext>;
+  userContext: { userId: string; username: string; role: string };
   conversationHistory: Array<{ role: Role; content: string; meta?: any; timestamp?: number }>;
   contextPackage: any;
   contextInfo: string;
@@ -482,9 +792,7 @@ function persistBuffer(mode: Mode): void {
   }
 }
 
-function ensureHistoryLoaded(mode: Mode): void {
-  const ctx = getUserContext();
-  const userId = ctx?.userId || 'anonymous';
+function ensureHistoryLoaded(mode: Mode, userId: string = 'anonymous'): void {
   if (historyLoadedForUser[mode] === userId && histories[mode].length > 0) {
     return;
   }
@@ -745,6 +1053,20 @@ function stripChainOfThought(raw: string): string {
 
 
 
+/**
+ * @deprecated LEGACY CODE - DO NOT USE FOR NEW FEATURES
+ *
+ * This function performs synchronous semantic search that can hang for minutes.
+ * It's only kept for backward compatibility when graphEnabled=false.
+ *
+ * **The graph pipeline should be used instead** - it has:
+ * - Proper timeout protection (30s)
+ * - Progress streaming
+ * - Full logging visibility
+ * - Modular workflow
+ *
+ * TODO: Remove this function entirely once graph pipeline is stable
+ */
 async function getRelevantContext(
   userMessage: string,
   mode: Mode,
@@ -752,6 +1074,8 @@ async function getRelevantContext(
   opts?: { usingLora?: boolean; includePersonaSummary?: boolean; replyToMessage?: string }
 ): Promise<{ context: string; usedSemantic: boolean; contextPackage: any }> {
   try {
+    console.warn('[getRelevantContext] ⚠️ DEPRECATED: Using legacy context retrieval - this can hang!');
+
     // Load chat settings to configure context retrieval
     const chatSettings = loadChatSettings();
 
@@ -917,11 +1241,17 @@ function refreshSystemPrompt(mode: Mode, includePersonaSummary = true): void {
   persistBuffer(mode);
 }
 
-// Wrap GET and POST with user context middleware for automatic profile path resolution
-export const GET: APIRoute = withUserContext(async (context) => {
-  const { request, cookies } = context;
+// GET handler - no middleware bullshit, simple and explicit
+export const GET: APIRoute = async ({ request, cookies }) => {
+
+  // Simple, explicit auth - no middleware magic
+  const user = getUserOrAnonymous(cookies);
+  const userPaths = user.role !== 'anonymous' ? getProfilePaths(user.username) : null;
+
+
   const url = new URL(request.url);
   const message = url.searchParams.get('message') || '';
+
   const mode = url.searchParams.get('mode') || 'inner';
   const newSession = url.searchParams.get('newSession') === 'true';
   const questionId = url.searchParams.get('questionId') || undefined;
@@ -957,15 +1287,24 @@ export const GET: APIRoute = withUserContext(async (context) => {
     }
   }
 
+  // MIGRATED: 2025-11-20 - Removed withUserContext wrapper
+  // handleChatRequest receives cookies and can do its own authentication
   return handleChatRequest({ message, mode, newSession, audience, length, reason, reasoningDepth, llm, forceOperator, yolo, sessionId, replyToQuestionId, replyToContent, origin: url.origin, cookies, graphPipelineOverride: graphOverride });
-});
+};
 
-export const POST: APIRoute = withUserContext(async ({ request, cookies }) => {
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// Removed withUserContext wrapper - handleChatRequest does explicit authentication internally
+export const POST: APIRoute = async ({ request, cookies }) => {
+  // Simple, explicit auth
+  const user = getUserOrAnonymous(cookies);
+
   try {
     const url = new URL(request.url);
     const body = await request.json();
     const graphParam = typeof body?.graphPipelineOverride === 'boolean' ? body.graphPipelineOverride : undefined;
-    return handleChatRequest({ ...body, origin: url.origin, cookies, graphPipelineOverride: graphParam });
+
+    // handleChatRequest does its own authentication (no withUserContext wrapper)
+    return await handleChatRequest({ ...body, origin: url.origin, cookies, graphPipelineOverride: graphParam });
   } catch (error) {
     console.error('[persona_chat] POST handler error:', error);
     return new Response(JSON.stringify({ error: 'Request handler failed: ' + (error as Error).message }), {
@@ -973,7 +1312,7 @@ export const POST: APIRoute = withUserContext(async ({ request, cookies }) => {
       headers: { 'Content-Type': 'application/json' }
     });
   }
-});
+};
 
 // DEPRECATED: This function is no longer used.
 // The unified reasoning layer (ReAct operator) now handles ALL requests from authenticated users.
@@ -1187,13 +1526,16 @@ Stay true to your personality. Don't mention "the operator" or technical details
 
 async function handleChatRequest({ message, mode = 'inner', newSession = false, audience, length, reason, reasoningDepth, llm, forceOperator = false, yolo = false, sessionId, replyToQuestionId, replyToContent, origin, cookies, graphPipelineOverride }: { message: string; mode?: string; newSession?: boolean; audience?: string; length?: string; reason?: boolean; reasoningDepth?: number; llm?: any; forceOperator?: boolean; yolo?: boolean; sessionId?: string; replyToQuestionId?: string; replyToContent?: string; origin?: string; cookies?: any; graphPipelineOverride?: boolean }) {
   console.log(`\n[CHAT_REQUEST] Received: "${message}"`);
+
+  // Get user ID from cookies (no middleware)
+  const user = getUserOrAnonymous(cookies);
+  const userId = user.id;
+
   const m: Mode = mode === 'conversation' ? 'conversation' : 'inner';
-  ensureHistoryLoaded(m);
+  ensureHistoryLoaded(m, userId);
   sessionId = sessionId || `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
-  let model;
-  let usingLora = false;
-  let includePersonaSummary = true;
+  // Reasoning depth settings
   const depthCandidate = Number(reasoningDepth);
   let depthLevel = Number.isFinite(depthCandidate) ? Math.max(0, Math.min(3, Math.round(depthCandidate))) : undefined;
   if (depthLevel === undefined) {
@@ -1201,51 +1543,16 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   }
   const reasoningRequested = depthLevel > 0;
 
-  try {
-    const { loadModelRegistry } = await import('@metahuman/core');
-    const registry = loadModelRegistry();
-    const fallbackId = registry.defaults?.fallback || 'default.fallback';
-    const fallbackModel = registry.models?.[fallbackId];
-    if (!fallbackModel?.model) {
-      throw new Error('Default fallback model not configured in etc/models.json');
-    }
-
-    const globalSettings = registry.globalSettings || {};
-    includePersonaSummary = globalSettings.includePersonaSummary !== false;
-    try {
-      if (getActiveFacet() === 'inactive') {
-        includePersonaSummary = false;
-      }
-    } catch {
-      // ignore facet errors for guests
-    }
-
-    // Use adapter if enabled, otherwise use base model
-    if (globalSettings.useAdapter && globalSettings.activeAdapter) {
-      const adapterInfo = typeof globalSettings.activeAdapter === 'string'
-        ? globalSettings.activeAdapter
-        : globalSettings.activeAdapter.modelName;
-      model = adapterInfo;
-      usingLora = true;
-    } else {
-      model = fallbackModel.model;
-      usingLora = false;
-    }
-  } catch (error) {
-    console.error('[persona_chat] Fatal: Could not determine model.', error);
-    return new Response(JSON.stringify({ error: 'Could not determine model: ' + (error as Error).message }), { status: 500 });
-  }
-
-  // Check if user is authenticated (has session cookie)
-  let sessionCookie, isAuthenticated, currentCtx, userRole, operatorRoleAllowed, cognitiveContext, cognitiveMode, allowMemoryWrites, graphEnabled;
+  // Authentication and cognitive mode setup
+  let sessionCookie, isAuthenticated, userRole, operatorRoleAllowed, cognitiveContext, cognitiveMode, allowMemoryWrites;
 
   try {
     sessionCookie = cookies?.get('mh_session');
     isAuthenticated = !!sessionCookie;
 
     // Resolve user context up front so downstream routing can respect role-based restrictions
-    currentCtx = getUserContext();
-    userRole = currentCtx?.role ?? 'anonymous';
+    // (No middleware - user already resolved at top of function)
+    userRole = user.role;
     // Allow operator ONLY for the profile owner
     // Guests and anonymous users get chat-only mode (no skill execution)
     operatorRoleAllowed = userRole === 'owner';
@@ -1256,8 +1563,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     cognitiveMode = isAuthenticated ? cognitiveContext.mode : 'emulation';
     allowMemoryWrites = isAuthenticated ? cognitiveContext.allowMemoryWrites : false;
 
-    const pipelineFlag = resolveNodePipelineFlag();
-    graphEnabled = typeof graphPipelineOverride === 'boolean' ? graphPipelineOverride : pipelineFlag;
+    console.log(`[CHAT_REQUEST] ✅ Graph-only mode - model resolution handled by model_resolver node`);
   } catch (error) {
     console.error('[persona_chat] Fatal: Failed to initialize chat context:', error);
     return new Response(JSON.stringify({ error: 'Failed to initialize chat context: ' + (error as Error).message }), { status: 500 });
@@ -1285,6 +1591,9 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   console.log(`[CHAT_REQUEST] Authenticated: ${isAuthenticated}`);
   console.log(`[CHAT_REQUEST] Routing decision: ${useOperator ? 'REACT_OPERATOR (unified)' : 'CHAT_ONLY (emulation)'}`);
 
+  // Determine if graph pipeline should be used
+  const graphEnabled = graphPipelineOverride !== undefined ? graphPipelineOverride : resolveNodePipelineFlag();
+
   // Build reply-to context BEFORE retrieving memories
   // This ensures the LLM knows what the user is responding to
   let replyToMessage: string | undefined = undefined;
@@ -1308,14 +1617,17 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     console.log(`[CHAT_REQUEST] Replying to selected message: "${replyToMessage.substring(0, 100)}..."`);
   }
 
-  // Get relevant context (memories + tasks) BEFORE routing decision
-  // This context will be used by both operator and chat paths
-  // Pass reply-to message so it gets injected at the top of context
-  const { context: contextInfo, usedSemantic, contextPackage } = await getRelevantContext(
-    message, m, sessionId,
-    { usingLora, includePersonaSummary, replyToMessage }
-  );
-  console.log(`[CHAT_REQUEST] Context retrieved. Length: ${contextInfo.length}, Semantic Search: ${usedSemantic}, Memories: ${contextPackage?.memoryCount || 0}, ReplyTo: ${!!replyToMessage}`);
+  // ============================================================================
+  // CONTEXT RETRIEVAL
+  // ============================================================================
+  // IMPORTANT: Graph pipeline (graphEnabled=true) handles semantic search internally
+  // via the semantic_search node with proper timeout protection.
+  // Context variables (populated by graph nodes, not handler)
+  const contextInfo = '';
+  const usedSemantic = false;
+  const contextPackage: any = {};
+
+  console.log(`[CHAT_REQUEST] ✅ Graph-only mode - semantic search handled by graph nodes`);
 
   // currentCtx resolved earlier for routing and logging
 
@@ -1329,7 +1641,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
         query: message.substring(0, 200),
         mode: cognitiveMode,
         indexStatus: contextPackage.indexStatus || 'unknown',
-        username: currentCtx?.username || 'anonymous',
+        username: user.username,
         sessionId: sessionId || 'unknown'
       });
 
@@ -1392,12 +1704,14 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
   if (graphEnabled) {
     console.log(`[persona_chat] 🔄 Attempting graph pipeline for mode: ${cognitiveMode}`);
-    const graphResult = await tryExecuteGraphPipeline({
+
+    // Use streaming version that shows real-time progress
+    const streamResult = streamGraphExecutionWithProgress({
       mode: m,
       message,
       sessionId,
       cognitiveMode,
-      userContext: currentCtx,
+      userContext: { userId: user.id, username: user.username, role: user.role },
       conversationHistory: conversationHistorySnapshot,
       contextPackage,
       contextInfo,
@@ -1405,35 +1719,21 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
       useOperator,
     });
 
-    if (graphResult) {
-      console.log(`[persona_chat] ✅ Graph pipeline SUCCESS using ${graphResult.graphSource} - bypassing legacy operator`);
-      return streamGraphAnswer(m, message, sessionId, graphResult.response);
-    } else {
-      console.warn(`[persona_chat] ⚠️  Graph pipeline returned null - falling back to legacy ${useOperator ? 'operator' : 'chat'}`);
-      audit({
-        level: 'warn',
-        category: 'system',
-        event: 'graph_pipeline_fallback',
-        details: {
-          mode: m,
-          cognitiveMode,
-          message: message.substring(0, 160),
-          useOperator,
-        },
-        actor: currentCtx?.userId || 'anonymous',
-      });
-    }
+    return streamResult;
   }
 
   // ============================================================================
   // PRIORITY 2 (FALLBACK): Legacy operator or chat-only
   // ============================================================================
+  // @deprecated This entire code path should be removed once graph pipeline is stable
+  // The graph pipeline replaces all of this with modular nodes
+  console.warn(`[persona_chat] ⚠️ FALLBACK TO LEGACY PATH - Graph pipeline not available`);
 
   if (m === 'conversation' && audience && forceOperator) {
     pushMessage(m, { role: 'system', content: `Audience/context: ${audience}` }, sessionId);
   }
 
-  // Note: Context already retrieved earlier (line 525) and available as contextInfo, usedSemantic, contextPackage
+  // Note: Context already retrieved earlier via legacy getRelevantContext() and available as contextInfo, usedSemantic, contextPackage
 
   // Load chat settings to configure response behavior
   const chatSettings = loadChatSettings();

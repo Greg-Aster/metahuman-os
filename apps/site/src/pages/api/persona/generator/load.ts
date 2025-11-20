@@ -6,22 +6,13 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getUserContext } from '@metahuman/core/context';
-import { withUserContext } from '../../../../middleware/userContext';
+import { getAuthenticatedUser } from '@metahuman/core';
 import { loadSession, listSessions } from '@metahuman/core/persona/session-manager';
 import { tryResolveProfilePath } from '@metahuman/core/paths';
 
-const handler: APIRoute = async ({ request }) => {
+const handler: APIRoute = async ({ cookies, request }) => {
   try {
-    const ctx = getUserContext();
-
-    // Check authentication
-    if (!ctx || ctx.role === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    const user = getAuthenticatedUser(cookies);
 
     // Verify access to interviews
     const pathResult = tryResolveProfilePath('personaInterviews');
@@ -37,7 +28,7 @@ const handler: APIRoute = async ({ request }) => {
 
     // If no sessionId provided, return list of all sessions
     if (!sessionId) {
-      const sessions = await listSessions(ctx.username);
+      const sessions = await listSessions(user.username);
       return new Response(
         JSON.stringify({
           success: true,
@@ -51,7 +42,7 @@ const handler: APIRoute = async ({ request }) => {
     }
 
     // Load specific session
-    const session = await loadSession(ctx.username, sessionId);
+    const session = await loadSession(user.username, sessionId);
 
     if (!session) {
       return new Response(
@@ -61,7 +52,7 @@ const handler: APIRoute = async ({ request }) => {
     }
 
     // Verify ownership (loadSession already checks this, but double-check)
-    if (session.userId !== ctx.userId) {
+    if (session.userId !== user.userId) {
       return new Response(
         JSON.stringify({ error: 'Access denied - session belongs to another user' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }
@@ -89,4 +80,6 @@ const handler: APIRoute = async ({ request }) => {
   }
 };
 
-export const GET = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// GET requires authentication for persona generation
+export const GET = handler;

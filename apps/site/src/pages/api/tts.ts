@@ -1,6 +1,5 @@
 import type { APIRoute } from 'astro';
 import { generateSpeech, generateMultiVoiceSpeech } from '@metahuman/core';
-import { withUserContext } from '../../middleware/userContext';
 
 /**
  * POST /api/tts
@@ -88,7 +87,7 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
  * GET /api/tts
  * Get TTS status
  */
-const getHandler: APIRoute = async () => {
+const getHandler: APIRoute = async ({ cookies }) => {
   try {
     const { getTTSStatus } = await import('@metahuman/core');
     const status = await getTTSStatus();
@@ -106,5 +105,7 @@ const getHandler: APIRoute = async () => {
   }
 };
 
-export const POST = withUserContext(postHandler);
-export const GET = withUserContext(getHandler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const POST = postHandler;
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const GET = getHandler;

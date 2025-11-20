@@ -1,15 +1,13 @@
 import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths } from '@metahuman/core'
+import { systemPaths, getAuthenticatedUser } from '@metahuman/core'
 import { OllamaClient } from '@metahuman/core/ollama'
 import { listAdapterDatasets, getActiveAdapter } from '@metahuman/core'
-import { getUserContext } from '@metahuman/core/context'
-import { withUserContext } from '../../middleware/userContext'
 
 function readModelRegistry() {
   try {
-    const p = path.join(paths.etc, 'models.json')
+    const p = path.join(systemPaths.etc, 'models.json')
     return JSON.parse(fs.readFileSync(p, 'utf-8'))
   } catch {
     return { globalSettings: {}, defaults: {}, models: {} }
@@ -17,19 +15,21 @@ function readModelRegistry() {
 }
 
 function writeModelRegistry(registry: any) {
-  const p = path.join(paths.etc, 'models.json')
+  const p = path.join(systemPaths.etc, 'models.json')
   fs.mkdirSync(path.dirname(p), { recursive: true })
   fs.writeFileSync(p, JSON.stringify(registry, null, 2))
 }
 
-const getHandler: APIRoute = async () => {
+const getHandler: APIRoute = async ({ cookies }) => {
   try {
-    const ctx = getUserContext()
-    if (!ctx || ctx.role === 'anonymous') {
+    // SECURITY FIX: 2025-11-20 - Require owner role for system configuration access
+    const user = getAuthenticatedUser(cookies);
+
+    if (user.role !== 'owner') {
       return new Response(
-        JSON.stringify({ success: false, error: 'Authentication required to view model settings.' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      )
+        JSON.stringify({ success: false, error: 'Owner role required to access system model configuration' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
     }
 
     const registry = readModelRegistry()
@@ -41,7 +41,7 @@ const getHandler: APIRoute = async () => {
       baseModels = tags.map(m => m.name)
     } catch {}
     const loras = listAdapterDatasets().map(d => ({ date: d.date, status: d.status, evalScore: d.evalScore }))
-    const dualAvailable = fs.existsSync(path.join(paths.out, 'adapters', 'history-merged', 'adapter-merged.gguf'))
+    const dualAvailable = fs.existsSync(path.join(systemPaths.out, 'adapters', 'history-merged', 'adapter-merged.gguf'))
     const active = getActiveAdapter()
     return new Response(
       JSON.stringify({ success: true, agent: globalSettings, baseModels, loras, active, dualAvailable }),
@@ -55,14 +55,16 @@ const getHandler: APIRoute = async () => {
   }
 }
 
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
-    const ctx = getUserContext()
-    if (!ctx || ctx.role === 'anonymous') {
+    // SECURITY FIX: 2025-11-20 - Require owner role for system configuration changes
+    const user = getAuthenticatedUser(cookies);
+
+    if (user.role !== 'owner') {
       return new Response(
-        JSON.stringify({ success: false, error: 'Authentication required to update model settings.' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      )
+        JSON.stringify({ success: false, error: 'Owner role required to modify system model configuration' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
     }
 
     const body = await request.json()
@@ -92,5 +94,7 @@ const postHandler: APIRoute = async ({ request }) => {
   }
 }
 
-export const GET = withUserContext(getHandler)
-export const POST = withUserContext(postHandler)
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// SECURITY FIX: 2025-11-20 - Both GET and POST require owner role for system config access
+export const GET = getHandler
+export const POST = postHandler

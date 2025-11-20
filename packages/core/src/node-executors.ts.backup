@@ -480,15 +480,24 @@ export const reactPlannerExecutor: NodeExecutor = async (inputs, context) => {
 
   const contextData = inputs[0]?.context || inputs[0] || {};
   const scratchpadInput = inputs[1];
-  const scratchpad = Array.isArray(scratchpadInput)
-    ? scratchpadInput
-    : scratchpadInput && typeof scratchpadInput === 'string'
-      ? scratchpadInput
-          .split(/\n{2,}/)
-          .map(entry => ({ thought: entry.trim(), action: '', observation: '' }))
-      : scratchpadInput && typeof scratchpadInput === 'object'
-        ? [scratchpadInput]
-        : [];
+
+  // Ensure scratchpad is always an array
+  let scratchpad: any[] = [];
+  if (Array.isArray(scratchpadInput)) {
+    scratchpad = scratchpadInput;
+  } else if (scratchpadInput && typeof scratchpadInput === 'string') {
+    scratchpad = scratchpadInput
+      .split(/\n{2,}/)
+      .map(entry => ({ thought: entry.trim(), action: '', observation: '' }));
+  } else if (scratchpadInput && typeof scratchpadInput === 'object') {
+    scratchpad = [scratchpadInput];
+  } else if (scratchpadInput === null || scratchpadInput === undefined) {
+    scratchpad = [];
+  } else {
+    // Unknown type - convert to empty array and log warning
+    console.warn('[ReactPlanner] Unexpected scratchpad type:', typeof scratchpadInput, scratchpadInput);
+    scratchpad = [];
+  }
 
   // Get available skills for planning
   const skills = listSkills();
@@ -2936,6 +2945,192 @@ export const goalManagerExecutor: NodeExecutor = async (inputs, _context, proper
 };
 
 // ============================================================================
+// ReAct Scratchpad Nodes (Modular Components)
+// ============================================================================
+
+/**
+ * Scratchpad Initializer Node
+ * Creates or resets the scratchpad for ReAct iteration
+ */
+export const scratchpadInitializerExecutor: NodeExecutor = async (inputs, context) => {
+  return {
+    scratchpad: [],
+    iteration: 0,
+    maxIterations: context.maxIterations || 10,
+    isComplete: false,
+  };
+};
+
+/**
+ * Scratchpad Updater Node
+ * Appends new thought/action/observation to scratchpad
+ */
+export const scratchpadUpdaterExecutor: NodeExecutor = async (inputs, context) => {
+  const currentScratchpad = inputs[0]?.scratchpad || [];
+  const iteration = inputs[0]?.iteration || 0;
+  const thought = inputs[1]?.thought || '';
+  const action = inputs[1]?.action || '';
+  const observation = inputs[1]?.observation || '';
+
+  const newEntry = {
+    iteration: iteration + 1,
+    thought,
+    action,
+    observation,
+    timestamp: new Date().toISOString(),
+  };
+
+  const updatedScratchpad = [...currentScratchpad, newEntry];
+
+  return {
+    scratchpad: updatedScratchpad,
+    iteration: iteration + 1,
+    maxIterations: inputs[0]?.maxIterations || 10,
+    isComplete: false,
+  };
+};
+
+/**
+ * Iteration Counter Node
+ * Tracks and validates iteration count
+ */
+export const iterationCounterExecutor: NodeExecutor = async (inputs, context) => {
+  const iteration = inputs[0]?.iteration || 0;
+  const maxIterations = inputs[0]?.maxIterations || context.maxIterations || 10;
+  const scratchpad = inputs[0]?.scratchpad || [];
+
+  const hasExceededMax = iteration >= maxIterations;
+  const shouldContinue = !hasExceededMax;
+
+  return {
+    iteration,
+    maxIterations,
+    hasExceededMax,
+    shouldContinue,
+    scratchpadLength: scratchpad.length,
+  };
+};
+
+/**
+ * Scratchpad Completion Checker Node
+ * Determines if ReAct task is complete based on response content and iteration count
+ */
+export const scratchpadCompletionCheckerExecutor: NodeExecutor = async (inputs) => {
+  const response = inputs[0]?.response || inputs[0] || '';
+  const iteration = inputs[1]?.iteration || 0;
+  const maxIterations = inputs[1]?.maxIterations || 10;
+
+  // Check for completion markers in response
+  const hasFinalAnswer = /Final Answer:|FINAL_ANSWER|Task Complete/i.test(response);
+  const hasExceededMax = iteration >= maxIterations;
+  const isComplete = hasFinalAnswer || hasExceededMax;
+
+  return {
+    isComplete,
+    hasFinalAnswer,
+    hasExceededMax,
+    iteration,
+    response,
+    reason: hasFinalAnswer ? 'final_answer' : hasExceededMax ? 'max_iterations' : 'continue',
+  };
+};
+
+/**
+ * Scratchpad Formatter Node
+ * Formats scratchpad for display or LLM consumption
+ */
+export const scratchpadFormatterExecutor: NodeExecutor = async (inputs, context) => {
+  const scratchpad = inputs[0]?.scratchpad || [];
+  const format = context.format || 'text'; // 'text' | 'json' | 'markdown'
+
+  if (format === 'json') {
+    return {
+      formatted: JSON.stringify(scratchpad, null, 2),
+      entries: scratchpad.length,
+    };
+  }
+
+  if (format === 'markdown') {
+    const formatted = scratchpad
+      .map((entry: any, idx: number) => {
+        return `### Iteration ${idx + 1}\n\n**Thought:** ${entry.thought}\n\n**Action:** ${entry.action}\n\n**Observation:** ${entry.observation}\n`;
+      })
+      .join('\n---\n\n');
+    return { formatted, entries: scratchpad.length };
+  }
+
+  // Default: text format
+  const formatted = scratchpad
+    .map((entry: any) => `Thought: ${entry.thought}\nAction: ${entry.action}\nObservation: ${entry.observation}`)
+    .join('\n\n');
+
+  return {
+    formatted,
+    entries: scratchpad.length,
+  };
+};
+
+/**
+ * Conditional Router Node
+ * Routes data flow based on conditions, enabling graph-level loops
+ *
+ * Inputs:
+ *   - condition: boolean | string | object - The condition to evaluate
+ *   - trueData: any - Data to pass if condition is true
+ *   - falseData: any - Data to pass if condition is false
+ *
+ * Outputs:
+ *   - routedData: any - The data selected based on condition
+ *   - conditionMet: boolean - Whether condition was true
+ *   - branch: 'true' | 'false' - Which branch was taken
+ *
+ * Note: The graph executor handles the actual routing to different nodes
+ * via the 'routingDecision' field. This executor just evaluates the condition
+ * and prepares the data.
+ */
+export const conditionalRouterExecutor: NodeExecutor = async (inputs, context) => {
+  // Extract inputs
+  const condition = inputs[0]?.condition ?? inputs[0]?.isComplete ?? inputs[0];
+  const trueData = inputs[1]?.trueData ?? inputs[1];
+  const falseData = inputs[2]?.falseData ?? inputs[2];
+
+  // Evaluate condition
+  let conditionMet = false;
+
+  if (typeof condition === 'boolean') {
+    conditionMet = condition;
+  } else if (typeof condition === 'string') {
+    conditionMet = condition.toLowerCase() === 'true' || condition === '1';
+  } else if (typeof condition === 'object' && condition !== null) {
+    // Handle objects with isComplete, isDone, or shouldContinue fields
+    conditionMet = Boolean(
+      condition.isComplete ||
+      condition.isDone ||
+      condition.shouldContinue ||
+      condition.value
+    );
+  } else if (typeof condition === 'number') {
+    conditionMet = condition !== 0;
+  } else {
+    conditionMet = Boolean(condition);
+  }
+
+  // Select data based on condition
+  const routedData = conditionMet ? trueData : falseData;
+  const branch = conditionMet ? 'true' : 'false';
+
+  console.log(`[ConditionalRouter] Condition: ${conditionMet}, Branch: ${branch}`);
+
+  return {
+    routedData,
+    conditionMet,
+    branch,
+    // This special field tells the graph executor which output slot to activate
+    routingDecision: branch,
+  };
+};
+
+// ============================================================================
 // Emulation Mode Specific Nodes
 // ============================================================================
 
@@ -3127,6 +3322,14 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
   'stream_writer': streamWriterExecutor,
   'chat_view': chatViewExecutor,
   'tts': ttsExecutor,
+
+  // ReAct scratchpad nodes (modular components)
+  'scratchpad_initializer': scratchpadInitializerExecutor,
+  'scratchpad_updater': scratchpadUpdaterExecutor,
+  'iteration_counter': iterationCounterExecutor,
+  'scratchpad_completion_checker': scratchpadCompletionCheckerExecutor,
+  'scratchpad_formatter': scratchpadFormatterExecutor,
+  'conditional_router': conditionalRouterExecutor,
 
   // Emulation mode specific nodes
   'reply_to_handler': replyToHandlerExecutor,

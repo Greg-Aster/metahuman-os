@@ -6,7 +6,6 @@ import {
 } from '@metahuman/core/function-memory';
 import { auditAction } from '@metahuman/core/audit';
 import { requireWriteMode } from '../../../middleware/cognitiveModeGuard';
-import { withUserContext } from '../../../middleware/userContext';
 
 /**
  * POST /api/functions/maintenance
@@ -17,7 +16,7 @@ import { withUserContext } from '../../../middleware/userContext';
  * - operation: 'full' | 'consolidate' | 'cleanup' (default: 'full')
  * - dryRun: boolean (default: false)
  */
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
     const body = await request.json();
     const operation = body.operation || 'full';
@@ -90,7 +89,7 @@ const postHandler: APIRoute = async ({ request }) => {
  *
  * Get maintenance recommendations (dry run of full maintenance)
  */
-const getHandler: APIRoute = async () => {
+const getHandler: APIRoute = async ({ cookies }) => {
   try {
     // Run maintenance in dry-run mode to get recommendations
     const result = await maintainFunctionMemory({ dryRun: true });
@@ -126,5 +125,6 @@ const getHandler: APIRoute = async () => {
 };
 
 // Wrap with middleware
-export const GET = withUserContext(getHandler);
-export const POST = withUserContext(requireWriteMode(postHandler));
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const GET = getHandler;
+export const POST = requireWriteMode(postHandler);

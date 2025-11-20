@@ -2,7 +2,6 @@ import type { APIRoute } from 'astro';
 import { loadFunction, promoteFunction } from '@metahuman/core/function-memory';
 import { auditDataChange } from '@metahuman/core/audit';
 import { requireWriteMode } from '../../../../middleware/cognitiveModeGuard';
-import { withUserContext } from '../../../../middleware/userContext';
 
 /**
  * POST /api/functions/:id/promote
@@ -87,4 +86,5 @@ const postHandler: APIRoute = async ({ params }) => {
 };
 
 // Wrap with middleware (requires write mode)
-export const POST = withUserContext(requireWriteMode(postHandler));
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const POST = requireWriteMode(postHandler);

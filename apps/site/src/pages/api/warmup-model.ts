@@ -1,8 +1,6 @@
 import type { APIRoute } from 'astro'
-import { getUserContext } from '@metahuman/core/context'
-import { withUserContext } from '../../middleware/userContext'
+import { getAuthenticatedUser, audit } from '@metahuman/core'
 import { callLLM } from '@metahuman/core/model-router'
-import { audit } from '@metahuman/core'
 
 /**
  * API endpoint to warm up (preload) a specific model role
@@ -11,15 +9,10 @@ import { audit } from '@metahuman/core'
  * into memory, preventing cold-start latency on first real use.
  */
 
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
-    const ctx = getUserContext()
-    if (!ctx || ctx.role === 'anonymous') {
-      return new Response(
-        JSON.stringify({ success: false, error: 'Authentication required.' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      )
-    }
+    // Explicit auth - require authentication for model warmup
+    const user = getAuthenticatedUser(cookies);
 
     const body = await request.json()
     const { role } = body || {}
@@ -60,7 +53,7 @@ const postHandler: APIRoute = async ({ request }) => {
         category: 'system',
         level: 'info',
         action: 'model_warmup',
-        actor: ctx.username,
+        actor: user.username,
         context: {
           role,
           duration,
@@ -81,7 +74,7 @@ const postHandler: APIRoute = async ({ request }) => {
         category: 'system',
         level: 'error',
         action: 'model_warmup_failed',
-        actor: ctx.username,
+        actor: user.username,
         context: {
           role,
           error: (error as Error).message
@@ -104,4 +97,6 @@ const postHandler: APIRoute = async ({ request }) => {
   }
 }
 
-export const POST = withUserContext(postHandler)
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// POST requires authentication for model warmup operations
+export const POST = postHandler

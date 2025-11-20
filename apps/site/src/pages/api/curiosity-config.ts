@@ -1,10 +1,27 @@
 import type { APIRoute } from 'astro';
-import { loadCuriosityConfig, saveCuriosityConfig, systemPaths } from '@metahuman/core';
-import { withUserContext } from '../../middleware/userContext';
+import { loadCuriosityConfig, saveCuriosityConfig, systemPaths, getAuthenticatedUser } from '@metahuman/core';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const handler: APIRoute = async ({ request }) => {
+const handler: APIRoute = async ({ cookies, request }) => {
+  // SECURITY FIX: 2025-11-20 - Require owner role for system configuration access
+  // Curiosity config and agents.json are system-level files
+  try {
+    const user = getAuthenticatedUser(cookies);
+
+    if (user.role !== 'owner') {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Owner role required to access/modify system configuration' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ success: false, error: 'Authentication required' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   if (request.method === 'GET') {
     try {
       const config = loadCuriosityConfig();
@@ -70,6 +87,7 @@ const handler: APIRoute = async ({ request }) => {
   });
 };
 
-// Wrap with user context middleware for automatic profile path resolution
-export const GET = withUserContext(handler);
-export const POST = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// SECURITY FIX: 2025-11-20 - Require owner role for system configuration
+export const GET = handler;
+export const POST = handler;

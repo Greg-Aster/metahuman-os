@@ -6,9 +6,9 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getUserContext } from '@metahuman/core/context';
-import { withUserContext } from '../../../../middleware/userContext';
+import { getAuthenticatedUser } from '@metahuman/core';
 import { auditAction } from '@metahuman/core/audit';
+import { tryResolveProfilePath } from '@metahuman/core/paths';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -77,18 +77,19 @@ const DEFAULT_PERSONA = {
   },
 };
 
-const handler: APIRoute = async () => {
+const handler: APIRoute = async ({ cookies }) => {
   try {
-    const context = getUserContext();
+    const user = getAuthenticatedUser(cookies);
 
-    if (!context || context.username === 'anonymous') {
+    // Verify access to persona core
+    const pathResult = tryResolveProfilePath('personaCore');
+    if (!pathResult.ok) {
       return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Access denied' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
       );
     }
-
-    const personaPath = context.profilePaths.personaCore;
+    const personaPath = pathResult.path;
 
     // Create backup before resetting
     const backupDir = path.join(path.dirname(personaPath), 'backups');
@@ -113,7 +114,7 @@ const handler: APIRoute = async () => {
     // Audit the reset action
     await auditAction({
       action: 'persona_file_reset',
-      actor: context.username,
+      actor: user.username,
       details: {
         backupPath,
         timestamp: new Date().toISOString(),
@@ -147,4 +148,6 @@ const handler: APIRoute = async () => {
   }
 };
 
-export const POST = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// POST requires authentication for persona generation
+export const POST = handler;

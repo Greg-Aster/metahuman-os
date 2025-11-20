@@ -328,7 +328,7 @@
       "orchestrator": "default.orchestrator",
       "persona": "default.orchestrator",
       "coder": "default.coder",
-      "planner": "default.planner",
+      "planner": "default.orchestrator",
       "curator": "default.curator",
       "summarizer": "default.summarizer",
       "psychotherapist": "ollama.qwen3:30b",

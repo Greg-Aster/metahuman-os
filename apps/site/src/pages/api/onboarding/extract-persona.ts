@@ -9,8 +9,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getUserContext } from '@metahuman/core/context';
-import { withUserContext } from '../../../middleware/userContext';
+import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
 import {
   extractPersonaFromTranscript,
   type ChatMessage,
@@ -29,7 +28,7 @@ import fs from 'node:fs';
  * Extract personality data from conversation
  * Body: { messages: ChatMessage[] }
  */
-const handler: APIRoute = async ({ request }) => {
+const handler: APIRoute = async ({ cookies, request }) => {
   try {
     const context = getUserContext();
 
@@ -136,4 +135,5 @@ const handler: APIRoute = async ({ request }) => {
   }
 };
 
-export const POST = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const POST = handler;

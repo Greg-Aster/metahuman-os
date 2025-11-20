@@ -259,9 +259,8 @@
     window.addEventListener('resize', setVH);
     window.addEventListener('orientationchange', setVH);
 
-    // Fire-and-forget: ask server to boot core agents (idempotent)
-    // Always attempt to boot boredom-service on UI load; endpoint is idempotent
-    fetch('/api/boot', { method: 'GET', cache: 'no-store', keepalive: true }).catch(() => {});
+    // NOTE: Boot call removed - AuthGate already calls /api/boot during auth check
+    // Agents are started by bin/run-with-agents script and boot endpoint is idempotent
 
     // Fire-and-forget: warm up models in background to avoid first-message latency
     // This pre-loads orchestrator and persona models into Ollama's memory

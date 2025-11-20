@@ -57,6 +57,7 @@ The UI will display prominent banners at the top of the screen to inform you of 
 - 🧩 Memory - Browse events & insights with inline expansion and modal editor.
 - 🎤 Voice - Audio upload, transcription, cloning, and per-user training data.
 - 🧠 AI Training - LoRA adapters and training management.
+- 🔗 Node Editor - Visual workflow designer for cognitive graphs (see below).
 - 💻 Terminal - Embedded command line.
 - ⚙️ System - System settings and tools.
 - 🌐 Network - Cloudflare tunnel and connectivity settings.

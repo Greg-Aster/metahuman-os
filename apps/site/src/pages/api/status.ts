@@ -8,13 +8,11 @@ import { getIndexStatus } from '@metahuman/core/vector-index';
 import { listAvailableAgents, getProcessingStatus } from '@metahuman/core/agent-monitor';
 import { isRunning as isOllamaRunning } from '@metahuman/core/ollama';
 import { getRuntimeMode } from '@metahuman/core/runtime-mode';
-import { withUserContext } from '../../middleware/userContext';
-import { getUserContext } from '@metahuman/core/context';
+import { getUserOrAnonymous, getProfilePaths, systemPaths } from '@metahuman/core';
 import { loadCuriosityConfig } from '@metahuman/core/config';
 import { getMemoryMetrics } from '@metahuman/core/memory-metrics-cache';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '@metahuman/core/paths';
 
 // Cache implementation for /api/status
 // Note: Cache key now includes cognitive mode to ensure accurate status per mode
@@ -28,21 +26,11 @@ export function invalidateStatusCache(): void {
 
 const handler: APIRoute = async ({ cookies }) => {
   try {
-    const ctx = getUserContext();
-    // Allow anonymous users WITH guest profile to view (read-only)
-    // Block anonymous users WITHOUT guest profile
-    if (!ctx || (ctx.role === 'anonymous' && !ctx.activeProfile)) {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required', authenticated: false }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    // Explicit auth - allow anonymous users to view system status (limited data)
+    const user = getUserOrAnonymous(cookies);
+    const isAuthenticated = user.role !== 'anonymous';
 
     const now = Date.now();
-
-    // Check authentication to determine effective cognitive mode
-    const sessionCookie = cookies?.get('mh_session');
-    const isAuthenticated = !!sessionCookie;
 
     // Load cognitive mode, but override for unauthenticated users
     const cognitiveConfig = loadCognitiveMode();
@@ -201,7 +189,7 @@ const handler: APIRoute = async ({ cookies }) => {
     }
 
     // MEMORY SYSTEM STATUS
-    const metrics = await getMemoryMetrics(ctx.username);
+    const metrics = await getMemoryMetrics(user.username);
     const memoryStats: any = {
       totalFiles: metrics.totalMemories,
       byType: metrics.memoriesByType,
@@ -302,7 +290,7 @@ const handler: APIRoute = async ({ cookies }) => {
 
     try {
       const today = new Date().toISOString().split('T')[0];
-      const auditFile = path.join(paths.logs, 'audit', `${today}.ndjson`);
+      const auditFile = path.join(systemPaths.logs, 'audit', `${today}.ndjson`);
       if (fs.existsSync(auditFile)) {
         const stats = fs.statSync(auditFile);
         systemHealth.auditLogSize = stats.size;
@@ -326,15 +314,17 @@ const handler: APIRoute = async ({ cookies }) => {
         return size;
       };
 
-      systemHealth.storageUsed = getDirSize(paths.root);
+      systemHealth.storageUsed = getDirSize(systemPaths.root);
     } catch {}
 
     // RECENT ACTIVITY
     let recentActivity: any[] = [];
 
-    try {
-      // Get last 5 episodic memories by reading files directly
-      const episodicPath = paths.episodic;
+    if (isAuthenticated) {
+      try {
+        // Get last 5 episodic memories by reading files directly
+        const profilePaths = getProfilePaths(user.username);
+        const episodicPath = profilePaths.episodic;
       const walkDir = (dir: string): string[] => {
         if (!fs.existsSync(dir)) return [];
         let files: string[] = [];
@@ -369,15 +359,19 @@ const handler: APIRoute = async ({ cookies }) => {
           return null;
         }
       }).filter(Boolean);
-    } catch {}
+      } catch {}
+    }
 
     // CURIOSITY STATS
     const curiosityConfig = loadCuriosityConfig();
-    const pendingQuestionsDir = paths.curiosityQuestionsPending;
     let openQuestionCount = 0;
     let lastAskedTimestamp: string | null = null;
 
-    if (fs.existsSync(pendingQuestionsDir)) {
+    if (isAuthenticated) {
+      const profilePaths = getProfilePaths(user.username);
+      const pendingQuestionsDir = profilePaths.curiosityQuestionsPending;
+
+      if (fs.existsSync(pendingQuestionsDir)) {
       const files = fs.readdirSync(pendingQuestionsDir).filter(f => f.endsWith('.json'));
       openQuestionCount = files.length;
 
@@ -390,6 +384,7 @@ const handler: APIRoute = async ({ cookies }) => {
           }
         } catch {}
       });
+      }
     }
 
     // RUNTIME MODE STATUS
@@ -476,5 +471,7 @@ const handler: APIRoute = async ({ cookies }) => {
   }
 };
 
-// Wrap with user context middleware for automatic profile path resolution
-export const GET = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// Anonymous users allowed (limited system status)
+// Authenticated users see full status with user-specific data
+export const GET = handler;

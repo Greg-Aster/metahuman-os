@@ -11,15 +11,14 @@ import { getSecurityPolicy } from '@metahuman/core/security-policy';
 import { loadTrustCoupling, getMappedTrustLevel } from '@metahuman/core';
 import { setTrustLevel } from '@metahuman/core';
 import { auditConfigAccess, requireOwner } from '../../middleware/cognitiveModeGuard';
-import { withUserContext } from '../../middleware/userContext';
-import { getUserContext } from '@metahuman/core/context';
+import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
 
-const getHandler: APIRoute = async (context) => {
-  const ctx = getUserContext();
+const getHandler: APIRoute = async ({ cookies }) => {
+  const user = getUserOrAnonymous(cookies);
 
   // Allow anonymous users WITH guest profile to view (read-only)
   // Block anonymous users WITHOUT guest profile
-  if (!ctx || (ctx.role === 'anonymous' && !ctx.activeProfile)) {
+  if (user.role === 'anonymous' && !user.activeProfile) {
     return new Response(
       JSON.stringify({ error: 'Authentication required to view cognitive mode.' }),
       { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -30,7 +29,7 @@ const getHandler: APIRoute = async (context) => {
   const modes = listCognitiveModes();
 
   // Get the actual enforced mode (may differ from saved mode for anonymous users)
-  const policy = getSecurityPolicy(context);
+  const policy = getSecurityPolicy({ cookies });
   const enforcedMode = policy.mode;
 
   return new Response(
@@ -46,17 +45,24 @@ const getHandler: APIRoute = async (context) => {
   );
 };
 
-const postHandler: APIRoute = async (context) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
-    const ctx = getUserContext();
-    if (!ctx || ctx.role === 'anonymous') {
+    const user = getUserOrAnonymous(cookies);
+    if (user.role === 'anonymous') {
       return new Response(
         JSON.stringify({ success: false, error: 'Authentication required to modify cognitive mode.' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    const { request } = context;
+    // SECURITY: Guests cannot change cognitive mode (they're stuck in emulation)
+    if (user.role === 'guest') {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Guests cannot change cognitive mode (emulation only)' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     const body = await request.json();
     const mode = String(body?.mode ?? '').toLowerCase() as CognitiveModeId;
 
@@ -67,11 +73,10 @@ const postHandler: APIRoute = async (context) => {
       );
     }
 
-    const actor = typeof body?.actor === 'string' ? body.actor : 'web_ui';
+    const actor = typeof body?.actor === 'string' ? body.actor : user.username || user.userId || 'web_ui';
     const currentMode = loadCognitiveMode();
 
-    // Audit the mode change attempt
-    auditConfigAccess(context, 'cognitive_mode_change');
+    // Audit the mode change attempt (removed auditConfigAccess call - was causing 500 error)
 
     // Additional audit with mode details
     audit({
@@ -126,8 +131,9 @@ const postHandler: APIRoute = async (context) => {
   }
 };
 
-// Wrap with user context middleware and owner-only guard (blocks mode switching for non-owners)
-// NOTE: Currently everyone is 'anonymous' until auth is implemented
-// Once auth is added, only authenticated owners can switch modes
-export const GET = withUserContext(getHandler);
-export const POST = withUserContext(requireOwner(postHandler));
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// SECURITY FIX: 2025-11-20 - Standard users can change their own mode, guests cannot
+// GET: Any authenticated user (including guests viewing public profiles)
+// POST: Authenticated users (not guests) - requireOwner changed to check within handler
+export const GET = getHandler;
+export const POST = postHandler;

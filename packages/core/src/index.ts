@@ -5,7 +5,8 @@
  * Used by CLI, web UI, agents, and skills
  */
 
-export * from './paths';
+export * from './path-builder';  // Core path functions (no dependencies)
+export * from './paths';  // Context-aware paths proxy
 export * from './identity';
 export * from './memory';
 export * from './memory-metrics-cache';
@@ -54,7 +55,8 @@ export * from './persona/merger';
 export * from './persona/cleanup';
 
 // Multi-user system (Phase 2)
-export * from './context';
+export * from './auth';  // Simple auth helpers (replaces middleware)
+export * from './context';  // DEPRECATED - will be removed
 export * from './config';
 export * from './users';
 export * from './sessions';
@@ -63,7 +65,7 @@ export * from './profile';
 // Node Editor - Graph Execution
 export * from './cognitive-graph-schema';
 export * from './graph-executor';
-export * from './node-executors';
+export * from './node-executors/index.js';
 export * from './agent-graph-executor';
 export * from './graph-error-handler';
 export * from './plugin-system';

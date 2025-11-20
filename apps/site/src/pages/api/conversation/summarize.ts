@@ -22,21 +22,15 @@
  */
 
 import type { APIRoute } from 'astro';
-import { audit, getUserContext, withUserContext } from '@metahuman/core';
+import { audit, getAuthenticatedUser, getProfilePaths } from '@metahuman/core';
 
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// Removed withUserContext wrapper, now passes explicit username/profilePaths to summarizer
 export const POST: APIRoute = async ({ request, cookies }) => {
   try {
-    // Authentication check
-    const activeUserId = cookies.get('mh_active_user')?.value;
-    if (!activeUserId) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: 'Authentication required'
-        }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    // Explicit authentication - require authenticated user
+    const user = getAuthenticatedUser(cookies);
+    const profilePaths = getProfilePaths(user.username);
 
     // Parse request body
     let sessionId: string;
@@ -63,62 +57,60 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       );
     }
 
-    // Run summarization within user context
+    // Run summarization with explicit user context
     let summaryResult: any = null;
     let errorMessage: string | null = null;
 
-    await withUserContext(activeUserId, async () => {
-      try {
-        // Dynamic import to avoid circular dependencies
-        const { summarizeSession } = await import('../../../../brain/agents/summarizer.js');
+    try {
+      // Dynamic import to avoid circular dependencies
+      const { summarizeSession } = await import('../../../../brain/agents/summarizer.js');
 
-        // Run summarization
-        const summary = await summarizeSession(sessionId);
+      // Run summarization with explicit username and profilePaths
+      const summary = await summarizeSession(sessionId, { username: user.username, profilePaths });
 
-        if (summary) {
-          summaryResult = {
-            sessionId: summary.sessionId,
-            summary: summary.summary,
-            keyTopics: summary.keyTopics,
-            decisions: summary.decisions,
-            outcomes: summary.outcomes,
-            messageCount: summary.messageCount,
-            toolsUsed: summary.toolsUsed,
-            mode: summary.mode,
-            startTime: summary.startTime,
-            endTime: summary.endTime
-          };
-
-          audit({
-            level: 'info',
-            category: 'action',
-            event: 'manual_summarization_triggered',
-            actor: 'api',
-            details: {
-              sessionId,
-              messageCount: summary.messageCount,
-              topicsCount: summary.keyTopics.length
-            }
-          });
-        } else {
-          errorMessage = 'No events found for this session';
-        }
-      } catch (error) {
-        console.error('[api/conversation/summarize] Summarization error:', error);
-        errorMessage = (error as Error).message || 'Summarization failed';
+      if (summary) {
+        summaryResult = {
+          sessionId: summary.sessionId,
+          summary: summary.summary,
+          keyTopics: summary.keyTopics,
+          decisions: summary.decisions,
+          outcomes: summary.outcomes,
+          messageCount: summary.messageCount,
+          toolsUsed: summary.toolsUsed,
+          mode: summary.mode,
+          startTime: summary.startTime,
+          endTime: summary.endTime
+        };
 
         audit({
-          level: 'error',
+          level: 'info',
           category: 'action',
-          event: 'manual_summarization_failed',
-          actor: 'api',
+          event: 'manual_summarization_triggered',
+          actor: user.username,
           details: {
             sessionId,
-            error: errorMessage
+            messageCount: summary.messageCount,
+            topicsCount: summary.keyTopics.length
           }
         });
+      } else {
+        errorMessage = 'No events found for this session';
       }
-    });
+    } catch (error) {
+      console.error('[api/conversation/summarize] Summarization error:', error);
+      errorMessage = (error as Error).message || 'Summarization failed';
+
+      audit({
+        level: 'error',
+        category: 'action',
+        event: 'manual_summarization_failed',
+        actor: user.username,
+        details: {
+          sessionId,
+          error: errorMessage
+        }
+      });
+    }
 
     // Return response
     if (summaryResult) {

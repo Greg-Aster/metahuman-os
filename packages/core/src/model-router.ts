@@ -83,6 +83,7 @@ function getContextualCognitiveMode(explicitMode: string | undefined): string | 
 /**
  * Build persona context summary from persona files
  * This is injected as a system message when includePersonaSummary is enabled
+ * MIGRATED: 2025-11-20 - Now uses getUserContext() to get username
  */
 function buildPersonaContext(): string {
   try {

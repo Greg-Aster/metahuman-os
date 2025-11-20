@@ -1,10 +1,8 @@
 import type { APIRoute } from 'astro';
-import { getUserContext } from '@metahuman/core';
-import { withUserContext } from '../../middleware/userContext';
+import { getAuthenticatedUser } from '@metahuman/core';
 import {
   getNodePipelineEnvOverride,
   readNodePipelineRuntime,
-  resolveNodePipelineFlag,
   writeNodePipelineRuntime,
 } from '../../utils/node-pipeline';
 
@@ -24,14 +22,14 @@ function buildResponseBody() {
   };
 }
 
-export const GET: APIRoute = withUserContext(async () => {
+const getHandler: APIRoute = async ({ cookies }) => {
   return new Response(JSON.stringify(buildResponseBody()), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   });
-});
+};
 
-export const POST: APIRoute = withUserContext(async ({ request }) => {
+const postHandler: APIRoute = async ({ cookies, request }) => {
   const envOverride = getNodePipelineEnvOverride();
   if (envOverride) {
     return new Response(
@@ -43,8 +41,8 @@ export const POST: APIRoute = withUserContext(async ({ request }) => {
     );
   }
 
-  const user = getUserContext();
-  if (user?.role !== 'owner') {
+  const user = getAuthenticatedUser(cookies);
+  if (user.role !== 'owner') {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },
@@ -70,7 +68,7 @@ export const POST: APIRoute = withUserContext(async ({ request }) => {
     );
   }
 
-  writeNodePipelineRuntime(enabled, user.username || user.userId || 'owner');
+  writeNodePipelineRuntime(enabled, user.username || 'owner');
 
   return new Response(
     JSON.stringify({
@@ -80,4 +78,8 @@ export const POST: APIRoute = withUserContext(async ({ request }) => {
     }),
     { status: 200, headers: { 'Content-Type': 'application/json' } }
   );
-});
+};
+
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const GET = getHandler;
+export const POST = postHandler;

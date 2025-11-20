@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { systemPaths } from './path-builder.js';
 import { paths } from './paths.js';
 
 export interface AdapterDatasetInfo {
@@ -55,7 +56,7 @@ export interface AutoApprovalConfig {
 }
 
 function getAdaptersRoot(): string {
-  return path.join(paths.out, 'adapters');
+  return path.join(systemPaths.out, 'adapters');
 }
 
 function safeReadJSON<T>(filePath: string): T | null {
@@ -155,16 +156,19 @@ export function listAdapterDatasets(): AdapterDatasetInfo[] {
 }
 
 function getModelRegistry(): any {
-  const cfgPath = path.join(paths.etc, 'models.json');
+  const cfgPath = path.join(systemPaths.etc, 'models.json');
   return safeReadJSON<any>(cfgPath) ?? null;
 }
 
 function writeModelRegistry(registry: any): void {
-  const cfgPath = path.join(paths.etc, 'models.json');
+  const cfgPath = path.join(systemPaths.etc, 'models.json');
   fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
   fs.writeFileSync(cfgPath, JSON.stringify(registry, null, 2));
 }
 
+/**
+ * Get active adapter info
+ */
 export function getActiveAdapter(): ActiveAdapterInfo | null {
   const registry = getModelRegistry();
   const globalSettings = registry?.globalSettings;
@@ -201,31 +205,39 @@ export function getActiveAdapter(): ActiveAdapterInfo | null {
   }
 
   // Fallback to legacy active-adapter.json for backward compatibility
-  const legacyPath = path.join(paths.persona, 'overrides', 'active-adapter.json');
-  const legacy = safeReadJSON<ActiveAdapterInfo>(legacyPath);
-  if (legacy) {
-    // Upgrade legacy config into models.json and remove file to avoid future divergence
-    if (!registry) return null;
+  // This requires user context (paths.persona), so wrap in try/catch
+  try {
+    const legacyPath = path.join(paths.persona, 'overrides', 'active-adapter.json');
+    const legacy = safeReadJSON<ActiveAdapterInfo>(legacyPath);
+    if (legacy) {
+      // Upgrade legacy config into models.json and remove file to avoid future divergence
+      if (!registry) return null;
 
-    const upgraded: ActiveAdapterInfo = {
-      ...legacy,
-      baseModel: legacy.baseModel,
-    };
+      const upgraded: ActiveAdapterInfo = {
+        ...legacy,
+        baseModel: legacy.baseModel,
+      };
 
-    if (!registry.globalSettings) {
-      registry.globalSettings = { includePersonaSummary: true, useAdapter: false, activeAdapter: null };
+      if (!registry.globalSettings) {
+        registry.globalSettings = { includePersonaSummary: true, useAdapter: false, activeAdapter: null };
+      }
+      registry.globalSettings.useAdapter = true;
+      registry.globalSettings.activeAdapter = upgraded;
+
+      writeModelRegistry(registry);
+      try { fs.rmSync(legacyPath); } catch {}
+      return upgraded;
     }
-    registry.globalSettings.useAdapter = true;
-    registry.globalSettings.activeAdapter = upgraded;
-
-    writeModelRegistry(registry);
-    try { fs.rmSync(legacyPath); } catch {}
-    return upgraded;
+  } catch {
+    // No user context or legacy file not found - this is fine, config is in models.json now
   }
 
   return null;
 }
 
+/**
+ * Set active adapter
+ */
 export function setActiveAdapter(info: ActiveAdapterInfo | null): void {
   const registry = getModelRegistry() || {};
 
@@ -247,12 +259,16 @@ export function setActiveAdapter(info: ActiveAdapterInfo | null): void {
   writeModelRegistry(registry);
 
   // Remove legacy file if present to prevent stale overrides
-  const legacyPath = path.join(paths.persona, 'overrides', 'active-adapter.json');
-  try { fs.rmSync(legacyPath); } catch {}
+  try {
+    const legacyPath = path.join(paths.persona, 'overrides', 'active-adapter.json');
+    fs.rmSync(legacyPath);
+  } catch {
+    // No user context or file doesn't exist - this is fine
+  }
 }
 
 export function readAutoApprovalConfig(): AutoApprovalConfig {
-  const configPath = path.join(paths.etc, 'auto-approval.json');
+  const configPath = path.join(systemPaths.etc, 'auto-approval.json');
   if (!fs.existsSync(configPath)) {
     const defaultConfig: AutoApprovalConfig = {
       enabled: true,
@@ -265,7 +281,7 @@ export function readAutoApprovalConfig(): AutoApprovalConfig {
       },
       alertEmail: null,
     };
-    fs.mkdirSync(paths.etc, { recursive: true });
+    fs.mkdirSync(systemPaths.etc, { recursive: true });
     fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
     return defaultConfig;
   }
@@ -273,7 +289,7 @@ export function readAutoApprovalConfig(): AutoApprovalConfig {
 }
 
 export function writeAutoApprovalConfig(config: AutoApprovalConfig): void {
-  const configPath = path.join(paths.etc, 'auto-approval.json');
-  fs.mkdirSync(paths.etc, { recursive: true });
+  const configPath = path.join(systemPaths.etc, 'auto-approval.json');
+  fs.mkdirSync(systemPaths.etc, { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }

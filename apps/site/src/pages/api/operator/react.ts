@@ -9,7 +9,6 @@ import { initializeSkills } from '../../../../../../brain/skills/index';
 import { runReActLoop, type ReActStep, type ReActContext, type OperatorTask } from '../../../../../../brain/agents/operator-react';
 import { audit } from '@metahuman/core/audit';
 import { requireOperatorMode } from '../../../middleware/cognitiveModeGuard';
-import { withUserContext } from '../../../middleware/userContext';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
 
 // Initialize skills when module loads
@@ -262,7 +261,8 @@ function streamReActTask(goal: string, audience?: string, context?: string, reas
 }
 
 // Wrap POST with operator mode guard (blocks in emulation mode and for non-owners)
-export const POST = withUserContext(requireOperatorMode(postHandler));
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const POST = requireOperatorMode(postHandler);
 
 /**
  * GET handler - Status and diagnostics

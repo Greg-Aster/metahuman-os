@@ -5,7 +5,6 @@ import {
   type FunctionTrustLevel,
 } from '@metahuman/core/function-memory';
 import { auditAction } from '@metahuman/core/audit';
-import { withUserContext } from '../../middleware/userContext';
 
 /**
  * GET /api/functions
@@ -81,4 +80,5 @@ const getHandler: APIRoute = async ({ request }) => {
 };
 
 // Wrap with user context middleware
-export const GET = withUserContext(getHandler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const GET = getHandler;

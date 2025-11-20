@@ -9,7 +9,9 @@ export async function embedText(
   const provider = opts.provider || 'ollama'
   if (provider === 'ollama') {
     const model = opts.model || 'nomic-embed-text'
-    const res = await ollama.embeddings(model, text)
+    const prompt = typeof text === 'string' ? text : JSON.stringify(text)
+    await ensureEmbeddingModelAvailable(model)
+    const res = await ollama.embeddings(model, prompt)
     return res.embedding
   }
 
@@ -25,6 +27,27 @@ export async function embedText(
   return vec.map(v => v / norm)
 }
 
+/**
+ * Ensure the requested embedding model is available locally.
+ * If missing, automatically pull it once, then mark it verified.
+ */
+const verifiedEmbeddingModels = new Set<string>()
+
+async function ensureEmbeddingModelAvailable(model: string) {
+  if (verifiedEmbeddingModels.has(model)) return
+
+  // Check installed models
+  const models = await ollama.listModels().catch(() => [])
+  const found = models.some(m => m.model === model || m.name === model)
+
+  if (!found) {
+    console.info(`[embeddings] Pulling missing embedding model "${model}" from Ollama...`)
+    await ollama.pullModel(model)
+  }
+
+  verifiedEmbeddingModels.add(model)
+}
+
 export function cosineSimilarity(a: number[], b: number[]): number {
   const n = Math.min(a.length, b.length)
   let dot = 0
@@ -38,4 +61,3 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   const denom = Math.sqrt(na) * Math.sqrt(nb) || 1
   return dot / denom
 }
-

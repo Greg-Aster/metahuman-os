@@ -78,3 +78,98 @@ The new cognitive architecture is designed to be extensible, which means it can 
 *   **Observability**: The system provides detailed metrics for each layer, making it easier to understand how the system is performing and to identify areas for improvement.
 
 This new cognitive architecture is a major step forward in the evolution of MetaHuman OS, and it will enable a more authentic, intelligent, and personal digital consciousness.
+
+## Node-Based Implementation
+
+The three-layer architecture described above is now implemented using a **visual node-based system** that allows you to see, edit, and customize the exact cognitive workflow for each mode.
+
+### From Abstract Layers to Concrete Nodes
+
+Each cognitive layer maps to specific nodes in the execution graph:
+
+**Layer 1 (Subconscious)** → Implemented as:
+- `semantic_search` node (memory retrieval)
+- `conversation_history` node (recent context)
+- `context_builder` node (context assembly)
+- `system_settings` node (persona integration)
+
+**Layer 2 (Personality Core)** → Implemented as:
+- `persona_llm` node (LLM generation)
+- `react_planner` node (reasoning)
+- `response_synthesizer` node (narration)
+
+**Layer 3 (Meta-Cognition)** → Implemented as:
+- `safety_validator` node (safety checks)
+- `response_refiner` node (refinement)
+- `cot_stripper` node (cleanup)
+
+### Visual Workflow Graphs
+
+Each cognitive mode is represented as a **directed graph** stored in JSON:
+
+```
+etc/cognitive-graphs/
+├── emulation-mode.json  (13 nodes, chat-only)
+├── dual-mode.json       (16 nodes, full ReAct)
+└── agent-mode.json      (16 nodes, heuristic routing)
+```
+
+### Advantages of Node-Based Implementation
+
+✅ **Transparency**: See exactly how your messages are processed
+✅ **Customization**: Edit workflows without changing code
+✅ **Modularity**: Compose complex behaviors from simple nodes
+✅ **Debugging**: Inspect each node's inputs/outputs in logs
+✅ **Hot-Reload**: Changes take effect immediately
+✅ **Visual Clarity**: Understand cognitive flow at a glance
+
+## On-Disk Data Structure
+
+MetaHuman OS stores all its data in human-readable formats directly on your local filesystem, organized under your project root. This ensures you own and can inspect all your data. Key directories include:
+
+*   **`persona/`**: Your identity, values, routines, and trust configuration.
+*   **`memory/`**: Time-stamped events (episodic), tasks, curated knowledge, and embedding indexes.
+*   **`brain/`**: Source code for autonomous agents and skills.
+*   **`logs/`**: Append-only audit trails, agent run histories, and sync logs.
+*   **`etc/`**: Runtime configurations for autonomy, audio, and more.
+*   **`out/`**: Generated artifacts like summaries, plans, and exports.
+
+## Technology Stack
+
+MetaHuman OS is built with modern, open-source technologies to ensure transparency and flexibility:
+
+*   **Runtime**: Node.js 18+, TypeScript 5+, ESM modules.
+*   **Data Storage**: JSON/Markdown files on disk (no database server required).
+*   **Web UI**: Astro + Svelte with Tailwind CSS.
+*   **LLM & Embeddings**: Ollama for local model inference.
+*   **Audio**: whisper.cpp, Piper for local speech processing.
+
+### Learn More
+
+For complete details on the node system, available node types, creating custom workflows, and modular ReAct components, see:
+
+**[Node-Based Cognitive System Guide](28-node-based-cognitive-system.md)**
+
+This guide covers:
+- All available node types and their APIs
+- How graphs are executed (topological sorting, data flow)
+- Creating custom workflows
+- Modular scratchpad nodes for ReAct
+- Debugging and performance optimization
+- Best practices for node composition
+
+### Migration Status
+
+The node-based system is **fully operational** for all three cognitive modes:
+
+| Mode | Graph Version | Status |
+|------|--------------|--------|
+| **Emulation** | v1.1 (13 nodes) | ✅ Production Ready |
+| **Dual** | v1.1 (16 nodes) | ✅ Production Ready |
+| **Agent** | v1.0 (16 nodes) | ✅ Production Ready |
+
+The legacy operator code remains as a safety fallback, but all modes now execute via the node pipeline by default. You can switch between node and legacy execution via `etc/runtime.json` configuration.
+
+---
+
+**This completes the cognitive architecture overview. The combination of abstract three-layer design + concrete node-based implementation provides both conceptual clarity and practical flexibility.**

@@ -6,9 +6,8 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getUserContext } from '@metahuman/core/context';
+import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
 import { paths } from '@metahuman/core/paths';
-import { withUserContext } from '../../../middleware/userContext';
 
 interface StagedCodeChange {
   filePath: string;
@@ -23,11 +22,11 @@ interface StagedCodeChange {
   rejectedAt?: string;
 }
 
-const handler: APIRoute = async () => {
+const handler: APIRoute = async ({ cookies }) => {
   try {
-    const ctx = getUserContext();
+    const user = getUserOrAnonymous(cookies);
 
-    if (!ctx || ctx.role === 'anonymous') {
+    if (user.role === 'anonymous') {
       return new Response(
         JSON.stringify({ error: 'Authentication required to view code approvals.' }),
         {
@@ -92,4 +91,5 @@ const handler: APIRoute = async () => {
   }
 };
 
-export const GET = withUserContext(handler);
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+export const GET = handler;
