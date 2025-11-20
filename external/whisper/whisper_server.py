@@ -88,15 +88,37 @@ async def transcribe(file: UploadFile = File(...), language: str = "en"):
         # Read audio data
         audio_data = await file.read()
 
-        # Save to temporary file (faster-whisper needs a file path)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as tmp:
+        # Detect file type and convert WebM to WAV if needed
+        file_ext = Path(file.filename).suffix.lower()
+
+        # Save to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
             tmp.write(audio_data)
             tmp_path = tmp.name
+
+        # Convert WebM to WAV using ffmpeg if needed
+        final_path = tmp_path
+        if file_ext in ['.webm', '.ogg', '.m4a']:
+            wav_path = tmp_path.replace(file_ext, '.wav')
+            try:
+                import subprocess
+                # Convert to WAV using ffmpeg (silent, overwrite)
+                subprocess.run(
+                    ['ffmpeg', '-i', tmp_path, '-ar', '16000', '-ac', '1', '-y', wav_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=True
+                )
+                final_path = wav_path
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                # If ffmpeg fails or isn't installed, try original file anyway
+                print(f"Warning: ffmpeg conversion failed ({e}), trying original file")
+                final_path = tmp_path
 
         try:
             # Transcribe
             segments, info = model.transcribe(
-                tmp_path,
+                final_path,
                 language=language,
                 beam_size=5,
                 vad_filter=True,  # Voice activity detection
@@ -120,8 +142,10 @@ async def transcribe(file: UploadFile = File(...), language: str = "en"):
             })
 
         finally:
-            # Clean up temp file
+            # Clean up temp files
             Path(tmp_path).unlink(missing_ok=True)
+            if final_path != tmp_path:
+                Path(final_path).unlink(missing_ok=True)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

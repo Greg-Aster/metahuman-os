@@ -6,6 +6,9 @@
  */
 
 import type { CognitiveGraph } from './cognitive-graph-schema';
+import { createLogger } from './logger.js';
+
+const log = createLogger('graph-pipeline');
 
 export type ExecutionStatus = 'pending' | 'running' | 'completed' | 'failed';
 
@@ -154,8 +157,19 @@ async function executeNode(
     // Get inputs from connected nodes
     const inputs = getNodeInputs(nodeId, graph, executionState);
 
+    const inputSummary = Array.isArray(inputs)
+      ? inputs.map(i => typeof i === 'object' ? `{${Object.keys(i).join(',')}}` : i)
+      : inputs;
+    log.debug(`   ➤ Node ${nodeId} (${node.type.replace('cognitive/', '')}) START`);
+    log.debug(`     Inputs: ${JSON.stringify(inputSummary).substring(0, 200)}`);
+
     // Execute the node based on its type
     const outputs = await executeNodeByType(node, inputs, contextData);
+
+    const outputSummary = typeof outputs === 'object' ? `{${Object.keys(outputs).join(',')}}` : outputs;
+    const duration = Date.now() - state.startTime!;
+    log.debug(`   ✓ Node ${nodeId} (${node.type.replace('cognitive/', '')}) DONE (${duration}ms)`);
+    log.debug(`     Outputs: ${outputSummary}`);
 
     state.inputs = inputs;
     state.outputs = outputs;
@@ -171,6 +185,7 @@ async function executeNode(
       });
     }
   } catch (error) {
+    console.error(`[GraphExecutor] Node ${nodeId} (${node.type}) FAILED:`, error);
     state.status = 'failed';
     state.error = error as Error;
     state.endTime = Date.now();
@@ -199,7 +214,25 @@ async function executeNodeByType(
 ): Promise<Record<string, any>> {
   const nodeType = node.type.replace('cognitive/', '');
 
-  // Import the real node executors
+  // Check if environment is explicitly set to 'server' in context
+  const forceServerExecution = context.environment === 'server';
+
+  // Check if we're in a browser environment (and not forcing server execution)
+  const isBrowser = typeof window !== 'undefined' && !forceServerExecution;
+
+  if (isBrowser) {
+    // In browser: Use mock executors (visual testing only)
+    log.debug(`     Browser mode: Using mock executor for ${nodeType}`);
+    return {
+      mockOutput: `Mock output from ${nodeType}`,
+      nodeType,
+      executed: true,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  // In Node.js (or forced server mode): Import the real node executors
+  log.debug(`     Server mode: Using real executor for ${nodeType}`);
   const { getNodeExecutor } = await import('./node-executors.js');
 
   // Get the executor for this node type
@@ -235,9 +268,15 @@ export async function executeGraph(
     status: 'running',
   };
 
+  log.info(`🚀 Starting execution: ${graph.name} v${graph.version}`);
+  log.debug(`   Nodes: ${graph.nodes.length}, Links: ${graph.links.length}`);
+  log.debug(`   Cognitive Mode: ${graph.cognitiveMode || 'default'}`);
+  log.debug(`   Context: userId=${contextData.userId}, sessionId=${contextData.sessionId}`);
+
   try {
     // Get execution order
     const executionOrder = topologicalSort(graph);
+    log.debug(`   Execution Order: ${executionOrder.length} nodes`);
 
     // Execute nodes in order
     for (const nodeId of executionOrder) {
@@ -247,6 +286,14 @@ export async function executeGraph(
 
     graphState.status = 'completed';
     graphState.endTime = Date.now();
+
+    // Log execution summary
+    const duration = graphState.endTime - graphState.startTime;
+    const nodeTypes = executionOrder
+      .map(id => graph.nodes.find(n => n.id === id)?.type.replace('cognitive/', ''))
+      .filter(Boolean);
+    log.info(`✅ COMPLETE: ${nodeTypes.length} nodes in ${duration}ms`);
+    log.info(`   Pipeline: ${nodeTypes.join(' → ')}`);
 
     if (eventHandler) {
       eventHandler({
@@ -276,16 +323,22 @@ export async function executeGraph(
  * Get the final output from a graph execution
  */
 export function getGraphOutput(state: GraphExecutionState): any {
-  // Find the terminal node (typically StreamWriter or last node)
+  // Priority 1: Look for stream_writer node (node 16 in dual-mode, node 9 in emulation-mode)
+  let streamWriterOutput: any = null;
   let lastOutput: any = null;
 
-  state.nodes.forEach((nodeState) => {
+  state.nodes.forEach((nodeState, nodeId) => {
     if (nodeState.status === 'completed' && nodeState.outputs) {
+      // Check if this is a stream_writer node
+      if (nodeId === 16 || nodeId === 9 || nodeState.outputs.output || nodeState.outputs.response) {
+        streamWriterOutput = nodeState.outputs;
+      }
       lastOutput = nodeState.outputs;
     }
   });
 
-  return lastOutput;
+  // Return stream_writer output if found, otherwise fall back to last output
+  return streamWriterOutput || lastOutput;
 }
 
 /**

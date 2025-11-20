@@ -1,7 +1,5 @@
 import type { APIRoute } from 'astro';
 import { generateSpeech, generateMultiVoiceSpeech } from '@metahuman/core';
-import { getSession } from '@metahuman/core/sessions';
-import { getUser } from '@metahuman/core/users';
 import { withUserContext } from '../../middleware/userContext';
 
 /**
@@ -38,20 +36,8 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
       });
     }
 
-    // Get user session for profile-aware TTS
-    const sessionCookie = cookies.get('mh_session');
-    let username = 'anonymous';
-
-    if (sessionCookie) {
-      const session = getSession(sessionCookie.value);
-      if (session) {
-        const user = getUser(session.userId);
-        if (user) {
-          username = user.username;
-        }
-      }
-    }
-
+    // User context is automatically set by withUserContext middleware
+    // For guest users viewing other profiles, context.profilePaths points to the viewed profile
     const normalizedProvider = normalizeProvider(provider);
     let audioBuffer: Buffer;
 
@@ -62,7 +48,7 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
         signal: request.signal,
         speakingRate,
         provider: normalizedProvider,
-        username,
+        // No username needed - context handles profile resolution
       });
     } else {
       // Generate speech audio with optional overrides (single voice)
@@ -73,7 +59,7 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
         pitchShift, // RVC-specific
         langCode, // Kokoro-specific language code
         provider: normalizedProvider,
-        username,
+        // No username needed - context handles profile resolution
       });
     }
 

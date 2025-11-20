@@ -64,6 +64,9 @@ export * from './profile';
 export * from './cognitive-graph-schema';
 export * from './graph-executor';
 export * from './node-executors';
+export * from './agent-graph-executor';
+export * from './graph-error-handler';
+export * from './plugin-system';
 
 // Version
 export const VERSION = '0.1.0';

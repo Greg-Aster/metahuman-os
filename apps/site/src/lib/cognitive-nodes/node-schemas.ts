@@ -13,7 +13,12 @@ export type NodeCategory =
   | 'chat'
   | 'model'
   | 'skill'
-  | 'output';
+  | 'output'
+  | 'control_flow'
+  | 'memory'
+  | 'utility'
+  | 'agent'
+  | 'config';
 
 export type SlotType =
   | 'string'
@@ -60,26 +65,88 @@ export const categoryColors = {
   model: { color: '#fb923c', bgColor: '#9a3412' },      // Orange
   skill: { color: '#34d399', bgColor: '#065f46' },      // Emerald
   output: { color: '#ef4444', bgColor: '#991b1b' },     // Red
+  control_flow: { color: '#818cf8', bgColor: '#4338ca' }, // Indigo
+  memory: { color: '#c084fc', bgColor: '#7e22ce' },     // Violet
+  utility: { color: '#94a3b8', bgColor: '#475569' },    // Slate
+  agent: { color: '#22d3ee', bgColor: '#155e75' },      // Cyan
+  config: { color: '#fde047', bgColor: '#854d0e' },     // Yellow
 };
 
 // ============================================================================
 // INPUT NODES
 // ============================================================================
 
+export const MicInputNode: NodeSchema = {
+  id: 'mic_input',
+  name: 'Mic Input',
+  category: 'input',
+  ...categoryColors.input,
+  inputs: [],
+  outputs: [
+    { name: 'audioBuffer', type: 'object', description: 'Raw audio buffer from microphone' },
+    { name: 'audioFormat', type: 'string', description: 'Audio format (wav/webm/mp3)' },
+    { name: 'hasMicInput', type: 'boolean', description: 'Whether mic input is available' },
+  ],
+  properties: {
+    audioFormat: 'wav',
+  },
+  description: 'Captures audio input from microphone for speech recognition',
+};
+
+export const SpeechToTextNode: NodeSchema = {
+  id: 'speech_to_text',
+  name: 'Speech to Text',
+  category: 'input',
+  ...categoryColors.input,
+  inputs: [
+    { name: 'audioBuffer', type: 'object', description: 'Audio buffer to transcribe' },
+  ],
+  outputs: [
+    { name: 'text', type: 'string', description: 'Transcribed text from speech' },
+    { name: 'transcribed', type: 'boolean', description: 'Whether transcription succeeded' },
+    { name: 'audioFormat', type: 'string', description: 'Audio format used' },
+  ],
+  properties: {
+    audioFormat: 'wav',
+  },
+  description: 'Converts speech audio to text using Whisper STT',
+};
+
+export const TextInputNode: NodeSchema = {
+  id: 'text_input',
+  name: 'Text Input',
+  category: 'input',
+  ...categoryColors.input,
+  inputs: [],
+  outputs: [
+    { name: 'text', type: 'string', description: 'Text from chat interface input' },
+    { name: 'hasTextInput', type: 'boolean', description: 'Whether text input is available' },
+  ],
+  properties: {
+    placeholder: 'Enter text...',
+  },
+  description: 'Gateway to chat interface text input - connects to main page text field',
+};
+
 export const UserInputNode: NodeSchema = {
   id: 'user_input',
   name: 'User Input',
   category: 'input',
   ...categoryColors.input,
-  inputs: [],
+  inputs: [
+    { name: 'speech', type: 'object', optional: true, description: 'Transcribed speech input from mic node' },
+    { name: 'text', type: 'string', optional: true, description: 'Direct text input from text input node' },
+  ],
   outputs: [
-    { name: 'message', type: 'string', description: 'Raw user message text' },
+    { name: 'message', type: 'string', description: 'User message (text or transcribed speech)' },
+    { name: 'inputSource', type: 'string', description: 'Input source: "text", "speech", or "chat"' },
     { name: 'sessionId', type: 'string', description: 'Session identifier' },
   ],
   properties: {
     message: '',
+    prioritizeChatInterface: true, // When true, use context.userMessage from chat, when false use inputs
   },
-  description: 'Entry point for user messages',
+  description: 'Unified input node - prioritizes chat interface by default, can accept text/speech from nodes',
 };
 
 export const SessionContextNode: NodeSchema = {
@@ -479,8 +546,43 @@ export const StreamWriterNode: NodeSchema = {
   inputs: [
     { name: 'response', type: 'string' },
   ],
-  outputs: [],
+  outputs: [
+    { name: 'output', type: 'string', description: 'Output text (for chaining to chat view)' },
+  ],
   description: 'Streams response to client (terminal node)',
+};
+
+export const ChatViewNode: NodeSchema = {
+  id: 'chat_view',
+  name: 'Chat View',
+  category: 'output',
+  ...categoryColors.output,
+  inputs: [
+    { name: 'message', type: 'string', optional: true, description: 'Direct message to display' },
+    { name: 'trigger', type: 'any', optional: true, description: 'Trigger to refresh from conversation' },
+  ],
+  outputs: [],
+  properties: {
+    mode: 'direct', // 'direct' | 'trigger'
+    maxMessages: 5,
+  },
+  description: 'Displays chat messages visually - direct input or triggered refresh from conversation history',
+};
+
+export const TTSNode: NodeSchema = {
+  id: 'tts',
+  name: 'Text to Speech',
+  category: 'output',
+  ...categoryColors.output,
+  inputs: [
+    { name: 'text', type: 'string', description: 'Text to speak' },
+  ],
+  outputs: [],
+  properties: {
+    provider: '', // Empty = use default
+    autoPlay: true,
+  },
+  description: 'Converts text to speech using the main interface TTS system',
 };
 
 // ============================================================================
@@ -625,9 +727,564 @@ export const ConversationalResponseNode: NodeSchema = {
   description: 'Generates conversational response (terminal skill)',
 };
 
+// ============================================================================
+// CONTROL FLOW NODES
+// ============================================================================
+
+export const LoopControllerNode: NodeSchema = {
+  id: 'loop_controller',
+  name: 'Loop Controller',
+  category: 'control_flow',
+  ...categoryColors.control_flow,
+  inputs: [
+    { name: 'input', type: 'any' },
+  ],
+  outputs: [
+    { name: 'iterations', type: 'array', description: 'Array of iteration results' },
+    { name: 'finalOutput', type: 'any', description: 'Final output after loop completes' },
+    { name: 'completed', type: 'boolean', description: 'Whether loop completed normally' },
+  ],
+  properties: {
+    maxIterations: 10,
+    completionCheck: 'completed',
+  },
+  description: 'Iterative execution with max iterations and completion detection',
+};
+
+export const ConditionalBranchNode: NodeSchema = {
+  id: 'conditional_branch',
+  name: 'Conditional Branch',
+  category: 'control_flow',
+  ...categoryColors.control_flow,
+  inputs: [
+    { name: 'input', type: 'any' },
+  ],
+  outputs: [
+    { name: 'conditionMet', type: 'boolean' },
+    { name: 'trueOutput', type: 'any', description: 'Output if condition is true' },
+    { name: 'falseOutput', type: 'any', description: 'Output if condition is false' },
+  ],
+  properties: {
+    condition: 'value',
+    operator: '==', // ==, !=, >, <, exists, truthy, falsy
+    compareValue: null,
+  },
+  description: 'Routes execution based on a condition (if/else logic)',
+};
+
+export const SwitchNode: NodeSchema = {
+  id: 'switch',
+  name: 'Switch',
+  category: 'control_flow',
+  ...categoryColors.control_flow,
+  inputs: [
+    { name: 'input', type: 'any' },
+  ],
+  outputs: [
+    { name: 'switchValue', type: 'any' },
+    { name: 'matchedCase', type: 'string' },
+    { name: 'output', type: 'any' },
+  ],
+  properties: {
+    switchField: 'mode',
+    cases: {},
+    defaultCase: 'default',
+  },
+  description: 'Multi-way routing based on a value',
+};
+
+export const ForEachNode: NodeSchema = {
+  id: 'for_each',
+  name: 'For Each',
+  category: 'control_flow',
+  ...categoryColors.control_flow,
+  inputs: [
+    { name: 'input', type: 'object' },
+  ],
+  outputs: [
+    { name: 'results', type: 'array', description: 'Array of iteration results' },
+    { name: 'count', type: 'number', description: 'Number of items processed' },
+  ],
+  properties: {
+    arrayField: 'items',
+  },
+  description: 'Iterates over an array, executing logic for each element',
+};
+
+// ============================================================================
+// MEMORY CURATION NODES
+// ============================================================================
+
+export const WeightedSamplerNode: NodeSchema = {
+  id: 'weighted_sampler',
+  name: 'Weighted Sampler',
+  category: 'memory',
+  ...categoryColors.memory,
+  inputs: [],
+  outputs: [
+    { name: 'memoryPaths', type: 'array', description: 'Sampled memory file paths' },
+    { name: 'count', type: 'number' },
+  ],
+  properties: {
+    decayFactor: 14, // Days for 50% weight reduction
+    sampleSize: 5,
+  },
+  description: 'Samples memories using exponential decay weighting',
+};
+
+export const AssociativeChainNode: NodeSchema = {
+  id: 'associative_chain',
+  name: 'Associative Chain',
+  category: 'memory',
+  ...categoryColors.memory,
+  inputs: [
+    { name: 'startMemory', type: 'memory', description: 'Starting memory object' },
+  ],
+  outputs: [
+    { name: 'chain', type: 'array', description: 'Chain of associated memories' },
+    { name: 'keywords', type: 'array', description: 'Keywords used for chaining' },
+  ],
+  properties: {
+    chainLength: 5,
+  },
+  description: 'Follows keyword connections between memories',
+};
+
+export const MemoryFilterNode: NodeSchema = {
+  id: 'memory_filter',
+  name: 'Memory Filter',
+  category: 'memory',
+  ...categoryColors.memory,
+  inputs: [
+    { name: 'memories', type: 'array' },
+  ],
+  outputs: [
+    { name: 'memories', type: 'array', description: 'Filtered memories' },
+    { name: 'count', type: 'number' },
+  ],
+  properties: {
+    filterType: null, // e.g., 'conversation', 'inner_dialogue'
+    filterTags: [],
+    startDate: null,
+    endDate: null,
+    limit: 100,
+  },
+  description: 'Filters memories by type, tags, or date range',
+};
+
+// ============================================================================
+// UTILITY NODES
+// ============================================================================
+
+export const JSONParserNode: NodeSchema = {
+  id: 'json_parser',
+  name: 'JSON Parser',
+  category: 'utility',
+  ...categoryColors.utility,
+  inputs: [
+    { name: 'text', type: 'string', description: 'Text containing JSON' },
+  ],
+  outputs: [
+    { name: 'data', type: 'object', description: 'Parsed JSON object' },
+    { name: 'success', type: 'boolean' },
+  ],
+  properties: {
+    fallback: null,
+  },
+  description: 'Extracts JSON from text (useful for parsing LLM responses)',
+};
+
+export const TextTemplateNode: NodeSchema = {
+  id: 'text_template',
+  name: 'Text Template',
+  category: 'utility',
+  ...categoryColors.utility,
+  inputs: [
+    { name: 'variables', type: 'object', description: 'Variables for interpolation' },
+  ],
+  outputs: [
+    { name: 'text', type: 'string', description: 'Interpolated text' },
+  ],
+  properties: {
+    template: '',
+  },
+  description: 'String interpolation with {{variable}} substitution',
+};
+
+export const DataTransformNode: NodeSchema = {
+  id: 'data_transform',
+  name: 'Data Transform',
+  category: 'utility',
+  ...categoryColors.utility,
+  inputs: [
+    { name: 'data', type: 'array' },
+  ],
+  outputs: [
+    { name: 'result', type: 'any', description: 'Transformed data' },
+    { name: 'count', type: 'number' },
+  ],
+  properties: {
+    operation: 'map', // map, filter, reduce, unique, sort
+    field: null,
+    condition: null,
+    reduceOperation: 'count',
+  },
+  description: 'Map/filter/reduce operations on arrays',
+};
+
+export const CacheNode: NodeSchema = {
+  id: 'cache',
+  name: 'Cache',
+  category: 'utility',
+  ...categoryColors.utility,
+  inputs: [
+    { name: 'value', type: 'any' },
+  ],
+  outputs: [
+    { name: 'value', type: 'any' },
+    { name: 'hit', type: 'boolean', description: 'Whether cache was hit' },
+  ],
+  properties: {
+    key: 'default',
+    ttl: 60000, // 1 minute in milliseconds
+    operation: 'get', // get, set, clear, clear_all
+  },
+  description: 'Stores intermediate results with TTL',
+};
+
+// ============================================================================
+// ADVANCED OPERATOR NODES
+// ============================================================================
+
+export const PlanParserNode: NodeSchema = {
+  id: 'plan_parser',
+  name: 'Plan Parser',
+  category: 'operator',
+  ...categoryColors.operator,
+  inputs: [
+    { name: 'plan', type: 'string', description: 'ReAct-style planning text' },
+  ],
+  outputs: [
+    { name: 'thought', type: 'string' },
+    { name: 'action', type: 'string' },
+    { name: 'actionInput', type: 'string' },
+    { name: 'respond', type: 'string', description: 'Final answer if present' },
+    { name: 'parsed', type: 'boolean' },
+  ],
+  properties: {
+    format: 'react', // react, json, freeform
+  },
+  description: 'Parses ReAct-style planning output into structured components',
+};
+
+export const ScratchpadManagerNode: NodeSchema = {
+  id: 'scratchpad_manager',
+  name: 'Scratchpad Manager',
+  category: 'operator',
+  ...categoryColors.operator,
+  inputs: [
+    { name: 'step', type: 'object', optional: true, description: 'Step to append' },
+  ],
+  outputs: [
+    { name: 'scratchpad', type: 'array', description: 'Current scratchpad state' },
+    { name: 'stepCount', type: 'number' },
+  ],
+  properties: {
+    operation: 'append', // append, get, clear, trim
+    maxSteps: 10,
+  },
+  description: 'Manages ReAct scratchpad state',
+};
+
+export const ErrorRecoveryNode: NodeSchema = {
+  id: 'error_recovery',
+  name: 'Error Recovery',
+  category: 'operator',
+  ...categoryColors.operator,
+  inputs: [
+    { name: 'error', type: 'string' },
+    { name: 'skillId', type: 'string', optional: true },
+  ],
+  outputs: [
+    { name: 'errorType', type: 'string', description: 'Categorized error type' },
+    { name: 'suggestions', type: 'array', description: 'Recovery suggestions' },
+    { name: 'shouldRetry', type: 'boolean' },
+  ],
+  properties: {
+    maxRetries: 3,
+  },
+  description: 'Provides smart retry suggestions based on error type',
+};
+
+export const StuckDetectorNode: NodeSchema = {
+  id: 'stuck_detector',
+  name: 'Stuck Detector',
+  category: 'operator',
+  ...categoryColors.operator,
+  inputs: [
+    { name: 'scratchpad', type: 'array' },
+  ],
+  outputs: [
+    { name: 'isStuck', type: 'boolean' },
+    { name: 'consecutiveFailures', type: 'number' },
+    { name: 'diagnosis', type: 'string' },
+    { name: 'suggestion', type: 'string' },
+  ],
+  properties: {
+    threshold: 3, // Number of consecutive failures
+  },
+  description: 'Detects failure loops and repeated unsuccessful actions',
+};
+
+// ============================================================================
+// AGENT NODES
+// ============================================================================
+
+export const MemoryLoaderNode: NodeSchema = {
+  id: 'memory_loader',
+  name: 'Memory Loader',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [],
+  outputs: [
+    { name: 'memories', type: 'array', description: 'Array of loaded memory objects' },
+    { name: 'count', type: 'number', description: 'Number of memories loaded' },
+    { name: 'hasMore', type: 'boolean', description: 'Whether more memories exist' },
+  ],
+  properties: {
+    limit: 10,
+    onlyUnprocessed: true,
+  },
+  description: 'Loads episodic memories from disk, optionally filtering for unprocessed items',
+};
+
+export const MemorySaverNode: NodeSchema = {
+  id: 'memory_saver',
+  name: 'Memory Saver',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [
+    { name: 'memory', type: 'memory', description: 'Memory object to save (must include path)' },
+  ],
+  outputs: [
+    { name: 'success', type: 'boolean' },
+    { name: 'path', type: 'string', description: 'Path where memory was saved' },
+    { name: 'error', type: 'string', optional: true },
+  ],
+  properties: {
+    updateOnly: true, // Merge with existing data
+  },
+  description: 'Saves enriched memory data back to disk',
+};
+
+export const LLMEnricherNode: NodeSchema = {
+  id: 'llm_enricher',
+  name: 'LLM Enricher',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [
+    { name: 'memory', type: 'memory', description: 'Memory object to enrich' },
+  ],
+  outputs: [
+    { name: 'memory', type: 'memory', description: 'Enriched memory with tags and entities' },
+    { name: 'success', type: 'boolean' },
+    { name: 'error', type: 'string', optional: true },
+  ],
+  properties: {
+    promptTemplate: `Analyze this memory and extract relevant tags and entities.
+
+Memory: {content}
+
+Return a JSON object with:
+- tags: array of relevant keyword tags (3-7 tags)
+- entities: array of entities mentioned (people, places, things)
+
+Format: {"tags": [...], "entities": [...]}`,
+  },
+  description: 'Uses LLM to extract tags and entities from memory content',
+};
+
+export const AgentTimerNode: NodeSchema = {
+  id: 'agent_timer',
+  name: 'Agent Timer',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [],
+  outputs: [
+    { name: 'currentTime', type: 'number', description: 'Current timestamp in milliseconds' },
+    { name: 'interval', type: 'number', description: 'Configured interval in milliseconds' },
+    { name: 'nextRun', type: 'number', description: 'Timestamp for next scheduled run' },
+  ],
+  properties: {
+    intervalMs: 60000, // Default 1 minute
+  },
+  description: 'Provides timing information for scheduled agent execution',
+};
+
+// ============================================================================
+// CONFIGURATION NODES
+// ============================================================================
+
+export const PersonaLoaderNode: NodeSchema = {
+  id: 'persona_loader',
+  name: 'Persona Loader',
+  category: 'config',
+  ...categoryColors.config,
+  inputs: [],
+  outputs: [
+    { name: 'persona', type: 'object', description: 'Full persona object' },
+    { name: 'identity', type: 'object', description: 'Identity information' },
+    { name: 'values', type: 'object', description: 'Core values' },
+    { name: 'goals', type: 'object', description: 'Goals' },
+    { name: 'success', type: 'boolean' },
+  ],
+  properties: {},
+  description: 'Loads persona core configuration from disk',
+};
+
+export const PersonaSaverNode: NodeSchema = {
+  id: 'persona_saver',
+  name: 'Persona Saver',
+  category: 'config',
+  ...categoryColors.config,
+  inputs: [
+    { name: 'persona', type: 'object', description: 'Persona object to save' },
+  ],
+  outputs: [
+    { name: 'success', type: 'boolean' },
+    { name: 'timestamp', type: 'string', description: 'Save timestamp' },
+  ],
+  properties: {},
+  description: 'Saves persona core configuration to disk',
+};
+
+export const TrustLevelReaderNode: NodeSchema = {
+  id: 'trust_level_reader',
+  name: 'Trust Level Reader',
+  category: 'config',
+  ...categoryColors.config,
+  inputs: [],
+  outputs: [
+    { name: 'trustLevel', type: 'string', description: 'Current trust level' },
+    { name: 'availableModes', type: 'array', description: 'Available trust levels' },
+    { name: 'description', type: 'string', description: 'Mode description' },
+    { name: 'success', type: 'boolean' },
+  ],
+  properties: {},
+  description: 'Reads current trust level from decision rules',
+};
+
+export const TrustLevelWriterNode: NodeSchema = {
+  id: 'trust_level_writer',
+  name: 'Trust Level Writer',
+  category: 'config',
+  ...categoryColors.config,
+  inputs: [
+    { name: 'trustLevel', type: 'string', description: 'New trust level' },
+  ],
+  outputs: [
+    { name: 'success', type: 'boolean' },
+    { name: 'trustLevel', type: 'string' },
+    { name: 'timestamp', type: 'string' },
+  ],
+  properties: {},
+  description: 'Sets trust level in decision rules',
+};
+
+export const DecisionRulesLoaderNode: NodeSchema = {
+  id: 'decision_rules_loader',
+  name: 'Decision Rules Loader',
+  category: 'config',
+  ...categoryColors.config,
+  inputs: [],
+  outputs: [
+    { name: 'rules', type: 'object', description: 'Full decision rules object' },
+    { name: 'trustLevel', type: 'string' },
+    { name: 'hardRules', type: 'array' },
+    { name: 'softPreferences', type: 'array' },
+    { name: 'success', type: 'boolean' },
+  ],
+  properties: {},
+  description: 'Loads decision rules configuration',
+};
+
+export const DecisionRulesSaverNode: NodeSchema = {
+  id: 'decision_rules_saver',
+  name: 'Decision Rules Saver',
+  category: 'config',
+  ...categoryColors.config,
+  inputs: [
+    { name: 'rules', type: 'object', description: 'Decision rules object to save' },
+  ],
+  outputs: [
+    { name: 'success', type: 'boolean' },
+    { name: 'timestamp', type: 'string' },
+  ],
+  properties: {},
+  description: 'Saves decision rules configuration',
+};
+
+export const IdentityExtractorNode: NodeSchema = {
+  id: 'identity_extractor',
+  name: 'Identity Extractor',
+  category: 'config',
+  ...categoryColors.config,
+  inputs: [
+    { name: 'persona', type: 'object', optional: true, description: 'Persona object (loads if not provided)' },
+  ],
+  outputs: [
+    { name: 'value', type: 'any', description: 'Extracted field value' },
+    { name: 'success', type: 'boolean' },
+  ],
+  properties: {
+    field: 'all', // Specific field to extract (name, role, etc.) or 'all'
+  },
+  description: 'Extracts specific identity fields from persona',
+};
+
+export const ValueManagerNode: NodeSchema = {
+  id: 'value_manager',
+  name: 'Value Manager',
+  category: 'config',
+  ...categoryColors.config,
+  inputs: [
+    { name: 'valueData', type: 'object', optional: true, description: 'Value data for add/remove/update' },
+  ],
+  outputs: [
+    { name: 'values', type: 'array', description: 'Current values array' },
+    { name: 'success', type: 'boolean' },
+  ],
+  properties: {
+    operation: 'get', // get, add, remove, update
+  },
+  description: 'Manages core values (CRUD operations)',
+};
+
+export const GoalManagerNode: NodeSchema = {
+  id: 'goal_manager',
+  name: 'Goal Manager',
+  category: 'config',
+  ...categoryColors.config,
+  inputs: [
+    { name: 'goalData', type: 'object', optional: true, description: 'Goal data for add/remove/update' },
+  ],
+  outputs: [
+    { name: 'goals', type: 'array', description: 'Current goals array' },
+    { name: 'success', type: 'boolean' },
+  ],
+  properties: {
+    operation: 'get', // get, add, remove, update
+    scope: 'shortTerm', // shortTerm, longTerm
+  },
+  description: 'Manages goals (CRUD operations)',
+};
+
 // Export all schemas as a registry
 export const nodeSchemas: NodeSchema[] = [
   // Input
+  MicInputNode,
+  SpeechToTextNode,
+  TextInputNode,
   UserInputNode,
   SessionContextNode,
   SystemSettingsNode,
@@ -663,6 +1320,8 @@ export const nodeSchemas: NodeSchema[] = [
   MemoryCaptureNode,
   AuditLoggerNode,
   StreamWriterNode,
+  ChatViewNode,
+  TTSNode,
 
   // Skills
   FsReadNode,
@@ -674,6 +1333,46 @@ export const nodeSchemas: NodeSchema[] = [
   SearchIndexNode,
   WebSearchNode,
   ConversationalResponseNode,
+
+  // Control Flow
+  LoopControllerNode,
+  ConditionalBranchNode,
+  SwitchNode,
+  ForEachNode,
+
+  // Memory Curation
+  WeightedSamplerNode,
+  AssociativeChainNode,
+  MemoryFilterNode,
+
+  // Utility
+  JSONParserNode,
+  TextTemplateNode,
+  DataTransformNode,
+  CacheNode,
+
+  // Advanced Operator
+  PlanParserNode,
+  ScratchpadManagerNode,
+  ErrorRecoveryNode,
+  StuckDetectorNode,
+
+  // Agent
+  MemoryLoaderNode,
+  MemorySaverNode,
+  LLMEnricherNode,
+  AgentTimerNode,
+
+  // Configuration
+  PersonaLoaderNode,
+  PersonaSaverNode,
+  TrustLevelReaderNode,
+  TrustLevelWriterNode,
+  DecisionRulesLoaderNode,
+  DecisionRulesSaverNode,
+  IdentityExtractorNode,
+  ValueManagerNode,
+  GoalManagerNode,
 ];
 
 // Helper to get schema by ID

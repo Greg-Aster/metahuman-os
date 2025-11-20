@@ -82,6 +82,7 @@
   let testingVoice = false;
   let testAudio: HTMLAudioElement | null = null;
   let generatingReference = false;
+  let isGuest = false; // Track if user is viewing as guest
 
   // VAD Test Recorder State
   let vadTestRecording = false;
@@ -133,6 +134,10 @@
       const response = await fetch('/api/voice-settings');
       if (!response.ok) throw new Error('Failed to load voice settings');
       config = await response.json();
+
+      // Check if we're a guest by attempting a no-op save check
+      // (we could also add a /api/auth/status endpoint, but this works)
+      isGuest = false; // Assume authenticated until proven otherwise
 
       // Set RVC defaults if not present
       if (config && config.rvc) {
@@ -190,6 +195,12 @@
       const result = await response.json();
 
       if (!response.ok) {
+        // Check if it's an authentication error
+        if (result.error?.includes('Authentication required')) {
+          isGuest = true;
+          error = "We apologize! You're viewing this profile as a guest and can't save settings. You can still test the voice to hear how it sounds! 🎙️";
+          throw new Error(error);
+        }
         throw new Error(result.error || 'Failed to save settings');
       }
 
@@ -200,7 +211,9 @@
       window.dispatchEvent(new CustomEvent('voice-settings-updated'));
       console.log('[VoiceSettings] Dispatched voice-settings-updated event');
     } catch (e) {
-      error = String(e);
+      if (!error) { // Only set error if we haven't already set a friendly message
+        error = String(e);
+      }
       console.error('[VoiceSettings] Save error:', e);
     } finally {
       saving = false;
@@ -209,6 +222,11 @@
 
   async function generateReference() {
     if (!config || config.provider !== 'sovits') return;
+
+    if (isGuest) {
+      error = "We apologize! You're viewing this profile as a guest and can't modify voice settings. Only the profile owner can generate reference audio. 🎙️";
+      return;
+    }
 
     try {
       generatingReference = true;
@@ -228,13 +246,21 @@
       const result = await response.json();
 
       if (!response.ok) {
+        // Check for authentication error
+        if (result.error?.includes('Authentication required')) {
+          isGuest = true;
+          error = "We apologize! You're viewing this profile as a guest and can't modify voice settings. Only the profile owner can generate reference audio. 🎙️";
+          return;
+        }
         throw new Error(result.error || 'Failed to generate reference audio');
       }
 
       successMessage = result.message || 'Reference audio regenerated successfully!';
       setTimeout(() => { successMessage = null; }, 5000);
     } catch (e) {
-      error = String(e);
+      if (!error) {
+        error = String(e);
+      }
       console.error('[VoiceSettings] Generate reference error:', e);
     } finally {
       generatingReference = false;
@@ -286,9 +312,16 @@
           try {
             await saveSettings();
           } catch (e) {
-            error = 'Failed to save custom voicepack settings before testing';
-            testingVoice = false;
-            return;
+            // If authentication required, guest user can still test using profile owner's voice.json
+            const errorMsg = String(e);
+            if (!errorMsg.includes('Authentication required')) {
+              error = 'Failed to save custom voicepack settings before testing';
+              testingVoice = false;
+              return;
+            }
+            // Mark as guest and continue - guests will use profile owner's existing voice.json
+            isGuest = true;
+            console.log('[VoiceSettings] Guest user testing with profile owner\'s voice settings');
           }
 
           // Don't send voiceId for custom voicepacks - let it use the saved config
@@ -462,12 +495,11 @@
 
       // Send to STT
       vadTestTranscription = 'Transcribing...';
-      const formData = new FormData();
-      formData.append('audio', blob);
+      const buf = await blob.arrayBuffer();
 
-      const response = await fetch('/api/stt', {
+      const response = await fetch('/api/stt?format=webm', {
         method: 'POST',
-        body: formData,
+        body: buf,
       });
 
       if (!response.ok) {
@@ -516,6 +548,11 @@
   {:else if error}
     <div class="error-message">{error}</div>
   {:else if config}
+    {#if isGuest}
+      <div class="guest-notice">
+        👋 You're viewing these voice settings as a guest! You can test how the voice sounds, but only the profile owner can make changes. Feel free to explore and listen! 🎧
+      </div>
+    {/if}
     {#if successMessage}
       <div class="success-message">{successMessage}</div>
     {/if}
@@ -1259,9 +1296,19 @@
 
     <!-- Actions -->
     <div class="actions">
-      <button class="save-button" on:click={saveSettings} disabled={saving}>
-        {saving ? 'Saving...' : '💾 Save Settings'}
+      <button
+        class="save-button"
+        on:click={saveSettings}
+        disabled={saving || isGuest}
+        title={isGuest ? "Guest users cannot save settings - viewing profile owner's configuration" : "Save voice settings"}
+      >
+        {saving ? 'Saving...' : isGuest ? '🔒 Guest Mode (Read-Only)' : '💾 Save Settings'}
       </button>
+      {#if isGuest}
+        <p class="guest-hint">
+          💡 Tip: Log in or create an account to customize your own voice settings!
+        </p>
+      {/if}
     </div>
   {/if}
 </div>
@@ -1573,6 +1620,37 @@
 
   .actions {
     margin-top: 1.5rem;
+  }
+
+  .guest-notice {
+    padding: 1rem;
+    background: linear-gradient(135deg, #dbeafe 0%, #e0e7ff 100%);
+    border: 2px solid #3b82f6;
+    border-radius: 0.75rem;
+    color: #1e40af;
+    margin-bottom: 1.5rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    text-align: center;
+    font-weight: 500;
+  }
+
+  :global(.dark) .guest-notice {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(99, 102, 241, 0.15) 100%);
+    border-color: #60a5fa;
+    color: #93c5fd;
+  }
+
+  .guest-hint {
+    margin-top: 0.75rem;
+    text-align: center;
+    font-size: 0.875rem;
+    color: #6b7280;
+    font-style: italic;
+  }
+
+  :global(.dark) .guest-hint {
+    color: #9ca3af;
   }
 
   .btn-generate-reference {

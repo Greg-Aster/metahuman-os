@@ -10,6 +10,8 @@ import { paths, getProfilePaths } from './paths.js';
 import { getUserContext } from './context.js';
 import { audit } from './audit.js';
 import { PiperService } from './tts/providers/piper-service.js';
+import { createLogger } from './logger.js';
+const log = createLogger('tts');
 import { SoVITSService } from './tts/providers/gpt-sovits-service.js';
 import { RVCService } from './tts/providers/rvc-service.js';
 import { KokoroService } from './tts/providers/kokoro-service.js';
@@ -59,13 +61,19 @@ function loadUserConfig(username?: string): VoiceConfig {
   // Always start with global config as base
   const globalConfig = loadRawConfig();
 
-  // If no username, return global config
-  if (!username || username === 'anonymous') {
+  // Check if we have user context (e.g., guest viewing another profile)
+  const userContext = getUserContext();
+
+  // Use context's profilePaths if available (for guest users viewing other profiles)
+  // Otherwise construct from username parameter
+  const userConfigPath = userContext?.profilePaths?.voiceConfig ||
+    (username && username !== 'anonymous' ? getProfilePaths(username).voiceConfig : null);
+
+  // If no config path or username is anonymous with no context, return global config
+  if (!userConfigPath) {
     return globalConfig;
   }
 
-  // Check for user-specific config
-  const userConfigPath = getProfilePaths(username).voiceConfig;
   if (!fs.existsSync(userConfigPath)) {
     // No user config, use global
     return globalConfig;
@@ -101,7 +109,7 @@ function loadUserConfig(username?: string): VoiceConfig {
       merged.cache = { ...merged.cache, ...userConfig.cache };
     }
 
-    console.log('[TTS] Loaded user-specific config for', username, '- provider:', merged.tts.provider);
+    log.debug(' Loaded user-specific config for', username, '- provider:', merged.tts.provider);
 
     return merged;
   } catch (error) {
@@ -120,9 +128,8 @@ function resolveConfigPaths(rawConfig: VoiceConfig, username?: string): VoiceCon
 
   // Get user context for profile-aware path resolution
   const userContext = getUserContext();
-  const activeUsername = username || userContext?.username;
 
-  console.log('[TTS] resolveConfigPaths:', { username, userContext, activeUsername });
+  log.debug(' resolveConfigPaths:', { username, userContext });
 
   // Resolve template variables in paths
   const resolvePath = (maybePath: string | undefined): string | undefined => {
@@ -133,8 +140,12 @@ function resolveConfigPaths(rawConfig: VoiceConfig, username?: string): VoiceCon
 
     // Replace {PROFILE_DIR} with user-specific profile directory
     if (resolvedPath.includes('{PROFILE_DIR}')) {
-      if (activeUsername) {
-        const profilePaths = getProfilePaths(activeUsername);
+      // Prefer context's profilePaths (handles guest users viewing other profiles)
+      // Fallback to username parameter, then to global out directory
+      if (userContext?.profilePaths) {
+        resolvedPath = resolvedPath.replace(/\{PROFILE_DIR\}/g, userContext.profilePaths.root);
+      } else if (username) {
+        const profilePaths = getProfilePaths(username);
         resolvedPath = resolvedPath.replace(/\{PROFILE_DIR\}/g, profilePaths.root);
       } else {
         // Fallback: use global out directory if no user context
@@ -195,7 +206,7 @@ export function createTTSService(provider?: 'piper' | 'gpt-sovits' | 'rvc' | 'ko
   const cfg = resolveConfigPaths(rawConfig, activeUsername);
   const selectedProvider = provider || cfg.tts.provider;
 
-  console.log('[TTS] createTTSService:', {
+  log.debug(' createTTSService:', {
     selectedProvider,
     activeUsername,
     rvcConfig: cfg.tts.rvc,
@@ -210,7 +221,7 @@ export function createTTSService(provider?: 'piper' | 'gpt-sovits' | 'rvc' | 'ko
   const runningServers = getRunningServers();
 
   if (runningServers.length > 0) {
-    console.log('[TTS] Running servers detected:', runningServers);
+    log.debug(' Running servers detected:', runningServers);
 
     // Stop servers that don't match the selected provider
     const serversToStop = runningServers.filter(p => p !== selectedProvider);
