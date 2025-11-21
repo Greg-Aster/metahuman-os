@@ -717,10 +717,13 @@ let reasoningStages: ReasoningStage[] = [];
 
   // Load chat history from episodic memory for the current mode
   async function loadHistoryForMode() {
+    console.log(`[ChatInterface] loadHistoryForMode called with mode: ${mode}`);
     try {
       const res = await fetch(`/api/chat/history?mode=${mode}&limit=60`);
+      console.log(`[ChatInterface] Fetched history for mode=${mode}, status:`, res.status);
       if (!res.ok) return;
       const data = await res.json();
+      console.log(`[ChatInterface] Loaded ${data.messages?.length || 0} messages for mode=${mode}`);
       if (Array.isArray(data.messages)) {
         // Merge server history with any locally cached assistant replies
         const cached = loadSessionFromStorage();

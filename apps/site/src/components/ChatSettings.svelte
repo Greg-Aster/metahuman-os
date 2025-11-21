@@ -17,6 +17,8 @@
   let maxContextChars = 900;
   let maxHistoryMessages = 30;
   let userInputPriority = true;
+  let innerDialogHistoryLimit = 80;
+  let innerDialogHistoryDays = 7;
 
   onMount(async () => {
     await loadSettings();
@@ -41,6 +43,8 @@
         maxContextChars = settings.maxContextChars;
         maxHistoryMessages = settings.maxHistoryMessages;
         userInputPriority = settings.userInputPriority;
+        innerDialogHistoryLimit = settings.innerDialogHistoryLimit ?? 80;
+        innerDialogHistoryDays = settings.innerDialogHistoryDays ?? 7;
       }
     } catch (error) {
       console.error('Failed to load chat settings:', error);
@@ -61,6 +65,8 @@
         maxContextChars,
         maxHistoryMessages,
         userInputPriority,
+        innerDialogHistoryLimit,
+        innerDialogHistoryDays,
       };
 
       const res = await fetch('/api/chat-settings', {
@@ -285,6 +291,41 @@
           Prioritize User Input
           <span class="help">Always focus on current question over context</span>
         </label>
+      </div>
+
+      <!-- Inner Dialog History Settings -->
+      <h4 style="margin-top: 1.5rem;">Inner Dialog Display</h4>
+
+      <!-- Inner Dialog History Limit -->
+      <div class="setting-group">
+        <label>
+          Inner Dialog Messages: {innerDialogHistoryLimit}
+          <span class="help">Max messages (reflections/dreams) to display in Inner Dialog tab</span>
+        </label>
+        <input
+          type="range"
+          min="20"
+          max="500"
+          step="10"
+          bind:value={innerDialogHistoryLimit}
+          on:change={saveSettings}
+        />
+      </div>
+
+      <!-- Inner Dialog History Days -->
+      <div class="setting-group">
+        <label>
+          Inner Dialog History: {innerDialogHistoryDays} days
+          <span class="help">Days of audit logs to scan for reflections/dreams</span>
+        </label>
+        <input
+          type="range"
+          min="1"
+          max="365"
+          step="1"
+          bind:value={innerDialogHistoryDays}
+          on:change={saveSettings}
+        />
       </div>
 
       {#if saving}

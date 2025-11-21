@@ -12,7 +12,7 @@ export interface UserContext {
   userId: string;
   username: string;
   role: 'owner' | 'standard' | 'guest' | 'anonymous';
-  profilePaths: ReturnType<typeof getProfilePaths>;
+  profilePaths?: ReturnType<typeof getProfilePaths>; // Undefined for anonymous users
   systemPaths: typeof systemPaths;
   activeProfile?: string; // Selected profile for guest users
 }
@@ -45,12 +45,22 @@ export function withUserContext<T>(
   user: { userId: string; username: string; role: string; activeProfile?: string },
   fn: () => T | Promise<T>
 ): Promise<T> {
-  // For guests with an active profile, use that profile's paths
-  // Otherwise use the user's own username
-  const profileUser =
-    user.activeProfile && user.role !== 'owner' ? user.activeProfile : user.username;
+  // Anonymous users don't have profile paths - they only get system paths
+  let profilePaths: ReturnType<typeof getProfilePaths> | undefined;
 
-  const profilePaths = getProfilePaths(profileUser);
+  if (user.role !== 'anonymous') {
+    // Safety check: ensure username is defined before accessing profile paths
+    if (!user.username) {
+      throw new Error(`Invalid user context: username is undefined for user ${user.userId} with role ${user.role}`);
+    }
+
+    // For guests with an active profile, use that profile's paths
+    // Otherwise use the user's own username
+    const profileUser =
+      user.activeProfile && user.role !== 'owner' ? user.activeProfile : user.username;
+    profilePaths = getProfilePaths(profileUser);
+  }
+
   const context: UserContext = {
     userId: user.userId,
     username: user.username,
@@ -85,7 +95,9 @@ export function setUserContext(
   username: string,
   role: 'owner' | 'standard' | 'guest' | 'anonymous'
 ): void {
-  const profilePaths = getProfilePaths(username);
+  // Anonymous users don't have profile paths
+  const profilePaths = role !== 'anonymous' ? getProfilePaths(username) : undefined;
+
   const context: UserContext = {
     userId,
     username,

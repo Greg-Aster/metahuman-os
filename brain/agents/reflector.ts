@@ -1,19 +1,18 @@
 
 import {
-  callLLM,
-  type RouterMessage,
-  captureEvent,
   searchMemory,
   paths,
   audit,
   listActiveTasks,
-  loadPersonaCore,
   ollama,
   acquireLock,
   isLocked,
   initGlobalLogger,
   listUsers,
   withUserContext,
+  executeGraph,
+  validateCognitiveGraph,
+  type CognitiveGraph,
 } from '../../packages/core/src/index';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -24,6 +23,16 @@ const technicalKeywords = [
   'llm', 'ollama', 'typescript', 'package.json', 'astro', 'dev server',
   'audit', 'persona', 'memory system', 'cli', 'codebase', 'development'
 ];
+
+/**
+ * Load reflector cognitive graph
+ */
+async function loadReflectorGraph(): Promise<CognitiveGraph> {
+  const graphPath = path.join(paths.root, 'etc', 'cognitive-graphs', 'reflector-mode.json');
+  const raw = await fs.readFile(graphPath, 'utf-8');
+  const parsed = JSON.parse(raw);
+  return validateCognitiveGraph(parsed);
+}
 
 /**
  * Get ALL memories (no pool limit)
@@ -320,163 +329,49 @@ What am I noticing? What thoughts or feelings are emerging?
       return;
     }
 
-    // Retry generate with small backoff to handle transient errors
-    const messages: RouterMessage[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: prompt },
-    ];
+    // Load reflector cognitive graph
+    const graph = await loadReflectorGraph();
 
-    let response: { content: string } | null = null;
-    const attempts = 3;
-    for (let i = 0; i < attempts; i++) {
-      try {
-        response = await callLLM({
-          role: 'persona',
-          messages,
-          options: { temperature: 0.8 },
-        });
-        break;
-      } catch (e) {
-        if (i === attempts - 1) throw e;
-        const delay = 500 * Math.pow(2, i);
-        console.warn(`[reflector] LLM call failed (attempt ${i + 1}/${attempts}). Retrying in ${delay}ms...`);
-        await new Promise(res => setTimeout(res, delay));
-      }
-    }
+    // Prepare context for graph execution
+    const reflectionWordCount = prompt.split(/\s+/).filter(Boolean).length;
+    const chainIsLong = recentMemories.length >= 3;
+    const conciseHint = chainIsLong || reflectionWordCount > 180
+      ? 'Keep the response under two sentences (<= 60 words).'
+      : 'Keep it to one short sentence (<= 25 words).';
 
-    const reflection = (response?.content || '').trim();
+    // Execute graph with prompts as context
+    const graphContext = {
+      userId: username,
+      allowMemoryWrites: true,
+      cognitiveMode: 'agent' as const,
+
+      // Node 1 (Generate Reflection) inputs
+      reflectionPrompt: prompt,
+      reflectionSystemPrompt: systemPrompt,
+
+      // Metadata for summary formatting
+      conciseHint,
+      reflectionWordCount,
+      chainIsLong,
+    };
+
+    const graphResult = await executeGraph(graph, graphContext);
+
+    // Extract reflection from graph execution
+    const reflectionNode = graphResult.nodes.get(1);
+    const reflection = (reflectionNode?.output?.response || '').trim();
 
     if (reflection) {
       console.log(`[reflector] Generated new insight: "${reflection}"`);
 
-      // Capture the reflection as an inner dialogue (never shows in main chat)
-      const reflectionMemoryPath = captureEvent(reflection, { type: 'inner_dialogue', tags: ['idle-thought', 'self-reflection', 'inner'] });
-      const reflectionRelPath = path.relative(paths.root, reflectionMemoryPath);
-
-      const reflectionWordCount = reflection.split(/\s+/).filter(Boolean).length;
-      const chainIsLong = recentMemories.length >= 3;
-
-      // Generate a concise takeaway to keep training data balanced
-      try {
-        const conciseHint = chainIsLong || reflectionWordCount > 180
-          ? 'Keep the response under two sentences (<= 60 words).'
-          : 'Keep it to one short sentence (<= 25 words).';
-
-        const summaryMessages: RouterMessage[] = [
-          {
-            role: 'system',
-            content: `
-You distill Greg's reflections into concise first-person takeaways.
-${conciseHint}
-Highlight the key realization or next step without rehashing every detail.
-          `.trim()
-          },
-          {
-            role: 'user',
-            content: `
-Here is the reflection:
-${reflection}
-
-Summarize the core takeaway. ${conciseHint}
-          `.trim()
-          }
-        ];
-
-        const summaryResponse = await callLLM({
-          role: 'summarizer',
-          messages: summaryMessages,
-          options: { temperature: 0.3 },
-        });
-        const reflectionSummary = summaryResponse?.content?.trim();
-
-        if (reflectionSummary) {
-          captureEvent(reflectionSummary, {
-            type: 'inner_dialogue',
-            tags: ['idle-thought', 'summary', 'concise', 'inner'],
-            links: [{ type: 'reflection', target: reflectionRelPath }]
-          });
-
-          audit({
-            category: 'decision',
-            level: 'info',
-            message: 'Reflector generated takeaway',
-            actor: 'reflector',
-            metadata: {
-              summary: reflectionSummary,
-              summaryPreview: reflectionSummary.substring(0, 80) + (reflectionSummary.length > 80 ? '...' : ''),
-              sourceReflection: reflectionRelPath
-            }
-          });
-        } else {
-          console.warn('[reflector] Summary generation returned empty text; skipping summary capture.');
-        }
-      } catch (e) {
-        console.warn('[reflector] Failed to generate concise takeaway:', (e as Error).message);
-      }
-
-      // Generate an extended conclusion when the reflection is substantial
-      if (chainIsLong || reflectionWordCount > 220) {
-        try {
-          const extendedMessages: RouterMessage[] = [
-            {
-              role: 'system',
-              content: `
-You are Greg consolidating a reflective train of thought into a coherent conclusion.
-Write in the first person.
-Use two or three sentences (<= 120 words) to capture the main insight, emotional tone, and any next step.
-Avoid repeating the reflection verbatim—synthesize it.
-              `.trim()
-            },
-            {
-              role: 'user',
-              content: `
-Here is the full reflection:
-${reflection}
-
-Compose an extended conclusion (2–3 sentences, <= 120 words) that captures the essence and next steps.
-              `.trim()
-            }
-          ];
-
-          const extendedResponse = await callLLM({
-            role: 'summarizer',
-            messages: extendedMessages,
-            options: { temperature: 0.4 },
-          });
-          const extendedSummary = extendedResponse?.content?.trim();
-
-          if (extendedSummary) {
-            captureEvent(extendedSummary, {
-              type: 'inner_dialogue',
-              tags: ['idle-thought', 'summary', 'extended', 'inner'],
-              links: [{ type: 'reflection', target: reflectionRelPath }]
-            });
-
-            audit({
-              category: 'decision',
-              level: 'info',
-              message: 'Reflector generated extended takeaway',
-              actor: 'reflector',
-              metadata: {
-                summary: extendedSummary,
-                summaryPreview: extendedSummary.substring(0, 100) + (extendedSummary.length > 100 ? '...' : ''),
-                sourceReflection: reflectionRelPath
-              }
-            });
-          } else {
-            console.warn('[reflector] Extended summary generation returned empty text; skipping.');
-          }
-        } catch (e) {
-          console.warn('[reflector] Failed to generate extended takeaway:', (e as Error).message);
-        }
-      }
-
-      // Audit: Reflection generated (full text for chat stream)
+      // Graph has already saved reflection, summary, and extended summary via inner_dialogue_capture nodes
+      // Just audit the completion
       let tasksCount = 0;
       try {
         const tasks = listActiveTasks();
         tasksCount = Array.isArray(tasks) ? tasks.length : 0;
       } catch {}
+
       audit({
         category: 'decision',
         level: 'info',
@@ -486,7 +381,8 @@ Compose an extended conclusion (2–3 sentences, <= 120 words) that captures the
           reflection: reflection, // Full reflection text
           reflectionPreview: reflection.substring(0, 100) + (reflection.length > 100 ? '...' : ''),
           memoriesConsidered: recentMemories.length,
-          tasksConsidered: tasksCount
+          tasksConsidered: tasksCount,
+          usedGraph: true,
         }
       });
     } else {

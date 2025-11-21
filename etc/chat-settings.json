@@ -64,6 +64,22 @@
       "description": "Always prioritize current user input over context/history",
       "value": true,
       "notes": "When true, adds explicit instruction to focus on user's current question"
+    },
+    "innerDialogHistoryLimit": {
+      "description": "Maximum messages to display in Inner Dialog tab",
+      "value": 80,
+      "min": 20,
+      "max": 500,
+      "step": 10,
+      "notes": "Shows reflections, dreams, and inner dialogue. Higher values may slow page load"
+    },
+    "innerDialogHistoryDays": {
+      "description": "Days of audit logs to scan for Inner Dialog",
+      "value": 7,
+      "min": 1,
+      "max": 365,
+      "step": 1,
+      "notes": "Recent reflections/dreams only. Increase to see older inner thoughts"
     }
   },
   "presets": {
@@ -76,7 +92,9 @@
       "semanticSearchThreshold": 0.62,
       "maxContextChars": 900,
       "maxHistoryMessages": 30,
-      "userInputPriority": true
+      "userInputPriority": true,
+      "innerDialogHistoryLimit": 80,
+      "innerDialogHistoryDays": 7
     },
     "focused": {
       "description": "Prioritize user's current question, minimal context interference",
@@ -87,7 +105,9 @@
       "semanticSearchThreshold": 0.7,
       "maxContextChars": 500,
       "maxHistoryMessages": 15,
-      "userInputPriority": true
+      "userInputPriority": true,
+      "innerDialogHistoryLimit": 50,
+      "innerDialogHistoryDays": 3
     },
     "immersive": {
       "description": "Deep context awareness, strong personality, rich history",
@@ -98,7 +118,9 @@
       "semanticSearchThreshold": 0.55,
       "maxContextChars": 1500,
       "maxHistoryMessages": 50,
-      "userInputPriority": false
+      "userInputPriority": false,
+      "innerDialogHistoryLimit": 150,
+      "innerDialogHistoryDays": 30
     },
     "minimal": {
       "description": "Clean slate, minimal context, direct responses",
@@ -109,7 +131,9 @@
       "semanticSearchThreshold": 0.8,
       "maxContextChars": 300,
       "maxHistoryMessages": 10,
-      "userInputPriority": true
+      "userInputPriority": true,
+      "innerDialogHistoryLimit": 30,
+      "innerDialogHistoryDays": 1
     }
   },
   "activePreset": "focused"

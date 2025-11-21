@@ -19,9 +19,9 @@ import {
   errorRecoveryExecutor,
   stuckDetectorExecutor,
 } from './operator-executors.js';
-import { personaLLMExecutor, modelResolverExecutor, modelRouterExecutor } from './llm-executors.js';
+import { personaLLMExecutor, modelResolverExecutor, modelRouterExecutor, reflectorLLMExecutor } from './llm-executors.js';
 import { chainOfThoughtStripperExecutor, safetyValidatorExecutor, responseRefinerExecutor } from './safety-executors.js';
-import { memoryCaptureExecutor, auditLoggerExecutor, streamWriterExecutor, chatViewExecutor, ttsExecutor } from './output-executors.js';
+import { innerDialogueCaptureExecutor, memoryCaptureExecutor, auditLoggerExecutor, streamWriterExecutor, chatViewExecutor, ttsExecutor } from './output-executors.js';
 import { loopControllerExecutor, conditionalBranchExecutor, switchExecutor, forEachExecutor, conditionalRouterExecutor } from './control-flow-executors.js';
 import {
   weightedSamplerExecutor,
@@ -110,6 +110,7 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
 
   // Chat nodes
   'persona_llm': personaLLMExecutor,
+  'reflector_llm': reflectorLLMExecutor,
   'chain_of_thought_stripper': chainOfThoughtStripperExecutor,
   'cot_stripper': chainOfThoughtStripperExecutor, // Alias for chain_of_thought_stripper
   'safety_validator': safetyValidatorExecutor,
@@ -120,6 +121,7 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
   'model_router': modelRouterExecutor,
 
   // Output nodes
+  'inner_dialogue_capture': innerDialogueCaptureExecutor,
   'memory_capture': memoryCaptureExecutor,
   'audit_logger': auditLoggerExecutor,
   'stream_writer': streamWriterExecutor,

@@ -14,7 +14,7 @@
   let nodeEditorRef: any;
   let currentGraph: any = null;
   let graphName = 'Untitled Graph';
-  let availableTemplates = listTemplates();
+  let availableTemplates: Array<{ id: string; name: string; description: string }> = [];
   type GraphSummary = {
     name: string;
     title: string;
@@ -61,7 +61,9 @@
 
   // Load available graphs on mount
   onMount(async () => {
-    // Templates are already listed
+    // Load templates dynamically from API
+    availableTemplates = await listTemplates();
+
     void refreshSavedGraphs();
 
     // NodeEditor will auto-load the template based on cognitiveMode prop

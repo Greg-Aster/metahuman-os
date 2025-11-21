@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import { loadPersonaCore } from '@metahuman/core/identity';
-import { tryResolveProfilePath, getAuthenticatedUser } from '@metahuman/core';
+import { tryResolveProfilePath, getUserOrAnonymous } from '@metahuman/core';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -17,8 +17,8 @@ import path from 'node:path';
 export const GET: APIRoute = async ({ cookies }) => {
   try {
     // Check authentication
-    const user = getAuthenticatedUser(cookies);
-    const isAuthenticated = user !== null;
+    const user = getUserOrAnonymous(cookies);
+    const isAuthenticated = user.role !== 'anonymous';
 
     if (!isAuthenticated) {
       // Anonymous users don't have persona icons

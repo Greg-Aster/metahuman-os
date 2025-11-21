@@ -31,14 +31,18 @@ export async function fetchTemplate(name: string): Promise<CognitiveGraphTemplat
   }
 
   try {
-    const response = await fetch(`/cognitive-graphs/${name}.json`);
+    // Use the API endpoint to fetch graphs (reads from etc/cognitive-graphs/)
+    const response = await fetch(`/api/cognitive-graph?name=${encodeURIComponent(name)}`);
     if (!response.ok) {
       console.error(`Failed to fetch template ${name}: ${response.status}`);
       return null;
     }
 
-    const template = await response.json();
-    templateCache.set(name, template);
+    const data = await response.json();
+    const template = data.graph;
+    if (template) {
+      templateCache.set(name, template);
+    }
     return template;
   } catch (error) {
     console.error(`Error fetching template ${name}:`, error);
@@ -61,14 +65,41 @@ export async function getTemplateForMode(mode: 'dual' | 'agent' | 'emulation'): 
 }
 
 /**
- * List all available templates
+ * List all available templates (dynamically from API)
  */
-export function listTemplates(): Array<{ id: string; name: string; description: string }> {
-  return [
-    { id: 'dual-mode', name: 'Dual Consciousness Mode', description: 'Full operator pipeline with ReAct loop' },
-    { id: 'agent-mode', name: 'Agent Mode', description: 'Conditional routing (chat vs operator)' },
-    { id: 'emulation-mode', name: 'Emulation Mode', description: 'Simple chat-only pipeline' },
-  ];
+export async function listTemplates(): Promise<Array<{ id: string; name: string; description: string }>> {
+  try {
+    const response = await fetch('/api/cognitive-graphs');
+    if (!response.ok) {
+      console.error('Failed to fetch graphs list:', response.status);
+      // Return hardcoded fallback
+      return [
+        { id: 'dual-mode', name: 'Dual Consciousness Mode', description: 'Full operator pipeline with ReAct loop' },
+        { id: 'agent-mode', name: 'Agent Mode', description: 'Conditional routing (chat vs operator)' },
+        { id: 'emulation-mode', name: 'Emulation Mode', description: 'Simple chat-only pipeline' },
+      ];
+    }
+
+    const data = await response.json();
+    const graphs = data.graphs || [];
+
+    // Filter to only builtin graphs and format for template list
+    return graphs
+      .filter((g: any) => g.scope === 'builtin')
+      .map((g: any) => ({
+        id: g.name,
+        name: g.title || g.name,
+        description: g.description || '',
+      }));
+  } catch (error) {
+    console.error('Error fetching templates:', error);
+    // Return hardcoded fallback
+    return [
+      { id: 'dual-mode', name: 'Dual Consciousness Mode', description: 'Full operator pipeline with ReAct loop' },
+      { id: 'agent-mode', name: 'Agent Mode', description: 'Conditional routing (chat vs operator)' },
+      { id: 'emulation-mode', name: 'Emulation Mode', description: 'Simple chat-only pipeline' },
+    ];
+  }
 }
 
 /**

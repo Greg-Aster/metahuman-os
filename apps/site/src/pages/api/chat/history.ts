@@ -2,8 +2,9 @@ import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
 import { getProfilePaths, getUserOrAnonymous, systemPaths, loadPersistedBuffer, withUserContext } from '@metahuman/core'
+import { loadChatSettings } from '@metahuman/core/chat-settings'
 
-type ChatRole = 'user' | 'assistant'
+type ChatRole = 'user' | 'assistant' | 'reflection' | 'dream'
 
 function readJSON(p: string): any | null {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return null }
@@ -34,33 +35,45 @@ function getLatestMtime(dir: string, pattern?: RegExp): number {
 }
 
 export const GET: APIRoute = async ({ request, cookies }) => {
-  return withUserContext({ cookies }, async () => {
-    try {
-      const user = getUserOrAnonymous(cookies);
+  try {
+    const user = getUserOrAnonymous(cookies);
 
-      const url = new URL(request.url)
-      const mode = (url.searchParams.get('mode') === 'inner') ? 'inner' : 'conversation'
-      const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit') || '80')))
-      // Reduced from 30 to 7 days for faster boot - users can request more via query param
-      const maxDays = Math.max(1, Math.min(365, Number(url.searchParams.get('days') || '7')))
+    // Load chat settings for inner dialog history defaults
+    const chatSettings = loadChatSettings();
+    const innerDialogDefaults = {
+      limit: chatSettings.settings?.innerDialogHistoryLimit?.value ?? 80,
+      days: chatSettings.settings?.innerDialogHistoryDays?.value ?? 7
+    };
 
-      if (user.role === 'anonymous') {
-        return new Response(JSON.stringify({ messages: [] }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
+    const url = new URL(request.url)
+    const mode = (url.searchParams.get('mode') === 'inner') ? 'inner' : 'conversation'
+    // Use configured defaults for inner mode, fallback to 80/7 for conversation mode
+    const defaultLimit = mode === 'inner' ? innerDialogDefaults.limit : 80;
+    const defaultDays = mode === 'inner' ? innerDialogDefaults.days : 7;
+    const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit') || defaultLimit)))
+    const maxDays = Math.max(1, Math.min(365, Number(url.searchParams.get('days') || defaultDays)))
+
+    if (user.role === 'anonymous') {
+      return new Response(JSON.stringify({ messages: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Run with user context for buffer loading
+    return withUserContext(
+      { userId: user.id, username: user.username, role: user.role },
+      async () => {
 
       const profilePaths = getProfilePaths(user.username);
 
-      // FIXED: Load from conversation buffer first (the actual chat history)
+      // Load from conversation buffer first (the actual chat history)
+      let bufferMessages: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number; meta?: any }> = [];
       try {
         const buffer = loadPersistedBuffer(mode);
         if (buffer && buffer.messages && buffer.messages.length > 0) {
-          // Filter out system messages and format for frontend
-          const chatMessages = buffer.messages
+          bufferMessages = buffer.messages
             .filter(msg => msg.role !== 'system' && !msg.meta?.summaryMarker)
-            .slice(-limit)
             .map(msg => ({
               role: msg.role as 'user' | 'assistant',
               content: msg.content,
@@ -68,18 +81,22 @@ export const GET: APIRoute = async ({ request, cookies }) => {
               meta: msg.meta
             }));
 
-          console.log(`[chat/history] Loaded ${chatMessages.length} messages from conversation buffer (${mode})`);
+          console.log(`[chat/history] Loaded ${bufferMessages.length} messages from conversation buffer (${mode})`);
 
-          return new Response(JSON.stringify({ messages: chatMessages }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json', 'X-Source': 'buffer' }
-          });
+          // For conversation mode, return buffer immediately (no need to merge reflections/dreams)
+          if (mode === 'conversation') {
+            return new Response(JSON.stringify({ messages: bufferMessages.slice(-limit) }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json', 'X-Source': 'buffer' }
+            });
+          }
+          // For inner mode, continue to load reflections/dreams and merge
         }
       } catch (bufferError) {
         console.warn('[chat/history] Failed to load from conversation buffer, falling back to episodic:', bufferError);
       }
 
-      // Fallback to episodic memory scan (legacy behavior)
+      // For inner mode OR if buffer is empty: Load from episodic memory and audit logs
       // Check cache
       const cacheKey = getCacheKey(user.username, mode, limit, maxDays);
       const now = Date.now();
@@ -111,13 +128,18 @@ export const GET: APIRoute = async ({ request, cookies }) => {
             const obj = readJSON(p)
             if (!obj || !obj.timestamp || !obj.content) continue
             const t = String(obj.type || '')
-            const isInner = t === 'inner_dialogue'
+            const isInner = t === 'inner_dialogue' || t === 'dream'
             const isConversation = t === 'conversation'
             if ((mode === 'inner' && !isInner) || (mode === 'conversation' && !isConversation)) continue
 
             const c: string = String(obj.content)
+
+            // Dreams appear as dream messages (system's internal content)
+            if (t === 'dream') {
+              items.push({ ts: Date.parse(obj.timestamp), role: 'dream', content: c, relPath: path.relative(systemPaths.root, p) })
+            }
             // Heuristics: map stored capture events to chat roles (only user side from memory)
-            if (c.startsWith('Me: "')) {
+            else if (c.startsWith('Me: "')) {
               items.push({ ts: Date.parse(obj.timestamp), role: 'user', content: c.replace(/^Me: \"|\"$/g, ''), relPath: path.relative(systemPaths.root, p) })
             }
           }
@@ -159,7 +181,12 @@ export const GET: APIRoute = async ({ request, cookies }) => {
                 const evt = String(obj.event || '')
                 const reflection = obj?.details?.reflection || obj?.metadata?.reflection
                 if (actor === 'reflector' && reflection && (evt === 'Reflector generated new insight' || evt === 'reflector_insight' || obj.category === 'decision')) {
-                  items.push({ ts, role: 'assistant', content: String(reflection) })
+                  items.push({ ts, role: 'reflection', content: String(reflection) })
+                }
+                // Dreams from dreamer agent
+                const dream = obj?.details?.dream || obj?.metadata?.dream
+                if (actor === 'dreamer' && dream) {
+                  items.push({ ts, role: 'dream', content: String(dream) })
                 }
               }
             } catch {}
@@ -168,6 +195,19 @@ export const GET: APIRoute = async ({ request, cookies }) => {
           if (items.length > limit * 3) break
         }
       } catch {}
+
+      // Merge buffer messages with episodic/audit items for inner mode
+      if (mode === 'inner' && bufferMessages.length > 0) {
+        // Convert buffer messages to items format for merging
+        const bufferItems = bufferMessages.map(m => ({
+          ts: m.timestamp,
+          role: m.role,
+          content: m.content,
+          relPath: undefined
+        }));
+        items.push(...bufferItems);
+        console.log(`[chat/history] Merging ${bufferMessages.length} buffer messages with ${items.length - bufferItems.length} episodic/audit items for inner mode`);
+      }
 
       // De-duplicate by (role, content)
       items.sort((a, b) => a.ts - b.ts)
@@ -193,12 +233,14 @@ export const GET: APIRoute = async ({ request, cookies }) => {
         auditMtime
       });
 
+      const source = mode === 'inner' && bufferMessages.length > 0 ? 'buffer+episodic' : 'episodic';
       return new Response(JSON.stringify(responseData), {
         status: 200,
-        headers: { 'Content-Type': 'application/json', 'X-Cache': 'MISS', 'X-Source': 'episodic' }
+        headers: { 'Content-Type': 'application/json', 'X-Cache': 'MISS', 'X-Source': source }
       });
-    } catch (err) {
-      return new Response(JSON.stringify({ error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
-    }
-  });
+      }
+    );
+  } catch (err) {
+    return new Response(JSON.stringify({ error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+  }
 }
