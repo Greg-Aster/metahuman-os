@@ -431,6 +431,46 @@ class PersonaLLMNodeImpl extends CognitiveNodeBase {
   }
 }
 
+class ReflectorLLMNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'reflector_llm')!;
+
+  constructor() {
+    super(ReflectorLLMNodeImpl.schema);
+  }
+
+  async onExecute() {
+    const prompt = this.getInputData(0);
+
+    // In real implementation, would call reflectorLLMExecutor
+    const response = 'This is a mock reflector response';
+
+    this.setOutputData(0, response);
+  }
+}
+
+class InnerDialogueCaptureNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'inner_dialogue_capture')!;
+
+  constructor() {
+    super(InnerDialogueCaptureNodeImpl.schema);
+  }
+
+  async onExecute() {
+    const text = this.getInputData(0);
+    const metadata = this.getInputData(1);
+
+    // In real implementation, would call innerDialogueCaptureExecutor
+    const result = {
+      saved: true,
+      type: 'inner_dialogue',
+      eventPath: 'memory/episodic/mock-path.json',
+      textLength: text?.length || 0,
+    };
+
+    this.setOutputData(0, result);
+  }
+}
+
 // ============================================================================
 // MODEL NODE IMPLEMENTATIONS
 // ============================================================================
@@ -866,6 +906,19 @@ class ConditionalBranchNodeImpl extends CognitiveNodeBase {
   constructor() { super(ConditionalBranchNodeImpl.schema); }
 }
 
+class ConditionalRouterNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'conditional_router')!;
+  constructor() { super(ConditionalRouterNodeImpl.schema); }
+  onExecute() {
+    const condition = this.getInputData(0);
+    const trueData = this.getInputData(1);
+    const falseData = this.getInputData(2);
+    const conditionMet = condition?.isComplete || condition?.isDone || condition?.shouldContinue || Boolean(condition);
+    this.setOutputData(0, conditionMet ? trueData : null); // exitOutput
+    this.setOutputData(1, conditionMet ? null : falseData); // loopOutput
+  }
+}
+
 class SwitchNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'switch')!;
   constructor() { super(SwitchNodeImpl.schema); }
@@ -1016,6 +1069,111 @@ class GoalManagerNodeImpl extends CognitiveNodeBase {
   constructor() { super(GoalManagerNodeImpl.schema); }
 }
 
+// ============================================================================
+// TRAIN OF THOUGHT NODE IMPLEMENTATIONS
+// ============================================================================
+
+class ScratchpadInitializerNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'scratchpad_initializer')!;
+  constructor() { super(ScratchpadInitializerNodeImpl.schema); }
+  onExecute() {
+    const seedMemory = this.getInputData(0) || '';
+    const fields = this.properties?.fields || ['thoughts', 'keywords', 'seenMemoryIds'];
+    const scratchpad: Record<string, any> = { seedMemory };
+    fields.forEach((f: string) => { scratchpad[f] = []; });
+    this.setOutputData(0, scratchpad);
+  }
+}
+
+class ScratchpadUpdaterNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'scratchpad_updater')!;
+  constructor() { super(ScratchpadUpdaterNodeImpl.schema); }
+  onExecute() {
+    const data = this.getInputData(0) || {};
+    const appendTo = this.properties?.appendTo || 'thoughts';
+    const trackField = this.properties?.trackField || 'seenMemoryIds';
+    // Pass through with updated fields
+    this.setOutputData(0, { ...data, [appendTo]: data[appendTo] || [], [trackField]: data[trackField] || [] });
+  }
+}
+
+class ThoughtGeneratorNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'thought_generator')!;
+  constructor() { super(ThoughtGeneratorNodeImpl.schema); }
+  onExecute() {
+    const context = this.getInputData(0) || {};
+    const seedMemory = this.getInputData(1) || context.seedMemory || '';
+    // In visual editor, show placeholder
+    this.setOutputData(0, {
+      thought: '[Generated thought will appear here]',
+      thoughts: context.thoughts || [],
+      keywords: [],
+      confidence: 0.5,
+      seedMemory,
+    });
+  }
+}
+
+class ThoughtEvaluatorNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'thought_evaluator')!;
+  constructor() { super(ThoughtEvaluatorNodeImpl.schema); }
+  onExecute() {
+    const thought = this.getInputData(0) || {};
+    const thoughts = thought.thoughts || [];
+    const maxIterations = this.properties?.maxIterations || 7;
+    this.setOutputData(0, {
+      isComplete: thoughts.length >= maxIterations,
+      reason: `Iteration ${thoughts.length}/${maxIterations}`,
+      nextSearchTerms: thought.keywords || [],
+      thoughts,
+      seedMemory: thought.seedMemory || '',
+    });
+  }
+}
+
+class ThoughtAggregatorNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'thought_aggregator')!;
+  constructor() { super(ThoughtAggregatorNodeImpl.schema); }
+  onExecute() {
+    const input = this.getInputData(0) || {};
+    const thoughts = input.thoughts || [];
+    this.setOutputData(0, {
+      consolidatedChain: thoughts.join('\n\n'),
+      insight: thoughts[thoughts.length - 1] || '',
+      summary: `Chain of ${thoughts.length} thoughts`,
+      thoughtCount: thoughts.length,
+    });
+  }
+}
+
+class LoopMemorySearchNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'loop_memory_search')!;
+  constructor() { super(LoopMemorySearchNodeImpl.schema); }
+  onExecute() {
+    const searchTerms = this.getInputData(0) || [];
+    const seenIds = this.getInputData(1) || [];
+    this.setOutputData(0, {
+      memories: [],
+      memoryIds: [],
+      searchTermsUsed: searchTerms,
+    });
+  }
+}
+
+class AgentTriggerNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'agent_trigger')!;
+  constructor() { super(AgentTriggerNodeImpl.schema); }
+  onExecute() {
+    const inputData = this.getInputData(0) || {};
+    const agentName = this.properties?.agentName || '';
+    this.setOutputData(0, {
+      triggered: !!agentName,
+      agentName,
+      inputData,
+    });
+  }
+}
+
   // Return all node implementation classes
   return {
     MicInputNodeImpl,
@@ -1036,6 +1194,8 @@ class GoalManagerNodeImpl extends CognitiveNodeBase {
     CompletionCheckerNodeImpl,
     ResponseSynthesizerNodeImpl,
     PersonaLLMNodeImpl,
+    ReflectorLLMNodeImpl,
+    InnerDialogueCaptureNodeImpl,
     ChainOfThoughtStripperNodeImpl,
     SafetyValidatorNodeImpl,
     ResponseRefinerNodeImpl,
@@ -1058,6 +1218,7 @@ class GoalManagerNodeImpl extends CognitiveNodeBase {
     // Control Flow
     LoopControllerNodeImpl,
     ConditionalBranchNodeImpl,
+    ConditionalRouterNodeImpl,
     SwitchNodeImpl,
     ForEachNodeImpl,
     // Memory Curation
@@ -1089,6 +1250,14 @@ class GoalManagerNodeImpl extends CognitiveNodeBase {
     IdentityExtractorNodeImpl,
     ValueManagerNodeImpl,
     GoalManagerNodeImpl,
+    // Train of Thought
+    ScratchpadInitializerNodeImpl,
+    ScratchpadUpdaterNodeImpl,
+    ThoughtGeneratorNodeImpl,
+    ThoughtEvaluatorNodeImpl,
+    ThoughtAggregatorNodeImpl,
+    LoopMemorySearchNodeImpl,
+    AgentTriggerNodeImpl,
   };
 }
 
@@ -1167,6 +1336,7 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
 
     // Chat nodes
     LiteGraph.registerNodeType('cognitive/persona_llm', nodeImpls.PersonaLLMNodeImpl);
+    LiteGraph.registerNodeType('cognitive/reflector_llm', nodeImpls.ReflectorLLMNodeImpl);
     LiteGraph.registerNodeType('cognitive/cot_stripper', nodeImpls.ChainOfThoughtStripperNodeImpl);
     LiteGraph.registerNodeType('cognitive/safety_validator', nodeImpls.SafetyValidatorNodeImpl);
     LiteGraph.registerNodeType('cognitive/response_refiner', nodeImpls.ResponseRefinerNodeImpl);
@@ -1177,6 +1347,7 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
 
     // Output nodes
     LiteGraph.registerNodeType('cognitive/memory_capture', nodeImpls.MemoryCaptureNodeImpl);
+    LiteGraph.registerNodeType('cognitive/inner_dialogue_capture', nodeImpls.InnerDialogueCaptureNodeImpl);
     LiteGraph.registerNodeType('cognitive/audit_logger', nodeImpls.AuditLoggerNodeImpl);
     LiteGraph.registerNodeType('cognitive/stream_writer', nodeImpls.StreamWriterNodeImpl);
     LiteGraph.registerNodeType('cognitive/chat_view', nodeImpls.ChatViewNodeImpl);
@@ -1196,6 +1367,7 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
     // Control Flow nodes
     LiteGraph.registerNodeType('cognitive/loop_controller', nodeImpls.LoopControllerNodeImpl);
     LiteGraph.registerNodeType('cognitive/conditional_branch', nodeImpls.ConditionalBranchNodeImpl);
+    LiteGraph.registerNodeType('cognitive/conditional_router', nodeImpls.ConditionalRouterNodeImpl);
     LiteGraph.registerNodeType('cognitive/switch', nodeImpls.SwitchNodeImpl);
     LiteGraph.registerNodeType('cognitive/for_each', nodeImpls.ForEachNodeImpl);
 
@@ -1232,6 +1404,15 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
     LiteGraph.registerNodeType('cognitive/identity_extractor', nodeImpls.IdentityExtractorNodeImpl);
     LiteGraph.registerNodeType('cognitive/value_manager', nodeImpls.ValueManagerNodeImpl);
     LiteGraph.registerNodeType('cognitive/goal_manager', nodeImpls.GoalManagerNodeImpl);
+
+    // Train of Thought nodes
+    LiteGraph.registerNodeType('cognitive/scratchpad_initializer', nodeImpls.ScratchpadInitializerNodeImpl);
+    LiteGraph.registerNodeType('cognitive/scratchpad_updater', nodeImpls.ScratchpadUpdaterNodeImpl);
+    LiteGraph.registerNodeType('cognitive/thought_generator', nodeImpls.ThoughtGeneratorNodeImpl);
+    LiteGraph.registerNodeType('cognitive/thought_evaluator', nodeImpls.ThoughtEvaluatorNodeImpl);
+    LiteGraph.registerNodeType('cognitive/thought_aggregator', nodeImpls.ThoughtAggregatorNodeImpl);
+    LiteGraph.registerNodeType('cognitive/loop_memory_search', nodeImpls.LoopMemorySearchNodeImpl);
+    LiteGraph.registerNodeType('cognitive/agent_trigger', nodeImpls.AgentTriggerNodeImpl);
 
     console.log('[CognitiveNodes] Registration completed successfully');
   } catch (error) {

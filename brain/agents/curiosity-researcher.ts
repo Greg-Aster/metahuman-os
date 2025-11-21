@@ -24,7 +24,8 @@ import {
   loadCuriosityConfig,
   loadTrustLevel,
   loadPersonaCore,
-  searchMemory
+  searchMemory,
+  captureEvent
 } from '@metahuman/core';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -145,7 +146,7 @@ async function researchQuestion(questionData: any): Promise<{ notes: string; sum
  * Process research for a single user
  */
 async function processUserResearch(username: string): Promise<number> {
-  const pendingDir = paths.curiosityQuestionsPending;
+  const pendingDir = path.join(paths.curiosity, 'questions', 'pending');
   const researchDir = paths.curiosityResearch;
 
   if (!fsSync.existsSync(pendingDir)) {

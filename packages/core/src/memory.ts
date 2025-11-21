@@ -301,6 +301,42 @@ export function updateTaskStatus(taskId: string, status: Task['status']): void {
   }
 }
 
+/**
+ * Update task fields (title, description, priority, tags, due, etc.)
+ * For status changes, use updateTaskStatus instead.
+ */
+export function updateTask(taskId: string, updates: Partial<Omit<Task, 'id' | 'created'>>): void {
+  const activeDir = path.join(paths.tasks, 'active');
+  const completedDir = path.join(paths.tasks, 'completed');
+
+  const activePath = path.join(activeDir, `${taskId}.json`);
+  const completedPath = path.join(completedDir, `${taskId}.json`);
+
+  let sourcePath = activePath;
+  if (!fs.existsSync(sourcePath)) {
+    sourcePath = completedPath;
+  }
+
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`Task not found: ${taskId}`);
+  }
+
+  const task: Task = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));
+
+  // Apply updates (excluding protected fields)
+  const { status, ...safeUpdates } = updates;
+  Object.assign(task, safeUpdates);
+  task.updated = timestamp();
+
+  // If status is being changed, delegate to updateTaskStatus
+  if (status && status !== task.status) {
+    fs.writeFileSync(sourcePath, JSON.stringify(task, null, 2));
+    updateTaskStatus(taskId, status);
+  } else {
+    fs.writeFileSync(sourcePath, JSON.stringify(task, null, 2));
+  }
+}
+
 export function deleteTask(taskId: string): string {
   // paths.tasks automatically resolves to user profile if context is set
   const activeDir = path.join(paths.tasks, 'active');

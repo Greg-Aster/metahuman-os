@@ -396,31 +396,12 @@ export async function executeGraph(
   contextData: Record<string, any>,
   eventHandler?: ExecutionEventHandler
 ): Promise<GraphExecutionState> {
-  console.log(`[🎯 EXEC_GRAPH_ENTRY] Function called at ${new Date().toISOString()}`);
-  console.log(`[🎯 EXEC_GRAPH_ENTRY] Graph: ${graph?.name}, Nodes: ${graph?.nodes?.length}`);
-  const timeoutMs = typeof contextData?.timeoutMs === 'number' ? contextData.timeoutMs : 30000;
-  console.log(`[🎯 EXEC_GRAPH_ENTRY] Timeout set to ${timeoutMs}ms`);
-  let timedOut = false;
-  const timeoutError = new Error(`Graph execution timed out after ${timeoutMs}ms`);
-
   const executionState = new Map<number, NodeExecutionState>();
   const graphState: GraphExecutionState = {
     nodes: executionState,
     startTime: Date.now(),
     status: 'running',
   };
-
-  const timeoutHandle = setTimeout(() => {
-    timedOut = true;
-    log.warn(`[GraphExecutor] Timeout fired after ${timeoutMs}ms for graph "${graph.name}"`);
-    if (eventHandler) {
-      eventHandler({
-        type: 'graph_error',
-        data: { error: timeoutError.message },
-        timestamp: Date.now(),
-      });
-    }
-  }, timeoutMs);
 
   log.info(`🚀 Starting execution: ${graph.name} v${graph.version}`);
   log.debug(`   Nodes: ${graph.nodes.length}, Links: ${graph.links.length}`);
@@ -460,10 +441,6 @@ export async function executeGraph(
 
       if (iterCount > maxIterations) {
         throw new Error(`Node ${nodeId} exceeded maximum iterations (${maxIterations}). Possible infinite loop.`);
-      }
-
-       if (timedOut) {
-        throw timeoutError;
       }
 
       graphState.currentNodeId = nodeId;
@@ -553,8 +530,6 @@ export async function executeGraph(
       });
     }
     return graphState;
-  } finally {
-    clearTimeout(timeoutHandle);
   }
 }
 

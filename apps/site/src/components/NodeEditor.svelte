@@ -62,49 +62,72 @@
       const templateGraph = await loadTemplateAsGraph(templateName);
 
       if (templateGraph) {
-        console.log(`[NodeEditor] Loading template: ${templateName}`, templateGraph);
+        console.log(`[NodeEditor] Loading template: ${templateName}`);
 
-        // IMPORTANT: Save links array BEFORE configure() mutates it
+        // IMPORTANT: Save links array and node info BEFORE configure() mutates it
         const linksArray = Array.isArray(templateGraph.links) ? [...templateGraph.links] : [];
-        console.log(`[NodeEditor] Saved ${linksArray.length} links before configure`);
+        const originalNodeIds = new Map<number, { type: string; pos: number[]; title?: string }>();
 
-        graph.configure(templateGraph);
-
-        // Debug: Check node structure after configure
-        const nodes = graph._nodes || [];
-        console.log(`[NodeEditor] After configure: ${nodes.length} nodes in graph`);
-        if (nodes.length > 0) {
-          const firstNode = nodes[0];
-          console.log('[NodeEditor] First node after configure:', {
-            id: firstNode.id,
-            type: firstNode.type,
-            inputsCount: firstNode.inputs?.length || 0,
-            outputsCount: firstNode.outputs?.length || 0,
-            inputs: firstNode.inputs,
-            outputs: firstNode.outputs,
+        if (Array.isArray(templateGraph.nodes)) {
+          templateGraph.nodes.forEach((node: any) => {
+            originalNodeIds.set(node.id, {
+              type: node.type,
+              pos: node.pos,
+              title: node.title
+            });
           });
         }
 
-        // Manually connect nodes using the saved links array
+        console.log(`[NodeEditor] Saved ${linksArray.length} links, ${originalNodeIds.size} node mappings before configure`);
+
+        graph.configure(templateGraph);
+
+        // Build ID mapping from original IDs to LiteGraph nodes
+        const idToNode = new Map<number, any>();
+        const graphNodes = graph._nodes || [];
+
+        originalNodeIds.forEach((info, originalId) => {
+          // First try getNodeById (works if LiteGraph preserved the ID)
+          let node = graph.getNodeById(originalId);
+
+          if (!node) {
+            // Fall back to matching by position and type
+            node = graphNodes.find((n: any) =>
+              n.type === info.type &&
+              n.pos && info.pos &&
+              Math.abs(n.pos[0] - info.pos[0]) < 1 &&
+              Math.abs(n.pos[1] - info.pos[1]) < 1
+            );
+          }
+
+          if (node) {
+            idToNode.set(originalId, node);
+          }
+        });
+
+        console.log(`[NodeEditor] Mapped ${idToNode.size}/${originalNodeIds.size} nodes`);
+
+        // Manually connect nodes using the saved links array and our ID mapping
         console.log(`[NodeEditor] Manually connecting ${linksArray.length} links...`);
-        linksArray.forEach((link: any, index: number) => {
+        let connectedCount = 0;
+        linksArray.forEach((link: any) => {
           const [linkId, originId, originSlot, targetId, targetSlot] = link;
-          const originNode = graph.getNodeById(originId);
-          const targetNode = graph.getNodeById(targetId);
+          const originNode = idToNode.get(originId);
+          const targetNode = idToNode.get(targetId);
 
           if (originNode && targetNode) {
             try {
               originNode.connect(originSlot, targetNode, targetSlot);
-              console.log(`[NodeEditor] Connected link ${index + 1}/${linksArray.length}: node ${originId}.${originSlot} -> node ${targetId}.${targetSlot}`);
+              connectedCount++;
             } catch (error) {
               console.warn(`[NodeEditor] Failed to connect link ${linkId}:`, error);
             }
           } else {
-            console.warn(`[NodeEditor] Skipping link ${linkId} - nodes not found (origin: ${!!originNode}, target: ${!!targetNode})`);
+            console.warn(`[NodeEditor] Skipping link ${linkId} - nodes not found (origin: ${!!originNode}, target: ${!!targetNode}), originalIds: ${originId} -> ${targetId}`);
           }
         });
 
-        console.log(`[NodeEditor] Template loaded successfully. Nodes: ${nodes.length}, Links: ${linksArray.length}`);
+        console.log(`[NodeEditor] Template loaded. Nodes: ${graphNodes.length}, Connected: ${connectedCount}/${linksArray.length} links`);
 
         // Force canvas to redraw connections
         if (canvas) {
@@ -431,30 +454,72 @@
   // Load graph data
   export function loadGraph(data: any) {
     if (graph && data) {
-      // IMPORTANT: Save links array BEFORE configure() mutates it
+      // IMPORTANT: Save links array and node ID mapping BEFORE configure() mutates it
       const linksArray = Array.isArray(data.links) ? [...data.links] : [];
-      console.log(`[NodeEditor] loadGraph: Saved ${linksArray.length} links before configure`);
+      const originalNodeIds = new Map<number, { type: string; pos: number[]; title?: string }>();
+
+      // Save original node info for mapping after configure
+      if (Array.isArray(data.nodes)) {
+        data.nodes.forEach((node: any) => {
+          originalNodeIds.set(node.id, {
+            type: node.type,
+            pos: node.pos,
+            title: node.title
+          });
+        });
+      }
+
+      console.log(`[NodeEditor] loadGraph: Saved ${linksArray.length} links, ${originalNodeIds.size} node mappings before configure`);
 
       graph.configure(data);
 
-      // Manually reconnect nodes using the saved links array
+      // Build ID mapping from original IDs to LiteGraph nodes
+      // LiteGraph may assign new internal IDs, so we need to map by position/type
+      const idToNode = new Map<number, any>();
+      const graphNodes = graph._nodes || [];
+
+      originalNodeIds.forEach((info, originalId) => {
+        // First try getNodeById (works if LiteGraph preserved the ID)
+        let node = graph.getNodeById(originalId);
+
+        if (!node) {
+          // Fall back to matching by position and type
+          node = graphNodes.find((n: any) =>
+            n.type === info.type &&
+            n.pos && info.pos &&
+            Math.abs(n.pos[0] - info.pos[0]) < 1 &&
+            Math.abs(n.pos[1] - info.pos[1]) < 1
+          );
+        }
+
+        if (node) {
+          idToNode.set(originalId, node);
+        }
+      });
+
+      console.log(`[NodeEditor] loadGraph: Mapped ${idToNode.size}/${originalNodeIds.size} nodes`);
+
+      // Manually reconnect nodes using the saved links array and our ID mapping
       console.log(`[NodeEditor] loadGraph: Manually connecting ${linksArray.length} links...`);
+      let connectedCount = 0;
       linksArray.forEach((link: any, index: number) => {
         const [linkId, originId, originSlot, targetId, targetSlot] = link;
-        const originNode = graph.getNodeById(originId);
-        const targetNode = graph.getNodeById(targetId);
+        const originNode = idToNode.get(originId);
+        const targetNode = idToNode.get(targetId);
 
         if (originNode && targetNode) {
           try {
             originNode.connect(originSlot, targetNode, targetSlot);
-            console.log(`[NodeEditor] loadGraph: Connected link ${index + 1}/${linksArray.length}: node ${originId}.${originSlot} -> node ${targetId}.${targetSlot}`);
+            connectedCount++;
           } catch (error) {
             console.warn(`[NodeEditor] loadGraph: Failed to connect link ${linkId}:`, error);
           }
         } else {
-          console.warn(`[NodeEditor] loadGraph: Skipping link ${linkId} - nodes not found (origin: ${!!originNode}, target: ${!!targetNode})`);
+          console.warn(`[NodeEditor] loadGraph: Skipping link ${linkId} - nodes not found (origin: ${!!originNode}, target: ${!!targetNode}), originalIds: ${originId} -> ${targetId}`);
         }
       });
+
+      console.log(`[NodeEditor] loadGraph: Connected ${connectedCount}/${linksArray.length} links`);
 
       // Force canvas to redraw connections
       if (canvas) {

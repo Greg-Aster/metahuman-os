@@ -17,6 +17,12 @@ import {
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+// Train of Thought integration
+import { executeTrainOfThoughtForUser, loadTrainOfThoughtGraph } from './train-of-thought.js';
+
+// Configuration: Set to true to use recursive train-of-thought instead of simple chain
+const USE_TRAIN_OF_THOUGHT = process.env.REFLECTOR_USE_TRAIN_OF_THOUGHT === 'true';
+
 // Technical keywords to deprioritize (not exclude, just lower weight)
 const technicalKeywords = [
   'metahuman', 'ai agent', 'organizer', 'reflector', 'boredom-service',
@@ -242,7 +248,20 @@ async function getAssociativeMemoryChain(chainLength: number = 3): Promise<any[]
 async function generateUserReflection(username: string): Promise<boolean> {
   console.log(`[reflector] Processing user: ${username}`);
 
-  // Use associative train of thought: 3-5 linked memories
+  // Option: Use recursive train-of-thought graph instead of simple chain
+  if (USE_TRAIN_OF_THOUGHT) {
+    console.log('[reflector] Using train-of-thought mode (recursive reasoning)');
+    const result = await executeTrainOfThoughtForUser(username);
+    if (result.success) {
+      console.log(`[reflector] Train of thought complete: ${result.thoughtCount} thoughts, insight: "${result.insight?.substring(0, 80)}..."`);
+      return true;
+    } else {
+      console.log(`[reflector] Train of thought failed: ${result.error}`);
+      return false;
+    }
+  }
+
+  // Default: Use associative train of thought: 3-5 linked memories
   const chainLength = Math.floor(Math.random() * 3) + 3; // 3 to 5 memories
   const recentMemories = await getAssociativeMemoryChain(chainLength);
 

@@ -122,6 +122,56 @@ user_input → operator_eligibility (smart detection)
 - ✅ Faster response times
 - ⚠️ Limited to single-step tasks (no multi-iteration)
 
+### 4. Train of Thought Workflow (`train-of-thought.json`)
+**Purpose**: Recursive reasoning that follows memory associations
+
+**Graph Structure** (v2.0, 10 nodes):
+```
+text_input → scratchpad_initializer → thought_generator
+                                            ↓
+                                      scratchpad_updater
+                                            ↓
+                                      thought_evaluator
+                                            ↓
+                                      loop_memory_search
+                                            ↓
+                                      conditional_router
+                                      ↙            ↘
+               [back-edge to thought_generator]   thought_aggregator
+                                                       ↓
+                                              inner_dialogue_capture
+                                                       ↓
+                                                  audit_logger
+```
+
+**Key Features**:
+- ✅ Recursive thought chains via keyword extraction
+- ✅ Self-limiting (stops on low confidence, repetition, or max iterations)
+- ✅ Memory-grounded reasoning (each thought seeded from actual memories)
+- ✅ Back-edge support for looping via `conditional_router`
+- ✅ Aggregates thoughts into narrative with key insight
+
+**Groups**:
+- **Initialization** (green): text_input, scratchpad_initializer
+- **Thought Loop** (orange): thought_generator → scratchpad_updater → thought_evaluator → loop_memory_search → conditional_router
+- **Output** (purple): thought_aggregator, inner_dialogue_capture, audit_logger
+
+### 5. Reflector Mode (`reflector-mode.json`)
+**Purpose**: Generates reflections from associative memory chains
+
+**Graph Structure** (v2.0, 7 nodes):
+```
+reflector_llm (reflection) → inner_dialogue_capture (reflection)
+                          → reflector_llm (summary) → inner_dialogue_capture (summary)
+                          → reflector_llm (extended) → inner_dialogue_capture (extended)
+                          → audit_logger
+```
+
+**Key Features**:
+- ✅ Parallel generation of reflection, summary, and extended summary
+- ✅ All outputs saved as inner dialogue
+- ✅ Full audit trail
+
 ## Node Types Reference
 
 ### Input Nodes
@@ -483,6 +533,155 @@ These are composable building blocks for creating custom ReAct workflows without
 {
   "formatted": "Thought: ...\nAction: ...\nObservation: ...",
   "entries": 3
+}
+```
+
+### Train of Thought Nodes
+
+These nodes enable recursive reasoning workflows where one thought triggers related thoughts.
+
+#### `thought_generator`
+**Purpose**: Generates a single reasoning step from memory context
+
+**Inputs**:
+- `[0]`: Memory context (string or object with content) or scratchpad from loop
+- `[1]`: Seed text (optional, from text_input)
+
+**Properties**:
+- `temperature` (default: 0.75): LLM creativity level
+- `extractKeywords` (default: true): Whether to extract keywords for next search
+- `systemPrompt` (optional): Custom prompt override
+
+**Outputs**:
+```json
+{
+  "thought": "The meeting with Sarah reminded me of our earlier discussions...",
+  "thoughts": ["thought1", "thought2", "..."],
+  "keywords": ["Sarah", "ML project", "collaboration"],
+  "confidence": 0.85,
+  "seedMemory": "Original context preserved for next iteration",
+  "raw": "Full LLM response"
+}
+```
+
+**Response Format**:
+The LLM is prompted to respond with:
+```
+THOUGHT: [1-3 sentences of genuine insight]
+CONFIDENCE: [0.0-1.0]
+KEYWORDS: [comma-separated keywords]
+```
+
+#### `thought_evaluator`
+**Purpose**: Decides if train of thought should continue or conclude
+
+**Inputs**:
+- `[0]`: Current thought from thought_generator
+
+**Properties**:
+- `minConfidence` (default: 0.4): Minimum confidence to continue
+- `maxIterations` (default: 7): Hard limit on iterations
+- `repetitionThreshold` (default: 0.8): Stop if thought too similar to previous
+
+**Outputs**:
+```json
+{
+  "isComplete": false,
+  "reason": "Continuing exploration (confidence: 0.85, keywords: Sarah, ML, project)",
+  "nextSearchTerms": ["Sarah", "ML", "project"],
+  "iteration": 3,
+  "confidence": 0.85,
+  "thoughts": ["thought1", "thought2", "thought3"],
+  "seedMemory": "Preserved context"
+}
+```
+
+**Stop Conditions**:
+- `isComplete: true` when:
+  - Max iterations reached
+  - Confidence below threshold
+  - Thought too short or empty
+  - No keywords extracted
+  - Thought is repetitive of previous
+
+#### `thought_aggregator`
+**Purpose**: Combines all thoughts into a coherent reasoning chain
+
+**Inputs**:
+- `[0]`: Scratchpad or evaluator output with accumulated thoughts
+
+**Properties**:
+- `summaryStyle`: 'narrative' | 'bullets' | 'insight' (default: 'narrative')
+- `maxLength` (default: 200): Maximum output length in words
+
+**Outputs**:
+```json
+{
+  "consolidatedChain": "Woven narrative of the reasoning chain...",
+  "insight": "Key insight or conclusion from the chain",
+  "summary": "Brief 1-sentence summary",
+  "thoughtCount": 5,
+  "raw": "Full LLM response"
+}
+```
+
+**Response Format**:
+The LLM synthesizes thoughts and responds with:
+```
+NARRATIVE: [Woven narrative of the reasoning chain]
+INSIGHT: [Single key insight]
+SUMMARY: [1-sentence summary]
+```
+
+#### `agent_trigger`
+**Purpose**: Allows one workflow to spawn another agent/workflow
+
+**Inputs**:
+- `[0]`: Input data to pass to the agent
+
+**Properties**:
+- `agentName` (required): Name of agent to trigger
+- `waitForCompletion` (default: true): Whether to wait for result
+- `timeout` (default: 30000): Timeout in milliseconds
+
+**Outputs**:
+```json
+{
+  "triggered": true,
+  "agentName": "train-of-thought",
+  "inputData": { "context": "..." },
+  "waitForCompletion": true,
+  "timeout": 30000,
+  "note": "Agent trigger queued - graph execution handled by caller"
+}
+```
+
+#### `loop_memory_search`
+**Purpose**: Searches for memories based on keywords, avoiding already-seen memories
+
+Designed to work inside loops where the same memory shouldn't be retrieved twice.
+
+**Inputs**:
+- `[0]`: Search terms (from thought_evaluator.nextSearchTerms)
+- `[1]`: Already seen memory IDs (from scratchpad)
+
+**Properties**:
+- `maxResults` (default: 3): Maximum memories to return
+- `excludeSeen` (default: true): Whether to exclude already-seen memories
+
+**Outputs**:
+```json
+{
+  "memories": [
+    {
+      "id": "evt-20251119-abc123",
+      "path": "memory/episodic/2025/evt-20251119-abc123.json",
+      "searchTerm": "Sarah"
+    }
+  ],
+  "memoryIds": ["evt-20251119-abc123"],
+  "searchTermsUsed": ["Sarah", "project"],
+  "totalFound": 2
 }
 ```
 

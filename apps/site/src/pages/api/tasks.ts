@@ -5,7 +5,7 @@
 
 import type { APIRoute } from 'astro';
 import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
-import { listActiveTasks, listCompletedTasks, createTask, updateTaskStatus } from '@metahuman/core/memory';
+import { listActiveTasks, listCompletedTasks, createTask, updateTaskStatus, updateTask } from '@metahuman/core/memory';
 import { auditDataChange } from '@metahuman/core/audit';
 import { requireWriteMode } from '../../middleware/cognitiveModeGuard';
 
@@ -121,21 +121,37 @@ const patchHandler: APIRoute = async ({ cookies, request }) => {
 
   try {
     const body = await request.json();
-    const { taskId, status } = body;
+    const { taskId, status, title, description, priority, tags, due, start, end, listId } = body;
 
-    if (!taskId || !status) {
+    if (!taskId) {
       return new Response(
-        JSON.stringify({ error: 'taskId and status are required' }),
+        JSON.stringify({ error: 'taskId is required' }),
         {
           status: 400,
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
         }
       );
     }
 
-    updateTaskStatus(taskId, status);
+    // Build updates object from provided fields
+    const updates: Record<string, any> = {};
+    if (title !== undefined) updates.title = title;
+    if (description !== undefined) updates.description = description;
+    if (priority !== undefined) updates.priority = priority;
+    if (tags !== undefined) updates.tags = tags;
+    if (due !== undefined) updates.due = due;
+    if (start !== undefined) updates.start = start;
+    if (end !== undefined) updates.end = end;
+    if (listId !== undefined) updates.listId = listId;
+
+    // If only status is being updated, use the optimized status-only function
+    if (status && Object.keys(updates).length === 0) {
+      updateTaskStatus(taskId, status);
+    } else {
+      // Include status in updates if provided
+      if (status) updates.status = status;
+      updateTask(taskId, updates);
+    }
 
     // Audit the update with actual username
     auditDataChange({
@@ -143,16 +159,14 @@ const patchHandler: APIRoute = async ({ cookies, request }) => {
       resource: 'task',
       path: taskId,
       actor: user.username,
-      details: { status },
+      details: { ...updates, status },
     });
 
     return new Response(
       JSON.stringify({ success: true }),
       {
         status: 200,
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
       }
     );
   } catch (error) {
@@ -160,9 +174,7 @@ const patchHandler: APIRoute = async ({ cookies, request }) => {
       JSON.stringify({ error: (error as Error).message }),
       {
         status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
       }
     );
   }

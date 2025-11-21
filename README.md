@@ -31,7 +31,7 @@ MetaHuman OS is a local-first digital personality extension that acts as a paral
 - TypeScript 5+
 - Python 3.8+
 - Ollama (for local LLM) - Install from [ollama.ai](https://ollama.ai)
-  - Tested models: `phi3:mini` (default), `Qwen3 coder: 30B"`, `nomic-embed-text` (embeddings)
+  - Tested models: `qwen3: 14B` (default), `Qwen3 coder: 30B"`, `nomic-embed-text` (embeddings)
 
 ### Installation
 

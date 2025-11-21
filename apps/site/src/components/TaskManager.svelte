@@ -58,6 +58,11 @@
   let filteredTasks: Task[] = [];
   let filteredCompletedTasks: Task[] = [];
 
+  // Edit mode state
+  let editingTaskId: string | null = null;
+  let editForm: Partial<Task> = {};
+  let editSaving = false;
+
   function startOfWeek(date: Date): Date {
     const d = new Date(date);
     const day = d.getDay();
@@ -194,6 +199,74 @@
     } catch (e) {
       error = (e as Error).message;
     }
+  }
+
+  function startEdit(task: Task) {
+    editingTaskId = task.id;
+    editForm = {
+      title: task.title,
+      description: task.description || '',
+      priority: task.priority || 'P2',
+      due: task.due || '',
+      tags: task.tags || [],
+      listId: task.listId || '',
+    };
+  }
+
+  function cancelEdit() {
+    editingTaskId = null;
+    editForm = {};
+  }
+
+  async function saveEdit() {
+    if (!editingTaskId || !editForm.title?.trim()) return;
+    editSaving = true;
+
+    try {
+      const payload: Record<string, unknown> = {
+        taskId: editingTaskId,
+        title: editForm.title.trim(),
+        description: editForm.description || '',
+        priority: editForm.priority || 'P2',
+        due: editForm.due || undefined,
+        tags: editForm.tags || [],
+      };
+      if (editForm.listId) {
+        payload.listId = editForm.listId;
+      }
+
+      const res = await fetch('/api/tasks', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) throw new Error('Failed to update task');
+
+      editingTaskId = null;
+      editForm = {};
+      await loadTasks();
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      editSaving = false;
+    }
+  }
+
+  function handleTagInput(event: KeyboardEvent) {
+    if (event.key === 'Enter' || event.key === ',') {
+      event.preventDefault();
+      const input = event.target as HTMLInputElement;
+      const tag = input.value.trim().replace(/,/g, '');
+      if (tag && !editForm.tags?.includes(tag)) {
+        editForm.tags = [...(editForm.tags || []), tag];
+      }
+      input.value = '';
+    }
+  }
+
+  function removeTag(tag: string) {
+    editForm.tags = (editForm.tags || []).filter(t => t !== tag);
   }
 
   function formatDate(iso?: string): string {
@@ -528,90 +601,193 @@
       <div class="space-y-3">
         {#each filteredTasks as task (task.id)}
           <div class="card p-4 hover:ring-2 hover:ring-brand/40 transition">
-            <div class="flex items-start justify-between gap-4">
-              <div class="flex-1">
-                <div class="flex items-center gap-2 mb-2">
-                  {#if task.priority}
-                    <span class="text-xs px-2 py-0.5 rounded-full font-semibold {getPriorityColor(task.priority)}">
-                      {task.priority}
-                    </span>
-                  {/if}
-                  <span class="text-xs px-2 py-0.5 rounded-full font-semibold {getStatusColor(task.status)}">
-                    {task.status.replace('_', ' ')}
-                  </span>
-                  {#if task.listId}
-                    <span class="text-[11px] px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700">
-                      {taskLists.find(l => l.id === task.listId)?.name ?? task.listId}
-                    </span>
-                  {/if}
+            {#if editingTaskId === task.id}
+              <!-- Edit Form -->
+              <div class="space-y-3">
+                <div>
+                  <label class="block text-xs font-semibold mb-1">Title</label>
+                  <input
+                    type="text"
+                    bind:value={editForm.title}
+                    class="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
+                    placeholder="Task title..."
+                  />
                 </div>
-                <h3 class="font-semibold mb-1">{task.title}</h3>
-                {#if task.description}
-                  <p class="text-sm muted">{task.description}</p>
-                {/if}
-                {#if task.tags?.length}
-                  <div class="mt-2 flex flex-wrap gap-1">
-                    {#each task.tags as tag}
-                      <span class="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700">{tag}</span>
+                <div>
+                  <label class="block text-xs font-semibold mb-1">Description</label>
+                  <textarea
+                    bind:value={editForm.description}
+                    rows="2"
+                    class="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
+                    placeholder="Description (optional)..."
+                  ></textarea>
+                </div>
+                <div class="flex gap-3">
+                  <div class="flex-1">
+                    <label class="block text-xs font-semibold mb-1">Priority</label>
+                    <select
+                      bind:value={editForm.priority}
+                      class="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
+                    >
+                      <option value="P0">P0 - Critical</option>
+                      <option value="P1">P1 - High</option>
+                      <option value="P2">P2 - Medium</option>
+                      <option value="P3">P3 - Low</option>
+                    </select>
+                  </div>
+                  <div class="flex-1">
+                    <label class="block text-xs font-semibold mb-1">Due Date</label>
+                    <input
+                      type="datetime-local"
+                      bind:value={editForm.due}
+                      class="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold mb-1">List</label>
+                  <select
+                    bind:value={editForm.listId}
+                    class="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
+                  >
+                    <option value="">No List</option>
+                    {#each taskLists as list (list.id)}
+                      <option value={list.id}>{list.name}</option>
+                    {/each}
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold mb-1">Tags</label>
+                  <div class="flex flex-wrap gap-1 mb-2">
+                    {#each editForm.tags || [] as tag}
+                      <span class="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 flex items-center gap-1">
+                        {tag}
+                        <button
+                          type="button"
+                          on:click={() => removeTag(tag)}
+                          class="hover:text-red-500"
+                        >&times;</button>
+                      </span>
                     {/each}
                   </div>
-                {/if}
-                <div class="mt-2 text-xs muted space-y-1">
-                  {#if task.start || task.end}
-                    <div>
-                      {#if task.start}Start: {formatDate(task.start)}{/if}
-                      {#if task.end}
-                        <span class="ml-2">End: {formatDate(task.end)}</span>
-                      {/if}
-                    </div>
-                  {/if}
-                  {#if task.due}
-                    <div>Due: {formatDate(task.due)}</div>
-                  {/if}
-                  <div>Created: {formatDate(task.created)}</div>
+                  <input
+                    type="text"
+                    on:keydown={handleTagInput}
+                    placeholder="Type tag and press Enter..."
+                    class="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
+                  />
                 </div>
-              </div>
-              <div class="flex flex-col gap-1">
-                {#if task.status === 'todo'}
+                <div class="flex gap-2 pt-2">
                   <button
-                    on:click={() => updateTaskStatus(task.id, 'in_progress')}
-                    class="text-xs px-3 py-1 rounded bg-blue-100 hover:bg-blue-200 dark:bg-blue-900 dark:hover:bg-blue-800"
+                    on:click={saveEdit}
+                    disabled={editSaving}
+                    class="btn"
                   >
-                    Start
-                  </button>
-                {/if}
-                {#if task.status === 'in_progress'}
-                  <button
-                    on:click={() => updateTaskStatus(task.id, 'done')}
-                    class="text-xs px-3 py-1 rounded bg-green-100 hover:bg-green-200 dark:bg-green-900 dark:hover:bg-green-800"
-                  >
-                    Complete
+                    {editSaving ? 'Saving...' : 'Save'}
                   </button>
                   <button
-                    on:click={() => updateTaskStatus(task.id, 'blocked')}
-                    class="text-xs px-3 py-1 rounded bg-red-100 hover:bg-red-200 dark:bg-red-900 dark:hover:bg-red-800"
-                  >
-                    Block
-                  </button>
-                {/if}
-                {#if task.status === 'blocked'}
-                  <button
-                    on:click={() => updateTaskStatus(task.id, 'in_progress')}
-                    class="text-xs px-3 py-1 rounded bg-blue-100 hover:bg-blue-200 dark:bg-blue-900 dark:hover:bg-blue-800"
-                  >
-                    Unblock
-                  </button>
-                {/if}
-                {#if task.status !== 'done' && task.status !== 'cancelled'}
-                  <button
-                    on:click={() => updateTaskStatus(task.id, 'cancelled')}
-                    class="text-xs px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-800 dark:hover:bg-gray-700"
+                    on:click={cancelEdit}
+                    class="px-4 py-2 rounded bg-gray-200 dark:bg-gray-700 text-sm"
                   >
                     Cancel
                   </button>
-                {/if}
+                </div>
               </div>
-            </div>
+            {:else}
+              <!-- Normal Task View -->
+              <div class="flex items-start justify-between gap-4">
+                <div class="flex-1">
+                  <div class="flex items-center gap-2 mb-2">
+                    {#if task.priority}
+                      <span class="text-xs px-2 py-0.5 rounded-full font-semibold {getPriorityColor(task.priority)}">
+                        {task.priority}
+                      </span>
+                    {/if}
+                    <span class="text-xs px-2 py-0.5 rounded-full font-semibold {getStatusColor(task.status)}">
+                      {task.status.replace('_', ' ')}
+                    </span>
+                    {#if task.listId}
+                      <span class="text-[11px] px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700">
+                        {taskLists.find(l => l.id === task.listId)?.name ?? task.listId}
+                      </span>
+                    {/if}
+                  </div>
+                  <h3 class="font-semibold mb-1">{task.title}</h3>
+                  {#if task.description}
+                    <p class="text-sm muted">{task.description}</p>
+                  {/if}
+                  {#if task.tags?.length}
+                    <div class="mt-2 flex flex-wrap gap-1">
+                      {#each task.tags as tag}
+                        <span class="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700">{tag}</span>
+                      {/each}
+                    </div>
+                  {/if}
+                  <div class="mt-2 text-xs muted space-y-1">
+                    {#if task.start || task.end}
+                      <div>
+                        {#if task.start}Start: {formatDate(task.start)}{/if}
+                        {#if task.end}
+                          <span class="ml-2">End: {formatDate(task.end)}</span>
+                        {/if}
+                      </div>
+                    {/if}
+                    {#if task.due}
+                      <div>Due: {formatDate(task.due)}</div>
+                    {/if}
+                    <div>Created: {formatDate(task.created)}</div>
+                  </div>
+                </div>
+                <div class="flex flex-col gap-1">
+                  <button
+                    on:click={() => startEdit(task)}
+                    class="text-xs px-3 py-1 rounded bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700"
+                    disabled={!$canWriteMemory}
+                    title={$canWriteMemory ? 'Edit task' : 'Editing disabled in read-only mode'}
+                  >
+                    Edit
+                  </button>
+                  {#if task.status === 'todo'}
+                    <button
+                      on:click={() => updateTaskStatus(task.id, 'in_progress')}
+                      class="text-xs px-3 py-1 rounded bg-blue-100 hover:bg-blue-200 dark:bg-blue-900 dark:hover:bg-blue-800"
+                    >
+                      Start
+                    </button>
+                  {/if}
+                  {#if task.status === 'in_progress'}
+                    <button
+                      on:click={() => updateTaskStatus(task.id, 'done')}
+                      class="text-xs px-3 py-1 rounded bg-green-100 hover:bg-green-200 dark:bg-green-900 dark:hover:bg-green-800"
+                    >
+                      Complete
+                    </button>
+                    <button
+                      on:click={() => updateTaskStatus(task.id, 'blocked')}
+                      class="text-xs px-3 py-1 rounded bg-red-100 hover:bg-red-200 dark:bg-red-900 dark:hover:bg-red-800"
+                    >
+                      Block
+                    </button>
+                  {/if}
+                  {#if task.status === 'blocked'}
+                    <button
+                      on:click={() => updateTaskStatus(task.id, 'in_progress')}
+                      class="text-xs px-3 py-1 rounded bg-blue-100 hover:bg-blue-200 dark:bg-blue-900 dark:hover:bg-blue-800"
+                    >
+                      Unblock
+                    </button>
+                  {/if}
+                  {#if task.status !== 'done' && task.status !== 'cancelled'}
+                    <button
+                      on:click={() => updateTaskStatus(task.id, 'cancelled')}
+                      class="text-xs px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-800 dark:hover:bg-gray-700"
+                    >
+                      Cancel
+                    </button>
+                  {/if}
+                </div>
+              </div>
+            {/if}
           </div>
         {/each}
       </div>

@@ -54,6 +54,13 @@ import {
   valueManagerExecutor,
   goalManagerExecutor,
 } from './persona-executors.js';
+import {
+  thoughtGeneratorExecutor,
+  thoughtEvaluatorExecutor,
+  thoughtAggregatorExecutor,
+  agentTriggerExecutor,
+  loopMemorySearchExecutor,
+} from './thought-executors.js';
 
 /**
  * Master registry of all node executors
@@ -166,6 +173,13 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
   'identity_extractor': identityExtractorExecutor,
   'value_manager': valueManagerExecutor,
   'goal_manager': goalManagerExecutor,
+
+  // Train of Thought nodes (recursive reasoning)
+  'thought_generator': thoughtGeneratorExecutor,
+  'thought_evaluator': thoughtEvaluatorExecutor,
+  'thought_aggregator': thoughtAggregatorExecutor,
+  'agent_trigger': agentTriggerExecutor,
+  'loop_memory_search': loopMemorySearchExecutor,
 };
 
 /**

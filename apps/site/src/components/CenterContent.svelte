@@ -58,6 +58,12 @@ let functionMemories: Array<{
 }> = []
 let loadingEvents = false
 let eventsError: string | null = null
+
+// Pagination and search state
+let searchQuery = ''
+let currentPage = 1
+const itemsPerPage = 50
+
 let personaTab: 'editor' | 'memory' | 'behavior' | 'generator' = 'editor'
 let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
@@ -253,6 +259,76 @@ $: if ($activeView !== 'system') {
 $: if ($activeView !== 'dashboard') {
   dashboardTab = 'overview';
 }
+
+// Reset pagination when switching tabs or searching
+$: if (memoryTab || searchQuery !== undefined) {
+  currentPage = 1;
+}
+
+// Filter function for memories
+function filterMemories<T extends { content?: string; tags?: string[]; timestamp?: string }>(items: T[], query: string): T[] {
+  if (!query.trim()) return items;
+  const q = query.toLowerCase();
+  return items.filter(item => {
+    const content = (item.content || '').toLowerCase();
+    const tags = (item.tags || []).join(' ').toLowerCase();
+    return content.includes(q) || tags.includes(q);
+  });
+}
+
+// Paginate function
+function paginate<T>(items: T[], page: number, perPage: number): T[] {
+  const start = (page - 1) * perPage;
+  return items.slice(start, start + perPage);
+}
+
+// Filtered and paginated episodic events
+$: filteredEvents = filterMemories(events, searchQuery);
+$: paginatedEvents = paginate(filteredEvents, currentPage, itemsPerPage);
+$: totalEpisodicPages = Math.ceil(filteredEvents.length / itemsPerPage);
+
+// Filtered and paginated reflections
+$: filteredReflections = filterMemories(reflectionMemories, searchQuery);
+$: paginatedReflections = paginate(filteredReflections, currentPage, itemsPerPage);
+$: totalReflectionPages = Math.ceil(filteredReflections.length / itemsPerPage);
+
+// Filtered and paginated dreams
+$: filteredDreams = filterMemories(dreamMemories, searchQuery);
+$: paginatedDreams = paginate(filteredDreams, currentPage, itemsPerPage);
+$: totalDreamPages = Math.ceil(filteredDreams.length / itemsPerPage);
+
+// Filtered and paginated AI ingestor
+$: filteredAiIngestor = filterMemories(aiIngestorMemories, searchQuery);
+$: paginatedAiIngestor = paginate(filteredAiIngestor, currentPage, itemsPerPage);
+$: totalAiIngestorPages = Math.ceil(filteredAiIngestor.length / itemsPerPage);
+
+// Filtered and paginated audio
+$: filteredAudio = filterMemories(audioTranscriptMemories, searchQuery);
+$: paginatedAudio = paginate(filteredAudio, currentPage, itemsPerPage);
+$: totalAudioPages = Math.ceil(filteredAudio.length / itemsPerPage);
+
+// Get current page info based on active memory tab
+$: currentTotalPages = (() => {
+  switch (memoryTab) {
+    case 'episodic': return totalEpisodicPages;
+    case 'reflections': return totalReflectionPages;
+    case 'dreams': return totalDreamPages;
+    case 'ai-ingestor': return totalAiIngestorPages;
+    case 'audio': return totalAudioPages;
+    default: return 1;
+  }
+})();
+
+$: currentTotalItems = (() => {
+  switch (memoryTab) {
+    case 'episodic': return filteredEvents.length;
+    case 'reflections': return filteredReflections.length;
+    case 'dreams': return filteredDreams.length;
+    case 'ai-ingestor': return filteredAiIngestor.length;
+    case 'audio': return filteredAudio.length;
+    default: return 0;
+  }
+})();
 
 // loadPersonaCore and savePersonaCore removed - now using PersonaEditor component
 
@@ -490,6 +566,70 @@ async function loadMemoryContent(relPath: string) {
             <button class="tab-button" class:active={memoryTab==='curiosity'} on:click={() => memoryTab='curiosity'}>Curiosity ❓</button>
             <button class="tab-button" class:active={memoryTab==='functions'} on:click={() => memoryTab='functions'}>Functions 🔧</button>
           </div>
+
+          <!-- Search and Pagination Controls -->
+          {#if !['tasks', 'curated', 'curiosity', 'functions'].includes(memoryTab)}
+            <div class="memory-controls-bar">
+              <div class="search-box">
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="11" cy="11" r="8"/>
+                  <path d="m21 21-4.35-4.35"/>
+                </svg>
+                <input
+                  type="text"
+                  placeholder="Search memories..."
+                  bind:value={searchQuery}
+                  class="search-input"
+                />
+                {#if searchQuery}
+                  <button class="search-clear" on:click={() => searchQuery = ''}>×</button>
+                {/if}
+              </div>
+              <div class="pagination-info">
+                {#if currentTotalItems > 0}
+                  <span class="item-count">
+                    {currentTotalItems} {currentTotalItems === 1 ? 'memory' : 'memories'}
+                    {#if searchQuery}(filtered){/if}
+                  </span>
+                {/if}
+              </div>
+            </div>
+
+            {#if currentTotalPages > 1}
+              <div class="pagination-controls">
+                <button
+                  class="page-btn"
+                  on:click={() => currentPage = 1}
+                  disabled={currentPage === 1}
+                  title="First page"
+                >««</button>
+                <button
+                  class="page-btn"
+                  on:click={() => currentPage = Math.max(1, currentPage - 1)}
+                  disabled={currentPage === 1}
+                  title="Previous page"
+                >«</button>
+
+                <span class="page-indicator">
+                  Page {currentPage} of {currentTotalPages}
+                </span>
+
+                <button
+                  class="page-btn"
+                  on:click={() => currentPage = Math.min(currentTotalPages, currentPage + 1)}
+                  disabled={currentPage === currentTotalPages}
+                  title="Next page"
+                >»</button>
+                <button
+                  class="page-btn"
+                  on:click={() => currentPage = currentTotalPages}
+                  disabled={currentPage === currentTotalPages}
+                  title="Last page"
+                >»»</button>
+              </div>
+            {/if}
+          {/if}
+
           {#if loadingEvents}
           <div class="loading-state">Loading memories...</div>
         {:else if eventsError}
@@ -508,7 +648,7 @@ async function loadMemoryContent(relPath: string) {
           </div>
         {:else if memoryTab==='episodic'}
           <div class="events-list">
-            {#each events as event}
+            {#each paginatedEvents as event}
               {@const key = getEventKey(event)}
               {@const isOpen = key ? !!expanded[key] : false}
               <div class="event-card">
@@ -572,7 +712,7 @@ async function loadMemoryContent(relPath: string) {
                 </div>
               </div>
             {:else}
-              {#each reflectionMemories as event}
+              {#each paginatedReflections as event}
                 {@const key = getEventKey(event)}
                 {@const isOpen = key ? !!expanded[key] : false}
                 <div class="event-card">
@@ -727,7 +867,7 @@ async function loadMemoryContent(relPath: string) {
                 </div>
               </div>
             {:else}
-              {#each aiIngestorMemories as event}
+              {#each paginatedAiIngestor as event}
                 {@const key = getEventKey(event)}
                 {@const isOpen = key ? !!expanded[key] : false}
                 <div class="event-card ai-ingestor-card">
@@ -802,7 +942,7 @@ async function loadMemoryContent(relPath: string) {
                 </div>
               </div>
             {:else}
-              {#each audioTranscriptMemories as event}
+              {#each paginatedAudio as event}
                 {@const key = getEventKey(event)}
                 {@const isOpen = key ? !!expanded[key] : false}
                 <div class="event-card audio-transcript-card">
@@ -868,8 +1008,8 @@ async function loadMemoryContent(relPath: string) {
         {:else if memoryTab === 'dreams'}
         <div class="events-list">
 
-            {#if dreamMemories.length > 0}
-              {#each dreamMemories as event (event.id)}
+            {#if paginatedDreams.length > 0}
+              {#each paginatedDreams as event (event.id)}
                 {@const key = getEventKey(event)}
                 {@const isOpen = key ? !!expanded[key] : false}
                 <div class="event-card dream-card">
@@ -1646,6 +1786,176 @@ async function loadMemoryContent(relPath: string) {
     outline: none;
     border-color: #7c3aed;
     box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+  }
+
+  /* Search and Pagination Controls */
+  .memory-controls-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background: rgba(0, 0, 0, 0.02);
+    border-radius: 0.5rem;
+    border: 1px solid rgba(0, 0, 0, 0.06);
+  }
+
+  :global(.dark) .memory-controls-bar {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .search-box {
+    position: relative;
+    flex: 1;
+    max-width: 400px;
+  }
+
+  .search-icon {
+    position: absolute;
+    left: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1rem;
+    height: 1rem;
+    color: #9ca3af;
+    pointer-events: none;
+  }
+
+  .search-input {
+    width: 100%;
+    padding: 0.5rem 2rem 0.5rem 2.25rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    background: white;
+    color: #1f2937;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+
+  :global(.dark) .search-input {
+    background: #1f2937;
+    border-color: #374151;
+    color: #f3f4f6;
+  }
+
+  .search-input:focus {
+    outline: none;
+    border-color: #7c3aed;
+    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+  }
+
+  .search-input::placeholder {
+    color: #9ca3af;
+  }
+
+  .search-clear {
+    position: absolute;
+    right: 0.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1.25rem;
+    height: 1.25rem;
+    border: none;
+    background: #e5e7eb;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 0.875rem;
+    line-height: 1;
+    color: #6b7280;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+  }
+
+  :global(.dark) .search-clear {
+    background: #374151;
+    color: #9ca3af;
+  }
+
+  .search-clear:hover {
+    background: #d1d5db;
+  }
+
+  :global(.dark) .search-clear:hover {
+    background: #4b5563;
+  }
+
+  .pagination-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .item-count {
+    font-size: 0.75rem;
+    color: #6b7280;
+    white-space: nowrap;
+  }
+
+  :global(.dark) .item-count {
+    color: #9ca3af;
+  }
+
+  .pagination-controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    padding: 0.5rem;
+    background: rgba(0, 0, 0, 0.02);
+    border-radius: 0.5rem;
+  }
+
+  :global(.dark) .pagination-controls {
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .page-btn {
+    padding: 0.375rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    background: white;
+    color: #374151;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  :global(.dark) .page-btn {
+    background: #1f2937;
+    border-color: #374151;
+    color: #d1d5db;
+  }
+
+  .page-btn:hover:not(:disabled) {
+    background: #f3f4f6;
+    border-color: #9ca3af;
+  }
+
+  :global(.dark) .page-btn:hover:not(:disabled) {
+    background: #374151;
+    border-color: #6b7280;
+  }
+
+  .page-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .page-indicator {
+    padding: 0 0.75rem;
+    font-size: 0.875rem;
+    color: #4b5563;
+    font-weight: 500;
+  }
+
+  :global(.dark) .page-indicator {
+    color: #9ca3af;
   }
 </style>
 

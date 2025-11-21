@@ -16,7 +16,10 @@ import type { NodeExecutor } from './types.js';
  */
 export const innerDialogueCaptureExecutor: NodeExecutor = async (inputs, context) => {
   // Extract reflection text (slot 0)
-  const reflectionText = typeof inputs[0] === 'string' ? inputs[0] : inputs[0]?.response || inputs[0]?.reflection || '';
+  // Support multiple output formats: string, response, reflection, consolidatedChain, insight
+  const reflectionText = typeof inputs[0] === 'string'
+    ? inputs[0]
+    : inputs[0]?.response || inputs[0]?.reflection || inputs[0]?.consolidatedChain || inputs[0]?.insight || '';
 
   if (!reflectionText || reflectionText.trim().length === 0) {
     return {
