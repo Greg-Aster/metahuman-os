@@ -113,12 +113,17 @@ function resolveEventCategory(event: EpisodicEvent): string {
   return DEFAULT_EVENT_CATEGORY;
 }
 
-function buildEventDirectory(category: string, year: string): string {
+function buildEventDirectory(category: string, timestamp: string): string {
+  const date = new Date(timestamp);
+  const year = date.getFullYear().toString();
+  const month = (date.getMonth() + 1).toString().padStart(2, '0'); // 01-12
+  const day = date.getDate().toString().padStart(2, '0'); // 01-31
+
   const safeCategory = category.replace(/[^a-z0-9-_]/g, '-');
   if (!safeCategory || safeCategory === DEFAULT_EVENT_CATEGORY) {
-    return path.join(paths.episodic, year);
+    return path.join(paths.episodic, year, month, day);
   }
-  return path.join(paths.episodic, safeCategory, year);
+  return path.join(paths.episodic, safeCategory, year, month, day);
 }
 
 export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {}): string {
@@ -139,9 +144,8 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
     metadata: opts.metadata || {},
   };
 
-  const year = new Date().getFullYear().toString();
   const category = resolveEventCategory(event);
-  const dir = buildEventDirectory(category, year);
+  const dir = buildEventDirectory(category, event.timestamp);
   fs.mkdirSync(dir, { recursive: true });
 
   const slug = content.toLowerCase()

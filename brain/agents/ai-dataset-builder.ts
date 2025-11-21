@@ -406,9 +406,30 @@ function buildFallbackSample(mem: any, batchIndex: number): GeneratedSample {
   const styleGuide = styleGuideForMemory(mem);
   const summarySource = mem.content || mem.response || '';
   const output = sanitizeOutputText(summarySource || `Reflect briefly on ${mem.type || 'this memory'}.`);
-  const instruction = sanitizeInstruction(`In Greg's voice, respond according to this guide: ${styleGuide}`);
+
+  // Generate a natural conversational question based on memory type
+  let instruction = '';
+  const memType = (mem.type || 'memory').toLowerCase();
+  const contentSnippet = (summarySource || '').slice(0, 50).trim();
+
+  if (memType.includes('observation') || memType.includes('journal')) {
+    instruction = contentSnippet
+      ? `What did you observe about ${contentSnippet}?`
+      : 'What did you observe recently?';
+  } else if (memType.includes('reflection')) {
+    instruction = 'What have you been reflecting on?';
+  } else if (memType.includes('action')) {
+    instruction = 'What action did you take?';
+  } else if (memType.includes('conversation') || memType.includes('chat')) {
+    instruction = 'Tell me about that conversation.';
+  } else if (memType.includes('dream')) {
+    instruction = 'What did you dream about?';
+  } else {
+    instruction = `Tell me about that ${memType}.`;
+  }
+
   return {
-    instruction,
+    instruction: sanitizeInstruction(instruction),
     input: '',
     output,
     meta: {
@@ -461,7 +482,7 @@ async function generateSamples(
       const messages = [
         {
           role: 'system',
-          content: `${systemPrompt}\nYou are transforming MetaHuman Greg's memory archive into instruction-tuning pairs. Keep Greg's tone (${persona.personality?.communicationStyle?.tone?.join(', ') || 'direct, concise, pragmatic, friendly'}), respect factual accuracy, and return STRICT JSON only.`,
+          content: `Transform memories into conversational training samples. Return STRICT JSON: {"samples": [{"instruction": "...", "output": "...", "meta": {...}}]}. DO NOT use <think> tags. DO NOT add examples. DO NOT invent facts. Use ONLY content from provided memories.`,
         },
         {
           role: 'user',
@@ -471,11 +492,16 @@ async function generateSamples(
             '',
             'REQUIREMENTS:',
             '- Produce a JSON object with a single key "samples" pointing to an array.',
-            '- For each memory, output one or more items with fields: instruction, input, output, meta.',
-            '- meta must include original memory id, type, and sourcePath.',
-            '- Follow the provided styleGuide when crafting each response.',
+            '- For each memory, generate one or more training samples with fields: instruction, input, output, meta.',
+            '- **CRITICAL: instruction = natural conversational question** that prompts the user to share the memory.',
+            '  Examples: "What did you do when X happened?", "How did you handle Y?", "Tell me about Z"',
+            '  VARY the question style. Use what/how/why/when/tell me/describe/explain patterns.',
+            '  DO NOT use hardcoded templates like "In Greg\'s voice, respond..."',
+            '- **output = Greg\'s first-person response** to the question, grounded in the memory content.',
+            '- Follow the provided styleGuide for each memory when crafting the output.',
             '- Use Greg\'s first-person voice. Do NOT include internal thoughts, planning phrases, or markdown.',
             `- Keep outputs concise (<= ${OUTPUT_WORD_LIMIT} words) and free of filler such as "Okay" or "Let me".`,
+            '- meta must include original memory id, type, and sourcePath.',
             '- Do not invent facts. Stay grounded in provided content.',
             '- Respond only with valid JSON. Do not include commentary or explanations outside the JSON object.',
           ].join('\n'),

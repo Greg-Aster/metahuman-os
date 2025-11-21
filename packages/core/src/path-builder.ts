@@ -139,6 +139,9 @@ export const systemPaths = {
   // System configuration (accessible to all users)
   etc: path.join(ROOT, 'etc'),
 
+  // System-wide output directory
+  out: path.join(ROOT, 'out'),
+
   // Voice models (shared system-wide - these are large 60-120MB files)
   voiceModels: path.join(ROOT, 'out', 'voices'),
 };

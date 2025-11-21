@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, afterUpdate } from 'svelte';
+  import { fetchJSONSafe, FetchTimeoutError } from '../lib/fetch-timeout';
 
   type DatasetStatus = {
     date: string;
@@ -58,18 +59,32 @@
     loading = true;
     error = null;
     try {
-      const res = await fetch('/api/adapters');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error || 'Failed to load adapters');
+      // ROBUSTNESS: 15s timeout with 1 retry to handle slow/stuck Ollama
+      const { data, error: fetchError } = await fetchJSONSafe('/api/adapters', {
+        timeout: 15000,
+        retries: 1,
+        retryDelay: 2000,
+      });
+
+      if (fetchError) {
+        throw new Error(fetchError);
+      }
+
+      if (!data || !data.success) {
+        throw new Error(data?.error || 'Failed to load adapters');
+      }
+
       datasets = Array.isArray(data.datasets) ? data.datasets : [];
       autoApproval = data.autoApproval ?? null;
       activeAdapter = data.activeAdapter ?? null;
       loraEnabled = !!(data.sleep?.loraEnabled);
       recentLogs = Array.isArray(data.recentLogs) ? data.recentLogs : [];
     } catch (err) {
-      console.error(err);
+      console.error('[AdapterDashboard] Load error:', err);
       error = (err as Error).message;
+
+      // GRACEFUL DEGRADATION: Keep existing data visible on error
+      // Don't clear datasets/activeAdapter if this is a refresh failure
     } finally {
       loading = false;
     }
@@ -77,10 +92,17 @@
 
   async function loadTrainingConfig() {
     try {
-      const res = await fetch('/api/training-data');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (data.success) {
+      // ROBUSTNESS: 10s timeout for config load
+      const { data, error: fetchError } = await fetchJSONSafe('/api/training-data', {
+        timeout: 10000,
+      });
+
+      if (fetchError) {
+        console.error('Failed to load training config:', fetchError);
+        return;
+      }
+
+      if (data && data.success) {
         trainingConfig = data.config;
       }
     } catch (err) {
@@ -331,17 +353,25 @@
 
   async function loadTrainingModels() {
     try {
-      const res = await fetch('/api/training-models');
-      const data = await res.json();
+      // ROBUSTNESS: 10s timeout (Ollama may be slow)
+      const { data, error: fetchError } = await fetchJSONSafe('/api/training-models', {
+        timeout: 10000,
+      });
 
-      if (data.success && data.models) {
+      if (fetchError) {
+        console.error('Failed to load training models:', fetchError);
+        trainingModelsError = fetchError;
+        return;
+      }
+
+      if (data && data.success && data.models) {
         trainingModels = data.models;
         if (data.notes?.setup_guide) {
           setupGuideLink = data.notes.setup_guide;
         }
       } else {
-        trainingModelsError = data.error || 'Failed to load training models';
-        if (data.setupGuide) {
+        trainingModelsError = data?.error || 'Failed to load training models';
+        if (data?.setupGuide) {
           setupGuideLink = data.setupGuide;
         }
       }
@@ -353,33 +383,34 @@
   
   async function loadFullCycleLogs() {
     try {
+      // ROBUSTNESS: 5s timeout for log polling (fails silently if slow)
+      const timeout = 5000;
+
       // Load audit logs
-      const auditRes = await fetch('/api/training/logs?maxLines=50');
-      const auditData = await auditRes.json();
-      if (auditData.success && auditData.logs) {
+      const { data: auditData } = await fetchJSONSafe('/api/training/logs?maxLines=50', { timeout });
+      if (auditData && auditData.success && auditData.logs) {
         fullCycleLogs = auditData.logs;
       }
 
       // Load console logs
-      const consoleRes = await fetch('/api/training/console-logs?maxLines=100');
-      const consoleData = await consoleRes.json();
-      if (consoleData.success && consoleData.logs) {
+      const { data: consoleData } = await fetchJSONSafe('/api/training/console-logs?maxLines=100', { timeout });
+      if (consoleData && consoleData.success && consoleData.logs) {
         fullCycleConsoleLogs = consoleData.logs;
       }
 
       // Check if process is still running
-      const statusRes = await fetch('/api/training/running');
-      const statusData = await statusRes.json();
-      if (statusData.success) {
+      const { data: statusData } = await fetchJSONSafe('/api/training/running', { timeout });
+      if (statusData && statusData.success) {
         fullCycleRunningPid = statusData.running ? statusData.pid : null;
 
         // If process stopped, stop polling
-        if (!statusData.running && fullCycleInProgress) {
+        if (!statusData.running && fullCycleRunningPid) {
           stopLogsPolling();
         }
       }
     } catch (err) {
-      console.error('Failed to load training logs:', err);
+      // Fail silently for log polling - don't interrupt user experience
+      console.warn('Failed to load training logs:', err);
     }
   }
 
@@ -614,6 +645,21 @@
       {loading ? 'Refreshing…' : 'Refresh'}
     </button>
   </div>
+
+  <!-- Error/Warning Banner -->
+  {#if error}
+    <div class="error-banner">
+      <div class="error-icon">⚠️</div>
+      <div class="error-content">
+        <strong>Connection Issue</strong>
+        <p>{error}</p>
+        {#if error.includes('timeout') || error.includes('timed out')}
+          <p class="error-hint">The server may be overloaded. Try refreshing or check if Ollama is stuck.</p>
+        {/if}
+      </div>
+      <button class="error-dismiss" on:click={() => error = null}>×</button>
+    </div>
+  {/if}
 
   <!-- Animated status line -->
   <div class="status-line">
@@ -918,7 +964,7 @@
               {#each fullCycleLogs as log}
                 <div class="log-entry">
                   <span class="log-timestamp">{new Date(log.timestamp).toLocaleTimeString()}</span>
-                  <span class="log-event">{log.event.replace('full_cycle_', '').replace(/_/g, ' ')}</span>
+                  <span class="log-event">{(log.event || 'unknown').replace('full_cycle_', '').replace(/_/g, ' ')}</span>
                   {#if log.details}
                     <span class="log-details">{JSON.stringify(log.details)}</span>
                   {/if}
@@ -2150,5 +2196,97 @@
 
   :global(.dark) .info-box strong {
     color: rgb(96, 165, 250);
+  }
+
+  /* Error Banner Styles */
+  .error-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1rem;
+    margin-top: 1rem;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 0.5rem;
+    animation: slideDown 0.3s ease-out;
+  }
+
+  :global(.dark) .error-banner {
+    background: rgba(248, 113, 113, 0.1);
+    border-color: rgba(248, 113, 113, 0.3);
+  }
+
+  @keyframes slideDown {
+    from {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .error-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+  }
+
+  .error-content {
+    flex: 1;
+    color: rgb(127, 29, 29);
+  }
+
+  :global(.dark) .error-content {
+    color: rgb(254, 202, 202);
+  }
+
+  .error-content strong {
+    display: block;
+    margin-bottom: 0.25rem;
+    color: rgb(153, 27, 27);
+  }
+
+  :global(.dark) .error-content strong {
+    color: rgb(248, 113, 113);
+  }
+
+  .error-content p {
+    margin: 0.25rem 0;
+    font-size: 0.875rem;
+  }
+
+  .error-hint {
+    margin-top: 0.5rem !important;
+    padding: 0.5rem;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 0.25rem;
+    font-size: 0.8125rem;
+    color: rgb(127, 29, 29);
+  }
+
+  :global(.dark) .error-hint {
+    background: rgba(255, 255, 255, 0.05);
+    color: rgb(252, 165, 165);
+  }
+
+  .error-dismiss {
+    padding: 0.25rem 0.5rem;
+    background: none;
+    border: none;
+    color: rgb(127, 29, 29);
+    font-size: 1.5rem;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+    flex-shrink: 0;
+  }
+
+  .error-dismiss:hover {
+    opacity: 1;
+  }
+
+  :global(.dark) .error-dismiss {
+    color: rgb(254, 202, 202);
   }
 </style>
