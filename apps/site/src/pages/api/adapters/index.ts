@@ -10,6 +10,7 @@ import {
   setActiveAdapter,
   paths,
   audit,
+  getAuthenticatedUser,
 } from '@metahuman/core';
 import { execSync } from 'node:child_process';
 import type { ActiveAdapterInfo } from '@metahuman/core';
@@ -211,8 +212,21 @@ function readRecentAdapterLogs(limit = 50): Array<{ timestamp: string; event: st
   return logs.slice(-limit)
 }
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ cookies }) => {
+  // SECURITY FIX: 2025-11-20 - Require owner role for adapter management
   try {
+    const user = getAuthenticatedUser(cookies);
+
+    if (user.role !== 'owner') {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Owner role required to access adapter management'
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     const datasets = listAdapterDatasets();
     const autoApproval = readAutoApprovalConfig();
     const activeAdapter = getActiveAdapter();
@@ -232,6 +246,13 @@ export const GET: APIRoute = async () => {
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   } catch (error) {
+    // Check if it's an authentication error
+    if (error instanceof Error && error.message.includes('Authentication required')) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Authentication required' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
     return new Response(
       JSON.stringify({ success: false, error: (error as Error).message }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
@@ -239,8 +260,21 @@ export const GET: APIRoute = async () => {
   }
 };
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ cookies, request }) => {
+  // SECURITY FIX: 2025-11-20 - Require owner role for adapter management
   try {
+    const user = getAuthenticatedUser(cookies);
+
+    if (user.role !== 'owner') {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Owner role required to manage adapters'
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     const body = await request.json();
     const action = body?.action;
 
@@ -288,7 +322,7 @@ export const POST: APIRoute = async ({ request }) => {
           category: 'action',
           event: 'sleep_config_updated',
           details: { adapters: sleep.adapters },
-          actor: 'web-ui',
+          actor: user.username,
         });
 
         return new Response(JSON.stringify({ success: true, sleep: { loraEnabled: !!sleep.adapters?.lora } }), {
@@ -302,8 +336,8 @@ export const POST: APIRoute = async ({ request }) => {
           level: 'info',
           category: 'action',
           event: 'adapter_builder_queued',
-          details: { actor: 'web-ui' },
-          actor: 'web-ui',
+          details: { actor: user.username },
+          actor: user.username,
         });
         // If auto-approval is enabled (live) and auto pipeline flags are set,
         // kick off the full cycle orchestrator to approve→train→eval→activate.
@@ -316,7 +350,7 @@ export const POST: APIRoute = async ({ request }) => {
               category: 'action',
               event: 'full_cycle_queued',
               details: { trigger: 'runBuilder', autoTrain: aa.autoTrain !== false, autoEval: aa.autoEval !== false, autoActivate: aa.autoActivate !== false },
-              actor: 'web-ui',
+              actor: user.username,
             });
           }
         } catch {}
@@ -332,8 +366,8 @@ export const POST: APIRoute = async ({ request }) => {
           level: 'info',
           category: 'action',
           event: 'dreamer_queued',
-          details: { actor: 'web-ui' },
-          actor: 'web-ui',
+          details: { actor: user.username },
+          actor: user.username,
         });
         return new Response(JSON.stringify({ success: true, message: 'Dreamer started in background' }), {
           status: 200,
@@ -346,8 +380,8 @@ export const POST: APIRoute = async ({ request }) => {
           level: 'info',
           category: 'action',
           event: 'night_processor_queued',
-          details: { actor: 'web-ui' },
-          actor: 'web-ui',
+          details: { actor: user.username },
+          actor: user.username,
         });
         return new Response(JSON.stringify({ success: true, message: 'Night processor started in background' }), {
           status: 200,
@@ -360,8 +394,8 @@ export const POST: APIRoute = async ({ request }) => {
           level: 'info',
           category: 'system',
           event: 'sleep_service_started_from_ui',
-          details: { actor: 'web-ui' },
-          actor: 'web-ui',
+          details: { actor: user.username },
+          actor: user.username,
         });
         return new Response(JSON.stringify({ success: true, message: 'Sleep service started (long-running)' }), {
           status: 200,
@@ -393,8 +427,8 @@ export const POST: APIRoute = async ({ request }) => {
           level: 'info',
           category: 'action',
           event: 'full_cycle_queued',
-          details: { actor: 'web-ui', model, dualMode },
-          actor: 'web-ui',
+          details: { actor: user.username, model, dualMode },
+          actor: user.username,
         });
         return new Response(JSON.stringify({ success: true, message: 'Full cycle started in background' }), {
           status: 200,
@@ -404,13 +438,13 @@ export const POST: APIRoute = async ({ request }) => {
       case 'approve': {
         const { date, notes } = body;
         if (!date) throw new Error('Missing dataset date');
-        createApproval(date, 'web-ui', notes);
+        createApproval(date, user.username, notes);
         audit({
           level: 'info',
           category: 'action',
           event: 'adapter_approved',
-          details: { date, notes, actor: 'web-ui' },
-          actor: 'web-ui',
+          details: { date, notes, actor: user.username },
+          actor: user.username,
         });
         return new Response(JSON.stringify({ success: true, message: 'Dataset approved' }), {
           status: 200,
@@ -420,13 +454,13 @@ export const POST: APIRoute = async ({ request }) => {
       case 'reject': {
         const { date, reason } = body;
         if (!date) throw new Error('Missing dataset date');
-        const destination = rejectDataset(date, reason || 'Not specified', 'web-ui');
+        const destination = rejectDataset(date, reason || 'Not specified', user.username);
         audit({
           level: 'info',
           category: 'action',
           event: 'adapter_rejected',
-          details: { date, reason, actor: 'web-ui' },
-          actor: 'web-ui',
+          details: { date, reason, actor: user.username },
+          actor: user.username,
         });
         return new Response(JSON.stringify({ success: true, message: 'Dataset rejected', archive: destination }), {
           status: 200,
@@ -442,13 +476,13 @@ export const POST: APIRoute = async ({ request }) => {
         const approvedPath = path.join(dir, 'approved.json');
         if (!fs.existsSync(approvedPath)) {
           if (aa.enabled && !aa.dryRun) {
-            createApproval(date, 'web-ui:auto', 'Auto-approved before training');
+            createApproval(date, `${user.username}:auto`, 'Auto-approved before training');
             audit({
               level: 'info',
               category: 'action',
               event: 'lora_dataset_auto_approved',
-              details: { date, actor: 'web-ui' },
-              actor: 'web-ui',
+              details: { date, actor: user.username },
+              actor: user.username,
             });
           } else {
             return new Response(
@@ -462,8 +496,8 @@ export const POST: APIRoute = async ({ request }) => {
           level: 'info',
           category: 'action',
           event: 'adapter_training_queued',
-          details: { date, actor: 'web-ui' },
-          actor: 'web-ui',
+          details: { date, actor: user.username },
+          actor: user.username,
         });
         return new Response(JSON.stringify({ success: true, message: 'Training started in background' }), {
           status: 200,
@@ -479,8 +513,8 @@ export const POST: APIRoute = async ({ request }) => {
           level: 'info',
           category: 'action',
           event: 'adapter_evaluation_queued',
-          details: { date, actor: 'web-ui' },
-          actor: 'web-ui',
+          details: { date, actor: user.username },
+          actor: user.username,
         });
         return new Response(JSON.stringify({ success: true, message: 'Evaluation started in background' }), {
           status: 200,
@@ -491,7 +525,7 @@ export const POST: APIRoute = async ({ request }) => {
         const { date } = body;
         if (!date) throw new Error('Missing dataset date');
         // Stage activation metadata and Modelfile
-        activateAdapter(date, 'web-ui');
+        activateAdapter(date, user.username);
 
         // Attempt to load into Ollama automatically
         try {
@@ -515,7 +549,7 @@ export const POST: APIRoute = async ({ request }) => {
             category: 'action',
             event: 'adapter_activated',
             details: { date, modelName, status: 'loaded' },
-            actor: 'web-ui',
+            actor: user.username,
           });
 
           return new Response(
@@ -529,7 +563,7 @@ export const POST: APIRoute = async ({ request }) => {
             category: 'action',
             event: 'adapter_activation_partial',
             details: { date, error: (e as Error).message },
-            actor: 'web-ui',
+            actor: user.username,
           });
           return new Response(
             JSON.stringify({
@@ -543,8 +577,8 @@ export const POST: APIRoute = async ({ request }) => {
       case 'activateDual': {
         const { date } = body;
         if (!date) throw new Error('Missing dataset date');
-        activateDualAdapter(date, 'web-ui');
-        audit({ level: 'info', category: 'action', event: 'adapter_activation_requested_dual', details: { date, actor: 'web-ui' }, actor: 'web-ui' });
+        activateDualAdapter(date, user.username);
+        audit({ level: 'info', category: 'action', event: 'adapter_activation_requested_dual', details: { date, actor: user.username }, actor: user.username });
         return new Response(JSON.stringify({ success: true, message: 'Dual adapter activated (history-merged + recent). If Ollama was running, it was auto-loaded.' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       case 'autoApproval': {
@@ -567,7 +601,7 @@ export const POST: APIRoute = async ({ request }) => {
           category: 'action',
           event: 'auto_approval_updated',
           details: config,
-          actor: 'web-ui',
+          actor: user.username,
         });
         return new Response(JSON.stringify({ success: true, config }), {
           status: 200,
@@ -587,8 +621,8 @@ export const POST: APIRoute = async ({ request }) => {
           level: 'info',
           category: 'action',
           event: 'adapter_merge_started',
-          details: { actor: 'web-ui' },
-          actor: 'web-ui',
+          details: { actor: user.username },
+          actor: user.username,
         });
 
         return new Response(
@@ -603,9 +637,20 @@ export const POST: APIRoute = async ({ request }) => {
         );
     }
   } catch (error) {
+    // Check if it's an authentication error
+    if (error instanceof Error && error.message.includes('Authentication required')) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Authentication required' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
     return new Response(
       JSON.stringify({ success: false, error: (error as Error).message }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
 };
+
+// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// SECURITY FIX: 2025-11-20 - Require owner role for adapter management (system files)
+// Both GET and POST now authenticate and check for owner role

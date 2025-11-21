@@ -245,11 +245,12 @@
     },
     {
       "id": 13,
-      "origin_id": 9,
+      "origin_id": 11,
       "origin_slot": 0,
       "target_id": 14,
       "target_slot": 0,
-      "type": "string"
+      "type": "llm_response",
+      "comment": "Chat path response (processed first)"
     },
     {
       "id": 14,
@@ -269,12 +270,12 @@
     },
     {
       "id": 16,
-      "origin_id": 11,
+      "origin_id": 9,
       "origin_slot": 0,
       "target_id": 14,
       "target_slot": 0,
-      "type": "llm_response",
-      "comment": "Chat path response"
+      "type": "string",
+      "comment": "Operator path response (processed last, wins the slot)"
     },
     {
       "id": 17,

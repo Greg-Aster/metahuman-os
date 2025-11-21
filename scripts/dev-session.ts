@@ -44,7 +44,7 @@ const sessionId = randomBytes(32).toString('hex');
 
 // Load existing sessions
 const sessionsPath = join(systemPaths.run, 'sessions.json');
-let sessions: any = { sessions: {} };
+let sessions: any = { sessions: [], version: 1 };
 if (existsSync(sessionsPath)) {
   try {
     sessions = JSON.parse(readFileSync(sessionsPath, 'utf-8'));
@@ -55,16 +55,21 @@ if (existsSync(sessionsPath)) {
 
 // Create session
 const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
-sessions.sessions[sessionId] = {
+const newSession = {
+  id: sessionId,
   userId: user.id,
-  username: user.username,
   role: user.role,
   createdAt: new Date().toISOString(),
   expiresAt: expiresAt.toISOString(),
+  lastActivity: new Date().toISOString(),
   metadata: {
     source: 'dev-session-helper',
   },
 };
+
+// Add to sessions array (remove existing session for this user if any)
+sessions.sessions = sessions.sessions.filter((s: any) => s.userId !== user.id);
+sessions.sessions.push(newSession);
 
 // Write sessions file
 writeFileSync(sessionsPath, JSON.stringify(sessions, null, 2));
