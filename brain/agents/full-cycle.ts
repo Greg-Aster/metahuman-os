@@ -18,7 +18,7 @@ import { systemPaths, audit, setActiveAdapter } from '../../packages/core/src/in
 import { withUserContext, getUserContext } from '../../packages/core/src/context.js';
 import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
 import dotenv from 'dotenv';
-import { mkdirpSync } from 'mkdirp';
+const mkdirpSync = (dir: string) => fs.mkdirSync(dir, { recursive: true });
 import { runRemoteTraining } from './lora-trainer';
 import { randomBytes } from 'node:crypto';
 import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
@@ -54,7 +54,7 @@ function cleanupAfterSuccessfulMerge(runRoot: string, workLocal?: string) {
   }
 }
 
-async function runAgent(agentName: string, args: string[] = []): Promise<number> {
+async function runAgent(agentName: string, args: string[] = [], username?: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const agentPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
     if (!fs.existsSync(agentPath)) {
@@ -62,8 +62,10 @@ async function runAgent(agentName: string, args: string[] = []): Promise<number>
       return resolve(1);
     }
 
-    console.log(`[full-cycle] Running agent: ${agentName} with args: ${args.join(' ')}`);
-    const child = spawn('tsx', [agentPath, ...args], { cwd: systemPaths.root, stdio: ['inherit', 'pipe', 'pipe'] });
+    // Pass username to subprocess so it can establish user context
+    const allArgs = username ? ['--username', username, ...args] : args;
+    console.log(`[full-cycle] Running agent: ${agentName} with args: ${allArgs.join(' ')}`);
+    const child = spawn('tsx', [agentPath, ...allArgs], { cwd: systemPaths.root, stdio: ['inherit', 'pipe', 'pipe'] });
 
     let stdout = '';
     let stderr = '';
@@ -169,7 +171,11 @@ async function mainWithContext() {
   writeDebugLog(`=== Starting remote full cycle for user: ${ctx.username} (${currentRunId}) ===`);
 
   // User-specific paths
-  const profileRoot = path.dirname(ctx.profilePaths.personaCore);
+  if (!ctx.profilePaths) {
+    console.error('[full-cycle] ERROR: User context missing profilePaths');
+    process.exit(1);
+  }
+  const profileRoot = ctx.profilePaths.root;
 
   // 2.1. Compute run identifiers and paths
   const now = new Date();
@@ -228,6 +234,8 @@ async function mainWithContext() {
     console.log('[full-cycle] Using AI dataset builder strategy');
     const aiBuilderPath = path.join(systemPaths.brain, 'agents', 'ai-dataset-builder.ts');
     const args = ['tsx', aiBuilderPath, '--output', CLEAN_DATA_FILE];
+    // BUGFIX: Pass username to ensure we only process this user's memories
+    args.push('--username', ctx.username);
     if (process.env.METAHUMAN_DATASET_MAX) {
       args.push('--max', process.env.METAHUMAN_DATASET_MAX);
     }
@@ -268,7 +276,7 @@ async function mainWithContext() {
     
     if (!fs.existsSync(datasetDir) || !fs.existsSync(path.join(datasetDir, 'instructions.jsonl'))) {
       writeDebugLog('Dataset directory or instructions.jsonl not found, running adapter-builder');
-      const rc = await runAgent('adapter-builder');
+      const rc = await runAgent('adapter-builder', [], ctx.username);
       writeDebugLog('adapter-builder completed', { exitCode: rc });
       if (rc !== 0) throw new Error('adapter-builder failed');
     } else {
@@ -300,7 +308,7 @@ async function mainWithContext() {
   }
 
   // 2.3. Load training config from etc/training.json
-  const trainingConfigPath = path.join(paths.etc, 'training.json');
+  const trainingConfigPath = path.join(systemPaths.etc, 'training.json');
   let config: any = {
     "base_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct",
     "lora_rank": 8,
@@ -455,7 +463,7 @@ async function mainWithContext() {
     // Multiple adapters exist, merge historical ones
     audit({ level: 'info', category: 'action', event: 'full_cycle_merging_adapters', details: { historicalCount: allAdapterDates.length, dualMode: dualModeEnabled }, actor: 'full-cycle' })
 
-    const rc = await runAgent('adapter-merger');
+    const rc = await runAgent('adapter-merger', [], ctx.username);
     if (rc === 0) {
       // Check if merge succeeded
       const mergedDir = path.join(adaptersRoot, 'history-merged');

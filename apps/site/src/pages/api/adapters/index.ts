@@ -189,22 +189,21 @@ function readRecentAdapterLogs(limit = 50): Array<{ timestamp: string; event: st
   const logs: Array<{ timestamp: string; event: string; actor?: string; details?: any }> = []
   try {
     const today = new Date().toISOString().slice(0, 10)
-    const days = [0, 1] // today + yesterday
-    for (const d of days) {
-      const date = new Date(Date.now() - d * 24 * 3600 * 1000).toISOString().slice(0, 10)
-      const file = path.join(paths.logs, 'audit', `${date}.ndjson`)
-      if (!fs.existsSync(file)) continue
-      const content = fs.readFileSync(file, 'utf-8')
-      const lines = content.trim().split('\n').slice(-1000) // cap
-      for (const line of lines) {
-        try {
-          const obj = JSON.parse(line)
-          const e = String(obj.event || '')
-          if (/adapter_|lora_|full_cycle_|gguf_/.test(e)) {
-            logs.push({ timestamp: obj.timestamp, event: e, actor: obj.actor, details: obj.details })
-          }
-        } catch {}
-      }
+    // PERFORMANCE: Only read from today's log, and only last 200 lines instead of 1000
+    const file = path.join(paths.logs, 'audit', `${today}.ndjson`)
+    if (!fs.existsSync(file)) return []
+
+    const content = fs.readFileSync(file, 'utf-8')
+    const lines = content.trim().split('\n').slice(-200) // Reduced from 2000 (1000×2 days) to 200
+
+    for (const line of lines) {
+      try {
+        const obj = JSON.parse(line)
+        const e = String(obj.event || '')
+        if (/adapter_|lora_|full_cycle_|gguf_/.test(e)) {
+          logs.push({ timestamp: obj.timestamp, event: e, actor: obj.actor, details: obj.details })
+        }
+      } catch {}
     }
   } catch {}
   // sort asc by time and slice last N
@@ -230,7 +229,8 @@ export const GET: APIRoute = async ({ cookies }) => {
     const datasets = listAdapterDatasets();
     const autoApproval = readAutoApprovalConfig();
     const activeAdapter = getActiveAdapter();
-    const recentLogs = readRecentAdapterLogs(75)
+    // PERFORMANCE: Reduced from 75 to 10 since UI only displays first 5
+    const recentLogs = readRecentAdapterLogs(10)
     // Read sleep config for LoRA enabled flag
     let loraEnabled = false;
     try {
@@ -412,25 +412,118 @@ export const POST: APIRoute = async ({ cookies, request }) => {
         if (typeof dualMode === 'boolean') {
           env.METAHUMAN_DUAL_MODE = dualMode ? '1' : '0';
         }
-        
+
+        // Create log file for full-cycle output
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const logPath = path.join(paths.logs, 'run', `full-cycle-${timestamp}.log`);
+        fs.mkdirSync(path.dirname(logPath), { recursive: true });
+        const logStream = fs.openSync(logPath, 'w');
+
         // Create a child process with the specified environment
         const agentPath = path.join(paths.brain, 'agents', 'full-cycle.ts');
-        const child = spawn('tsx', [agentPath], {
+        const child = spawn('tsx', [agentPath, '--username', user.username], {
           cwd: paths.root,
-          stdio: 'ignore',
+          stdio: ['ignore', logStream, logStream], // stdout and stderr to log file
           detached: true,
           env
         });
         child.unref();
-        
+
+        // Store PID for cancellation
+        const pidPath = path.join(paths.logs, 'run', 'full-cycle.pid');
+        fs.writeFileSync(pidPath, String(child.pid), 'utf-8');
+
         audit({
           level: 'info',
           category: 'action',
           event: 'full_cycle_queued',
-          details: { actor: user.username, model, dualMode },
+          details: { actor: user.username, model, dualMode, logPath, pid: child.pid },
           actor: user.username,
         });
-        return new Response(JSON.stringify({ success: true, message: 'Full cycle started in background' }), {
+        return new Response(JSON.stringify({ success: true, message: 'Full cycle started in background', logPath, pid: child.pid }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      case 'cancelFullCycle': {
+        const pidPath = path.join(paths.logs, 'run', 'full-cycle.pid');
+        let killedPids: number[] = [];
+
+        // Try PID file first
+        if (fs.existsSync(pidPath)) {
+          const pidStr = fs.readFileSync(pidPath, 'utf-8').trim();
+          const pid = parseInt(pidStr, 10);
+
+          if (!isNaN(pid)) {
+            try {
+              // Kill the process group (negative PID kills the whole process tree)
+              process.kill(-pid, 'SIGTERM');
+              killedPids.push(pid);
+              fs.unlinkSync(pidPath);
+            } catch (err: any) {
+              if (err.code !== 'ESRCH') {
+                console.warn(`[cancelFullCycle] Failed to kill process ${pid}:`, err.message);
+              }
+            }
+          }
+        }
+
+        // FALLBACK: If PID file doesn't exist or failed, find processes by name
+        try {
+          const { execSync } = require('node:child_process');
+
+          // Find all full-cycle and ai-dataset-builder processes for this user
+          const psOutput = execSync(
+            `ps aux | grep -E "full-cycle.ts|ai-dataset-builder.ts" | grep "${user.username}" | grep -v grep | awk '{print $2}'`,
+            { encoding: 'utf-8' }
+          ).trim();
+
+          if (psOutput) {
+            const pids = psOutput.split('\n').map(p => parseInt(p, 10)).filter(p => !isNaN(p));
+
+            for (const pid of pids) {
+              try {
+                process.kill(pid, 'SIGTERM');
+                killedPids.push(pid);
+              } catch (err: any) {
+                if (err.code !== 'ESRCH') {
+                  console.warn(`[cancelFullCycle] Failed to kill process ${pid}:`, err.message);
+                }
+              }
+            }
+          }
+        } catch (err: any) {
+          console.warn('[cancelFullCycle] Fallback process killing failed:', err.message);
+        }
+
+        // Clean up PID file if it exists
+        if (fs.existsSync(pidPath)) {
+          fs.unlinkSync(pidPath);
+        }
+
+        if (killedPids.length === 0) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'No training processes found'
+          }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'full_cycle_cancelled',
+          details: { pids: killedPids, actor: user.username },
+          actor: user.username,
+        });
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: `Cancelled ${killedPids.length} training process(es)`,
+          pids: killedPids
+        }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });

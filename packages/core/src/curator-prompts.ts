@@ -238,20 +238,56 @@ Return a JSON object:
 \`\`\`
 
 ## Remember
-Your goal is to create a training dataset that will make the LoRA adapter feel like talking to the actual person. Every decision should serve that goal. Quality over quantity - one perfect sample is worth ten mediocre ones.`;
+Your goal is to create a training dataset that will make the LoRA adapter feel like talking to the actual person. Every decision should serve that goal. Quality over quantity - one perfect sample is worth ten mediocre ones.
+
+## IMPORTANT: Therapy Insights Integration
+If therapy session insights are provided above, use them to:
+1. **Validate Authenticity**: Check if samples align with revealed values, communication style, and experiences
+2. **Enhance Context**: Add context from therapy that makes samples more meaningful
+3. **Identify Patterns**: Look for recurring themes from therapy (e.g., need to prove oneself, bitterness, seeking connection)
+4. **Preserve Voice**: Match the authentic voice captured in therapy responses
+5. **Flag Inconsistencies**: Mark samples that contradict therapy-revealed patterns
+
+Therapy insights are the GOLD STANDARD for understanding this person. They reveal:
+- Deep motivations (e.g., childhood trauma driving need to prove skills)
+- Authentic communication patterns (e.g., "Fuck Yeah!", awkward mumbling, pivoting to questions)
+- Core values (honesty, frankness, diversity, genuine connections)
+- Social dynamics (withdrawal from interactions, creating alone, leaving doors open)
+- Emotional patterns (bitterness, frustration with lack of recognition)
+
+Use this context to score authenticity and consistency higher when samples align with therapy insights.`;
+
 
 /**
  * Prompt template for batch curation
  */
 export function buildBatchCurationPrompt(
   samples: Array<{ instruction: string; input: string; output: string; metadata?: any }>,
-  personaSummary: string
+  personaSummary: string,
+  therapyInsights?: string
 ): string {
+  // Limit therapy insights to prevent context overflow
+  // Keep only the most recent and most relevant insights
+  let therapySection = '';
+  if (therapyInsights) {
+    const lines = therapyInsights.split('\n');
+    const maxLines = 150; // ~3000 tokens for therapy context
+
+    if (lines.length > maxLines) {
+      // Take first part (header) and most recent session insights
+      const header = lines.slice(0, 10).join('\n');
+      const recentInsights = lines.slice(-maxLines + 10).join('\n');
+      therapySection = `\n## THERAPY SESSION INSIGHTS (Most Recent)\n${header}\n[... earlier sessions omitted ...]\n${recentInsights}\n`;
+    } else {
+      therapySection = `\n## THERAPY SESSION INSIGHTS\n${therapyInsights}\n`;
+    }
+  }
+
   return `Review these ${samples.length} training samples for personality modeling.
 
 ## USER PERSONALITY PROFILE
 ${personaSummary}
-
+${therapySection}
 ## YOUR TASK
 1. **Evaluate**: Score each sample using the 5 quality criteria (authenticity, specificity, consistency, behavioral, density)
 2. **Filter**: Keep only samples with weighted score ≥ 6.0
@@ -338,4 +374,71 @@ export function buildPersonaSummary(personaData: any): string {
   }
 
   return sections.join('\n\n');
+}
+
+/**
+ * Generate varied prompts using LLM for specific memory types
+ * This creates more diverse training data than static prompt pools
+ */
+export async function generateVariedPrompts(
+  memoryType: string,
+  count: number = 20,
+  therapyInsights?: string
+): Promise<string[]> {
+  const contextSection = therapyInsights
+    ? `\n## User Context\n${therapyInsights}\n\nGenerate prompts that align with this person's communication style and interests.`
+    : '';
+
+  const typeDescriptions: Record<string, string> = {
+    dream: 'surreal, symbolic dreams that reveal subconscious patterns',
+    reflection: 'deep personal reflections and insights',
+    journal: 'personal journal entries and daily thoughts',
+    observation: 'observations about experiences or events',
+    decision: 'decision-making processes and reasoning',
+    inner_dialogue: 'internal thoughts and self-directed questions',
+  };
+
+  const description = typeDescriptions[memoryType] || 'personal thoughts and experiences';
+
+  const prompt = `Generate ${count} varied, natural conversational prompts for ${description}.
+
+${contextSection}
+
+Requirements:
+- Sound like genuine human questions, not formulaic templates
+- Vary in length, formality, and directness
+- Mix open-ended questions with specific inquiries
+- Include casual phrasing (e.g., "Tell me about...", "What's going on with...", "How do you feel about...")
+- Some should be intimate/personal, others more reflective
+- Avoid repetitive patterns or starting every prompt the same way
+
+Return ONLY a JSON array of strings, no other text:
+["prompt1", "prompt2", ...]`;
+
+  try {
+    // Import callLLM dynamically to avoid circular dependencies
+    const { callLLM } = await import('./model-router.js');
+
+    const response = await callLLM({
+      role: 'curator',
+      messages: [{ role: 'user', content: prompt }],
+      options: {
+        temperature: 0.9, // Higher temperature for more creativity
+        response_format: { type: 'json_object' },
+      },
+    });
+
+    const parsed = JSON.parse(response.content);
+    if (Array.isArray(parsed.prompts)) {
+      return parsed.prompts;
+    } else if (Array.isArray(parsed)) {
+      return parsed;
+    }
+
+    console.warn('[curator-prompts] LLM returned unexpected format, using fallback prompts');
+    return [];
+  } catch (error) {
+    console.warn(`[curator-prompts] Failed to generate varied prompts: ${(error as Error).message}`);
+    return [];
+  }
 }

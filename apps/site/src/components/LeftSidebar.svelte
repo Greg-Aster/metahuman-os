@@ -633,12 +633,14 @@
     // Set up document click handler for closing dropdowns
     document.addEventListener('click', handleDocumentClick);
 
-    // Set up visibility change handling to connect/disconnect EventSource
+    // Set up visibility change handling to connect/disconnect EventSource and pause polling
     const handleVisibilityChange = () => {
       if (document.hidden) {
         disconnectActivityStream();
+        stopApprovalsPolling();
       } else {
         connectActivityStream();
+        startApprovalsPolling();
       }
     };
 

@@ -126,7 +126,8 @@
         "code-generation",
         "code-review",
         "orchestrator",
-        "persona"
+        "persona",
+        "curator"
       ],
       "description": "Specialized model for code generation, review, and refactoring",
       "options": {
@@ -245,7 +246,8 @@
       "roles": [
         "psychotherapist",
         "orchestrator",
-        "persona"
+        "persona",
+        "curator"
       ],
       "adapters": [],
       "description": "Imported from Ollama tag qwen3:30b",
@@ -329,7 +331,7 @@
       "persona": "default.orchestrator",
       "coder": "default.coder",
       "planner": "default.orchestrator",
-      "curator": "default.curator",
+      "curator": "ollama.qwen3:30b",
       "summarizer": "default.summarizer",
       "psychotherapist": "ollama.qwen3:30b",
       "description": "Full cognitive mirror with operator routing"

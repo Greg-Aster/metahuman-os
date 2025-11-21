@@ -12,10 +12,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { audit, callLLM, systemPaths } from '../../packages/core/src/index.js';
-import { getUserContext } from '../../packages/core/src/context.js';
+import { getUserContext, withUserContext } from '../../packages/core/src/context.js';
+import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
 import {
   collectAllUserData,
   loadPersonaData,
+  extractTherapyInsights,
+  generateAllVariedPrompts,
   type RawTrainingSample,
 } from '../../packages/core/src/user-data-collector.js';
 import {
@@ -26,10 +29,79 @@ import {
   type CuratedSample,
 } from '../../packages/core/src/curator-prompts.js';
 
-// Batch processing configuration
-const CURATOR_BATCH_SIZE = 50; // Process 50 samples at a time
-const QUALITY_THRESHOLD = 6.0; // Minimum weighted quality score (0-10 scale)
-const CURATOR_TEMPERATURE = 0.3; // Low temperature for consistent evaluation
+/**
+ * Training data configuration interface
+ */
+interface TrainingDataConfig {
+  curator: {
+    batchSize: number;
+    qualityThreshold: number;
+    temperature: number;
+  };
+  collection: {
+    maxDays: number;
+    maxSamplesPerSource: number;
+  };
+  memoryTypes: {
+    enabled: string[];
+    priorities: Record<string, number>;
+  };
+}
+
+/**
+ * Load training data configuration from etc/training-data.json
+ */
+function loadTrainingConfig(): TrainingDataConfig {
+  const configPath = path.join(systemPaths.etc, 'training-data.json');
+
+  try {
+    if (fs.existsSync(configPath)) {
+      const content = fs.readFileSync(configPath, 'utf-8');
+      const config = JSON.parse(content);
+      console.log('[adapter-builder] Loaded training data config from etc/training-data.json');
+      console.log(`[adapter-builder] - Batch size: ${config.curator.batchSize}`);
+      console.log(`[adapter-builder] - Max samples per source: ${config.collection.maxSamplesPerSource}`);
+      console.log(`[adapter-builder] - Quality threshold: ${config.curator.qualityThreshold}`);
+      return config;
+    }
+  } catch (error) {
+    console.warn('[adapter-builder] Failed to load config, using defaults:', error);
+  }
+
+  // Default configuration (Phase 2 optimal settings)
+  console.log('[adapter-builder] Using default Phase 2 optimal settings');
+  return {
+    curator: {
+      batchSize: 100,
+      qualityThreshold: 6.0,
+      temperature: 0.3,
+    },
+    collection: {
+      maxDays: 999999,
+      maxSamplesPerSource: 3000,
+    },
+    memoryTypes: {
+      enabled: [
+        'conversation',
+        'observation',
+        'reflection',
+        'reflection_summary',
+        'inner_dialogue',
+        'decision',
+        'dream',
+        'journal',
+        'curiosity_question',
+        'summary',
+      ],
+      priorities: {
+        therapy_session: 10,
+        conversation: 9,
+        inner_dialogue: 8,
+        reflection: 7,
+      },
+    },
+  };
+}
 
 /**
  * Statistics for curation process
@@ -50,14 +122,16 @@ interface CurationStats {
  */
 async function curateBatch(
   samples: RawTrainingSample[],
-  personaSummary: string
+  personaSummary: string,
+  config: TrainingDataConfig,
+  therapyInsights?: string
 ): Promise<CuratedSample[]> {
   if (samples.length === 0) {
     return [];
   }
 
   // Build curator prompt with batch of samples
-  const batchPrompt = buildBatchCurationPrompt(samples, personaSummary);
+  const batchPrompt = buildBatchCurationPrompt(samples, personaSummary, therapyInsights);
 
   try {
     // Call curator model (configurable via status widget)
@@ -68,7 +142,7 @@ async function curateBatch(
         { role: 'user', content: batchPrompt },
       ],
       options: {
-        temperature: CURATOR_TEMPERATURE,
+        temperature: config.curator.temperature,
         response_format: { type: 'json_object' },
       },
     });
@@ -81,16 +155,8 @@ async function curateBatch(
       // Fallback: return samples with default quality scores
       return samples.map((s) => ({
         ...s,
-        qualityScore: 5.0,
-        criteriaScores: {
-          authenticity: 5,
-          specificity: 5,
-          consistency: 5,
-          behavioral: 5,
-          density: 5,
-        },
-        improvementsMade: [],
-        curatorNotes: 'Curator failed to process',
+        quality_score: 5.0,
+        improvements_made: [],
       }));
     }
 
@@ -102,16 +168,8 @@ async function curateBatch(
     // Fallback: return samples with default quality scores
     return samples.map((s) => ({
       ...s,
-      qualityScore: 5.0,
-      criteriaScores: {
-        authenticity: 5,
-        specificity: 5,
-        consistency: 5,
-        behavioral: 5,
-        density: 5,
-      },
-      improvementsMade: [],
-      curatorNotes: 'Curator unavailable',
+      quality_score: 5.0,
+      improvements_made: [],
     }));
   }
 }
@@ -121,7 +179,9 @@ async function curateBatch(
  */
 async function curateAllData(
   rawSamples: RawTrainingSample[],
-  personaSummary: string
+  personaSummary: string,
+  config: TrainingDataConfig,
+  therapyInsights?: string
 ): Promise<{ curated: CuratedSample[]; stats: CurationStats }> {
   const stats: CurationStats = {
     totalReviewed: 0,
@@ -136,11 +196,11 @@ async function curateAllData(
   console.log(`[adapter-builder] Starting curation of ${rawSamples.length} samples...`);
 
   // Process in batches
-  for (let i = 0; i < rawSamples.length; i += CURATOR_BATCH_SIZE) {
-    const batch = rawSamples.slice(i, i + CURATOR_BATCH_SIZE);
-    console.log(`[adapter-builder] Curating batch ${Math.floor(i / CURATOR_BATCH_SIZE) + 1}/${Math.ceil(rawSamples.length / CURATOR_BATCH_SIZE)} (${batch.length} samples)...`);
+  for (let i = 0; i < rawSamples.length; i += config.curator.batchSize) {
+    const batch = rawSamples.slice(i, i + config.curator.batchSize);
+    console.log(`[adapter-builder] Curating batch ${Math.floor(i / config.curator.batchSize) + 1}/${Math.ceil(rawSamples.length / config.curator.batchSize)} (${batch.length} samples)...`);
 
-    const curated = await curateBatch(batch, personaSummary);
+    const curated = await curateBatch(batch, personaSummary, config, therapyInsights);
     allCurated.push(...curated);
 
     stats.totalReviewed += batch.length;
@@ -151,12 +211,12 @@ async function curateAllData(
   let totalQuality = 0;
 
   for (const sample of allCurated) {
-    const score = sample.qualityScore || 0;
+    const score = sample.quality_score || 0;
 
     // Always keep therapy sessions (highest quality data source)
     // Apply threshold to other sources
     const isTherapy = sample.metadata?.source === 'therapy_session';
-    const meetsThreshold = score >= QUALITY_THRESHOLD;
+    const meetsThreshold = score >= config.curator.qualityThreshold;
 
     if (isTherapy || meetsThreshold) {
       kept.push(sample);
@@ -178,7 +238,7 @@ async function curateAllData(
   // Calculate average quality by source
   for (const source of Object.keys(stats.bySource)) {
     const sourceSamples = kept.filter((s) => s.metadata?.source === source);
-    const sourceTotal = sourceSamples.reduce((sum, s) => sum + (s.qualityScore || 0), 0);
+    const sourceTotal = sourceSamples.reduce((sum, s) => sum + (s.quality_score || 0), 0);
     stats.bySource[source].avgQuality = sourceTotal / sourceSamples.length;
   }
 
@@ -191,7 +251,8 @@ async function curateAllData(
 function writeCuratedDataset(
   samples: CuratedSample[],
   outputDir: string,
-  stats: CurationStats
+  stats: CurationStats,
+  config: TrainingDataConfig
 ): string {
   fs.mkdirSync(outputDir, { recursive: true });
 
@@ -211,14 +272,13 @@ function writeCuratedDataset(
   const metadata = {
     pairCount: samples.length,
     createdAt: new Date().toISOString(),
-    qualityThreshold: QUALITY_THRESHOLD,
+    qualityThreshold: config.curator.qualityThreshold,
     averageQuality: stats.averageQuality,
     bySource: stats.bySource,
     samples: samples.map((s) => ({
       instruction: s.instruction.substring(0, 100),
-      qualityScore: s.qualityScore,
-      criteriaScores: s.criteriaScores,
-      improvementsMade: s.improvementsMade,
+      quality_score: s.quality_score,
+      improvements_made: s.improvements_made,
       source: s.metadata?.source,
       category: s.metadata?.category,
     })),
@@ -243,33 +303,59 @@ function writeCuratedDataset(
 }
 
 /**
- * Main adapter builder entry point
+ * Main adapter builder entry point (runs within user context)
  */
-async function main() {
+async function mainWithContext() {
   const ctx = getUserContext();
 
   if (!ctx) {
     console.error('[adapter-builder] ERROR: No user context found.');
     console.error('[adapter-builder] This agent must be run with user context.');
-    console.error('[adapter-builder] Use: withUserContext(userInfo, async () => { ... })');
     process.exit(1);
   }
 
   console.log(`[adapter-builder] Building curated dataset for user: ${ctx.username}`);
+
+  if (!ctx.profilePaths) {
+    console.error('[adapter-builder] ERROR: User context missing profilePaths');
+    process.exit(1);
+  }
+
+  // Load training data configuration
+  const config = loadTrainingConfig();
 
   await audit({
     level: 'info',
     category: 'action',
     event: 'adapter_builder_started',
     actor: ctx.username,
-    details: { userId: ctx.userId, username: ctx.username },
+    details: {
+      userId: ctx.userId,
+      username: ctx.username,
+      config: {
+        batchSize: config.curator.batchSize,
+        maxSamples: config.collection.maxSamplesPerSource,
+        qualityThreshold: config.curator.qualityThreshold,
+      },
+    },
   });
 
-  // Collect all user data
-  const profileRoot = path.dirname(ctx.profilePaths.personaCore);
+  // Step 1: Load context data FIRST (needed for prompt generation)
+  const profileRoot = ctx.profilePaths.root;
+  const personaData = loadPersonaData(profileRoot);
+  const personaSummary = buildPersonaSummary(personaData);
+
+  const therapyDir = path.join(profileRoot, 'persona', 'therapy');
+  const therapyInsights = extractTherapyInsights(therapyDir);
+
+  // Step 2: Generate varied prompts using LLM for maximum diversity (BEFORE data collection)
+  console.log(`[adapter-builder] Pre-generating varied prompts for all memory types...`);
+  await generateAllVariedPrompts(therapyInsights);
+
+  // Step 3: Collect all user data (now uses generated prompts)
   const rawSamples = collectAllUserData(profileRoot, {
-    maxDays: 999999, // Use all time (no cutoff)
-    maxSamplesPerSource: 1000, // Up to 1000 per source
+    maxDays: config.collection.maxDays,
+    maxSamplesPerSource: config.collection.maxSamplesPerSource,
   });
 
   if (rawSamples.length === 0) {
@@ -290,26 +376,25 @@ async function main() {
     process.exit(1);
   }
 
-  // Load persona for curator context
-  const personaData = loadPersonaData(profileRoot);
-  const personaSummary = buildPersonaSummary(personaData);
-
   console.log(`[adapter-builder] Collected ${rawSamples.length} raw training samples`);
   console.log(`[adapter-builder] Starting curation process with curator model...`);
+  if (therapyInsights) {
+    console.log(`[adapter-builder] Using therapy session insights to guide curation`);
+  }
 
   // Curate data in batches
-  const { curated, stats } = await curateAllData(rawSamples, personaSummary);
+  const { curated, stats } = await curateAllData(rawSamples, personaSummary, config, therapyInsights);
 
   if (curated.length === 0) {
     console.error('[adapter-builder] ERROR: No samples passed quality threshold.');
-    console.error('[adapter-builder] Quality threshold: ${QUALITY_THRESHOLD}/10');
+    console.error(`[adapter-builder] Quality threshold: ${config.curator.qualityThreshold}/10`);
 
     await audit({
       level: 'error',
       category: 'action',
       event: 'adapter_builder_failed',
       actor: ctx.username,
-      details: { reason: 'all_samples_filtered', threshold: QUALITY_THRESHOLD },
+      details: { reason: 'all_samples_filtered', threshold: config.curator.qualityThreshold },
     });
 
     process.exit(1);
@@ -318,7 +403,7 @@ async function main() {
   // Write curated dataset to user-specific output directory
   const timestamp = new Date().toISOString().split('T')[0];
   const outputDir = path.join(profileRoot, 'out', 'adapters', timestamp);
-  const datasetPath = writeCuratedDataset(curated, outputDir, stats);
+  const datasetPath = writeCuratedDataset(curated, outputDir, stats, config);
 
   await audit({
     level: 'info',
@@ -341,8 +426,34 @@ async function main() {
   console.log(`[adapter-builder] Ready for LoRA training!`);
 }
 
+/**
+ * CLI entry point - parses --username and establishes user context
+ */
+async function main() {
+  const args = process.argv.slice(2);
+  let username: string | null = null;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--username' && i + 1 < args.length) {
+      username = args[i + 1];
+      break;
+    }
+  }
+
+  if (!username) {
+    console.error('[adapter-builder] ERROR: --username <name> is required');
+    console.error('\nUsage: npx tsx brain/agents/adapter-builder.ts --username <username>');
+    process.exit(1);
+  }
+
+  const userInfo = requireUserInfo(username);
+  console.log(`[adapter-builder] Starting for user: ${username}`);
+
+  await withUserContext(userInfo, mainWithContext);
+}
+
 // Run main
-main().catch((err) => {
+main().catch((err: Error) => {
   console.error('[adapter-builder] Fatal error:', err);
   audit({
     level: 'error',

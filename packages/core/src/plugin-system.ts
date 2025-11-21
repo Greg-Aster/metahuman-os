@@ -59,8 +59,7 @@ export async function loadPlugin(filePath: string): Promise<LoadedPlugin | null>
     // Dynamic import with file:// protocol and cache-busting timestamp
     const moduleUrl = `file://${absolutePath}?t=${Date.now()}`;
     // @ts-ignore - Vite can't analyze this dynamic import, but it's intentional for hot-reloading
-    /* @vite-ignore */
-    const module = await import(moduleUrl);
+    const module = await import(/* @vite-ignore */ moduleUrl);
 
     // Validate plugin structure
     if (!module.default || typeof module.default !== 'object') {

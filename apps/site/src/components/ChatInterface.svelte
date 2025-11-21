@@ -753,6 +753,7 @@ let reasoningStages: ReasoningStage[] = [];
     isComponentMounted = false;
 
     reflectionStream?.close();
+    chatResponseStream?.close(); // Fix memory leak: close chat stream
     if (activityTimeout) {
       clearTimeout(activityTimeout);
     }

@@ -272,7 +272,8 @@ export class KokoroService implements ITextToSpeechService {
   private async checkServerHealth(serverUrl: string): Promise<boolean> {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 2000);
+      // Use longer timeout (5s) to handle slow responses and reduce false negatives
+      const timeout = setTimeout(() => controller.abort(), 5000);
 
       const response = await fetch(`${serverUrl}/health`, {
         signal: controller.signal,

@@ -16,7 +16,10 @@ const handler: APIRoute = async ({ cookies }) => {
 
     // Get TTS status (provider, server availability)
     const ttsStatus = await getTTSStatus();
-    console.log('[voice-status] TTS Status:', JSON.stringify(ttsStatus, null, 2));
+    // Only log when unavailable to reduce noise
+    if (!ttsStatus.available) {
+      console.log('[voice-status] TTS unavailable:', ttsStatus.error || 'server not responding');
+    }
 
     // Get voice training metrics
     let trainingMetrics: any = {

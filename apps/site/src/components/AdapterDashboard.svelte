@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, afterUpdate } from 'svelte';
 
   type DatasetStatus = {
     date: string;
@@ -50,6 +50,10 @@
   let updatingConfig = false;
   let recentLogs: Array<{ timestamp: string; event: string; actor?: string; details?: any }> = [];
 
+  // Training data configuration
+  let trainingConfig: any = null;
+  let updatingTrainingConfig = false;
+
   async function loadData() {
     loading = true;
     error = null;
@@ -71,10 +75,103 @@
     }
   }
 
-  onMount(() => {
+  async function loadTrainingConfig() {
+    try {
+      const res = await fetch('/api/training-data');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.success) {
+        trainingConfig = data.config;
+      }
+    } catch (err) {
+      console.error('Failed to load training config:', err);
+    }
+  }
+
+  async function updateTrainingConfig(updates: any) {
+    updatingTrainingConfig = true;
+    try {
+      const res = await fetch('/api/training-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to update training config');
+      trainingConfig = data.config;
+      alert('Training data configuration updated successfully');
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      updatingTrainingConfig = false;
+    }
+  }
+
+  function applyPhasePreset(phase: 'phase1_conservative' | 'phase2_optimal' | 'phase3_maximum') {
+    if (!trainingConfig || !trainingConfig.phases[phase]) return;
+    const preset = trainingConfig.phases[phase];
+    updateTrainingConfig({
+      curator: {
+        batchSize: preset.curator.batchSize,
+      },
+      collection: {
+        maxSamplesPerSource: preset.curator.maxSamplesPerSource,
+      },
+    });
+  }
+
+  onMount(async () => {
     loadData();
-    const interval = setInterval(loadData, 15000);
-    return () => clearInterval(interval);
+    loadTrainingConfig();
+    loadTrainingModels();
+
+    // Check if training is already running on page load
+    try {
+      const statusRes = await fetch('/api/training/running');
+      const statusData = await statusRes.json();
+      if (statusData.success && statusData.running) {
+        fullCycleRunningPid = statusData.pid;
+        monitorExpanded = true;
+        startLogsPolling();
+      }
+    } catch (e) {
+      console.warn('Could not check training status on mount:', e);
+    }
+
+    // PERFORMANCE: Increased from 15s to 30s to reduce server load
+    const interval = setInterval(loadData, 30000);
+
+    // Pause polling when tab is hidden to save resources
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        clearInterval(interval);
+        stopLogsPolling();
+      } else {
+        // Resume polling when tab becomes visible
+        loadData();
+        const newInterval = setInterval(loadData, 30000); // PERFORMANCE: Increased from 15s to 30s
+        if (fullCycleRunningPid) {
+          startLogsPolling();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      stopLogsPolling();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  });
+
+  afterUpdate(() => {
+    // Auto-scroll logs to bottom when new entries are added
+    if (consoleLogsScrollContainer && fullCycleRunningPid) {
+      consoleLogsScrollContainer.scrollTop = consoleLogsScrollContainer.scrollHeight;
+    }
+    if (eventsLogsScrollContainer && fullCycleRunningPid) {
+      eventsLogsScrollContainer.scrollTop = eventsLogsScrollContainer.scrollHeight;
+    }
   });
 
   function setWorking(date: string, action: string, value: boolean) {
@@ -203,55 +300,171 @@
     }
   }
 
-  // Track state for full cycle modal
+  // Track state for full cycle modal (simplified - just config)
   let showFullCycleModal = false;
   let selectedModel = '';
   let dualModeEnabled = false;
-  let availableModels: string[] = [];
+
+  // Training monitor state (moved from modal)
+  let fullCycleRunningPid: number | null = null;
+  let fullCycleLogs: Array<{ timestamp: string; event: string; details?: any }> = [];
+  let fullCycleConsoleLogs: string[] = [];
+  let logsInterval: number | null = null;
+  let consoleLogsScrollContainer: HTMLDivElement | null = null;
+  let eventsLogsScrollContainer: HTMLDivElement | null = null;
+  let cancelling = false;
+  let monitorExpanded = false;
+
+  // Training base models (loaded dynamically from Ollama)
+  interface TrainingModel {
+    id: string;
+    name: string;
+    description: string;
+    size: string;
+    vram: string;
+    license: string;
+  }
+
+  let trainingModels: TrainingModel[] = [];
+  let trainingModelsError: string | null = null;
+  let setupGuideLink = '/docs/user-guide/lora-training.md';
+
+  async function loadTrainingModels() {
+    try {
+      const res = await fetch('/api/training-models');
+      const data = await res.json();
+
+      if (data.success && data.models) {
+        trainingModels = data.models;
+        if (data.notes?.setup_guide) {
+          setupGuideLink = data.notes.setup_guide;
+        }
+      } else {
+        trainingModelsError = data.error || 'Failed to load training models';
+        if (data.setupGuide) {
+          setupGuideLink = data.setupGuide;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load training models:', err);
+      trainingModelsError = 'Failed to load training models';
+    }
+  }
   
+  async function loadFullCycleLogs() {
+    try {
+      // Load audit logs
+      const auditRes = await fetch('/api/training/logs?maxLines=50');
+      const auditData = await auditRes.json();
+      if (auditData.success && auditData.logs) {
+        fullCycleLogs = auditData.logs;
+      }
+
+      // Load console logs
+      const consoleRes = await fetch('/api/training/console-logs?maxLines=100');
+      const consoleData = await consoleRes.json();
+      if (consoleData.success && consoleData.logs) {
+        fullCycleConsoleLogs = consoleData.logs;
+      }
+
+      // Check if process is still running
+      const statusRes = await fetch('/api/training/running');
+      const statusData = await statusRes.json();
+      if (statusData.success) {
+        fullCycleRunningPid = statusData.running ? statusData.pid : null;
+
+        // If process stopped, stop polling
+        if (!statusData.running && fullCycleInProgress) {
+          stopLogsPolling();
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load training logs:', err);
+    }
+  }
+
+  async function cancelFullCycle() {
+    if (!confirm('Cancel the training cycle? This will stop all in-progress work.')) {
+      return;
+    }
+
+    cancelling = true;
+    try {
+      await sendAction('cancelFullCycle', {});
+      fullCycleRunningPid = null;
+      stopLogsPolling();
+      alert('Training cancelled successfully');
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      cancelling = false;
+    }
+  }
+
+  function startLogsPolling() {
+    // Clear any existing interval
+    if (logsInterval) {
+      clearInterval(logsInterval);
+    }
+
+    // Load logs immediately
+    loadFullCycleLogs();
+
+    // PERFORMANCE: Increased from 5s to 10s to reduce server load
+    logsInterval = setInterval(loadFullCycleLogs, 10000);
+  }
+
+  function stopLogsPolling() {
+    if (logsInterval) {
+      clearInterval(logsInterval);
+      logsInterval = null;
+    }
+  }
+
+  function closeFullCycleModal() {
+    showFullCycleModal = false;
+  }
+
   async function runFullCycleWithParams() {
     try {
+      // Start the full cycle
       await sendAction('fullCycle', {
         model: selectedModel || undefined,
         dualMode: dualModeEnabled
       });
-      alert('Full cycle started. Watch the audit stream for progress.');
+
+      // Close modal and show success message
       showFullCycleModal = false;
+
+      // Expand training monitor and start polling
+      monitorExpanded = true;
+      startLogsPolling();
+
+      alert('Training started! Check the Training Monitor section below to follow progress.');
     } catch (err) {
       alert((err && (err as any).message) || String(err));
     }
   }
-  
+
   async function runFullCycleNow() {
-    // Load current base model from etc/models.json to use as default
+    // Load current base model from etc/training.json to use as default
     try {
-      const res = await fetch('/api/model-info');
+      const res = await fetch('/api/training-config');
       if (res.ok) {
         const data = await res.json();
-        selectedModel = data.baseModel || '';
+        selectedModel = data.base_model || '';
       }
     } catch (e) {
-      console.warn('Could not fetch current model, using empty default:', e);
-      selectedModel = '';
+      // Try fallback to first model in list
+      selectedModel = trainingModels.length > 0 ? trainingModels[0].id : '';
     }
-    
-    // Load available models from Ollama
-    try {
-      const res = await fetch('/api/models');
-      if (res.ok) {
-        const data = await res.json();
-        availableModels = data.baseModels || [];
-        // If selectedModel is empty and we have models, default to the current base model
-        if (!selectedModel && data.agent?.model) {
-          selectedModel = data.agent.model;
-        }
-      }
-    } catch (e) {
-      console.warn('Could not fetch available models:', e);
-      // Fallback to a default list if API fails
-      availableModels = ['qwen3:8b', 'qwen3:30b', 'dolphin-mistral:latest'];
+
+    // If selectedModel is not in our training models list, use the first one
+    const modelIds = trainingModels.map(m => m.id);
+    if (!modelIds.includes(selectedModel) && trainingModels.length > 0) {
+      selectedModel = trainingModels[0].id;
     }
-    
+
     // Set dual mode to true by default if we have historical adapters
     try {
       const adaptersRes = await fetch('/api/adapters');
@@ -264,7 +477,7 @@
       console.warn('Could not determine if dual mode should be enabled:', e);
       dualModeEnabled = false; // Default to false
     }
-    
+
     showFullCycleModal = true;
   }
 
@@ -476,26 +689,159 @@
       {/if}
     </div>
   </section>
-  
-  <!-- Full Cycle Modal -->
+
+  <!-- Training Data Configuration -->
+  {#if trainingConfig}
+    <section class="card">
+      <header>
+        <h3>📊 Training Data Configuration</h3>
+        <p>Configure data collection and curation settings for LoRA adapter training.</p>
+      </header>
+
+      <div class="training-config-grid">
+        <div class="config-section">
+          <h4>Curator Settings</h4>
+          <div class="form-row">
+            <label for="batch-size">Batch Size:</label>
+            <input
+              id="batch-size"
+              type="number"
+              min="10"
+              max="200"
+              step="10"
+              value={trainingConfig.curator.batchSize}
+              disabled={updatingTrainingConfig}
+              on:change={(e) => updateTrainingConfig({ curator: { batchSize: parseInt(e.currentTarget.value) } })}
+            />
+            <span class="help-hint">Samples processed per curator call (10-200)</span>
+          </div>
+          <div class="form-row">
+            <label for="quality-threshold">Quality Threshold:</label>
+            <input
+              id="quality-threshold"
+              type="number"
+              min="0"
+              max="10"
+              step="0.1"
+              value={trainingConfig.curator.qualityThreshold}
+              disabled={updatingTrainingConfig}
+              on:change={(e) => updateTrainingConfig({ curator: { qualityThreshold: parseFloat(e.currentTarget.value) } })}
+            />
+            <span class="help-hint">Minimum quality score (0-10)</span>
+          </div>
+          <div class="form-row">
+            <label for="temperature">Temperature:</label>
+            <input
+              id="temperature"
+              type="number"
+              min="0"
+              max="2"
+              step="0.1"
+              value={trainingConfig.curator.temperature}
+              disabled={updatingTrainingConfig}
+              on:change={(e) => updateTrainingConfig({ curator: { temperature: parseFloat(e.currentTarget.value) } })}
+            />
+            <span class="help-hint">LLM temperature (0-2)</span>
+          </div>
+        </div>
+
+        <div class="config-section">
+          <h4>Collection Settings</h4>
+          <div class="form-row">
+            <label for="max-samples">Max Samples/Source:</label>
+            <input
+              id="max-samples"
+              type="number"
+              min="100"
+              max="10000"
+              step="100"
+              value={trainingConfig.collection.maxSamplesPerSource}
+              disabled={updatingTrainingConfig}
+              on:change={(e) => updateTrainingConfig({ collection: { maxSamplesPerSource: parseInt(e.currentTarget.value) } })}
+            />
+            <span class="help-hint">Maximum samples per memory type (100-10000)</span>
+          </div>
+          <div class="form-row">
+            <label for="max-days">Max Days:</label>
+            <input
+              id="max-days"
+              type="number"
+              min="1"
+              max="999999"
+              value={trainingConfig.collection.maxDays}
+              disabled={updatingTrainingConfig}
+              on:change={(e) => updateTrainingConfig({ collection: { maxDays: parseInt(e.currentTarget.value) } })}
+            />
+            <span class="help-hint">Days of history to include (999999 = all time)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="phase-presets">
+        <h4>Quick Presets</h4>
+        <div class="preset-buttons">
+          <button class="preset-btn" on:click={() => applyPhasePreset('phase1_conservative')} disabled={updatingTrainingConfig}>
+            <span class="preset-name">Phase 1: Conservative</span>
+            <span class="preset-desc">~800-1200 samples, ~15 mins</span>
+          </button>
+          <button class="preset-btn active" on:click={() => applyPhasePreset('phase2_optimal')} disabled={updatingTrainingConfig}>
+            <span class="preset-name">Phase 2: Optimal (Current)</span>
+            <span class="preset-desc">~2500-3000 samples, ~30 mins</span>
+          </button>
+          <button class="preset-btn" on:click={() => applyPhasePreset('phase3_maximum')} disabled={updatingTrainingConfig}>
+            <span class="preset-name">Phase 3: Maximum</span>
+            <span class="preset-desc">~4000-5000 samples, ~45-60 mins</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="current-status">
+        <strong>Current Configuration:</strong>
+        Batch size: <span class="highlight">{trainingConfig.curator.batchSize}</span> |
+        Max samples: <span class="highlight">{trainingConfig.collection.maxSamplesPerSource}</span> |
+        Quality threshold: <span class="highlight">{trainingConfig.curator.qualityThreshold}</span>
+      </div>
+    </section>
+  {/if}
+
+  <!-- Full Cycle Modal (Simplified - Config Only) -->
   {#if showFullCycleModal}
-    <div class="modal-overlay" role="presentation" on:click={() => showFullCycleModal = false}>
+    <div class="modal-overlay" role="presentation" on:click={closeFullCycleModal}>
       <div class="modal-content" role="dialog" aria-modal="true" on:click|stopPropagation>
         <div class="modal-header">
           <h3>Run Full Cycle</h3>
-          <button class="modal-close" on:click={() => showFullCycleModal = false}>×</button>
+          <button class="modal-close" on:click={closeFullCycleModal}>×</button>
         </div>
         <div class="modal-body">
-          <div class="form-group">
-            <label for="model-select">Base Model:</label>
-            <select id="model-select" bind:value={selectedModel}>
-              <option value="">Use default from etc/models.json</option>
-              {#each availableModels as model}
-                <option value={model}>{model}</option>
-              {/each}
-            </select>
-            <p class="help-text">Select the base model to use for training the LoRA adapter. If empty, will use the model specified in etc/models.json</p>
-          </div>
+          {#if trainingModelsError || trainingModels.length === 0}
+            <div class="warning-box">
+              <strong>⚠️ No Ollama Models Available</strong>
+              <p>No models found in your local Ollama installation. Please pull at least one model using <code>ollama pull &lt;model&gt;</code></p>
+              <p>
+                <a href={setupGuideLink} target="_blank" class="setup-link">
+                  📖 View Setup Guide →
+                </a>
+              </p>
+              {#if trainingModelsError}
+                <p class="error-detail">{trainingModelsError}</p>
+              {/if}
+            </div>
+          {:else}
+            <div class="form-group">
+              <label for="model-select">Ollama Base Model:</label>
+              <select id="model-select" bind:value={selectedModel}>
+                <option value="">Use default from etc/training.json</option>
+                {#each trainingModels as model}
+                  <option value={model.id}>
+                    {model.name} - {model.size}
+                  </option>
+                {/each}
+              </select>
+              <p class="help-text">
+                Select an Ollama model from your local installation to use as the base for LoRA fine-tuning.
+              </p>
+            </div>
+          {/if}
           <div class="form-group">
             <label class="checkbox-label">
               <input type="checkbox" bind:checked={dualModeEnabled} />
@@ -503,34 +849,115 @@
             </label>
             <p class="help-text">If enabled, combines historical knowledge with recent learnings. Requires historical adapters to be present.</p>
           </div>
+          <div class="info-box">
+            <p><strong>ℹ️ After starting:</strong> Follow training progress in the <strong>Training Monitor</strong> section below.</p>
+          </div>
         </div>
         <div class="modal-footer">
-          <button class="btn-secondary" on:click={() => showFullCycleModal = false}>Cancel</button>
-          <button class="btn-primary" on:click={runFullCycleWithParams}>Run Full Cycle</button>
+          <button class="btn-secondary" on:click={closeFullCycleModal}>Cancel</button>
+          <button class="btn-primary" on:click={runFullCycleWithParams}>Start Training</button>
         </div>
       </div>
     </div>
   {/if}
 
-  <!-- Recent pipeline logs -->
-  <section class="card">
+  <!-- Training Monitor -->
+  <section class="card training-monitor">
     <header>
-      <h3>Recent Activity</h3>
-      <p>Latest LoRA pipeline events (build → train → eval → activate).</p>
-    </header>
-    <div class="log-list">
-      {#each recentLogs as log}
-        <div class="log-item">
-          <span class="log-time">{new Date(log.timestamp).toLocaleTimeString()}</span>
-          <span class="log-evt">{log.event}</span>
-          {#if log.details?.dataset}<span class="log-ds">{log.details.dataset}</span>{/if}
-          {#if log.details?.modelName}<span class="log-ds">{log.details.modelName}</span>{/if}
+      <div class="monitor-header-content">
+        <div>
+          <h3>🖥️ Training Monitor</h3>
+          <p>Real-time view of active training processes and recent activity.</p>
         </div>
-      {/each}
-      {#if recentLogs.length === 0}
-        <div class="empty">No recent events</div>
+        <button class="toggle-btn" on:click={() => monitorExpanded = !monitorExpanded}>
+          {monitorExpanded ? '▼ Collapse' : '▶ Expand'}
+        </button>
+      </div>
+    </header>
+
+    <!-- Status Indicator -->
+    <div class="monitor-status">
+      {#if fullCycleRunningPid}
+        <div class="status-badge running">
+          <div class="spinner-small"></div>
+          <span>Training in Progress (PID: {fullCycleRunningPid})</span>
+        </div>
+        <button class="btn-danger-small" on:click={cancelFullCycle} disabled={cancelling}>
+          {cancelling ? 'Cancelling...' : '🛑 Cancel'}
+        </button>
+      {:else}
+        <div class="status-badge idle">
+          <span>No active training</span>
+        </div>
       {/if}
     </div>
+
+    {#if monitorExpanded}
+      <div class="monitor-content">
+        <!-- Console Output (Local Processing) -->
+        <div class="logs-container">
+          <h4>🖥️ Console Output (Dataset Building, Curator)</h4>
+          <div class="logs-scroll console-output" bind:this={consoleLogsScrollContainer}>
+            {#if fullCycleConsoleLogs.length === 0}
+              <div class="log-empty">No console output yet. {fullCycleRunningPid ? 'Waiting for process to start...' : 'Start a training cycle to see output.'}</div>
+            {:else}
+              {#each fullCycleConsoleLogs as line}
+                <div class="console-line">{line}</div>
+              {/each}
+            {/if}
+          </div>
+        </div>
+
+        <!-- Audit Events (High-Level Status) -->
+        <div class="logs-container compact">
+          <h4>📋 Training Events</h4>
+          <div class="logs-scroll events-output" bind:this={eventsLogsScrollContainer}>
+            {#if fullCycleLogs.length === 0}
+              <div class="log-empty">No training events yet. {fullCycleRunningPid ? 'Waiting for events...' : 'Start a training cycle to see events.'}</div>
+            {:else}
+              {#each fullCycleLogs as log}
+                <div class="log-entry">
+                  <span class="log-timestamp">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                  <span class="log-event">{log.event.replace('full_cycle_', '').replace(/_/g, ' ')}</span>
+                  {#if log.details}
+                    <span class="log-details">{JSON.stringify(log.details)}</span>
+                  {/if}
+                </div>
+              {/each}
+            {/if}
+          </div>
+        </div>
+
+        {#if fullCycleRunningPid}
+          <div class="progress-footer">
+            <p class="help-text">
+              <strong>Note:</strong> The training process may take 30-60 minutes depending on dataset size.
+              You can navigate away and check back later.
+            </p>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Recent Activity (Compact View) -->
+    {#if !monitorExpanded}
+      <div class="recent-activity-compact">
+        <h4>Recent Activity</h4>
+        <div class="log-list">
+          {#each recentLogs.slice(0, 5) as log}
+            <div class="log-item">
+              <span class="log-time">{new Date(log.timestamp).toLocaleTimeString()}</span>
+              <span class="log-evt">{log.event}</span>
+              {#if log.details?.dataset}<span class="log-ds">{log.details.dataset}</span>{/if}
+              {#if log.details?.modelName}<span class="log-ds">{log.details.modelName}</span>{/if}
+            </div>
+          {/each}
+          {#if recentLogs.length === 0}
+            <div class="empty">No recent events</div>
+          {/if}
+        </div>
+      </div>
+    {/if}
   </section>
 
   <section class="card">
@@ -1122,5 +1549,606 @@
 
   :global(.dark) .help-text {
     color: #9ca3af;
+  }
+
+  .warning-box {
+    padding: 1.25rem;
+    background: rgba(249, 115, 22, 0.1);
+    border: 1px solid rgba(249, 115, 22, 0.3);
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  :global(.dark) .warning-box {
+    background: rgba(249, 115, 22, 0.15);
+    border-color: rgba(249, 115, 22, 0.4);
+  }
+
+  .warning-box strong {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: rgb(194, 65, 12);
+    font-size: 1rem;
+  }
+
+  :global(.dark) .warning-box strong {
+    color: rgb(251, 146, 60);
+  }
+
+  .warning-box p {
+    margin: 0.5rem 0;
+    color: rgb(124, 45, 18);
+    font-size: 0.875rem;
+  }
+
+  :global(.dark) .warning-box p {
+    color: rgb(253, 186, 116);
+  }
+
+  .warning-box code {
+    background: rgba(0, 0, 0, 0.1);
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-family: monospace;
+    font-size: 0.85em;
+  }
+
+  :global(.dark) .warning-box code {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .setup-link {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    background: rgb(249, 115, 22);
+    color: white;
+    text-decoration: none;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    transition: background 0.2s;
+  }
+
+  .setup-link:hover {
+    background: rgb(234, 88, 12);
+  }
+
+  .error-detail {
+    margin-top: 0.75rem;
+    padding: 0.5rem;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 0.25rem;
+    font-size: 0.8rem;
+    font-family: monospace;
+  }
+
+  :global(.dark) .error-detail {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  /* Training Data Configuration Styles */
+  .training-config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .config-section h4 {
+    margin: 0 0 1rem 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: rgb(17 24 39);
+  }
+
+  :global(.dark) .config-section h4 {
+    color: rgb(243 244 246);
+  }
+
+  .form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .form-row label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: rgb(55 65 81);
+  }
+
+  :global(.dark) .form-row label {
+    color: rgb(209 213 219);
+  }
+
+  .form-row input[type="number"] {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    border-radius: 0.375rem;
+    background: white;
+    font-size: 0.875rem;
+  }
+
+  :global(.dark) .form-row input[type="number"] {
+    background: #1f2937;
+    border-color: rgba(255, 255, 255, 0.2);
+    color: white;
+  }
+
+  .form-row input[type="number"]:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .help-hint {
+    font-size: 0.75rem;
+    color: rgb(107 114 128);
+    font-style: italic;
+  }
+
+  :global(.dark) .help-hint {
+    color: rgb(156 163 175);
+  }
+
+  .phase-presets {
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+  }
+
+  :global(.dark) .phase-presets {
+    border-top-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .phase-presets h4 {
+    margin: 0 0 1rem 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: rgb(17 24 39);
+  }
+
+  :global(.dark) .phase-presets h4 {
+    color: rgb(243 244 246);
+  }
+
+  .preset-buttons {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0.75rem;
+  }
+
+  .preset-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 1rem;
+    background: white;
+    border: 2px solid rgba(0, 0, 0, 0.1);
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  :global(.dark) .preset-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .preset-btn:hover:not(:disabled) {
+    border-color: rgb(124 58 237);
+    background: rgba(124, 58, 237, 0.05);
+  }
+
+  :global(.dark) .preset-btn:hover:not(:disabled) {
+    border-color: rgb(167 139 250);
+    background: rgba(167, 139, 250, 0.05);
+  }
+
+  .preset-btn.active {
+    border-color: rgb(124 58 237);
+    background: rgba(124, 58, 237, 0.1);
+  }
+
+  :global(.dark) .preset-btn.active {
+    border-color: rgb(167 139 250);
+    background: rgba(167, 139, 250, 0.1);
+  }
+
+  .preset-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .preset-name {
+    font-weight: 600;
+    font-size: 0.875rem;
+    margin-bottom: 0.25rem;
+    color: rgb(17 24 39);
+  }
+
+  :global(.dark) .preset-name {
+    color: rgb(243 244 246);
+  }
+
+  .preset-desc {
+    font-size: 0.75rem;
+    color: rgb(107 114 128);
+  }
+
+  :global(.dark) .preset-desc {
+    color: rgb(156 163 175);
+  }
+
+  .current-status {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    background: rgba(124, 58, 237, 0.05);
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    color: rgb(55 65 81);
+  }
+
+  :global(.dark) .current-status {
+    background: rgba(167, 139, 250, 0.1);
+    color: rgb(209 213 219);
+  }
+
+  .current-status .highlight {
+    font-weight: 600;
+    color: rgb(124 58 237);
+  }
+
+  :global(.dark) .current-status .highlight {
+    color: rgb(167 139 250);
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Logs Container Styles (used in Training Monitor) */
+  .logs-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 300px;
+  }
+
+  .logs-container h4 {
+    margin: 0 0 0.75rem 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: rgb(17 24 39);
+  }
+
+  :global(.dark) .logs-container h4 {
+    color: rgb(243 244 246);
+  }
+
+  .logs-scroll {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    background: rgba(0, 0, 0, 0.02);
+    font-family: 'Courier New', monospace;
+    font-size: 0.875rem;
+    max-height: 350px;
+  }
+
+  :global(.dark) .logs-scroll {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .log-empty {
+    padding: 2rem;
+    text-align: center;
+    color: rgb(107 114 128);
+    font-style: italic;
+  }
+
+  :global(.dark) .log-empty {
+    color: rgb(156 163 175);
+  }
+
+  .log-entry {
+    display: flex;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  }
+
+  .log-entry:last-child {
+    border-bottom: none;
+  }
+
+  :global(.dark) .log-entry {
+    border-bottom-color: rgba(255, 255, 255, 0.05);
+  }
+
+  .log-timestamp {
+    flex-shrink: 0;
+    color: rgb(107 114 128);
+    font-size: 0.75rem;
+  }
+
+  :global(.dark) .log-timestamp {
+    color: rgb(156 163 175);
+  }
+
+  .log-event {
+    flex-shrink: 0;
+    font-weight: 600;
+    color: rgb(124 58 237);
+    text-transform: capitalize;
+  }
+
+  :global(.dark) .log-event {
+    color: rgb(167 139 250);
+  }
+
+  .log-details {
+    flex: 1;
+    color: rgb(75 85 99);
+    font-size: 0.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  :global(.dark) .log-details {
+    color: rgb(209 213 219);
+  }
+
+  .progress-footer {
+    padding: 1rem;
+    background: rgba(249, 115, 22, 0.05);
+    border-radius: 0.5rem;
+  }
+
+  :global(.dark) .progress-footer {
+    background: rgba(249, 115, 22, 0.1);
+  }
+
+  .progress-footer .help-text {
+    margin: 0;
+  }
+
+  /* Console Output Styles */
+  .logs-container.compact {
+    min-height: 150px;
+  }
+
+  .logs-container.compact .logs-scroll {
+    max-height: 180px;
+  }
+
+  .console-output {
+    background: rgba(0, 0, 0, 0.85);
+    color: rgb(209 213 219);
+    font-family: 'Courier New', Consolas, monospace;
+    font-size: 0.8rem;
+    line-height: 1.4;
+  }
+
+  :global(.dark) .console-output {
+    background: rgba(0, 0, 0, 0.95);
+    color: rgb(229 231 235);
+  }
+
+  .console-line {
+    padding: 0.25rem 0;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  .console-line:hover {
+    background: rgba(124, 58, 237, 0.1);
+  }
+
+  .events-output {
+    max-height: 200px !important;
+  }
+
+  /* Training Monitor Styles */
+  .training-monitor {
+    border: 2px solid rgba(124, 58, 237, 0.2);
+  }
+
+  :global(.dark) .training-monitor {
+    border-color: rgba(167, 139, 250, 0.3);
+  }
+
+  .monitor-header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    width: 100%;
+  }
+
+  .toggle-btn {
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid rgba(124, 58, 237, 0.3);
+    background: rgba(124, 58, 237, 0.05);
+    color: rgb(124 58 237);
+    cursor: pointer;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: all 0.2s;
+  }
+
+  .toggle-btn:hover {
+    background: rgba(124, 58, 237, 0.1);
+    border-color: rgba(124, 58, 237, 0.5);
+  }
+
+  :global(.dark) .toggle-btn {
+    border-color: rgba(167, 139, 250, 0.3);
+    background: rgba(167, 139, 250, 0.05);
+    color: rgb(167 139 250);
+  }
+
+  :global(.dark) .toggle-btn:hover {
+    background: rgba(167, 139, 250, 0.1);
+    border-color: rgba(167, 139, 250, 0.5);
+  }
+
+  .monitor-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.02);
+    border-radius: 0.5rem;
+    margin-top: 1rem;
+  }
+
+  :global(.dark) .monitor-status {
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .status-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    font-weight: 500;
+    font-size: 0.95rem;
+  }
+
+  .status-badge.running {
+    background: rgba(34, 197, 94, 0.1);
+    color: rgb(22, 163, 74);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+  }
+
+  :global(.dark) .status-badge.running {
+    background: rgba(34, 197, 94, 0.15);
+    color: rgb(74, 222, 128);
+    border-color: rgba(34, 197, 94, 0.4);
+  }
+
+  .status-badge.idle {
+    background: rgba(107, 114, 128, 0.1);
+    color: rgb(75, 85, 99);
+    border: 1px solid rgba(107, 114, 128, 0.2);
+  }
+
+  :global(.dark) .status-badge.idle {
+    background: rgba(156, 163, 175, 0.1);
+    color: rgb(156, 163, 175);
+    border-color: rgba(156, 163, 175, 0.2);
+  }
+
+  .spinner-small {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(34, 197, 94, 0.2);
+    border-top-color: rgb(22, 163, 74);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  :global(.dark) .spinner-small {
+    border-color: rgba(74, 222, 128, 0.2);
+    border-top-color: rgb(74, 222, 128);
+  }
+
+  .btn-danger-small {
+    padding: 0.4rem 0.8rem;
+    border-radius: 0.5rem;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    background: rgba(239, 68, 68, 0.1);
+    color: rgb(220, 38, 38);
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+
+  .btn-danger-small:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.6);
+  }
+
+  .btn-danger-small:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  :global(.dark) .btn-danger-small {
+    border-color: rgba(248, 113, 113, 0.4);
+    background: rgba(248, 113, 113, 0.1);
+    color: rgb(248, 113, 113);
+  }
+
+  :global(.dark) .btn-danger-small:hover:not(:disabled) {
+    background: rgba(248, 113, 113, 0.2);
+    border-color: rgba(248, 113, 113, 0.6);
+  }
+
+  .monitor-content {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    margin-top: 1rem;
+  }
+
+  .recent-activity-compact {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+  }
+
+  :global(.dark) .recent-activity-compact {
+    border-top-color: rgba(255, 255, 255, 0.05);
+  }
+
+  .recent-activity-compact h4 {
+    margin: 0 0 0.75rem 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: rgb(75, 85, 99);
+  }
+
+  :global(.dark) .recent-activity-compact h4 {
+    color: rgb(156, 163, 175);
+  }
+
+  .info-box {
+    padding: 1rem;
+    background: rgba(59, 130, 246, 0.05);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 0.5rem;
+    margin-top: 0.5rem;
+  }
+
+  :global(.dark) .info-box {
+    background: rgba(59, 130, 246, 0.1);
+    border-color: rgba(59, 130, 246, 0.3);
+  }
+
+  .info-box p {
+    margin: 0;
+    color: rgb(30, 64, 175);
+    font-size: 0.875rem;
+  }
+
+  :global(.dark) .info-box p {
+    color: rgb(147, 197, 253);
+  }
+
+  .info-box strong {
+    color: rgb(29, 78, 216);
+  }
+
+  :global(.dark) .info-box strong {
+    color: rgb(96, 165, 250);
   }
 </style>

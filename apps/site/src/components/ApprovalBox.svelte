@@ -5,7 +5,7 @@
    * Similar to Claude Code, Cursor, Windsurf approval UIs
    */
 
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { codeToHtml } from 'shiki';
   import { isOwner } from '../stores/security-policy';
@@ -225,6 +225,27 @@
     fetchApprovals();
     // Poll every 5 seconds for new approvals
     pollInterval = setInterval(fetchApprovals, 5000) as unknown as number;
+
+    // Pause polling when tab is hidden to save resources
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+        }
+      } else {
+        if (!pollInterval) {
+          fetchApprovals();
+          pollInterval = setInterval(fetchApprovals, 5000) as unknown as number;
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   });
 
 </script>

@@ -40,35 +40,51 @@ type CuriosityQuestion = {
   answeredAt?: string
 }
 
-function listEpisodic(profilePaths: ReturnType<typeof getProfilePaths>): EpisodicItem[] {
+function listEpisodic(profilePaths: ReturnType<typeof getProfilePaths>, limit?: number): EpisodicItem[] {
   const items: EpisodicItem[] = []
-  const walk = (dir: string) => {
-    if (!fs.existsSync(dir)) return
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name)
-      if (entry.isDirectory()) walk(full)
-      else if (entry.isFile() && entry.name.endsWith('.json')) {
-        try {
-          const raw = fs.readFileSync(full, 'utf8')
-          const obj = JSON.parse(raw)
-          if (obj && obj.id && obj.timestamp && obj.content) {
-            items.push({
-              id: obj.id,
-              timestamp: obj.timestamp,
-              content: obj.content,
-              type: obj.type,
-              tags: obj.tags || [],
-              entities: Array.isArray(obj.entities) ? obj.entities : [],
-              links: Array.isArray(obj.links) ? obj.links : [],
-              relPath: path.relative(systemPaths.root, full),
-              validation: obj.validation || undefined,
-            })
-          }
-        } catch {}
-      }
+
+  if (!fs.existsSync(profilePaths.episodic)) return items;
+
+  // Get year directories (e.g., 2025, 2024) and sort newest first
+  const yearDirs = fs.readdirSync(profilePaths.episodic, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && /^\d{4}$/.test(entry.name))
+    .map(entry => entry.name)
+    .sort().reverse(); // 2025, 2024, 2023...
+
+  // Walk years newest-first, reading only what we need
+  for (const year of yearDirs) {
+    if (limit && items.length >= limit) break;
+
+    const yearPath = path.join(profilePaths.episodic, year);
+    const files = fs.readdirSync(yearPath, { withFileTypes: true })
+      .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
+      .map(entry => path.join(yearPath, entry.name));
+
+    // Process files in this year (no need to sort within year for limit)
+    for (const full of files) {
+      if (limit && items.length >= limit) break;
+
+      try {
+        const raw = fs.readFileSync(full, 'utf8')
+        const obj = JSON.parse(raw)
+        if (obj && obj.id && obj.timestamp && obj.content) {
+          items.push({
+            id: obj.id,
+            timestamp: obj.timestamp,
+            content: obj.content,
+            type: obj.type,
+            tags: obj.tags || [],
+            entities: Array.isArray(obj.entities) ? obj.entities : [],
+            links: Array.isArray(obj.links) ? obj.links : [],
+            relPath: path.relative(systemPaths.root, full),
+            validation: obj.validation || undefined,
+          })
+        }
+      } catch {}
     }
   }
-  walk(profilePaths.episodic)
+
+  // Sort by timestamp (newest first)
   items.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1))
   return items
 }
@@ -156,7 +172,7 @@ function listCuriosityQuestions(profilePaths: ReturnType<typeof getProfilePaths>
   return out
 }
 
-const handler: APIRoute = async ({ cookies }) => {
+const handler: APIRoute = async ({ cookies, request }) => {
   try {
     const user = getUserOrAnonymous(cookies)
 
@@ -179,13 +195,20 @@ const handler: APIRoute = async ({ cookies }) => {
 
     const profilePaths = getProfilePaths(user.username);
 
-    const episodic = listEpisodic(profilePaths)
-    const reflections = episodic.filter(item => item.type === 'reflection')
-    const dreams = episodic.filter(item => item.type === 'dream')
-    const episodicFiltered = episodic.filter(item => item.type !== 'reflection' && item.type !== 'dream')
-    const tasks = listActiveTasks(profilePaths)
-    const curated = listCurated(profilePaths)
-    const curiosityQuestions = listCuriosityQuestions(profilePaths)
+    // Parse query parameters for pagination
+    const url = new URL(request.url);
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '100'), 500); // Max 500 items
+
+    // Load episodic memories with limit (stops early after reaching limit)
+    const episodic = listEpisodic(profilePaths, limit);
+    const reflections = episodic.filter(item => item.type === 'reflection');
+    const dreams = episodic.filter(item => item.type === 'dream');
+    const episodicFiltered = episodic.filter(item => item.type !== 'reflection' && item.type !== 'dream');
+
+    // Tasks and curated are typically small, load all
+    const tasks = listActiveTasks(profilePaths);
+    const curated = listCurated(profilePaths);
+    const curiosityQuestions = listCuriosityQuestions(profilePaths);
 
     return new Response(JSON.stringify({
       episodic: episodicFiltered,
@@ -194,6 +217,11 @@ const handler: APIRoute = async ({ cookies }) => {
       tasks,
       curated,
       curiosityQuestions,
+      pagination: {
+        limit,
+        returned: episodic.length,
+        hasMore: episodic.length === limit
+      }
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   } catch (err) {
     return new Response(JSON.stringify({ error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
