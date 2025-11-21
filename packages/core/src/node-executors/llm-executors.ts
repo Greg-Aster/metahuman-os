@@ -155,9 +155,9 @@ export const modelResolverExecutor: NodeExecutor = async (inputs, context) => {
  * Model Router Node
  * Routes request to appropriate model
  */
-export const modelRouterExecutor: NodeExecutor = async (inputs, context) => {
+export const modelRouterExecutor: NodeExecutor = async (inputs, context, properties) => {
   const messages = inputs[0] || [];
-  const role = inputs[1] || 'persona';
+  const role = inputs[1] || properties?.role || 'persona';
 
   try {
     const response = await callLLM({
@@ -165,9 +165,9 @@ export const modelRouterExecutor: NodeExecutor = async (inputs, context) => {
       messages,
       cognitiveMode: context.cognitiveMode,
       options: {
-        maxTokens: 2048,
-        repeatPenalty: 1.15,
-        temperature: 0.7,
+        maxTokens: properties?.maxTokens || 2048,
+        repeatPenalty: properties?.repeatPenalty || 1.15,
+        temperature: properties?.temperature || 0.7,
       },
     });
 
@@ -178,6 +178,82 @@ export const modelRouterExecutor: NodeExecutor = async (inputs, context) => {
     console.error('[ModelRouter] Error:', error);
     return {
       response: 'Error routing to model',
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Reflector LLM Node
+ * Generates reflections/summaries with custom system prompts and temperature
+ * Used by reflector agent for generating inner dialogue
+ * Reads prompts from inputs[0] or falls back to context (reflectionPrompt, summaryPrompt, etc.)
+ */
+export const reflectorLLMExecutor: NodeExecutor = async (inputs, context, properties) => {
+  // Try to get prompt from inputs first, then context
+  let userPrompt = typeof inputs[0] === 'string' ? inputs[0] : inputs[0]?.text || inputs[0]?.prompt || inputs[0]?.response || '';
+  let systemPrompt = properties?.systemPrompt || '';
+  const role = properties?.role || 'persona';
+  const temperature = properties?.temperature || 0.7;
+
+  // If we have input (reflection text) and role is summarizer, format it into a summary prompt
+  if (userPrompt && userPrompt.trim().length > 0 && role === 'summarizer') {
+    const reflection = userPrompt;
+    const conciseHint = context.conciseHint || 'Keep it concise.';
+
+    // Determine if this is extended or concise summary based on properties.temperature
+    if (temperature >= 0.4) {
+      // Extended summary
+      userPrompt = `Here is the full reflection:\n${reflection}\n\nCompose an extended conclusion (2–3 sentences, <= 120 words) that captures the essence and next steps.`;
+      systemPrompt = systemPrompt || `You are Greg consolidating a reflective train of thought into a coherent conclusion.\nWrite in the first person.\nUse two or three sentences (<= 120 words) to capture the main insight, emotional tone, and any next step.\nAvoid repeating the reflection verbatim—synthesize it.`;
+    } else {
+      // Concise summary
+      userPrompt = `Here is the reflection:\n${reflection}\n\nSummarize the core takeaway. ${conciseHint}`;
+      systemPrompt = systemPrompt || `You distill Greg's reflections into concise first-person takeaways.\n${conciseHint}\nHighlight the key realization or next step without rehashing every detail.`;
+    }
+  } else if (!userPrompt || userPrompt.trim().length === 0) {
+    // Fallback to context-specific prompts for initial reflection generation
+    if (context.reflectionPrompt) {
+      userPrompt = context.reflectionPrompt;
+      systemPrompt = systemPrompt || context.reflectionSystemPrompt || '';
+    }
+  }
+
+  if (!userPrompt || userPrompt.trim().length === 0) {
+    return {
+      response: '',
+      error: 'No prompt provided',
+    };
+  }
+
+  if (!systemPrompt || systemPrompt.trim().length === 0) {
+    systemPrompt = 'You are an introspective assistant.';
+  }
+
+  try {
+    const messages = [
+      { role: 'system' as const, content: systemPrompt },
+      { role: 'user' as const, content: userPrompt },
+    ];
+
+    const response = await callLLM({
+      role,
+      messages,
+      cognitiveMode: context.cognitiveMode,
+      options: {
+        maxTokens: properties?.maxTokens || 2048,
+        repeatPenalty: properties?.repeatPenalty || 1.15,
+        temperature,
+      },
+    });
+
+    return {
+      response: response.content,
+    };
+  } catch (error) {
+    console.error('[ReflectorLLM] Error:', error);
+    return {
+      response: '',
       error: (error as Error).message,
     };
   }

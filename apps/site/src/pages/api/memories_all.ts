@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
-import { getAuthenticatedUser, getProfilePaths, systemPaths } from '@metahuman/core'
+import { getUserOrAnonymous, getProfilePaths, systemPaths } from '@metahuman/core'
 import { getSecurityPolicy } from '../../../../../packages/core/src/security-policy.js'
 
 type EpisodicItem = {
@@ -158,7 +158,15 @@ function listCuriosityQuestions(profilePaths: ReturnType<typeof getProfilePaths>
 
 const handler: APIRoute = async ({ cookies }) => {
   try {
-    const user = getAuthenticatedUser(cookies)
+    const user = getUserOrAnonymous(cookies)
+
+    // Anonymous users cannot access memory data
+    if (user.role === 'anonymous') {
+      return new Response(
+        JSON.stringify({ error: 'Authentication required. Please log in to view memories.' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
 
     // Require authentication to access memory data
     const policy = getSecurityPolicy({ cookies });

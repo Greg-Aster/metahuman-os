@@ -3,9 +3,72 @@
  * Handles memory capture, audit logging, stream writing, chat view, and TTS
  */
 
+import path from 'path';
+import { paths } from '../paths.js';
 import { captureEvent } from '../memory.js';
 import { audit } from '../audit.js';
 import type { NodeExecutor } from './types.js';
+
+/**
+ * Inner Dialogue Capture Node
+ * Saves inner dialogue (reflections, thoughts) to episodic memory
+ * Type: 'inner_dialogue' - never shows in main chat, only in Inner Dialogue tab
+ */
+export const innerDialogueCaptureExecutor: NodeExecutor = async (inputs, context) => {
+  // Extract reflection text (slot 0)
+  const reflectionText = typeof inputs[0] === 'string' ? inputs[0] : inputs[0]?.response || inputs[0]?.reflection || '';
+
+  if (!reflectionText || reflectionText.trim().length === 0) {
+    return {
+      saved: false,
+      reason: 'No reflection text to capture',
+    };
+  }
+
+  if (!context.allowMemoryWrites || !context.userId || context.userId === 'anonymous') {
+    // Don't save memory for anonymous users
+    return {
+      saved: false,
+      reason: context.allowMemoryWrites ? 'Anonymous user' : 'Memory writes disabled',
+    };
+  }
+
+  try {
+    const options = {
+      type: 'inner_dialogue' as const,
+      tags: inputs[1]?.tags || ['idle-thought', 'self-reflection', 'inner'],
+      links: inputs[1]?.links || undefined,
+    };
+
+    const eventPath = captureEvent(reflectionText, options);
+    const relativePath = path.relative(paths.root, eventPath);
+
+    audit({
+      category: 'data',
+      level: 'info',
+      event: 'inner_dialogue_captured',
+      actor: context.userId,
+      details: {
+        type: 'inner_dialogue',
+        path: relativePath,
+        textLength: reflectionText.length,
+      },
+    });
+
+    return {
+      saved: true,
+      type: 'inner_dialogue',
+      eventPath: relativePath,
+      textLength: reflectionText.length,
+    };
+  } catch (error) {
+    console.error('[InnerDialogueCapture] Error:', error);
+    return {
+      saved: false,
+      error: (error as Error).message,
+    };
+  }
+};
 
 /**
  * Memory Capture Node
