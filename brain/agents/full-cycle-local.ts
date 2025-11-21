@@ -17,7 +17,7 @@ import { systemPaths, audit, setActiveAdapter } from '../../packages/core/src/in
 import { withUserContext, getUserContext } from '../../packages/core/src/context.js';
 import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
 import dotenv from 'dotenv';
-import { mkdirpSync } from 'mkdirp';
+const mkdirpSync = (dir: string) => fs.mkdirSync(dir, { recursive: true });
 import { randomBytes } from 'node:crypto';
 import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
 
@@ -179,7 +179,11 @@ async function mainWithContext() {
   console.log(`[${new Date().toISOString()}] === Starting local full cycle for user: ${ctx.username} (${currentRunId}) ===`);
 
   // User-specific paths
-  const profileRoot = path.dirname(ctx.profilePaths.personaCore);
+  if (!ctx.profilePaths) {
+    console.error('[full-cycle-local] ERROR: User context missing profilePaths');
+    process.exit(1);
+  }
+  const profileRoot = ctx.profilePaths.root;
 
   // Step 1: Determine dataset date and run label
   const now = new Date();

@@ -85,18 +85,25 @@ export class OllamaProvider implements LLMProvider {
     const model = this.activeAdapter || options.model || this.defaultModel;
 
     try {
+      const body: any = {
+        model,
+        messages: messages.map(m => ({ role: m.role, content: m.content })),
+        stream: false,
+        options: {
+          temperature: options.temperature || 0.7,
+          num_predict: options.maxTokens,
+        },
+      };
+
+      // BUGFIX: Support JSON format mode for structured output
+      if (options.format === 'json') {
+        body.format = 'json';
+      }
+
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          messages: messages.map(m => ({ role: m.role, content: m.content })),
-          stream: false,
-          options: {
-            temperature: options.temperature || 0.7,
-            num_predict: options.maxTokens,
-          },
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {

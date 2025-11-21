@@ -1,11 +1,93 @@
-# Memory Schemas (Minimal)
+# ⚠️ LEGACY REFERENCE DIRECTORY - DO NOT STORE DATA HERE
 
-This project uses simple JSON files for memories and tasks. Files are user‑owned data under `memory/`.
+**This directory tree is for schema documentation and legacy data reference only.**
 
-## Episodic Event (`memory/episodic/YYYY/*.json`)
-
-Example
+**All new data should be stored in user profiles:**
 ```
+profiles/{username}/memory/
+├── episodic/       # Timeline of life events
+├── curated/        # Processed and enriched memories
+├── semantic/       # Facts and knowledge
+├── procedural/     # Skills and how-to knowledge
+├── tasks/          # Task management
+├── inbox/          # File ingestion queue
+├── index/          # Vector search indices
+└── preferences/    # Learned preferences
+```
+
+---
+
+## Multi-User Architecture
+
+As of November 2025, MetaHuman OS supports multiple user profiles. Each user has their own isolated memory space in `profiles/{username}/memory/`.
+
+### User Context
+
+The system automatically handles user context via `AsyncLocalStorage`. When you interact with the system through:
+- Web UI (authenticated)
+- CLI commands (as owner)
+- API endpoints (with session)
+
+...all memory operations automatically use your profile directory.
+
+### Legacy Data
+
+This global `memory/` directory contains:
+- **Schema documentation** - JSON schemas and examples
+- **Legacy data** - Files created before multi-user migration (preserved for reference)
+- **README files** - Warning breadcrumbs to prevent misuse
+
+### Directory Status
+
+| Directory | Status | Notes |
+|-----------|--------|-------|
+| `episodic/` | 📁 Legacy | ~1,200 old events, read READMEs in subdirs |
+| `curated/` | 📁 Legacy | Old processed conversations |
+| `inbox/` | 📁 Legacy | Old ingested files in `_archive/` |
+| `tasks/` | 📋 Schema Only | Tasks now in profiles, see schema docs |
+| `semantic/` | 📋 Schema Only | Knowledge graphs per-user |
+| `procedural/` | 📋 Schema Only | Skill learning per-user |
+| `preferences/` | 📋 Schema Only | User-specific preferences |
+| `index/` | 📋 Schema Only | Vector indices per-user |
+
+---
+
+## For Developers
+
+When writing code that creates memory files:
+
+```typescript
+import { captureEvent, createTask } from '@metahuman/core/memory';
+import { withUserContext } from '@metahuman/core';
+
+// In API routes - use explicit auth
+export const POST: APIRoute = async ({ cookies }) => {
+  const user = getAuthenticatedUser(cookies);
+
+  // Wrap operations in user context
+  await withUserContext(
+    { userId: user.id, username: user.username, role: user.role },
+    async () => {
+      // These will use profiles/{username}/memory/
+      captureEvent('something happened');
+      createTask('do something');
+    }
+  );
+};
+```
+
+The `paths` object from `@metahuman/core` automatically resolves to the correct user profile when context is set.
+
+---
+
+## Memory Schemas
+
+### Episodic Event (`episodic/YYYY/*.json`)
+
+Timeline of life events stored chronologically.
+
+**Example:**
+```json
 {
   "id": "evt-202510210030129",
   "timestamp": "2025-10-21T00:30:12.912Z",
@@ -18,20 +100,23 @@ Example
 }
 ```
 
-Fields
-- `id` string (unique id)
-- `timestamp` ISO string
-- `content` free text
-- `type` optional string, default `observation`
-- `entities` optional string[]
-- `tags` optional string[]
-- `importance` optional number 0..1
-- `links` optional array of `{ type, target }`
+**Fields:**
+- `id` - Unique event identifier (string)
+- `timestamp` - ISO datetime string
+- `content` - Event description (string)
+- `type` - Event category (default: "observation")
+  - Types: `observation`, `conversation`, `inner_dialogue`, `dream`, `reflection`, `system`
+- `entities` - Extracted people/places/things (string[])
+- `tags` - Categorization labels (string[])
+- `importance` - Relevance score 0-1 (number)
+- `links` - Relationships to other memories (array)
 
-## Task (`memory/tasks/{active|completed}/*.json`)
+### Task (`tasks/{active|completed}/*.json`)
 
-Example
-```
+Task management with status tracking.
+
+**Example:**
+```json
 {
   "id": "task-20251021101500",
   "title": "Implement morning brief agent",
@@ -41,18 +126,33 @@ Example
   "due": null,
   "tags": ["agents"],
   "dependencies": [],
+  "userId": "user-greggles-abc123",
   "created": "2025-10-21T10:15:00.000Z",
   "updated": "2025-10-21T10:15:00.000Z",
   "completed": null
 }
 ```
 
-Fields
-- `status` one of `todo|in_progress|blocked|done|cancelled`
-- `priority` optional `P0|P1|P2|P3`
-- `created` and `updated` ISO strings; `completed` optional ISO string
+**Fields:**
+- `id` - Unique task identifier (string)
+- `title` - Short task description (string)
+- `description` - Detailed description (string)
+- `status` - Current state: `todo`, `in_progress`, `blocked`, `done`, `cancelled`
+- `priority` - Urgency level: `P0`, `P1`, `P2`, `P3` (default: `P2`)
+- `due` - Due date (ISO string or null)
+- `tags` - Category labels (string[])
+- `dependencies` - Task IDs this depends on (string[])
+- `userId` - Owner user ID (string)
+- `created` - Creation timestamp (ISO string)
+- `updated` - Last modification timestamp (ISO string)
+- `completed` - Completion timestamp (ISO string or null)
 
-## Indexing
+### Semantic Index (`index/embeddings-*.json`)
 
-If enabled, a semantic index is written to `memory/index/embeddings-*.json` (see `@metahuman/core/vector-index`).
+Vector embeddings for semantic search over memories.
 
+Generated by the indexing system when enabled. See `@metahuman/core/vector-index` for usage.
+
+---
+
+**Remember:** This global directory is for documentation and legacy reference only. All active data lives in user profiles under `profiles/{username}/memory/`.

@@ -132,9 +132,21 @@
   onMount(() => {
     startApprovalsInterval();
     const unsubscribe = isOwner.subscribe(() => startApprovalsInterval());
+
+    // Pause polling when tab is hidden to save resources
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stopApprovalsInterval();
+      } else {
+        startApprovalsInterval();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       stopApprovalsInterval();
       unsubscribe();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   });
 </script>

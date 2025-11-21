@@ -4,7 +4,7 @@ import {
   approveSkillExecution,
   rejectSkillExecution,
 } from '@metahuman/core/skills';
-import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
+import { getAuthenticatedUser, getUserOrAnonymous, withUserContext } from '@metahuman/core';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
 
 /**
@@ -41,8 +41,8 @@ const getHandler: APIRoute = async ({ cookies }) => {
  */
 const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
-    const user = getUserOrAnonymous(cookies);
-    if (user.role === 'anonymous') {
+    const user = getAuthenticatedUser(cookies);
+    if (!user) {
       return new Response(
         JSON.stringify({ error: 'Authentication required to modify approvals.' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -78,7 +78,11 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
 
     let result;
     if (action === 'approve') {
-      result = await approveSkillExecution(id, 'web-user');
+      // Set user context so the skill execution creates resources in the correct user profile
+      result = await withUserContext(
+        { userId: user.id, username: user.username, role: user.role },
+        async () => await approveSkillExecution(id, user.username)
+      );
       return new Response(
         JSON.stringify({ success: result.success, result }),
         {
@@ -87,7 +91,7 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
         }
       );
     } else {
-      result = rejectSkillExecution(id, 'web-user');
+      result = rejectSkillExecution(id, user.username);
       return new Response(
         JSON.stringify({ success: result.success, error: result.error }),
         {

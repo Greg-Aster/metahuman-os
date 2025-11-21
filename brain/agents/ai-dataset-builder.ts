@@ -5,9 +5,10 @@
  * entire memory corpus into high-quality instruction tuning samples.
  *
  * Usage:
- *   pnpm tsx brain/agents/ai-dataset-builder.ts --output ./out/datasets/2025-10-31/ai_dataset.jsonl
+ *   pnpm tsx brain/agents/ai-dataset-builder.ts --output ./out/datasets/2025-10-31/ai_dataset.jsonl --username greggles
  *
  * Optional flags:
+ *   --username <name>      User whose memories to process (defaults to system paths if not provided)
  *   --max <number>         Maximum memories to process (defaults to config.maxMemories)
  *   --chunk <number>       How many memories per LLM batch (defaults to config.chunkSize)
  *   --model <name>         Override model name (otherwise current default provider is used)
@@ -19,9 +20,13 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import {
   paths,
+  systemPaths,
+  getProfilePaths,
   audit,
   loadPersonaCore,
   llm,
+  withUserContext,
+  callLLM,
 } from '../../packages/core/src/index.js';
 import { spawnSync } from 'node:child_process';
 import { acquireLock } from '../../packages/core/src/locks.js';
@@ -103,8 +108,12 @@ function parseArgs() {
   return out;
 }
 
-function collectEpisodicMemories(): MemoryRecord[] {
-  const root = paths.episodic;
+function collectEpisodicMemories(username?: string): MemoryRecord[] {
+  // BUGFIX: Use profile-specific paths when username is provided
+  const root = username ? getProfilePaths(username).episodic : paths.episodic;
+  if (username) {
+    console.log(`[ai-dataset-builder] Loading memories for user: ${username} from ${root}`);
+  }
   if (!fs.existsSync(root)) return [];
 
   const records: MemoryRecord[] = [];
@@ -488,9 +497,16 @@ async function generateSamples(
 
       let response;
       try {
-        response = await llm.generate(messages, modelOverride || undefined, {
-          temperature,
-          maxTokens: 2048,
+        // BUGFIX: Use model-router with 'curator' role to respect user's profile-specific model config
+        // Previously used llm.generate() which bypassed role-based model selection
+        response = await callLLM({
+          role: 'curator',
+          messages: messages.map(m => ({ role: m.role, content: m.content })),
+          options: {
+            temperature,
+            maxTokens: 2048,
+            format: 'json', // BUGFIX: Force JSON mode to ensure structured output
+          },
         });
       } catch (error) {
         lastError = error as Error;
@@ -613,6 +629,7 @@ async function main() {
   const maxArg = typeof args.max === 'string' ? Number(args.max) : undefined;
   const chunkArg = typeof args.chunk === 'string' ? Number(args.chunk) : undefined;
   const modelArg = typeof args.model === 'string' ? args.model : undefined;
+  const usernameArg = typeof args.username === 'string' ? args.username : undefined;
 
   const date = new Date().toISOString().slice(0, 10);
   const defaultOutput = path.join(paths.root, config.outputDir, date, 'ai_dataset.jsonl');
@@ -641,7 +658,8 @@ async function main() {
 
   try {
     const memories: MemoryRecord[] = [];
-    memories.push(...collectEpisodicMemories());
+    // BUGFIX: Pass username to use profile-specific paths
+    memories.push(...collectEpisodicMemories(usernameArg));
     if (config.includeSemanticCurated) memories.push(...collectSemanticCurated());
     if (config.includeAudioTranscripts) memories.push(...collectAudioTranscripts());
     if (config.includeInboxMarkdown) memories.push(...collectInboxMarkdown());
@@ -723,8 +741,26 @@ async function main() {
 // Execute only when run directly
 const modulePath = fileURLToPath(import.meta.url);
 if (process.argv[1] === modulePath) {
-  main().catch((error) => {
-    console.error('Fatal error:', error);
-    process.exit(1);
-  });
+  // BUGFIX: Parse username and run with user context so model config comes from profile
+  const args = parseArgs();
+  const usernameArg = typeof args.username === 'string' ? args.username : undefined;
+
+  if (usernameArg) {
+    // Run with user context to ensure profile-specific model config is used
+    console.log(`[ai-dataset-builder] Running with user context: ${usernameArg}`);
+    withUserContext(
+      { userId: usernameArg, username: usernameArg, role: 'owner' },
+      () => main()
+    ).catch((error) => {
+      console.error('Fatal error:', error);
+      process.exit(1);
+    });
+  } else {
+    // No username provided - run without context (uses system paths)
+    console.warn('[ai-dataset-builder] WARNING: No --username provided, using system-wide configuration');
+    main().catch((error) => {
+      console.error('Fatal error:', error);
+      process.exit(1);
+    });
+  }
 }

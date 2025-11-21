@@ -8,6 +8,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { paths, audit } from '../../packages/core/src/index.js';
+import { withUserContext } from '../../packages/core/src/context.js';
+import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
 
 interface MergeConfig {
   method: 'linear' | 'ties' | 'dare_ties' | 'slerp';
@@ -224,12 +226,12 @@ function fallbackMerge(adapterPaths: string[], outputDir: string): string {
 }
 
 /**
- * Main merge workflow
+ * Main merge workflow (runs within user context)
  * - Find all historical adapters (excluding most recent)
  * - Merge them into a single "history" adapter
  * - Keep the most recent adapter separate
  */
-async function main() {
+async function mainWithContext() {
   const args = process.argv.slice(2);
   const allAdapters = findAdapters();
 
@@ -276,7 +278,33 @@ ADAPTER ${mergedPath}
 ADAPTER ${recentGGUF}`);
 }
 
-main().catch((err) => {
+/**
+ * CLI entry point - parses --username and establishes user context
+ */
+async function main() {
+  const args = process.argv.slice(2);
+  let username: string | null = null;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--username' && i + 1 < args.length) {
+      username = args[i + 1];
+      break;
+    }
+  }
+
+  if (!username) {
+    console.error('[adapter-merger] ERROR: --username <name> is required');
+    console.error('\nUsage: npx tsx brain/agents/adapter-merger.ts --username <username>');
+    process.exit(1);
+  }
+
+  const userInfo = requireUserInfo(username);
+  console.log(`[adapter-merger] Starting for user: ${username}`);
+
+  await withUserContext(userInfo, mainWithContext);
+}
+
+main().catch((err: Error) => {
   console.error('[adapter-merger] Fatal error:', err);
   audit({
     level: 'error',

@@ -14,6 +14,7 @@ export * from './recent-tools-cache';
 export * from './summary-state';
 export * from './function-memory';
 export * from './audit';
+export * from './llm';
 export * from './ollama';
 export * from './model-resolver';
 export * from './model-router';

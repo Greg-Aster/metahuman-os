@@ -1,5 +1,7 @@
 <script lang="ts">
   import { activeView } from '../stores/navigation';
+
+  // Load ChatInterface eagerly (it's the default view and most common)
   import ChatInterface from './ChatInterface.svelte';
   import Dashboard from './Dashboard.svelte';
   import TaskManager from './TaskManager.svelte';
@@ -156,7 +158,8 @@ async function loadEvents() {
   loadingEvents = true;
   eventsError = null;
     try {
-      const res = await fetch('/api/memories_all');
+      // Load most recent 100 memories (paginated for performance)
+      const res = await fetch('/api/memories_all?limit=100');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const episodicEvents = Array.isArray(data.episodic) ? data.episodic : [];
