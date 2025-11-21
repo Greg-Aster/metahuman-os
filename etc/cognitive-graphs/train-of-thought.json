@@ -1,0 +1,275 @@
+{
+  "version": "2.0",
+  "name": "Train of Thought Workflow",
+  "description": "Recursive reasoning that follows memory associations, allowing one thought to trigger related thoughts until natural conclusion",
+  "cognitiveMode": "agent",
+  "author": "MetaHuman OS",
+  "created": "2025-11-20",
+  "last_modified": "2025-11-20",
+  "tags": ["reflection", "train-of-thought", "recursive", "inner-dialogue"],
+  "nodes": [
+    {
+      "id": 1,
+      "type": "cognitive/text_input",
+      "pos": [50, 200],
+      "size": [180, 80],
+      "properties": {
+        "inputKey": "seedMemory"
+      },
+      "title": "Seed Memory Input"
+    },
+    {
+      "id": 2,
+      "type": "cognitive/scratchpad_initializer",
+      "pos": [280, 200],
+      "size": [200, 80],
+      "properties": {
+        "fields": ["thoughts", "keywords", "seenMemoryIds"]
+      },
+      "title": "Initialize Scratchpad"
+    },
+    {
+      "id": 3,
+      "type": "cognitive/thought_generator",
+      "pos": [530, 200],
+      "size": [220, 100],
+      "properties": {
+        "temperature": 0.75,
+        "extractKeywords": true
+      },
+      "title": "Generate Thought"
+    },
+    {
+      "id": 4,
+      "type": "cognitive/scratchpad_updater",
+      "pos": [800, 200],
+      "size": [200, 100],
+      "properties": {
+        "appendTo": "thoughts",
+        "trackField": "seenMemoryIds"
+      },
+      "title": "Record Thought"
+    },
+    {
+      "id": 5,
+      "type": "cognitive/thought_evaluator",
+      "pos": [1050, 200],
+      "size": [220, 100],
+      "properties": {
+        "minConfidence": 0.4,
+        "maxIterations": 7
+      },
+      "title": "Evaluate: Continue?"
+    },
+    {
+      "id": 6,
+      "type": "cognitive/loop_memory_search",
+      "pos": [800, 380],
+      "size": [220, 100],
+      "properties": {
+        "maxResults": 3,
+        "excludeSeen": true
+      },
+      "title": "Search Related Memories"
+    },
+    {
+      "id": 7,
+      "type": "cognitive/conditional_router",
+      "pos": [1050, 380],
+      "size": [220, 100],
+      "properties": {
+        "conditionField": "shouldExit"
+      },
+      "title": "Continue or Exit"
+    },
+    {
+      "id": 8,
+      "type": "cognitive/thought_aggregator",
+      "pos": [1350, 200],
+      "size": [220, 100],
+      "properties": {
+        "summaryStyle": "narrative",
+        "maxLength": 200
+      },
+      "title": "Aggregate Thoughts"
+    },
+    {
+      "id": 9,
+      "type": "cognitive/inner_dialogue_capture",
+      "pos": [1620, 200],
+      "size": [200, 80],
+      "properties": {
+        "tags": ["train-of-thought", "reflection", "inner"]
+      },
+      "title": "Save Thought Chain"
+    },
+    {
+      "id": 10,
+      "type": "cognitive/audit_logger",
+      "pos": [1620, 320],
+      "size": [180, 60],
+      "properties": {
+        "category": "decision",
+        "event": "train_of_thought_complete"
+      },
+      "title": "Audit Completion"
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 2,
+      "target_slot": 0,
+      "type": "string",
+      "comment": "Seed Memory → Initialize Scratchpad"
+    },
+    {
+      "id": 2,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Scratchpad → Thought Generator"
+    },
+    {
+      "id": 3,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "Seed Memory → Thought Generator (context)"
+    },
+    {
+      "id": 4,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Thought → Record in Scratchpad"
+    },
+    {
+      "id": 5,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Thought Generator → Evaluator (current thought)"
+    },
+    {
+      "id": 15,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 2,
+      "type": "object",
+      "comment": "Updated Scratchpad → Evaluator (history)"
+    },
+    {
+      "id": 6,
+      "origin_id": 5,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 0,
+      "type": "array",
+      "comment": "Search Terms → Memory Search"
+    },
+    {
+      "id": 7,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 1,
+      "type": "array",
+      "comment": "Seen Memory IDs → Memory Search (exclude)"
+    },
+    {
+      "id": 8,
+      "origin_id": 5,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 0,
+      "type": "boolean",
+      "comment": "shouldContinue → Router"
+    },
+    {
+      "id": 9,
+      "origin_id": 6,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 2,
+      "type": "object",
+      "comment": "New memories → Router slot 2 (for back-edge when looping)"
+    },
+    {
+      "id": 16,
+      "origin_id": 5,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Evaluator (with thoughts) → Router slot 1 (for aggregator when exiting)"
+    },
+    {
+      "id": 10,
+      "origin_id": 7,
+      "origin_slot": 1,
+      "target_id": 3,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Loop back with new memory → Thought Generator [BACK-EDGE]"
+    },
+    {
+      "id": 11,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 8,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Exit Loop → Aggregate Thoughts"
+    },
+    {
+      "id": 13,
+      "origin_id": 8,
+      "origin_slot": 0,
+      "target_id": 9,
+      "target_slot": 0,
+      "type": "string",
+      "comment": "Consolidated Chain → Save"
+    },
+    {
+      "id": 14,
+      "origin_id": 8,
+      "origin_slot": 0,
+      "target_id": 10,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Aggregation Result → Audit"
+    }
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "Initialization",
+      "bounding": [30, 150, 270, 180],
+      "color": "#2d5a27"
+    },
+    {
+      "id": 2,
+      "title": "Thought Loop",
+      "bounding": [510, 150, 800, 380],
+      "color": "#5a4327"
+    },
+    {
+      "id": 3,
+      "title": "Output",
+      "bounding": [1330, 150, 520, 280],
+      "color": "#4a275a"
+    }
+  ]
+}

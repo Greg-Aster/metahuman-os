@@ -412,6 +412,43 @@ export const PersonaLLMNode: NodeSchema = {
   description: 'Generates response using persona model',
 };
 
+export const ReflectorLLMNode: NodeSchema = {
+  id: 'reflector_llm',
+  name: 'Reflector LLM',
+  category: 'chat',
+  ...categoryColors.chat,
+  inputs: [
+    { name: 'prompt', type: 'string', description: 'User prompt or reflection text' },
+  ],
+  outputs: [
+    { name: 'response', type: 'string' },
+  ],
+  properties: {
+    role: 'persona',
+    temperature: 0.8,
+    systemPrompt: '',
+  },
+  description: 'Generates reflections/summaries with custom prompts',
+};
+
+export const InnerDialogueCaptureNode: NodeSchema = {
+  id: 'inner_dialogue_capture',
+  name: 'Inner Dialogue Capture',
+  category: 'output',
+  ...categoryColors.output,
+  inputs: [
+    { name: 'text', type: 'string', description: 'Reflection or thought text' },
+    { name: 'metadata', type: 'object', optional: true },
+  ],
+  outputs: [
+    { name: 'result', type: 'object', description: 'Save result with path' },
+  ],
+  properties: {
+    tags: ['idle-thought', 'self-reflection', 'inner'],
+  },
+  description: 'Saves inner dialogue to episodic memory (never shown in main chat)',
+};
+
 export const ChainOfThoughtStripperNode: NodeSchema = {
   id: 'cot_stripper',
   name: 'Chain-of-Thought Stripper',
@@ -770,6 +807,26 @@ export const ConditionalBranchNode: NodeSchema = {
     compareValue: null,
   },
   description: 'Routes execution based on a condition (if/else logic)',
+};
+
+export const ConditionalRouterNode: NodeSchema = {
+  id: 'conditional_router',
+  name: 'Conditional Router',
+  category: 'control_flow',
+  ...categoryColors.control_flow,
+  inputs: [
+    { name: 'condition', type: 'any', description: 'Condition data (boolean or object with isComplete/shouldContinue)' },
+    { name: 'trueData', type: 'any', description: 'Data to route if condition is true (exit path)' },
+    { name: 'falseData', type: 'any', description: 'Data to route if condition is false (loop-back path)' },
+  ],
+  outputs: [
+    { name: 'exitOutput', type: 'any', description: 'Output when condition is true (exit loop)' },
+    { name: 'loopOutput', type: 'any', description: 'Output when condition is false (continue loop)' },
+  ],
+  properties: {
+    conditionField: 'isComplete', // Field to check in condition object
+  },
+  description: 'Routes data based on condition - designed for loop control with exit and loop-back paths',
 };
 
 export const SwitchNode: NodeSchema = {
@@ -1279,6 +1336,141 @@ export const GoalManagerNode: NodeSchema = {
   description: 'Manages goals (CRUD operations)',
 };
 
+// ============================================================================
+// TRAIN OF THOUGHT NODES (Recursive reasoning)
+// ============================================================================
+
+export const ScratchpadInitializerNode: NodeSchema = {
+  id: 'scratchpad_initializer',
+  name: 'Scratchpad Initializer',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [
+    { name: 'seedMemory', type: 'string', description: 'Initial memory content to seed the thought chain' },
+  ],
+  outputs: [
+    { name: 'scratchpad', type: 'object', description: 'Initialized scratchpad with empty fields' },
+  ],
+  properties: {
+    fields: ['thoughts', 'keywords', 'seenMemoryIds'], // Fields to initialize
+  },
+  description: 'Initializes a scratchpad object for tracking thought chain state',
+};
+
+export const ScratchpadUpdaterNode: NodeSchema = {
+  id: 'scratchpad_updater',
+  name: 'Scratchpad Updater',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [
+    { name: 'data', type: 'object', description: 'Data to append/update in scratchpad' },
+  ],
+  outputs: [
+    { name: 'scratchpad', type: 'object', description: 'Updated scratchpad' },
+  ],
+  properties: {
+    appendTo: 'thoughts', // Field to append to
+    trackField: 'seenMemoryIds', // Field to track unique IDs
+  },
+  description: 'Updates scratchpad state by appending data to specified fields',
+};
+
+export const ThoughtGeneratorNode: NodeSchema = {
+  id: 'thought_generator',
+  name: 'Thought Generator',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [
+    { name: 'context', type: 'object', description: 'Memory context or scratchpad from previous iteration' },
+    { name: 'seedMemory', type: 'string', optional: true, description: 'Seed memory text' },
+  ],
+  outputs: [
+    { name: 'result', type: 'object', description: 'Generated thought with keywords and confidence' },
+  ],
+  properties: {
+    temperature: 0.75,
+    extractKeywords: true,
+  },
+  description: 'Generates a single reasoning step from memory context using LLM',
+};
+
+export const ThoughtEvaluatorNode: NodeSchema = {
+  id: 'thought_evaluator',
+  name: 'Thought Evaluator',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [
+    { name: 'thought', type: 'object', description: 'Current thought from thought_generator' },
+    { name: 'iteration', type: 'object', optional: true, description: 'Iteration info' },
+    { name: 'history', type: 'object', optional: true, description: 'Scratchpad history' },
+  ],
+  outputs: [
+    { name: 'evaluation', type: 'object', description: 'Evaluation result with isComplete, reason, nextSearchTerms' },
+  ],
+  properties: {
+    minConfidence: 0.4,
+    maxIterations: 7,
+    repetitionThreshold: 0.8,
+  },
+  description: 'Decides if the train of thought should continue or conclude',
+};
+
+export const ThoughtAggregatorNode: NodeSchema = {
+  id: 'thought_aggregator',
+  name: 'Thought Aggregator',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [
+    { name: 'scratchpad', type: 'object', description: 'Scratchpad with all thoughts' },
+  ],
+  outputs: [
+    { name: 'result', type: 'object', description: 'Consolidated chain, insight, summary, and thoughtCount' },
+  ],
+  properties: {
+    summaryStyle: 'narrative', // 'narrative' | 'bullets' | 'insight'
+    maxLength: 200,
+  },
+  description: 'Combines all thoughts into a coherent reasoning chain',
+};
+
+export const LoopMemorySearchNode: NodeSchema = {
+  id: 'loop_memory_search',
+  name: 'Loop Memory Search',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [
+    { name: 'searchTerms', type: 'array', description: 'Keywords to search for' },
+    { name: 'seenIds', type: 'array', optional: true, description: 'Already seen memory IDs to exclude' },
+  ],
+  outputs: [
+    { name: 'result', type: 'object', description: 'Found memories, memoryIds, searchTermsUsed' },
+  ],
+  properties: {
+    maxResults: 3,
+    excludeSeen: true,
+  },
+  description: 'Searches for memories based on keywords, avoiding already-seen memories',
+};
+
+export const AgentTriggerNode: NodeSchema = {
+  id: 'agent_trigger',
+  name: 'Agent Trigger',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [
+    { name: 'inputData', type: 'object', description: 'Data to pass to the triggered agent' },
+  ],
+  outputs: [
+    { name: 'result', type: 'object', description: 'Triggered status and agent result' },
+  ],
+  properties: {
+    agentName: '', // Name of agent to trigger
+    waitForCompletion: true,
+    timeout: 30000,
+  },
+  description: 'Triggers another agent/workflow from within a graph',
+};
+
 // Export all schemas as a registry
 export const nodeSchemas: NodeSchema[] = [
   // Input
@@ -1308,6 +1500,7 @@ export const nodeSchemas: NodeSchema[] = [
 
   // Chat
   PersonaLLMNode,
+  ReflectorLLMNode,
   ChainOfThoughtStripperNode,
   SafetyValidatorNode,
   ResponseRefinerNode,
@@ -1318,6 +1511,7 @@ export const nodeSchemas: NodeSchema[] = [
 
   // Output
   MemoryCaptureNode,
+  InnerDialogueCaptureNode,
   AuditLoggerNode,
   StreamWriterNode,
   ChatViewNode,
@@ -1337,6 +1531,7 @@ export const nodeSchemas: NodeSchema[] = [
   // Control Flow
   LoopControllerNode,
   ConditionalBranchNode,
+  ConditionalRouterNode,
   SwitchNode,
   ForEachNode,
 
@@ -1362,6 +1557,15 @@ export const nodeSchemas: NodeSchema[] = [
   MemorySaverNode,
   LLMEnricherNode,
   AgentTimerNode,
+
+  // Train of Thought (Recursive Reasoning)
+  ScratchpadInitializerNode,
+  ScratchpadUpdaterNode,
+  ThoughtGeneratorNode,
+  ThoughtEvaluatorNode,
+  ThoughtAggregatorNode,
+  LoopMemorySearchNode,
+  AgentTriggerNode,
 
   // Configuration
   PersonaLoaderNode,

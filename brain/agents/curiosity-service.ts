@@ -373,6 +373,29 @@ What are you genuinely curious about? Ask one natural question.
       }
     });
 
+    // Save question to pending directory for curiosity-researcher to pick up
+    try {
+      const pendingDir = path.join(paths.curiosity, 'questions', 'pending');
+      await fs.mkdir(pendingDir, { recursive: true });
+      const questionData = {
+        id: questionId,
+        question,
+        askedAt,
+        seedMemories,
+        status: 'pending',
+        trustLevel: trust,
+        username
+      };
+      await fs.writeFile(
+        path.join(pendingDir, `${questionId}.json`),
+        JSON.stringify(questionData, null, 2),
+        'utf-8'
+      );
+      console.log(`[curiosity-service] Saved question to pending for research: ${questionId}`);
+    } catch (err) {
+      console.warn(`[curiosity-service] Failed to save question to pending:`, err);
+    }
+
     console.log(`[curiosity-service] Asked: "${question.substring(0, 60)}..."`);
     return true;
 

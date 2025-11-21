@@ -437,6 +437,10 @@ let reasoningStages: ReasoningStage[] = [];
 
   // Intersection observer for auto-scroll detection
   let scrollSentinel: HTMLDivElement;
+  let scrollObserver: IntersectionObserver | null = null;
+
+  // Component lifecycle flag for cleanup
+  let isComponentMounted = true;
 
 
   function loadChatPrefs() {
@@ -602,7 +606,7 @@ let reasoningStages: ReasoningStage[] = [];
       console.log(`[ChatInterface] Hydrated ${messages.length} messages from server`);
     }
 
-    const observer = new IntersectionObserver(
+    scrollObserver = new IntersectionObserver(
       (entries) => {
         shouldAutoScroll = entries[0].isIntersecting;
       },
@@ -610,7 +614,7 @@ let reasoningStages: ReasoningStage[] = [];
     );
 
     if (scrollSentinel) {
-      observer.observe(scrollSentinel);
+      scrollObserver.observe(scrollSentinel);
     }
 
     // Connect to reflection stream
@@ -702,17 +706,14 @@ let reasoningStages: ReasoningStage[] = [];
     // and loaded via /api/chat/history just like regular messages
 
     // Listen for voice settings changes (triggered when user updates VAD settings in UI)
-    const handleSettingsUpdate = () => {
-      console.log('[chat-mic] Voice settings updated, reloading...');
-      loadVADSettings();
-    };
-    window.addEventListener('voice-settings-updated', handleSettingsUpdate);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('voice-settings-updated', handleSettingsUpdate);
-    };
+    window.addEventListener('voice-settings-updated', handleVoiceSettingsUpdate);
   });
+
+  // Event handler stored at module level for proper cleanup
+  function handleVoiceSettingsUpdate() {
+    console.log('[chat-mic] Voice settings updated, reloading...');
+    loadVADSettings();
+  }
 
 
   // Load chat history from episodic memory for the current mode
@@ -748,6 +749,9 @@ let reasoningStages: ReasoningStage[] = [];
   }
 
   onDestroy(() => {
+    // Mark component as unmounted to stop animation loops
+    isComponentMounted = false;
+
     reflectionStream?.close();
     if (activityTimeout) {
       clearTimeout(activityTimeout);
@@ -762,7 +766,28 @@ let reasoningStages: ReasoningStage[] = [];
       audioCtx = null;
     }
     unsubscribeYolo();
-    // teardownOperatorOutsideListener removed - operator info popover removed
+
+    // Clean up IntersectionObserver (moved from async onMount which doesn't work for cleanup)
+    if (scrollObserver) {
+      scrollObserver.disconnect();
+      scrollObserver = null;
+    }
+
+    // Clean up voice settings event listener
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('voice-settings-updated', handleVoiceSettingsUpdate);
+    }
+
+    // Clean up mic resources
+    if (micSilenceTimer) {
+      clearTimeout(micSilenceTimer);
+      micSilenceTimer = null;
+    }
+    try { micStream?.getTracks().forEach(t => t.stop()); } catch {}
+    micStream = null;
+    try { micAudioCtx?.close(); } catch {}
+    micAudioCtx = null;
+    micAnalyser = null;
   });
 
   afterUpdate(() => {
@@ -1294,8 +1319,8 @@ let reasoningStages: ReasoningStage[] = [];
     const analyser = micAnalyser; if (!analyser) return;
 
     const tickVAD = () => {
-      // Keep VAD running as long as we have an analyser (mic stream is active)
-      if (!micAnalyser) return;
+      // Stop the loop if component is unmounted or analyser is gone
+      if (!isComponentMounted || !micAnalyser) return;
 
       // CRITICAL: Don't record while TTS is playing (prevents recording LLM's own voice)
       if (currentAudio && !currentAudio.paused) {

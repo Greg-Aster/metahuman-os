@@ -20,6 +20,8 @@ export interface ChatSettings {
   maxContextChars: number;
   maxHistoryMessages: number;
   userInputPriority: boolean;
+  innerDialogHistoryLimit: number;
+  innerDialogHistoryDays: number;
 }
 
 export interface ChatSettingsConfig {
@@ -102,6 +104,8 @@ function extractSettings(config: ChatSettingsConfig): ChatSettings {
     maxContextChars: config.settings.maxContextChars?.value ?? 900,
     maxHistoryMessages: config.settings.maxHistoryMessages?.value ?? 30,
     userInputPriority: config.settings.userInputPriority?.value ?? true,
+    innerDialogHistoryLimit: config.settings.innerDialogHistoryLimit?.value ?? 80,
+    innerDialogHistoryDays: config.settings.innerDialogHistoryDays?.value ?? 7,
   };
 }
 
@@ -245,6 +249,8 @@ export function getDefaultSettings(): ChatSettings {
     maxContextChars: 900,
     maxHistoryMessages: 30,
     userInputPriority: true,
+    innerDialogHistoryLimit: 80,
+    innerDialogHistoryDays: 7,
   };
 }
 

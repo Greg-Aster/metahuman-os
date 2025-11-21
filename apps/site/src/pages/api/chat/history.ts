@@ -41,8 +41,8 @@ export const GET: APIRoute = async ({ request, cookies }) => {
     // Load chat settings for inner dialog history defaults
     const chatSettings = loadChatSettings();
     const innerDialogDefaults = {
-      limit: chatSettings.settings?.innerDialogHistoryLimit?.value ?? 80,
-      days: chatSettings.settings?.innerDialogHistoryDays?.value ?? 7
+      limit: chatSettings.innerDialogHistoryLimit ?? 80,
+      days: chatSettings.innerDialogHistoryDays ?? 7
     };
 
     const url = new URL(request.url)
@@ -137,6 +137,10 @@ export const GET: APIRoute = async ({ request, cookies }) => {
             // Dreams appear as dream messages (system's internal content)
             if (t === 'dream') {
               items.push({ ts: Date.parse(obj.timestamp), role: 'dream', content: c, relPath: path.relative(systemPaths.root, p) })
+            }
+            // Inner dialogue (reflections, inner curiosity Q&A) appear as reflections
+            else if (t === 'inner_dialogue') {
+              items.push({ ts: Date.parse(obj.timestamp), role: 'reflection', content: c, relPath: path.relative(systemPaths.root, p) })
             }
             // Heuristics: map stored capture events to chat roles (only user side from memory)
             else if (c.startsWith('Me: "')) {

@@ -100,7 +100,74 @@ The bootstrap wrapper handles:
 
 **Auto-triggered:** By the scheduler-service at configurable intervals.
 
-### 3. Boredom Service
+### 3. Train of Thought Agent
+
+**Purpose:** Performs recursive reasoning by following memory associations, where one thought triggers related thoughts until natural conclusion.
+
+**How it works:**
+1. Selects a seed memory using weighted random sampling (recent memories prioritized via 14-day decay)
+2. Generates initial thought/reflection on the seed memory
+3. Extracts keywords from the thought to search for related memories
+4. Evaluates whether to continue (based on confidence, repetition, keyword availability)
+5. If continuing, searches for related memories and generates another thought
+6. Repeats until max iterations (7) or natural conclusion
+7. Aggregates all thoughts into a coherent reasoning chain with insights
+8. Saves the consolidated chain as inner dialogue
+
+**Key Features:**
+- **Recursive reasoning**: Thoughts chain naturally via keyword extraction and memory search
+- **Self-limiting**: Stops when thoughts become repetitive, confidence drops, or keywords exhausted
+- **Memory-grounded**: Each thought is seeded from actual episodic memories
+- **Configurable**: Max iterations, confidence threshold, temperature all adjustable
+
+**Cognitive Graph Architecture:**
+The train of thought system is implemented as a cognitive graph (`etc/cognitive-graphs/train-of-thought.json`) with 10 nodes:
+1. `text_input` - Receives seed memory
+2. `scratchpad_initializer` - Initializes thought accumulator
+3. `thought_generator` - Generates reasoning steps with keywords
+4. `scratchpad_updater` - Records each thought
+5. `thought_evaluator` - Decides whether to continue or conclude
+6. `loop_memory_search` - Finds related memories (excludes already-seen)
+7. `conditional_router` - Loop back or exit based on evaluation
+8. `thought_aggregator` - Synthesizes all thoughts into narrative/insight
+9. `inner_dialogue_capture` - Saves result as inner dialogue
+10. `audit_logger` - Logs completion
+
+**Node Types Used:**
+- `cognitive/thought_generator`: Generates reflections with confidence scores and keywords
+- `cognitive/thought_evaluator`: Decides continuation based on confidence, iterations, repetition
+- `cognitive/thought_aggregator`: Combines thoughts into narrative with key insight
+- `cognitive/loop_memory_search`: Searches memories while tracking seen IDs
+
+**Example Output:**
+```
+Step 1: The meeting with Sarah about the ML project reminded me of our earlier discussions...
+Step 2: The pattern of iterative refinement in ML mirrors how we approach product design...
+Step 3: This connects to the broader theme of embracing uncertainty in creative work...
+
+Insight: The recursive nature of machine learning training shares a fundamental philosophy with
+creative iteration—both require embracing uncertainty and learning from each attempt.
+```
+
+**Run manually:**
+```bash
+./bin/mh agent run train-of-thought
+```
+
+**Integration with Reflector:**
+The reflector agent can optionally use train-of-thought for deeper reasoning. Enable via environment variable:
+```bash
+REFLECTOR_USE_TRAIN_OF_THOUGHT=true ./bin/mh agent run reflector
+```
+
+**Configuration Properties (in cognitive graph):**
+- `thought_generator.temperature`: Creativity level (default: 0.75)
+- `thought_generator.extractKeywords`: Whether to extract keywords (default: true)
+- `thought_evaluator.minConfidence`: Minimum confidence to continue (default: 0.4)
+- `thought_evaluator.maxIterations`: Maximum thought iterations (default: 7)
+- `thought_aggregator.summaryStyle`: 'narrative' | 'bullets' | 'insight' (default: 'narrative')
+
+### 4. Boredom Service
 
 **Purpose:** Simulates a "wandering mind" by triggering reflections during idle time.
 
@@ -721,10 +788,18 @@ The curiosity system consists of three coordinated agents that work together to 
 
 #### 25c. Curiosity Researcher Agent
 
-**Performs deep research on pending questions.**
+**Performs autonomous research on pending questions when users don't respond.**
 
-**How it works:**
-- Selects one pending question per cycle (rate-limited)
+This agent enables the AI to satisfy its own curiosity by researching questions internally when the user doesn't answer. This creates an elegant dual-path system: questions go to users first, and if unanswered, the AI researches them itself.
+
+**The Curiosity Flow:**
+1. **Curiosity Service** generates a question and asks the user
+2. Question is saved to `memory/curiosity/questions/pending/` directory
+3. **If user answers**: Answer Watcher detects it, moves question to `answered/`
+4. **If user doesn't answer**: Researcher picks up the pending question and researches it autonomously
+
+**How the Researcher works:**
+- Selects one pending question per cycle (rate-limited to avoid overwhelming system)
 - Uses LLM to extract 2-3 key topics from the question
 - Searches episodic memories for up to 5 results per topic
 - Generates Markdown research notes with:
@@ -732,6 +807,7 @@ The curiosity system consists of three coordinated agents that work together to 
   - Related memories with timestamps
   - LLM-generated summary of insights
 - Saves research to `memory/curiosity/research/{questionId}-research.md`
+- Saves a summary as an `inner_dialogue` event (viewable in Inner Dialogue tab)
 - Only processes the most recently active user
 
 **Research Note Example:**
