@@ -75,12 +75,16 @@ export const reactPlannerExecutor: NodeExecutor = async (inputs, context) => {
 Available Skills:
 ${skillDescriptions}
 
+IMPORTANT: Use "Final Answer:" for conversational responses. Only use skills when you need to take an actual action (read files, create tasks, search data, etc.). Do NOT use conversational_response skill - just use Final Answer directly.
+
 Output your response in this format:
+
+If you need to use a tool/skill:
 Thought: [your reasoning]
 Action: [skill_id]
 Action Input: {"param": "value"}
 
-Or if the task is complete:
+If you can answer directly without tools:
 Thought: [your reasoning]
 Final Answer: [your response]`,
     },
@@ -128,13 +132,25 @@ What should I do next?`,
  * Executes a specific skill based on the plan and captures tool invocations to memory
  */
 export const skillExecutorExecutor: NodeExecutor = async (inputs, context) => {
+  console.log('[SkillExecutor] ========== SKILL EXECUTOR ENTRY ==========');
+  console.log('[SkillExecutor] useOperator:', context.useOperator);
+  console.log('[SkillExecutor] Inputs:', inputs.length, 'items');
+  console.log('[SkillExecutor] Input[0] type:', typeof inputs[0], 'keys:', inputs[0] ? Object.keys(inputs[0]) : []);
+
   if (context.useOperator === false) {
+    console.log('[SkillExecutor] EARLY RETURN: useOperator === false');
     return {};
   }
 
   // Handle both string and object inputs (react_planner returns { plan: string })
   const planInput = inputs[0] || '';
   const plan = typeof planInput === 'object' && planInput.plan ? planInput.plan : planInput;
+
+  console.log('[SkillExecutor] Plan type:', typeof plan);
+  if (typeof plan === 'string') {
+    console.log('[SkillExecutor] Plan length:', plan.length);
+    console.log('[SkillExecutor] Full plan:', plan);
+  }
 
   if (typeof plan !== 'string') {
     console.error('[SkillExecutor] Expected string plan, got:', typeof plan, plan);
@@ -147,6 +163,24 @@ export const skillExecutorExecutor: NodeExecutor = async (inputs, context) => {
 
   const maxRetries = 2; // Maximum retry attempts per skill execution
   const retryCount = context.retryCount || 0;
+
+  // Check if this is a Final Answer (no action to execute)
+  console.log('[SkillExecutor] Checking for "Final Answer:" in plan...');
+  const finalAnswerMatch = plan.match(/Final Answer:\s*(.+)/is);
+  console.log('[SkillExecutor] finalAnswerMatch:', finalAnswerMatch ? `Found: "${finalAnswerMatch[1].substring(0, 100)}..."` : 'NOT FOUND');
+
+  if (finalAnswerMatch) {
+    const finalAnswer = finalAnswerMatch[1].trim();
+    console.log('[SkillExecutor] ✅ Detected Final Answer, passing through to ResponseSynthesizer');
+    console.log('[SkillExecutor] finalAnswer length:', finalAnswer.length);
+    return {
+      success: true,
+      finalResponse: finalAnswer,
+      outputs: {
+        response: finalAnswer,
+      },
+    };
+  }
 
   // Parse the plan to extract skill_id and inputs
   // This is a simplified parser - in production you'd want more robust parsing
@@ -342,12 +376,41 @@ export const completionCheckerExecutor: NodeExecutor = async (inputs) => {
  * Synthesizes final response from loop controller output or scratchpad
  */
 export const responseSynthesizerExecutor: NodeExecutor = async (inputs, context) => {
-  if (process.env.DEBUG_GRAPH) console.log(`[ResponseSynthesizer] ========== RESPONSE SYNTHESIZER ==========`);
-  if (process.env.DEBUG_GRAPH) console.log(`[ResponseSynthesizer] Received ${inputs.length} inputs`);
-  if (process.env.DEBUG_GRAPH) console.log(`[ResponseSynthesizer] Input[0]:`, {
+  console.log(`[ResponseSynthesizer] ========== RESPONSE SYNTHESIZER ==========`);
+  console.log(`[ResponseSynthesizer] Received ${inputs.length} inputs`);
+  console.log(`[ResponseSynthesizer] Input[0]:`, {
     type: typeof inputs[0],
     keys: inputs[0] ? Object.keys(inputs[0]) : [],
   });
+  console.log(`[ResponseSynthesizer] Input[1]:`, {
+    type: typeof inputs[1],
+    keys: inputs[1] ? Object.keys(inputs[1]) : [],
+  });
+
+  // Check if inputs[1] has the SkillExecutor output (slot 1 in agent-mode graph)
+  if (inputs[1]) {
+    console.log(`[ResponseSynthesizer] Checking inputs[1] for response data...`);
+    console.log(`[ResponseSynthesizer] inputs[1].finalResponse:`, inputs[1].finalResponse ? `"${inputs[1].finalResponse.substring(0, 50)}..."` : 'undefined');
+    console.log(`[ResponseSynthesizer] inputs[1].outputs:`, inputs[1].outputs);
+
+    if (inputs[1].finalResponse) {
+      console.log(`[ResponseSynthesizer] ✅ Found finalResponse in inputs[1] (SkillExecutor output)`);
+      console.log(`[ResponseSynthesizer] finalResponse: "${inputs[1].finalResponse.substring(0, 100)}..."`);
+      return {
+        response: inputs[1].finalResponse,
+        skillExecutorOutput: true,
+      };
+    }
+
+    if (inputs[1].outputs && inputs[1].outputs.response) {
+      console.log(`[ResponseSynthesizer] ✅ Found response in inputs[1].outputs (SkillExecutor output)`);
+      console.log(`[ResponseSynthesizer] response: "${inputs[1].outputs.response.substring(0, 100)}..."`);
+      return {
+        response: inputs[1].outputs.response,
+        skillExecutorOutput: true,
+      };
+    }
+  }
 
   // Extract loop result or scratchpad
   let loopResult = inputs[0] || inputs.loopResult || {};

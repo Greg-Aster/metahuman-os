@@ -20,17 +20,10 @@ import {
  */
 const getHandler: APIRoute = async ({ cookies }) => {
   try {
-    const context = getUserContext();
+    const user = getAuthenticatedUser(cookies);
 
-    if (!context || context.username === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const state = getOnboardingState(context.userId);
-    const needs = needsOnboarding(context.userId);
+    const state = getOnboardingState(user.userId);
+    const needs = needsOnboarding(user.userId);
 
     return new Response(
       JSON.stringify({
@@ -65,14 +58,7 @@ const getHandler: APIRoute = async ({ cookies }) => {
  */
 const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
-    const context = getUserContext();
-
-    if (!context || context.username === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    const user = getAuthenticatedUser(cookies);
 
     const body = await request.json();
     const { updates } = body as { updates: Partial<OnboardingState> };
@@ -84,7 +70,7 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
       );
     }
 
-    const success = updateOnboardingState(context.userId, updates, context.username);
+    const success = updateOnboardingState(user.userId, updates, user.username);
 
     if (!success) {
       return new Response(
@@ -93,7 +79,7 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
       );
     }
 
-    const updatedState = getOnboardingState(context.userId);
+    const updatedState = getOnboardingState(user.userId);
 
     return new Response(
       JSON.stringify({

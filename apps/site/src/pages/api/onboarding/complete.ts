@@ -14,16 +14,9 @@ import { completeOnboarding, getOnboardingState } from '@metahuman/core/onboardi
  */
 const handler: APIRoute = async ({ cookies }) => {
   try {
-    const context = getUserContext();
+    const user = getAuthenticatedUser(cookies);
 
-    if (!context || context.username === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const success = completeOnboarding(context.userId, context.username);
+    const success = completeOnboarding(user.userId, user.username);
 
     if (!success) {
       return new Response(
@@ -32,7 +25,7 @@ const handler: APIRoute = async ({ cookies }) => {
       );
     }
 
-    const finalState = getOnboardingState(context.userId);
+    const finalState = getOnboardingState(user.userId);
 
     return new Response(
       JSON.stringify({

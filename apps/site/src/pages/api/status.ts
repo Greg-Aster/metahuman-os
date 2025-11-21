@@ -54,9 +54,15 @@ const handler: APIRoute = async ({ cookies }) => {
       );
     }
 
-    const persona = loadPersonaCore();
-    const rules = loadDecisionRules();
-    const tasks = listActiveTasks();
+    // Load user-specific data only for authenticated users
+    const persona = isAuthenticated ? loadPersonaCore() : {
+      identity: { name: 'Anonymous', role: 'Guest', purpose: '' },
+      values: { core: [] },
+      goals: { shortTerm: [] },
+      lastUpdated: new Date().toISOString(),
+    };
+    const rules = isAuthenticated ? loadDecisionRules() : { trustLevel: 'observe' };
+    const tasks = isAuthenticated ? listActiveTasks() : [];
 
     // Determine base model and active adapter from single config file
     let currentModel: string | null = null;
@@ -188,60 +194,84 @@ const handler: APIRoute = async ({ cookies }) => {
       modelRoles = {};
     }
 
-    // MEMORY SYSTEM STATUS
-    const metrics = await getMemoryMetrics(user.username);
-    const memoryStats: any = {
-      totalFiles: metrics.totalMemories,
-      byType: metrics.memoriesByType,
-      lastCapture: metrics.lastCaptureTimestamp,
-    };
+    // MEMORY SYSTEM STATUS - only for authenticated users
+    let memoryStats: any;
+    let byCategory: Record<string, number>;
 
-    // Group types into categories for the UI
-    const categories: Record<string, string[]> = {
-      Internal: ['inner_dialogue', 'reflection', 'dream'],
-      Conversational: ['conversation', 'chat'],
-      Knowledge: ['observation', 'action', 'journal', 'summary'],
-      System: ['tool_invocation', 'file_read', 'file_write', 'unknown'],
-    };
+    if (isAuthenticated) {
+      const metrics = await getMemoryMetrics(user.username);
+      memoryStats = {
+        totalFiles: metrics.totalMemories,
+        byType: metrics.memoriesByType,
+        lastCapture: metrics.lastCaptureTimestamp,
+      };
 
-    const byCategory: Record<string, number> = {
-      Internal: 0,
-      Conversational: 0,
-      Knowledge: 0,
-      System: 0,
-    };
+      // Group types into categories for the UI
+      const categories: Record<string, string[]> = {
+        Internal: ['inner_dialogue', 'reflection', 'dream'],
+        Conversational: ['conversation', 'chat'],
+        Knowledge: ['observation', 'action', 'journal', 'summary'],
+        System: ['tool_invocation', 'file_read', 'file_write', 'unknown'],
+      };
 
-    for (const [type, count] of Object.entries(metrics.memoriesByType)) {
-      let categorized = false;
-      for (const [cat, types] of Object.entries(categories)) {
-        if (types.includes(type)) {
-          byCategory[cat] = (byCategory[cat] || 0) + count;
-          categorized = true;
-          break;
+      byCategory = {
+        Internal: 0,
+        Conversational: 0,
+        Knowledge: 0,
+        System: 0,
+      };
+
+      for (const [type, count] of Object.entries(metrics.memoriesByType)) {
+        let categorized = false;
+        for (const [cat, types] of Object.entries(categories)) {
+          if (types.includes(type)) {
+            byCategory[cat] = (byCategory[cat] || 0) + count;
+            categorized = true;
+            break;
+          }
+        }
+        if (!categorized) {
+          byCategory['System'] = (byCategory['System'] || 0) + count;
         }
       }
-      if (!categorized) {
-        byCategory['System'] = (byCategory['System'] || 0) + count;
+
+      memoryStats.byCategory = byCategory;
+
+      // Calculate percentages
+      const percentages: Record<string, number> = {};
+      if (metrics.totalMemories > 0) {
+        for (const [category, count] of Object.entries(byCategory)) {
+          percentages[category] = Math.round((count / metrics.totalMemories) * 100);
+        }
       }
+      memoryStats.percentages = percentages;
+
+      // Add index status from metrics if available
+      const indexStatus = await getIndexStatus();
+      memoryStats.totalIndexed = indexStatus.items || 0;
+      memoryStats.indexAvailable = indexStatus.exists;
+      memoryStats.indexModel = indexStatus.model || null;
+      memoryStats.lastIndexed = indexStatus.createdAt || null;
+    } else {
+      // Anonymous users - return default empty memory stats
+      memoryStats = {
+        totalFiles: 0,
+        byType: {},
+        lastCapture: null,
+        byCategory: {
+          Internal: 0,
+          Conversational: 0,
+          Knowledge: 0,
+          System: 0,
+        },
+        percentages: {},
+        totalIndexed: 0,
+        indexAvailable: false,
+        indexModel: null,
+        lastIndexed: null,
+      };
+      byCategory = memoryStats.byCategory;
     }
-
-    memoryStats.byCategory = byCategory;
-
-    // Calculate percentages
-    const percentages: Record<string, number> = {};
-    if (metrics.totalMemories > 0) {
-      for (const [category, count] of Object.entries(byCategory)) {
-        percentages[category] = Math.round((count / metrics.totalMemories) * 100);
-      }
-    }
-    memoryStats.percentages = percentages;
-
-    // Add index status from metrics if available
-    const indexStatus = await getIndexStatus();
-    memoryStats.totalIndexed = indexStatus.items || 0;
-    memoryStats.indexAvailable = indexStatus.exists;
-    memoryStats.indexModel = indexStatus.model || null;
-    memoryStats.lastIndexed = indexStatus.createdAt || null;
 
 
 

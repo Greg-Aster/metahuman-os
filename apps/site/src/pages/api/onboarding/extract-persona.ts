@@ -10,6 +10,7 @@
 
 import type { APIRoute } from 'astro';
 import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
+import { tryResolveProfilePath } from '@metahuman/core/paths';
 import {
   extractPersonaFromTranscript,
   type ChatMessage,
@@ -30,14 +31,7 @@ import fs from 'node:fs';
  */
 const handler: APIRoute = async ({ cookies, request }) => {
   try {
-    const context = getUserContext();
-
-    if (!context || context.username === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    const user = getAuthenticatedUser(cookies);
 
     const body = await request.json();
     const { messages } = body as { messages: ChatMessage[] };
@@ -53,7 +47,14 @@ const handler: APIRoute = async ({ cookies, request }) => {
     const extracted = await extractPersonaFromTranscript(messages);
 
     // Load existing persona
-    const personaPath = context.profilePaths.personaCore;
+    const personaCoreResult = tryResolveProfilePath('personaCore');
+    if (!personaCoreResult.ok) {
+      return new Response(
+        JSON.stringify({ error: 'Access denied' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    const personaPath = personaCoreResult.path;
     const currentPersona = loadExistingPersona(personaPath);
 
     // Create backup before applying changes
@@ -88,8 +89,15 @@ const handler: APIRoute = async ({ cookies, request }) => {
     });
 
     // Export as training data (JSONL format)
+    const profileRootResult = tryResolveProfilePath('root');
+    if (!profileRootResult.ok) {
+      return new Response(
+        JSON.stringify({ error: 'Access denied' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
     const trainingDir = path.join(
-      context.profilePaths.root,
+      profileRootResult.path,
       'memory/training/personality-surveys'
     );
     fs.mkdirSync(trainingDir, { recursive: true });

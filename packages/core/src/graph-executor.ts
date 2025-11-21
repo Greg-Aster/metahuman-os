@@ -160,6 +160,15 @@ function getNodeInputs(
           value = sourceNode.outputs;
         }
 
+        // DEBUG: Log data passing between nodes
+        if (link.origin_id === 9 && link.target_id === 14) {
+          console.log('[getNodeInputs] 🔗 ResponseSynthesizer → CoTStripper');
+          console.log('[getNodeInputs] sourceNode.outputs:', JSON.stringify(sourceNode.outputs).substring(0, 200));
+          console.log('[getNodeInputs] link.origin_slot:', link.origin_slot);
+          console.log('[getNodeInputs] value to pass:', JSON.stringify(value).substring(0, 200));
+          console.log('[getNodeInputs] target_slot:', link.target_slot);
+        }
+
         inputs[link.target_slot] = value;
       }
     }
@@ -171,6 +180,15 @@ function getNodeInputs(
   const inputArray: any[] = [];
   for (let i = 0; i <= maxSlot; i++) {
     inputArray[i] = inputs[i];
+  }
+
+  // DEBUG: Log final inputs array for CoTStripper
+  if (nodeId === 14) {
+    console.log('[getNodeInputs] 🎯 Final inputs for CoTStripper (node 14):');
+    console.log('[getNodeInputs] inputs object:', JSON.stringify(inputs).substring(0, 200));
+    console.log('[getNodeInputs] maxSlot:', maxSlot);
+    console.log('[getNodeInputs] inputArray length:', inputArray.length);
+    console.log('[getNodeInputs] inputArray[0]:', inputArray[0] ? JSON.stringify(inputArray[0]).substring(0, 200) : 'undefined');
   }
 
   return inputArray.length > 0 ? inputArray : inputs;
@@ -425,8 +443,16 @@ export async function executeGraph(
     const executedCount = new Map<number, number>(); // Track iteration count per node
     const maxIterations = 20; // Safety limit
 
+    console.log(`[GraphExecutor] ========== EXECUTION QUEUE ==========`);
+    console.log(`[GraphExecutor] Initial queue:`, executionQueue.join(', '));
+    console.log(`[GraphExecutor] Total nodes to execute: ${executionQueue.length}`);
+
     while (executionQueue.length > 0) {
       const nodeId = executionQueue.shift()!;
+      const node = graph.nodes.find(n => n.id === nodeId);
+      const nodeType = node?.type || 'unknown';
+
+      console.log(`[GraphExecutor] >>> Executing node ${nodeId} (${nodeType})`);
 
       // Track iteration count (prevent infinite loops)
       const iterCount = (executedCount.get(nodeId) || 0) + 1;
@@ -444,9 +470,9 @@ export async function executeGraph(
 
       // Execute the node
       await executeNode(nodeId, graph, executionState, contextData, eventHandler);
+      console.log(`[GraphExecutor] <<< Completed node ${nodeId} (${nodeType})`);
 
       // Check if this node is a conditional_router
-      const node = graph.nodes.find(n => n.id === nodeId);
       if (node && (node.type === 'conditional_router' || node.type === 'cognitive/conditional_router')) {
         const nodeState = executionState.get(nodeId);
         const outputs = nodeState?.outputs;

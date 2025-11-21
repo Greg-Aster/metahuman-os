@@ -15,19 +15,12 @@ import { skipOnboarding, getOnboardingState } from '@metahuman/core/onboarding';
  */
 const handler: APIRoute = async ({ cookies, request }) => {
   try {
-    const context = getUserContext();
-
-    if (!context || context.username === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    const user = getAuthenticatedUser(cookies);
 
     const body = await request.json().catch(() => ({}));
     const { reason } = body as { reason?: string };
 
-    const success = skipOnboarding(context.userId, reason, context.username);
+    const success = skipOnboarding(user.userId, reason, user.username);
 
     if (!success) {
       return new Response(
@@ -36,7 +29,7 @@ const handler: APIRoute = async ({ cookies, request }) => {
       );
     }
 
-    const finalState = getOnboardingState(context.userId);
+    const finalState = getOnboardingState(user.userId);
 
     return new Response(
       JSON.stringify({
