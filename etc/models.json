@@ -26,7 +26,9 @@
         "orchestrator",
         "router",
         "planner",
-        "persona"
+        "persona",
+        "curator",
+        "psychotherapist"
       ],
       "description": "Capable orchestrator using same model as persona for better intent routing",
       "options": {
@@ -127,7 +129,8 @@
         "code-review",
         "orchestrator",
         "persona",
-        "curator"
+        "curator",
+        "psychotherapist"
       ],
       "description": "Specialized model for code generation, review, and refactoring",
       "options": {
@@ -331,9 +334,9 @@
       "persona": "default.orchestrator",
       "coder": "default.coder",
       "planner": "default.orchestrator",
-      "curator": "ollama.qwen3:30b",
+      "curator": "default.coder",
       "summarizer": "default.summarizer",
-      "psychotherapist": "ollama.qwen3:30b",
+      "psychotherapist": "default.coder",
       "description": "Full cognitive mirror with operator routing"
     },
     "agent": {

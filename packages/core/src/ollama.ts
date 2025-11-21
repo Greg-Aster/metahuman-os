@@ -198,30 +198,39 @@ export class OllamaClient {
       mirostat?: number
       mirostat_eta?: number
       mirostat_tau?: number
+      format?: string // BUGFIX: Support JSON mode to constrain output format
     }
   ): Promise<OllamaChatResponse> {
+    // BUGFIX: Build request body with format at top level (not in options)
+    const requestBody: any = {
+      model,
+      messages,
+      stream: options?.stream || false,
+      options: Object.fromEntries(
+        Object.entries({
+          temperature: options?.temperature ?? 0.7,
+          top_p: options?.top_p,
+          top_k: options?.top_k,
+          repeat_penalty: options?.repeat_penalty,
+          repeat_last_n: options?.repeat_last_n,
+          num_ctx: options?.num_ctx,
+          num_predict: options?.num_predict,
+          mirostat: options?.mirostat,
+          mirostat_eta: options?.mirostat_eta,
+          mirostat_tau: options?.mirostat_tau,
+        }).filter(([, v]) => v !== undefined)
+      ),
+    };
+
+    // BUGFIX: Add format as top-level parameter (Ollama API requirement)
+    if (options?.format) {
+      requestBody.format = options.format;
+    }
+
     const response = await fetch(`${this.endpoint}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages,
-        stream: options?.stream || false,
-        options: Object.fromEntries(
-          Object.entries({
-            temperature: options?.temperature ?? 0.7,
-            top_p: options?.top_p,
-            top_k: options?.top_k,
-            repeat_penalty: options?.repeat_penalty,
-            repeat_last_n: options?.repeat_last_n,
-            num_ctx: options?.num_ctx,
-            num_predict: options?.num_predict,
-            mirostat: options?.mirostat,
-            mirostat_eta: options?.mirostat_eta,
-            mirostat_tau: options?.mirostat_tau,
-          }).filter(([, v]) => v !== undefined)
-        ),
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {

@@ -41,52 +41,109 @@ type CuriosityQuestion = {
 }
 
 function listEpisodic(profilePaths: ReturnType<typeof getProfilePaths>, limit?: number): EpisodicItem[] {
+  // Try loading from index first (fast path)
+  const indexPath = path.join(profilePaths.indexDir, 'embeddings-nomic-embed-text.json');
+  let idx: { meta: any; data: any[] } | null = null;
+  try {
+    if (fs.existsSync(indexPath)) {
+      idx = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+    }
+  } catch (err) {
+    console.warn('[memories_all] Failed to load index:', err);
+  }
+
+  if (idx && idx.data && idx.data.length > 0) {
+    const items: EpisodicItem[] = idx.data
+      .filter((item: any) => item.type === 'episodic')
+      .map((item: any) => {
+        // Parse metadata from the stored text
+        const textParts = item.text.split(' Tags:');
+        const contentPart = textParts[0];
+        const tagsAndEntities = textParts[1] || '';
+
+        const tagsMatch = tagsAndEntities.match(/^([^]*?) Entities:/);
+        const tags = tagsMatch
+          ? tagsMatch[1].trim().split(/\s+/).filter(Boolean)
+          : tagsAndEntities.trim().split(/\s+/).filter(Boolean);
+
+        const entitiesMatch = tagsAndEntities.match(/Entities:([^]*?)$/);
+        const entities = entitiesMatch
+          ? entitiesMatch[1].trim().split(/\s+/).filter(Boolean)
+          : [];
+
+        return {
+          id: item.id,
+          timestamp: item.timestamp || '',
+          content: contentPart,
+          type: extractTypeFromPath(item.path),
+          tags: tags,
+          entities: entities,
+          links: [],
+          relPath: path.relative(systemPaths.root, item.path),
+          validation: undefined // Validation loaded on-demand when viewing individual memory
+        };
+      })
+      .sort((a: any, b: any) => (a.timestamp < b.timestamp ? 1 : -1));
+
+    return limit ? items.slice(0, limit) : items;
+  }
+
+  // Fallback to filesystem scan if no index (backwards compatibility)
   const items: EpisodicItem[] = []
 
   if (!fs.existsSync(profilePaths.episodic)) return items;
 
-  // Get year directories (e.g., 2025, 2024) and sort newest first
-  const yearDirs = fs.readdirSync(profilePaths.episodic, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && /^\d{4}$/.test(entry.name))
-    .map(entry => entry.name)
-    .sort().reverse(); // 2025, 2024, 2023...
+  // Helper function to recursively walk directory tree and collect JSON files
+  const walkDirectory = (dir: string): void => {
+    if (!fs.existsSync(dir) || (limit && items.length >= limit)) return;
 
-  // Walk years newest-first, reading only what we need
-  for (const year of yearDirs) {
-    if (limit && items.length >= limit) break;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
 
-    const yearPath = path.join(profilePaths.episodic, year);
-    const files = fs.readdirSync(yearPath, { withFileTypes: true })
-      .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
-      .map(entry => path.join(yearPath, entry.name));
-
-    // Process files in this year (no need to sort within year for limit)
-    for (const full of files) {
+    for (const entry of entries) {
       if (limit && items.length >= limit) break;
 
-      try {
-        const raw = fs.readFileSync(full, 'utf8')
-        const obj = JSON.parse(raw)
-        if (obj && obj.id && obj.timestamp && obj.content) {
-          items.push({
-            id: obj.id,
-            timestamp: obj.timestamp,
-            content: obj.content,
-            type: obj.type,
-            tags: obj.tags || [],
-            entities: Array.isArray(obj.entities) ? obj.entities : [],
-            links: Array.isArray(obj.links) ? obj.links : [],
-            relPath: path.relative(systemPaths.root, full),
-            validation: obj.validation || undefined,
-          })
-        }
-      } catch {}
+      const fullPath = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        // Recurse into subdirectories (handles both old year-only and new year/month/day)
+        walkDirectory(fullPath);
+      } else if (entry.isFile() && entry.name.endsWith('.json')) {
+        try {
+          const raw = fs.readFileSync(fullPath, 'utf8');
+          const obj = JSON.parse(raw);
+          if (obj && obj.id && obj.timestamp && obj.content) {
+            items.push({
+              id: obj.id,
+              timestamp: obj.timestamp,
+              content: obj.content,
+              type: obj.type,
+              tags: obj.tags || [],
+              entities: Array.isArray(obj.entities) ? obj.entities : [],
+              links: Array.isArray(obj.links) ? obj.links : [],
+              relPath: path.relative(systemPaths.root, fullPath),
+              validation: obj.validation || undefined,
+            });
+          }
+        } catch {}
+      }
     }
-  }
+  };
+
+  // Start walking from episodic root
+  walkDirectory(profilePaths.episodic);
 
   // Sort by timestamp (newest first)
-  items.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1))
-  return items
+  items.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
+  return items;
+}
+
+function extractTypeFromPath(filePath: string): string | undefined {
+  // Extract type from directory structure or filename
+  if (filePath.includes('/reflections/')) return 'reflection';
+  if (filePath.includes('/dreams/')) return 'dream';
+  if (filePath.includes('/audio-dreams/')) return 'dream';
+  // Default episodic type
+  return 'observation';
 }
 
 function listActiveTasks(profilePaths: ReturnType<typeof getProfilePaths>): TaskItem[] {

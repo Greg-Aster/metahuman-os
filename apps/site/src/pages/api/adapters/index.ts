@@ -8,7 +8,7 @@ import {
   writeAutoApprovalConfig,
   getActiveAdapter,
   setActiveAdapter,
-  paths,
+  systemPaths,
   audit,
   getAuthenticatedUser,
 } from '@metahuman/core';
@@ -16,7 +16,7 @@ import { execSync } from 'node:child_process';
 import type { ActiveAdapterInfo } from '@metahuman/core';
 
 function datasetDir(date: string): string {
-  return path.join(paths.out, 'adapters', date);
+  return path.join(systemPaths.out, 'adapters', date);
 }
 
 function ensureDataset(date: string): string {
@@ -28,12 +28,12 @@ function ensureDataset(date: string): string {
 }
 
 function backgroundAgent(agentFile: string, args: string[]): void {
-  const agentPath = path.join(paths.brain, 'agents', agentFile);
+  const agentPath = path.join(systemPaths.brain, 'agents', agentFile);
   if (!fs.existsSync(agentPath)) {
     throw new Error(`Agent not found: ${agentFile}`);
   }
   const child = spawn('tsx', [agentPath, ...args], {
-    cwd: paths.root,
+    cwd: systemPaths.root,
     stdio: 'ignore',
     detached: true,
   });
@@ -65,7 +65,7 @@ function createApproval(date: string, approvedBy: string, notes?: string): void 
 
 function rejectDataset(date: string, reason: string, actor: string): string {
   const dir = ensureDataset(date);
-  const archiveDir = path.join(paths.out, 'adapters', '_rejected');
+  const archiveDir = path.join(systemPaths.out, 'adapters', '_rejected');
   fs.mkdirSync(archiveDir, { recursive: true });
   const destination = path.join(archiveDir, date);
   fs.renameSync(dir, destination);
@@ -97,7 +97,7 @@ function activateAdapter(date: string, actor: string): void {
   }
 
   // Check for historical merged adapter (dual-adapter system)
-  const historyMergedPath = path.join(paths.out, 'adapters', 'history-merged', 'adapter-merged.gguf');
+  const historyMergedPath = path.join(systemPaths.out, 'adapters', 'history-merged', 'adapter-merged.gguf');
   const hasHistoricalAdapter = fs.existsSync(historyMergedPath);
 
   const modelName = `greg-${date}`;
@@ -143,7 +143,7 @@ FROM ${baseModel}
 function activateDualAdapter(date: string, actor: string): void {
   const dir = ensureDataset(date);
   const recentGGUF = path.join(dir, 'adapter.gguf');
-  const mergedGGUF = path.join(paths.out, 'adapters', 'history-merged', 'adapter-merged.gguf');
+  const mergedGGUF = path.join(systemPaths.out, 'adapters', 'history-merged', 'adapter-merged.gguf');
   if (!fs.existsSync(recentGGUF)) throw new Error('Recent adapter.gguf not found');
   if (!fs.existsSync(mergedGGUF)) throw new Error('history-merged/adapter-merged.gguf not found');
 
@@ -179,7 +179,7 @@ function activateDualAdapter(date: string, actor: string): void {
   setActiveAdapter(cfg);
 
   try {
-    execSync(`ollama create ${modelName} -f "${modelfilePath}"`, { stdio: 'ignore', cwd: paths.root });
+    execSync(`ollama create ${modelName} -f "${modelfilePath}"`, { stdio: 'ignore', cwd: systemPaths.root });
     cfg.status = 'loaded';
     setActiveAdapter(cfg);
   } catch {}
@@ -189,12 +189,12 @@ function readRecentAdapterLogs(limit = 50): Array<{ timestamp: string; event: st
   const logs: Array<{ timestamp: string; event: string; actor?: string; details?: any }> = []
   try {
     const today = new Date().toISOString().slice(0, 10)
-    // PERFORMANCE: Only read from today's log, and only last 200 lines instead of 1000
-    const file = path.join(paths.logs, 'audit', `${today}.ndjson`)
+    const file = path.join(systemPaths.logs, 'audit', `${today}.ndjson`)
     if (!fs.existsSync(file)) return []
 
-    const content = fs.readFileSync(file, 'utf-8')
-    const lines = content.trim().split('\n').slice(-200) // Reduced from 2000 (1000×2 days) to 200
+    // PERFORMANCE: Use tail to read only last 200 lines instead of entire file
+    const content = execSync(`tail -n 200 "${file}"`, { encoding: 'utf-8' })
+    const lines = content.trim().split('\n')
 
     for (const line of lines) {
       try {
@@ -234,7 +234,7 @@ export const GET: APIRoute = async ({ cookies }) => {
     // Read sleep config for LoRA enabled flag
     let loraEnabled = false;
     try {
-      const sleepPath = path.join(paths.etc, 'sleep.json');
+      const sleepPath = path.join(systemPaths.etc, 'sleep.json');
       if (fs.existsSync(sleepPath)) {
         const sleep = JSON.parse(fs.readFileSync(sleepPath, 'utf-8'));
         loraEnabled = !!(sleep?.adapters?.lora);
@@ -247,7 +247,10 @@ export const GET: APIRoute = async ({ cookies }) => {
     );
   } catch (error) {
     // Check if it's an authentication error
-    if (error instanceof Error && error.message.includes('Authentication required')) {
+    if (error instanceof Error && (
+      error.message.includes('Authentication required') ||
+      error.message.includes('UNAUTHORIZED')
+    )) {
       return new Response(
         JSON.stringify({ success: false, error: 'Authentication required' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -308,7 +311,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     switch (action) {
       case 'sleep': {
         const { loraEnabled } = body || {};
-        const sleepPath = path.join(paths.etc, 'sleep.json');
+        const sleepPath = path.join(systemPaths.etc, 'sleep.json');
         if (!fs.existsSync(sleepPath)) throw new Error('sleep.json not found');
         const sleep = JSON.parse(fs.readFileSync(sleepPath, 'utf-8'));
         if (typeof loraEnabled === 'boolean') {
@@ -415,14 +418,14 @@ export const POST: APIRoute = async ({ cookies, request }) => {
 
         // Create log file for full-cycle output
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const logPath = path.join(paths.logs, 'run', `full-cycle-${timestamp}.log`);
+        const logPath = path.join(systemPaths.logs, 'run', `full-cycle-${timestamp}.log`);
         fs.mkdirSync(path.dirname(logPath), { recursive: true });
         const logStream = fs.openSync(logPath, 'w');
 
         // Create a child process with the specified environment
-        const agentPath = path.join(paths.brain, 'agents', 'full-cycle.ts');
+        const agentPath = path.join(systemPaths.brain, 'agents', 'full-cycle.ts');
         const child = spawn('tsx', [agentPath, '--username', user.username], {
-          cwd: paths.root,
+          cwd: systemPaths.root,
           stdio: ['ignore', logStream, logStream], // stdout and stderr to log file
           detached: true,
           env
@@ -430,7 +433,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
         child.unref();
 
         // Store PID for cancellation
-        const pidPath = path.join(paths.logs, 'run', 'full-cycle.pid');
+        const pidPath = path.join(systemPaths.logs, 'run', 'full-cycle.pid');
         fs.writeFileSync(pidPath, String(child.pid), 'utf-8');
 
         audit({
@@ -446,7 +449,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
         });
       }
       case 'cancelFullCycle': {
-        const pidPath = path.join(paths.logs, 'run', 'full-cycle.pid');
+        const pidPath = path.join(systemPaths.logs, 'run', 'full-cycle.pid');
         let killedPids: number[] = [];
 
         // Try PID file first
@@ -499,6 +502,19 @@ export const POST: APIRoute = async ({ cookies, request }) => {
         // Clean up PID file if it exists
         if (fs.existsSync(pidPath)) {
           fs.unlinkSync(pidPath);
+        }
+
+        // ROBUSTNESS: Stop any stuck Ollama models to free up resources
+        try {
+          const { execSync } = require('node:child_process');
+          // Unload all loaded models to free GPU/CPU
+          execSync('curl -s http://localhost:11434/api/generate -d \'{"model": "", "keep_alive": 0}\'', {
+            timeout: 2000,
+            stdio: 'ignore',
+          });
+        } catch (err) {
+          // Non-critical - Ollama may not be running or may timeout
+          console.warn('[cancelFullCycle] Failed to unload Ollama models:', err);
         }
 
         if (killedPids.length === 0) {
@@ -629,7 +645,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
           const { execSync } = require('node:child_process');
           execSync(`ollama create ${modelName} -f "${modelfilePath}"`, {
             stdio: 'inherit',
-            cwd: paths.root,
+            cwd: systemPaths.root,
           });
 
           const current = getActiveAdapter();
@@ -703,7 +719,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       }
       case 'mergeAdapters': {
         // Run adapter-merger agent to merge historical adapters
-        const agentPath = path.join(paths.brain, 'agents', 'adapter-merger.ts');
+        const agentPath = path.join(systemPaths.brain, 'agents', 'adapter-merger.ts');
         if (!fs.existsSync(agentPath)) {
           throw new Error('adapter-merger.ts not found');
         }
@@ -731,7 +747,10 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     }
   } catch (error) {
     // Check if it's an authentication error
-    if (error instanceof Error && error.message.includes('Authentication required')) {
+    if (error instanceof Error && (
+      error.message.includes('Authentication required') ||
+      error.message.includes('UNAUTHORIZED')
+    )) {
       return new Response(
         JSON.stringify({ success: false, error: 'Authentication required' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
