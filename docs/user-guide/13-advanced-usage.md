@@ -843,6 +843,272 @@ tsx brain/agents/full-cycle-remote.ts $(date +%Y-%m-%d)
 
 This agent handles all 8 steps autonomously and reports summary at completion.
 
+---
+
+## Full Fine-Tuning with Monthly Updates
+
+**For more comprehensive documentation, see [Monthly Training Workflow](../monthly-training-workflow.md)**
+
+Unlike LoRA adapters (which only train a small subset of parameters), full fine-tuning trains the entire model, creating a completely personalized version of the base model. MetaHuman OS supports incremental monthly fine-tuning to continuously improve your personality model over time.
+
+### LoRA vs. Full Fine-Tuning
+
+| Aspect | LoRA (Adapters) | Full Fine-Tuning |
+|--------|----------------|------------------|
+| **Training time** | 30-60 minutes | 1-3 hours |
+| **GPU memory** | 16GB (RTX 5090) | 70GB (A100 80GB) |
+| **Cost per run** | ~$1.00 | ~$2.00-$3.00 |
+| **Model size** | 2GB adapter | 28GB full model |
+| **Quality** | Good for style | Excellent for personality |
+| **Forgetting** | Low risk | Requires careful strategy |
+
+**When to use full fine-tuning:**
+- You want the highest quality personality capture
+- You're willing to spend $2-3/month for training
+- You have 3,000+ quality samples
+- You want a standalone model (not dependent on base model updates)
+
+### Monthly Training Strategy
+
+Full fine-tuning uses a **monthly update** strategy to prevent catastrophic forgetting:
+
+1. **Foundation training** (once): Train on 5,000-10,000 samples to establish baseline personality
+2. **Monthly updates**: Mix recent memories (last 30 days) with random old samples (3,000)
+
+This approach:
+- ✅ Learns new experiences from recent memories
+- ✅ Prevents forgetting by mixing in old memories
+- ✅ Reduces training time vs. full dataset retraining
+- ✅ Costs only $1.50-$2.00 per month
+
+### Quick Start Commands
+
+**Foundation training** (first time):
+```bash
+# Wait until you have 3,000+ samples accumulated
+find profiles/greggles/memory/episodic -name "*.json" | wc -l
+
+# Run foundation training (one-time)
+tsx brain/agents/fine-tune-cycle.ts --username greggles
+```
+
+**Monthly updates** (every 4 weeks):
+```bash
+# Automatic monthly strategy (30 days recent + 3000 old)
+tsx brain/agents/fine-tune-cycle.ts --username greggles --monthly
+```
+
+**Custom strategy**:
+```bash
+# 45 days recent + 4000 old samples
+tsx brain/agents/fine-tune-cycle.ts --username greggles \
+  --days-recent 45 \
+  --old-samples 4000
+
+# Bi-weekly updates (14 days + 2000 old)
+tsx brain/agents/fine-tune-cycle.ts --username greggles \
+  --days-recent 14 \
+  --old-samples 2000
+```
+
+### Training Pipeline
+
+The full fine-tuning pipeline consists of 6 steps:
+
+1. **Memory Curation**: Load and clean episodic memories
+   - Splits by date (recent vs. old)
+   - Randomly samples old memories
+   - Combines for training dataset
+
+2. **Mode Formatting**: Apply cognitive mode templates
+   - Dual mode: `<thought>` / `<world>` tags
+   - Emulation mode: Standard chat format
+   - Agent mode: Tool invocation format
+
+3. **Schema Application**: Apply model-specific chat template
+   - Qwen3: `<|user|>` / `<|assistant|>` format
+   - Other models: Configurable templates
+
+4. **JSONL Export**: Convert to training format
+   - Validates structure
+   - Checks quality metrics
+   - Exports to `.jsonl`
+
+5. **RunPod Training**: Execute on cloud GPU
+   - Launches A100 80GB pod
+   - Uploads dataset + config
+   - Runs full fine-tuning script
+   - Downloads trained model (~28GB)
+
+6. **Model Registration**: Update model registry
+   - Tracks version lineage
+   - Sets current_base_model for next run
+   - Enables continuous learning
+
+### Configuration Files
+
+**Base config** (`etc/fine-tune-config.json`):
+```json
+{
+  "base_model": "Qwen/Qwen3-14B",
+  "training_mode": "full_finetune",
+  "learning_rate": 5e-6,
+  "num_train_epochs": 3,
+  "per_device_train_batch_size": 1,
+  "gradient_accumulation_steps": 32,
+  "bf16": true,
+  "optim": "adafactor"
+}
+```
+
+**Mode-specific configs** (`etc/modes/dual-config.json`, `emulation-config.json`, `agent-config.json`):
+- Override base config for mode-specific training
+- Adjust learning rate, warmup steps, etc.
+- Use with `--mode <mode>` flag
+
+### Memory Requirements
+
+**14B model on A100 80GB**:
+```
+Model weights (bf16):        28GB
+Gradients (bf16):            28GB
+Adafactor optimizer:         14GB
+Activations (checkpointed):   5GB
+CUDA overhead:                3GB
+──────────────────────────────────
+Total:                       ~78GB ✓
+```
+
+**Why Adafactor is critical**:
+- AdamW requires 60GB for optimizer states (total: 116GB ❌)
+- Adafactor only needs 14GB (total: 75GB ✓)
+- Uses factorized second moments (no full parameter-wise storage)
+
+### Quality Metrics
+
+Before training, the curator reports quality metrics:
+
+```
+Quality metrics:
+  - Avg assistant length: 43.6 words
+  - Short samples (<=40 words): 93%  ⚠️ TOO HIGH
+  - Long samples (>100 words): 3%
+  - Filler detected: 8.3%
+  - Mode distribution:
+    - Dual: 65.7%
+    - Emulation: 34.3%
+    - Agent: 0%
+```
+
+**Target metrics**:
+- Short samples: <50% (you want variety!)
+- Filler detected: <10%
+- Mode distribution: 20-40% dual, 40-60% emulation, 10-20% agent
+
+**If you see 93% short samples**: Capture more substantial conversations, not just brief acknowledgments.
+
+### Cost Breakdown
+
+**Foundation training** (5,000 samples):
+- GPU time: 2 hours × $1.89/hr = $3.78
+- Total: ~$4.00
+
+**Monthly update** (30 days recent + 3000 old = ~4,000 samples):
+- GPU time: 1.5 hours × $1.89/hr = $2.84
+- Total: ~$3.00
+
+**Annual cost** (12 monthly updates):
+- Foundation: $4.00 (once)
+- 11 updates: $2.50 × 11 = $27.50
+- **Total**: $31.50/year
+
+### Continuous Learning Lineage
+
+The model registry tracks version history:
+
+```json
+{
+  "original_base_model": "Qwen/Qwen3-14B",
+  "current_base_model": "/profiles/greggles/out/.../v3/model",
+  "training_history": [
+    {
+      "version": 1,
+      "base_model_used": "Qwen/Qwen3-14B",
+      "samples_trained": 5247,
+      "timestamp": "2025-11-01T10:00:00Z"
+    },
+    {
+      "version": 2,
+      "base_model_used": "/out/.../v1/model",
+      "samples_trained": 4102,
+      "timestamp": "2025-12-01T10:00:00Z"
+    },
+    {
+      "version": 3,
+      "base_model_used": "/out/.../v2/model",
+      "samples_trained": 4301,
+      "timestamp": "2026-01-01T10:00:00Z"
+    }
+  ]
+}
+```
+
+Each run builds on the previous version, creating continuous personality evolution.
+
+### Troubleshooting
+
+**"Only 230 samples - recommended 5000+"**:
+- This is a pipeline test, not enough for real training
+- Continue accumulating memories
+- Wait until you have 3,000+ samples
+
+**"Short samples: 93%"**:
+- Capture more substantial conversations
+- Avoid training on mostly brief acknowledgments
+- Aim for <50% short samples
+
+**"Training failed: No space left on device"**:
+- Fixed in latest version (saves to `/workspace/` network volume)
+- Clear cached work directories if still occurring
+
+**"Optimizer uses AdamW instead of Adafactor"**:
+- Check `etc/fine-tune-config.json` has `"optim": "adafactor"`
+- Clear cached configs: `rm -rf metahuman-runs/greggles/YYYY-MM-DD/*`
+
+### Loading Trained Model to Ollama
+
+After training completes, load the new model:
+
+```bash
+# The trained model is at:
+# profiles/greggles/out/fine-tuned-models/YYYY-MM-DD/RUN-ID/model/
+
+# Convert to GGUF (if not done automatically)
+# ... GGUF conversion steps here ...
+
+# Load to Ollama
+ollama create greggles-v2 -f profiles/greggles/out/.../Modelfile
+
+# Test
+ollama run greggles-v2 "How are you feeling today?"
+```
+
+### Best Practices
+
+1. **Wait for quality data**: Don't rush to 3,000 samples with low-quality content
+2. **Monthly schedule**: Pick a consistent day (e.g., 1st of month)
+3. **Monitor metrics**: Check curator output before each run
+4. **Keep backups**: Retain last 2-3 model versions for rollback
+5. **Test before deleting**: Verify new model quality before removing old versions
+
+### Related Documentation
+
+- **[Monthly Training Workflow](../monthly-training-workflow.md)** - Complete guide (recommended reading)
+- **[Continuous Learning System](../continuous-learning-system.md)** - Model registry and versioning
+- **[Fine-Tune RunPod Deployment](../fine-tune-runpod-deployment.md)** - RunPod setup
+
+---
+
 ### Docker Deployment for LoRA Training
 
 MetaHuman OS supports containerized LoRA training for cloud GPU providers like RunPod. This allows you to train adapters on powerful remote GPUs while keeping your local system lightweight.

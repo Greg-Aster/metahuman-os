@@ -5,7 +5,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 import { paths, audit, ProgressTracker } from '../../packages/core/src/index.js';
 import dotenv from 'dotenv';
 import { ensureDirSync } from 'fs-extra';
@@ -397,14 +397,16 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     log(logFilePath, `RUNPOD_DIRECT_SSH_USER=${DIRECT_SSH_USER}; will prefer this user for direct SSH.`);
   }
 
-  // Read base model from config file
+  // Read config file (base model and training mode)
   let base_model: string;
+  let cfg: any;
   try {
-    const configContent = JSON.parse(fs.readFileSync(opts.CONFIG_FILE, 'utf-8'));
-    base_model = configContent.base_model;
+    cfg = JSON.parse(fs.readFileSync(opts.CONFIG_FILE, 'utf-8'));
+    base_model = cfg.base_model;
   } catch (error) {
     log(logFilePath, `Failed to read base model from config: ${(error as Error).message}`);
     base_model = "Qwen/Qwen3-30B-A3B"; // fallback
+    cfg = { base_model, training_mode: 'lora' };
   }
 
   tracker.setMetadata({ base_model, samples: opts.samples_used });
@@ -441,9 +443,21 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     log(logFilePath, `Using RUNPOD_TEMPLATE_ID=${envTemplateId}`);
   }
 
-  // GPU selection from environment or default to RTX 4090 (best for 30B LoRA)
-  const gpuType = process.env.RUNPOD_GPU_TYPE || "NVIDIA GeForce RTX 4090";
-  log(logFilePath, `Using GPU type: ${gpuType}`);
+  // GPU selection: A100 80GB for full fine-tuning, env var (5090) for LoRA
+  const trainingMode = cfg.training_mode || 'lora';
+  let gpuType: string;
+
+  if (trainingMode === 'full_finetune' || trainingMode === 'full') {
+    // Full fine-tuning requires 80GB+ VRAM (gradients + optimizer states)
+    gpuType = process.env.RUNPOD_GPU_TYPE_FULL || "NVIDIA A100 80GB PCIe";
+    log(logFilePath, `FULL FINE-TUNING mode: Using ${gpuType} (80GB VRAM required)`);
+  } else {
+    // LoRA training works on smaller GPUs
+    gpuType = process.env.RUNPOD_GPU_TYPE || "NVIDIA GeForce RTX 4090";
+    log(logFilePath, `LoRA mode: Using ${gpuType}`);
+  }
+
+  log(logFilePath, `Selected GPU type: ${gpuType}`);
 
   tracker.startStage('pod_creation', `Requesting ${gpuType}`);
 
@@ -743,20 +757,34 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     tracker.updateStage('file_upload', 67, 'Uploaded config.json');
     console.log('📤 Uploaded: config.json');
 
-    // Upload fixed training script (overrides the one baked into v3 image)
-    const fixedTrainingScriptPath = path.join(paths.root, 'docker', 'runpod-trainer', 'train_unsloth.py');
-    log(logFilePath, `Uploading fixed training script from: ${fixedTrainingScriptPath}`);
-    await sshUploadFileBase64(fixedTrainingScriptPath, '/workspace/train_unsloth.py', ssh_user!, ssh_host!, ssh_key_path!, logFilePath, ssh_port);
+    // Determine which training script to upload based on config
+    let trainingScriptName: string;
+    let trainingScriptPath: string;
+    const trainingMode = cfg.training_mode || 'lora';
+
+    if (trainingMode === 'full_finetune' || trainingMode === 'full') {
+      trainingScriptName = 'train_full_finetune.py';
+      trainingScriptPath = path.join(paths.root, 'docker', 'runpod-trainer', 'train_full_finetune.py');
+      log(logFilePath, 'FULL FINE-TUNING mode detected');
+    } else {
+      trainingScriptName = 'train_unsloth.py';
+      trainingScriptPath = path.join(paths.root, 'docker', 'runpod-trainer', 'train_unsloth.py');
+      log(logFilePath, 'LoRA training mode detected');
+    }
+
+    // Upload training script (overrides the one baked into v3 image)
+    log(logFilePath, `Uploading training script from: ${trainingScriptPath}`);
+    await sshUploadFileBase64(trainingScriptPath, `/workspace/${trainingScriptName}`, ssh_user!, ssh_host!, ssh_key_path!, logFilePath, ssh_port);
 
     // Verify upload by checking file size and line count
-    const verifyResult = await sshExecNoPty(ssh_user!, ssh_host!, ssh_key_path!, 'wc -l /workspace/train_unsloth.py && ls -lh /workspace/train_unsloth.py', ssh_port);
+    const verifyResult = await sshExecNoPty(ssh_user!, ssh_host!, ssh_key_path!, `wc -l /workspace/${trainingScriptName} && ls -lh /workspace/${trainingScriptName}`, ssh_port);
     log(logFilePath, `Training script verification: ${verifyResult.stdout.trim()}`);
 
     // Also remove any Python bytecode cache that might interfere
     await sshExecNoPty(ssh_user!, ssh_host!, ssh_key_path!, 'rm -rf /workspace/__pycache__ /workspace/*.pyc', ssh_port);
 
     tracker.completeStage('file_upload');
-    console.log('📤 Uploaded: train_unsloth.py');
+    console.log(`📤 Uploaded: ${trainingScriptName}`);
     console.log('✅ Stage 3/6: Upload complete\n');
 
     // Verify and generate upload.ok on the pod
@@ -772,9 +800,14 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     }
 
     // 3.4. Run training remotely with real-time progress streaming
-    console.log('\n🔥 Stage 4/6: Training LoRA adapter...');
-    console.log('⏱️  Expected duration: 30-60 minutes for 30B model\n');
-    log(logFilePath, 'Executing remote training script...');
+    if (trainingMode === 'full_finetune' || trainingMode === 'full') {
+      console.log('\n🔥 Stage 4/6: Full fine-tuning model...');
+      console.log('⏱️  Expected duration: 2-6 hours for 30B model\n');
+    } else {
+      console.log('\n🔥 Stage 4/6: Training LoRA adapter...');
+      console.log('⏱️  Expected duration: 30-60 minutes for 30B model\n');
+    }
+    log(logFilePath, `Executing remote training script: ${trainingScriptName}`);
     tracker.startStage('training', 'Model loading and setup');
 
     // Stream training output in real-time to show progress
@@ -791,7 +824,13 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
         '-o', 'TCPKeepAlive=yes',
       ];
       if (ssh_port) args.push('-p', String(ssh_port));
-      args.push('-i', ssh_key_path!, `${ssh_user}@${ssh_host}`, 'source /workspace/unsloth-venv/bin/activate && python /workspace/train_unsloth.py');
+
+      // Use venv if available (LoRA templates), otherwise use system Python (A100 templates)
+      const pythonCommand = trainingMode === 'full_finetune' || trainingMode === 'full'
+        ? `python3 /workspace/${trainingScriptName}`  // A100: Use system Python
+        : `source /workspace/unsloth-venv/bin/activate && python /workspace/${trainingScriptName}`;  // LoRA: Use venv
+
+      args.push('-i', ssh_key_path!, `${ssh_user}@${ssh_host}`, pythonCommand);
 
       const ssh = spawn('ssh', args);
       let stdout = '';
@@ -864,75 +903,218 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
       summary.training_success = true;
     }
 
-    // 3.5. Download BOTH merged GGUF AND adapter artifacts
-    // We download the merged GGUF for immediate use, and keep adapter for potential future merging
-    console.log('\n📥 Stage 5/6: Downloading trained model...');
-    console.log('⏱️  This will download both the merged GGUF (~20GB) and adapter artifacts (~2GB)\n');
-    log(logFilePath, 'Downloading merged GGUF and adapter artifacts...');
-    tracker.startStage('adapter_download', 'Downloading merged GGUF');
+    // 3.5. Download trained model (mode-specific paths)
+    // trainingMode is already declared earlier (line 763)
+    const isFullFineTune = trainingMode === 'full_finetune' || trainingMode === 'full';
 
-    // First, download the merged GGUF (this is what we'll actually use)
-    if (summary.training_success) {
-        console.log('📥 Part 1/2: Downloading merged GGUF model via SCP...');
-        const finalGGUFPath = path.join(path.dirname(opts.FINAL_ADAPTER_DIR), 'adapter.gguf');
-        ensureDirSync(path.dirname(finalGGUFPath));
+    if (isFullFineTune) {
+        // Full fine-tuning: download safetensors model directory
+        console.log('\n📥 Stage 5/6: Downloading full fine-tuned model...');
+        console.log('⏱️  This will download the safetensors model (~28GB)\n');
+        log(logFilePath, 'Downloading full fine-tuned model from /workspace/output/model/...');
+        tracker.startStage('adapter_download', 'Downloading safetensors model');
 
-        const ggufDownloadResult = await sshScpDownload(
+        if (summary.training_success) {
+            console.log('📥 Downloading full model via SCP...');
+            ensureDirSync(opts.FINAL_ADAPTER_DIR);
+
+            const tempModelDir = path.join(opts.WORK_LOCAL, 'temp_model_download');
+            ensureDirSync(tempModelDir);
+
+            const modelDownloadResult = await sshScpDownload(
+                ssh_user!, ssh_host!, ssh_key_path!,
+                '/workspace/output/model', // Full model directory
+                tempModelDir,
+                logFilePath,
+                ssh_port,
+                true // Recursive
+            );
+
+            if (modelDownloadResult.exitCode === 0) {
+                const downloadedModelPath = path.join(tempModelDir, 'model');
+                if (fs.existsSync(downloadedModelPath)) {
+                    fs.readdirSync(downloadedModelPath).forEach(file => {
+                        fs.renameSync(path.join(downloadedModelPath, file), path.join(opts.FINAL_ADAPTER_DIR, file));
+                    });
+                    fs.rmSync(tempModelDir, { recursive: true, force: true });
+                    log(logFilePath, 'Full model downloaded and moved to final directory.');
+                    console.log('✅ Full model downloaded successfully.');
+                    tracker.completeStage('adapter_download');
+
+                    // Convert to GGUF locally if enabled in config
+                    const ggufConfig = cfg.gguf_conversion;
+                    if (ggufConfig && ggufConfig.enabled) {
+                        console.log('\n🔧 Stage 6/7: Converting to GGUF locally...');
+                        console.log(`⏱️  Converting to ${ggufConfig.quantization_type} quantization (may take 10-20 minutes)\n`);
+                        log(logFilePath, 'Starting local GGUF conversion using llama.cpp...');
+                        tracker.startStage('gguf_conversion', `Converting to ${ggufConfig.quantization_type}`);
+
+                        try {
+                            // Paths
+                            const llamaCppPath = path.join(paths.root, 'vendor', 'llama.cpp');
+                            const convertScript = path.join(llamaCppPath, 'convert_hf_to_gguf.py');
+                            const quantizeBinary = path.join(llamaCppPath, 'llama-quantize');
+                            const modelParentDir = path.dirname(opts.FINAL_ADAPTER_DIR);
+                            const f16Path = path.join(modelParentDir, `model-f16.gguf`);
+                            const quantizedPath = path.join(modelParentDir, `model-${ggufConfig.quantization_type}.gguf`);
+
+                            // Ensure llama.cpp exists
+                            if (!fs.existsSync(llamaCppPath)) {
+                                console.log('📦 llama.cpp not found, cloning...');
+                                log(logFilePath, 'Cloning llama.cpp repository...');
+                                const vendorDir = path.join(paths.root, 'vendor');
+                                ensureDirSync(vendorDir);
+                                execSync(`git clone https://github.com/ggml-org/llama.cpp.git "${llamaCppPath}"`, {
+                                    stdio: 'inherit',
+                                    cwd: vendorDir,
+                                });
+                                console.log('✓ llama.cpp cloned');
+                            }
+
+                            if (!fs.existsSync(quantizeBinary)) {
+                                console.log('🔨 Building llama.cpp binaries...');
+                                log(logFilePath, 'Building llama.cpp binaries...');
+                                execSync('make -j$(nproc)', { cwd: llamaCppPath, stdio: 'inherit' });
+                                console.log('✓ llama.cpp built');
+                            }
+
+                            // Step 1: Convert to F16 GGUF
+                            console.log('📝 Step 1/2: Converting to FP16 GGUF...');
+                            log(logFilePath, `Converting ${opts.FINAL_ADAPTER_DIR} to F16 GGUF...`);
+
+                            const venvPython = path.join(paths.root, 'venv', 'bin', 'python3');
+                            const pythonCmd = fs.existsSync(venvPython) ? venvPython : 'python3';
+
+                            execSync(`${pythonCmd} "${convertScript}" "${opts.FINAL_ADAPTER_DIR}" --outtype f16 --outfile "${f16Path}"`, {
+                                stdio: 'inherit',
+                                cwd: llamaCppPath,
+                                env: { ...process.env, PYTHONPATH: llamaCppPath },
+                            });
+
+                            const f16SizeGB = (fs.statSync(f16Path).size / (1024 ** 3)).toFixed(2);
+                            console.log(`✓ F16 GGUF created (${f16SizeGB}GB)`);
+                            log(logFilePath, `F16 GGUF created: ${f16Path} (${f16SizeGB}GB)`);
+                            tracker.updateStage('gguf_conversion', 50, 'F16 conversion complete, quantizing...');
+
+                            // Step 2: Quantize to target format
+                            console.log(`📦 Step 2/2: Quantizing to ${ggufConfig.quantization_type}...`);
+                            log(logFilePath, `Quantizing to ${ggufConfig.quantization_type}...`);
+
+                            execSync(`"${quantizeBinary}" "${f16Path}" "${quantizedPath}" ${ggufConfig.quantization_type}`, {
+                                stdio: 'inherit',
+                                cwd: llamaCppPath,
+                            });
+
+                            const quantSizeGB = (fs.statSync(quantizedPath).size / (1024 ** 3)).toFixed(2);
+                            console.log(`✓ Quantized GGUF created (${quantSizeGB}GB)`);
+                            log(logFilePath, `Quantized GGUF: ${quantizedPath} (${quantSizeGB}GB)`);
+
+                            // Clean up intermediate F16 file
+                            console.log('🧹 Cleaning up intermediate F16 file...');
+                            fs.unlinkSync(f16Path);
+
+                            console.log(`\n✅ GGUF conversion complete!`);
+                            console.log(`📁 Safetensors: ${opts.FINAL_ADAPTER_DIR} (for future training)`);
+                            console.log(`📁 GGUF: ${quantizedPath} (for Ollama)`);
+                            console.log(`💾 Size: ${quantSizeGB}GB (${ggufConfig.quantization_type})\n`);
+
+                            log(logFilePath, `GGUF conversion complete: ${quantizedPath}`);
+                            tracker.completeStage('gguf_conversion');
+
+                            summary.gguf_path = quantizedPath;
+                        } catch (error) {
+                            console.error(`⚠️ GGUF conversion failed: ${(error as Error).message}`);
+                            log(logFilePath, `GGUF conversion failed: ${(error as Error).message}`);
+                            tracker.failStage('gguf_conversion', (error as Error).message);
+                            // Don't fail the entire pipeline - safetensors model is still usable
+                        }
+                    } else {
+                        console.log('ℹ️ GGUF conversion disabled in config, skipping');
+                        log(logFilePath, 'GGUF conversion disabled or not configured');
+                    }
+                } else {
+                    log(logFilePath, 'Downloaded model directory not found in temp location.');
+                    console.error('❌ Model download failed - directory not found.');
+                }
+            } else {
+                log(logFilePath, `Model download failed with exit code ${modelDownloadResult.exitCode}`);
+                console.error(`❌ Model download failed.`);
+                tracker.failStage('adapter_download', `Model download failed: ${modelDownloadResult.exitCode}`);
+            }
+        } else {
+            log(logFilePath, 'Skipping model download due to training failure.');
+            console.log('⚠️ Skipping model download due to training failure.');
+        }
+    } else {
+        // LoRA training: download GGUF + adapter artifacts
+        console.log('\n📥 Stage 5/6: Downloading trained model...');
+        console.log('⏱️  This will download both the merged GGUF (~20GB) and adapter artifacts (~2GB)\n');
+        log(logFilePath, 'Downloading merged GGUF and adapter artifacts...');
+        tracker.startStage('adapter_download', 'Downloading merged GGUF');
+
+        // First, download the merged GGUF (this is what we'll actually use)
+        if (summary.training_success) {
+            console.log('📥 Part 1/2: Downloading merged GGUF model via SCP...');
+            const finalGGUFPath = path.join(path.dirname(opts.FINAL_ADAPTER_DIR), 'adapter.gguf');
+            ensureDirSync(path.dirname(finalGGUFPath));
+
+            const ggufDownloadResult = await sshScpDownload(
+                ssh_user!, ssh_host!, ssh_key_path!,
+                '/workspace/final_merged_model.gguf',
+                finalGGUFPath,
+                logFilePath,
+                ssh_port
+            );
+
+            if (ggufDownloadResult.exitCode !== 0) {
+                log(logFilePath, `Merged GGUF download failed with exit code ${ggufDownloadResult.exitCode}`);
+                console.error(`❌ GGUF download via SCP failed.`);
+                tracker.failStage('adapter_download', `GGUF SCP failed: ${ggufDownloadResult.exitCode}`);
+            } else {
+                const sizeGB = (fs.statSync(finalGGUFPath).size / (1024 ** 3)).toFixed(2);
+                log(logFilePath, `Merged GGUF downloaded successfully to ${finalGGUFPath} (${sizeGB}GB)`);
+                console.log(`✅ Merged GGUF saved successfully via SCP (${sizeGB}GB)`);
+                tracker.updateStage('adapter_download', 50, 'GGUF ready, downloading adapter artifacts...');
+            }
+        } else {
+            log(logFilePath, 'Skipping GGUF download due to training failure.');
+            console.log('⚠️ Skipping GGUF download due to training failure.');
+        }
+
+        // Second, download the adapter artifacts (for potential future merging)
+        console.log('\n📥 Part 2/2: Downloading adapter artifacts for archival via SCP...');
+        ensureDirSync(opts.FINAL_ADAPTER_DIR);
+
+        // Create a temporary directory for downloading the adapter contents
+        const tempAdapterDir = path.join(opts.WORK_LOCAL, 'temp_adapter_download');
+        ensureDirSync(tempAdapterDir);
+
+        const adapterDownloadResult = await sshScpDownload(
             ssh_user!, ssh_host!, ssh_key_path!,
-            '/workspace/final_merged_model.gguf',
-            finalGGUFPath,
+            '/output/adapter', // Download the whole directory
+            tempAdapterDir,
             logFilePath,
-            ssh_port
+            ssh_port,
+            true // Recursive
         );
 
-        if (ggufDownloadResult.exitCode !== 0) {
-            log(logFilePath, `Merged GGUF download failed with exit code ${ggufDownloadResult.exitCode}`);
-            console.error(`❌ GGUF download via SCP failed.`);
-            tracker.failStage('adapter_download', `GGUF SCP failed: ${ggufDownloadResult.exitCode}`);
+        if (adapterDownloadResult.exitCode === 0) {
+            // Move contents from tempAdapterDir/adapter to FINAL_ADAPTER_DIR
+            const downloadedAdapterPath = path.join(tempAdapterDir, 'adapter');
+            if (fs.existsSync(downloadedAdapterPath)) {
+                fs.readdirSync(downloadedAdapterPath).forEach(file => {
+                    fs.renameSync(path.join(downloadedAdapterPath, file), path.join(opts.FINAL_ADAPTER_DIR, file));
+                });
+                fs.rmSync(tempAdapterDir, { recursive: true, force: true });
+                log(logFilePath, 'Adapter artifacts moved to final directory.');
+                console.log('✅ Adapter artifacts downloaded and moved successfully.');
+            } else {
+                log(logFilePath, 'Downloaded adapter directory not found in temp location.');
+            }
         } else {
-            const sizeGB = (fs.statSync(finalGGUFPath).size / (1024 ** 3)).toFixed(2);
-            log(logFilePath, `Merged GGUF downloaded successfully to ${finalGGUFPath} (${sizeGB}GB)`);
-            console.log(`✅ Merged GGUF saved successfully via SCP (${sizeGB}GB)`);
-            tracker.updateStage('adapter_download', 50, 'GGUF ready, downloading adapter artifacts...');
+            log(logFilePath, `Adapter artifacts download failed with exit code ${adapterDownloadResult.exitCode}`);
+            console.error(`❌ Adapter artifacts download failed.`);
         }
-    } else {
-        log(logFilePath, 'Skipping GGUF download due to training failure.');
-        console.log('⚠️ Skipping GGUF download due to training failure.');
-    }
-
-    // Second, download the adapter artifacts (for potential future merging)
-    console.log('\n📥 Part 2/2: Downloading adapter artifacts for archival via SCP...');
-    ensureDirSync(opts.FINAL_ADAPTER_DIR);
-    
-    // Create a temporary directory for downloading the adapter contents
-    const tempAdapterDir = path.join(opts.WORK_LOCAL, 'temp_adapter_download');
-    ensureDirSync(tempAdapterDir);
-
-    const adapterDownloadResult = await sshScpDownload(
-        ssh_user!, ssh_host!, ssh_key_path!,
-        '/output/adapter', // Download the whole directory
-        tempAdapterDir,
-        logFilePath,
-        ssh_port,
-        true // Recursive
-    );
-
-    if (adapterDownloadResult.exitCode === 0) {
-        // Move contents from tempAdapterDir/adapter to FINAL_ADAPTER_DIR
-        const downloadedAdapterPath = path.join(tempAdapterDir, 'adapter');
-        if (fs.existsSync(downloadedAdapterPath)) {
-            fs.readdirSync(downloadedAdapterPath).forEach(file => {
-                fs.renameSync(path.join(downloadedAdapterPath, file), path.join(opts.FINAL_ADAPTER_DIR, file));
-            });
-            fs.rmSync(tempAdapterDir, { recursive: true, force: true });
-            log(logFilePath, 'Adapter artifacts moved to final directory.');
-            console.log('✅ Adapter artifacts downloaded and moved successfully.');
-        } else {
-            log(logFilePath, 'Downloaded adapter directory not found in temp location.');
-        }
-    } else {
-        log(logFilePath, `Adapter artifacts download failed with exit code ${adapterDownloadResult.exitCode}`);
-        console.error(`❌ Adapter artifacts download failed.`);
     }
 
     // Download the upload.ok file separately

@@ -1,0 +1,46 @@
+{
+  "comment": "Dual consciousness mode fine-tuning configuration",
+  "notes": [
+    "Dual mode learns complex thought→world mappings with <thought> and <world> tags.",
+    "Requires careful tuning to maintain coherent internal monologue.",
+    "Higher warmup steps help model learn the structured format.",
+    "Slightly higher learning rate than base to adapt thought patterns."
+  ],
+
+  "cognitive_mode": "dual",
+
+  "base_model": "Qwen/Qwen3-14B",
+  "training_mode": "full_finetune",
+
+  "learning_rate": 6e-6,
+  "num_train_epochs": 3,
+  "per_device_train_batch_size": 1,
+  "gradient_accumulation_steps": 32,
+
+  "max_seq_length": 2048,
+  "warmup_steps": 150,
+  "logging_steps": 10,
+  "save_steps": 500,
+
+  "fp16": false,
+  "bf16": true,
+
+  "optim": "adafactor",
+  "weight_decay": 0.01,
+  "max_grad_norm": 1.0,
+
+  "save_total_limit": 3,
+
+  "dataset_requirements": {
+    "min_samples": 3000,
+    "recommended_samples": 8000,
+    "mode_filter": "dual",
+    "note": "Dual mode requires high-quality thought chain examples"
+  },
+
+  "gguf_conversion": {
+    "enabled": true,
+    "quantization_type": "Q6_K",
+    "intermediate_type": "f16"
+  }
+}

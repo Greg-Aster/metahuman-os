@@ -1,0 +1,11 @@
+{
+  "family": "llama",
+  "description": "LLaMA3 model family",
+  "user_prefix": "[INST] ",
+  "user_suffix": " [/INST]",
+  "assistant_prefix": " ",
+  "assistant_suffix": "",
+  "separator": "\n",
+  "eos_token": "</s>",
+  "notes": "LLaMA3 uses [INST] tags with space after [/INST] before assistant response."
+}

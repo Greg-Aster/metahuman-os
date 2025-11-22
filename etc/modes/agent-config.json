@@ -1,0 +1,46 @@
+{
+  "comment": "Agent mode (tool-using) fine-tuning configuration",
+  "notes": [
+    "Agent mode learns structured tool invocation and reasoning.",
+    "Requires precision for JSON tool calls and step-by-step reasoning.",
+    "Lower learning rate to maintain structured output quality.",
+    "Emphasis on following function calling format strictly."
+  ],
+
+  "cognitive_mode": "agent",
+
+  "base_model": "Qwen/Qwen3-14B",
+  "training_mode": "full_finetune",
+
+  "learning_rate": 4e-6,
+  "num_train_epochs": 3,
+  "per_device_train_batch_size": 1,
+  "gradient_accumulation_steps": 32,
+
+  "max_seq_length": 2048,
+  "warmup_steps": 120,
+  "logging_steps": 10,
+  "save_steps": 500,
+
+  "fp16": false,
+  "bf16": true,
+
+  "optim": "adafactor",
+  "weight_decay": 0.015,
+  "max_grad_norm": 0.8,
+
+  "save_total_limit": 2,
+
+  "dataset_requirements": {
+    "min_samples": 2000,
+    "recommended_samples": 6000,
+    "mode_filter": "agent",
+    "note": "Agent mode needs diverse tool usage examples"
+  },
+
+  "gguf_conversion": {
+    "enabled": true,
+    "quantization_type": "Q6_K",
+    "intermediate_type": "f16"
+  }
+}

@@ -4,8 +4,22 @@
   "description": "Model registry for multi-model orchestration. Defines roles and their associated models.",
   "globalSettings": {
     "includePersonaSummary": true,
-    "useAdapter": false,
-    "activeAdapter": null
+    "useAdapter": true,
+    "activeAdapter": {
+      "modelName": "greggles-2025-11-22",
+      "activatedAt": "2025-11-22T06:53:47.681Z",
+      "adapterPath": "/home/greggles/metahuman/profiles/greggles/out/adapters/2025-11-22/2025-11-22-060353-b09636/adapter.gguf",
+      "dataset": "2025-11-22-060353-b09636",
+      "date": "2025-11-22",
+      "modelfilePath": "/home/greggles/metahuman/profiles/greggles/out/adapters/2025-11-22/2025-11-22-060353-b09636/Modelfile",
+      "status": "loaded",
+      "activatedBy": "full-cycle",
+      "isDualAdapter": false,
+      "runLabel": "2025-11-22-060353-b09636",
+      "trainingMethod": "remote",
+      "ggufAdapterPath": "/home/greggles/metahuman/profiles/greggles/out/adapters/2025-11-22/2025-11-22-060353-b09636/adapter.gguf",
+      "baseModel": "unsloth/Qwen3-14B"
+    }
   },
   "defaults": {
     "orchestrator": "default.orchestrator",

@@ -1,0 +1,11 @@
+{
+  "family": "phi",
+  "description": "Phi-3 model family",
+  "user_prefix": "<|prompt|>",
+  "user_suffix": "",
+  "assistant_prefix": "<|answer|>",
+  "assistant_suffix": "",
+  "separator": "\n",
+  "eos_token": "<|endoftext|>",
+  "notes": "Phi-3 uses prompt/answer tags with newline separator."
+}

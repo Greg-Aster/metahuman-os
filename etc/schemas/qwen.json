@@ -1,0 +1,11 @@
+{
+  "family": "qwen",
+  "description": "Qwen3 model family (Coder, Instruct, etc.)",
+  "user_prefix": "<|user|>",
+  "user_suffix": "",
+  "assistant_prefix": "<|assistant|>",
+  "assistant_suffix": "",
+  "separator": "",
+  "eos_token": "<|endoftext|>",
+  "notes": "Qwen3 uses special tokens for user and assistant. No explicit separator needed."
+}
