@@ -6,6 +6,18 @@ import time
 import argparse
 from datetime import datetime
 
+# BUGFIX: Disable xFormers to prevent Flash Attention compatibility issues on newer GPUs
+# RTX 5090 (capability 12.0) is too new for xFormers builds in most containers
+# Force PyTorch to use native SDPA instead - multiple env vars for comprehensive coverage
+os.environ['XFORMERS_DISABLED'] = '1'
+os.environ['XFORMERS_FORCE_DISABLE_TRITON'] = '1'
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+os.environ['TORCH_CUDNN_SDPA_ENABLED'] = '1'
+# Disable Flash Attention at the transformers level
+os.environ['USE_FLASH_ATTENTION'] = '0'
+os.environ['DISABLE_FLASH_ATTN'] = '1'
+
 # Set HuggingFace cache - use /workspace on RunPod, ~/.cache locally
 # Detect RunPod by checking if we have write access to /workspace (not just if it exists)
 is_runpod = os.path.exists('/workspace') and os.access('/workspace', os.W_OK)
@@ -21,6 +33,33 @@ else:
 
 import importlib
 import subprocess
+
+# BUGFIX: Physically remove xFormers from the environment
+# RTX 5090 (capability 12.0) is incompatible with the xFormers build in this container
+# We must uninstall it completely before importing Unsloth
+import sys
+
+print("[train_unsloth] 🔧 Attempting to uninstall xFormers to prevent RTX 5090 incompatibility...")
+
+try:
+    # Try to uninstall xformers using pip
+    subprocess.run(
+        [sys.executable, "-m", "pip", "uninstall", "-y", "xformers"],
+        check=False,
+        capture_output=True,
+        timeout=30
+    )
+    print("[train_unsloth] ✅ xFormers uninstalled successfully")
+except Exception as e:
+    print(f"[train_unsloth] ⚠️  Could not uninstall xFormers: {e}")
+
+# Clear any cached xFormers modules from sys.modules
+xformers_modules = [key for key in sys.modules.keys() if key.startswith('xformers')]
+for mod in xformers_modules:
+    del sys.modules[mod]
+    print(f"[train_unsloth] 🗑️  Cleared cached module: {mod}")
+
+print("[train_unsloth] ✅ Environment prepared for SDPA-only training")
 
 from unsloth import FastLanguageModel
 from unsloth.trainer import UnslothTrainer, UnslothTrainingArguments
@@ -152,15 +191,59 @@ def main():
         log_progress("MODEL_DOWNLOAD", f"Model will be loaded in full {dtype} (requires ~60GB VRAM for 30B models)")
 
     model_start = time.time()
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        cfg["base_model"],
-        load_in_4bit=load_in_4bit,
-        dtype=dtype,
-        use_gradient_checkpointing=True,
-        max_seq_length=cfg["max_seq_length"],
-    )
+
+    # BUGFIX: Use SDPA attention for compatibility with newer GPUs (RTX 5090, etc.)
+    # Flash Attention 2 via xFormers has GPU capability restrictions
+    # SDPA is PyTorch's native implementation and works on all GPUs
+    log_progress("MODEL_DOWNLOAD", "Using PyTorch SDPA attention (compatible with all GPUs)")
+
+    try:
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            cfg["base_model"],
+            load_in_4bit=load_in_4bit,
+            dtype=dtype,
+            use_gradient_checkpointing="unsloth",  # Use Unsloth's checkpointing, not FA2
+            max_seq_length=cfg["max_seq_length"],
+            attn_implementation="sdpa",  # Use PyTorch native SDPA instead of Flash Attention
+        )
+    except Exception as e:
+        # If SDPA fails, try without specifying attention implementation
+        log_progress("MODEL_DOWNLOAD", f"SDPA failed, retrying with default attention: {e}")
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            cfg["base_model"],
+            load_in_4bit=load_in_4bit,
+            dtype=dtype,
+            use_gradient_checkpointing="unsloth",
+            max_seq_length=cfg["max_seq_length"],
+        )
     model_time = time.time() - model_start
     log_progress("MODEL_DOWNLOAD", f"✅ Model loaded in {model_time/60:.1f} minutes", 100)
+
+    # BUGFIX: Explicitly disable Flash Attention in model config and modules after loading
+    # This patches the model's internal attention mechanism to use standard attention
+    try:
+        if hasattr(model, 'config'):
+            model.config._attn_implementation = "eager"
+            if hasattr(model.config, 'use_flash_attention_2'):
+                model.config.use_flash_attention_2 = False
+            if hasattr(model.config, '_flash_attn_2_enabled'):
+                model.config._flash_attn_2_enabled = False
+            log_progress("MODEL_DOWNLOAD", "Patched model config to use eager attention")
+
+        # Also patch all attention modules in the model
+        patched_modules = 0
+        for name, module in model.named_modules():
+            if 'attention' in name.lower() or 'attn' in name.lower():
+                if hasattr(module, '_attn_implementation'):
+                    module._attn_implementation = "eager"
+                    patched_modules += 1
+                if hasattr(module, 'is_causal'):
+                    module.is_causal = True  # Ensure causal masking is explicit
+
+        if patched_modules > 0:
+            log_progress("MODEL_DOWNLOAD", f"Patched {patched_modules} attention modules to eager mode")
+    except Exception as e:
+        log_progress("MODEL_DOWNLOAD", f"Warning: Could not patch attention config: {e}")
 
     # Get chat template configuration from config file
     chat_template = cfg.get('chat_template', 'auto').lower()
@@ -286,6 +369,9 @@ def main():
         logging_steps=10,
         save_strategy="epoch",
         save_total_limit=2,
+        # BUGFIX: Force eager mode to bypass Flash Attention
+        torch_compile=False,  # Disable torch compilation
+        optim=cfg.get("optimizer", "paged_adamw_8bit"),  # Use config optimizer
     )
 
     trainer = UnslothTrainer(

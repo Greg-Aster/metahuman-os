@@ -47,6 +47,78 @@ function cleanupAfterSuccessfulMerge(runRoot: string, workLocal: string) {
   safeRemove(path.join(workLocal, "temp_adapter_download"));
 }
 
+/**
+ * ROBUSTNESS: Clean up any stuck training processes before starting
+ * Prevents resource conflicts and hung processes from blocking new training runs
+ */
+function cleanupStuckProcesses(username: string) {
+  console.log('[full-cycle-local] Checking for stuck training processes...');
+
+  try {
+    // Find all full-cycle and dataset-builder processes for this user
+    const psOutput = execSync(
+      `ps aux | grep -E "full-cycle.ts|full-cycle-local.ts|ai-dataset-builder.ts|adapter-builder.ts" | grep "${username}" | grep -v grep | awk '{print $2}'`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
+    ).trim();
+
+    if (psOutput) {
+      const pids = psOutput.split('\n').filter(Boolean);
+      const currentPid = process.pid.toString();
+
+      // Filter out our own PID
+      const stuckPids = pids.filter(pid => pid !== currentPid);
+
+      if (stuckPids.length > 0) {
+        console.log(`[full-cycle-local] Found ${stuckPids.length} stuck process(es): ${stuckPids.join(', ')}`);
+        console.log('[full-cycle-local] Killing stuck processes...');
+
+        for (const pid of stuckPids) {
+          try {
+            execSync(`kill -9 ${pid}`, { stdio: 'ignore' });
+          } catch (err) {
+            // Process may have already exited, ignore
+          }
+        }
+
+        console.log('[full-cycle-local] Stuck processes cleaned up');
+      } else {
+        console.log('[full-cycle-local] No stuck processes found');
+      }
+    } else {
+      console.log('[full-cycle-local] No stuck processes found');
+    }
+  } catch (err) {
+    // ps command returned no results or failed - not critical
+    console.log('[full-cycle-local] Process cleanup check complete');
+  }
+
+  // Unload Ollama models to free resources
+  try {
+    console.log('[full-cycle-local] Unloading Ollama models to free resources...');
+    execSync('curl -s http://localhost:11434/api/generate -d \'{"model": "", "keep_alive": 0}\'', {
+      timeout: 2000,
+      stdio: 'ignore',
+    });
+    console.log('[full-cycle-local] Ollama models unloaded');
+  } catch (err) {
+    // Ollama may not be running or may timeout - not critical
+    console.log('[full-cycle-local] Ollama cleanup skipped (may not be running)');
+  }
+
+  // Clean up stale PID files
+  try {
+    const pidFile = path.join(systemPaths.logs, 'run', `full-cycle-local-${username}.pid`);
+    if (fs.existsSync(pidFile)) {
+      fs.rmSync(pidFile, { force: true });
+      console.log('[full-cycle-local] Removed stale PID file');
+    }
+  } catch (err) {
+    // Not critical
+  }
+
+  console.log('[full-cycle-local] Pre-flight cleanup complete\n');
+}
+
 async function runAgent(agentName: string, args: string[] = []): Promise<number> {
   return new Promise((resolve, reject) => {
     const agentPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
@@ -174,6 +246,9 @@ async function mainWithContext() {
     console.error('[full-cycle-local] This must be run with withUserContext()');
     process.exit(1);
   }
+
+  // ROBUSTNESS: Clean up stuck processes before starting
+  cleanupStuckProcesses(ctx.username);
 
   currentRunId = randomBytes(8).toString('hex');
   console.log(`[${new Date().toISOString()}] === Starting local full cycle for user: ${ctx.username} (${currentRunId}) ===`);

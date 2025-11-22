@@ -41,6 +41,7 @@ Welcome to the MetaHuman OS User Guide. This guide is organized into the followi
 
 13. **[Advanced Usage](13-advanced-usage.md)**
     *   **Advanced Workflows and Customization**: For experienced users, this section provides insights into advanced workflows, customization options, and how to leverage the full potential of MetaHuman OS.
+    *   **[Full Fine-Tuning with Monthly Updates](13-advanced-usage.md#full-fine-tuning-with-monthly-updates)**: Learn about incremental monthly fine-tuning to continuously improve your personality model. Includes foundation training, monthly update strategies, quality metrics, cost analysis, and troubleshooting. See also: [Monthly Training Workflow](../monthly-training-workflow.md) for comprehensive guide.
 
 14. **[Configuration Files](14-configuration-files.md)**
     *   **Reference for All Config Files**: A detailed reference for all configuration files located in the `etc/` directory, explaining their purpose and how to modify them.

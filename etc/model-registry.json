@@ -1,0 +1,37 @@
+{
+  "comment": "Model registry tracks fine-tuning lineage and current base model",
+  "notes": [
+    "This file is automatically updated after each successful training run.",
+    "The 'current_base_model' is used for the next fine-tuning cycle.",
+    "Original model is always preserved for reference.",
+    "Model paths can be local (trained models) or HuggingFace (original)."
+  ],
+
+  "original_base_model": "Qwen/Qwen3-14B",
+  "current_base_model": "Qwen/Qwen3-14B",
+  "model_type": "huggingface",
+
+  "training_history": [],
+
+  "output_formats": {
+    "unquantized": {
+      "format": "safetensors",
+      "purpose": "Future fine-tuning",
+      "location": "model/",
+      "keep": true
+    },
+    "quantized": {
+      "format": "gguf",
+      "quantization": "Q8_0",
+      "purpose": "Local inference (Ollama)",
+      "location": "model.gguf",
+      "keep": true
+    }
+  },
+
+  "versioning": {
+    "enabled": true,
+    "auto_update_base": true,
+    "keep_all_versions": true
+  }
+}

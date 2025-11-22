@@ -1,0 +1,45 @@
+Full-cycle-finetune
+run fine tun with qwen3:14 example (from root directoy)
+pnpm tsx brain/agents/fine-tune-cycle.ts --username greggles
+
+Full-cycle-adapter -
+
+Tp monitor progress in real-time, use this terminal command:
+tail -f /home/greggles/metahuman/logs/run/full-cycle-2025-11-22T04-03-59-177Z.log
+Or to manually trigger a new training run (if you want to cancel the current one):
+# Kill current training
+pkill -f "full-cycle.ts"
+
+pnpm tsx brain/agents/full-cycle.ts --username greggles
+
+
+out folder:
+   Dataset: /home/greggles/metahuman/profiles/<user>/out/adapters/2025-11-22
+
+
+some of the save points may be problematic:
+home/greggles/metahuman/metahuman-runs/greggles/2025-11-22/2025-11-22-065730-98d59b/temp_model_download
+
+if it failes convert run
+
+Current run: No - the running process uses the old code that expected GGUF from RunPod. Solution: After download completes, manually convert:
+# Once the safetensors download finishes, run local conversion manually:
+cd /home/greggles/metahuman
+
+# Set paths (adjust RUN-ID to match your actual folder)
+MODEL_DIR="profiles/greggles/out/fine-tuned-models/2025-11-22/2025-11-22-065730-98d59b/model"
+OUTPUT_DIR="profiles/greggles/out/fine-tuned-models/2025-11-22/2025-11-22-065730-98d59b"
+
+# Convert to F16 GGUF
+python3 vendor/llama.cpp/convert_hf_to_gguf.py "$MODEL_DIR" \
+  --outtype f16 \
+  --outfile "$OUTPUT_DIR/model-f16.gguf"
+
+# Quantize to Q6_K
+vendor/llama.cpp/llama-quantize \
+  "$OUTPUT_DIR/model-f16.gguf" \
+  "$OUTPUT_DIR/model-Q6_K.gguf" \
+  Q6_K
+
+# Clean up intermediate file
+rm "$OUTPUT_DIR/model-f16.gguf"

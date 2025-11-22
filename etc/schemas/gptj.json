@@ -1,0 +1,11 @@
+{
+  "family": "gptj",
+  "description": "GPT-J model family",
+  "user_prefix": "Human: ",
+  "user_suffix": "",
+  "assistant_prefix": "\nAssistant: ",
+  "assistant_suffix": "",
+  "separator": "\n\n",
+  "eos_token": "<|endoftext|>",
+  "notes": "GPT-J uses simple Human/Assistant prefixes with double newline separators."
+}

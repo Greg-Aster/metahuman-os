@@ -473,8 +473,6 @@ export const POST: APIRoute = async ({ cookies, request }) => {
 
         // FALLBACK: If PID file doesn't exist or failed, find processes by name
         try {
-          const { execSync } = require('node:child_process');
-
           // Find all full-cycle and ai-dataset-builder processes for this user
           const psOutput = execSync(
             `ps aux | grep -E "full-cycle.ts|ai-dataset-builder.ts" | grep "${user.username}" | grep -v grep | awk '{print $2}'`,
@@ -506,7 +504,6 @@ export const POST: APIRoute = async ({ cookies, request }) => {
 
         // ROBUSTNESS: Stop any stuck Ollama models to free up resources
         try {
-          const { execSync } = require('node:child_process');
           // Unload all loaded models to free GPU/CPU
           execSync('curl -s http://localhost:11434/api/generate -d \'{"model": "", "keep_alive": 0}\'', {
             timeout: 2000,
@@ -642,7 +639,6 @@ export const POST: APIRoute = async ({ cookies, request }) => {
           const modelfilePath = path.join(dir, 'Modelfile');
           const modelName = `greg-${date}`;
 
-          const { execSync } = require('node:child_process');
           execSync(`ollama create ${modelName} -f "${modelfilePath}"`, {
             stdio: 'inherit',
             cwd: systemPaths.root,
