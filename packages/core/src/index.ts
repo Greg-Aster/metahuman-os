@@ -52,6 +52,7 @@ export * from './schema-manager';
 export * from './mode-validator';
 export * from './model-registry';
 export * from './system-activity';
+export * from './training-cleanup';
 export * from './persona/session-manager';
 export * from './persona/question-generator';
 export * from './persona/extractor';

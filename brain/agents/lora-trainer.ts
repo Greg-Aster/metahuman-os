@@ -37,6 +37,9 @@ interface RunRemoteTrainingResult {
   training_success: boolean;
   terminated: boolean;
   upload_verification?: string;
+  gguf_path?: string;
+  ollama_model?: string;
+  ollama_loaded?: boolean;
 }
 
 // Helper to write logs to a dedicated file
@@ -1174,6 +1177,77 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
       }
     }
 
+    // ROBUSTNESS: Create Modelfile even if training_success is false, as long as GGUF exists
+    // This handles cases where training succeeded but post-processing failed
+    if (!summary.training_success) {
+      try {
+        const pathMatch = opts.FINAL_ADAPTER_DIR.match(/profiles\/([^/]+)\//);
+        const username = pathMatch ? pathMatch[1] : 'user';
+        const dateStr = path.basename(path.dirname(opts.FINAL_ADAPTER_DIR));
+        const runId = path.basename(opts.FINAL_ADAPTER_DIR);
+        const isFullFineTune = trainingMode === 'full_finetune' || trainingMode === 'full';
+
+        let ggufPath: string;
+        if (isFullFineTune) {
+          const modelParentDir = path.dirname(opts.FINAL_ADAPTER_DIR);
+          ggufPath = path.join(modelParentDir, `model-Q6_K.gguf`);
+        } else {
+          ggufPath = path.join(path.dirname(opts.FINAL_ADAPTER_DIR), 'adapter.gguf');
+        }
+
+        // Only create Modelfile if GGUF actually exists (training may have produced output despite error)
+        if (fs.existsSync(ggufPath)) {
+          console.log('\n⚠️  Training marked as failed, but GGUF file exists - creating Modelfile anyway');
+          log(logFilePath, `Found GGUF at ${ggufPath} despite training_success=false, creating Modelfile`);
+
+          const usernameCapitalized = username.charAt(0).toUpperCase() + username.slice(1);
+          const modelfileContent = `# MetaHuman OS ${isFullFineTune ? 'Full Fine-Tuned' : 'LoRA Adapter'} Model - ${username} - ${dateStr}
+# Training run: ${runId}
+# Note: Training had errors but model file was created
+FROM ${ggufPath}
+
+TEMPLATE """{{ if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{ if .Prompt }}<|im_start|>user
+{{ .Prompt }}<|im_end|>
+{{ end }}<|im_start|>assistant
+{{ .Response }}<|im_end|>
+"""
+
+SYSTEM You are ${usernameCapitalized}'s digital personality extension. Speak naturally in first person as ${usernameCapitalized}.`;
+
+          const modelfilePath = path.join(path.dirname(ggufPath), 'Modelfile');
+          fs.writeFileSync(modelfilePath, modelfileContent);
+          console.log(`✅ Created Modelfile at ${modelfilePath}`);
+          log(logFilePath, `Created fallback Modelfile at ${modelfilePath}`);
+
+          // Attempt to load into Ollama (best effort)
+          try {
+            const modelName = isFullFineTune ? `${username}-finetune-${dateStr}` : `${username}-${dateStr}`;
+            console.log(`🦙 Attempting to load model into Ollama: ${modelName}`);
+            log(logFilePath, `Running: ollama create ${modelName} -f ${modelfilePath}`);
+
+            const { execSync } = await import('node:child_process');
+            execSync(`ollama create ${modelName} -f "${modelfilePath}"`, {
+              stdio: 'pipe',
+              encoding: 'utf-8',
+              timeout: 300000,
+            });
+
+            console.log(`✅ Model loaded into Ollama despite training errors`);
+            log(logFilePath, `Successfully loaded ${modelName} into Ollama`);
+          } catch (ollamaError) {
+            console.warn(`⚠️  Failed to load model into Ollama: ${(ollamaError as Error).message}`);
+            log(logFilePath, `Ollama load failed: ${(ollamaError as Error).message}`);
+          }
+        }
+      } catch (fallbackError) {
+        // Don't fail the entire process if fallback Modelfile creation fails
+        log(logFilePath, `Fallback Modelfile creation failed: ${(fallbackError as Error).message}`);
+        console.warn(`⚠️  Could not create fallback Modelfile: ${(fallbackError as Error).message}`);
+      }
+    }
+
     // Final completion message
     if (summary.training_success) {
       tracker.complete(`Training successful - adapter saved to ${opts.FINAL_ADAPTER_DIR}`);
@@ -1181,10 +1255,119 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
       console.log(`📁 Adapter location: ${opts.FINAL_ADAPTER_DIR}`);
       console.log(`📊 Progress log: ${tracker.getStatusFilePath()}`);
       console.log(`📝 Training output: ${path.join(opts.WORK_LOCAL, 'training_output.txt')}\n`);
+
+      // 3.6.1 Load model into Ollama automatically
+      console.log('\n🦙 Stage 7/7: Loading model into Ollama...');
+      log(logFilePath, 'Creating Ollama model from GGUF...');
+      tracker.startStage('ollama_load', 'Creating Ollama model');
+
+      try {
+        // Extract username from path (e.g., profiles/greggles/out/...)
+        const pathMatch = opts.FINAL_ADAPTER_DIR.match(/profiles\/([^/]+)\//);
+        const username = pathMatch ? pathMatch[1] : 'user';
+
+        // Determine GGUF path and model name based on training type
+        let ggufPath: string;
+        let modelName: string;
+        const dateStr = path.basename(path.dirname(opts.FINAL_ADAPTER_DIR));  // e.g., "2025-11-22"
+        const runId = path.basename(opts.FINAL_ADAPTER_DIR);                   // e.g., "2025-11-22-065730-98d59b"
+        const isFullFineTune = trainingMode === 'full_finetune' || trainingMode === 'full';
+
+        if (isFullFineTune) {
+          // Full fine-tune: use Q6_K quantized model
+          const modelParentDir = path.dirname(opts.FINAL_ADAPTER_DIR);
+          ggufPath = path.join(modelParentDir, `model-Q6_K.gguf`);
+          modelName = `${username}-finetune-${dateStr}`;
+
+          if (!fs.existsSync(ggufPath)) {
+            // Fallback to safetensors directory if Q6_K not found (conversion might have failed)
+            console.log(`⚠️ Q6_K model not found at ${ggufPath}, skipping Ollama load`);
+            log(logFilePath, `Q6_K model not found, skipping Ollama load`);
+            tracker.failStage('ollama_load', 'Q6_K model not found');
+            throw new Error('Q6_K model not found');
+          }
+        } else {
+          // LoRA training: use merged adapter GGUF
+          ggufPath = path.join(path.dirname(opts.FINAL_ADAPTER_DIR), 'adapter.gguf');
+          modelName = `${username}-${dateStr}`;
+
+          if (!fs.existsSync(ggufPath)) {
+            console.log(`⚠️ Adapter GGUF not found at ${ggufPath}, skipping Ollama load`);
+            log(logFilePath, `Adapter GGUF not found, skipping Ollama load`);
+            tracker.failStage('ollama_load', 'Adapter GGUF not found');
+            throw new Error('Adapter GGUF not found');
+          }
+        }
+
+        // Create Modelfile
+        const usernameCapitalized = username.charAt(0).toUpperCase() + username.slice(1);
+        const modelfileContent = `# MetaHuman OS ${isFullFineTune ? 'Full Fine-Tuned' : 'LoRA Adapter'} Model - ${username} - ${dateStr}
+# Training run: ${runId}
+FROM ${ggufPath}
+
+TEMPLATE """{{ if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{ if .Prompt }}<|im_start|>user
+{{ .Prompt }}<|im_end|>
+{{ end }}<|im_start|>assistant
+{{ .Response }}<|im_end|>
+"""
+
+SYSTEM You are ${usernameCapitalized}'s digital personality extension. Speak naturally in first person as ${usernameCapitalized}.`;
+
+        const modelfilePath = path.join(path.dirname(ggufPath), 'Modelfile');
+        fs.writeFileSync(modelfilePath, modelfileContent);
+        log(logFilePath, `Created Modelfile at ${modelfilePath}`);
+
+        // Load model into Ollama
+        console.log(`🦙 Creating Ollama model: ${modelName}`);
+        console.log(`📁 From GGUF: ${ggufPath}`);
+        log(logFilePath, `Running: ollama create ${modelName} -f ${modelfilePath}`);
+
+        const ollamaResult = execSync(`ollama create ${modelName} -f "${modelfilePath}"`, {
+          stdio: 'pipe',
+          encoding: 'utf-8',
+          timeout: 300000,  // 5 minute timeout
+        });
+
+        console.log(`✅ Ollama model created: ${modelName}`);
+        log(logFilePath, `Ollama model created successfully: ${modelName}`);
+        log(logFilePath, `Ollama output: ${ollamaResult}`);
+        tracker.completeStage('ollama_load');
+
+        summary.ollama_model = modelName;
+        summary.ollama_loaded = true;
+
+        console.log('\n🎊 Model is now available in Ollama!');
+        console.log(`   Run: ollama run ${modelName}\n`);
+
+      } catch (error) {
+        console.error(`⚠️ Failed to load model into Ollama: ${(error as Error).message}`);
+        log(logFilePath, `Ollama load failed: ${(error as Error).message}`);
+        tracker.failStage('ollama_load', (error as Error).message);
+        summary.ollama_loaded = false;
+        // Don't fail the entire training - model files are still usable
+      }
     }
 
     // 3.7. Write final summary
     fs.writeFileSync(opts.SUMMARY_FILE, JSON.stringify(summary, null, 2));
+
+    // 3.8. Auto-cleanup: Archive old training runs
+    try {
+      const pathMatch = opts.FINAL_ADAPTER_DIR.match(/profiles\/([^/]+)\//);
+      const username = pathMatch ? pathMatch[1] : null;
+
+      if (username) {
+        const { autoCleanupTrainingRuns, cleanupOldWorkDirectories } = await import('@metahuman/core');
+        const isFullFineTune = trainingMode === 'full_finetune' || trainingMode === 'full';
+        await autoCleanupTrainingRuns(username, opts.RUN_LABEL, isFullFineTune);
+        cleanupOldWorkDirectories(username);
+      }
+    } catch (err) {
+      console.warn('[lora-trainer] Auto-cleanup failed (non-critical):', (err as Error).message);
+      log(logFilePath, `Auto-cleanup failed: ${(err as Error).message}`);
+    }
   }
 
   return summary;

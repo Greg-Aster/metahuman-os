@@ -22,6 +22,8 @@ const mkdirpSync = (dir: string) => fs.mkdirSync(dir, { recursive: true });
 import { runRemoteTraining } from './lora-trainer';
 import { randomBytes } from 'node:crypto';
 import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
+import { applySchemaBatch } from '../../packages/core/src/schema-manager.js';
+import type { FormattedSample, SchemaAppliedSample } from '../../packages/core/src/schema-manager.js';
 
 // Load environment variables from .env file FIRST
 dotenv.config({ path: path.join(systemPaths.root, '.env') });
@@ -302,10 +304,83 @@ async function mainWithContext() {
   }
 
   // 2.2. Build dataset (local)
-  const datasetStrategy = process.env.METAHUMAN_DATASET_BUILDER?.toLowerCase() || 'classic';
+  const datasetStrategy = process.env.METAHUMAN_DATASET_BUILDER?.toLowerCase() || 'advanced';
   let samples_used = 0;
 
-  if (datasetStrategy === 'ai') {
+  if (datasetStrategy === 'advanced') {
+    // NEW: Use advanced curation pipeline (same as fine-tune-cycle.ts)
+    console.log('[full-cycle] Using advanced curation pipeline');
+
+    const CURATED_PATH = path.join(OUT_ROOT, 'curated_memories.json');
+    const FORMATTED_PATH = path.join(OUT_ROOT, 'formatted_samples.json');
+    const SCHEMA_PATH = path.join(OUT_ROOT, 'schema_applied.json');
+
+    // Step 1: Curate memories (advanced quality filtering)
+    console.log('[full-cycle] STEP 1/4: Curating memories...');
+    const curatorArgs = ['--username', ctx.username, '--output', CURATED_PATH];
+
+    // Support monthly training strategy from env vars
+    if (process.env.METAHUMAN_DAYS_RECENT || process.env.METAHUMAN_OLD_SAMPLES) {
+      const daysRecent = process.env.METAHUMAN_DAYS_RECENT || '30';
+      const oldSamples = process.env.METAHUMAN_OLD_SAMPLES || '3000';
+      curatorArgs.push('--days-recent', daysRecent);
+      curatorArgs.push('--old-samples', oldSamples);
+      console.log(`[full-cycle] Using monthly strategy (${daysRecent} days recent + ${oldSamples} old)`);
+    }
+
+    if (process.env.METAHUMAN_MAX_SAMPLES) {
+      curatorArgs.push('--max', process.env.METAHUMAN_MAX_SAMPLES);
+    }
+
+    const curatorCode = await runAgent('memory-curator', curatorArgs, ctx.username);
+    if (curatorCode !== 0) {
+      throw new Error('Memory curation failed');
+    }
+
+    // Step 2: Format samples (add cognitive mode tags)
+    console.log('[full-cycle] STEP 2/4: Formatting samples with mode tags...');
+    const formatterArgs = ['--input', CURATED_PATH, '--output', FORMATTED_PATH];
+    const formatterCode = await runAgent('mode-formatter', formatterArgs, ctx.username);
+    if (formatterCode !== 0) {
+      throw new Error('Mode formatting failed');
+    }
+
+    // Step 3: Apply schema (model-family specific wrapping)
+    console.log('[full-cycle] STEP 3/4: Applying schema wrappers...');
+    const formattedContent = fs.readFileSync(FORMATTED_PATH, 'utf-8');
+    const formattedSamples = JSON.parse(formattedContent) as FormattedSample[];
+
+    // Get base model from config (will be loaded below)
+    const trainingConfigPath = path.join(systemPaths.etc, 'training.json');
+    let baseModel = 'unsloth/Qwen3-14B'; // default
+    if (fs.existsSync(trainingConfigPath)) {
+      const cfg = JSON.parse(fs.readFileSync(trainingConfigPath, 'utf-8'));
+      baseModel = process.env.METAHUMAN_BASE_MODEL || cfg.base_model || baseModel;
+    }
+
+    console.log(`[full-cycle] Applying schema for base model: ${baseModel}`);
+    const schemaAppliedSamples: SchemaAppliedSample[] = applySchemaBatch(formattedSamples, baseModel);
+    fs.writeFileSync(SCHEMA_PATH, JSON.stringify(schemaAppliedSamples, null, 2));
+
+    // Step 4: Export to JSONL
+    console.log('[full-cycle] STEP 4/4: Exporting to JSONL...');
+    const jsonlLines: string[] = [];
+    for (const sample of schemaAppliedSamples) {
+      // Unsloth expects: instruction (user), input (optional context), output (assistant)
+      // SchemaAppliedSample has wrapped input/output ready for training
+      jsonlLines.push(JSON.stringify({
+        instruction: sample.input,  // Wrapped user input (with mode tags)
+        input: '',                   // No additional context needed
+        output: sample.output        // Wrapped assistant output (with mode tags)
+      }));
+    }
+    fs.writeFileSync(CLEAN_DATA_FILE, jsonlLines.join('\n'));
+    fs.writeFileSync(RAW_DATA_FILE, jsonlLines.join('\n')); // For compatibility
+
+    samples_used = schemaAppliedSamples.length;
+    console.log(`[full-cycle] Advanced curation complete: ${samples_used} high-quality samples`);
+
+  } else if (datasetStrategy === 'ai') {
     console.log('[full-cycle] Using AI dataset builder strategy');
     const aiBuilderPath = path.join(systemPaths.brain, 'agents', 'ai-dataset-builder.ts');
     const args = ['tsx', aiBuilderPath, '--output', CLEAN_DATA_FILE];
@@ -493,14 +568,8 @@ async function mainWithContext() {
   }
 
   const canonicalSafetensors = path.join(datasetDir, 'adapter_model.safetensors');
-  const uniqueSafetensors = path.join(datasetDir, `adapter_model-${RUN_LABEL}.safetensors`);
-  try {
-    if (!fs.existsSync(uniqueSafetensors)) {
-      fs.copyFileSync(adapterPath, uniqueSafetensors);
-    }
-  } catch (e) {
-    console.warn('[full-cycle] Failed to write unique adapter_model.safetensors copy:', (e as Error).message);
-  }
+  // Note: We don't create timestamped copies - files already exist in run directories
+  // Symlinks provide access without duplicating storage
   try {
     if (fs.existsSync(canonicalSafetensors) || fs.lstatSync(canonicalSafetensors)) {
       fs.rmSync(canonicalSafetensors);
@@ -561,21 +630,14 @@ async function mainWithContext() {
   const personaName = ctx.username.charAt(0).toUpperCase() + ctx.username.slice(1);
   const recentGGUF = path.join(OUT_ROOT, 'adapter.gguf');
   const canonicalGGUF = path.join(datasetDir, 'adapter.gguf');
-  const uniqueGGUF = path.join(datasetDir, `adapter-${RUN_LABEL}.gguf`);
 
   // Verify the merged GGUF exists
   if (!fs.existsSync(recentGGUF)) {
     throw new Error(`Merged GGUF not found at ${recentGGUF}. Training may have failed.`);
   }
 
-  // Preserve unique copy and update canonical pointer
-  try {
-    if (!fs.existsSync(uniqueGGUF)) {
-      fs.copyFileSync(recentGGUF, uniqueGGUF);
-    }
-  } catch (e) {
-    console.warn('[full-cycle] Failed to write unique GGUF copy:', (e as Error).message);
-  }
+  // Note: Removed timestamped copy creation - files already exist in run directories
+  // Symlinks provide access to latest without duplicating storage
 
   try {
     if (fs.existsSync(canonicalGGUF) || fs.lstatSync(canonicalGGUF)) {
@@ -622,6 +684,14 @@ SYSTEM You are ${personaName}'s digital personality extension. Speak naturally i
     modelfile = `# MetaHuman OS Fully-Merged Model - ${ctx.username} - ${DATE_STR}
 # This GGUF contains both the base model and trained adapter (merged on RunPod)
 FROM ${recentGGUF}
+
+TEMPLATE """{{ if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{ if .Prompt }}<|im_start|>user
+{{ .Prompt }}<|im_end|>
+{{ end }}<|im_start|>assistant
+{{ .Response }}<|im_end|>
+"""
 
 SYSTEM You are ${personaName}'s digital personality extension. Speak naturally in first person as ${personaName}.
 `;
@@ -715,6 +785,15 @@ SYSTEM You are ${personaName}'s digital personality extension. Speak naturally i
   console.log(`\n✅ [full-cycle] Training complete for user: ${ctx.username}`);
   console.log(`   Model name: ${modelName}`);
   console.log(`   Dataset: ${datasetDir}`);
+
+  // Auto-cleanup: Archive old training runs
+  try {
+    const { autoCleanupTrainingRuns, cleanupOldWorkDirectories } = await import('@metahuman/core');
+    await autoCleanupTrainingRuns(ctx.username, RUN_LABEL, false); // false = LoRA adapter
+    cleanupOldWorkDirectories(ctx.username);
+  } catch (err) {
+    console.warn('[full-cycle] Auto-cleanup failed (non-critical):', (err as Error).message);
+  }
 }
 
 async function main() {

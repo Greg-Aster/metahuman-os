@@ -313,14 +313,14 @@ async function executeNodeByType(
 
   if (executor) {
     try {
-      // Execute with timeout protection (30 seconds)
+      // Execute with timeout protection (120 seconds for LLM calls)
       const startTime = Date.now();
       if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting at ${new Date().toISOString()}`);
 
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => {
-          reject(new Error(`⏱️ TIMEOUT: Node ${node.id} (${nodeType}) exceeded 30 second execution limit`));
-        }, 30000);
+          reject(new Error(`⏱️ TIMEOUT: Node ${node.id} (${nodeType}) exceeded 120 second execution limit`));
+        }, 120000);
       });
 
       const executionPromise = executor(inputs, context, node.properties);

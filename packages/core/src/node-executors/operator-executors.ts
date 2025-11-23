@@ -220,9 +220,6 @@ export const skillExecutorExecutor: NodeExecutor = async (inputs, context) => {
     if (!result.success && result.error && retryCount < maxRetries) {
       console.log(`[SkillExecutor] Skill ${skillId} failed (retry ${retryCount}/${maxRetries}), analyzing error...`);
 
-      // Import error recovery executor
-      const { errorRecoveryExecutor } = await import('./operator-executors.js');
-
       // Call error recovery executor to categorize and determine if we should retry
       errorRecoveryAnalysis = await errorRecoveryExecutor(
         [{ error: result.error, skillId, retryCount }],
