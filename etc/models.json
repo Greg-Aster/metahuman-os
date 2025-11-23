@@ -82,36 +82,6 @@
         "sizeGB": 9.3
       }
     },
-    "persona.with-lora": {
-      "provider": "ollama",
-      "model": "greggles-2025-11-22",
-      "adapters": [
-        "/home/greggles/metahuman/profiles/greggles/out/adapters/2025-11-22/2025-11-22-060353-b09636/adapter.gguf"
-      ],
-      "baseModel": "unsloth/Qwen3-14B",
-      "roles": [
-        "persona",
-        "conversation",
-        "coder",
-        "orchestrator"
-      ],
-      "description": "Persona model with LoRA adapter for voice tuning (Nov 22 training)",
-      "options": {
-        "contextWindow": 8192,
-        "temperature": 0.8,
-        "topP": 0.95,
-        "repeatPenalty": 1.4
-      },
-      "metadata": {
-        "priority": "high",
-        "alwaysLoaded": false,
-        "estimatedLatency": "medium",
-        "adapterLoadTime": 1000,
-        "trainedOn": "2025-11-22",
-        "evalScore": null,
-        "sizeGB": 9
-      }
-    },
     "default.curator": {
       "provider": "ollama",
       "model": "qwen3:14b",
@@ -308,20 +278,6 @@
         "source": "ollama-discovery"
       }
     },
-    "ollama.greggles-finetune-2025-11-22:latest": {
-      "provider": "ollama",
-      "model": "greggles-finetune-2025-11-22:latest",
-      "roles": [
-        "orchestrator",
-        "persona"
-      ],
-      "adapters": [],
-      "description": "Imported from Ollama tag greggles-finetune-2025-11-22:latest",
-      "options": {},
-      "metadata": {
-        "source": "ollama-discovery"
-      }
-    },
     "ollama.greggles-finetune-q6k-2025-11-22:latest": {
       "provider": "ollama",
       "model": "greggles-finetune-q6k-2025-11-22:latest",
@@ -331,6 +287,20 @@
       ],
       "adapters": [],
       "description": "Imported from Ollama tag greggles-finetune-q6k-2025-11-22:latest",
+      "options": {},
+      "metadata": {
+        "source": "ollama-discovery"
+      }
+    },
+    "ollama.greggles-2025-11-22:latest": {
+      "provider": "ollama",
+      "model": "greggles-2025-11-22:latest",
+      "roles": [
+        "persona",
+        "orchestrator"
+      ],
+      "adapters": [],
+      "description": "Imported from Ollama tag greggles-2025-11-22:latest",
       "options": {},
       "metadata": {
         "source": "ollama-discovery"
@@ -376,13 +346,10 @@
   "cognitiveModeMappings": {
     "dual": {
       "orchestrator": "default.orchestrator",
-      "persona": "persona.with-lora",
-      "coder": "persona.with-lora",
       "planner": "default.orchestrator",
       "curator": "default.coder",
       "summarizer": "default.summarizer",
-      "psychotherapist": "default.coder",
-      "description": "Full cognitive mirror with operator routing"
+      "psychotherapist": "default.coder"
     },
     "agent": {
       "orchestrator": "default.orchestrator",
@@ -391,13 +358,11 @@
       "planner": "default.planner",
       "curator": "default.curator",
       "summarizer": "default.summarizer",
-      "psychotherapist": "default.psychotherapist",
-      "description": "Lightweight assistant mode"
+      "psychotherapist": "default.psychotherapist"
     },
     "emulation": {
-      "orchestrator": "ollama.greggles-finetune-q6k-2025-11-22:latest",
-      "persona": "ollama.greggles-finetune-q6k-2025-11-22:latest",
-      "description": "Read-only personality snapshot"
+      "orchestrator": "ollama.greggles-2025-11-22:latest",
+      "persona": "ollama.greggles-2025-11-22:latest"
     }
   },
   "providers": {

@@ -5,7 +5,7 @@ import { getActiveAdapter } from '@metahuman/core';
 import { listAvailableRoles, resolveModelForCognitiveMode, loadModelRegistry } from '@metahuman/core/model-resolver';
 import { loadCognitiveMode } from '@metahuman/core/cognitive-mode';
 import { getIndexStatus } from '@metahuman/core/vector-index';
-import { listAvailableAgents, getProcessingStatus } from '@metahuman/core/agent-monitor';
+import { listAvailableAgents } from '@metahuman/core/agent-monitor';
 import { isRunning as isOllamaRunning } from '@metahuman/core/ollama';
 import { getRuntimeMode } from '@metahuman/core/runtime-mode';
 import { getUserOrAnonymous, getProfilePaths, systemPaths } from '@metahuman/core';
@@ -278,31 +278,18 @@ const handler: APIRoute = async ({ cookies }) => {
     // AGENT ACTIVITY
     let agentActivity: any = {
       available: [],
-      processing: null,
     };
 
     try {
       const agentNames = listAvailableAgents(); // Returns string[]
-      const processing = getProcessingStatus();
 
       // listAvailableAgents returns just names, not full objects
-      // We'll need to get run stats from audit logs or processing status
+      // We'll need to get run stats from audit logs
       agentActivity.available = agentNames.map((name: string) => ({
         name,
         lastRun: null, // TODO: Parse from audit logs
         runCount: 0,   // TODO: Parse from audit logs
       }));
-
-      // Only show processing if it has actual data
-      if (processing && processing.agent) {
-        agentActivity.processing = {
-          agent: processing.agent,
-          status: processing.status || 'processing',
-          lastActivity: processing.lastActivity,
-        };
-      } else {
-        agentActivity.processing = null;
-      }
     } catch {}
 
     // SYSTEM HEALTH

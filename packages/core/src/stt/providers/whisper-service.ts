@@ -100,6 +100,20 @@ export class WhisperService {
     // Ensure server is ready (auto-start if needed)
     const serverReady = await this._ensureServerReady();
     if (!serverReady) {
+      // Check if server is loading
+      try {
+        const healthResponse = await fetch(`${serverUrl}/health`);
+        if (healthResponse.ok) {
+          const health = await healthResponse.json();
+          if (health.status === 'loading') {
+            throw new Error('WHISPER_LOADING: Model is still loading, please wait...');
+          }
+        }
+      } catch (e) {
+        if ((e as Error).message.startsWith('WHISPER_LOADING:')) {
+          throw e;
+        }
+      }
       throw new Error(`Whisper server could not be started at ${serverUrl}`);
     }
 
@@ -120,6 +134,10 @@ export class WhisperService {
 
     if (!response.ok) {
       const errorText = await response.text();
+      // Check if it's a "still loading" error from the server
+      if (response.status === 503 && errorText.includes('still loading')) {
+        throw new Error('WHISPER_LOADING: Model is still loading, please wait...');
+      }
       throw new Error(`Whisper server error (${response.status}): ${errorText}`);
     }
 
@@ -228,7 +246,14 @@ print(json.dumps(result))
       });
 
       clearTimeout(timeout);
-      return response.ok;
+
+      if (!response.ok) {
+        return false;
+      }
+
+      // Check if model is ready (not just loading)
+      const health = await response.json();
+      return health.status === 'ready';
     } catch {
       return false;
     }
@@ -364,19 +389,29 @@ print(json.dumps(result))
 
       console.log(`[WhisperService] Started server (PID ${child.pid}) on port ${port}`);
 
-      // Wait for server to be ready (max 10 seconds)
+      // Wait for server to respond (not necessarily model loaded - max 10 seconds)
       const maxWaitMs = 10000;
       const startWaitTime = Date.now();
       while (Date.now() - startWaitTime < maxWaitMs) {
         await new Promise((resolve) => setTimeout(resolve, 500));
-        const healthy = await this.checkServerHealth(this.config.server.url);
-        if (healthy) {
-          console.log(`[WhisperService] Server is ready`);
-          return true;
+
+        // Check if server is responding (any status is fine - loading, ready, or error)
+        try {
+          const response = await fetch(`${this.config.server.url}/health`, {
+            signal: AbortSignal.timeout(2000)
+          });
+
+          if (response.ok) {
+            const health = await response.json();
+            console.log(`[WhisperService] Server responding with status: ${health.status}`);
+            return true; // Server is up, even if model still loading
+          }
+        } catch {
+          // Server not responding yet, continue waiting
         }
       }
 
-      console.warn('[WhisperService] Server start timeout');
+      console.warn('[WhisperService] Server failed to respond within 10 seconds');
       return false;
     } catch (error) {
       console.error('[WhisperService] Failed to start server:', error);

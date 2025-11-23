@@ -217,7 +217,7 @@ if [ "$USE_WHISPER_SERVER" = "true" ] && [ "$AUTO_START_WHISPER" = "true" ]; the
   echo "  Device: $WHISPER_DEVICE"
   echo "  Compute type: $WHISPER_COMPUTE"
 
-  # Start server in background
+  # Start server in background (non-blocking)
   nohup "$PYTHON_BIN" "$SERVER_SCRIPT" \
     --model "$WHISPER_MODEL" \
     --device "$WHISPER_DEVICE" \
@@ -228,17 +228,15 @@ if [ "$USE_WHISPER_SERVER" = "true" ] && [ "$AUTO_START_WHISPER" = "true" ]; the
   WHISPER_PID=$!
   echo "$WHISPER_PID" > "$WHISPER_PID_FILE"
 
-  # Wait for server to start
-  echo "  Waiting for server to initialize..."
-  sleep 3
-
-  # Verify it's running
-  if kill -0 "$WHISPER_PID" 2>/dev/null && curl -s --max-time 3 http://127.0.0.1:$WHISPER_PORT/health > /dev/null 2>&1; then
+  # Quick server health check (process started, not waiting for model load)
+  sleep 1
+  if kill -0 "$WHISPER_PID" 2>/dev/null; then
     echo -e "  ${GREEN}✓ Whisper server started (PID: $WHISPER_PID)${NC}"
+    echo "    ⏳ Model loading in background..."
     echo "    Logs: $LOG_FILE"
     echo "    Endpoint: http://127.0.0.1:$WHISPER_PORT"
   else
-    echo -e "  ${RED}✗ Whisper server failed to start${NC}"
+    echo -e "  ${RED}✗ Whisper server process failed to start${NC}"
     echo "    Check logs: $LOG_FILE"
     rm -f "$WHISPER_PID_FILE"
     exit 1

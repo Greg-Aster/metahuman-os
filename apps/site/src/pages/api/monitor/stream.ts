@@ -9,7 +9,6 @@ import {
   paths,
   getAgentStatuses,
   getAgentMetrics,
-  getProcessingStatus,
   listAvailableAgents,
 } from '@metahuman/core';
 
@@ -38,7 +37,6 @@ export const GET: APIRoute = ({ request }) => {
         try {
           const statuses = getAgentStatuses();
           const agents = listAvailableAgents();
-          const processing = getProcessingStatus();
 
           // Build comprehensive metrics for each agent
           const agentMetrics = agents.map((name) => {
@@ -64,22 +62,10 @@ export const GET: APIRoute = ({ request }) => {
             };
           });
 
-          const processingStatus = {
-            processed: processing.processedMemories,
-            total: processing.totalMemories,
-            processedPercentage:
-              processing.totalMemories > 0
-                ? Math.round(
-                    (processing.processedMemories / processing.totalMemories) * 100
-                  )
-                : 0,
-          };
-
           sendEvent({
             type: 'metrics',
             timestamp: new Date().toISOString(),
             agents: agentMetrics,
-            processing: processingStatus,
           });
         } catch (error) {
           console.error('Error computing metrics:', error);
@@ -159,11 +145,12 @@ export const GET: APIRoute = ({ request }) => {
       sendEvent({ type: 'connected' });
       sendMetricsUpdate();
 
-      // Check for new audit entries every 1 second
-      const auditInterval = setInterval(readNewLines, 1000);
+      // Check for new audit entries every 30 seconds (reduced from 1s to prevent 100% CPU)
+      // 24MB log file causes massive CPU when polled every second
+      const auditInterval = setInterval(readNewLines, 30000);
 
-      // Also send periodic metrics updates every 5 seconds (in case no audit events)
-      const metricsInterval = setInterval(sendMetricsUpdate, 5000);
+      // Also send periodic metrics updates every 30 seconds (in case no audit events)
+      const metricsInterval = setInterval(sendMetricsUpdate, 30000);
 
       request.signal.addEventListener('abort', () => {
         isClosed = true;

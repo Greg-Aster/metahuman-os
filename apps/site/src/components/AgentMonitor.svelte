@@ -27,16 +27,9 @@
     errors: string[];
   }
 
-  interface ProcessingStatus {
-    processed: number;
-    total: number;
-    processedPercentage: number;
-  }
-
   export let compact = false;
 
   let agents: AgentMetrics[] = [];
-  let processing: ProcessingStatus | null = null;
   let connected = false;
   let eventSource: EventSource | null = null;
   let expandedAgents: Set<string> = new Set();
@@ -237,7 +230,6 @@
           connected = true;
         } else if (data.type === 'metrics') {
           agents = sortAgentsByActivity(data.agents || []);
-          processing = data.processing || null;
         }
       } catch (err) {
         console.error('Failed to parse SSE event:', err);
@@ -268,18 +260,6 @@
         {connected ? 'Live' : 'Connecting...'}
       </span>
     </div>
-
-    {#if processing}
-      <div class="flex items-center gap-1.5 text-[0.7rem] flex-1">
-        <span class="font-medium text-gray-500 dark:text-gray-400">Memory:</span>
-        <div class="agent-progress-bar">
-          <div class="agent-progress-fill" style="width: {processing.processedPercentage}%" />
-        </div>
-        <span class="text-[0.65rem] text-gray-500 dark:text-gray-400 whitespace-nowrap">
-          {processing.processed}/{processing.total} ({processing.processedPercentage}%)
-        </span>
-      </div>
-    {/if}
 
     {#if $sleepStatus}
       <div class="flex items-center gap-1.5 text-[0.7rem] font-medium px-2 py-1 rounded-md bg-black/[0.03] dark:bg-white/[0.03]">

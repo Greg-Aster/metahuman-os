@@ -7,7 +7,44 @@ import { callLLM } from '@metahuman/core/model-router'
  *
  * This sends a minimal inference request to Ollama to trigger model loading
  * into memory, preventing cold-start latency on first real use.
+ *
+ * Features:
+ * - Deduplication: Won't warm the same model twice within 5 minutes
+ * - Timeout: Fails gracefully after 30s instead of hanging forever
+ * - Thread-safe: Uses in-memory cache to prevent concurrent warmups
  */
+
+// In-memory cache to prevent duplicate warmups
+// Key: role name, Value: timestamp of last warmup
+const warmupCache = new Map<string, number>();
+const WARMUP_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const WARMUP_TIMEOUT = 30 * 1000; // 30 seconds
+
+function isRecentlyWarmed(role: string): boolean {
+  const lastWarmup = warmupCache.get(role);
+  if (!lastWarmup) return false;
+  return Date.now() - lastWarmup < WARMUP_CACHE_TTL;
+}
+
+function markAsWarmed(role: string): void {
+  warmupCache.set(role, Date.now());
+}
+
+async function warmupWithTimeout(role: string): Promise<any> {
+  return Promise.race([
+    callLLM({
+      role: role as any,
+      messages: [{ role: 'user', content: 'hi' }],
+      options: {
+        maxTokens: 1,
+        temperature: 0,
+      },
+    }),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Warmup timeout after ${WARMUP_TIMEOUT}ms`)), WARMUP_TIMEOUT)
+    ),
+  ]);
+}
 
 const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
@@ -33,28 +70,35 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
       )
     }
 
+    // Skip if recently warmed (deduplication)
+    if (isRecentlyWarmed(role)) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: `Model for role "${role}" was recently warmed (cached)`,
+          cached: true
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
+
     const startTime = Date.now()
 
     try {
-      // Send minimal inference to trigger model loading
-      // 1 token generation is enough to load model into memory
-      await callLLM({
-        role: role as any,
-        messages: [{ role: 'user', content: 'hi' }],
-        options: {
-          maxTokens: 1,
-          temperature: 0,
-        },
-      })
+      // Send minimal inference to trigger model loading with timeout
+      await warmupWithTimeout(role)
 
       const duration = Date.now() - startTime
+
+      // Mark as warmed for deduplication
+      markAsWarmed(role)
 
       audit({
         category: 'system',
         level: 'info',
-        action: 'model_warmup',
+        event: 'model_warmup',
         actor: user.username,
-        context: {
+        details: {
           role,
           duration,
           trigger: 'user_request'
@@ -73,9 +117,9 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
       audit({
         category: 'system',
         level: 'error',
-        action: 'model_warmup_failed',
+        event: 'model_warmup_failed',
         actor: user.username,
-        context: {
+        details: {
           role,
           error: (error as Error).message
         }

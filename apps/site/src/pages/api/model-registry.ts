@@ -88,18 +88,25 @@ const getHandler: APIRoute = async ({ cookies }) => {
     }
 
     // Build available models list from registry + Ollama
-    const registryModels = Object.entries(registry.models || {}).map(([id, config]: [string, any]) => ({
-      id,
-      provider: config.provider,
-      model: config.model,
-      roles: Array.from(new Set(config.roles || [])),
-      description: config.description || '',
-      adapters: config.adapters || [],
-      baseModel: config.baseModel || null,
-      metadata: config.metadata || {},
-      options: config.options || {},
-      source: 'registry' as const
-    }))
+    // IMPORTANT: Only include registry models that actually exist in Ollama
+    const ollamaModelNames = new Set(ollamaModels.map(m => m.name))
+    const registryModels = Object.entries(registry.models || {})
+      .filter(([_id, config]: [string, any]) => {
+        // Only include if the model exists in Ollama
+        return ollamaModelNames.has(config.model)
+      })
+      .map(([id, config]: [string, any]) => ({
+        id,
+        provider: config.provider,
+        model: config.model,
+        roles: Array.from(new Set(config.roles || [])),
+        description: config.description || '',
+        adapters: config.adapters || [],
+        baseModel: config.baseModel || null,
+        metadata: config.metadata || {},
+        options: config.options || {},
+        source: 'registry' as const
+      }))
 
     // Add Ollama models that aren't in the registry
     const registryModelNames = new Set(registryModels.map(m => m.model))

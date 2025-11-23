@@ -25,6 +25,11 @@
   let logSlowRequests = true;
   let savingLogging = false;
 
+  // Audit logging control
+  let auditLoggingEnabled = false;
+  let auditLoggingLoading = false;
+  let auditLoggingSaving = false;
+
   // Node pipeline state
   let nodePipelineEnabled = false;
   let nodePipelineLocked = false;
@@ -36,6 +41,7 @@
     loadModelInfo();
     loadLoraState();
     loadLoggingConfig();
+    loadAuditLoggingState();
     loadNodePipelineState();
   });
 
@@ -82,6 +88,69 @@
       alert(`Failed to update node pipeline state: ${(err as Error).message}`);
     } finally {
       nodePipelineSaving = false;
+    }
+  }
+
+  async function loadAuditLoggingState() {
+    auditLoggingLoading = true;
+    try {
+      const res = await fetch('/api/audit-control');
+      if (res.ok) {
+        const data = await res.json();
+        auditLoggingEnabled = !!data.enabled;
+      }
+    } catch (err) {
+      console.error('[SystemSettings] Error loading audit logging state:', err);
+    } finally {
+      auditLoggingLoading = false;
+    }
+  }
+
+  async function handleAuditLoggingToggle(event: Event) {
+    if (auditLoggingSaving) {
+      event?.preventDefault();
+      return;
+    }
+    const target = event.currentTarget as HTMLInputElement | null;
+    const desired = target?.checked ?? !auditLoggingEnabled;
+    auditLoggingSaving = true;
+    try {
+      const res = await fetch('/api/audit-control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: desired })
+      });
+      if (!res.ok) {
+        throw new Error('Failed to update audit logging state');
+      }
+      const data = await res.json();
+      auditLoggingEnabled = !!data.enabled;
+    } catch (err) {
+      console.error('[SystemSettings] Error updating audit logging state:', err);
+      auditLoggingEnabled = !desired;
+      alert(`Failed to update audit logging: ${(err as Error).message}`);
+    } finally {
+      auditLoggingSaving = false;
+    }
+  }
+
+  async function purgeOldAuditLogs() {
+    if (!confirm('Purge audit logs older than 7 days? This cannot be undone.')) {
+      return;
+    }
+    try {
+      const res = await fetch('/api/audit-control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ purgeOld: true })
+      });
+      if (!res.ok) {
+        throw new Error('Failed to purge old logs');
+      }
+      alert('Old audit logs have been purged successfully');
+    } catch (err) {
+      console.error('[SystemSettings] Error purging logs:', err);
+      alert(`Failed to purge logs: ${(err as Error).message}`);
     }
   }
 
@@ -283,6 +352,47 @@
           Legacy pipeline is active. Enable to route chats through the node graph.
         {/if}
       </p>
+    </div>
+  </div>
+
+  <!-- Audit Logging Control -->
+  <div class="setting-group" style="margin-top: 1.5rem;">
+    <label class="setting-label">Audit Logging</label>
+    <div class="lora-toggle-container">
+      <div class="lora-toggle-header">
+        <span class="setting-label">Enable detailed activity logs</span>
+        <label
+          class="toggle-switch"
+          for="audit-logging-toggle"
+          aria-label="Toggle audit logging"
+        >
+          <input
+            id="audit-logging-toggle"
+            type="checkbox"
+            bind:checked={auditLoggingEnabled}
+            disabled={auditLoggingLoading || auditLoggingSaving}
+            on:change={handleAuditLoggingToggle}
+          />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <p class="lora-toggle-description">
+        {#if auditLoggingEnabled}
+          ⚠️ Audit logging is ON. This creates large log files (24MB+/day) and causes 100% CPU when viewing Agent Monitor. Disable for better performance.
+        {:else}
+          ✓ Audit logging is OFF. System runs smoothly. Enable only when debugging issues.
+        {/if}
+      </p>
+      <div style="margin-top: 0.5rem;">
+        <button
+          class="action-button"
+          on:click={purgeOldAuditLogs}
+          disabled={auditLoggingSaving}
+          style="padding: 0.4rem 0.8rem; font-size: 0.85rem;"
+        >
+          🗑️ Purge Logs Older Than 7 Days
+        </button>
+      </div>
     </div>
   </div>
 

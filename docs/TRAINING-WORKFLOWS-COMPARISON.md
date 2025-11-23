@@ -2,25 +2,26 @@
 
 ## Overview
 
-MetaHuman OS has **two distinct training workflows** for fine-tuning models on your personality data:
+MetaHuman OS has **three distinct training workflows** for fine-tuning models on your personality data:
 
-1. **full-cycle.ts** - LoRA adapter training (lightweight, merged models)
-2. **fine-tune-cycle.ts** - Full fine-tuning (complete model replacement)
+1. **full-cycle.ts** - LoRA adapter training on RunPod (remote GPU, lightweight merged models)
+2. **full-cycle-local.ts** - LoRA adapter training locally (your GPU, same quality as remote)
+3. **fine-tune-cycle.ts** - Full fine-tuning (complete model replacement)
 
-Both use the **same training parameters** from [etc/training.json](../etc/training.json), but differ significantly in data curation, workflow structure, and output.
+All three use the **same training parameters** from [etc/training.json](../etc/training.json) and **identical advanced curation**, but differ in training location, workflow structure, and output format.
 
 ---
 
 ## 🔄 Workflow Structure
 
-### full-cycle.ts (LoRA Merged Models)
+### full-cycle.ts (Remote LoRA Training)
 **Location:** [brain/agents/full-cycle.ts](../brain/agents/full-cycle.ts)
 
 **Pipeline:**
 ```
-1. Curate dataset (inline, simple deduplication)
+1. Curate dataset (advanced pipeline - same as fine-tune)
 2. Upload to RunPod
-3. Train LoRA adapter
+3. Train LoRA adapter (remote GPU)
 4. Merge adapter with base model (on RunPod)
 5. Download merged GGUF (quantized Q4_K_M)
 6. Load to Ollama
@@ -28,6 +29,21 @@ Both use the **same training parameters** from [etc/training.json](../etc/traini
 ```
 
 **Single-file agent:** All logic in one file (~750 lines)
+
+### full-cycle-local.ts (Local LoRA Training)
+**Location:** [brain/agents/full-cycle-local.ts](../brain/agents/full-cycle-local.ts)
+
+**Pipeline:**
+```
+1. Curate dataset (advanced pipeline - identical to remote)
+2. Train LoRA adapter (local GPU)
+3. Convert to GGUF (quantized Q4_K_M)
+4. Load to Ollama
+5. Auto-cleanup old runs
+```
+
+**Requirements:** Python 3.10+, unsloth, CUDA GPU (24GB+ VRAM recommended)
+**Single-file agent:** All logic in one file (~630 lines)
 
 ### fine-tune-cycle.ts (Full Fine-Tuning)
 **Location:** [brain/agents/fine-tune-cycle.ts](../brain/agents/fine-tune-cycle.ts)
@@ -52,19 +68,19 @@ Both use the **same training parameters** from [etc/training.json](../etc/traini
 
 ## 📊 Data Curation
 
-### full-cycle.ts - Advanced Curation (UPDATED!)
-**Default:** Now uses the same advanced pipeline as fine-tune-cycle.ts!
+### All Workflows Use Advanced Curation (UPDATED!)
+**Default:** All three workflows now use the same advanced pipeline!
 
-**Approach:**
+**Approach (used by full-cycle.ts, full-cycle-local.ts, and fine-tune-cycle.ts):**
 - **Step 1:** Curate memories via `memory-curator` agent (quality filtering)
 - **Step 2:** Format samples via `mode-formatter` agent (add cognitive mode tags)
 - **Step 3:** Apply schema wrappers via `schema-manager` (model-specific)
 - **Step 4:** Export to JSONL
 - **Filler removal, response trimming, cognitive modes** - all included!
 
-**Legacy mode:** Set `METAHUMAN_DATASET_BUILDER=classic` for old behavior
+**Legacy mode:** Set `METAHUMAN_DATASET_BUILDER=classic` for old behavior (full-cycle.ts and full-cycle-local.ts only)
 
-**Pros:** Same quality as fine-tune-cycle, concise responses, mode awareness
+**Pros:** High quality, concise responses, mode awareness, consistent across all workflows
 **Cons:** Slightly slower than old simple deduplication (but worth it!)
 
 ---
@@ -192,32 +208,40 @@ run-summary.json                         # Training summary
 
 ## ⚖️ Key Differences Summary
 
-| Feature | full-cycle.ts | fine-tune-cycle.ts |
-|---------|---------------|-------------------|
-| **Training Type** | LoRA adapter (merged) | Full fine-tuning |
-| **Data Curation** | ✅ Advanced (same as fine-tune) | ✅ Advanced + quality filtering |
-| **Cognitive Modes** | ✅ Assigned automatically | ✅ Assigned automatically |
-| **Filler Removal** | ✅ Yes | ✅ Yes |
-| **Response Trimming** | ✅ Yes (40-300 words) | ✅ Yes (40-300 words) |
-| **Monthly Strategy** | ✅ Yes (via env vars) | ✅ Yes (recent + old mix) |
-| **Quality Metrics** | ✅ Calculated and logged | ✅ Calculated and logged |
-| **Model Size** | 8.4GB (Q4_K_M) | 12GB (Q6_K) |
-| **Training Time** | ~30-45 min | ~45-60 min |
-| **VRAM Usage** | ~10-14GB | ~10-14GB (same) |
-| **Output Quality** | Verbose, may have fillers | Concise, cleaned |
-| **Use Case** | Quick iterations, testing | Production, monthly updates |
-| **Retraining** | Requires safetensors | Full model available |
+| Feature | full-cycle.ts | full-cycle-local.ts | fine-tune-cycle.ts |
+|---------|---------------|---------------------|-------------------|
+| **Training Type** | LoRA adapter (merged) | LoRA adapter (merged) | Full fine-tuning |
+| **Training Location** | RunPod (remote GPU) | Local GPU | RunPod (remote GPU) |
+| **Data Curation** | ✅ Advanced | ✅ Advanced (identical) | ✅ Advanced |
+| **Cognitive Modes** | ✅ Auto-assigned | ✅ Auto-assigned | ✅ Auto-assigned |
+| **Filler Removal** | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Response Trimming** | ✅ Yes (40-300 words) | ✅ Yes (40-300 words) | ✅ Yes (40-300 words) |
+| **Monthly Strategy** | ✅ Yes (via env vars) | ✅ Yes (via env vars) | ✅ Yes (recent + old mix) |
+| **Quality Metrics** | ✅ Calculated | ✅ Calculated | ✅ Calculated |
+| **Model Size** | 8.4GB (Q4_K_M) | 8.4GB (Q4_K_M) | 12GB (Q6_K) |
+| **Training Time** | ~30-45 min | ~30-45 min | ~45-60 min |
+| **VRAM Usage** | ~10-14GB (RunPod) | ~24GB (local) | ~10-14GB (RunPod) |
+| **Requirements** | RunPod API key | Python + unsloth + CUDA | RunPod API key |
+| **Use Case** | Quick iterations | Local dev/testing | Production |
+| **Retraining** | Requires safetensors | Requires safetensors | Full model available |
 
 ---
 
 ## 🎯 When to Use Which?
 
-### Use full-cycle.ts when:
+### Use full-cycle.ts (Remote) when:
 - ✅ Want LoRA adapter training (lighter, faster)
 - ✅ Smaller model size is priority (8.4GB vs 12GB)
 - ✅ Testing new configurations quickly
-- ✅ Same quality as fine-tune but faster inference
+- ✅ No local GPU or want cloud-based training
 - ✅ **Now includes all advanced curation features!**
+
+### Use full-cycle-local.ts (Local) when:
+- ✅ Have local CUDA GPU (24GB+ VRAM)
+- ✅ Want same quality as remote without RunPod costs
+- ✅ Prefer keeping training data local
+- ✅ Developing/testing training scripts locally
+- ✅ **Same advanced curation as remote!**
 
 ### Use fine-tune-cycle.ts when:
 - ✅ Production monthly training
@@ -232,7 +256,7 @@ run-summary.json                         # Training summary
 
 ## 🚀 Usage Examples
 
-### full-cycle.ts
+### full-cycle.ts (Remote)
 ```bash
 # LoRA training with advanced curation (default)
 pnpm tsx brain/agents/full-cycle.ts --username greggles
@@ -249,6 +273,28 @@ pnpm tsx brain/agents/full-cycle.ts --username greggles
 # Use legacy simple curation (not recommended)
 export METAHUMAN_DATASET_BUILDER=classic
 pnpm tsx brain/agents/full-cycle.ts --username greggles
+```
+
+### full-cycle-local.ts (Local)
+```bash
+# Local LoRA training with advanced curation (default)
+pnpm tsx brain/agents/full-cycle-local.ts --username greggles
+
+# With monthly training strategy
+export METAHUMAN_DAYS_RECENT=30
+export METAHUMAN_OLD_SAMPLES=3000
+pnpm tsx brain/agents/full-cycle-local.ts --username greggles
+
+# With custom sample limit
+export METAHUMAN_MAX_SAMPLES=5000
+pnpm tsx brain/agents/full-cycle-local.ts --username greggles
+
+# Use legacy simple curation (not recommended)
+export METAHUMAN_DATASET_BUILDER=classic
+pnpm tsx brain/agents/full-cycle-local.ts --username greggles
+
+# Setup local training environment (first time)
+./bin/setup-local-training
 ```
 
 ### fine-tune-cycle.ts

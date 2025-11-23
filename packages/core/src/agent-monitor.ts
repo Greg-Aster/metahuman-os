@@ -181,60 +181,6 @@ export function getAgentStats(agentName: string): {
 }
 
 /**
- * Get processing status from recent runs
- */
-export function getProcessingStatus(): {
-  totalMemories: number;
-  processedMemories: number;
-  unprocessedMemories: number;
-} {
-  try {
-    const episodicDir = paths.episodic;
-    let total = 0;
-    let processed = 0;
-
-    const walk = (dir: string) => {
-      if (!fs.existsSync(dir)) return;
-
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const fullPath = path.join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        walk(fullPath);
-      } else if (entry.isFile() && entry.name.endsWith('.json')) {
-        try {
-          const content = fs.readFileSync(fullPath, 'utf8');
-          const memory = JSON.parse(content);
-          total++;
-
-          if (memory.metadata?.processed) {
-            processed++;
-          }
-        } catch {
-          // Skip invalid files
-        }
-      }
-    }
-  };
-
-    walk(episodicDir);
-
-    return {
-      totalMemories: total,
-      processedMemories: processed,
-      unprocessedMemories: total - processed,
-    };
-  } catch (error) {
-    // Handle access denied for anonymous users gracefully
-    return {
-      totalMemories: 0,
-      processedMemories: 0,
-      unprocessedMemories: 0,
-    };
-  }
-}
-
-/**
  * Agent registry path
  */
 const getRegistryPath = () => path.join(paths.logs, 'agents', 'running.json');

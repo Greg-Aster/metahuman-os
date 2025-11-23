@@ -20,6 +20,8 @@ import dotenv from 'dotenv';
 const mkdirpSync = (dir: string) => fs.mkdirSync(dir, { recursive: true });
 import { randomBytes } from 'node:crypto';
 import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
+import { applySchemaBatch } from '../../packages/core/src/schema-manager.js';
+import type { FormattedSample, SchemaAppliedSample } from '../../packages/core/src/schema-manager.js';
 
 // Load environment variables
 dotenv.config({ path: path.join(systemPaths.root, '.env') });
@@ -278,20 +280,6 @@ async function mainWithContext() {
   const WORK_LOCAL = path.join(legacyRunRoot, RUN_LABEL);
   const FINAL_ADAPTER_DIR = path.join(OUT_ROOT, 'adapter');
 
-  console.log('[full-cycle-local] Preparing dataset...');
-  const instructionsPath = path.join(datasetDir, 'instructions.jsonl');
-
-  // If dataset doesn't exist, run adapter-builder
-  if (!fs.existsSync(datasetDir) || !fs.existsSync(instructionsPath)) {
-    console.log('[full-cycle-local] Building new dataset with adapter-builder...');
-    const buildRc = await runAgent('adapter-builder');
-    if (buildRc !== 0) {
-      throw new Error('adapter-builder failed');
-    }
-  } else {
-    console.log(`[${new Date().toISOString()}] Dataset already exists, skipping adapter-builder`);
-  }
-
   // Step 2: Prepare local training data
   mkdirpSync(legacyRunRoot);
   mkdirpSync(WORK_LOCAL);
@@ -302,60 +290,153 @@ async function mainWithContext() {
   const CLEAN_DATA_FILE = path.join(WORK_LOCAL, 'unsloth_dataset.jsonl');
   const CONFIG_FILE = path.join(WORK_LOCAL, 'config.json');
 
-  // Copy instructions to raw dataset file
   mkdirpSync(path.dirname(RAW_DATA_FILE));
-  try {
-    fs.copyFileSync(instructionsPath, RAW_DATA_FILE);
-    fs.copyFileSync(instructionsPath, canonicalRawDataFile);
-  } catch (copyErr) {
-    console.warn('[full-cycle-local] Failed to copy dataset:', (copyErr as Error).message);
-  }
 
-  // Step 2.2: Clean dataset with deduplication
-  console.log('[full-cycle-local] Building dataset from JSONL...');
-  const rawLines = fs.readFileSync(RAW_DATA_FILE, 'utf-8').trim().split('\n').filter(Boolean);
-  const parsed = rawLines
-    .map(line => {
-      try {
-        return JSON.parse(line);
-      } catch {
-        return null;
-      }
-    })
-    .filter(obj => obj && obj.instruction && obj.output);
+  // Step 2.2: Build dataset with advanced curation or classic deduplication
+  const datasetStrategy = process.env.METAHUMAN_DATASET_BUILDER?.toLowerCase() || 'advanced';
+  let samples_used = 0;
 
-  // Deduplicate samples
-  const seenSamples = new Set<string>();
-  const cleaned: any[] = [];
-  let duplicateCount = 0;
+  if (datasetStrategy === 'advanced') {
+    // NEW: Use advanced curation pipeline (same as full-cycle.ts)
+    console.log('[full-cycle-local] Using advanced curation pipeline');
 
-  for (const obj of parsed) {
-    const cleanObj = {
-      instruction: obj.instruction,
-      input: obj.input || '',
-      output: obj.output
-    };
-    const fingerprint = JSON.stringify(cleanObj);
+    const CURATED_PATH = path.join(OUT_ROOT, 'curated_memories.json');
+    const FORMATTED_PATH = path.join(OUT_ROOT, 'formatted_samples.json');
+    const SCHEMA_PATH = path.join(OUT_ROOT, 'schema_applied.json');
 
-    if (seenSamples.has(fingerprint)) {
-      duplicateCount++;
-      continue;
+    // Step 1: Curate memories (advanced quality filtering)
+    console.log('[full-cycle-local] STEP 1/4: Curating memories...');
+    const curatorArgs = ['--username', ctx.username, '--output', CURATED_PATH];
+
+    // Support monthly training strategy from env vars
+    if (process.env.METAHUMAN_DAYS_RECENT || process.env.METAHUMAN_OLD_SAMPLES) {
+      const daysRecent = process.env.METAHUMAN_DAYS_RECENT || '30';
+      const oldSamples = process.env.METAHUMAN_OLD_SAMPLES || '3000';
+      curatorArgs.push('--days-recent', daysRecent);
+      curatorArgs.push('--old-samples', oldSamples);
+      console.log(`[full-cycle-local] Using monthly strategy (${daysRecent} days recent + ${oldSamples} old)`);
     }
 
-    seenSamples.add(fingerprint);
-    cleaned.push(cleanObj);
-  }
+    if (process.env.METAHUMAN_MAX_SAMPLES) {
+      curatorArgs.push('--max', process.env.METAHUMAN_MAX_SAMPLES);
+    }
 
-  fs.writeFileSync(CLEAN_DATA_FILE, cleaned.map(obj => JSON.stringify(obj)).join('\n'));
-  const samples_used = cleaned.length;
+    const curatorCode = await runAgent('memory-curator', curatorArgs);
+    if (curatorCode !== 0) {
+      throw new Error('Memory curation failed');
+    }
 
-  if (duplicateCount > 0) {
-    console.log(`[full-cycle-local] Removed ${duplicateCount} duplicate samples`);
-  }
-  console.log(`[full-cycle-local] Kept ${samples_used} unique samples after cleaning`);
+    // Step 2: Format samples (add cognitive mode tags)
+    console.log('[full-cycle-local] STEP 2/4: Formatting samples with mode tags...');
+    const formatterArgs = ['--input', CURATED_PATH, '--output', FORMATTED_PATH];
+    const formatterCode = await runAgent('mode-formatter', formatterArgs);
+    if (formatterCode !== 0) {
+      throw new Error('Mode formatting failed');
+    }
 
-  if (samples_used === 0) {
-    throw new Error('CLEAN_DATA_FILE ended up empty after cleaning');
+    // Step 3: Apply schema (model-family specific wrapping)
+    console.log('[full-cycle-local] STEP 3/4: Applying schema wrappers...');
+    const formattedContent = fs.readFileSync(FORMATTED_PATH, 'utf-8');
+    const formattedSamples = JSON.parse(formattedContent) as FormattedSample[];
+
+    // Get base model from config (will be loaded below)
+    const trainingConfigPath = path.join(systemPaths.etc, 'training.json');
+    let baseModel = 'unsloth/Qwen3-14B'; // default
+    if (fs.existsSync(trainingConfigPath)) {
+      const cfg = JSON.parse(fs.readFileSync(trainingConfigPath, 'utf-8'));
+      baseModel = process.env.METAHUMAN_BASE_MODEL || cfg.base_model || baseModel;
+    }
+
+    console.log(`[full-cycle-local] Applying schema for base model: ${baseModel}`);
+    const schemaAppliedSamples: SchemaAppliedSample[] = applySchemaBatch(formattedSamples, baseModel);
+    fs.writeFileSync(SCHEMA_PATH, JSON.stringify(schemaAppliedSamples, null, 2));
+
+    // Step 4: Export to JSONL
+    console.log('[full-cycle-local] STEP 4/4: Exporting to JSONL...');
+    const jsonlLines: string[] = [];
+    for (const sample of schemaAppliedSamples) {
+      // Unsloth expects: instruction (user), input (optional context), output (assistant)
+      // SchemaAppliedSample has wrapped input/output ready for training
+      jsonlLines.push(JSON.stringify({
+        instruction: sample.input,  // Wrapped user input (with mode tags)
+        input: '',                   // No additional context needed
+        output: sample.output        // Wrapped assistant output (with mode tags)
+      }));
+    }
+    fs.writeFileSync(CLEAN_DATA_FILE, jsonlLines.join('\n'));
+    fs.writeFileSync(RAW_DATA_FILE, jsonlLines.join('\n')); // For compatibility
+    fs.writeFileSync(canonicalRawDataFile, jsonlLines.join('\n'));
+
+    samples_used = schemaAppliedSamples.length;
+    console.log(`[full-cycle-local] Advanced curation complete: ${samples_used} high-quality samples`);
+
+  } else {
+    // Classic mode: Simple deduplication (legacy behavior)
+    console.log('[full-cycle-local] Using classic deduplication strategy');
+
+    const instructionsPath = path.join(datasetDir, 'instructions.jsonl');
+
+    // If dataset doesn't exist, run adapter-builder
+    if (!fs.existsSync(datasetDir) || !fs.existsSync(instructionsPath)) {
+      console.log('[full-cycle-local] Building new dataset with adapter-builder...');
+      const buildRc = await runAgent('adapter-builder');
+      if (buildRc !== 0) {
+        throw new Error('adapter-builder failed');
+      }
+    }
+
+    // Copy instructions to raw dataset file
+    try {
+      fs.copyFileSync(instructionsPath, RAW_DATA_FILE);
+      fs.copyFileSync(instructionsPath, canonicalRawDataFile);
+    } catch (copyErr) {
+      console.warn('[full-cycle-local] Failed to copy dataset:', (copyErr as Error).message);
+    }
+
+    // Simple deduplication
+    const rawLines = fs.readFileSync(RAW_DATA_FILE, 'utf-8').trim().split('\n').filter(Boolean);
+    const parsed = rawLines
+      .map(line => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter(obj => obj && obj.instruction && obj.output);
+
+    const seenSamples = new Set<string>();
+    const cleaned: any[] = [];
+    let duplicateCount = 0;
+
+    for (const obj of parsed) {
+      const cleanObj = {
+        instruction: obj.instruction,
+        input: obj.input || '',
+        output: obj.output
+      };
+      const fingerprint = JSON.stringify(cleanObj);
+
+      if (seenSamples.has(fingerprint)) {
+        duplicateCount++;
+        continue;
+      }
+
+      seenSamples.add(fingerprint);
+      cleaned.push(cleanObj);
+    }
+
+    fs.writeFileSync(CLEAN_DATA_FILE, cleaned.map(obj => JSON.stringify(obj)).join('\n'));
+    samples_used = cleaned.length;
+
+    if (duplicateCount > 0) {
+      console.log(`[full-cycle-local] Removed ${duplicateCount} duplicate samples`);
+    }
+    console.log(`[full-cycle-local] Kept ${samples_used} unique samples after cleaning`);
+
+    if (samples_used === 0) {
+      throw new Error('CLEAN_DATA_FILE ended up empty after cleaning');
+    }
   }
 
   // Step 2.3: Load training config
@@ -525,6 +606,15 @@ SYSTEM You are ${personaName}'s digital personality extension. Speak naturally i
   }
 
   cleanupAfterSuccessfulMerge(OUT_ROOT, WORK_LOCAL);
+
+  // Auto-cleanup: Archive old training runs
+  try {
+    const { autoCleanupTrainingRuns, cleanupOldWorkDirectories } = await import('@metahuman/core');
+    await autoCleanupTrainingRuns(ctx.username, RUN_LABEL, false); // false = LoRA adapter
+    cleanupOldWorkDirectories(ctx.username);
+  } catch (err) {
+    console.warn('[full-cycle-local] Auto-cleanup failed (non-critical):', (err as Error).message);
+  }
 
   await audit({
     level: 'info',

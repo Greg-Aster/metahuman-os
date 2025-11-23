@@ -24,7 +24,6 @@ import {
   listAvailableAgents,
   getAgentLogs,
   getAgentStats,
-  getProcessingStatus,
   registerAgent,
   unregisterAgent,
   isAgentRunning,
@@ -952,7 +951,6 @@ Agents & Automation:
   agent list          List available agents
   agent status        Show agent run statistics
   agent logs [name]   View recent agent activity
-  agent monitor       Show memory processing status
 
 Ollama & AI:
   ollama status       Check if Ollama is running
@@ -1018,7 +1016,6 @@ For more information, see DESIGN.md and ARCHITECTURE.md
     console.error('  list                List available agents');
     console.error('  status [name]       Show agent statistics');
     console.error('  logs [name]         View recent agent logs');
-    console.error('  monitor             Show memory processing status');
     process.exit(1);
   }
 
@@ -1152,20 +1149,6 @@ For more information, see DESIGN.md and ARCHITECTURE.md
           const level = log.level.toUpperCase().padEnd(5);
           console.log(`[${time}] [${level}] ${log.agent}: ${log.message}`);
         });
-      }
-      break;
-    }
-
-    case 'monitor': {
-      const status = getProcessingStatus();
-      console.log('Memory Processing Status:\n');
-      console.log(`Total memories: ${status.totalMemories}`);
-      console.log(`Processed: ${status.processedMemories}`);
-      console.log(`Unprocessed: ${status.unprocessedMemories}`);
-
-      if (status.totalMemories > 0) {
-        const percentage = ((status.processedMemories / status.totalMemories) * 100).toFixed(1);
-        console.log(`Completion: ${percentage}%`);
       }
       break;
     }
