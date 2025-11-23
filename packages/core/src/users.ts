@@ -11,7 +11,7 @@ import { randomUUID } from 'crypto';
 import bcrypt from 'bcrypt';
 import { paths } from './paths.js';
 import { audit } from './audit.js';
-import type { OnboardingState } from './onboarding.js';
+import type { OnboardingState } from './types/onboarding.js';
 
 const BCRYPT_ROUNDS = 12; // Standard secure rounds for bcrypt
 

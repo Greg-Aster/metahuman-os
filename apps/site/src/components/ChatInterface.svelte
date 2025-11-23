@@ -123,7 +123,12 @@ let reasoningStages: ReasoningStage[] = [];
   }
 
   function ensureAuditStream() {
-    if (auditStream) return;
+    // Close any existing connection first to prevent duplicates
+    if (auditStream) {
+      auditStream.close();
+      auditStream = null;
+    }
+
     auditStream = new EventSource('/api/stream');
     auditStream.onmessage = (event) => {
       try {
@@ -617,7 +622,11 @@ let reasoningStages: ReasoningStage[] = [];
       scrollObserver.observe(scrollSentinel);
     }
 
-    // Connect to reflection stream
+    // Connect to reflection stream (close existing connection first to prevent duplicates)
+    if (reflectionStream) {
+      reflectionStream.close();
+      reflectionStream = null;
+    }
     reflectionStream = new EventSource('/api/reflections/stream');
 
     reflectionStream.onmessage = (event) => {
@@ -626,41 +635,77 @@ let reasoningStages: ReasoningStage[] = [];
 
         // Handle reflections
         if (data.type === 'reflection' && data.reflection) {
-          messages = [
-            ...messages,
-            {
-              role: 'reflection',
-              content: data.reflection,
-              timestamp: new Date(data.timestamp).getTime(),
-            },
-          ];
+          const reflectionTimestamp = new Date(data.timestamp).getTime();
 
-          // Add voice support for inner dialog if enabled
-          if (boredomTtsEnabled && mode === 'inner' && data.reflection) {
-            void speakText(data.reflection);
+          // Check for duplicates based on content and timestamp
+          const isDuplicate = messages.some(msg =>
+            msg.role === 'reflection' &&
+            msg.content === data.reflection &&
+            Math.abs(msg.timestamp - reflectionTimestamp) < 1000 // Within 1 second
+          );
+
+          if (!isDuplicate) {
+            messages = [
+              ...messages,
+              {
+                role: 'reflection',
+                content: data.reflection,
+                timestamp: reflectionTimestamp,
+              },
+            ];
+
+            // Add voice support for inner dialog if enabled
+            if (boredomTtsEnabled && mode === 'inner' && data.reflection) {
+              void speakText(data.reflection);
+            }
+          } else {
+            console.log('[reflection] Ignoring duplicate reflection');
           }
         }
 
         // Handle dreams
         if (data.type === 'dream' && data.dream) {
-          messages = [
-            ...messages,
-            {
-              role: 'dream',
-              content: data.dream,
-              timestamp: new Date(data.timestamp).getTime(),
-            },
-          ];
+          const dreamTimestamp = new Date(data.timestamp).getTime();
 
-          // Add voice support for dreams if enabled
-          if (boredomTtsEnabled && mode === 'inner' && data.dream) {
-            void speakText(data.dream);
+          // Check for duplicates based on content and timestamp
+          const isDuplicate = messages.some(msg =>
+            msg.role === 'dream' &&
+            msg.content === data.dream &&
+            Math.abs(msg.timestamp - dreamTimestamp) < 1000 // Within 1 second
+          );
+
+          if (!isDuplicate) {
+            messages = [
+              ...messages,
+              {
+                role: 'dream',
+                content: data.dream,
+                timestamp: dreamTimestamp,
+              },
+            ];
+
+            // Add voice support for dreams if enabled
+            if (boredomTtsEnabled && mode === 'inner' && data.dream) {
+              void speakText(data.dream);
+            }
+          } else {
+            console.log('[dream] Ignoring duplicate dream');
           }
         }
 
         // Handle curiosity questions (only in conversation mode)
         if (data.type === 'curiosity' && data.question && mode === 'conversation') {
           console.log('[curiosity] Received new question via SSE:', data.questionId);
+
+          // Check for duplicates - prevent same question ID from being added multiple times
+          const isDuplicate = messages.some(msg =>
+            msg.meta?.curiosityQuestionId === data.questionId
+          );
+
+          if (isDuplicate) {
+            console.log('[curiosity] Ignoring duplicate question:', data.questionId);
+            return;
+          }
 
           const newMessage = {
             role: 'assistant' as MessageRole,
