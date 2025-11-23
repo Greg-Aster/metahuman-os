@@ -5,7 +5,6 @@ import {
   getAgentStats,
   getAgentStatuses,
   getAgentMetrics,
-  getProcessingStatus,
 } from '@metahuman/core';
 
 export const GET: APIRoute = async ({ url }) => {
@@ -16,20 +15,7 @@ export const GET: APIRoute = async ({ url }) => {
       case 'overview': {
         const agents = listAvailableAgents();
         const statuses = getAgentStatuses();
-        const processing = getProcessingStatus();
         const recentLogs = getAgentLogs(undefined, 50);
-
-        // Shape processing status to what the UI expects
-        const processingStatus = {
-          processed: processing.processedMemories,
-          total: processing.totalMemories,
-          processedPercentage:
-            processing.totalMemories > 0
-              ? Math.round(
-                  (processing.processedMemories / processing.totalMemories) * 100
-                )
-              : 0,
-        };
 
         // Build comprehensive metrics for each agent (same shape as SSE endpoint)
         const agentMetrics = agents.map((name) => {
@@ -58,7 +44,6 @@ export const GET: APIRoute = async ({ url }) => {
         return new Response(
           JSON.stringify({
             agents: agentMetrics,
-            processing: processingStatus,
             recentLogs,
           }),
           {
@@ -84,19 +69,6 @@ export const GET: APIRoute = async ({ url }) => {
 
         return new Response(
           JSON.stringify({ stats, logs }),
-          {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json',
-            },
-          }
-        );
-      }
-
-      case 'processing': {
-        const processing = getProcessingStatus();
-        return new Response(
-          JSON.stringify(processing),
           {
             status: 200,
             headers: {

@@ -21,7 +21,22 @@ export default defineConfig({
         'mh.dndiy.org',
         '.dndiy.org' // Allow all subdomains
       ],
-      hmr: process.env.DISABLE_HMR === 'true' ? false : true
+      hmr: process.env.DISABLE_HMR === 'true' ? false : true,
+      watch: {
+        // Exclude agent-modified dirs to prevent 14,000+ reads/sec (80-90% CPU)
+        // See: strace shows 28,303 read() calls in 2 seconds
+        ignored: [
+          '**/node_modules/**',
+          '**/.git/**',
+          '**/dist/**',
+          '**/.astro/**',
+          '**/logs/**',      // Audit logs change constantly
+          '**/memory/**',    // Episodic memory files change constantly
+          '**/persona/**',   // Persona updates
+          '**/out/**',       // Generated outputs
+          '**/*.log'
+        ]
+      }
     }
   }
 });

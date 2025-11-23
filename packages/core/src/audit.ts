@@ -11,6 +11,61 @@ import { getUserContext } from './context.js';
  * When no context is set, logs go to root-level logs/audit/ (system logs)
  */
 
+// Audit logging control - disabled by default to prevent CPU issues from massive logs
+let auditEnabled = false;
+let auditRetentionDays = 7; // Auto-delete logs older than this
+
+/**
+ * Enable or disable audit logging globally
+ */
+export function setAuditEnabled(enabled: boolean): void {
+  auditEnabled = enabled;
+}
+
+/**
+ * Get current audit logging state
+ */
+export function isAuditEnabled(): boolean {
+  return auditEnabled;
+}
+
+/**
+ * Set audit log retention period (days)
+ */
+export function setAuditRetention(days: number): void {
+  auditRetentionDays = days;
+}
+
+/**
+ * Purge audit logs older than retention period
+ */
+export function purgeOldAuditLogs(): void {
+  const auditDir = path.join(paths.logs, 'audit');
+  if (!fs.existsSync(auditDir)) return;
+
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - auditRetentionDays);
+  const cutoffStr = cutoffDate.toISOString().slice(0, 10);
+
+  const files = fs.readdirSync(auditDir);
+  let purgedCount = 0;
+
+  for (const file of files) {
+    if (file.endsWith('.ndjson')) {
+      const fileDate = file.replace('.ndjson', '');
+      if (fileDate < cutoffStr) {
+        const filePath = path.join(auditDir, file);
+        fs.unlinkSync(filePath);
+        purgedCount++;
+      }
+    }
+  }
+
+  if (purgedCount > 0) {
+    console.log(`[audit] Purged ${purgedCount} old log file(s)`);
+  }
+}
+
 export interface AuditEntry {
   timestamp: string;
   level: 'info' | 'warn' | 'error' | 'critical';
@@ -37,6 +92,9 @@ export interface AuditLog {
  * paths.logs automatically resolves to user profile if context is set.
  */
 export function audit(entry: Omit<AuditEntry, 'timestamp'>): void {
+  // Skip if audit logging is disabled (prevents 100% CPU from massive log files)
+  if (!auditEnabled) return;
+
   // Get current user context (if any)
   const ctx = getUserContext();
 

@@ -1351,13 +1351,33 @@ let reasoningStages: ReasoningStage[] = [];
           console.log('[chat-mic] No transcript detected (empty or null response)');
         }
       } else {
-        console.error('[chat-mic] STT request failed:', res.status, res.statusText);
+        // Check if it's a "still loading" error
+        const errorText = await res.text();
+        if (res.status === 500 && errorText.includes('WHISPER_LOADING')) {
+          console.log('[chat-mic] Whisper model still loading...');
+          // Show friendly message to user (add to messages as system message)
+          messages = [...messages, {
+            role: 'system',
+            content: '⏳ Voice recognition is still loading... please wait a moment and try again.',
+            timestamp: Date.now()
+          }];
+        } else {
+          console.error('[chat-mic] STT request failed:', res.status, res.statusText);
+        }
       }
     } catch (e) {
       console.error('[chat-mic] STT failed:', e);
     } finally {
+      // Clean up recording state
       micChunks = [];
       micStartedAt = null;
+      micRecording = false; // Ensure recording flag is reset
+      micSpeaking = false; // Reset speaking state
+
+      // In continuous mode, ensure we're ready for next recording
+      if (micContinuousMode) {
+        console.log('[chat-mic] Ready for next speech in continuous mode');
+      }
     }
   }
 
@@ -1412,6 +1432,8 @@ let reasoningStages: ReasoningStage[] = [];
             if (micRecorder && micRecorder.state === 'recording') {
               console.log('[chat-mic] WARNING: Recorder already recording, skipping start');
               micRecording = true; // Sync state
+              // CRITICAL: Don't return here - must continue VAD loop!
+              requestAnimationFrame(tickVAD);
               return;
             }
 

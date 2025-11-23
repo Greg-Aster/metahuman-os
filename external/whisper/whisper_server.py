@@ -7,6 +7,7 @@ import argparse
 import io
 import json
 import tempfile
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +27,8 @@ app = FastAPI(title="Whisper STT Server")
 # Global model instance
 model: Optional[WhisperModel] = None
 model_config = {}
+model_loading = False
+model_ready = False
 
 
 class TranscribeResponse(BaseModel):
@@ -37,8 +40,8 @@ class TranscribeResponse(BaseModel):
 
 @app.on_event("startup")
 async def startup():
-    """Initialize Whisper model on server startup"""
-    global model, model_config
+    """Initialize Whisper model on server startup (non-blocking)"""
+    global model, model_config, model_loading, model_ready
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="base.en", help="Whisper model size")
     parser.add_argument("--device", default="cpu", help="Device to use: cpu or cuda")
@@ -59,30 +62,64 @@ async def startup():
     if device == 'cuda' and compute_type == 'int8':
         compute_type = 'float16'  # float16 is better for GPU
 
-    print(f"Loading Whisper model '{args.model}' on {device} with {compute_type}...")
-    model = WhisperModel(args.model, device=device, compute_type=compute_type)
-    print(f"✓ Whisper model initialized (model={args.model}, device={device}, compute_type={compute_type})")
+    # Load model in background thread to avoid blocking server startup
+    def load_model():
+        global model, model_loading, model_ready
+        model_loading = True
+        print(f"⏳ Loading Whisper model '{args.model}' on {device} with {compute_type}...")
+        try:
+            model = WhisperModel(args.model, device=device, compute_type=compute_type)
+            model_ready = True
+            print(f"✓ Whisper model initialized (model={args.model}, device={device}, compute_type={compute_type})")
+        except Exception as e:
+            print(f"✗ Failed to load Whisper model: {e}")
+            model_ready = False
+        finally:
+            model_loading = False
+
+    thread = threading.Thread(target=load_model, daemon=True)
+    thread.start()
+    print(f"🚀 Whisper server started, model loading in background...")
 
 
 @app.get("/health")
 async def health():
-    """Health check endpoint"""
-    if model is None:
-        raise HTTPException(status_code=503, detail="Model not initialized")
+    """Health check endpoint - returns loading state"""
+    global model, model_loading, model_ready
 
-    return {
-        "status": "ok",
-        "model": model_config.get('model', 'unknown'),
-        "device": model_config.get('device', 'unknown'),
-        "compute_type": model_config.get('compute_type', 'unknown')
-    }
+    if model_ready and model is not None:
+        return {
+            "status": "ready",
+            "model": model_config.get('model', 'unknown'),
+            "device": model_config.get('device', 'unknown'),
+            "compute_type": model_config.get('compute_type', 'unknown')
+        }
+    elif model_loading:
+        return {
+            "status": "loading",
+            "message": "Model is loading in background, please wait...",
+            "model": model_config.get('model', 'unknown'),
+            "device": model_config.get('device', 'unknown'),
+            "compute_type": model_config.get('compute_type', 'unknown')
+        }
+    else:
+        return {
+            "status": "error",
+            "message": "Model failed to load",
+            "model": model_config.get('model', 'unknown')
+        }
 
 
 @app.post("/transcribe")
 async def transcribe(file: UploadFile = File(...), language: str = "en"):
     """Transcribe audio file to text"""
-    if model is None:
-        raise HTTPException(status_code=503, detail="Model not initialized")
+    global model, model_loading, model_ready
+
+    if not model_ready or model is None:
+        if model_loading:
+            raise HTTPException(status_code=503, detail="Model is still loading, please wait...")
+        else:
+            raise HTTPException(status_code=503, detail="Model not initialized")
 
     try:
         # Read audio data
