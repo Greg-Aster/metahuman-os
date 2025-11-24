@@ -563,7 +563,7 @@ Based on these execution steps, provide a clear, helpful response to the user's 
       cognitiveMode: context.cognitiveMode,
       options: {
         maxTokens: 2048,
-        repeatPenalty: 1.15,
+        repeatPenalty: 1.2,  // Increased from 1.20 to match persona_llm settings
         temperature: 0.7,
       },
     });

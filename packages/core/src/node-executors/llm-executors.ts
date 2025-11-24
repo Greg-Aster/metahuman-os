@@ -17,21 +17,57 @@ export const personaLLMExecutor: NodeExecutor = async (inputs, context) => {
   }
 
   // inputs[0] = conversation history (from conversation_history node)
-  // inputs[1] = memories (from semantic_search node)
+  // inputs[1] = memories (from semantic_search node) OR orchestrator instructions
+  // inputs[2] = orchestrator instructions (if using orchestrator flow)
   const conversationHistory = inputs[0]?.messages || context.conversationHistory || [];
+
+  // Check if inputs[2] has orchestrator data (new flow) or inputs[1] has memories (old flow)
+  let memories: any[] = [];
+  let orchestratorInstructions = '';
+  let responseStyle: 'verbose' | 'concise' | 'conversational' = 'conversational';
+
+  if (inputs[2]?.instructions) {
+    // New orchestrator flow: inputs[1] = memories, inputs[2] = orchestrator
+    memories = Array.isArray(inputs[1]) ? inputs[1] : [];
+    orchestratorInstructions = inputs[2].instructions || '';
+    responseStyle = inputs[2].responseStyle || 'conversational';
+  } else if (Array.isArray(inputs[1])) {
+    // Old flow: inputs[1] = memories
+    memories = inputs[1];
+  }
+
   const message = context.userMessage || '';
 
   try {
     const persona = loadPersonaCore();
 
-    const messages = [
-      {
-        role: 'system' as const,
-        content: `You are ${persona.identity.name}. ${persona.identity.purpose || ''}
+    // Format memories if available
+    let memoryContext = '';
+    if (memories.length > 0) {
+      memoryContext = '\n\nRelevant memories:\n' + memories
+        .map((mem: any, idx: number) => {
+          const content = mem.content || mem.text || mem.message || '';
+          const timestamp = mem.timestamp ? new Date(mem.timestamp).toLocaleDateString() : '';
+          return `${idx + 1}. ${timestamp ? `[${timestamp}] ` : ''}${content}`;
+        })
+        .join('\n');
+    }
+
+    // Build system prompt with orchestrator instructions
+    let systemContent = `You are ${persona.identity.name}. ${persona.identity.purpose || ''}
 
 ${persona.personality ? `Personality: ${JSON.stringify(persona.personality)}` : ''}
 
-Respond naturally as yourself, maintaining your personality and perspective.`,
+Respond naturally as yourself, maintaining your personality and perspective.${memoryContext}`;
+
+    if (orchestratorInstructions) {
+      systemContent += `\n\nInstructions: ${orchestratorInstructions}`;
+    }
+
+    const messages = [
+      {
+        role: 'system' as const,
+        content: systemContent,
       },
       ...conversationHistory.slice(-10).map((msg: any) => ({
         role: msg.role || 'user',
@@ -49,9 +85,16 @@ Respond naturally as yourself, maintaining your personality and perspective.`,
       return typeof msg.content === 'string' && msg.content.trim().length > 0;
     });
 
-    // Adjust temperature for inner dialogue (-0.1 for more focused responses)
+    // Calculate temperature based on response style and mode
+    let baseTemperature = 0.7;
+    if (responseStyle === 'verbose') {
+      baseTemperature = 0.8; // More creative for detailed responses
+    } else if (responseStyle === 'concise') {
+      baseTemperature = 0.5; // More focused for brief answers
+    }
+
+    // Adjust for inner dialogue (-0.1 for more focused responses)
     const mode = context.mode || context.dialogueType || 'conversation';
-    const baseTemperature = 0.7;
     const temperature = mode === 'inner' ? baseTemperature - 0.1 : baseTemperature;
 
     const response = await callLLM({
@@ -60,7 +103,7 @@ Respond naturally as yourself, maintaining your personality and perspective.`,
       cognitiveMode: context.cognitiveMode,
       options: {
         maxTokens: 2048,
-        repeatPenalty: 1.15,
+        repeatPenalty: 1.3,  // Increased from 1.15 to prevent repetition loops
         temperature,
       },
     });
@@ -178,6 +221,94 @@ export const modelRouterExecutor: NodeExecutor = async (inputs, context, propert
     console.error('[ModelRouter] Error:', error);
     return {
       response: 'Error routing to model',
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Orchestrator LLM Node
+ * Lightweight intent analysis for emulation mode
+ * Determines what the persona needs: memory context, response style, instructions
+ */
+export const orchestratorLLMExecutor: NodeExecutor = async (inputs, context, properties) => {
+  const userMessage = inputs[0] || context.userMessage || '';
+
+  if (!userMessage || userMessage.trim().length === 0) {
+    return {
+      needsMemory: false,
+      responseStyle: 'conversational',
+      instructions: 'Respond naturally to the greeting.',
+      error: 'No user message provided',
+    };
+  }
+
+  try {
+    const systemPrompt = `You are an intent analyzer for a conversational AI system. Your job is to analyze the user's query and determine:
+
+1. Does this query need memory/context from past conversations? (true/false)
+2. What response style is appropriate? (verbose/concise/conversational)
+3. What instructions should the persona receive?
+
+Examples:
+- "hi" → needsMemory: false, responseStyle: conversational, instructions: "Greet the user warmly"
+- "what's 2+2?" → needsMemory: false, responseStyle: concise, instructions: "Provide a direct answer"
+- "write me a book about AI" → needsMemory: false, responseStyle: verbose, instructions: "Generate a detailed book outline with chapters and key topics"
+- "what did Sarah say about the project?" → needsMemory: true, responseStyle: conversational, instructions: "Search memories for Sarah's comments and summarize naturally"
+- "make it shorter" → needsMemory: false, responseStyle: concise, instructions: "Condense the previous response to 1-2 sentences"
+- "tell me more about that" → needsMemory: true, responseStyle: verbose, instructions: "Expand on the previous topic with additional details from memory"
+
+Respond in JSON format:
+{
+  "needsMemory": true/false,
+  "responseStyle": "verbose" | "concise" | "conversational",
+  "instructions": "Clear instructions for the persona"
+}`;
+
+    const messages = [
+      { role: 'system' as const, content: systemPrompt },
+      { role: 'user' as const, content: `Analyze this query: "${userMessage}"` },
+    ];
+
+    const response = await callLLM({
+      role: 'orchestrator',
+      messages,
+      cognitiveMode: context.cognitiveMode,
+      options: {
+        maxTokens: 256,
+        repeatPenalty: 1.15,
+        temperature: 0.3, // Low temp for consistent classification
+      },
+    });
+
+    // Parse JSON response
+    try {
+      const parsed = JSON.parse(response.content);
+      return {
+        needsMemory: parsed.needsMemory || false,
+        responseStyle: parsed.responseStyle || 'conversational',
+        instructions: parsed.instructions || 'Respond naturally',
+        raw: response.content,
+      };
+    } catch (parseError) {
+      // If JSON parsing fails, extract from text
+      const needsMemoryMatch = response.content.match(/needsMemory[":]\s*(true|false)/i);
+      const styleMatch = response.content.match(/responseStyle[":]\s*["']?(verbose|concise|conversational)/i);
+      const instructionsMatch = response.content.match(/instructions[":]\s*["']([^"']+)/i);
+
+      return {
+        needsMemory: needsMemoryMatch?.[1]?.toLowerCase() === 'true' || false,
+        responseStyle: (styleMatch?.[1]?.toLowerCase() as 'verbose' | 'concise' | 'conversational') || 'conversational',
+        instructions: instructionsMatch?.[1] || 'Respond naturally',
+        raw: response.content,
+      };
+    }
+  } catch (error) {
+    console.error('[OrchestratorLLM] Error:', error);
+    return {
+      needsMemory: false,
+      responseStyle: 'conversational',
+      instructions: 'Respond naturally to the user',
       error: (error as Error).message,
     };
   }

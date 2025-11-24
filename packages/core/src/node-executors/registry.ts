@@ -19,7 +19,7 @@ import {
   errorRecoveryExecutor,
   stuckDetectorExecutor,
 } from './operator-executors.js';
-import { personaLLMExecutor, modelResolverExecutor, modelRouterExecutor, reflectorLLMExecutor } from './llm-executors.js';
+import { personaLLMExecutor, modelResolverExecutor, modelRouterExecutor, reflectorLLMExecutor, orchestratorLLMExecutor } from './llm-executors.js';
 import { chainOfThoughtStripperExecutor, safetyValidatorExecutor, responseRefinerExecutor } from './safety-executors.js';
 import { innerDialogueCaptureExecutor, memoryCaptureExecutor, auditLoggerExecutor, streamWriterExecutor, chatViewExecutor, ttsExecutor } from './output-executors.js';
 import { loopControllerExecutor, conditionalBranchExecutor, switchExecutor, forEachExecutor, conditionalRouterExecutor } from './control-flow-executors.js';
@@ -117,6 +117,7 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
 
   // Chat nodes
   'persona_llm': personaLLMExecutor,
+  'orchestrator_llm': orchestratorLLMExecutor,
   'reflector_llm': reflectorLLMExecutor,
   'chain_of_thought_stripper': chainOfThoughtStripperExecutor,
   'cot_stripper': chainOfThoughtStripperExecutor, // Alias for chain_of_thought_stripper

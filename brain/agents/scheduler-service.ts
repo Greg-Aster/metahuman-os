@@ -9,8 +9,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { scheduler, paths, audit, acquireLock, initGlobalLogger } from '@metahuman/core';
+import { preloadEmbeddingModel } from '@metahuman/core/embeddings';
 
-function main() {
+async function main() {
   initGlobalLogger('scheduler-service');
   console.log('[scheduler-service] Initializing...');
 
@@ -36,6 +37,11 @@ function main() {
   }
 
   console.log('[scheduler-service] Started successfully');
+
+  // Preload embedding model in background (don't block startup)
+  preloadEmbeddingModel().catch((err) => {
+    console.error('[scheduler-service] Failed to preload embedding model:', err);
+  });
 
   // Watch configuration file for changes
   const configPath = path.join(paths.etc, 'agents.json');
@@ -67,4 +73,7 @@ function main() {
   });
 }
 
-main();
+main().catch((err) => {
+  console.error('[scheduler-service] Fatal error:', err);
+  process.exit(1);
+});

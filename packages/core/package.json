@@ -9,6 +9,7 @@
     "./identity": "./src/identity.ts",
     "./memory": "./src/memory.ts",
     "./audit": "./src/audit.ts",
+    "./embeddings": "./src/embeddings.ts",
     "./paths": "./src/paths.ts",
     "./context": "./src/context.ts",
     "./ollama": "./src/ollama.ts",
