@@ -1173,20 +1173,21 @@ async function getRelevantContext(
 function buildSystemPrompt(mode: Mode, includePersonaSummary = true): string {
   let systemPrompt = '';
   if (includePersonaSummary) {
-    const persona = loadPersonaWithFacet();
+    try {
+      const persona = loadPersonaWithFacet();
 
-    // Phase 5: Add persona cache context (long-term themes and facts)
-    const personaCache = getPersonaContext();
+      // Phase 5: Add persona cache context (long-term themes and facts)
+      const personaCache = getPersonaContext();
 
-    const communicationStyle = persona.personality?.communicationStyle ?? {};
-    const tone = communicationStyle.tone;
-    const toneText = Array.isArray(tone) ? tone.join(', ') : tone || 'adaptive';
+      const communicationStyle = persona.personality?.communicationStyle ?? {};
+      const tone = communicationStyle.tone;
+      const toneText = Array.isArray(tone) ? tone.join(', ') : tone || 'adaptive';
 
-    const values = Array.isArray(persona.values?.core)
-      ? persona.values.core.map((v: any) => v.value || v).filter(Boolean)
-      : [];
+      const values = Array.isArray(persona.values?.core)
+        ? persona.values.core.map((v: any) => v.value || v).filter(Boolean)
+        : [];
 
-    systemPrompt = `
+      systemPrompt = `
 You are ${persona.identity.name}, an autonomous digital personality extension.
 Your role is: ${persona.identity.role}.
 Your purpose is: ${persona.identity.purpose}.
@@ -1197,8 +1198,19 @@ Your personality is defined by these traits:
 
 ${personaCache ? `Long-term context:\n${personaCache}\n` : ''}
 You are having a ${mode}.
-    `.trim();
+      `.trim();
+    } catch (error) {
+      console.warn('[persona_chat] Failed to load persona; using generic system prompt', (error as Error).message);
+      systemPrompt = '';
+    }
   } else {
+    systemPrompt = mode === 'inner'
+      ? 'You are having an internal dialogue with yourself.'
+      : 'You are having a conversation.';
+  }
+
+  // Fallback for anonymous/unauthenticated sessions where persona cannot be loaded
+  if (!systemPrompt) {
     systemPrompt = mode === 'inner'
       ? 'You are having an internal dialogue with yourself.'
       : 'You are having a conversation.';
@@ -1243,6 +1255,16 @@ function refreshSystemPrompt(mode: Mode, includePersonaSummary = true): void {
 
 // GET handler - no middleware bullshit, simple and explicit
 export const GET: APIRoute = async ({ request, cookies }) => {
+  console.log('========================================');
+  console.log('[persona_chat] GET HANDLER ENTERED');
+  console.log('[persona_chat] Request URL:', request.url);
+  try {
+    const dbg = new URL(request.url);
+    console.log('[persona_chat] Query params:', dbg.searchParams.toString());
+  } catch (err) {
+    console.warn('[persona_chat] Failed to parse request URL for logging', err);
+  }
+  console.log('========================================');
 
   // Simple, explicit auth - no middleware magic
   const user = getUserOrAnonymous(cookies);
@@ -1251,6 +1273,7 @@ export const GET: APIRoute = async ({ request, cookies }) => {
 
   const url = new URL(request.url);
   const message = url.searchParams.get('message') || '';
+  console.log('[persona_chat GET] Message:', message.substring(0, 100));
 
   const mode = url.searchParams.get('mode') || 'inner';
   const newSession = url.searchParams.get('newSession') === 'true';
@@ -1295,12 +1318,20 @@ export const GET: APIRoute = async ({ request, cookies }) => {
 // MIGRATED: 2025-11-20 - Explicit authentication pattern
 // Removed withUserContext wrapper - handleChatRequest does explicit authentication internally
 export const POST: APIRoute = async ({ request, cookies }) => {
+  console.log('========================================');
+  console.log('[persona_chat] POST HANDLER ENTERED');
+  console.log('[persona_chat] Request URL:', request.url);
+  console.log('========================================');
+
   // Simple, explicit auth
   const user = getUserOrAnonymous(cookies);
 
   try {
     const url = new URL(request.url);
     const body = await request.json();
+    console.log('[persona_chat] Request body keys:', Object.keys(body));
+    console.log('[persona_chat] Message:', body.message?.substring(0, 50));
+
     const graphParam = typeof body?.graphPipelineOverride === 'boolean' ? body.graphPipelineOverride : undefined;
 
     // handleChatRequest does its own authentication (no withUserContext wrapper)
@@ -1593,6 +1624,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
   // Determine if graph pipeline should be used
   const graphEnabled = graphPipelineOverride !== undefined ? graphPipelineOverride : resolveNodePipelineFlag();
+  console.log(`[CHAT_REQUEST] graphEnabled=${graphEnabled} (override=${graphPipelineOverride})`);
 
   // Build reply-to context BEFORE retrieving memories
   // This ensures the LLM knows what the user is responding to
@@ -1676,7 +1708,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   console.log(JSON.stringify(histories[m], null, 2));
 
   if (newSession || histories[m].length === 0) {
-    initializeChat(m, reasoningRequested, usingLora, includePersonaSummary);
+    initializeChat(m, reasoningRequested);
     if (!message) {
       return new Response(JSON.stringify({ response: 'Chat session initialized.' }), { status: 200 });
     }

@@ -233,7 +233,7 @@ async function executeNode(
     const inputSummary = Array.isArray(inputs)
       ? inputs.map(i => typeof i === 'object' ? `{${Object.keys(i).join(',')}}` : i)
       : inputs;
-    log.debug(`   ➤ Node ${nodeId} (${node.type.replace('cognitive/', '')}) START`);
+    log.debug(`   ➤ Node ${nodeId} (${node.type.replace('cognitive/', '')}) START at ${new Date().toISOString()}`);
     log.debug(`     Inputs: ${JSON.stringify(inputSummary).substring(0, 200)}`);
 
     // Execute the node based on its type

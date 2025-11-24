@@ -293,6 +293,23 @@ export const ConversationHistoryNode: NodeSchema = {
   description: 'Loads conversation history',
 };
 
+export const BufferManagerNode: NodeSchema = {
+  id: 'buffer_manager',
+  name: 'Buffer Manager',
+  category: 'context',
+  ...categoryColors.context,
+  inputs: [
+    { name: 'messages', type: 'array', description: 'Conversation messages to persist' },
+  ],
+  outputs: [
+    { name: 'result', type: 'object', description: 'Persistence result with persisted, mode, messageCount' },
+  ],
+  properties: {
+    mode: 'conversation',
+  },
+  description: 'Persists conversation buffer to disk',
+};
+
 // ============================================================================
 // OPERATOR NODES
 // ============================================================================
@@ -399,17 +416,55 @@ export const PersonaLLMNode: NodeSchema = {
   category: 'chat',
   ...categoryColors.chat,
   inputs: [
-    { name: 'messages', type: 'array', description: 'Chat history' },
-    { name: 'context', type: 'context', optional: true },
+    { name: 'personaText', type: 'object', description: 'Formatted persona text from persona_formatter' },
+    { name: 'conversationHistory', type: 'array', description: 'Chat history' },
+    { name: 'memories', type: 'array', optional: true, description: 'Semantic search memories' },
+    { name: 'orchestratorData', type: 'object', optional: true, description: 'Instructions from orchestrator' },
   ],
   outputs: [
-    { name: 'response', type: 'llm_response' },
+    { name: 'response', type: 'string' },
   ],
   properties: {
-    model: 'persona',
-    temperature: 0.8,
+    model: 'fallback',
+    temperature: 0.7,
   },
-  description: 'Generates response using persona model',
+  description: 'Generates response using persona with orchestrator instructions',
+};
+
+export const OrchestratorLLMNode: NodeSchema = {
+  id: 'orchestrator_llm',
+  name: 'Intent Orchestrator',
+  category: 'chat',
+  ...categoryColors.chat,
+  inputs: [
+    { name: 'userMessage', type: 'string', description: 'User message to analyze' },
+  ],
+  outputs: [
+    { name: 'decision', type: 'object', description: 'Object with needsMemory, responseStyle, instructions' },
+  ],
+  properties: {
+    temperature: 0.3,
+  },
+  description: 'Analyzes user intent to determine memory needs and response style',
+};
+
+export const PersonaFormatterNode: NodeSchema = {
+  id: 'persona_formatter',
+  name: 'Persona Formatter',
+  category: 'config',
+  ...categoryColors.config,
+  inputs: [
+    { name: 'personaData', type: 'object', description: 'Persona data from persona_loader' },
+  ],
+  outputs: [
+    { name: 'formatted', type: 'object', description: 'Object with formatted persona text' },
+  ],
+  properties: {
+    includePersonality: true,
+    includeValues: true,
+    includeGoals: true,
+  },
+  description: 'Formats persona data into system prompt text',
 };
 
 export const ReflectorLLMNode: NodeSchema = {
@@ -1363,16 +1418,65 @@ export const ScratchpadUpdaterNode: NodeSchema = {
   category: 'agent',
   ...categoryColors.agent,
   inputs: [
-    { name: 'data', type: 'object', description: 'Data to append/update in scratchpad' },
+    { name: 'iterationData', type: 'object', description: 'Iteration data with scratchpad' },
+    { name: 'observation', type: 'string', description: 'Observation from skill execution' },
+    { name: 'plan', type: 'object', description: 'Thought and action from planner' },
   ],
   outputs: [
-    { name: 'scratchpad', type: 'object', description: 'Updated scratchpad' },
+    { name: 'scratchpad', type: 'object', description: 'Updated scratchpad with iteration, maxIterations, scratchpad array' },
+  ],
+  properties: {},
+  description: 'Updates scratchpad with new thought, action, observation for ReAct loop',
+};
+
+export const IterationCounterNode: NodeSchema = {
+  id: 'iteration_counter',
+  name: 'Iteration Counter',
+  category: 'operator',
+  ...categoryColors.operator,
+  inputs: [
+    { name: 'scratchpad', type: 'object', description: 'Initial scratchpad from initializer' },
+    { name: 'loopBack', type: 'object', optional: true, description: 'Loop-back data from conditional router' },
+  ],
+  outputs: [
+    { name: 'iterationData', type: 'object', description: 'Object with iteration, maxIterations, scratchpad' },
   ],
   properties: {
-    appendTo: 'thoughts', // Field to append to
-    trackField: 'seenMemoryIds', // Field to track unique IDs
+    maxIterations: 10,
   },
-  description: 'Updates scratchpad state by appending data to specified fields',
+  description: 'Tracks iteration count in ReAct loop',
+};
+
+export const ScratchpadCompletionCheckerNode: NodeSchema = {
+  id: 'scratchpad_completion_checker',
+  name: 'Completion Checker',
+  category: 'operator',
+  ...categoryColors.operator,
+  inputs: [
+    { name: 'scratchpad', type: 'object', description: 'Scratchpad with iteration data' },
+  ],
+  outputs: [
+    { name: 'result', type: 'object', description: 'Object with isComplete, reason, scratchpad' },
+  ],
+  properties: {},
+  description: 'Checks if ReAct task is complete based on scratchpad content',
+};
+
+export const ScratchpadFormatterNode: NodeSchema = {
+  id: 'scratchpad_formatter',
+  name: 'Scratchpad Formatter',
+  category: 'operator',
+  ...categoryColors.operator,
+  inputs: [
+    { name: 'scratchpad', type: 'object', description: 'Scratchpad to format' },
+  ],
+  outputs: [
+    { name: 'formatted', type: 'string', description: 'Formatted scratchpad text' },
+  ],
+  properties: {
+    format: 'text', // 'text' | 'json' | 'markdown'
+  },
+  description: 'Formats scratchpad for display or LLM consumption',
 };
 
 export const ThoughtGeneratorNode: NodeSchema = {
@@ -1490,6 +1594,7 @@ export const nodeSchemas: NodeSchema[] = [
   ContextBuilderNode,
   SemanticSearchNode,
   ConversationHistoryNode,
+  BufferManagerNode,
 
   // Operator
   ReActPlannerNode,
@@ -1497,9 +1602,13 @@ export const nodeSchemas: NodeSchema[] = [
   ObservationFormatterNode,
   CompletionCheckerNode,
   ResponseSynthesizerNode,
+  IterationCounterNode,
+  ScratchpadCompletionCheckerNode,
+  ScratchpadFormatterNode,
 
   // Chat
   PersonaLLMNode,
+  OrchestratorLLMNode,
   ReflectorLLMNode,
   ChainOfThoughtStripperNode,
   SafetyValidatorNode,
@@ -1569,6 +1678,7 @@ export const nodeSchemas: NodeSchema[] = [
 
   // Configuration
   PersonaLoaderNode,
+  PersonaFormatterNode,
   PersonaSaverNode,
   TrustLevelReaderNode,
   TrustLevelWriterNode,
