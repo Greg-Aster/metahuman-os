@@ -25,9 +25,12 @@ export function getNodePipelineEnvOverride():
 export function readNodePipelineRuntime(): boolean {
   try {
     const runtime = loadRuntimeConfig();
-    return runtime?.cognitive?.useNodePipeline === true;
+    const value = runtime?.cognitive?.useNodePipeline;
+    // Default to enabled when unset; explicit false disables the pipeline
+    return value !== false;
   } catch {
-    return false;
+    // Fail-open so the node pipeline is used unless explicitly disabled
+    return true;
   }
 }
 

@@ -15,8 +15,20 @@ import type { NodeExecutor } from './types.js';
  * Plans the next action using ReAct reasoning
  */
 export const reactPlannerExecutor: NodeExecutor = async (inputs, context) => {
+  if (process.env.DEBUG_GRAPH) console.log(`[ReactPlanner] ENTRY - context.useOperator =`, context.useOperator);
+
   if (context.useOperator === false) {
-    return {};
+    // Signal immediate completion - bypass operator loop
+    // Return plan field (not thought) to match normal planner output format
+    // Scratchpad updater expects planOutput.plan, not planOutput.thought
+    const bypassResult = {
+      plan: 'Final Answer: User query is conversational, not requiring operator tools.',
+      iteration: 0,
+      maxIterations: 10,
+      scratchpad: [],
+    };
+    if (process.env.DEBUG_GRAPH) console.log(`[ReactPlanner] BYPASSING OPERATOR - Returning:`, JSON.stringify(bypassResult, null, 2));
+    return bypassResult;
   }
 
   if (process.env.DEBUG_GRAPH) console.log(`[ReactPlanner] ========== REACT PLANNER ==========`);
@@ -213,7 +225,10 @@ export const skillExecutorExecutor: NodeExecutor = async (inputs, context) => {
 
   try {
     const trustLevel: TrustLevel = 'supervised_auto';
-    result = await executeSkill(skillId, skillInputs, trustLevel);
+    // Auto-approve skills when yolo mode is enabled
+    // Orchestrator already performed permission pre-checks, so we can safely bypass approval queue
+    const autoApprove = context.yoloMode === true;
+    result = await executeSkill(skillId, skillInputs, trustLevel, autoApprove);
     error = result.error;
 
     // If execution failed and we haven't exhausted retries, analyze error for recovery
@@ -235,8 +250,8 @@ export const skillExecutorExecutor: NodeExecutor = async (inputs, context) => {
         const delayMs = Math.min(1000 * Math.pow(2, retryCount), 5000);
         await new Promise(resolve => setTimeout(resolve, delayMs));
 
-        // Retry the skill execution
-        const retryResult = await executeSkill(skillId, skillInputs, trustLevel);
+        // Retry the skill execution (use same autoApprove setting)
+        const retryResult = await executeSkill(skillId, skillInputs, trustLevel, autoApprove);
 
         if (retryResult.success) {
           console.log(`[SkillExecutor] ✓ Retry succeeded for ${skillId}`);
@@ -651,7 +666,34 @@ export const errorRecoveryExecutor: NodeExecutor = async (inputs, _context, prop
 
     const errorStr = String(error).toLowerCase();
 
-    if (errorStr.includes('not found') || errorStr.includes('enoent')) {
+    // Check for path restriction errors (most specific first)
+    if (errorStr.includes('path_not_allowed') || errorStr.includes('write not allowed')) {
+      errorType = 'PATH_RESTRICTED';
+      // Extract allowed directories from error message if present
+      const match = String(error).match(/allowed:\s*([^.]+)/i);
+      if (match) {
+        const allowedDirs = match[1].trim();
+        suggestions = [
+          `This path is restricted. Use one of these directories: ${allowedDirs}`,
+          `Do NOT retry with the same path - it will always fail`,
+          `Use conversational_response to explain the restriction to the user`,
+        ];
+      } else {
+        suggestions = [
+          `This path is restricted by security policy`,
+          `Check the skill's allowedDirectories in the manifest`,
+          `Use conversational_response to explain the restriction to the user`,
+        ];
+      }
+    } else if (errorStr.includes('failed validation')) {
+      errorType = 'VALIDATION_FAILED';
+      suggestions = [
+        `The input parameters don't meet requirements`,
+        `Check the skill manifest for parameter constraints`,
+        `Do NOT retry with the same inputs`,
+        `Use conversational_response to explain the validation error to the user`,
+      ];
+    } else if (errorStr.includes('not found') || errorStr.includes('enoent')) {
       errorType = 'FILE_NOT_FOUND';
       suggestions = [
         `Try using fs_list to check what files are available`,
@@ -689,6 +731,8 @@ export const errorRecoveryExecutor: NodeExecutor = async (inputs, _context, prop
     }
 
     // Determine if we should retry
+    // ONLY retry transient errors (timeouts, network issues, invalid args)
+    // DO NOT retry: PATH_RESTRICTED, VALIDATION_FAILED, PERMISSION_DENIED, FILE_NOT_FOUND
     const shouldRetry = retryCount < maxRetries && (
       errorType === 'TIMEOUT' ||
       errorType === 'NETWORK_ERROR' ||

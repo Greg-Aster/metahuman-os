@@ -1,7 +1,7 @@
 {
-  "version": "1.2",
-  "name": "Emulation Mode (Orchestrated)",
-  "description": "Lightweight chat with intelligent orchestration - determines memory needs and response style dynamically",
+  "version": "1.3",
+  "name": "Emulation Mode (Full Node Control)",
+  "description": "All processing visible in graph - orchestrator, persona formatter, conditional memory search",
   "cognitiveMode": "emulation",
   "last_modified": "2025-11-23",
   "nodes": [
@@ -31,6 +31,25 @@
     },
     {
       "id": 4,
+      "type": "cognitive/persona_loader",
+      "pos": [280, 100],
+      "size": [180, 80],
+      "title": "Persona Loader"
+    },
+    {
+      "id": 5,
+      "type": "cognitive/persona_formatter",
+      "pos": [500, 100],
+      "size": [200, 80],
+      "properties": {
+        "includePersonality": true,
+        "includeValues": true,
+        "includeGoals": true
+      },
+      "title": "Persona Formatter"
+    },
+    {
+      "id": 6,
       "type": "cognitive/conversation_history",
       "pos": [280, 340],
       "size": [200, 80],
@@ -41,21 +60,21 @@
       "title": "Conversation History"
     },
     {
-      "id": 5,
+      "id": 7,
       "type": "cognitive/orchestrator_llm",
       "pos": [280, 200],
       "size": [200, 80],
       "title": "Intent Orchestrator"
     },
     {
-      "id": 6,
+      "id": 8,
       "type": "cognitive/conditional_router",
       "pos": [540, 200],
       "size": [200, 100],
       "title": "Memory Router"
     },
     {
-      "id": 7,
+      "id": 9,
       "type": "cognitive/semantic_search",
       "pos": [800, 100],
       "size": [180, 80],
@@ -66,7 +85,7 @@
       "title": "Semantic Search"
     },
     {
-      "id": 8,
+      "id": 10,
       "type": "cognitive/persona_llm",
       "pos": [1040, 200],
       "size": [180, 80],
@@ -77,14 +96,14 @@
       "title": "Persona LLM"
     },
     {
-      "id": 9,
+      "id": 11,
       "type": "cognitive/cot_stripper",
       "pos": [1280, 200],
       "size": [200, 80],
       "title": "CoT Stripper"
     },
     {
-      "id": 10,
+      "id": 12,
       "type": "cognitive/safety_validator",
       "pos": [1540, 200],
       "size": [200, 80],
@@ -94,28 +113,28 @@
       "title": "Safety Validator"
     },
     {
-      "id": 11,
+      "id": 13,
       "type": "cognitive/response_refiner",
       "pos": [1800, 200],
       "size": [200, 80],
       "title": "Response Refiner"
     },
     {
-      "id": 12,
+      "id": 14,
       "type": "cognitive/memory_capture",
       "pos": [2060, 100],
       "size": [180, 100],
       "title": "Memory Capture"
     },
     {
-      "id": 13,
+      "id": 15,
       "type": "cognitive/buffer_manager",
       "pos": [2060, 300],
       "size": [180, 80],
       "title": "Buffer Manager"
     },
     {
-      "id": 14,
+      "id": 16,
       "type": "cognitive/stream_writer",
       "pos": [2300, 200],
       "size": [180, 60],
@@ -127,7 +146,7 @@
       "id": 1,
       "origin_id": 1,
       "origin_slot": 0,
-      "target_id": 5,
+      "target_id": 7,
       "target_slot": 0,
       "type": "string",
       "comment": "User message → Orchestrator"
@@ -145,82 +164,82 @@
       "id": 3,
       "origin_id": 1,
       "origin_slot": 1,
-      "target_id": 4,
+      "target_id": 6,
       "target_slot": 0,
       "type": "string",
       "comment": "Session ID → Conversation History"
     },
     {
       "id": 4,
-      "origin_id": 5,
+      "origin_id": 4,
       "origin_slot": 0,
-      "target_id": 6,
+      "target_id": 5,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Persona data → Persona Formatter"
+    },
+    {
+      "id": 5,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 8,
       "target_slot": 0,
       "type": "object",
       "comment": "Orchestrator decision → Conditional Router (needsMemory)"
     },
     {
-      "id": 5,
+      "id": 6,
       "origin_id": 1,
       "origin_slot": 0,
-      "target_id": 7,
+      "target_id": 9,
       "target_slot": 0,
       "type": "string",
       "comment": "User message → Semantic Search (conditional)"
     },
     {
-      "id": 6,
-      "origin_id": 6,
+      "id": 7,
+      "origin_id": 8,
       "origin_slot": 0,
-      "target_id": 7,
+      "target_id": 9,
       "target_slot": 1,
       "type": "object",
       "comment": "Router decision → Semantic Search trigger"
     },
     {
-      "id": 7,
-      "origin_id": 4,
+      "id": 8,
+      "origin_id": 5,
       "origin_slot": 0,
-      "target_id": 8,
+      "target_id": 10,
       "target_slot": 0,
+      "type": "object",
+      "comment": "Formatted persona → Persona LLM"
+    },
+    {
+      "id": 9,
+      "origin_id": 6,
+      "origin_slot": 0,
+      "target_id": 10,
+      "target_slot": 1,
       "type": "array",
       "comment": "Conversation history → Persona LLM"
     },
     {
-      "id": 8,
-      "origin_id": 7,
+      "id": 10,
+      "origin_id": 9,
       "origin_slot": 0,
-      "target_id": 8,
-      "target_slot": 1,
+      "target_id": 10,
+      "target_slot": 2,
       "type": "array",
       "comment": "Memories → Persona LLM (if needsMemory=true)"
     },
     {
-      "id": 9,
-      "origin_id": 5,
-      "origin_slot": 0,
-      "target_id": 8,
-      "target_slot": 2,
-      "type": "object",
-      "comment": "Orchestrator instructions → Persona LLM"
-    },
-    {
-      "id": 10,
-      "origin_id": 8,
-      "origin_slot": 0,
-      "target_id": 9,
-      "target_slot": 0,
-      "type": "llm_response",
-      "comment": "LLM response → CoT Stripper"
-    },
-    {
       "id": 11,
-      "origin_id": 9,
+      "origin_id": 7,
       "origin_slot": 0,
       "target_id": 10,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Cleaned response → Safety Validator"
+      "target_slot": 3,
+      "type": "object",
+      "comment": "Orchestrator instructions → Persona LLM"
     },
     {
       "id": 12,
@@ -228,59 +247,77 @@
       "origin_slot": 0,
       "target_id": 11,
       "target_slot": 0,
+      "type": "llm_response",
+      "comment": "LLM response → CoT Stripper"
+    },
+    {
+      "id": 13,
+      "origin_id": 11,
+      "origin_slot": 0,
+      "target_id": 12,
+      "target_slot": 0,
+      "type": "string",
+      "comment": "Cleaned response → Safety Validator"
+    },
+    {
+      "id": 14,
+      "origin_id": 12,
+      "origin_slot": 0,
+      "target_id": 13,
+      "target_slot": 0,
       "type": "string",
       "comment": "Validated response → Response Refiner"
     },
     {
-      "id": 13,
-      "origin_id": 10,
+      "id": 15,
+      "origin_id": 12,
       "origin_slot": 3,
-      "target_id": 11,
+      "target_id": 13,
       "target_slot": 1,
       "type": "object",
       "comment": "Safety metadata → Response Refiner"
     },
     {
-      "id": 14,
-      "origin_id": 11,
+      "id": 16,
+      "origin_id": 13,
       "origin_slot": 0,
-      "target_id": 12,
+      "target_id": 14,
       "target_slot": 1,
       "type": "string",
       "comment": "Refined response → Memory Capture"
     },
     {
-      "id": 15,
+      "id": 17,
       "origin_id": 1,
       "origin_slot": 0,
-      "target_id": 12,
+      "target_id": 14,
       "target_slot": 0,
       "type": "string",
       "comment": "User message → Memory Capture"
     },
     {
-      "id": 16,
+      "id": 18,
       "origin_id": 3,
       "origin_slot": 0,
-      "target_id": 12,
+      "target_id": 14,
       "target_slot": 2,
       "type": "object",
       "comment": "System settings → Memory Capture"
     },
     {
-      "id": 17,
-      "origin_id": 11,
+      "id": 19,
+      "origin_id": 13,
       "origin_slot": 0,
-      "target_id": 14,
+      "target_id": 16,
       "target_slot": 0,
       "type": "string",
       "comment": "Refined response → Stream Writer"
     },
     {
-      "id": 18,
-      "origin_id": 4,
+      "id": 20,
+      "origin_id": 6,
       "origin_slot": 0,
-      "target_id": 13,
+      "target_id": 15,
       "target_slot": 0,
       "type": "array",
       "comment": "Updated conversation history → Buffer Manager"

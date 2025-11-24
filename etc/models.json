@@ -283,7 +283,9 @@
       "model": "greggles-finetune-q6k-2025-11-22:latest",
       "roles": [
         "orchestrator",
-        "persona"
+        "persona",
+        "planner",
+        "summarizer"
       ],
       "adapters": [],
       "description": "Imported from Ollama tag greggles-finetune-q6k-2025-11-22:latest",
@@ -345,10 +347,11 @@
   },
   "cognitiveModeMappings": {
     "dual": {
-      "orchestrator": "default.orchestrator",
-      "planner": "default.orchestrator",
+      "orchestrator": "ollama.greggles-finetune-q6k-2025-11-22:latest",
+      "persona": "ollama.greggles-2025-11-22:latest",
+      "planner": "ollama.greggles-finetune-q6k-2025-11-22:latest",
       "curator": "default.coder",
-      "summarizer": "default.summarizer",
+      "summarizer": "ollama.greggles-finetune-q6k-2025-11-22:latest",
       "psychotherapist": "default.coder"
     },
     "agent": {
@@ -361,7 +364,7 @@
       "psychotherapist": "default.psychotherapist"
     },
     "emulation": {
-      "orchestrator": "ollama.greggles-2025-11-22:latest",
+      "orchestrator": "ollama.greggles-finetune-q6k-2025-11-22:latest",
       "persona": "ollama.greggles-2025-11-22:latest"
     }
   },

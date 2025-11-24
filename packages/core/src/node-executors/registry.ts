@@ -45,6 +45,7 @@ import { createSkillExecutor } from './skill-executors.js';
 import { memoryLoaderExecutor, memorySaverExecutor, llmEnricherExecutor, agentTimerExecutor } from './agent-executors.js';
 import {
   personaLoaderExecutor,
+  personaFormatterExecutor,
   personaSaverExecutor,
   trustLevelReaderExecutor,
   trustLevelWriterExecutor,
@@ -166,6 +167,7 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
 
   // Configuration nodes (persona management)
   'persona_loader': personaLoaderExecutor,
+  'persona_formatter': personaFormatterExecutor,
   'persona_saver': personaSaverExecutor,
   'trust_level_reader': trustLevelReaderExecutor,
   'trust_level_writer': trustLevelWriterExecutor,

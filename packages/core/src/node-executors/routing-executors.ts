@@ -44,6 +44,9 @@ export const operatorEligibilityExecutor: NodeExecutor = async (inputs, context)
   );
   const effectiveDecision = typeof context.useOperator === 'boolean' ? context.useOperator : hasActionIntent;
 
+  // CRITICAL: Write useOperator to context so react_planner can access it
+  context.useOperator = effectiveDecision;
+
   return {
     useOperator: effectiveDecision,
     message,

@@ -8,18 +8,19 @@ import path from 'node:path';
 import { paths } from '../../packages/core/src/paths';
 import { SkillManifest, SkillResult, isWriteAllowed } from '../../packages/core/src/skills';
 import { getSecurityPolicy } from '../../packages/core/src/security-policy';
+import { loadDecisionRules } from '../../packages/core/src/identity';
 
 export const manifest: SkillManifest = {
   id: 'fs_write',
   name: 'Write File',
-  description: 'Write content to a file in allowed directories',
+  description: `Write content to a file. Allowed directories depend on your user role and trust level. Common directories: out/, logs/. Profile-specific paths may be available based on your permissions.`,
   category: 'fs',
 
   inputs: {
     path: {
       type: 'string',
       required: true,
-      description: 'Project-relative path (e.g., "out/file.txt") or absolute system path. Project-relative paths should NOT start with /',
+      description: `Project-relative path. Allowed directories depend on your current permissions. Try paths like "out/file.txt" or "logs/file.txt". If denied, the error message will show your allowed directories.`,
       validation: (value) => isWriteAllowed(value),
     },
     content: {
@@ -43,7 +44,7 @@ export const manifest: SkillManifest = {
   cost: 'cheap',
   minTrustLevel: 'supervised_auto',
   requiresApproval: true,
-  allowedDirectories: ['memory/', 'out/', 'logs/'],
+  allowedDirectories: ['out/', 'logs/'], // Base directories, expanded dynamically per user
 };
 
 export async function execute(inputs: {
@@ -57,22 +58,58 @@ export async function execute(inputs: {
       : path.resolve(paths.root, inputs.path);
     const overwrite = inputs.overwrite ?? false;
 
-    // Double-check write permission (directory-based)
-    if (!isWriteAllowed(filepath)) {
+    // Get security context
+    const policy = getSecurityPolicy();
+    const trustLevel = loadDecisionRules().trustLevel;
+
+    // Build context-aware allowed directories list
+    const allowedDirs: string[] = ['out/', 'logs/'];
+
+    // Add profile-specific directories if user has profile write access
+    if (policy.username && policy.canWriteProfile(policy.username)) {
+      allowedDirs.push(`profiles/${policy.username}/`);
+    }
+
+    // Add memory/ for users with memory write permission
+    if (policy.canWriteMemory) {
+      allowedDirs.push('memory/');
+    }
+
+    // Check role-based permissions first (more specific error messages)
+    try {
+      policy.requireFileAccess(filepath);
+    } catch (securityError: any) {
+      const attemptedPath = inputs.path;
       return {
         success: false,
-        error: `Write not allowed to path: ${filepath}`,
+        error: `PATH_NOT_ALLOWED: Cannot write to "${attemptedPath}".
+
+Your current permissions:
+  - User: ${policy.username || 'anonymous'}
+  - Role: ${policy.role}
+  - Trust Level: ${trustLevel}
+  - Cognitive Mode: ${policy.mode}
+
+Allowed directories for your role:
+  ${allowedDirs.map(d => `• ${d}`).join('\n  ')}
+
+Reason: ${securityError.message}
+
+Suggestion: Try using a path like "out/your-file.txt" or ask the user to grant higher permissions.`,
       };
     }
 
-    // Check role-based permissions
-    try {
-      const policy = getSecurityPolicy();
-      policy.requireFileAccess(filepath);
-    } catch (securityError: any) {
+    // Double-check write permission (directory-based - legacy check)
+    if (!isWriteAllowed(filepath)) {
+      const attemptedPath = inputs.path;
       return {
         success: false,
-        error: `Security check failed: ${securityError.message}`,
+        error: `PATH_NOT_ALLOWED: Cannot write to "${attemptedPath}".
+
+Your allowed directories:
+  ${allowedDirs.map(d => `• ${d}`).join('\n  ')}
+
+Try using a path like "out/your-file.txt" instead.`,
       };
     }
 

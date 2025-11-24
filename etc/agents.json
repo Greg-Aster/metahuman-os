@@ -27,13 +27,14 @@
     "organizer": {
       "id": "organizer",
       "enabled": true,
-      "type": "interval",
+      "type": "activity",
       "priority": "high",
       "agentPath": "organizer.ts",
-      "interval": 60,
+      "inactivityThreshold": 300,
       "runOnBoot": false,
-      "autoRestart": true,
-      "maxRetries": 3
+      "autoRestart": false,
+      "maxRetries": 3,
+      "comment": "Runs after 5 minutes of inactivity to avoid competing with user for VRAM"
     },
     "night-pipeline": {
       "id": "night-pipeline",

@@ -1,0 +1,518 @@
+/**
+ * Chat Interface Animations & Pseudo-Elements
+ * Contains animations and pseudo-element styles that can't be done with Tailwind utility classes
+ */
+
+/* === Microphone Recording Animations === */
+
+/* Pulse animation for recording microphone button */
+.mic-btn.recording::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border: 2px solid rgba(167, 139, 250, 0.8);
+  border-radius: 0.75rem;
+  animation: pulseMic 1.2s infinite ease-out;
+  pointer-events: none;
+}
+
+@keyframes pulseMic {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.6;
+  }
+  80% {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.2);
+    opacity: 0;
+  }
+}
+
+/* Breathing animation for continuous mode */
+.mic-btn.continuous:not(.recording) {
+  animation: breathe 2s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Recording waveform bounce animation */
+.recording-icon {
+  color: #ef4444 !important;
+  animation: recordingBounce 0.8s ease-in-out infinite;
+}
+
+@keyframes recordingBounce {
+  0%, 100% {
+    transform: scaleY(1);
+  }
+  25% {
+    transform: scaleY(1.2);
+  }
+  50% {
+    transform: scaleY(0.8);
+  }
+  75% {
+    transform: scaleY(1.1);
+  }
+}
+
+/* Waiting sound wave animation */
+.waiting-icon {
+  animation: soundWave 2s ease-in-out infinite;
+}
+
+@keyframes soundWave {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* === Ollama Warning Banner === */
+
+.ollama-warning-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  margin: 1rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 2px solid rgba(239, 68, 68, 0.3);
+  border-radius: 0.5rem;
+  font-size: 0.95rem;
+}
+
+:global(.dark) .ollama-warning-banner {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.warning-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.warning-content {
+  flex: 1;
+}
+
+.warning-title {
+  font-weight: 600;
+  color: rgba(239, 68, 68, 0.9);
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+}
+
+:global(.dark) .warning-title {
+  color: rgba(239, 68, 68, 1);
+}
+
+.warning-message {
+  color: rgba(0, 0, 0, 0.8);
+  line-height: 1.5;
+}
+
+:global(.dark) .warning-message {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.warning-message code {
+  background: rgba(0, 0, 0, 0.1);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+}
+
+:global(.dark) .warning-message code {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.warning-error {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: rgba(239, 68, 68, 0.8);
+  font-style: italic;
+}
+
+.warning-refresh-btn {
+  margin-top: 0.75rem;
+  padding: 0.5rem 1rem;
+  background: rgba(139, 92, 246, 0.8);
+  color: white;
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.warning-refresh-btn:hover {
+  background: rgba(139, 92, 246, 1);
+  transform: translateY(-1px);
+}
+
+.warning-refresh-btn:active {
+  transform: translateY(0);
+}
+
+/* === Message Styling === */
+
+/* Facet-specific border colors for assistant messages */
+.message-assistant[data-facet="poet"] .message-content {
+  border-left: 3px solid rgba(99, 102, 241, 0.6);
+}
+
+.message-assistant[data-facet="thinker"] .message-content {
+  border-left: 3px solid rgba(59, 130, 246, 0.6);
+}
+
+.message-assistant[data-facet="friend"] .message-content {
+  border-left: 3px solid rgba(34, 197, 94, 0.6);
+}
+
+.message-assistant[data-facet="antagonist"] .message-content {
+  border-left: 3px solid rgba(239, 68, 68, 0.6);
+}
+
+.message-assistant[data-facet="default"] .message-content {
+  border-left: 3px solid rgba(139, 92, 246, 0.6);
+}
+
+/* Message hover effect */
+.message:hover:not(.message-selected) .message-content {
+  box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.15) inset;
+}
+
+/* Selected message highlighting */
+.message-selected .message-content {
+  box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.4) inset !important;
+}
+
+.message-selected:hover .message-content {
+  box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.6) inset !important;
+}
+
+/* Message mic button hover effect */
+.message:hover .msg-mic-btn {
+  opacity: 1;
+}
+
+/* Mic button in message - enhanced visibility */
+.msg-mic-btn {
+  position: absolute;
+  bottom: 0.5rem;
+  right: 0.5rem;
+  z-index: 10;
+  opacity: 0.3;
+  background: rgba(139, 92, 246, 0.15) !important;
+  color: rgba(139, 92, 246, 0.9) !important;
+  border: none;
+  border-radius: 0.375rem;
+  padding: 0.375rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  pointer-events: auto;
+}
+
+:global(.dark) .msg-mic-btn {
+  background: rgba(167, 139, 250, 0.2) !important;
+  color: rgba(167, 139, 250, 0.95) !important;
+}
+
+.msg-mic-btn:hover {
+  opacity: 1 !important;
+  transform: scale(1.15);
+  background: rgba(139, 92, 246, 0.25) !important;
+  color: rgba(139, 92, 246, 1) !important;
+}
+
+:global(.dark) .msg-mic-btn:hover {
+  background: rgba(167, 139, 250, 0.3) !important;
+  color: rgba(167, 139, 250, 1) !important;
+}
+
+/* === System Message Styling === */
+
+.message-system .message-content {
+  background: rgba(107, 114, 128, 0.1);
+  border-left: 3px solid rgba(107, 114, 128, 0.4);
+  font-size: 0.9em;
+  color: rgba(107, 114, 128, 0.9);
+  font-style: italic;
+}
+
+:global(.dark) .message-system .message-content {
+  background: rgba(75, 85, 99, 0.15);
+  border-left: 3px solid rgba(107, 114, 128, 0.5);
+  color: rgba(156, 163, 175, 0.95);
+}
+
+.message-system .message-role {
+  color: rgba(107, 114, 128, 0.7);
+  font-size: 0.85em;
+}
+
+:global(.dark) .message-system .message-role {
+  color: rgba(156, 163, 175, 0.8);
+}
+
+/* === Message Interaction === */
+
+.message {
+  cursor: pointer;
+}
+
+/* Make message-content positioned for mic button */
+.message-content {
+  position: relative;
+  padding-bottom: 2rem; /* Extra space for mic button */
+}
+
+/* === Stop Button === */
+
+.input-stop-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(239, 68, 68, 0.1);
+  color: rgba(239, 68, 68, 1);
+  border: none;
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.input-stop-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  transform: scale(1.05);
+}
+
+:global(.dark) .input-stop-btn {
+  background: rgba(248, 113, 113, 0.15);
+  color: rgba(248, 113, 113, 1);
+}
+
+:global(.dark) .input-stop-btn:hover {
+  background: rgba(248, 113, 113, 0.25);
+}
+
+/* === Reply Indicator === */
+
+.reply-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(167, 139, 250, 0.1);
+  border-left: 3px solid rgba(167, 139, 250, 0.6);
+  border-radius: 0.375rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.reply-label {
+  font-weight: 600;
+  color: rgba(167, 139, 250, 1);
+}
+
+.reply-preview {
+  flex: 1;
+  color: rgba(156, 163, 175, 1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reply-cancel {
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.25rem;
+  background: rgba(239, 68, 68, 0.1);
+  color: rgba(239, 68, 68, 1);
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.reply-cancel:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+/* === Mic Button Styles === */
+
+.mic-btn {
+  position: relative;
+}
+
+.mic-btn.continuous {
+  background: rgba(59, 130, 246, 0.2) !important;
+  border-color: rgba(59, 130, 246, 0.6) !important;
+}
+
+/* === Input Actions === */
+
+.input-actions {
+  position: relative;
+}
+
+/* === Clear Button Mobile Toggle === */
+
+/* Hide icon on desktop, show text */
+.clear-btn .clear-icon {
+  display: none;
+}
+
+.clear-btn .clear-text {
+  display: inline;
+}
+
+/* === Stop Button Text === */
+.input-stop-btn .stop-text {
+  display: inline;
+}
+
+/* === Mobile Responsive Overrides === */
+
+@media (max-width: 640px) {
+  .mode-toggle-container {
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+    padding: 0.75rem 0.5rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .mode-toggle-container::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mode-toggle {
+    flex: 0 0 auto;
+    gap: 0.35rem;
+  }
+
+  .mode-btn {
+    flex: 0 0 auto;
+    padding: 0.45rem 0.5rem;
+    font-size: 1rem;
+    min-width: unset;
+  }
+
+  .mode-label,
+  .control-text {
+    display: none;
+  }
+
+  .mode-icon {
+    font-size: 1.1rem;
+  }
+
+  .icon-btn .badge {
+    display: none;
+  }
+
+  .length-toggle,
+  .reasoning-toggle,
+  .quick-audio {
+    flex: 0 0 auto;
+    gap: 0.35rem;
+  }
+
+  .length-toggle {
+    gap: 0;
+  }
+
+  .length-toggle .control-label {
+    display: none;
+  }
+
+  .length-toggle select {
+    width: 70px;
+    padding: 0.35rem 0.4rem;
+    font-size: 0.75rem;
+  }
+
+  .reasoning-slider-wrapper {
+    width: 70px;
+    height: 28px;
+  }
+
+  .reasoning-slider-input::-webkit-slider-thumb {
+    width: 24px;
+    height: 24px;
+  }
+
+  .reasoning-slider-input::-moz-range-thumb {
+    width: 24px;
+    height: 24px;
+  }
+
+  .reasoning-emoji {
+    font-size: 16px;
+  }
+
+  .icon-btn {
+    padding: 0.35rem 0.45rem;
+    min-width: unset;
+  }
+
+  .clear-btn {
+    padding: 0.35rem 0.5rem;
+    min-width: unset;
+    font-size: 1.1rem;
+  }
+
+  .clear-btn .clear-text {
+    display: none;
+  }
+
+  .clear-btn .clear-icon {
+    display: inline;
+  }
+
+  .mic-btn {
+    display: none;
+  }
+
+  .input-wrapper {
+    gap: 0.5rem;
+  }
+
+  .chat-input {
+    font-size: 0.95rem;
+    padding: 0.65rem 0.8rem;
+  }
+
+  .input-row {
+    gap: 0.5rem;
+  }
+
+  .input-actions {
+    gap: 0.35rem;
+  }
+
+  .input-stop-btn,
+  .send-btn {
+    padding: 0.6rem;
+  }
+}

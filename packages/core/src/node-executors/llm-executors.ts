@@ -4,7 +4,6 @@
  */
 
 import { callLLM } from '../model-router.js';
-import { loadPersonaCore } from '../identity.js';
 import type { NodeExecutor } from './types.js';
 
 /**
@@ -16,34 +15,31 @@ export const personaLLMExecutor: NodeExecutor = async (inputs, context) => {
     return {};
   }
 
-  // inputs[0] = conversation history (from conversation_history node)
-  // inputs[1] = memories (from semantic_search node) OR orchestrator instructions
-  // inputs[2] = orchestrator instructions (if using orchestrator flow)
-  const conversationHistory = inputs[0]?.messages || context.conversationHistory || [];
+  // inputs[0] = persona formatted text (from persona_formatter node)
+  // inputs[1] = conversation history (from conversation_history node)
+  // inputs[2] = memories (from semantic_search node, optional)
+  // inputs[3] = orchestrator instructions (from orchestrator_llm node, optional)
 
-  // Check if inputs[2] has orchestrator data (new flow) or inputs[1] has memories (old flow)
-  let memories: any[] = [];
-  let orchestratorInstructions = '';
-  let responseStyle: 'verbose' | 'concise' | 'conversational' = 'conversational';
-
-  if (inputs[2]?.instructions) {
-    // New orchestrator flow: inputs[1] = memories, inputs[2] = orchestrator
-    memories = Array.isArray(inputs[1]) ? inputs[1] : [];
-    orchestratorInstructions = inputs[2].instructions || '';
-    responseStyle = inputs[2].responseStyle || 'conversational';
-  } else if (Array.isArray(inputs[1])) {
-    // Old flow: inputs[1] = memories
-    memories = inputs[1];
-  }
+  const personaText = inputs[0]?.formatted || '';
+  const conversationHistory = inputs[1]?.messages || context.conversationHistory || [];
+  const memories = inputs[2] || [];
+  const orchestratorData = inputs[3];
 
   const message = context.userMessage || '';
 
-  try {
-    const persona = loadPersonaCore();
+  // Extract orchestrator instructions and response style
+  let orchestratorInstructions = '';
+  let responseStyle: 'verbose' | 'concise' | 'conversational' = 'conversational';
 
+  if (orchestratorData?.instructions) {
+    orchestratorInstructions = orchestratorData.instructions;
+    responseStyle = orchestratorData.responseStyle || 'conversational';
+  }
+
+  try {
     // Format memories if available
     let memoryContext = '';
-    if (memories.length > 0) {
+    if (Array.isArray(memories) && memories.length > 0) {
       memoryContext = '\n\nRelevant memories:\n' + memories
         .map((mem: any, idx: number) => {
           const content = mem.content || mem.text || mem.message || '';
@@ -53,12 +49,14 @@ export const personaLLMExecutor: NodeExecutor = async (inputs, context) => {
         .join('\n');
     }
 
-    // Build system prompt with orchestrator instructions
-    let systemContent = `You are ${persona.identity.name}. ${persona.identity.purpose || ''}
+    // Build system prompt from components
+    let systemContent = personaText || 'Respond naturally and helpfully.';
 
-${persona.personality ? `Personality: ${JSON.stringify(persona.personality)}` : ''}
+    if (memoryContext) {
+      systemContent += memoryContext;
+    }
 
-Respond naturally as yourself, maintaining your personality and perspective.${memoryContext}`;
+    systemContent += '\n\nRespond naturally as yourself, maintaining your personality and perspective.';
 
     if (orchestratorInstructions) {
       systemContent += `\n\nInstructions: ${orchestratorInstructions}`;
@@ -98,7 +96,7 @@ Respond naturally as yourself, maintaining your personality and perspective.${me
     const temperature = mode === 'inner' ? baseTemperature - 0.1 : baseTemperature;
 
     const response = await callLLM({
-      role: 'persona',
+      role: 'fallback', // Use 'fallback' to avoid auto-injection from model-router (persona is handled by persona_formatter node)
       messages,
       cognitiveMode: context.cognitiveMode,
       options: {
@@ -232,9 +230,13 @@ export const modelRouterExecutor: NodeExecutor = async (inputs, context, propert
  * Determines what the persona needs: memory context, response style, instructions
  */
 export const orchestratorLLMExecutor: NodeExecutor = async (inputs, context, properties) => {
-  const userMessage = inputs[0] || context.userMessage || '';
+  // Extract message from user_input node output or context
+  const inputData = inputs[0];
+  const userMessage = typeof inputData === 'string'
+    ? inputData
+    : (inputData?.message || context.userMessage || '');
 
-  if (!userMessage || userMessage.trim().length === 0) {
+  if (!userMessage || typeof userMessage !== 'string' || userMessage.trim().length === 0) {
     return {
       needsMemory: false,
       responseStyle: 'conversational',

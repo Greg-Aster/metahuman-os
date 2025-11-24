@@ -148,6 +148,7 @@ export const semanticSearchExecutor: NodeExecutor = async (inputs, context, prop
  * Retrieves recent conversation messages from persisted buffer
  */
 export const conversationHistoryExecutor: NodeExecutor = async (inputs, context, properties) => {
+  const startTime = Date.now();
   const limit = properties?.limit || 20;
   const mode = context.mode || context.dialogueType || 'conversation';
 
@@ -157,14 +158,16 @@ export const conversationHistoryExecutor: NodeExecutor = async (inputs, context,
   let loadedFromBuffer = false;
 
   try {
+    const loadStart = Date.now();
     const { loadPersistedBuffer } = await import('../conversation-buffer.js');
     const bufferData = loadPersistedBuffer(mode as 'inner' | 'conversation');
+    const loadTime = Date.now() - loadStart;
 
     if (bufferData.messages.length > 0) {
       messages = bufferData.messages;
       summaryMarkers = bufferData.summaryMarkers;
       loadedFromBuffer = true;
-      console.log(`[ConversationHistory] Loaded ${messages.length} messages from persisted ${mode} buffer`);
+      console.log(`[ConversationHistory] Loaded ${messages.length} messages from persisted ${mode} buffer (${loadTime}ms)`);
     }
   } catch (error) {
     console.warn('[ConversationHistory] Could not load persisted buffer, using context:', error);
@@ -193,6 +196,11 @@ export const conversationHistoryExecutor: NodeExecutor = async (inputs, context,
   // Estimate token count (rough: 4 chars per token)
   const totalChars = messages.reduce((sum, msg) => sum + (msg.content?.length || 0), 0);
   const estimatedTokens = Math.ceil(totalChars / 4);
+
+  const totalTime = Date.now() - startTime;
+  if (totalTime > 100) {
+    console.log(`[ConversationHistory] ⚠️ Slow execution: ${totalTime}ms (${messages.length} messages, ${estimatedTokens} tokens)`);
+  }
 
   return {
     messages,

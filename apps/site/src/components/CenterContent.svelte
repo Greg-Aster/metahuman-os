@@ -15,6 +15,10 @@
   import AdapterDashboard from './AdapterDashboard.svelte';
   import TrainingMonitor from './TrainingMonitor.svelte';
   import OnboardingWizard from './OnboardingWizard.svelte';
+  import TrainingWizard from './TrainingWizard.svelte';
+  import TrainingHistory from './TrainingHistory.svelte';
+  import DatasetManagement from './DatasetManagement.svelte';
+  import SystemControls from './SystemControls.svelte';
   import Lifeline from './Lifeline.svelte';
   import OvernightLearnings from './OvernightLearnings.svelte';
   import SystemSettings from './SystemSettings.svelte';
@@ -69,7 +73,7 @@ const itemsPerPage = 50
 let personaTab: 'editor' | 'memory' | 'behavior' | 'generator' = 'editor'
 let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
-let trainingTab: 'setup' | 'datasets' | 'monitor' | 'adapters' = 'datasets'
+let trainingTab: 'wizard' | 'datasets' | 'manage' | 'system' | 'monitor' | 'adapters' = 'wizard'
 let systemTab: 'chat' | 'lifeline' | 'settings' | 'security' | 'network' | 'addons' = 'settings'
 let dashboardTab: 'overview' | 'tasks' | 'approvals' = 'overview'
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
@@ -512,30 +516,22 @@ async function loadMemoryContent(relPath: string) {
       </div>
       <div class="view-content">
         <div class="tab-group">
-          <button class="tab-button" class:active={trainingTab === 'setup'} on:click={() => trainingTab = 'setup'}>🧭 Setup Wizard</button>
-          <button class="tab-button" class:active={trainingTab === 'datasets'} on:click={() => trainingTab = 'datasets'}>Datasets</button>
-          <button class="tab-button" class:active={trainingTab === 'monitor'} on:click={() => trainingTab = 'monitor'}>Training Monitor</button>
-          <button class="tab-button" class:active={trainingTab === 'adapters'} on:click={() => trainingTab = 'adapters'}>Adapters</button>
+          <button class="tab-button" class:active={trainingTab === 'wizard'} on:click={() => trainingTab = 'wizard'}>🧙 Training Wizard</button>
+          <button class="tab-button" class:active={trainingTab === 'datasets'} on:click={() => trainingTab = 'datasets'}>📜 Training History</button>
+          <button class="tab-button" class:active={trainingTab === 'manage'} on:click={() => trainingTab = 'manage'}>📊 Dataset Management</button>
+          <button class="tab-button" class:active={trainingTab === 'system'} on:click={() => trainingTab = 'system'}>⚙️ System Controls</button>
+          <button class="tab-button" class:active={trainingTab === 'monitor'} on:click={() => trainingTab = 'monitor'}>📡 Training Monitor</button>
         </div>
-        {#if trainingTab === 'setup'}
-          <div class="onboarding-wrapper">
-            <OnboardingWizard onComplete={() => {
-              trainingTab = 'datasets';
-              alert('Onboarding completed! Your data has been saved.');
-            }} />
-          </div>
+        {#if trainingTab === 'wizard'}
+          <TrainingWizard />
         {:else if trainingTab === 'datasets'}
-          <AdapterDashboard />
+          <TrainingHistory />
+        {:else if trainingTab === 'manage'}
+          <DatasetManagement />
+        {:else if trainingTab === 'system'}
+          <SystemControls />
         {:else if trainingTab === 'monitor'}
           <TrainingMonitor />
-        {:else if trainingTab === 'adapters'}
-          <div class="empty-state">
-            <div class="empty-icon">🧠</div>
-            <div class="empty-title">Active Adapters</div>
-            <div class="empty-description">
-              Adapter management interface coming soon. Check the Settings tab in the right sidebar for current adapter status.
-            </div>
-          </div>
         {/if}
       </div>
     </div>

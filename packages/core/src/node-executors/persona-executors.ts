@@ -11,8 +11,9 @@ import type { NodeExecutor } from './types.js';
  */
 export const personaLoaderExecutor: NodeExecutor = async (_inputs, _context, _properties) => {
   try {
-    const { loadPersonaCore } = await import('../identity.js');
+    const { loadPersonaCore, getActiveFacet } = await import('../identity.js');
     const persona = loadPersonaCore();
+    const activeFacet = getActiveFacet();
 
     return {
       success: true,
@@ -21,11 +22,100 @@ export const personaLoaderExecutor: NodeExecutor = async (_inputs, _context, _pr
       personality: persona.personality,
       values: persona.values,
       goals: persona.goals,
+      activeFacet,
     };
   } catch (error) {
     console.error('[PersonaLoader] Error:', error);
     return {
       success: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Persona Formatter Node
+ * Formats persona data into system prompt text
+ * Replaces the invisible auto-injection from model-router
+ */
+export const personaFormatterExecutor: NodeExecutor = async (inputs, _context, properties) => {
+  const personaData = inputs[0];
+  const includePersonality = properties?.includePersonality !== false;
+  const includeValues = properties?.includeValues !== false;
+  const includeGoals = properties?.includeGoals !== false;
+
+  if (!personaData || !personaData.success) {
+    return {
+      formatted: '',
+      error: personaData?.error || 'No persona data provided',
+    };
+  }
+
+  const { persona, identity, values, goals, activeFacet } = personaData;
+
+  // Don't format if facet is inactive
+  if (activeFacet === 'inactive') {
+    return {
+      formatted: '',
+      facetInactive: true,
+    };
+  }
+
+  try {
+    const parts: string[] = [];
+
+    // Identity (always included)
+    if (identity) {
+      parts.push(`You are ${identity.name}${identity.role ? `, ${identity.role}` : ''}.`);
+      if (identity.purpose) {
+        parts.push(identity.purpose);
+      }
+    }
+
+    // Personality (optional)
+    if (includePersonality && persona?.personality) {
+      parts.push(`\nPersonality: ${JSON.stringify(persona.personality)}`);
+    }
+
+    // Core values (top 3, optional)
+    if (includeValues && values?.core && Array.isArray(values.core)) {
+      const topValues = values.core.slice(0, 3);
+      const valueNames = topValues.map((v: any) => v.value || v).filter(Boolean);
+      if (valueNames.length > 0) {
+        parts.push(`\nCore values: ${valueNames.join(', ')}.`);
+      }
+    }
+
+    // Short-term goals (optional)
+    if (includeGoals && goals?.shortTerm && Array.isArray(goals.shortTerm)) {
+      parts.push(`\nCurrent goals:`);
+      goals.shortTerm.forEach((goal: any) => {
+        const goalText = goal.goal || goal;
+        parts.push(`- ${goalText}`);
+      });
+    }
+
+    // Long-term goals (optional, just titles/descriptions)
+    if (includeGoals && goals?.longTerm && Array.isArray(goals.longTerm)) {
+      const aspirations = goals.longTerm
+        .map((g: any) => g.goal || g.title || g.description || g)
+        .filter(Boolean);
+      if (aspirations.length > 0) {
+        parts.push(`\nLong-term goals: ${aspirations.slice(0, 3).join(', ')}.`);
+      }
+    }
+
+    const formatted = parts.join('\n');
+
+    return {
+      formatted,
+      success: true,
+      characterCount: formatted.length,
+    };
+  } catch (error) {
+    console.error('[PersonaFormatter] Error:', error);
+    return {
+      formatted: '',
       error: (error as Error).message,
     };
   }

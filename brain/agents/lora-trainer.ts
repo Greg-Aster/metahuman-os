@@ -471,7 +471,7 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
       mutation CreatePod {
         podFindAndDeployOnDemand(
           input: {
-            templateId: "${envTemplateId || 'pzr9tt3vvq'}",
+            templateId: "${envTemplateId || 'metahuman-runpod-trainer'}",
             gpuTypeId: "${gpuType}",
             cloudType: ${cloudType},
             gpuCount: 1,
@@ -845,34 +845,43 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
         const text = data.toString();
         stdout += text;
 
+        // Stream all output to console for detailed logging
+        // Split by lines and log each line to preserve formatting
+        const lines = text.split('\n').filter(line => line.trim());
+        for (const line of lines) {
+          console.log(line);
+        }
+
         // Parse progress bar: "65%|██████▌ | 17/26 [27:32<11:45, 78.36s/it]"
         const progressMatch = text.match(/(\d+)%\|.*?\| (\d+)\/(\d+)/);
         if (progressMatch) {
           const [_, percent, current, total] = progressMatch;
           const progress = parseInt(percent);
 
-          if (progress > lastProgress || Date.now() - lastLogTime > 30000) { // Update every 5% or 30 seconds
+          // Update progress tracker every 1% or 10 seconds (reduced from 5%/30s)
+          if (progress > lastProgress || Date.now() - lastLogTime > 10000) {
             lastProgress = progress;
             lastLogTime = Date.now();
             tracker.updateStage('training', progress, `Step ${current}/${total}`);
-            console.log(`🔥 Training: ${percent}% (Step ${current}/${total})`);
           }
         }
 
         // Parse loss metrics: "{'loss': 2.4506, ...}"
         const lossMatch = text.match(/['"']loss['"']:\s*([\d.]+)/);
-        if (lossMatch && Date.now() - lastLogTime > 30000) {
-          console.log(`📉 Loss: ${lossMatch[1]}`);
+        if (lossMatch && Date.now() - lastLogTime > 10000) {
           lastLogTime = Date.now();
-        }
-
-        // Check for completion
-        if (text.includes('Training complete') || text.includes('train_unsloth] Saving model')) {
-          console.log('✅ Training loop completed, saving model...');
         }
       });
 
-      ssh.stderr.on('data', (data) => { stderr += data.toString(); });
+      ssh.stderr.on('data', (data) => {
+        const text = data.toString();
+        stderr += text;
+        // Stream stderr to console for detailed logging
+        const lines = text.split('\n').filter(line => line.trim());
+        for (const line of lines) {
+          console.error(line);
+        }
+      });
 
       ssh.on('close', (exitCode) => {
         resolve({ stdout, stderr, exitCode: exitCode || 0 });

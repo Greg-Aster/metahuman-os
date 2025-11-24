@@ -15,6 +15,7 @@ import {
   type NodeSchema,
   TextInputNode,
   ConversationHistoryNode,
+  BufferManagerNode,
   ObservationFormatterNode,
   CompletionCheckerNode,
   ResponseSynthesizerNode,
@@ -30,7 +31,12 @@ import {
   SearchIndexNode,
   WebSearchNode,
   ChatViewNode,
-  TTSNode
+  TTSNode,
+  OrchestratorLLMNode,
+  PersonaFormatterNode,
+  IterationCounterNode,
+  ScratchpadCompletionCheckerNode,
+  ScratchpadFormatterNode
 } from './node-schemas';
 
 /**
@@ -364,6 +370,27 @@ class SemanticSearchNodeImpl extends CognitiveNodeBase {
   }
 }
 
+class BufferManagerNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'buffer_manager')!;
+
+  constructor() {
+    super(BufferManagerNodeImpl.schema);
+  }
+
+  async onExecute() {
+    const messages = this.getInputData(0);
+
+    // In real implementation, would call bufferManagerExecutor to persist conversation buffer
+    const result = {
+      persisted: true,
+      mode: 'conversation',
+      messageCount: messages?.length || 0,
+    };
+
+    this.setOutputData(0, result);
+  }
+}
+
 // ============================================================================
 // OPERATOR NODE IMPLEMENTATIONS
 // ============================================================================
@@ -421,13 +448,36 @@ class PersonaLLMNodeImpl extends CognitiveNodeBase {
   }
 
   async onExecute() {
-    const messages = this.getInputData(0);
-    const context = this.getInputData(1);
+    const personaText = this.getInputData(0);
+    const conversationHistory = this.getInputData(1);
+    const memories = this.getInputData(2);
+    const orchestratorData = this.getInputData(3);
 
-    // In real implementation, would call LLM
+    // In real implementation, would call LLM with formatted persona, history, memories, and orchestrator instructions
     const response = 'This is a mock persona response';
 
     this.setOutputData(0, response);
+  }
+}
+
+class OrchestratorLLMNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'orchestrator_llm')!;
+
+  constructor() {
+    super(OrchestratorLLMNodeImpl.schema);
+  }
+
+  async onExecute() {
+    const userMessage = this.getInputData(0);
+
+    // In real implementation, would call orchestratorLLMExecutor
+    const decision = {
+      needsMemory: false,
+      responseStyle: 'conversational',
+      instructions: 'Respond naturally to the greeting.',
+    };
+
+    this.setOutputData(0, decision);
   }
 }
 
@@ -848,6 +898,90 @@ class ResponseSynthesizerNodeImpl extends CognitiveNodeBase {
   constructor() { super(ResponseSynthesizerNode); }
 }
 
+class IterationCounterNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'iteration_counter')!;
+
+  constructor() {
+    super(IterationCounterNodeImpl.schema);
+  }
+
+  onExecute() {
+    const scratchpad = this.getInputData(0);
+    const loopBack = this.getInputData(1);
+
+    // Use loop-back data if available, otherwise use initial scratchpad
+    const data = loopBack || scratchpad || {};
+    const iteration = data.iteration || 0;
+    const maxIterations = this.properties.maxIterations || 10;
+
+    this.setOutputData(0, {
+      iteration,
+      maxIterations,
+      scratchpad: data.scratchpad || [],
+    });
+  }
+}
+
+class ScratchpadCompletionCheckerNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'scratchpad_completion_checker')!;
+
+  constructor() {
+    super(ScratchpadCompletionCheckerNodeImpl.schema);
+  }
+
+  onExecute() {
+    const scratchpadData = this.getInputData(0) || {};
+    const scratchpad = scratchpadData.scratchpad || [];
+    const iteration = scratchpadData.iteration || 0;
+    const maxIterations = scratchpadData.maxIterations || 10;
+
+    // Check for completion
+    const latestEntry = scratchpad[scratchpad.length - 1] || {};
+    const combinedText = `${latestEntry.thought || ''} ${latestEntry.observation || ''}`;
+    const hasFinalAnswer = /Final Answer:|FINAL_ANSWER|Task Complete/i.test(combinedText);
+    const hasExceededMax = iteration >= maxIterations;
+
+    const isComplete = hasFinalAnswer || hasExceededMax;
+
+    this.setOutputData(0, {
+      isComplete,
+      reason: hasFinalAnswer ? 'Final answer detected' : hasExceededMax ? 'Max iterations reached' : 'Continue',
+      scratchpad: scratchpadData,
+    });
+  }
+}
+
+class ScratchpadFormatterNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'scratchpad_formatter')!;
+
+  constructor() {
+    super(ScratchpadFormatterNodeImpl.schema);
+  }
+
+  onExecute() {
+    const scratchpadData = this.getInputData(0) || {};
+    const scratchpad = scratchpadData.scratchpad || [];
+    const format = this.properties.format || 'text';
+
+    let formatted = '';
+    if (format === 'json') {
+      formatted = JSON.stringify(scratchpad, null, 2);
+    } else if (format === 'markdown') {
+      formatted = scratchpad
+        .map((entry: any, idx: number) =>
+          `### Iteration ${idx + 1}\n\n**Thought:** ${entry.thought}\n\n**Action:** ${entry.action}\n\n**Observation:** ${entry.observation}\n`
+        )
+        .join('\n---\n\n');
+    } else {
+      formatted = scratchpad
+        .map((entry: any) => `Thought: ${entry.thought}\nAction: ${entry.action}\nObservation: ${entry.observation}`)
+        .join('\n\n');
+    }
+
+    this.setOutputData(0, formatted);
+  }
+}
+
 class ChainOfThoughtStripperNodeImpl extends CognitiveNodeBase {
   constructor() { super(ChainOfThoughtStripperNode); }
 }
@@ -1026,7 +1160,61 @@ class AgentTimerNodeImpl extends CognitiveNodeBase {
 
 class PersonaLoaderNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'persona_loader')!;
-  constructor() { super(PersonaLoaderNodeImpl.schema); }
+
+  constructor() {
+    super(PersonaLoaderNodeImpl.schema);
+  }
+
+  onExecute() {
+    // In real implementation, would call personaLoaderExecutor
+    // Mock persona data for visual editor
+    const personaData = {
+      persona: {
+        personality: { traits: ['curious', 'analytical', 'helpful'] },
+      },
+      identity: {
+        name: 'Greg',
+        role: 'AI Researcher',
+        purpose: 'To assist and learn',
+      },
+      values: {
+        core: [
+          { value: 'transparency' },
+          { value: 'growth' },
+          { value: 'creativity' },
+        ],
+      },
+      goals: {
+        shortTerm: [
+          { goal: 'Build amazing AI systems' },
+        ],
+      },
+      activeFacet: 'default',
+    };
+
+    this.setOutputData(0, personaData);
+  }
+}
+
+class PersonaFormatterNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'persona_formatter')!;
+
+  constructor() {
+    super(PersonaFormatterNodeImpl.schema);
+  }
+
+  onExecute() {
+    const personaData = this.getInputData(0);
+
+    // In real implementation, would call personaFormatterExecutor
+    const formatted = {
+      formatted: 'You are Greg, an AI researcher and developer.',
+      success: true,
+      characterCount: 43,
+    };
+
+    this.setOutputData(0, formatted);
+  }
 }
 
 class PersonaSaverNodeImpl extends CognitiveNodeBase {
@@ -1087,13 +1275,34 @@ class ScratchpadInitializerNodeImpl extends CognitiveNodeBase {
 
 class ScratchpadUpdaterNodeImpl extends CognitiveNodeBase {
   static schema = nodeSchemas.find((s) => s.id === 'scratchpad_updater')!;
-  constructor() { super(ScratchpadUpdaterNodeImpl.schema); }
+
+  constructor() {
+    super(ScratchpadUpdaterNodeImpl.schema);
+  }
+
   onExecute() {
-    const data = this.getInputData(0) || {};
-    const appendTo = this.properties?.appendTo || 'thoughts';
-    const trackField = this.properties?.trackField || 'seenMemoryIds';
-    // Pass through with updated fields
-    this.setOutputData(0, { ...data, [appendTo]: data[appendTo] || [], [trackField]: data[trackField] || [] });
+    const iterationData = this.getInputData(0) || {};
+    const observation = this.getInputData(1) || '';
+    const plan = this.getInputData(2) || {};
+
+    const iteration = iterationData.iteration || 0;
+    const maxIterations = iterationData.maxIterations || 10;
+    const scratchpad = iterationData.scratchpad || [];
+
+    // Add new entry to scratchpad
+    const newEntry = {
+      thought: plan.thought || '',
+      action: plan.action || '',
+      observation,
+    };
+
+    const updatedScratchpad = [...scratchpad, newEntry];
+
+    this.setOutputData(0, {
+      iteration: iteration + 1,
+      maxIterations,
+      scratchpad: updatedScratchpad,
+    });
   }
 }
 
@@ -1187,13 +1396,18 @@ class AgentTriggerNodeImpl extends CognitiveNodeBase {
     OperatorEligibilityNodeImpl,
     ContextBuilderNodeImpl,
     SemanticSearchNodeImpl,
+    BufferManagerNodeImpl,
     ConversationHistoryNodeImpl,
     ReActPlannerNodeImpl,
     SkillExecutorNodeImpl,
     ObservationFormatterNodeImpl,
     CompletionCheckerNodeImpl,
     ResponseSynthesizerNodeImpl,
+    IterationCounterNodeImpl,
+    ScratchpadCompletionCheckerNodeImpl,
+    ScratchpadFormatterNodeImpl,
     PersonaLLMNodeImpl,
+    OrchestratorLLMNodeImpl,
     ReflectorLLMNodeImpl,
     InnerDialogueCaptureNodeImpl,
     ChainOfThoughtStripperNodeImpl,
@@ -1242,6 +1456,7 @@ class AgentTriggerNodeImpl extends CognitiveNodeBase {
     AgentTimerNodeImpl,
     // Configuration
     PersonaLoaderNodeImpl,
+    PersonaFormatterNodeImpl,
     PersonaSaverNodeImpl,
     TrustLevelReaderNodeImpl,
     TrustLevelWriterNodeImpl,
@@ -1326,6 +1541,7 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
     LiteGraph.registerNodeType('cognitive/context_builder', nodeImpls.ContextBuilderNodeImpl);
     LiteGraph.registerNodeType('cognitive/semantic_search', nodeImpls.SemanticSearchNodeImpl);
     LiteGraph.registerNodeType('cognitive/conversation_history', nodeImpls.ConversationHistoryNodeImpl);
+    LiteGraph.registerNodeType('cognitive/buffer_manager', nodeImpls.BufferManagerNodeImpl);
 
     // Operator nodes
     LiteGraph.registerNodeType('cognitive/react_planner', nodeImpls.ReActPlannerNodeImpl);
@@ -1333,9 +1549,13 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
     LiteGraph.registerNodeType('cognitive/observation_formatter', nodeImpls.ObservationFormatterNodeImpl);
     LiteGraph.registerNodeType('cognitive/completion_checker', nodeImpls.CompletionCheckerNodeImpl);
     LiteGraph.registerNodeType('cognitive/response_synthesizer', nodeImpls.ResponseSynthesizerNodeImpl);
+    LiteGraph.registerNodeType('cognitive/iteration_counter', nodeImpls.IterationCounterNodeImpl);
+    LiteGraph.registerNodeType('cognitive/scratchpad_completion_checker', nodeImpls.ScratchpadCompletionCheckerNodeImpl);
+    LiteGraph.registerNodeType('cognitive/scratchpad_formatter', nodeImpls.ScratchpadFormatterNodeImpl);
 
     // Chat nodes
     LiteGraph.registerNodeType('cognitive/persona_llm', nodeImpls.PersonaLLMNodeImpl);
+    LiteGraph.registerNodeType('cognitive/orchestrator_llm', nodeImpls.OrchestratorLLMNodeImpl);
     LiteGraph.registerNodeType('cognitive/reflector_llm', nodeImpls.ReflectorLLMNodeImpl);
     LiteGraph.registerNodeType('cognitive/cot_stripper', nodeImpls.ChainOfThoughtStripperNodeImpl);
     LiteGraph.registerNodeType('cognitive/safety_validator', nodeImpls.SafetyValidatorNodeImpl);
@@ -1396,6 +1616,7 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
 
     // Configuration nodes
     LiteGraph.registerNodeType('cognitive/persona_loader', nodeImpls.PersonaLoaderNodeImpl);
+    LiteGraph.registerNodeType('cognitive/persona_formatter', nodeImpls.PersonaFormatterNodeImpl);
     LiteGraph.registerNodeType('cognitive/persona_saver', nodeImpls.PersonaSaverNodeImpl);
     LiteGraph.registerNodeType('cognitive/trust_level_reader', nodeImpls.TrustLevelReaderNodeImpl);
     LiteGraph.registerNodeType('cognitive/trust_level_writer', nodeImpls.TrustLevelWriterNodeImpl);

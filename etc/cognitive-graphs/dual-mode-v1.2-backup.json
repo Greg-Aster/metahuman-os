@@ -1,14 +1,14 @@
 {
-  "version": "2.1",
-  "name": "Dual Consciousness Mode (Orchestrated)",
-  "description": "Enhanced dual mode with intent orchestrator - intelligently routes simple queries to skip operator overhead, while providing enhanced planning guidance for complex tasks",
+  "version": "2.0",
+  "name": "Dual Consciousness Mode (Modular ReAct)",
+  "description": "Full operator pipeline with modular scratchpad nodes, semantic memory grounding, and proactive agents",
   "cognitiveMode": "dual",
-  "last_modified": "2025-11-24",
+  "last_modified": "2025-11-19",
   "nodes": [
     {
       "id": 1,
       "type": "cognitive/user_input",
-      "pos": [50, 200],
+      "pos": [50, 100],
       "size": [180, 60],
       "properties": {
         "message": ""
@@ -18,59 +18,35 @@
     {
       "id": 2,
       "type": "cognitive/session_context",
-      "pos": [50, 300],
+      "pos": [50, 200],
       "size": [180, 60],
       "title": "Session Context"
     },
     {
       "id": 3,
       "type": "cognitive/system_settings",
-      "pos": [50, 400],
+      "pos": [50, 300],
       "size": [180, 80],
       "title": "System Settings"
     },
     {
-      "id": 24,
-      "type": "cognitive/orchestrator_llm",
-      "pos": [280, 180],
-      "size": [200, 100],
-      "properties": {
-        "model": "orchestrator",
-        "temperature": 0.1,
-        "intentClassification": true,
-        "permissionCheck": true
-      },
-      "title": "Intent Orchestrator"
-    },
-    {
-      "id": 25,
-      "type": "cognitive/smart_router",
-      "pos": [530, 180],
-      "size": [200, 120],
-      "properties": {
-        "routeOnComplexity": true,
-        "simpleThreshold": 0.3
-      },
-      "title": "Smart Router"
-    },
-    {
       "id": 4,
       "type": "cognitive/auth_check",
-      "pos": [280, 320],
+      "pos": [280, 220],
       "size": [180, 60],
       "title": "Auth Check"
     },
     {
       "id": 5,
       "type": "cognitive/operator_eligibility",
-      "pos": [530, 380],
+      "pos": [280, 340],
       "size": [200, 80],
       "title": "Operator Eligibility"
     },
     {
       "id": 6,
       "type": "cognitive/semantic_search",
-      "pos": [770, 100],
+      "pos": [520, 100],
       "size": [180, 80],
       "properties": {
         "similarityThreshold": 0.6,
@@ -81,7 +57,7 @@
     {
       "id": 7,
       "type": "cognitive/conversation_history",
-      "pos": [770, 220],
+      "pos": [520, 220],
       "size": [200, 80],
       "properties": {
         "mode": "conversation",
@@ -92,7 +68,7 @@
     {
       "id": 8,
       "type": "cognitive/context_builder",
-      "pos": [1010, 160],
+      "pos": [760, 160],
       "size": [180, 80],
       "properties": {
         "searchDepth": "normal",
@@ -104,14 +80,14 @@
     {
       "id": 9,
       "type": "cognitive/scratchpad_initializer",
-      "pos": [1250, 100],
+      "pos": [1000, 100],
       "size": [200, 60],
       "title": "Scratchpad Initializer"
     },
     {
       "id": 10,
       "type": "cognitive/iteration_counter",
-      "pos": [1250, 200],
+      "pos": [1000, 200],
       "size": [200, 60],
       "properties": {
         "maxIterations": 10
@@ -121,7 +97,7 @@
     {
       "id": 11,
       "type": "cognitive/react_planner",
-      "pos": [1500, 200],
+      "pos": [1250, 200],
       "size": [200, 80],
       "properties": {
         "model": "persona"
@@ -131,35 +107,35 @@
     {
       "id": 12,
       "type": "cognitive/skill_executor",
-      "pos": [1750, 200],
+      "pos": [1500, 200],
       "size": [200, 80],
       "title": "Skill Executor"
     },
     {
       "id": 13,
       "type": "cognitive/scratchpad_updater",
-      "pos": [2000, 200],
+      "pos": [1750, 200],
       "size": [200, 80],
       "title": "Scratchpad Updater"
     },
     {
       "id": 14,
       "type": "cognitive/scratchpad_completion_checker",
-      "pos": [2250, 200],
+      "pos": [2000, 200],
       "size": [220, 80],
       "title": "Completion Checker"
     },
     {
       "id": 15,
       "type": "cognitive/conditional_router",
-      "pos": [2530, 200],
+      "pos": [2280, 200],
       "size": [200, 100],
-      "title": "Loop Router"
+      "title": "Conditional Router"
     },
     {
       "id": 16,
       "type": "cognitive/scratchpad_formatter",
-      "pos": [2800, 100],
+      "pos": [2550, 100],
       "size": [200, 60],
       "properties": {
         "format": "text"
@@ -169,8 +145,8 @@
     {
       "id": 17,
       "type": "cognitive/response_synthesizer",
-      "pos": [3050, 180],
-      "size": [200, 100],
+      "pos": [2800, 100],
+      "size": [200, 80],
       "properties": {
         "model": "persona",
         "style": "default"
@@ -180,14 +156,14 @@
     {
       "id": 18,
       "type": "cognitive/cot_stripper",
-      "pos": [3300, 180],
+      "pos": [3050, 100],
       "size": [200, 60],
       "title": "CoT Stripper"
     },
     {
       "id": 19,
       "type": "cognitive/safety_validator",
-      "pos": [3550, 180],
+      "pos": [3300, 100],
       "size": [200, 60],
       "properties": {
         "threshold": 0.75
@@ -197,78 +173,33 @@
     {
       "id": 20,
       "type": "cognitive/response_refiner",
-      "pos": [3800, 180],
+      "pos": [3550, 100],
       "size": [200, 60],
       "title": "Response Refiner"
     },
     {
       "id": 21,
       "type": "cognitive/memory_capture",
-      "pos": [4050, 100],
+      "pos": [3800, 100],
       "size": [180, 80],
       "title": "Memory Capture"
     },
     {
       "id": 22,
       "type": "cognitive/audit_logger",
-      "pos": [4050, 220],
+      "pos": [3800, 220],
       "size": [180, 60],
       "title": "Audit Logger"
     },
     {
       "id": 23,
       "type": "cognitive/stream_writer",
-      "pos": [4290, 160],
+      "pos": [4040, 160],
       "size": [180, 60],
       "title": "Stream Writer"
     }
   ],
   "links": [
-    {
-      "id": 101,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 24,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "User message → Orchestrator"
-    },
-    {
-      "id": 102,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 24,
-      "target_slot": 1,
-      "type": "object",
-      "comment": "System settings → Orchestrator (for permission context)"
-    },
-    {
-      "id": 103,
-      "origin_id": 24,
-      "origin_slot": 0,
-      "target_id": 25,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Orchestrator analysis → Smart Router"
-    },
-    {
-      "id": 104,
-      "origin_id": 25,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 2,
-      "type": "object",
-      "comment": "Complex path → Operator Eligibility"
-    },
-    {
-      "id": 105,
-      "origin_id": 25,
-      "origin_slot": 1,
-      "target_id": 17,
-      "target_slot": 3,
-      "type": "object",
-      "comment": "Simple path → Direct to Response Synthesizer (with guidance)"
-    },
     {
       "id": 1,
       "origin_id": 1,
@@ -423,15 +354,6 @@
       "comment": "Context → ReAct Planner"
     },
     {
-      "id": 106,
-      "origin_id": 24,
-      "origin_slot": 0,
-      "target_id": 11,
-      "target_slot": 3,
-      "type": "object",
-      "comment": "Orchestrator guidance → ReAct Planner (when operator used)"
-    },
-    {
       "id": 18,
       "origin_id": 11,
       "origin_slot": 0,
@@ -483,7 +405,7 @@
       "target_id": 15,
       "target_slot": 0,
       "type": "object",
-      "comment": "Completion status → Loop Router"
+      "comment": "Completion status → Conditional Router"
     },
     {
       "id": 24,
@@ -492,7 +414,7 @@
       "target_id": 15,
       "target_slot": 1,
       "type": "object",
-      "comment": "Scratchpad (exit data) → Loop Router"
+      "comment": "Scratchpad (exit data) → Router"
     },
     {
       "id": 25,
@@ -501,7 +423,7 @@
       "target_id": 15,
       "target_slot": 2,
       "type": "object",
-      "comment": "Scratchpad (loop data) → Loop Router"
+      "comment": "Scratchpad (loop data) → Router"
     },
     {
       "id": 26,
