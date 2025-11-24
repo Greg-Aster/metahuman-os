@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "model": "nomic-embed-text",
+  "provider": "ollama",
+  "preloadAtStartup": true,
+  "description": "Embedding model configuration for semantic memory search"
+}

@@ -36,6 +36,13 @@
   let nodePipelineLoading = false;
   let nodePipelineSaving = false;
 
+  // Embedding model control
+  let embeddingEnabled = true;
+  let embeddingModel = 'nomic-embed-text';
+  let embeddingPreload = true;
+  let embeddingLoading = false;
+  let embeddingSaving = false;
+
   onMount(async () => {
     loadWelcomeModalSetting();
     loadModelInfo();
@@ -43,6 +50,7 @@
     loadLoggingConfig();
     loadAuditLoggingState();
     loadNodePipelineState();
+    loadEmbeddingConfig();
   });
 
   async function loadNodePipelineState() {
@@ -151,6 +159,103 @@
     } catch (err) {
       console.error('[SystemSettings] Error purging logs:', err);
       alert(`Failed to purge logs: ${(err as Error).message}`);
+    }
+  }
+
+  async function loadEmbeddingConfig() {
+    embeddingLoading = true;
+    try {
+      const res = await fetch('/api/embeddings-control');
+      if (res.ok) {
+        const data = await res.json();
+        embeddingEnabled = !!data.enabled;
+        embeddingModel = data.model || 'nomic-embed-text';
+        embeddingPreload = !!data.preloadAtStartup;
+      }
+    } catch (err) {
+      console.error('[SystemSettings] Error loading embedding config:', err);
+    } finally {
+      embeddingLoading = false;
+    }
+  }
+
+  async function handleEmbeddingToggle(event: Event) {
+    if (embeddingSaving) {
+      event?.preventDefault();
+      return;
+    }
+    const target = event.currentTarget as HTMLInputElement | null;
+    const desired = target?.checked ?? !embeddingEnabled;
+    embeddingSaving = true;
+    try {
+      const res = await fetch('/api/embeddings-control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: desired })
+      });
+      if (!res.ok) {
+        throw new Error('Failed to update embedding state');
+      }
+      const data = await res.json();
+      embeddingEnabled = !!data.config.enabled;
+    } catch (err) {
+      console.error('[SystemSettings] Error updating embedding state:', err);
+      embeddingEnabled = !desired;
+      alert(`Failed to update embedding: ${(err as Error).message}`);
+    } finally {
+      embeddingSaving = false;
+    }
+  }
+
+  async function handleEmbeddingPreloadToggle(event: Event) {
+    if (embeddingSaving) {
+      event?.preventDefault();
+      return;
+    }
+    const target = event.currentTarget as HTMLInputElement | null;
+    const desired = target?.checked ?? !embeddingPreload;
+    embeddingSaving = true;
+    try {
+      const res = await fetch('/api/embeddings-control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preloadAtStartup: desired })
+      });
+      if (!res.ok) {
+        throw new Error('Failed to update preload state');
+      }
+      const data = await res.json();
+      embeddingPreload = !!data.config.preloadAtStartup;
+    } catch (err) {
+      console.error('[SystemSettings] Error updating preload state:', err);
+      embeddingPreload = !desired;
+      alert(`Failed to update preload: ${(err as Error).message}`);
+    } finally {
+      embeddingSaving = false;
+    }
+  }
+
+  async function preloadEmbeddingNow() {
+    if (!embeddingEnabled) {
+      alert('Enable embeddings first before preloading');
+      return;
+    }
+    embeddingSaving = true;
+    try {
+      const res = await fetch('/api/embeddings-control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preloadNow: true })
+      });
+      if (!res.ok) {
+        throw new Error('Failed to preload model');
+      }
+      alert('Embedding model is being preloaded in the background');
+    } catch (err) {
+      console.error('[SystemSettings] Error preloading model:', err);
+      alert(`Failed to preload: ${(err as Error).message}`);
+    } finally {
+      embeddingSaving = false;
     }
   }
 
@@ -393,6 +498,80 @@
           🗑️ Purge Logs Older Than 7 Days
         </button>
       </div>
+    </div>
+  </div>
+
+  <!-- Embedding Model Control -->
+  <div class="setting-group" style="margin-top: 1.5rem;">
+    <label class="setting-label">Embedding Model (Semantic Memory)</label>
+    <div class="lora-toggle-container">
+      <div class="lora-toggle-header">
+        <span class="setting-label">Enable semantic memory search</span>
+        <label
+          class="toggle-switch"
+          for="embedding-toggle"
+          aria-label="Toggle embedding model"
+        >
+          <input
+            id="embedding-toggle"
+            type="checkbox"
+            bind:checked={embeddingEnabled}
+            disabled={embeddingLoading || embeddingSaving}
+            on:change={handleEmbeddingToggle}
+          />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <p class="lora-toggle-description">
+        {#if embeddingEnabled}
+          ✓ Semantic search is ON. The "{embeddingModel}" model enables memory-based conversations.
+        {:else}
+          ⚠️ Semantic search is OFF. Conversations will use basic keyword search only.
+        {/if}
+      </p>
+
+      {#if embeddingEnabled}
+        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color, #333);">
+          <div class="lora-toggle-header">
+            <span class="setting-label">Preload model at startup</span>
+            <label
+              class="toggle-switch"
+              for="embedding-preload-toggle"
+              aria-label="Toggle preload at startup"
+            >
+              <input
+                id="embedding-preload-toggle"
+                type="checkbox"
+                bind:checked={embeddingPreload}
+                disabled={embeddingLoading || embeddingSaving}
+                on:change={handleEmbeddingPreloadToggle}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <p class="lora-toggle-description" style="font-size: 0.85rem; margin-top: 0.5rem;">
+            {#if embeddingPreload}
+              ✓ Model will load automatically on system startup (keeps it in memory)
+            {:else}
+              Model will load on-demand when needed (may cause delays on first use)
+            {/if}
+          </p>
+        </div>
+
+        <div style="margin-top: 0.75rem;">
+          <button
+            class="action-button"
+            on:click={preloadEmbeddingNow}
+            disabled={embeddingSaving}
+            style="padding: 0.4rem 0.8rem; font-size: 0.85rem;"
+          >
+            🔄 Load Model Now
+          </button>
+          <p style="font-size: 0.8rem; color: var(--text-muted, #999); margin-top: 0.3rem;">
+            Current model: <strong>{embeddingModel}</strong> (~791MB VRAM)
+          </p>
+        </div>
+      {/if}
     </div>
   </div>
 

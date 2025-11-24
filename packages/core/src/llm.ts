@@ -62,7 +62,10 @@ export class OllamaProvider implements LLMProvider {
       if (registry.globalSettings?.useAdapter && registry.globalSettings?.activeAdapter) {
         this.activeAdapter = registry.globalSettings.activeAdapter;
         if (!OllamaProvider.adapterLogged) {
-          console.log(`[llm] Using adapter: ${this.activeAdapter}`);
+          const adapterName = typeof this.activeAdapter === 'object' && this.activeAdapter.modelName
+            ? this.activeAdapter.modelName
+            : JSON.stringify(this.activeAdapter);
+          console.log(`[llm] Using adapter: ${adapterName}`);
           OllamaProvider.adapterLogged = true;
         }
       } else {
