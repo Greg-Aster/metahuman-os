@@ -315,26 +315,40 @@ async function mainWithContext() {
     const FORMATTED_PATH = path.join(OUT_ROOT, 'formatted_samples.json');
     const SCHEMA_PATH = path.join(OUT_ROOT, 'schema_applied.json');
 
-    // Step 1: Curate memories (advanced quality filtering)
-    console.log('[full-cycle] STEP 1/4: Curating memories...');
-    const curatorArgs = ['--username', ctx.username, '--output', CURATED_PATH];
+    // Step 0: Pre-curation pass - LLM curator finishes any uncurated memories
+    // This will run BEFORE aggregation to maximize available data
+    console.log('[full-cycle] STEP 0/4: Pre-curation pass (LLM curator finishing uncurated memories)...');
+    console.log('[full-cycle] Processing remaining uncurated memories before aggregation');
 
-    // Support monthly training strategy from env vars
-    if (process.env.METAHUMAN_DAYS_RECENT || process.env.METAHUMAN_OLD_SAMPLES) {
-      const daysRecent = process.env.METAHUMAN_DAYS_RECENT || '30';
-      const oldSamples = process.env.METAHUMAN_OLD_SAMPLES || '3000';
-      curatorArgs.push('--days-recent', daysRecent);
-      curatorArgs.push('--old-samples', oldSamples);
-      console.log(`[full-cycle] Using monthly strategy (${daysRecent} days recent + ${oldSamples} old)`);
+    try {
+      const llmCuratorCode = await runAgent('curator', ['--username', ctx.username], ctx.username);
+      if (llmCuratorCode === 0) {
+        console.log('[full-cycle] ✅ Pre-curation pass completed successfully');
+      } else {
+        console.warn(`[full-cycle] ⚠️  Pre-curation pass exited with code ${llmCuratorCode}, continuing...`);
+      }
+    } catch (curatorError) {
+      console.warn('[full-cycle] ⚠️  Pre-curation pass failed:', (curatorError as Error).message);
+      console.warn('[full-cycle] Continuing with available curated memories...');
     }
+
+    // Step 1: Aggregate curated conversations from curator.ts output
+    console.log('[full-cycle] STEP 1/4: Aggregating curated conversations...');
+    console.log('[full-cycle] Using LLM-curated conversations from curator agent');
+
+    const aggregatorArgs = ['--username', ctx.username, '--output', CURATED_PATH];
+
+    // Note: Monthly training strategy is handled by curator.ts incrementally
+    // The curator processes ~50 memories per run and maintains quality over time
+    // For training, we simply aggregate all available curated conversations
 
     if (process.env.METAHUMAN_MAX_SAMPLES) {
-      curatorArgs.push('--max', process.env.METAHUMAN_MAX_SAMPLES);
+      aggregatorArgs.push('--max', process.env.METAHUMAN_MAX_SAMPLES);
     }
 
-    const curatorCode = await runAgent('memory-curator', curatorArgs, ctx.username);
-    if (curatorCode !== 0) {
-      throw new Error('Memory curation failed');
+    const aggregatorCode = await runAgent('curated-aggregator', aggregatorArgs, ctx.username);
+    if (aggregatorCode !== 0) {
+      throw new Error('Curated conversation aggregation failed');
     }
 
     // Step 2: Format samples (add cognitive mode tags)
@@ -523,6 +537,7 @@ async function mainWithContext() {
     CONFIG_FILE,
     SUMMARY_FILE,
     samples_used,
+    username: ctx.username,
   });
 
   console.log(`[full-cycle] Remote training complete, success=${result.training_success}`);

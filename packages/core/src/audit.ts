@@ -11,8 +11,9 @@ import { getUserContext } from './context.js';
  * When no context is set, logs go to root-level logs/audit/ (system logs)
  */
 
-// Audit logging control - disabled by default to prevent CPU issues from massive logs
-let auditEnabled = false;
+// Audit logging control - enabled by default for tracking all system operations
+// Can be disabled via /api/audit-control if logs become too large
+let auditEnabled = true;
 let auditRetentionDays = 7; // Auto-delete logs older than this
 
 /**

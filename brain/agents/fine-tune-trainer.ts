@@ -144,6 +144,7 @@ export async function runRemoteFineTune(
       CONFIG_FILE,
       SUMMARY_FILE,
       samples_used,
+      username: options.username,
     });
 
     console.log(`[fine-tune-trainer] Training result: success=${result.training_success}`);

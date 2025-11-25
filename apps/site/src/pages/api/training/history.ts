@@ -15,10 +15,171 @@ interface TrainingRun {
   baseModel?: string;
   duration?: string;
   error?: string;
+  fullLogPath?: string; // Full path for reading logs
 }
 
 /**
- * Parse audit logs to extract training run history
+ * Parse docs/run_logs directory to extract training runs
+ */
+function parseRunLogsDirectory(): TrainingRun[] {
+  const runs: TrainingRun[] = [];
+  const runLogsDir = path.join(systemPaths.root, 'docs', 'run_logs');
+
+  if (!fs.existsSync(runLogsDir)) {
+    return runs;
+  }
+
+  try {
+    // Get date directories (YYYY-MM-DD)
+    const dateDirs = fs.readdirSync(runLogsDir)
+      .filter(f => {
+        const fullPath = path.join(runLogsDir, f);
+        return fs.statSync(fullPath).isDirectory();
+      })
+      .sort()
+      .reverse()
+      .slice(0, 30); // Last 30 days
+
+    for (const dateDir of dateDirs) {
+      const datePath = path.join(runLogsDir, dateDir);
+
+      // Get run directories within each date
+      const runDirs = fs.readdirSync(datePath)
+        .filter(f => {
+          const fullPath = path.join(datePath, f);
+          return fs.statSync(fullPath).isDirectory();
+        });
+
+      for (const runDir of runDirs) {
+        const runPath = path.join(datePath, runDir);
+        const trainerLogPath = path.join(runPath, 'trainer.log');
+
+        if (!fs.existsSync(trainerLogPath)) {
+          continue;
+        }
+
+        try {
+          // Parse trainer.log to extract metadata (optimized - read only last 50KB for large files)
+          const logStats = fs.statSync(trainerLogPath);
+          const fileSize = logStats.size;
+
+          let logContent = '';
+          if (fileSize > 50000) {
+            // For large files, read last 50KB only (roughly 500-1000 lines)
+            const fd = fs.openSync(trainerLogPath, 'r');
+            const readSize = Math.min(50000, fileSize);
+            const buffer = Buffer.alloc(readSize);
+            fs.readSync(fd, buffer, 0, readSize, fileSize - readSize);
+            fs.closeSync(fd);
+            logContent = buffer.toString('utf-8');
+          } else {
+            // For small files, read entire file
+            logContent = fs.readFileSync(trainerLogPath, 'utf-8');
+          }
+
+          const lines = logContent.split('\n');
+
+          let startTime = '';
+          let endTime = '';
+          let status: 'completed' | 'failed' | 'cancelled' = 'completed';
+          let method = 'fine-tune';
+          let baseModel = '';
+          let error = '';
+
+          // Extract metadata from log lines (optimized - scan in reverse for end time)
+          for (let i = lines.length - 1; i >= 0; i--) {
+            const line = lines[i];
+
+            // Extract end time first (scan from bottom)
+            if (!endTime) {
+              const timestampMatch = line.match(/\[([\d-T:.Z]+)\]/);
+              if (timestampMatch) {
+                endTime = timestampMatch[1];
+              }
+            }
+
+            // Check for errors
+            if (line.includes('Training exit code: 1') || line.includes('failed')) {
+              status = 'failed';
+            }
+
+            if (line.includes('torch.AcceleratorError') || line.includes('CUDA error')) {
+              status = 'failed';
+              error = 'CUDA error: GPU busy or unavailable';
+            }
+
+            if (line.includes('Training stderr') && line.includes('error')) {
+              status = 'failed';
+              if (!error) error = 'Training script error';
+            }
+          }
+
+          // Scan from top for start time and model info
+          for (const line of lines) {
+            // Extract start time (first timestamp)
+            if (!startTime && line.includes('Starting new training run')) {
+              const match = line.match(/\[([\d-T:.Z]+)\]/);
+              if (match) startTime = match[1];
+            }
+
+            // Extract base model
+            if (!baseModel && (line.includes('base_model') || line.includes('Loading tokenizer for'))) {
+              const modelMatch = line.match(/(?:base_model|tokenizer for)\s+(\S+)/);
+              if (modelMatch) baseModel = modelMatch[1];
+            }
+
+            // Detect LORA vs full fine-tune
+            if (line.includes('LoRA') || line.includes('lora_rank')) {
+              method = 'remote-lora';
+            } else if (line.includes('FULL FINE-TUNING') || line.includes('full_finetune')) {
+              method = 'fine-tune';
+            }
+
+            // Early exit if we have all critical metadata
+            if (startTime && baseModel && endTime) {
+              break;
+            }
+          }
+
+          // Use directory name for start time if not found in logs
+          if (!startTime) {
+            const dirMatch = runDir.match(/(\d{4}-\d{2}-\d{2})-(\d{6})/);
+            if (dirMatch) {
+              const date = dirMatch[1];
+              const time = dirMatch[2];
+              startTime = `${date}T${time.substring(0, 2)}:${time.substring(2, 4)}:${time.substring(4, 6)}Z`;
+            }
+          }
+
+          const run: TrainingRun = {
+            id: runDir,
+            startTime: startTime || new Date().toISOString(),
+            endTime: endTime || undefined,
+            status,
+            method,
+            logFile: `${dateDir}/${runDir}/trainer.log`,
+            fullLogPath: trainerLogPath,
+            baseModel: baseModel || undefined,
+            duration: startTime && endTime ? calculateDuration(startTime, endTime) : undefined,
+            error: error || undefined,
+          };
+
+          runs.push(run);
+        } catch (err) {
+          // Skip invalid run directories
+          console.warn(`[training/history] Failed to parse run ${runDir}:`, err);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[training/history] Failed to scan run_logs directory:', err);
+  }
+
+  return runs;
+}
+
+/**
+ * Parse audit logs to extract training run history (legacy)
  */
 function parseTrainingHistory(): TrainingRun[] {
   const runs: TrainingRun[] = [];
@@ -50,7 +211,7 @@ function parseTrainingHistory(): TrainingRun[] {
         const entry = JSON.parse(line);
         const event = entry.event as string;
 
-        // Track full cycle starts
+        // Track full cycle starts (from /api/adapters fullCycle action)
         if (event === 'full_cycle_queued') {
           const pid = entry.details?.pid;
           const logPath = entry.details?.logPath;
@@ -64,6 +225,27 @@ function parseTrainingHistory(): TrainingRun[] {
               method: entry.details?.dualMode ? 'full-cycle (dual)' : 'full-cycle',
               logFile: path.basename(logPath),
               baseModel: entry.details?.model,
+            };
+
+            runsByPid.set(pid, run);
+          }
+        }
+
+        // Track training starts (from /api/training/launch endpoint)
+        if (event === 'training_started') {
+          const pid = entry.details?.pid;
+          const method = entry.details?.method || 'unknown';
+          const logPath = entry.details?.logPath;
+
+          if (pid) {
+            const run: TrainingRun = {
+              id: `run-${pid}`,
+              startTime: entry.timestamp,
+              status: 'completed', // Default, will update if we find errors
+              pid,
+              method: method,
+              logFile: logPath || `training-${pid}.log`, // Use logPath from audit or fallback
+              baseModel: entry.details?.config?.base_model,
             };
 
             runsByPid.set(pid, run);
@@ -155,13 +337,32 @@ function calculateDuration(start: string, end: string): string {
  */
 export const GET: APIRoute = async () => {
   try {
-    const runs = parseTrainingHistory();
+    // Parse both sources and merge
+    const runLogsRuns = parseRunLogsDirectory();
+    const auditRuns = parseTrainingHistory();
+
+    // Merge runs, preferring docs/run_logs data (more detailed)
+    const runsById = new Map<string, TrainingRun>();
+
+    // Add audit runs first
+    for (const run of auditRuns) {
+      runsById.set(run.id, run);
+    }
+
+    // Overlay run_logs data (more authoritative)
+    for (const run of runLogsRuns) {
+      runsById.set(run.id, run);
+    }
+
+    const allRuns = Array.from(runsById.values())
+      .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())
+      .slice(0, 50);
 
     return new Response(
       JSON.stringify({
         success: true,
-        runs,
-        count: runs.length,
+        runs: allRuns,
+        count: allRuns.length,
       }),
       {
         status: 200,

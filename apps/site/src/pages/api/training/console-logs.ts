@@ -10,7 +10,8 @@ import path from 'node:path';
 import { systemPaths } from '@metahuman/core';
 
 /**
- * Get the most recent full-cycle log file
+ * Get the most recent training log file
+ * Matches: full-cycle-*.log, full-cycle-local-*.log, fine-tune-cycle-*.log
  */
 function getMostRecentLogFile(): string | null {
   const logsDir = path.join(systemPaths.logs, 'run');
@@ -20,7 +21,10 @@ function getMostRecentLogFile(): string | null {
   }
 
   const files = fs.readdirSync(logsDir)
-    .filter(f => f.startsWith('full-cycle-') && f.endsWith('.log'))
+    .filter(f =>
+      (f.includes('full-cycle') || f.includes('fine-tune-cycle')) &&
+      f.endsWith('.log')
+    )
     .map(f => ({
       name: f,
       path: path.join(logsDir, f),
@@ -32,7 +36,7 @@ function getMostRecentLogFile(): string | null {
 }
 
 /**
- * GET handler - Retrieve full-cycle console logs
+ * GET handler - Retrieve training console logs (all methods)
  */
 export const GET: APIRoute = async ({ request }) => {
   try {
@@ -45,7 +49,7 @@ export const GET: APIRoute = async ({ request }) => {
       return new Response(
         JSON.stringify({
           success: false,
-          error: 'No full-cycle log files found',
+          error: 'No training log files found',
           logs: [],
         }),
         {

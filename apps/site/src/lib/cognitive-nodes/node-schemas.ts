@@ -230,6 +230,25 @@ export const OperatorEligibilityNode: NodeSchema = {
   description: 'Determines if operator should be used',
 };
 
+export const SmartRouterNode: NodeSchema = {
+  id: 'smart_router',
+  name: 'Smart Router',
+  category: 'router',
+  ...categoryColors.router,
+  inputs: [
+    { name: 'orchestratorAnalysis', type: 'object', description: 'Analysis from orchestrator LLM' },
+  ],
+  outputs: [
+    { name: 'complexPath', type: 'object', description: 'Output for complex queries (to operator)' },
+    { name: 'simplePath', type: 'object', description: 'Output for simple queries (direct to response)' },
+  ],
+  properties: {
+    routeOnComplexity: true,
+    simpleThreshold: 0.3,
+  },
+  description: 'Routes queries based on complexity analysis - simple queries skip operator overhead',
+};
+
 // ============================================================================
 // CONTEXT NODES
 // ============================================================================
@@ -1234,6 +1253,86 @@ export const AgentTimerNode: NodeSchema = {
 };
 
 // ============================================================================
+// CURIOSITY SERVICE NODES (User-Aware Question Generation)
+// ============================================================================
+
+export const CuriosityWeightedSamplerNode: NodeSchema = {
+  id: 'curiosity_weighted_sampler',
+  name: 'Curiosity Weighted Sampler',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [],
+  outputs: [
+    { name: 'memories', type: 'array', description: 'Array of sampled memory objects' },
+    { name: 'count', type: 'number', description: 'Number of memories sampled' },
+    { name: 'username', type: 'string', description: 'User whose memories were sampled' },
+    { name: 'decayFactor', type: 'number', description: 'Decay factor used (days)' },
+  ],
+  properties: {
+    sampleSize: 5,
+    decayFactor: 14, // Days for exponential decay
+  },
+  description: 'Samples user-specific memories using weighted selection with exponential decay (14-day half-life). SECURITY: Uses explicit user path isolation.',
+};
+
+export const CuriosityQuestionGeneratorNode: NodeSchema = {
+  id: 'curiosity_question_generator',
+  name: 'Curiosity Question Generator',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [
+    { name: 'memories', type: 'array', description: 'Array of memory objects to base question on' },
+  ],
+  outputs: [
+    { name: 'question', type: 'string', description: 'Generated curiosity question' },
+    { name: 'rawQuestion', type: 'string', description: 'Same as question (for compatibility)' },
+    { name: 'username', type: 'string', description: 'User for whom question was generated' },
+    { name: 'memoriesConsidered', type: 'number', description: 'Number of memories used' },
+  ],
+  properties: {
+    temperature: 0.6,
+  },
+  description: 'Generates natural, conversational curiosity questions via LLM using persona-aware prompt construction',
+};
+
+export const CuriosityQuestionSaverNode: NodeSchema = {
+  id: 'curiosity_question_saver',
+  name: 'Curiosity Question Saver',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [
+    { name: 'question', type: 'string', description: 'Generated question to save' },
+    { name: 'memories', type: 'array', optional: true, description: 'Seed memories (for metadata)' },
+  ],
+  outputs: [
+    { name: 'questionId', type: 'string', description: 'Unique question ID' },
+    { name: 'saved', type: 'boolean', description: 'Whether save was successful' },
+    { name: 'username', type: 'string', description: 'User for whom question was saved' },
+    { name: 'askedAt', type: 'string', description: 'ISO timestamp when question was asked' },
+  ],
+  properties: {},
+  description: 'Saves question to audit log (for SSE streaming) and pending directory (for researcher agent). SECURITY: Uses user-specific paths.',
+};
+
+export const CuriosityActivityCheckNode: NodeSchema = {
+  id: 'curiosity_activity_check',
+  name: 'Curiosity Activity Check',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [],
+  outputs: [
+    { name: 'canAsk', type: 'boolean', description: 'Whether enough time has passed to ask' },
+    { name: 'timeSinceLastQuestion', type: 'number', optional: true, description: 'Seconds since last question (null if never asked)' },
+    { name: 'questionInterval', type: 'number', description: 'Required interval in seconds' },
+    { name: 'username', type: 'string', description: 'User being checked' },
+  ],
+  properties: {
+    questionIntervalSeconds: 1800, // Default 30 minutes
+  },
+  description: 'Checks if enough time has passed since last curiosity question to prevent rapid-fire questions',
+};
+
+// ============================================================================
 // CONFIGURATION NODES
 // ============================================================================
 
@@ -1589,6 +1688,7 @@ export const nodeSchemas: NodeSchema[] = [
   CognitiveModeRouterNode,
   AuthCheckNode,
   OperatorEligibilityNode,
+  SmartRouterNode,
 
   // Context
   ContextBuilderNode,
@@ -1666,6 +1766,12 @@ export const nodeSchemas: NodeSchema[] = [
   MemorySaverNode,
   LLMEnricherNode,
   AgentTimerNode,
+
+  // Curiosity Service (User-Aware Question Generation)
+  CuriosityWeightedSamplerNode,
+  CuriosityQuestionGeneratorNode,
+  CuriosityQuestionSaverNode,
+  CuriosityActivityCheckNode,
 
   // Train of Thought (Recursive Reasoning)
   ScratchpadInitializerNode,

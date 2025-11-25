@@ -67,6 +67,7 @@ build/
 /etc/lifeline.json
 /etc/network.json
 /etc/logging.json
+/etc/runpod.json
 /etc/config
 /etc/legacy/
 # Keep template/example configs

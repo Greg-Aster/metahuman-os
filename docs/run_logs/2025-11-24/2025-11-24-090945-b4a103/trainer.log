@@ -1,0 +1,45 @@
+[2025-11-24T09:09:46.514Z] === Starting new training run ===
+[2025-11-24T09:09:46.514Z] Date: 2025-11-24
+[2025-11-24T09:09:46.514Z] Run label: 2025-11-24-090945-b4a103
+[2025-11-24T09:09:46.514Z] Work directory: /home/greggles/metahuman/metahuman-runs/greggles/2025-11-24/2025-11-24-090945-b4a103
+[2025-11-24T09:09:46.514Z] RUNPOD_NO_GATEWAY=1 set; skipping gateway schema probes.
+[2025-11-24T09:09:46.514Z] RUNPOD_DIRECT_SSH_USER=root; will prefer this user for direct SSH.
+[2025-11-24T09:09:46.514Z] Using RUNPOD_TEMPLATE_ID=6r5jlk3b89
+[2025-11-24T09:09:46.514Z] LoRA mode: Using NVIDIA GeForce RTX 5090
+[2025-11-24T09:09:46.514Z] Selected GPU type: NVIDIA GeForce RTX 5090
+[2025-11-24T09:09:46.515Z] Attempting to deploy pod on COMMUNITY cloud...
+[2025-11-24T09:09:47.546Z] Pod created successfully on COMMUNITY cloud. Pod ID: rgc979mx4t327w
+[2025-11-24T09:09:47.547Z] Waiting for pod to become RUNNING...
+[2025-11-24T09:09:47.547Z] Waiting for pod ssh gateway... (Attempt 1/120)
+[2025-11-24T09:09:53.146Z] Waiting for pod ssh gateway... (Attempt 2/120)
+[2025-11-24T09:09:58.677Z] Waiting for pod ssh gateway... (Attempt 3/120)
+[2025-11-24T09:10:04.310Z] Waiting for pod ssh gateway... (Attempt 4/120)
+[2025-11-24T09:10:10.043Z] Waiting for pod ssh gateway... (Attempt 5/120)
+[2025-11-24T09:10:15.585Z] Waiting for pod ssh gateway... (Attempt 6/120)
+[2025-11-24T09:10:21.132Z] Waiting for pod ssh gateway... (Attempt 7/120)
+[2025-11-24T09:10:26.675Z] Waiting for pod ssh gateway... (Attempt 8/120)
+[2025-11-24T09:10:32.263Z] Waiting for pod ssh gateway... (Attempt 9/120)
+[2025-11-24T09:10:37.894Z] Waiting for pod ssh gateway... (Attempt 10/120)
+[2025-11-24T09:10:43.450Z] Waiting for pod ssh gateway... (Attempt 11/120)
+[2025-11-24T09:10:49.023Z] Waiting for pod ssh gateway... (Attempt 12/120)
+[2025-11-24T09:10:54.687Z] Waiting for pod ssh gateway... (Attempt 13/120)
+[2025-11-24T09:11:00.423Z] Waiting for pod ssh gateway... (Attempt 14/120)
+[2025-11-24T09:11:05.964Z] Waiting for pod ssh gateway... (Attempt 15/120)
+[2025-11-24T09:11:11.686Z] Waiting for pod ssh gateway... (Attempt 16/120)
+[2025-11-24T09:11:17.304Z] Waiting for pod ssh gateway... (Attempt 17/120)
+[2025-11-24T09:11:22.818Z] Waiting for pod ssh gateway... (Attempt 18/120)
+[2025-11-24T09:11:28.360Z] Waiting for pod ssh gateway... (Attempt 19/120)
+[2025-11-24T09:11:34.009Z] Waiting for pod ssh gateway... (Attempt 20/120)
+[2025-11-24T09:11:39.517Z] Waiting for pod ssh gateway... (Attempt 21/120)
+[2025-11-24T09:11:45.280Z] Waiting for pod ssh gateway... (Attempt 22/120)
+[2025-11-24T09:11:51.214Z] Waiting for pod ssh gateway... (Attempt 23/120)
+[2025-11-24T09:11:56.769Z] Waiting for pod ssh gateway... (Attempt 24/120)
+[2025-11-24T09:12:02.684Z] Waiting for pod ssh gateway... (Attempt 25/120)
+[2025-11-24T09:12:08.198Z] Waiting for pod ssh gateway... (Attempt 26/120)
+[2025-11-24T09:12:13.727Z] Waiting for pod ssh gateway... (Attempt 27/120)
+[2025-11-24T09:12:19.251Z] Waiting for pod ssh gateway... (Attempt 28/120)
+[2025-11-24T09:12:24.955Z] Waiting for pod ssh gateway... (Attempt 29/120)
+[2025-11-24T09:12:30.534Z] Waiting for pod ssh gateway... (Attempt 30/120)
+[2025-11-24T09:12:35.905Z] Waiting for pod ssh gateway... (Attempt 31/120)
+[2025-11-24T09:12:41.289Z] Waiting for pod ssh gateway... (Attempt 32/120)
+[2025-11-24T09:12:46.526Z] Waiting for pod ssh gateway... (Attempt 33/120)

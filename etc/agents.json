@@ -36,6 +36,18 @@
       "maxRetries": 3,
       "comment": "Runs after 5 minutes of inactivity to avoid competing with user for VRAM"
     },
+    "curator": {
+      "id": "curator",
+      "enabled": true,
+      "type": "interval",
+      "priority": "normal",
+      "agentPath": "curator.ts",
+      "interval": 1800,
+      "runOnBoot": false,
+      "autoRestart": true,
+      "maxRetries": 2,
+      "comment": "LLM-based memory curation - processes 50 uncurated memories every 30 minutes, generating quality training data by creating conversational exchanges from raw memories"
+    },
     "night-pipeline": {
       "id": "night-pipeline",
       "enabled": true,

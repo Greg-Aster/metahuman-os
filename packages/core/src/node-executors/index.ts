@@ -21,6 +21,7 @@ export * from './emulation-executors.js';
 export * from './skill-executors.js';
 export * from './agent-executors.js';
 export * from './persona-executors.js';
+export * from './curiosity-executors.js';
 
 // Re-export registry functions and main registry
 export { nodeExecutors, registerPluginExecutor, unregisterPluginExecutor, getNodeExecutor, hasRealImplementation } from './registry.js';

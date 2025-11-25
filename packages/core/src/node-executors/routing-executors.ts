@@ -53,3 +53,41 @@ export const operatorEligibilityExecutor: NodeExecutor = async (inputs, context)
     intent: effectiveDecision ? 'action' : 'conversation',
   };
 };
+
+/**
+ * Smart Router Node
+ * Routes queries based on orchestrator complexity analysis
+ * Simple queries skip operator overhead and go directly to response synthesis
+ */
+export const smartRouterExecutor: NodeExecutor = async (inputs, context) => {
+  const orchestratorAnalysis = inputs[0] || {};
+
+  // Extract complexity and metadata from orchestrator analysis
+  const complexity = orchestratorAnalysis.complexity || 0.5;
+  const needsMemory = orchestratorAnalysis.needsMemory || false;
+  const simpleThreshold = 0.3; // Can be overridden by node properties
+
+  // Determine routing decision
+  const isSimple = complexity < simpleThreshold && !needsMemory;
+
+  // Route based on complexity
+  if (isSimple) {
+    // Simple path: Goes directly to response synthesizer
+    return {
+      complexPath: null,
+      simplePath: orchestratorAnalysis,
+      routingDecision: 'simple',
+      complexity,
+      skippedOperator: true
+    };
+  } else {
+    // Complex path: Goes through operator pipeline
+    return {
+      complexPath: orchestratorAnalysis,
+      simplePath: null,
+      routingDecision: 'complex',
+      complexity,
+      skippedOperator: false
+    };
+  }
+};

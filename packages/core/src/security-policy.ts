@@ -6,6 +6,7 @@ import {
 } from './cognitive-mode.js';
 import { validateSession } from './sessions.js';
 import { getUser } from './users.js';
+import { getUserContext } from './context.js';
 
 /**
  * User role types for access control
@@ -18,19 +19,34 @@ import { getUser } from './users.js';
 export type UserRole = 'owner' | 'standard' | 'guest' | 'anonymous';
 
 /**
- * Check if a username is in the administrator list
+ * Check if a user has administrator privileges
  * Administrators can edit system code and access all profiles
+ *
+ * NOTE: Admin privileges are granted to users with 'owner' role.
+ * The ADMIN_USERS environment variable is deprecated and no longer used.
  */
-export function isAdministrator(username?: string): boolean {
+export function isAdministrator(username?: string, role?: UserRole): boolean {
   if (!username) return false;
 
-  const adminUsers = process.env.ADMIN_USERS || '';
-  const adminList = adminUsers
-    .split(',')
-    .map((u) => u.trim())
-    .filter((u) => u.length > 0);
+  // Owner role automatically grants admin privileges
+  if (role === 'owner') return true;
 
-  return adminList.includes(username);
+  // Legacy ADMIN_USERS support (deprecated, but kept for backward compatibility)
+  // This will be removed in a future version
+  const adminUsers = process.env.ADMIN_USERS || '';
+  if (adminUsers) {
+    const adminList = adminUsers
+      .split(',')
+      .map((u) => u.trim())
+      .filter((u) => u.length > 0);
+
+    if (adminList.includes(username)) {
+      console.warn(`[Security] ADMIN_USERS is deprecated. User '${username}' should have 'owner' role instead.`);
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -250,7 +266,7 @@ function computeSecurityPolicy(
           reason: 'not_administrator',
           role,
           username,
-          required: 'admin privileges (set in ADMIN_USERS env var)',
+          required: 'admin privileges (owner role)',
         });
       }
     },
@@ -270,7 +286,7 @@ function computeSecurityPolicy(
             role,
             username,
             filePath: normalizedPath,
-            required: 'admin privileges (set in ADMIN_USERS env var)',
+            required: 'admin privileges (owner role)',
           });
         }
         return; // Admin can edit anything
@@ -303,7 +319,7 @@ function computeSecurityPolicy(
               username,
               targetUsername,
               filePath: normalizedPath,
-              required: 'admin privileges (set in ADMIN_USERS env var)',
+              required: 'admin privileges (owner role)',
             });
           }
           return; // Admin can access any profile
@@ -331,7 +347,7 @@ function computeSecurityPolicy(
           role,
           username,
           filePath: normalizedPath,
-          required: 'admin privileges (set in ADMIN_USERS env var)',
+          required: 'admin privileges (owner role)',
         });
       }
     },
@@ -397,8 +413,9 @@ function extractSession(context?: any): SessionInfo | null {
   const user = getUser(session.userId);
 
   // Check if user is administrator
+  // Owner role automatically grants admin privileges
   const username = user?.username;
-  const isAdmin = isAdministrator(username);
+  const isAdmin = isAdministrator(username, session.role);
 
   // Return session info
   return {
@@ -435,8 +452,23 @@ export function getSecurityPolicy(context?: any): SecurityPolicy {
     return REQUEST_POLICY_CACHE.get(context)!;
   }
 
-  // Extract session (if available)
-  const session = extractSession(context);
+  // PRIORITY 1: Try to get user context from AsyncLocalStorage (set by graph pipeline)
+  // This allows skills executed from graph nodes to access authenticated user info
+  let session: SessionInfo | undefined;
+  const userContext = getUserContext();
+  if (userContext && userContext.role !== 'anonymous') {
+    session = {
+      role: userContext.role,
+      id: userContext.userId,
+      username: userContext.username,
+      isAdmin: isAdministrator(userContext.username, userContext.role),
+    };
+  }
+
+  // PRIORITY 2: Extract session from HTTP request (if no AsyncLocalStorage context)
+  if (!session) {
+    session = extractSession(context);
+  }
 
   // Load current cognitive mode from file system
   let mode: CognitiveModeId = 'dual';

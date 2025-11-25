@@ -134,7 +134,7 @@ def main():
     cfg = {
         "base_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct",
         "training_mode": "full_finetune",
-        "learning_rate": 5e-6,  # Much lower than LoRA (5e-6 vs 2e-4)
+        "learning_rate": 3e-5,  # Default within recommended full fine-tune range
         "num_train_epochs": 3,
         "per_device_train_batch_size": 1,
         "gradient_accumulation_steps": 32,  # Higher to compensate for batch=1
@@ -163,8 +163,22 @@ def main():
 
     os.makedirs(output_dir, exist_ok=True)
 
+    # Enforce a sane learning rate range for full fine-tuning
+    min_lr, max_lr = 1e-5, 5e-5
+    configured_lr = cfg.get("learning_rate", 3e-5)
+    try:
+        configured_lr = float(configured_lr)
+    except (TypeError, ValueError):
+        log_progress("CONFIG", f"Invalid learning rate '{configured_lr}' provided, falling back to 3e-5")
+        configured_lr = 3e-5
+
+    clamped_lr = max(min_lr, min(max_lr, configured_lr))
+    if clamped_lr != configured_lr:
+        log_progress("CONFIG", f"Learning rate {configured_lr} outside [{min_lr}, {max_lr}], clamped to {clamped_lr}")
+    cfg["learning_rate"] = clamped_lr
+
     log_progress("CONFIG", f"Training mode: {cfg.get('training_mode', 'full_finetune')}")
-    log_progress("CONFIG", f"Learning rate: {cfg['learning_rate']} (FULL fine-tune - much lower than LoRA)")
+    log_progress("CONFIG", f"Learning rate: {cfg['learning_rate']} (full fine-tune range {min_lr}-{max_lr})")
     log_progress("CONFIG", f"Epochs: {cfg['num_train_epochs']}")
     log_progress("CONFIG", f"Batch size: {cfg['per_device_train_batch_size']} × {cfg['gradient_accumulation_steps']} = {cfg['per_device_train_batch_size'] * cfg['gradient_accumulation_steps']} effective")
 

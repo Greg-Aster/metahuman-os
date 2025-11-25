@@ -348,7 +348,7 @@
   "cognitiveModeMappings": {
     "dual": {
       "orchestrator": "ollama.greggles-finetune-q6k-2025-11-22:latest",
-      "persona": "ollama.greggles-2025-11-22:latest",
+      "persona": "ollama.greggles-finetune-q6k-2025-11-22:latest",
       "planner": "ollama.greggles-finetune-q6k-2025-11-22:latest",
       "curator": "default.coder",
       "summarizer": "ollama.greggles-finetune-q6k-2025-11-22:latest",
@@ -359,7 +359,7 @@
       "persona": "default.persona",
       "coder": "default.coder",
       "planner": "default.planner",
-      "curator": "default.curator",
+      "curator": "default.coder",
       "summarizer": "default.summarizer",
       "psychotherapist": "default.psychotherapist"
     },
