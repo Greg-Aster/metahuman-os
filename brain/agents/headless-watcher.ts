@@ -2,17 +2,29 @@
 /**
  * Headless Mode Watcher
  *
- * Monitors the runtime configuration file and manages agent lifecycle based on
- * headless mode state. When headless mode is enabled, this service stops all
- * local agents while keeping the tunnel and web server running. When disabled,
- * it resumes normal agent operations.
+ * ⚠️  DEPRECATED: This service is no longer needed. Agent lifecycle management
+ * is now handled directly by enterHeadlessMode/exitHeadlessMode functions in
+ * packages/core/src/runtime-mode.ts.
  *
- * This service also provides a built-in keepalive mechanism to prevent system
- * sleep while in headless mode, ensuring the tunnel and web server remain
- * accessible for remote users.
+ * This file is kept for reference but should not be started. The new approach
+ * is more efficient (no watcher process) and more reliable (immediate response).
  *
- * MULTI-USER: This is a system-level service that manages global runtime state.
+ * Previous behavior:
+ * - Monitored runtime.json for headless mode changes
+ * - Stopped/started agents based on state changes
+ * - Provided keepalive mechanism
+ *
+ * New behavior (runtime-mode.ts):
+ * - enterHeadlessMode() directly calls stopAllAgents()
+ * - exitHeadlessMode() directly spawns default agents
+ * - No polling, no file watching, no wasted resources
+ *
+ * MULTI-USER: This was a system-level service that managed global runtime state.
  */
+
+console.warn('⚠️  headless-watcher is deprecated - use runtime-mode.ts functions instead');
+console.warn('   Exiting immediately. Remove this agent from your startup scripts.');
+process.exit(0);
 
 import fs from 'node:fs';
 import path from 'node:path';

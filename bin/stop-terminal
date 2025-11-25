@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+LOG_DIR="$REPO_ROOT/logs/run"
+PID_FILE="$LOG_DIR/terminal.pid"
+
+if [ ! -f "$PID_FILE" ]; then
+  echo "Terminal server not running (no PID file)"
+  exit 0
+fi
+
+PID=$(cat "$PID_FILE")
+
+if ! ps -p "$PID" >/dev/null 2>&1; then
+  echo "Terminal server not running (stale PID)"
+  rm -f "$PID_FILE"
+  exit 0
+fi
+
+echo "Stopping terminal server (PID: $PID)..."
+kill "$PID" 2>/dev/null || true
+
+# Wait for process to exit
+for i in {1..10}; do
+  if ! ps -p "$PID" >/dev/null 2>&1; then
+    echo "✓ Terminal server stopped"
+    rm -f "$PID_FILE"
+    exit 0
+  fi
+  sleep 0.5
+done
+
+# Force kill if still running
+if ps -p "$PID" >/dev/null 2>&1; then
+  echo "Force killing terminal server..."
+  kill -9 "$PID" 2>/dev/null || true
+fi
+
+rm -f "$PID_FILE"
+echo "✓ Terminal server stopped"

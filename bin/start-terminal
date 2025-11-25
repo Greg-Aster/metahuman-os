@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+TERMINAL_PORT="${TERMINAL_PORT:-3001}"
+LOG_DIR="$REPO_ROOT/logs/run"
+PID_FILE="$LOG_DIR/terminal.pid"
+
+mkdir -p "$LOG_DIR"
+
+# Check if terminal is already running
+if [ -f "$PID_FILE" ]; then
+  PID=$(cat "$PID_FILE")
+  if ps -p "$PID" >/dev/null 2>&1; then
+    echo "Terminal server already running (PID: $PID)"
+    exit 0
+  else
+    # Stale PID file
+    rm -f "$PID_FILE"
+  fi
+fi
+
+# Start ttyd in background
+echo "Starting terminal server on port $TERMINAL_PORT..."
+
+# Start ttyd with appropriate settings
+nohup "$SCRIPT_DIR/ttyd" \
+  --port "$TERMINAL_PORT" \
+  --writable \
+  --cwd "$REPO_ROOT" \
+  bash \
+  >"$LOG_DIR/terminal.log" 2>&1 &
+
+echo $! > "$PID_FILE"
+
+# Wait a moment to verify it started
+sleep 1
+
+if ps -p "$(cat "$PID_FILE")" >/dev/null 2>&1; then
+  echo "✓ Terminal server started (PID: $(cat "$PID_FILE"))"
+  echo "   Access terminal at: http://localhost:$TERMINAL_PORT"
+else
+  echo "✗ Terminal failed to start. Check $LOG_DIR/terminal.log"
+  rm -f "$PID_FILE"
+  exit 1
+fi

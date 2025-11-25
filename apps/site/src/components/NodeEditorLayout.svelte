@@ -47,6 +47,37 @@
   let tracesError = '';
   let loadMenuRef: HTMLDivElement;
 
+  // Track which dropdown groups are expanded
+  let expandedGroups = new Set<string>(['cognitive-modes', 'agent-workflows']);
+
+  function toggleGroup(groupId: string) {
+    if (expandedGroups.has(groupId)) {
+      expandedGroups.delete(groupId);
+    } else {
+      expandedGroups.add(groupId);
+    }
+    expandedGroups = expandedGroups; // Trigger reactivity
+  }
+
+  // Categorize templates into groups
+  $: categorizedTemplates = (() => {
+    const cognitiveModesSet = new Set(['dual-mode', 'agent-mode', 'emulation-mode']);
+    // Legacy workflows: old dual consciousness mode versions
+    const legacyWorkflowsSet = new Set(['dual-mode-v1.1-backup', 'dual-mode-v1.2-backup']);
+
+    const cognitiveModes = availableTemplates.filter(t => cognitiveModesSet.has(t.id));
+    const legacyWorkflows = availableTemplates.filter(t => legacyWorkflowsSet.has(t.id));
+    const agentWorkflows = availableTemplates.filter(t =>
+      !cognitiveModesSet.has(t.id) && !legacyWorkflowsSet.has(t.id)
+    );
+
+    return {
+      cognitiveModes,
+      agentWorkflows,
+      legacyWorkflows
+    };
+  })();
+
   // Update graph name when cognitive mode changes
   $: {
     console.log('[NodeEditorLayout] Cognitive mode prop changed:', cognitiveMode);
@@ -469,6 +500,7 @@
         </button>
         {#if showLoadMenu}
           <div class="dropdown-menu" on:click|stopPropagation>
+            <!-- Saved Graphs Section -->
             <div class="dropdown-header">Saved Graphs</div>
             {#if graphsLoading}
               <div class="dropdown-item disabled">Loading...</div>
@@ -496,16 +528,93 @@
                 </div>
               {/each}
             {/if}
+
             <div class="dropdown-divider"></div>
-            <div class="dropdown-header">Cognitive Mode Templates</div>
-            {#each availableTemplates as template}
-              <button class="dropdown-item" on:click={() => loadTemplate(template.id)}>
-                <div>
-                  <div class="template-name">{template.name}</div>
-                  <div class="template-description">{template.description}</div>
-                </div>
+
+            <!-- Cognitive Modes Group (Collapsible) -->
+            <button
+              class="dropdown-group-header"
+              on:click|stopPropagation={() => toggleGroup('cognitive-modes')}
+            >
+              <svg
+                class="group-chevron"
+                class:expanded={expandedGroups.has('cognitive-modes')}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+              </svg>
+              <span>Cognitive Modes</span>
+            </button>
+            {#if expandedGroups.has('cognitive-modes')}
+              {#each categorizedTemplates.cognitiveModes as template}
+                <button class="dropdown-item nested" on:click={() => loadTemplate(template.id)}>
+                  <div>
+                    <div class="template-name">{template.name}</div>
+                    <div class="template-description">{template.description}</div>
+                  </div>
+                </button>
+              {/each}
+            {/if}
+
+            <!-- Agent Workflows Group (Collapsible) -->
+            {#if categorizedTemplates.agentWorkflows.length > 0}
+              <button
+                class="dropdown-group-header"
+                on:click|stopPropagation={() => toggleGroup('agent-workflows')}
+              >
+                <svg
+                  class="group-chevron"
+                  class:expanded={expandedGroups.has('agent-workflows')}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                </svg>
+                <span>Agent Workflows</span>
               </button>
-            {/each}
+              {#if expandedGroups.has('agent-workflows')}
+                {#each categorizedTemplates.agentWorkflows as template}
+                  <button class="dropdown-item nested" on:click={() => loadTemplate(template.id)}>
+                    <div>
+                      <div class="template-name">{template.name}</div>
+                      <div class="template-description">{template.description}</div>
+                    </div>
+                  </button>
+                {/each}
+              {/if}
+            {/if}
+
+            <!-- Legacy Workflows Group (Collapsible) -->
+            {#if categorizedTemplates.legacyWorkflows.length > 0}
+              <button
+                class="dropdown-group-header"
+                on:click|stopPropagation={() => toggleGroup('legacy-workflows')}
+              >
+                <svg
+                  class="group-chevron"
+                  class:expanded={expandedGroups.has('legacy-workflows')}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                </svg>
+                <span>Legacy Workflows</span>
+              </button>
+              {#if expandedGroups.has('legacy-workflows')}
+                {#each categorizedTemplates.legacyWorkflows as template}
+                  <button class="dropdown-item nested" on:click={() => loadTemplate(template.id)}>
+                    <div>
+                      <div class="template-name">{template.name}</div>
+                      <div class="template-description">{template.description}</div>
+                    </div>
+                  </button>
+                {/each}
+              {/if}
+            {/if}
           </div>
         {/if}
       </div>
@@ -1098,12 +1207,32 @@
     left: 0;
     margin-top: 0.5rem;
     min-width: 320px;
+    max-width: 400px;
+    max-height: 500px;
     background: #1a1a1a;
     border: 1px solid #444;
     border-radius: 6px;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
     z-index: 1000;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .dropdown-menu::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .dropdown-menu::-webkit-scrollbar-track {
+    background: #1a1a1a;
+  }
+
+  .dropdown-menu::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 4px;
+  }
+
+  .dropdown-menu::-webkit-scrollbar-thumb:hover {
+    background: #555;
   }
 
   .dropdown-header {
@@ -1114,6 +1243,42 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
     border-bottom: 1px solid #333;
+  }
+
+  .dropdown-group-header {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid #2a2a2a;
+    color: #bbb;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .dropdown-group-header:hover {
+    background: #252525;
+    color: #fff;
+  }
+
+  .group-chevron {
+    width: 1rem;
+    height: 1rem;
+    transition: transform 0.2s;
+    transform: rotate(0deg);
+    flex-shrink: 0;
+  }
+
+  .group-chevron.expanded {
+    transform: rotate(90deg);
   }
 
   .dropdown-item {
@@ -1133,6 +1298,15 @@
   }
 
   .dropdown-item:hover {
+    background: #2a2a2a;
+  }
+
+  .dropdown-item.nested {
+    padding-left: 2rem;
+    background: #151515;
+  }
+
+  .dropdown-item.nested:hover {
     background: #2a2a2a;
   }
 

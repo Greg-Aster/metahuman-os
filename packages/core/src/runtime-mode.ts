@@ -4,12 +4,17 @@
  * Manages headless mode state for MetaHuman OS. Headless mode keeps the
  * tunnel and web server running while pausing all local agents, allowing
  * remote users to claim full system resources without conflicts.
+ *
+ * Agent lifecycle is managed directly by enterHeadlessMode/exitHeadlessMode
+ * functions - no separate watcher process needed.
  */
 
 import fs from 'fs';
 import path from 'path';
+import { spawn } from 'child_process';
 import { paths } from './paths.js';
 import { audit } from './audit.js';
+import { stopAllAgents, registerAgent, unregisterAgent } from './agent-monitor.js';
 
 const RUNTIME_CONFIG_PATH = path.join(paths.root, 'etc', 'runtime.json');
 
@@ -102,6 +107,17 @@ export function isHeadless(): boolean {
  * Enter headless mode (stop agents, keep tunnel/server running)
  */
 export function enterHeadlessMode(actor?: string): void {
+  console.log('[runtime-mode] Entering headless mode - stopping all agents...');
+
+  // Stop all agents gracefully
+  const result = stopAllAgents(false);
+
+  console.log(`[runtime-mode] Stopped ${result.stopped.length}/${result.total} agents`);
+  if (result.failed.length > 0) {
+    console.warn(`[runtime-mode] Failed to stop: ${result.failed.join(', ')}`);
+  }
+
+  // Update runtime state
   setRuntimeMode(
     {
       headless: true,
@@ -110,12 +126,27 @@ export function enterHeadlessMode(actor?: string): void {
     },
     actor
   );
+
+  audit({
+    category: 'system',
+    level: 'info',
+    message: 'Headless mode activated - agents stopped',
+    actor: actor || 'system',
+    metadata: {
+      stopped: result.stopped,
+      failed: result.failed,
+      total: result.total,
+    }
+  });
 }
 
 /**
  * Exit headless mode (resume normal operation)
  */
 export function exitHeadlessMode(actor?: string, claimedBy?: string): void {
+  console.log('[runtime-mode] Exiting headless mode - resuming agents...');
+
+  // Update runtime state first
   setRuntimeMode(
     {
       headless: false,
@@ -124,4 +155,81 @@ export function exitHeadlessMode(actor?: string, claimedBy?: string): void {
     },
     actor
   );
+
+  // Start default agents after a brief delay for cleanup
+  setTimeout(() => {
+    startDefaultAgents(actor);
+  }, 2000);
+}
+
+/**
+ * Start default agents when exiting headless mode
+ */
+function startDefaultAgents(actor?: string): void {
+  const defaultAgents = ['scheduler-service', 'boredom-service', 'audio-organizer'];
+
+  console.log('[runtime-mode] Starting default agents...');
+
+  for (const agentName of defaultAgents) {
+    try {
+      const agentPath = path.join(paths.brain, 'agents', `${agentName}.ts`);
+
+      // Check if agent file exists
+      if (!fs.existsSync(agentPath)) {
+        console.warn(`[runtime-mode] Agent not found: ${agentPath}`);
+        continue;
+      }
+
+      // Use bootstrap wrapper to establish user context for agents
+      const bootstrapPath = path.join(paths.brain, 'agents', '_bootstrap.ts');
+      const child = spawn('tsx', [bootstrapPath, agentName], {
+        detached: true,
+        stdio: 'ignore',
+        cwd: paths.root,
+        env: {
+          ...process.env,
+          NODE_PATH: [
+            path.join(paths.root, 'node_modules'),
+            path.join(paths.root, 'packages/cli/node_modules'),
+            path.join(paths.root, 'apps/site/node_modules'),
+          ].join(':'),
+        },
+      });
+
+      child.unref();
+
+      if (child.pid) {
+        registerAgent(agentName, child.pid);
+        console.log(`[runtime-mode] Started ${agentName} (PID: ${child.pid})`);
+
+        audit({
+          level: 'info',
+          category: 'system',
+          event: 'agent_started',
+          details: { agent: agentName, pid: child.pid, source: 'runtime-mode' },
+          actor: actor || 'system',
+        });
+
+        child.on('close', (code: number) => {
+          audit({
+            level: code === 0 ? 'info' : 'error',
+            category: 'system',
+            event: 'agent_stopped',
+            details: { agent: agentName, exitCode: code, source: 'runtime-mode' },
+            actor: actor || 'system',
+          });
+          unregisterAgent(agentName);
+        });
+      }
+    } catch (error) {
+      console.error(`[runtime-mode] Failed to start ${agentName}:`, error);
+    }
+  }
+
+  audit({
+    category: 'system',
+    level: 'info',
+    message: 'Headless mode deactivated - agents resumed',
+    actor: actor || 'system',
+  });
 }

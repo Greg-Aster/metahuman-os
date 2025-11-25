@@ -57,6 +57,40 @@ export const GET: APIRoute = async ({ request }) => {
         });
       }
 
+      case 'training-logs': {
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const { systemPaths } = await import('@metahuman/core');
+
+        const logPath = path.join(systemPaths.logs, 'run', `rvc-training-${speakerId}.log`);
+
+        if (!fs.existsSync(logPath)) {
+          return new Response(JSON.stringify({ logs: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        try {
+          const content = fs.readFileSync(logPath, 'utf-8');
+          const lines = content.split('\n').filter(line => line.trim());
+
+          // Return last 100 lines to avoid overwhelming the UI
+          const recentLines = lines.slice(-100);
+
+          return new Response(JSON.stringify({ logs: recentLines }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        } catch (error) {
+          console.error('[rvc-training] Error reading training logs:', error);
+          return new Response(JSON.stringify({ logs: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
       default:
         return new Response(JSON.stringify({ error: 'Invalid action' }), {
           status: 400,

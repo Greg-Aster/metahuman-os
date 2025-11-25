@@ -127,7 +127,7 @@ export function listSkills(): SkillManifest[] {
  * Get skills available at a given trust level
  */
 export function getAvailableSkills(trustLevel: TrustLevel): SkillManifest[] {
-  const trustLevels: TrustLevel[] = ['observe', 'suggest', 'supervised_auto', 'bounded_auto'];
+  const trustLevels: TrustLevel[] = ['observe', 'suggest', 'supervised_auto', 'bounded_auto', 'adaptive_auto'];
   const currentIndex = trustLevels.indexOf(trustLevel);
 
   return listSkills().filter(skill => {

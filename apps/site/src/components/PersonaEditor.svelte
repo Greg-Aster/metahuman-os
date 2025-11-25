@@ -83,7 +83,7 @@
     facets: Record<string, Facet>;
   };
 
-  let editorTab: 'core' | 'facets' = 'core';
+  let editorTab: 'core' | 'facets' | 'archives' = 'core';
   let coreTab: 'identity' | 'personality' | 'values' | 'goals' | 'context' | 'advanced' = 'identity';
 
   let personaCore: PersonaCore | null = null;
@@ -93,6 +93,22 @@
   let saving = false;
   let error: string | null = null;
   let success: string | null = null;
+
+  // Archive management state
+  type Archive = {
+    filename: string;
+    timestamp: string;
+    createdAt: string;
+    version: string;
+    lastUpdated: string | null;
+    identity: { name: string; role: string };
+    size: number;
+  };
+  let archives: Archive[] = [];
+  let loadingArchives = false;
+  let archivesLoaded = false; // Track if we've attempted to load
+  let selectedArchive: any = null;
+  let viewingArchive = false;
 
   onMount(() => {
     loadPersonaData();
@@ -247,6 +263,144 @@
     }
     facetsConfig = facetsConfig;
   }
+
+  // Archive management functions
+  async function loadArchives() {
+    console.log('[PersonaEditor] Loading archives...');
+    loadingArchives = true;
+    error = null;
+    try {
+      const res = await fetch('/api/persona-archives');
+      console.log('[PersonaEditor] Archive response status:', res.status);
+
+      if (!res.ok) {
+        const text = await res.text();
+        console.error('[PersonaEditor] Archive error response:', text);
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
+
+      const data = await res.json();
+      console.log('[PersonaEditor] Archive data:', data);
+
+      if (!data.success) throw new Error(data.error || 'Failed to load archives');
+      archives = data.archives;
+      archivesLoaded = true; // Mark as loaded
+      console.log('[PersonaEditor] Loaded archives:', archives.length);
+    } catch (e) {
+      console.error('[PersonaEditor] Failed to load archives:', e);
+      error = (e as Error).message;
+      archivesLoaded = true; // Mark as attempted even if failed
+    } finally {
+      loadingArchives = false;
+    }
+  }
+
+  async function viewArchive(filename: string) {
+    loading = true;
+    error = null;
+    try {
+      const res = await fetch('/api/persona-archives', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'view', filename }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Failed to view archive');
+      selectedArchive = data.persona;
+      viewingArchive = true;
+    } catch (e) {
+      console.error('Failed to view archive:', e);
+      error = (e as Error).message;
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function restoreArchive(filename: string) {
+    if (!confirm(`Are you sure you want to restore this archive? Your current persona will be backed up first.`)) {
+      return;
+    }
+
+    saving = true;
+    error = null;
+    success = null;
+    try {
+      const res = await fetch('/api/persona-archives', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'restore', filename }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Failed to restore archive');
+      success = `Persona restored successfully! Current version backed up as ${data.backupFile}`;
+
+      // Reload persona data
+      await loadPersonaData();
+
+      // Reload archives to show new backup
+      await loadArchives();
+
+      setTimeout(() => { success = null; }, 5000);
+    } catch (e) {
+      console.error('Failed to restore archive:', e);
+      error = (e as Error).message;
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function deleteArchive(filename: string) {
+    if (!confirm(`Are you sure you want to delete this archive? This cannot be undone.`)) {
+      return;
+    }
+
+    saving = true;
+    error = null;
+    success = null;
+    try {
+      const res = await fetch('/api/persona-archives', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', filename }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Failed to delete archive');
+      success = 'Archive deleted successfully!';
+      await loadArchives();
+      setTimeout(() => { success = null; }, 3000);
+    } catch (e) {
+      console.error('Failed to delete archive:', e);
+      error = (e as Error).message;
+    } finally {
+      saving = false;
+    }
+  }
+
+  function closeArchiveViewer() {
+    viewingArchive = false;
+    selectedArchive = null;
+  }
+
+  function formatTimestamp(timestamp: string): string {
+    // Convert YYYY-MM-DD-HHmmss to readable format
+    const match = timestamp.match(/(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})/);
+    if (match) {
+      const [_, year, month, day, hour, min, sec] = match;
+      return `${year}-${month}-${day} ${hour}:${min}:${sec}`;
+    }
+    return timestamp;
+  }
+
+  function formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
+
+  // Load archives when switching to archives tab (only once)
+  $: if (editorTab === 'archives' && !archivesLoaded && !loadingArchives) {
+    loadArchives();
+  }
 </script>
 
 <div class="persona-editor">
@@ -266,6 +420,9 @@
         </button>
         <button class="editor-tab" class:active={editorTab === 'facets'} on:click={() => editorTab = 'facets'}>
           Facets
+        </button>
+        <button class="editor-tab" class:active={editorTab === 'archives'} on:click={() => editorTab = 'archives'}>
+          Archives
         </button>
       </div>
 
@@ -719,6 +876,79 @@
           </button>
         </div>
       </div>
+
+    {:else if editorTab === 'archives'}
+      <div class="editor-content">
+        <div class="archives-header">
+          <div>
+            <h3>Persona Archives</h3>
+            <p class="archives-description">
+              View and restore previous versions of your persona profile. Archives are automatically created by the psychoanalyzer agent before updates.
+            </p>
+          </div>
+          <button class="btn-refresh" on:click={loadArchives} disabled={loadingArchives}>
+            {loadingArchives ? 'Loading...' : 'Refresh'}
+          </button>
+        </div>
+
+        {#if error}
+          <div class="error-state">
+            <div class="error-title">Failed to load archives</div>
+            <div class="error-message">{error}</div>
+            <button class="retry-btn" on:click={loadArchives}>Retry</button>
+          </div>
+        {:else if loadingArchives && archives.length === 0}
+          <div class="loading-state">Loading archives...</div>
+        {:else if archives.length === 0}
+          <div class="empty-state">
+            <p>No archives found. Archives are created automatically when the psychoanalyzer agent updates your persona.</p>
+          </div>
+        {:else}
+          <div class="archives-list">
+            {#each archives as archive}
+              <div class="archive-card">
+                <div class="archive-header">
+                  <div class="archive-info">
+                    <h4>{archive.identity.name}</h4>
+                    <span class="archive-timestamp">{formatTimestamp(archive.timestamp)}</span>
+                  </div>
+                  <div class="archive-actions">
+                    <button class="btn-view" on:click={() => viewArchive(archive.filename)}>View</button>
+                    <button class="btn-restore" on:click={() => restoreArchive(archive.filename)} disabled={saving}>
+                      Restore
+                    </button>
+                    <button class="btn-delete" on:click={() => deleteArchive(archive.filename)} disabled={saving}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+                <div class="archive-meta">
+                  <span>Role: {archive.identity.role}</span>
+                  <span>Version: {archive.version}</span>
+                  <span>Size: {formatFileSize(archive.size)}</span>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+
+        {#if viewingArchive && selectedArchive}
+          <div class="archive-viewer-overlay" on:click={closeArchiveViewer} on:keydown={(e) => e.key === 'Escape' && closeArchiveViewer()} role="button" tabindex="-1">
+            <div class="archive-viewer" on:click|stopPropagation role="dialog" aria-modal="true">
+              <div class="archive-viewer-header">
+                <h3>Archive Viewer</h3>
+                <button class="btn-close" on:click={closeArchiveViewer}>×</button>
+              </div>
+              <div class="archive-viewer-content">
+                <pre>{JSON.stringify(selectedArchive, null, 2)}</pre>
+              </div>
+              <div class="archive-viewer-actions">
+                <button class="btn-close-footer" on:click={closeArchiveViewer}>Close</button>
+              </div>
+            </div>
+          </div>
+        {/if}
+      </div>
     {/if}
   {/if}
 </div>
@@ -1093,5 +1323,305 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
+  }
+
+  /* Archives styles */
+  .archives-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1.5rem;
+  }
+
+  .archives-header h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+
+  .archives-description {
+    margin: 0;
+    font-size: 0.875rem;
+    color: #6b7280;
+    max-width: 600px;
+  }
+
+  :global(.dark) .archives-description {
+    color: #9ca3af;
+  }
+
+  .btn-refresh {
+    padding: 0.5rem 1rem;
+    background: #6366f1;
+    color: white;
+    border: none;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-refresh:hover:not(:disabled) {
+    background: #4f46e5;
+  }
+
+  .btn-refresh:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .empty-state {
+    padding: 3rem;
+    text-align: center;
+    color: #6b7280;
+  }
+
+  :global(.dark) .empty-state {
+    color: #9ca3af;
+  }
+
+  .archives-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .archive-card {
+    padding: 1.25rem;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+  }
+
+  .archive-card:hover {
+    border-color: #7c3aed;
+    box-shadow: 0 2px 8px rgba(124, 58, 237, 0.1);
+  }
+
+  :global(.dark) .archive-card {
+    background: #1f2937;
+    border-color: #374151;
+  }
+
+  :global(.dark) .archive-card:hover {
+    border-color: #8b5cf6;
+    box-shadow: 0 2px 8px rgba(139, 92, 246, 0.2);
+  }
+
+  .archive-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 0.75rem;
+  }
+
+  .archive-info h4 {
+    margin: 0 0 0.25rem 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #111827;
+  }
+
+  :global(.dark) .archive-info h4 {
+    color: #f3f4f6;
+  }
+
+  .archive-timestamp {
+    font-size: 0.875rem;
+    color: #6b7280;
+    font-family: 'Courier New', monospace;
+  }
+
+  :global(.dark) .archive-timestamp {
+    color: #9ca3af;
+  }
+
+  .archive-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .btn-view,
+  .btn-restore,
+  .btn-delete {
+    padding: 0.375rem 0.75rem;
+    border: none;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-view {
+    background: #6366f1;
+    color: white;
+  }
+
+  .btn-view:hover {
+    background: #4f46e5;
+  }
+
+  .btn-restore {
+    background: #10b981;
+    color: white;
+  }
+
+  .btn-restore:hover:not(:disabled) {
+    background: #059669;
+  }
+
+  .btn-restore:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .btn-delete {
+    background: #ef4444;
+    color: white;
+  }
+
+  .btn-delete:hover:not(:disabled) {
+    background: #dc2626;
+  }
+
+  .btn-delete:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .archive-meta {
+    display: flex;
+    gap: 1.5rem;
+    font-size: 0.875rem;
+    color: #6b7280;
+  }
+
+  :global(.dark) .archive-meta {
+    color: #9ca3af;
+  }
+
+  /* Archive Viewer Modal */
+  .archive-viewer-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .archive-viewer {
+    background: white;
+    border-radius: 0.5rem;
+    width: 90%;
+    max-width: 900px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  }
+
+  :global(.dark) .archive-viewer {
+    background: #1f2937;
+  }
+
+  .archive-viewer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.25rem;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  :global(.dark) .archive-viewer-header {
+    border-bottom-color: #374151;
+  }
+
+  .archive-viewer-header h3 {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+
+  .btn-close {
+    background: none;
+    border: none;
+    font-size: 2rem;
+    line-height: 1;
+    color: #6b7280;
+    cursor: pointer;
+    padding: 0;
+    width: 2rem;
+    height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.375rem;
+    transition: all 0.2s;
+  }
+
+  .btn-close:hover {
+    background: #f3f4f6;
+    color: #111827;
+  }
+
+  :global(.dark) .btn-close:hover {
+    background: #374151;
+    color: #f3f4f6;
+  }
+
+  .archive-viewer-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem;
+  }
+
+  .archive-viewer-content pre {
+    margin: 0;
+    padding: 1rem;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    overflow-x: auto;
+    color: #111827;
+  }
+
+  :global(.dark) .archive-viewer-content pre {
+    background: #111827;
+    border-color: #374151;
+    color: #f3f4f6;
+  }
+
+  .archive-viewer-actions {
+    padding: 1rem 1.25rem;
+    border-top: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  :global(.dark) .archive-viewer-actions {
+    border-top-color: #374151;
+  }
+
+  .btn-close-footer {
+    padding: 0.5rem 1rem;
+    background: #6b7280;
+    color: white;
+    border: none;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-close-footer:hover {
+    background: #4b5563;
   }
 </style>

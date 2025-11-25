@@ -64,6 +64,16 @@ export const systemSettingsExecutor: NodeExecutor = async (inputs, context) => {
       console.warn('[SystemSettings] Could not load memory policy:', error);
     }
 
+    // Load trust level from decision rules
+    let trustLevel = 'supervised_auto'; // fallback default
+    try {
+      const { loadDecisionRules } = await import('../identity.js');
+      const rules = loadDecisionRules();
+      trustLevel = rules.trustLevel;
+    } catch (error) {
+      console.warn('[SystemSettings] Could not load trust level:', error);
+    }
+
     return {
       cognitiveMode: mode,
       chatSettings: chatSettings || {
@@ -76,7 +86,7 @@ export const systemSettingsExecutor: NodeExecutor = async (inputs, context) => {
         canWriteConversation: mode !== 'emulation',
         canWriteInnerDialogue: mode !== 'emulation',
       },
-      trustLevel: 'supervised_auto',
+      trustLevel,
       settings: {
         recordingEnabled: mode !== 'emulation',
         proactiveAgents: mode === 'dual',

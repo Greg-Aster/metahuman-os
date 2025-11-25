@@ -4,6 +4,10 @@ import { promisify } from 'node:util'
 import fs from 'node:fs'
 import path from 'node:path'
 import { systemPaths } from '@metahuman/core'
+import dotenv from 'dotenv'
+
+// Load environment variables from .env file
+dotenv.config({ path: path.join(systemPaths.root, '.env') })
 
 const execAsync = promisify(exec)
 
@@ -14,6 +18,7 @@ interface GPUInfo {
   hasUnsloth: boolean
   hasRunpodKey: boolean
   hasPreviousModel: boolean
+  hasS3Configured: boolean
 }
 
 /**
@@ -32,6 +37,7 @@ export const GET: APIRoute = async () => {
     hasUnsloth: false,
     hasRunpodKey: false,
     hasPreviousModel: false,
+    hasS3Configured: false,
   }
 
   // 1. Check for NVIDIA GPU
@@ -91,6 +97,17 @@ export const GET: APIRoute = async () => {
     info.hasPreviousModel = hasFinetuned || hasActiveAdapter
   } catch (e) {
     // Model registry error, assume no previous models
+  }
+
+  // 5. Check for S3 configuration
+  if (process.env.RUNPOD_S3_ACCESS_KEY && process.env.RUNPOD_S3_SECRET_KEY) {
+    info.hasS3Configured = true
+    console.log('[gpu-info] S3 storage configured:', {
+      endpoint: process.env.RUNPOD_S3_ENDPOINT || 'https://storage.runpod.io',
+      bucket: process.env.RUNPOD_S3_BUCKET || 'metahuman-training'
+    })
+  } else {
+    console.log('[gpu-info] S3 storage not configured - set RUNPOD_S3_ACCESS_KEY and RUNPOD_S3_SECRET_KEY in .env')
   }
 
   return new Response(JSON.stringify(info), {

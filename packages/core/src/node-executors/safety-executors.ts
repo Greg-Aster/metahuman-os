@@ -17,8 +17,15 @@ export const chainOfThoughtStripperExecutor: NodeExecutor = async (inputs) => {
   let response = '';
   if (typeof inputs[0] === 'string') {
     response = inputs[0];
-  } else if (inputs[0]?.response && typeof inputs[0].response === 'string') {
-    response = inputs[0].response;
+  } else if (inputs[0]?.response) {
+    // Handle nested response objects (e.g., { response: { response: "actual text" } })
+    if (typeof inputs[0].response === 'string') {
+      response = inputs[0].response;
+    } else if (typeof inputs[0].response === 'object' && inputs[0].response?.response) {
+      response = inputs[0].response.response;
+    } else if (typeof inputs[0].response === 'object' && inputs[0].response?.content) {
+      response = inputs[0].response.content;
+    }
   } else if (inputs[0]?.content && typeof inputs[0].content === 'string') {
     response = inputs[0].content;
   }
@@ -36,6 +43,10 @@ export const chainOfThoughtStripperExecutor: NodeExecutor = async (inputs) => {
     .replace(/^Action:.*$/gm, '')
     .replace(/^Observation:.*$/gm, '')
     .replace(/^Final Answer:\s*/i, '')
+    // Remove model-specific tokens
+    .replace(/<\|assistant\|>:?\s*/gi, '')
+    .replace(/<\|user\|>:?\s*/gi, '')
+    .replace(/<\|system\|>:?\s*/gi, '')
     .trim();
 
   console.log('[CoTStripper] Cleaned:', `"${cleaned.substring(0, 80)}..."`);

@@ -2,5 +2,10 @@ packages:
   - packages/*
   - apps/*
 
+ignoredBuiltDependencies:
+  - esbuild
+  - node-pty
+  - sharp
+
 onlyBuiltDependencies:
   - bcrypt

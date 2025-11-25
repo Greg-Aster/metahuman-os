@@ -12,6 +12,7 @@ fi
 
 cleanup() {
   "$REPO_ROOT/bin/mh" agent stop --all >/dev/null 2>&1 || true
+  "$REPO_ROOT/bin/stop-terminal" >/dev/null 2>&1 || true
 }
 
 trap cleanup EXIT INT TERM
@@ -37,6 +38,9 @@ fi
 
 # Auto-start voice server based on active TTS provider
 "$REPO_ROOT/bin/start-voice-server" 2>/dev/null || true
+
+# Auto-start terminal server
+"$REPO_ROOT/bin/start-terminal" 2>/dev/null || true
 
 cd "$REPO_ROOT/apps/site"
 

@@ -2108,7 +2108,69 @@ async function runReActLoopV2(
         step: state.currentStep
       });
 
-      // Return structured error instead of throwing
+      // Try Big Brother mode escalation if enabled
+      const operatorConfig = loadOperatorConfig();
+      const { escalateToBigBrother, shouldEscalateToBigBrother } = await import('@metahuman/core/big-brother');
+
+      // Track retry count (stored in metadata or state)
+      const retryCount = state.scratchpad.filter(e =>
+        e.thought.includes('Big Brother') || e.thought.includes('escalation')
+      ).length;
+
+      if (shouldEscalateToBigBrother(operatorConfig, stuckCheck.errorType, retryCount)) {
+        try {
+          // Escalate to Big Brother
+          onProgress?.({
+            type: 'thinking',
+            content: '🤖 Escalating to Big Brother for guidance...',
+            step: state.currentStep
+          });
+
+          const escalationResponse = await escalateToBigBrother({
+            goal,
+            stuckReason: stuckCheck.reason,
+            errorType: stuckCheck.errorType,
+            scratchpad: state.scratchpad,
+            context: stuckCheck.context,
+            suggestions: stuckCheck.suggestions
+          }, operatorConfig);
+
+          if (escalationResponse.success && escalationResponse.suggestions.length > 0) {
+            // Big Brother provided guidance - inject it into scratchpad and continue
+            onProgress?.({
+              type: 'thought',
+              content: `🧠 Big Brother Analysis:\n${escalationResponse.reasoning}\n\nSuggestions:\n${escalationResponse.suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}`,
+              step: state.currentStep
+            });
+
+            // Add Big Brother guidance to scratchpad
+            const guidanceEntry: ScratchpadEntry = {
+              step: state.currentStep,
+              thought: `Big Brother guidance received: ${escalationResponse.reasoning}. Trying suggested approach: ${escalationResponse.suggestions[0]}`,
+              timestamp: new Date().toISOString()
+            };
+            state.scratchpad.push(guidanceEntry);
+
+            // Continue with one more attempt using Big Brother's suggestions
+            // Don't return yet - let it try the suggested approach
+            continue;
+          }
+        } catch (escalationError) {
+          // Log escalation failure but continue with normal stuck handling
+          audit({
+            level: 'error',
+            category: 'action',
+            event: 'big_brother_escalation_error',
+            details: {
+              goal,
+              error: (escalationError as Error).message
+            },
+            actor: 'operator-react-v2',
+          });
+        }
+      }
+
+      // Return structured error (original behavior if escalation disabled/failed)
       return {
         goal,
         result: null,

@@ -10,6 +10,12 @@ import { paths, audit, ProgressTracker, getProfilePaths } from '../../packages/c
 import dotenv from 'dotenv';
 import { ensureDirSync } from 'fs-extra';
 import fetch from 'node-fetch';
+import {
+  loadS3ConfigFromEnv,
+  uploadDirectoryToS3,
+  uploadFileToS3,
+  type S3Config,
+} from '../../packages/core/src/s3-upload.js';
 
 // Load environment variables from .env file
 dotenv.config({ path: path.join(paths.root, '.env') });
@@ -41,6 +47,8 @@ interface RunRemoteTrainingResult {
   gguf_path?: string;
   ollama_model?: string;
   ollama_loaded?: boolean;
+  s3_url?: string;
+  s3_key?: string;
 }
 
 // Helper to write logs to a dedicated file
@@ -1029,24 +1037,118 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
         tracker.startStage('adapter_download', 'Downloading safetensors model');
 
         if (summary.training_success) {
-          // Download model FIRST while pod is still running (SSH is active)
-          console.log('📥 Downloading model via rsync (excluding 24GB of checkpoints)...');
-          ensureDirSync(opts.FINAL_ADAPTER_DIR);
+          // Check if S3 is configured for fast upload instead of download
+          // Can be disabled via METAHUMAN_DISABLE_S3 environment variable
+          const s3Disabled = process.env.METAHUMAN_DISABLE_S3 === '1';
+          const s3Config = s3Disabled ? null : loadS3ConfigFromEnv();
 
-          const modelDownloadResult = await rsyncDownload(
-            ssh_user!, ssh_host!, ssh_key_path!,
-            '/workspace/output/model', // Full model directory
-            opts.FINAL_ADAPTER_DIR, // Download directly to final dir
-            logFilePath,
-            ssh_port,
-            ['checkpoint-*', '*.pt', '*.pth', 'optimizer.pt', 'scheduler.pt', 'rng_state.pth']
-          );
+          if (s3Disabled) {
+            console.log('ℹ️ S3 upload disabled by user preference, using direct download...');
+            log(logFilePath, 'S3 upload disabled via METAHUMAN_DISABLE_S3 flag');
+          }
 
-          if (modelDownloadResult.exitCode === 0) {
-            // Download succeeded - pod will be terminated in finally block to stop all billing
-            log(logFilePath, 'Full model downloaded (checkpoints excluded).');
-            console.log('✅ Download complete (saved 24GB by excluding checkpoints).');
-            tracker.completeStage('adapter_download');
+          if (s3Config) {
+            // S3 Path: Upload model to S3 for fast termination
+            console.log('☁️ S3 configured - uploading model to RunPod S3...');
+            console.log('⏱️  This will upload the model (~2-3 minutes) then terminate the pod immediately\n');
+            log(logFilePath, 'Uploading model to S3 storage...');
+            tracker.startStage('s3_upload', 'Uploading to S3');
+
+            // Install AWS CLI on the pod and upload directly from there
+            const s3Key = `${opts.username}/${opts.RUN_LABEL}/model`;
+            const uploadScript = `
+#!/bin/bash
+set -e
+
+# Install AWS CLI if not present
+if ! command -v aws &> /dev/null; then
+  echo "Installing AWS CLI..."
+  curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+  unzip -q awscliv2.zip
+  ./aws/install
+fi
+
+# Configure AWS credentials
+export AWS_ACCESS_KEY_ID="${s3Config.accessKeyId}"
+export AWS_SECRET_ACCESS_KEY="${s3Config.secretAccessKey}"
+export AWS_ENDPOINT_URL="${s3Config.endpoint}"
+export AWS_DEFAULT_REGION="${s3Config.region || 'us-east-1'}"
+
+# Upload model directory to S3 (excluding checkpoints to save 24GB)
+echo "Uploading model to s3://${s3Config.bucket}/${s3Key}/"
+aws s3 sync /workspace/output/model s3://${s3Config.bucket}/${s3Key}/ \\
+  --exclude "checkpoint-*" \\
+  --exclude "*.pt" \\
+  --exclude "*.pth" \\
+  --exclude "optimizer.pt" \\
+  --exclude "scheduler.pt" \\
+  --exclude "rng_state.pth" \\
+  --endpoint-url "${s3Config.endpoint}"
+
+echo "Upload complete!"
+`;
+
+            // Write upload script to temp file
+            const uploadScriptPath = path.join(opts.WORK_LOCAL, 'upload_to_s3.sh');
+            fs.writeFileSync(uploadScriptPath, uploadScript);
+
+            try {
+              // Copy script to pod using base64 upload
+              await sshUploadFileBase64(
+                uploadScriptPath,
+                '/tmp/upload_to_s3.sh',
+                ssh_user!, ssh_host!, ssh_key_path!,
+                logFilePath, ssh_port
+              );
+              log(logFilePath, 'Upload script copied to pod');
+
+              // Execute upload script on pod
+              const uploadResult = await sshExecNoPty(
+                ssh_user!, ssh_host!, ssh_key_path!,
+                'chmod +x /tmp/upload_to_s3.sh && /tmp/upload_to_s3.sh',
+                ssh_port
+              );
+
+              if (uploadResult.exitCode === 0) {
+                const s3Url = `${s3Config.endpoint}/${s3Config.bucket}/${s3Key}/`;
+                log(logFilePath, `Model uploaded to S3: ${s3Url}`);
+                console.log(`✅ Model uploaded to S3!`);
+                console.log(`📍 S3 Location: ${s3Url}`);
+                console.log('💡 Download later with: aws s3 sync <s3-url> <local-path>');
+                tracker.completeStage('s3_upload');
+
+                summary.s3_url = s3Url;
+                summary.s3_key = s3Key;
+              } else {
+                log(logFilePath, `S3 upload failed with exit code ${uploadResult.exitCode}`);
+                console.error('❌ S3 upload failed');
+                console.error(`stderr: ${uploadResult.stderr}`);
+                tracker.failStage('s3_upload', `Upload failed: ${uploadResult.exitCode}`);
+              }
+            } catch (error) {
+              log(logFilePath, `S3 upload error: ${(error as Error).message}`);
+              console.error('❌ S3 upload error:', (error as Error).message);
+              tracker.failStage('s3_upload', (error as Error).message);
+            }
+          } else {
+            // Fallback: Direct download if S3 not configured
+            console.log('📥 Downloading model via rsync (excluding 24GB of checkpoints)...');
+            ensureDirSync(opts.FINAL_ADAPTER_DIR);
+
+            const modelDownloadResult = await rsyncDownload(
+              ssh_user!, ssh_host!, ssh_key_path!,
+              '/workspace/output/model', // Full model directory
+              opts.FINAL_ADAPTER_DIR, // Download directly to final dir
+              logFilePath,
+              ssh_port,
+              ['checkpoint-*', '*.pt', '*.pth', 'optimizer.pt', 'scheduler.pt', 'rng_state.pth']
+            );
+
+            if (modelDownloadResult.exitCode === 0) {
+              // Download succeeded - pod will be terminated in finally block to stop all billing
+              log(logFilePath, 'Full model downloaded (checkpoints excluded).');
+              console.log('✅ Download complete (saved 24GB by excluding checkpoints).');
+              tracker.completeStage('adapter_download');
 
             // Convert to GGUF locally if enabled in config
             const ggufConfig = cfg.gguf_conversion;
@@ -1144,6 +1246,7 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
             console.error('❌ Model download failed.');
             tracker.failStage('adapter_download', `Model download failed: ${modelDownloadResult.exitCode}`);
           }
+        }
         } else {
           log(logFilePath, 'Skipping model download due to training failure.');
           console.log('⚠️ Skipping model download due to training failure.');

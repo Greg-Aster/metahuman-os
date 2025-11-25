@@ -805,6 +805,59 @@
     filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.4));
   }
 
+  /* Big Brother Toggle */
+  .big-brother-toggle {
+    @apply inline-flex items-center gap-1 px-2 py-1.5 border border-black/15 dark:border-white/20 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 rounded-md cursor-pointer transition-all;
+  }
+
+  .big-brother-toggle:hover {
+    @apply bg-gray-50 dark:bg-gray-800;
+  }
+
+  .big-brother-toggle.active {
+    @apply bg-blue-600 dark:bg-blue-500 text-white dark:text-gray-900 border-blue-600 dark:border-blue-500;
+  }
+
+  .big-brother-toggle.active.ready {
+    @apply bg-green-600 dark:bg-green-500 border-green-600 dark:border-green-500;
+  }
+
+  .big-brother-icon {
+    @apply text-base;
+  }
+
+  .big-brother-badge {
+    @apply text-xs bg-yellow-600 text-white rounded px-1 font-bold;
+  }
+
+  .big-brother-badge.ready {
+    @apply bg-green-600 text-white text-base px-0;
+    animation: pulse-ready 2s ease-in-out infinite;
+  }
+
+  .big-brother-badge.checking {
+    @apply bg-yellow-600 text-white;
+    animation: pulse-checking 1s ease-in-out infinite;
+  }
+
+  @keyframes pulse-ready {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.6;
+    }
+  }
+
+  @keyframes pulse-checking {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.3;
+    }
+  }
+
   .icon-btn {
     @apply inline-flex items-center gap-1 px-2 py-1.5 border border-black/15 dark:border-white/20 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 rounded-md cursor-pointer;
   }

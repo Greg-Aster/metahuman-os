@@ -27,6 +27,7 @@ import * as taskDelete from './task_delete';
 import * as codeGenerate from './code_generate';
 import * as codeApplyPatch from './code_apply_patch';
 import * as conversationalResponse from './conversational_response';
+import * as shellExecute from './shell_execute';
 
 // Track whether skills have been initialized
 let skillsInitialized = false;
@@ -66,8 +67,9 @@ export function initializeSkills(): void {
   registerSkill(codeGenerate.manifest, codeGenerate.execute);
   registerSkill(codeApplyPatch.manifest, codeApplyPatch.execute);
   registerSkill(conversationalResponse.manifest, conversationalResponse.execute);
+  registerSkill(shellExecute.manifest, shellExecute.execute);
 
-  console.log('[skills] Skills registered: fs_read, fs_write, fs_list, fs_delete, json_update, http_get, summarize_file, git_status, git_commit, search_index, run_agent, shell_safe, web_search, task_create, task_update_status, task_list, task_find, task_delete, code_generate, code_apply_patch, conversational_response');
+  console.log('[skills] Skills registered: fs_read, fs_write, fs_list, fs_delete, json_update, http_get, summarize_file, git_status, git_commit, search_index, run_agent, shell_safe, shell_execute, web_search, task_create, task_update_status, task_list, task_find, task_delete, code_generate, code_apply_patch, conversational_response');
 
   skillsInitialized = true;
 }
@@ -79,6 +81,7 @@ export {
   searchIndex,
   runAgent,
   shellSafe,
+  shellExecute,
   webSearch,
   taskCreate,
   taskUpdateStatus,

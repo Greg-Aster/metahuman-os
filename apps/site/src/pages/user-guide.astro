@@ -8,42 +8,131 @@ import { marked } from 'marked';
 marked.setOptions({
   gfm: true,
   breaks: false,
-  headerIds: true,
-  mangle: false,
 });
 
-// Read user guide chapters
-const userGuidePath = path.join(process.cwd(), '..', '..', 'docs', 'user-guide');
-let chapters: Array<{ id: string; title: string; content: string; number: string }> = [];
+// Read user guide chapters recursively from subdirectories
+const userGuidePath = path.join(process.cwd(), '..', '..', 'docs', 'user-guide-v2');
+
+interface Chapter {
+  id: string;
+  title: string;
+  content: string;
+  number: string;
+  category: string;
+  path: string;
+}
+
+interface Category {
+  id: string;
+  name: string;
+  chapters: Chapter[];
+  order: number;
+}
+
+let chapters: Chapter[] = [];
+let categories: Category[] = [];
 
 try {
-  const files = readdirSync(userGuidePath)
-    .filter(f => f.endsWith('.md') && f !== 'index.md')
-    .sort();
+  // Helper function to recursively read markdown files
+  function readMarkdownFiles(dir: string, relativeDirPath: string = ''): Chapter[] {
+    const items = readdirSync(dir, { withFileTypes: true });
+    const result: Chapter[] = [];
 
-  chapters = files.map(file => {
-    const fullPath = path.join(userGuidePath, file);
-    const rawContent = readFileSync(fullPath, 'utf-8');
-    const parsedContent = marked.parse(rawContent);
+    for (const item of items) {
+      const fullPath = path.join(dir, item.name);
 
-    // Extract number from filename (e.g., "01-overview.md" -> "01")
-    const numberMatch = file.match(/^(\d+)-/);
-    const number = numberMatch ? numberMatch[1] : '';
+      if (item.isDirectory()) {
+        // Recursively read subdirectories
+        const newRelativePath = relativeDirPath ? path.join(relativeDirPath, item.name) : item.name;
+        result.push(...readMarkdownFiles(fullPath, newRelativePath));
+      } else if (item.isFile() && item.name.endsWith('.md') && item.name !== 'index.md') {
+        // Read markdown file
+        const rawContent = readFileSync(fullPath, 'utf-8');
+        const parsedContent = marked.parse(rawContent);
 
-    // Extract title from filename
-    const filename = file.replace('.md', '');
-    const title = filename
-      .replace(/^\d+-/, '')
-      .replace(/-/g, ' ')
-      .replace(/\b\w/g, l => l.toUpperCase());
+        // Extract number from filename (e.g., "01-overview.md" -> "01")
+        const numberMatch = item.name.match(/^(\d+)-/);
+        const number = numberMatch ? numberMatch[1] : '';
 
-    return {
-      id: filename,
-      title,
-      content: parsedContent as string,
-      number,
-    };
+        // Extract title from filename
+        const filename = item.name.replace('.md', '');
+        const title = filename
+          .replace(/^\d+-/, '')
+          .replace(/-/g, ' ')
+          .replace(/\b\w/g, l => l.toUpperCase());
+
+        // Determine category from directory path
+        // If relativeDirPath is empty, it's in root
+        // If relativeDirPath has separators, take the first component
+        // Otherwise, use the whole relativeDirPath as category
+        let category = 'root';
+        if (relativeDirPath) {
+          const parts = relativeDirPath.split(path.sep);
+          category = parts[0];
+        }
+
+        const itemRelativePath = relativeDirPath ? path.join(relativeDirPath, item.name) : item.name;
+
+        result.push({
+          id: filename,
+          title,
+          content: parsedContent as string,
+          number,
+          category,
+          path: itemRelativePath,
+        });
+      }
+    }
+
+    return result;
+  }
+
+  // Read all chapters
+  chapters = readMarkdownFiles(userGuidePath).sort((a, b) => {
+    // Sort by number if both have numbers
+    if (a.number && b.number) {
+      return parseInt(a.number) - parseInt(b.number);
+    }
+    // Numbers come before non-numbers
+    if (a.number) return -1;
+    if (b.number) return 1;
+    // Alphabetical for non-numbered files
+    return a.title.localeCompare(b.title);
   });
+
+  // Group chapters by category
+  const categoryMap = new Map<string, Chapter[]>();
+
+  // Define category display names and order
+  const categoryConfig: Record<string, { name: string; order: number }> = {
+    root: { name: 'Main Guide', order: 0 },
+    'getting-started': { name: '🚀 Getting Started', order: 1 },
+    'using-metahuman': { name: '💬 Using MetaHuman', order: 2 },
+    'training-personalization': { name: '🧠 Training & Personalization', order: 3 },
+    'advanced-features': { name: '🎓 Advanced Features', order: 4 },
+    'configuration-admin': { name: '⚙️ Configuration & Admin', order: 5 },
+    reference: { name: '📖 Reference', order: 6 },
+    appendix: { name: '📋 Appendix', order: 7 },
+  };
+
+  chapters.forEach(chapter => {
+    const categoryId = chapter.category;
+    if (!categoryMap.has(categoryId)) {
+      categoryMap.set(categoryId, []);
+    }
+    categoryMap.get(categoryId)!.push(chapter);
+  });
+
+  // Convert to sorted array of categories
+  categories = Array.from(categoryMap.entries())
+    .map(([id, chapterList]) => ({
+      id,
+      name: categoryConfig[id]?.name || id.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+      chapters: chapterList,
+      order: categoryConfig[id]?.order ?? 99,
+    }))
+    .sort((a, b) => a.order - b.order);
+
 } catch (error) {
   console.error('Failed to load user guide:', error);
 }
@@ -59,20 +148,32 @@ try {
       </div>
 
       <nav class="chapter-nav">
-        <ul class="chapter-list">
-          {chapters.map(chapter => (
-            <li class="chapter-item">
-              <button
-                class="chapter-button"
-                data-chapter={chapter.id}
-                data-first={chapter.id === chapters[0]?.id}
-              >
-                <span class="chapter-number">{chapter.number}</span>
-                <span class="chapter-title">{chapter.title}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        {categories.map((category, categoryIndex) => (
+          <div class="category-section" data-category={category.id}>
+            <button
+              class="category-header"
+              data-category-id={category.id}
+              data-first-category={categoryIndex === 0}
+            >
+              <span class="category-name">{category.name}</span>
+              <span class="category-toggle">▼</span>
+            </button>
+            <ul class="chapter-list" data-category-chapters={category.id}>
+              {category.chapters.map(chapter => (
+                <li class="chapter-item">
+                  <button
+                    class="chapter-button"
+                    data-chapter={chapter.id}
+                    data-first={chapter.id === chapters[0]?.id}
+                  >
+                    <span class="chapter-number">{chapter.number}</span>
+                    <span class="chapter-title">{chapter.title}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
       </nav>
     </aside>
 
@@ -158,6 +259,35 @@ try {
       }
     }
 
+    // Category collapsing/expanding
+    document.querySelectorAll('.category-header').forEach(header => {
+      header.addEventListener('click', () => {
+        const categoryId = header.getAttribute('data-category-id');
+        const section = header.closest('.category-section');
+        const chapterList = section?.querySelector(`[data-category-chapters="${categoryId}"]`);
+        const toggle = header.querySelector('.category-toggle');
+
+        if (section && chapterList && toggle) {
+          const isCollapsed = section.classList.contains('collapsed');
+
+          if (isCollapsed) {
+            // Expand
+            section.classList.remove('collapsed');
+            toggle.textContent = '▼';
+          } else {
+            // Collapse
+            section.classList.add('collapsed');
+            toggle.textContent = '▶';
+          }
+        }
+      });
+
+      // Expand first category by default
+      if (header.getAttribute('data-first-category') === 'true') {
+        // Already expanded by default, do nothing
+      }
+    });
+
     // Sidebar chapter buttons
     document.querySelectorAll('.chapter-button').forEach(button => {
       button.addEventListener('click', () => {
@@ -186,8 +316,35 @@ try {
     // Handle URL hash navigation
     function handleHashChange() {
       const hash = window.location.hash.substring(1); // Remove '#'
-      if (hash) {
-        showChapter(hash);
+      if (!hash) return;
+
+      // Handle two formats:
+      // 1. Chapter only: "#23-voice-system"
+      // 2. Chapter + section: "/user-guide/23-voice-system#4-kokoro-styletts2-voicepacks"
+
+      // Extract chapter and section from hash
+      let chapterId = hash;
+      let sectionId: string | null = null;
+
+      // Check if hash contains a section anchor (e.g., "23-voice-system#4-kokoro")
+      const hashParts = hash.split('#');
+      if (hashParts.length > 1) {
+        chapterId = hashParts[0];
+        sectionId = hashParts[1];
+      }
+
+      // Show the chapter
+      showChapter(chapterId);
+
+      // If there's a section anchor, scroll to it after a short delay
+      // (to ensure chapter is visible first)
+      if (sectionId) {
+        setTimeout(() => {
+          const sectionElement = document.getElementById(sectionId);
+          if (sectionElement) {
+            sectionElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 300);
       }
     }
 
@@ -264,10 +421,73 @@ try {
     padding: 0.5rem 0;
   }
 
+  /* Category Sections */
+  .category-section {
+    margin: 0;
+  }
+
+  .category-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.625rem 1.5rem;
+    border: none;
+    background: rgb(243 244 246);
+    color: rgb(17 24 39);
+    font-weight: 700;
+    font-size: 0.8125rem;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+  }
+
+  :global(.dark) .category-header {
+    background: rgb(31 41 55);
+    color: rgb(209 213 219);
+  }
+
+  .category-header:hover {
+    background: rgb(229 231 235);
+  }
+
+  :global(.dark) .category-header:hover {
+    background: rgb(55 65 81);
+  }
+
+  .category-name {
+    flex: 1;
+  }
+
+  .category-toggle {
+    font-size: 0.75rem;
+    color: rgb(107 114 128);
+    transition: transform 0.2s;
+  }
+
+  :global(.dark) .category-toggle {
+    color: rgb(156 163 175);
+  }
+
+  .category-section.collapsed .category-toggle {
+    transform: rotate(-90deg);
+  }
+
   .chapter-list {
     list-style: none;
     padding: 0;
     margin: 0;
+    max-height: 1000px;
+    overflow: hidden;
+    transition: max-height 0.3s ease-in-out, opacity 0.2s;
+    opacity: 1;
+  }
+
+  .category-section.collapsed .chapter-list {
+    max-height: 0;
+    opacity: 0;
   }
 
   .chapter-item {

@@ -173,8 +173,15 @@ export const streamWriterExecutor: NodeExecutor = async (inputs, context) => {
   let response = '';
   if (typeof inputs[0] === 'string') {
     response = inputs[0];
-  } else if (inputs[0]?.response && typeof inputs[0].response === 'string') {
-    response = inputs[0].response;
+  } else if (inputs[0]?.response) {
+    // Handle nested response objects
+    if (typeof inputs[0].response === 'string') {
+      response = inputs[0].response;
+    } else if (typeof inputs[0].response === 'object' && inputs[0].response?.response) {
+      response = inputs[0].response.response;
+    } else if (typeof inputs[0].response === 'object' && inputs[0].response?.content) {
+      response = inputs[0].response.content;
+    }
   } else if (inputs[0]?.content && typeof inputs[0].content === 'string') {
     response = inputs[0].content;
   } else if (inputs[0]?.cleaned && typeof inputs[0].cleaned === 'string') {

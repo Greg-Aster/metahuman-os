@@ -1,92 +1,324 @@
 # MetaHuman OS User Guide
 
-Welcome to the MetaHuman OS User Guide. This guide is organized into the following chapters, providing a comprehensive overview of the system's functionality, architecture, and usage.
+Welcome to the MetaHuman OS User Guide. This comprehensive documentation will help you understand, install, and master MetaHuman OS — an autonomous digital personality extension operating system that mirrors your identity, memories, goals, and personality.
 
-1.  **[Overview](01-overview.md)**
-    *   **Introduction and Core Principles**: Understand the vision behind MetaHuman OS as an autonomous digital personality extension, mirroring your identity, memories, goals, and personality. Learn about its role as a parallel intelligence augmenting your cognitive abilities 24/7.
+> **Note:** Documentation is being reorganized into a hierarchical structure. New tutorials and guides are in dedicated subdirectories, while existing documentation remains in the root `user-guide/` folder.
 
-2.  **[Quick Start](02-quick-start.md)**
-    *   **Installation and Initial Setup**: Get up and running with MetaHuman OS. This section covers the necessary steps for installation, initial configuration, and how to start both the web UI and the command-line interface.
+---
 
-3.  **[Project Structure](03-project-structure.md)**
-    *   **Understanding the Directory Layout**: Explore the `pnpm` monorepo structure, including the `apps/`, `packages/`, `brain/`, `memory/`, and `persona/` directories. Learn where different components of the MetaHuman OS reside.
+## 🚀 Getting Started
 
-4.  **[Core Concepts](04-core-concepts.md)**
-    *   **Identity, Memory, Agents, and Decision Engine**: Dive into the fundamental building blocks of MetaHuman OS. This chapter explains the Identity Kernel, Memory Manager, Process Scheduler, Decision Engine, and Sync Engine, and how they interact to form the core logic of your digital personality.
-    *   **[Cognitive Modes](04-core-concepts.md#8-cognitive-modes-upcoming-feature)**: Learn about the upcoming cognitive modes that will allow you to switch between different operational paradigms.
+Perfect for new users. Follow these guides to get up and running quickly:
 
-5.  **[User Interface](05-user-interface.md)**
-    *   **Web UI and Interaction Methods**: Discover the web dashboard built with Astro and Tailwind CSS. Learn how to visualize the state of your digital personality extension and interact with the system through a modern web interface.
+1. **[Overview](01-overview.md)**
+   - Introduction and core principles
+   - Vision behind MetaHuman OS
+   - What makes it different
 
-6.  **[CLI Reference](06-cli-reference.md)**
-    *   **Command-Line Interface Guide**: A comprehensive guide to interacting with MetaHuman OS via the command line. This section details key commands such as `mh init`, `mh status`, `mh capture "<observation>"`, `mh task add "<task>"`, and `mh remember "<query>"`.
+2. **[Quick Start](02-quick-start.md)**
+   - Installation and initial setup
+   - First-time configuration
+   - Starting the system
 
-7.  **[Memory System](07-memory-system.md)**
-    *   **Working with Episodic, Semantic, and Procedural Memory**: Understand how MetaHuman OS stores and retrieves information. This chapter explains the different types of memory and the mechanisms used for data storage, including JSON files, Markdown files, and SQLite.
+3. **[First Steps Tutorial](getting-started/03-first-steps-tutorial.md)** ⭐ NEW
+   - Your first conversation
+   - Recording voice samples
+   - Understanding cognitive modes
+   - Basic memory and task management
+   - Web UI walkthrough
 
-8.  **[Autonomous Agents](08-autonomous-agents.md)**
-    *   **Background Processes and Automation**: Learn about the autonomous agents that operate continuously to augment your cognitive abilities. This section covers how these agents function in the background to manage tasks, process information, and drive the system's proactive behavior.
+4. **[Project Structure](03-project-structure.md)**
+   - Directory layout and organization
+   - Monorepo structure
+   - Where files live
 
-9.  **[Skills System](09-skills-system.md)**
-    *   **Executable Capabilities**: Explore the skills system, which defines the executable capabilities of MetaHuman OS. Understand how the system plans and executes these skills to ingest, organize, and act within defined trust boundaries.
+5. **[Common Workflows](getting-started/05-common-workflows.md)** ⭐ NEW
+   - Voice training end-to-end
+   - Memory management best practices
+   - LoRA adapter training pipeline
+   - Multi-user profile setup
+   - Task and project management
+   - Backup and recovery
+   - Troubleshooting common issues
 
-10. **[Security & Trust Model](10-security-trust.md)**
-    *   **Progressive Trust and Safety**: Delve into the security measures and trust model implemented in MetaHuman OS. Learn about auditability, reversibility, trust levels, and policies that ensure safe and controlled operations.
+---
 
-11. **[Special Features](11-special-features.md)**
-    *   **Audio Processing, LoRA Adapters, Vector Search**: Discover advanced functionalities such as local transcription (ASR) and text-to-speech (TTS) services, the use of LoRA adapters for model customization, and vector search for efficient memory retrieval.
+## 📚 Core Features
 
-12. **[Troubleshooting](12-troubleshooting.md)**
-    *   **Common Issues and Solutions**: Find solutions to common problems and issues you might encounter while using MetaHuman OS.
+Essential documentation for understanding and using MetaHuman OS:
 
-13. **[Advanced Usage](13-advanced-usage.md)**
-    *   **Advanced Workflows and Customization**: For experienced users, this section provides insights into advanced workflows, customization options, and how to leverage the full potential of MetaHuman OS.
-    *   **[Full Fine-Tuning with Monthly Updates](13-advanced-usage.md#full-fine-tuning-with-monthly-updates)**: Learn about incremental monthly fine-tuning to continuously improve your personality model. Includes foundation training, monthly update strategies, quality metrics, cost analysis, and troubleshooting. See also: [Monthly Training Workflow](../monthly-training-workflow.md) for comprehensive guide.
+### System Fundamentals
 
-14. **[Configuration Files](14-configuration-files.md)**
-    *   **Reference for All Config Files**: A detailed reference for all configuration files located in the `etc/` directory, explaining their purpose and how to modify them.
+6. **[Core Concepts](04-core-concepts.md)**
+   - Identity Kernel
+   - Memory Manager
+   - Autonomous Agents
+   - Decision Engine
+   - Cognitive Modes
 
-15. **[Known Issues & Experimental Features](15-known-issues.md)**
-    *   **Important Notes on Features in Development**: Stay informed about known issues and features that are currently under development or are considered experimental.
+7. **[User Interface](05-user-interface.md)**
+   - ChatGPT-style 3-column layout
+   - Left sidebar (Features)
+   - Center panel (Content)
+   - Right sidebar (Developer tools)
+   - Memory Browser with 7 specialized tabs
 
-16. **[What's Next](16-whats-next.md)**
-    *   **Roadmap and Future Features**: Get a glimpse into the future of MetaHuman OS by reviewing the project roadmap and upcoming features.
+8. **[CLI Reference](06-cli-reference.md)** ⭐ UPDATED
+   - System commands (init, status, start)
+   - Memory commands (capture, remember, find)
+   - Task management
+   - Agent management
+   - Ollama integration
+   - **Voice training** (rvc, sovits, kokoro) — NEW
+   - **LoRA adapters** (list, train, activate) — UPDATED
+   - **Fine-tuning** (cognitive mode training) — NEW
+   - **Persona generator** (interactive interview) — UPDATED
+   - Multi-user commands
 
-17. **[Authentication, Profiles & Guest Access](17-authentication-setup.md)**
-    *   **Getting Help**: Information on how to get support, report issues, and contribute to the MetaHuman OS project.
+### Memory & Data
 
-18. **[Cloudflare Tunnel Setup Guide](17-cloudflare-tunnel-setup.md)**
-    *   **Getting Help**: Information on how to get support, report issues, and contribute to the MetaHuman OS project.
+9. **[Memory System](07-memory-system.md)**
+   - Episodic, semantic, and procedural memory
+   - JSON storage format
+   - Memory enrichment
+   - Function memory system
+   - Semantic indexing
 
-19. **[Support](17-support.md)**
-    *   **Getting Help**: Information on how to get support, report issues, and contribute to the MetaHuman OS project.
+10. **[Autonomous Agents](08-autonomous-agents.md)**
+    - Organizer (memory enrichment)
+    - Reflector (internal reflections)
+    - Boredom Maintenance (activity-based)
+    - Curiosity Services (user-facing & internal)
+    - Dreamer (surreal dreams)
+    - Sleep Service
+    - Ingestor (file processing)
 
-20. **[Special States & Protocols](18-special-states.md)**
-    *   **Easter Eggs & Emergency Features**: Learn about special modes like "Wetware Deceased", "Lifeline Protocol", and the "Kill Switch".
+11. **[Skills System](09-skills-system.md)**
+    - Executable capabilities
+    - Skill discovery
+    - Tool catalog
+    - Custom skill creation
+
+---
+
+## 🎤 Voice & Personality
+
+Advanced features for personalizing your MetaHuman:
+
+12. **[Voice System (Text-to-Speech)](23-voice-system.md)**
+    - **Piper**: Fast synthetic voices (no training)
+    - **GPT-SoVITS**: Instant voice cloning (5-10 second samples)
+    - **RVC**: High-quality voice conversion (requires training)
+    - **Kokoro**: StyleTTS2 with custom voicepacks
+    - Training workflows and troubleshooting
+
+13. **[Persona Management System](25-persona-generation.md)**
+    - **PersonaGenerator**: Therapist-style interview system
+    - **PersonaEditor**: Manual persona editing
+    - **Psychoanalyzer**: Automatic evolution from memories
+    - Persona lifecycle management
+
+14. **[LoRA Adapter Training](11-special-features.md#lora-adapter-training)**
+    - Dataset curation and approval
+    - Training pipeline
+    - Evaluation metrics
+    - Dual-adapter system (historical + recent)
+    - Activation and testing
+
+15. **[Fine-Tuning & Monthly Updates](13-advanced-usage.md#full-fine-tuning-with-monthly-updates)**
+    - Cognitive mode training (dual, emulation, agent)
+    - Monthly incremental updates
+    - Foundation training strategies
+    - Quality metrics and cost analysis
+
+---
+
+## 🧠 Cognitive Architecture
+
+Deep dive into the AI systems powering MetaHuman OS:
+
+16. **[Cognitive Architecture](27-cognitive-architecture.md)**
+    - Multi-layer intelligence system
+    - Authentic personality emulation
+    - Computational efficiency
+    - Human-like reasoning
+
+17. **[Node-Based Cognitive System](28-node-based-cognitive-system.md)**
+    - Visual workflow design
+    - Node editor interface
+    - Graph executor engine
+    - Modular ReAct components
+    - Custom workflow creation
+
+18. **[Graceful Failure & Guidance Learning](26-graceful-failure-and-guidance-learning.md)**
+    - Error handling
+    - Learning from corrections
+    - Operator resilience
+
+---
+
+## 🔒 Security & Operations
+
+Essential guides for safe, reliable operation:
+
+19. **[Security & Trust Model](10-security-trust.md)**
+    - Progressive trust levels
+    - Audit trail
+    - Policy enforcement
+    - Reversibility guarantees
+
+20. **[Authentication & Profiles](17-authentication-setup.md)**
+    - User registration and login
+    - Profile management
+    - Guest access
+    - Session handling
 
 21. **[Multi-User Profiles & Guest Mode](19-multi-user-profiles.md)**
-    *   **Independent User Configurations**: Understand how MetaHuman OS supports multiple users with isolated profiles, guest access to public personas, persona facets, and the special "Mutant Super Intelligence" merged consciousness feature.
+    - Isolated user profiles
+    - Guest access setup
+    - Permission model
+    - Persona facets
+    - "Mutant Super Intelligence" merged mode
 
 22. **[Headless Runtime Mode](20-headless-runtime-mode.md)**
-    *   **Remote Access Without Conflicts**: Learn how to enable headless mode to pause local agents while keeping the web server and tunnel running. Perfect for dedicated remote access from mobile devices or multiple locations without resource conflicts.
+    - Remote access without conflicts
+    - Pausing local agents
+    - Dedicated web server
+    - Mobile access
 
-23. **[Terms of Service](21-terms-of-service.md)**
-    *   **Privacy Commitment & Liability**: Understand the privacy-first approach of MetaHuman OS, including data security responsibilities, local-first infrastructure, and limitation of liability. Learn about your responsibilities when using the system.
+23. **[Cloudflare Tunnel Setup](17-cloudflare-tunnel-setup.md)**
+    - Secure remote access
+    - Domain configuration
+    - Zero-trust networking
 
-24. **[Ethical Use Policy](22-ethical-use-policy.md)**
-    *   **Responsible AI Usage Guidelines**: Learn about prohibited uses (impersonation without consent, malicious AI systems), ethical principles (authenticity, consent, autonomy), and your commitment to responsible use of MetaHuman OS. Remember: Don't make Skynet!
+---
 
-25. **[Voice System (Text-to-Speech)](23-voice-system.md)**
-    *   **Local Voice Cloning & TTS**: Comprehensive guide to MetaHuman's three TTS providers: Piper (fast synthetic voices), GPT-SoVITS (instant voice cloning with 5-10 second samples), and RVC (highest quality trained voice conversion). Includes training workflows, configurable parameters, troubleshooting, and best practices for voice quality.
+## 🛠️ Configuration & Advanced Usage
 
-26. **[Persona Management System](25-persona-generation.md)**
-    *   **Complete Persona Lifecycle**: Learn about the three complementary tools for creating and maintaining your digital persona: PersonaGenerator (therapist interview), PersonaEditor (manual editing), and Psychoanalyzer (automatic evolution from memories). Each serves a distinct purpose in keeping your personality profile accurate and current.
+For power users and customization:
 
-27. **[Graceful Failure & Guidance Learning](26-graceful-failure-and-guidance-learning.md)**
-    *   **Resilient Operator Behavior**: Understand how the MetaHuman OS operator handles errors gracefully, asks for your guidance, and learns from your input to prevent similar issues in the future.
+24. **[Configuration Files Reference](14-configuration-files.md)**
+    - `etc/` directory structure
+    - All config files documented
+    - Template variables
+    - Hot-reload behavior
 
-28. **[Cognitive Architecture: Multi-Layer Intelligence System](27-cognitive-architecture.md)**
-    *   **Authentic Personality Emulation**: Explore the new multi-layer cognitive architecture that mimics human consciousness, enabling more authentic personality emulation while maintaining computational efficiency and scalability.
+25. **[Advanced Usage](13-advanced-usage.md)**
+    - Advanced workflows
+    - Customization options
+    - Power user features
+    - Performance tuning
 
-29. **[Node-Based Cognitive System: Visual Programming for AI Workflows](28-node-based-cognitive-system.md)**
-    *   **Visual Workflow Design**: Learn about the revolutionary node-based architecture that lets you view, edit, and customize cognitive workflows as visual graphs. Understand how nodes compose into complete cognitive pipelines, explore modular ReAct components, and create custom workflows tailored to your needs.
+26. **[Special Features](11-special-features.md)**
+    - Audio processing (ASR/TTS)
+    - Vector search
+    - LoRA adapters
+    - Self-healing coder
+    - Addon system
+
+27. **[Special States & Protocols](18-special-states.md)**
+    - "Wetware Deceased" mode
+    - Lifeline Protocol (emergency)
+    - Kill Switch
+    - Easter eggs
+
+---
+
+## 📖 Reference & Support
+
+Additional resources and help:
+
+28. **[Troubleshooting](12-troubleshooting.md)**
+    - Common issues and solutions
+    - Error messages
+    - Debugging tips
+    - Recovery procedures
+
+29. **[Known Issues & Experimental Features](15-known-issues.md)**
+    - Features in development
+    - Limitations and caveats
+    - Beta features
+    - Workarounds
+
+30. **[What's Next (Roadmap)](16-whats-next.md)**
+    - Future features
+    - Development priorities
+    - Upcoming releases
+    - Community contributions
+
+31. **[Support](17-support.md)**
+    - Getting help
+    - Reporting issues
+    - Contributing
+    - Community resources
+
+---
+
+## 📜 Legal & Ethics
+
+Important policies and commitments:
+
+32. **[Terms of Service](21-terms-of-service.md)**
+    - Privacy commitment
+    - Data security responsibilities
+    - Local-first infrastructure
+    - Limitation of liability
+
+33. **[Ethical Use Policy](22-ethical-use-policy.md)**
+    - Prohibited uses
+    - Ethical principles
+    - Responsible AI guidelines
+    - Authenticity and consent
+
+---
+
+## 🔍 Quick Reference
+
+**For absolute beginners:**
+1. Read [Overview](01-overview.md)
+2. Follow [Quick Start](02-quick-start.md)
+3. Complete [First Steps Tutorial](getting-started/03-first-steps-tutorial.md)
+4. Practice [Common Workflows](getting-started/05-common-workflows.md)
+
+**For developers:**
+1. Review [Project Structure](03-project-structure.md)
+2. Study [Core Concepts](04-core-concepts.md)
+3. Explore [Node-Based System](28-node-based-cognitive-system.md)
+4. Check [Configuration Files](14-configuration-files.md)
+
+**For voice enthusiasts:**
+1. Read [Voice System Guide](23-voice-system.md)
+2. Try [Voice Training Workflow](getting-started/05-common-workflows.md#voice-training-end-to-end)
+3. Configure [Voice Settings](14-configuration-files.md#etcvoicejson)
+
+**For personality customization:**
+1. Use [Persona Generator](25-persona-generation.md)
+2. Follow [LoRA Training Workflow](getting-started/05-common-workflows.md#lora-adapter-training-pipeline)
+3. Understand [Cognitive Modes](04-core-concepts.md#8-cognitive-modes)
+
+**For troubleshooting:**
+1. Check [Troubleshooting Guide](12-troubleshooting.md)
+2. Review [Common Workflows - Troubleshooting](getting-started/05-common-workflows.md#troubleshooting-common-issues)
+3. Visit [Support Resources](17-support.md)
+
+---
+
+## 📊 Documentation Status
+
+**✅ Complete:** Core features, CLI reference, voice system, persona tools
+**🔄 In Progress:** Reorganization into hierarchical structure
+**📝 Coming Soon:** Developer API reference, plugin development guide, advanced node system tutorials
+
+---
+
+## 🤝 Contributing to Documentation
+
+Found an error? Want to improve a guide?
+
+1. Documentation source: `docs/user-guide/`
+2. Open an issue or pull request on GitHub
+3. Follow the [Contributing Guidelines](../../CONTRIBUTING.md)
+
+---
+
+**Welcome to MetaHuman OS! Your digital extension awaits.** 🚀
