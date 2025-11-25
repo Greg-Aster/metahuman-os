@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { paths, audit, ProgressTracker } from '../../packages/core/src/index.js';
+import { paths, audit, ProgressTracker, getProfilePaths } from '../../packages/core/src/index.js';
 import dotenv from 'dotenv';
 import { ensureDirSync } from 'fs-extra';
 import fetch from 'node-fetch';
@@ -28,6 +28,7 @@ interface RunRemoteTrainingOptions {
   CONFIG_FILE: string;
   SUMMARY_FILE: string;
   samples_used: number;
+  username: string; // Username for profile access
 }
 
 interface RunRemoteTrainingResult {
@@ -352,6 +353,58 @@ async function sshScpDownload(
 
     scp.on('error', (err) => {
       log(logFilePath, `SCP command failed to start: ${err.message}`);
+      resolve({ exitCode: -1, stderr: err.message });
+    });
+  });
+}
+
+/**
+ * Download using rsync instead of scp - supports resume and excludes patterns
+ */
+async function rsyncDownload(
+  ssh_user: string,
+  ssh_host: string,
+  ssh_key_path: string,
+  remotePath: string,
+  localPath: string,
+  logFilePath: string,
+  ssh_port?: number | null,
+  excludePatterns: string[] = []
+): Promise<{ exitCode: number; stderr: string }> {
+  return new Promise((resolve) => {
+    const sshCmd = ssh_port
+      ? `ssh -p ${ssh_port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ${ssh_key_path}`
+      : `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ${ssh_key_path}`;
+
+    const excludeArgs = excludePatterns.map(p => `--exclude=${p}`).join(' ');
+    const cmd = `rsync -avz --partial --progress ${excludeArgs} -e "${sshCmd}" ${ssh_user}@${ssh_host}:${remotePath}/ ${localPath}/`;
+
+    log(logFilePath, `Starting rsync download: ${cmd}`);
+    const rsync = spawn('bash', ['-c', cmd]);
+
+    let stderr = '';
+    rsync.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    rsync.stdout.on('data', (data) => {
+      const output = data.toString();
+      if (output.includes('%') || output.includes('to-chk')) {
+        process.stdout.write(output);
+      }
+    });
+
+    rsync.on('close', (exitCode) => {
+      if (exitCode === 0) {
+        log(logFilePath, `Rsync download successful for ${remotePath}`);
+      } else {
+        log(logFilePath, `Rsync failed for ${remotePath} with exit code ${exitCode}. Stderr: ${stderr}`);
+      }
+      resolve({ exitCode: exitCode || 0, stderr });
+    });
+
+    rsync.on('error', (err) => {
+      log(logFilePath, `Rsync command failed to start: ${err.message}`);
       resolve({ exitCode: -1, stderr: err.message });
     });
   });
@@ -739,13 +792,48 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     tracker.completeStage('ssh_connection');
     console.log('✅ Stage 2/6: SSH connection established\n');
 
-    // Give container a few seconds to fully initialize after SSH becomes available
-    console.log('⏸️  Waiting 10 seconds for container to fully initialize...');
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    // 2.1. Wait for pod environment to be fully ready
+    console.log('⏸️  Verifying pod environment is ready...');
+    log(logFilePath, 'Checking for Python, pip, and workspace setup');
+
+    let retries = 0;
+    const maxRetries = 6; // 6 retries * 10 seconds = 1 minute
+    let envReady = false;
+
+    while (retries < maxRetries && !envReady) {
+      try {
+        const checkResult = await sshExecNoPty(
+          ssh_user!,
+          ssh_host!,
+          ssh_key_path!,
+          'python3 --version && pip --version && ls /workspace && echo "ENV_READY"',
+          ssh_port
+        );
+
+        if (checkResult.stdout.includes('ENV_READY')) {
+          console.log('✅ Pod environment is ready');
+          log(logFilePath, `Environment check passed: ${checkResult.stdout}`);
+          envReady = true;
+        } else {
+          log(logFilePath, `Environment not ready yet (attempt ${retries + 1}/${maxRetries})`);
+          retries++;
+          await new Promise(resolve => setTimeout(resolve, 10000));
+        }
+      } catch (error) {
+        log(logFilePath, `Environment check failed (attempt ${retries + 1}/${maxRetries}): ${(error as Error).message}`);
+        retries++;
+        await new Promise(resolve => setTimeout(resolve, 10000));
+      }
+    }
+
+    if (!envReady) {
+      console.warn('⚠️  Pod environment may not be fully ready, proceeding with upload...');
+      log(logFilePath, 'WARNING: Environment checks did not pass, proceeding anyway');
+    }
 
     // 3.3. Upload dataset + config + fixed training script using base64-over-ssh
-    console.log('\n📤 Stage 3/6: Uploading files to pod...');
-    log(logFilePath, `Uploading files via base64-over-ssh (samples: ${opts.samples_used})...`);
+    console.log('\n📤 Stage 3/6: Uploading training data to pod...');
+    log(logFilePath, `Uploading curated training files via base64-over-ssh (samples: ${opts.samples_used})...`);
     tracker.startStage('file_upload', 'Uploading 3 files');
 
     // Ensure target directories exist with proper permissions
@@ -753,12 +841,26 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     log(logFilePath, `Directory creation result: ${mkdirResult.stdout}`);
 
     await sshUploadFileBase64(opts.CLEAN_DATA_FILE, '/workspace/input/unsloth_dataset.jsonl', ssh_user!, ssh_host!, ssh_key_path!, logFilePath, ssh_port);
-    tracker.updateStage('file_upload', 33, `Uploaded dataset (${opts.samples_used} samples)`);
+    tracker.updateStage('file_upload', 25, `Uploaded dataset (${opts.samples_used} samples)`);
     console.log(`📤 Uploaded: dataset.jsonl (${opts.samples_used} samples)`);
 
     await sshUploadFileBase64(opts.CONFIG_FILE, '/workspace/input/config.json', ssh_user!, ssh_host!, ssh_key_path!, logFilePath, ssh_port);
-    tracker.updateStage('file_upload', 67, 'Uploaded config.json');
+    tracker.updateStage('file_upload', 50, 'Uploaded config.json');
     console.log('📤 Uploaded: config.json');
+
+    // Upload persona data for training context
+    const profilePaths = getProfilePaths(opts.username);
+    const personaPath = path.join(profilePaths.persona, 'core.json');
+
+    if (fs.existsSync(personaPath)) {
+      await sshUploadFileBase64(personaPath, '/workspace/input/persona.json', ssh_user!, ssh_host!, ssh_key_path!, logFilePath, ssh_port);
+      tracker.updateStage('file_upload', 75, 'Uploaded persona.json');
+      console.log('📤 Uploaded: persona.json');
+      log(logFilePath, 'Uploaded persona data for training context');
+    } else {
+      log(logFilePath, 'WARNING: persona/core.json not found, training without persona context');
+      console.warn('⚠️  No persona.json found - training without persona context');
+    }
 
     // Determine which training script to upload based on config
     let trainingScriptName: string;
@@ -927,135 +1029,124 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
         tracker.startStage('adapter_download', 'Downloading safetensors model');
 
         if (summary.training_success) {
-            console.log('📥 Downloading full model via SCP...');
-            ensureDirSync(opts.FINAL_ADAPTER_DIR);
+          // Download model FIRST while pod is still running (SSH is active)
+          console.log('📥 Downloading model via rsync (excluding 24GB of checkpoints)...');
+          ensureDirSync(opts.FINAL_ADAPTER_DIR);
 
-            const tempModelDir = path.join(opts.WORK_LOCAL, 'temp_model_download');
-            ensureDirSync(tempModelDir);
+          const modelDownloadResult = await rsyncDownload(
+            ssh_user!, ssh_host!, ssh_key_path!,
+            '/workspace/output/model', // Full model directory
+            opts.FINAL_ADAPTER_DIR, // Download directly to final dir
+            logFilePath,
+            ssh_port,
+            ['checkpoint-*', '*.pt', '*.pth', 'optimizer.pt', 'scheduler.pt', 'rng_state.pth']
+          );
 
-            const modelDownloadResult = await sshScpDownload(
-                ssh_user!, ssh_host!, ssh_key_path!,
-                '/workspace/output/model', // Full model directory
-                tempModelDir,
-                logFilePath,
-                ssh_port,
-                true // Recursive
-            );
+          if (modelDownloadResult.exitCode === 0) {
+            // Download succeeded - pod will be terminated in finally block to stop all billing
+            log(logFilePath, 'Full model downloaded (checkpoints excluded).');
+            console.log('✅ Download complete (saved 24GB by excluding checkpoints).');
+            tracker.completeStage('adapter_download');
 
-            if (modelDownloadResult.exitCode === 0) {
-                const downloadedModelPath = path.join(tempModelDir, 'model');
-                if (fs.existsSync(downloadedModelPath)) {
-                    fs.readdirSync(downloadedModelPath).forEach(file => {
-                        fs.renameSync(path.join(downloadedModelPath, file), path.join(opts.FINAL_ADAPTER_DIR, file));
-                    });
-                    fs.rmSync(tempModelDir, { recursive: true, force: true });
-                    log(logFilePath, 'Full model downloaded and moved to final directory.');
-                    console.log('✅ Full model downloaded successfully.');
-                    tracker.completeStage('adapter_download');
+            // Convert to GGUF locally if enabled in config
+            const ggufConfig = cfg.gguf_conversion;
+            if (ggufConfig && ggufConfig.enabled) {
+              console.log('\n🔧 Stage 6/7: Converting to GGUF locally...');
+              console.log(`⏱️  Converting to ${ggufConfig.quantization_type} quantization (may take 10-20 minutes)\n`);
+              log(logFilePath, 'Starting local GGUF conversion using llama.cpp...');
+              tracker.startStage('gguf_conversion', `Converting to ${ggufConfig.quantization_type}`);
 
-                    // Convert to GGUF locally if enabled in config
-                    const ggufConfig = cfg.gguf_conversion;
-                    if (ggufConfig && ggufConfig.enabled) {
-                        console.log('\n🔧 Stage 6/7: Converting to GGUF locally...');
-                        console.log(`⏱️  Converting to ${ggufConfig.quantization_type} quantization (may take 10-20 minutes)\n`);
-                        log(logFilePath, 'Starting local GGUF conversion using llama.cpp...');
-                        tracker.startStage('gguf_conversion', `Converting to ${ggufConfig.quantization_type}`);
+              try {
+                // Paths
+                const llamaCppPath = path.join(paths.root, 'vendor', 'llama.cpp');
+                const convertScript = path.join(llamaCppPath, 'convert_hf_to_gguf.py');
+                const quantizeBinary = path.join(llamaCppPath, 'llama-quantize');
+                const modelParentDir = path.dirname(opts.FINAL_ADAPTER_DIR);
+                const f16Path = path.join(modelParentDir, `model-f16.gguf`);
+                const quantizedPath = path.join(modelParentDir, `model-${ggufConfig.quantization_type}.gguf`);
 
-                        try {
-                            // Paths
-                            const llamaCppPath = path.join(paths.root, 'vendor', 'llama.cpp');
-                            const convertScript = path.join(llamaCppPath, 'convert_hf_to_gguf.py');
-                            const quantizeBinary = path.join(llamaCppPath, 'llama-quantize');
-                            const modelParentDir = path.dirname(opts.FINAL_ADAPTER_DIR);
-                            const f16Path = path.join(modelParentDir, `model-f16.gguf`);
-                            const quantizedPath = path.join(modelParentDir, `model-${ggufConfig.quantization_type}.gguf`);
-
-                            // Ensure llama.cpp exists
-                            if (!fs.existsSync(llamaCppPath)) {
-                                console.log('📦 llama.cpp not found, cloning...');
-                                log(logFilePath, 'Cloning llama.cpp repository...');
-                                const vendorDir = path.join(paths.root, 'vendor');
-                                ensureDirSync(vendorDir);
-                                execSync(`git clone https://github.com/ggml-org/llama.cpp.git "${llamaCppPath}"`, {
-                                    stdio: 'inherit',
-                                    cwd: vendorDir,
-                                });
-                                console.log('✓ llama.cpp cloned');
-                            }
-
-                            if (!fs.existsSync(quantizeBinary)) {
-                                console.log('🔨 Building llama.cpp binaries...');
-                                log(logFilePath, 'Building llama.cpp binaries...');
-                                execSync('make -j$(nproc)', { cwd: llamaCppPath, stdio: 'inherit' });
-                                console.log('✓ llama.cpp built');
-                            }
-
-                            // Step 1: Convert to F16 GGUF
-                            console.log('📝 Step 1/2: Converting to FP16 GGUF...');
-                            log(logFilePath, `Converting ${opts.FINAL_ADAPTER_DIR} to F16 GGUF...`);
-
-                            const venvPython = path.join(paths.root, 'venv', 'bin', 'python3');
-                            const pythonCmd = fs.existsSync(venvPython) ? venvPython : 'python3';
-
-                            execSync(`${pythonCmd} "${convertScript}" "${opts.FINAL_ADAPTER_DIR}" --outtype f16 --outfile "${f16Path}"`, {
-                                stdio: 'inherit',
-                                cwd: llamaCppPath,
-                                env: { ...process.env, PYTHONPATH: llamaCppPath },
-                            });
-
-                            const f16SizeGB = (fs.statSync(f16Path).size / (1024 ** 3)).toFixed(2);
-                            console.log(`✓ F16 GGUF created (${f16SizeGB}GB)`);
-                            log(logFilePath, `F16 GGUF created: ${f16Path} (${f16SizeGB}GB)`);
-                            tracker.updateStage('gguf_conversion', 50, 'F16 conversion complete, quantizing...');
-
-                            // Step 2: Quantize to target format
-                            console.log(`📦 Step 2/2: Quantizing to ${ggufConfig.quantization_type}...`);
-                            log(logFilePath, `Quantizing to ${ggufConfig.quantization_type}...`);
-
-                            execSync(`"${quantizeBinary}" "${f16Path}" "${quantizedPath}" ${ggufConfig.quantization_type}`, {
-                                stdio: 'inherit',
-                                cwd: llamaCppPath,
-                            });
-
-                            const quantSizeGB = (fs.statSync(quantizedPath).size / (1024 ** 3)).toFixed(2);
-                            console.log(`✓ Quantized GGUF created (${quantSizeGB}GB)`);
-                            log(logFilePath, `Quantized GGUF: ${quantizedPath} (${quantSizeGB}GB)`);
-
-                            // Clean up intermediate F16 file
-                            console.log('🧹 Cleaning up intermediate F16 file...');
-                            fs.unlinkSync(f16Path);
-
-                            console.log(`\n✅ GGUF conversion complete!`);
-                            console.log(`📁 Safetensors: ${opts.FINAL_ADAPTER_DIR} (for future training)`);
-                            console.log(`📁 GGUF: ${quantizedPath} (for Ollama)`);
-                            console.log(`💾 Size: ${quantSizeGB}GB (${ggufConfig.quantization_type})\n`);
-
-                            log(logFilePath, `GGUF conversion complete: ${quantizedPath}`);
-                            tracker.completeStage('gguf_conversion');
-
-                            summary.gguf_path = quantizedPath;
-                        } catch (error) {
-                            console.error(`⚠️ GGUF conversion failed: ${(error as Error).message}`);
-                            log(logFilePath, `GGUF conversion failed: ${(error as Error).message}`);
-                            tracker.failStage('gguf_conversion', (error as Error).message);
-                            // Don't fail the entire pipeline - safetensors model is still usable
-                        }
-                    } else {
-                        console.log('ℹ️ GGUF conversion disabled in config, skipping');
-                        log(logFilePath, 'GGUF conversion disabled or not configured');
-                    }
-                } else {
-                    log(logFilePath, 'Downloaded model directory not found in temp location.');
-                    console.error('❌ Model download failed - directory not found.');
+                // Ensure llama.cpp exists
+                if (!fs.existsSync(llamaCppPath)) {
+                  console.log('📦 llama.cpp not found, cloning...');
+                  log(logFilePath, 'Cloning llama.cpp repository...');
+                  const vendorDir = path.join(paths.root, 'vendor');
+                  ensureDirSync(vendorDir);
+                  execSync(`git clone https://github.com/ggml-org/llama.cpp.git "${llamaCppPath}"`, {
+                    stdio: 'inherit',
+                    cwd: vendorDir,
+                  });
+                  console.log('✓ llama.cpp cloned');
                 }
+
+                if (!fs.existsSync(quantizeBinary)) {
+                  console.log('🔨 Building llama.cpp binaries...');
+                  log(logFilePath, 'Building llama.cpp binaries...');
+                  execSync('make -j$(nproc)', { cwd: llamaCppPath, stdio: 'inherit' });
+                  console.log('✓ llama.cpp built');
+                }
+
+                // Step 1: Convert to F16 GGUF
+                console.log('📝 Step 1/2: Converting to FP16 GGUF...');
+                log(logFilePath, `Converting ${opts.FINAL_ADAPTER_DIR} to F16 GGUF...`);
+
+                const venvPython = path.join(paths.root, 'venv', 'bin', 'python3');
+                const pythonCmd = fs.existsSync(venvPython) ? venvPython : 'python3';
+
+                execSync(`${pythonCmd} "${convertScript}" "${opts.FINAL_ADAPTER_DIR}" --outtype f16 --outfile "${f16Path}"`, {
+                  stdio: 'inherit',
+                  cwd: llamaCppPath,
+                  env: { ...process.env, PYTHONPATH: llamaCppPath },
+                });
+
+                const f16SizeGB = (fs.statSync(f16Path).size / (1024 ** 3)).toFixed(2);
+                console.log(`✓ F16 GGUF created (${f16SizeGB}GB)`);
+                log(logFilePath, `F16 GGUF created: ${f16Path} (${f16SizeGB}GB)`);
+                tracker.updateStage('gguf_conversion', 50, 'F16 conversion complete, quantizing...');
+
+                // Step 2: Quantize to target format
+                console.log(`📦 Step 2/2: Quantizing to ${ggufConfig.quantization_type}...`);
+                log(logFilePath, `Quantizing to ${ggufConfig.quantization_type}...`);
+
+                execSync(`"${quantizeBinary}" "${f16Path}" "${quantizedPath}" ${ggufConfig.quantization_type}`, {
+                  stdio: 'inherit',
+                  cwd: llamaCppPath,
+                });
+
+                const quantSizeGB = (fs.statSync(quantizedPath).size / (1024 ** 3)).toFixed(2);
+                console.log(`✓ Quantized GGUF created (${quantSizeGB}GB)`);
+                log(logFilePath, `Quantized GGUF: ${quantizedPath} (${quantSizeGB}GB)`);
+
+                // Clean up intermediate F16 file
+                console.log('🧹 Cleaning up intermediate F16 file...');
+                fs.unlinkSync(f16Path);
+
+                console.log(`\n✅ GGUF conversion complete!`);
+                console.log(`📁 Safetensors: ${opts.FINAL_ADAPTER_DIR} (for future training)`);
+                console.log(`📁 GGUF: ${quantizedPath} (for Ollama)`);
+                console.log(`💾 Size: ${quantSizeGB}GB (${ggufConfig.quantization_type})\n`);
+
+                log(logFilePath, `GGUF conversion complete: ${quantizedPath}`);
+                tracker.completeStage('gguf_conversion');
+
+                summary.gguf_path = quantizedPath;
+              } catch (error) {
+                console.error(`⚠️ GGUF conversion failed: ${(error as Error).message}`);
+                log(logFilePath, `GGUF conversion failed: ${(error as Error).message}`);
+                tracker.failStage('gguf_conversion', (error as Error).message);
+                // Don't fail the entire pipeline - safetensors model is still usable
+              }
             } else {
-                log(logFilePath, `Model download failed with exit code ${modelDownloadResult.exitCode}`);
-                console.error(`❌ Model download failed.`);
-                tracker.failStage('adapter_download', `Model download failed: ${modelDownloadResult.exitCode}`);
+              console.log('ℹ️ GGUF conversion disabled in config, skipping');
+              log(logFilePath, 'GGUF conversion disabled or not configured');
             }
+          } else {
+            log(logFilePath, `Model download failed with exit code ${modelDownloadResult.exitCode}`);
+            console.error('❌ Model download failed.');
+            tracker.failStage('adapter_download', `Model download failed: ${modelDownloadResult.exitCode}`);
+          }
         } else {
-            log(logFilePath, 'Skipping model download due to training failure.');
-            console.log('⚠️ Skipping model download due to training failure.');
+          log(logFilePath, 'Skipping model download due to training failure.');
+          console.log('⚠️ Skipping model download due to training failure.');
         }
     } else {
         // LoRA training: download GGUF + adapter artifacts

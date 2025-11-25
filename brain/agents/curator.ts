@@ -3,272 +3,59 @@
  * Curator Agent - Prepares clean, persona-friendly training data
  *
  * This agent:
- * - Processes raw episodic memories into curated summaries
+ * - Processes raw episodic memories into curated summaries (LLM-based)
  * - Removes tool syntax, JSON, and operator transcripts
  * - Extracts conversational essence for LoRA training
  * - Generates training-ready conversation pairs
  * - Flags sensitive data for review
+ * - Runs incrementally (processes ~50 uncurated memories per run)
  *
  * Part of Phase 3: Multi-Model Orchestration
  */
 
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-// For ESM __dirname
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const ROOT = path.resolve(__dirname, '..', '..');
 
 // Import from core
-import { paths, audit, auditAction, callLLM, type RouterMessage, acquireLock, isLocked, initGlobalLogger } from '@metahuman/core';
+import {
+  acquireLock,
+  isLocked,
+  initGlobalLogger,
+  withUserContext,
+  getUserContext,
+  executeGraph,
+  validateCognitiveGraph,
+  audit,
+  type CognitiveGraph,
+  paths,
+} from '../../packages/core/src/index.js';
+import { registerAgent, unregisterAgent } from '../../packages/core/src/agent-monitor.js';
+import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
 
-interface EpisodicMemory {
-  id: string;
-  timestamp: string;
-  content: string;
-  type?: string;
-  entities?: string[];
-  tags?: string[];
-  response?: string;
-  metadata?: {
-    processed?: boolean;
-    curated?: boolean;
-    curatedAt?: string;
-    model?: string;
-  };
-}
-
-interface CuratedMemory {
-  id: string;
-  originalTimestamp: string;
-  conversationalEssence: string;
-  context?: string;
-  userMessage?: string;
-  assistantResponse?: string;
-  curatedAt: string;
-  flags: string[];
-  suitableForTraining: boolean;
-}
-
-interface TrainingPair {
-  messages: Array<{
-    role: 'system' | 'user' | 'assistant';
-    content: string;
-  }>;
-  metadata: {
-    sourceId: string;
-    timestamp: string;
-    curatedAt: string;
-  };
+/**
+ * Load curator cognitive graph
+ */
+async function loadCuratorGraph(): Promise<CognitiveGraph> {
+  const graphPath = path.join(paths.root, 'etc', 'cognitive-graphs', 'curator-mode.json');
+  const raw = await fs.readFile(graphPath, 'utf-8');
+  const parsed = JSON.parse(raw);
+  return validateCognitiveGraph(parsed);
 }
 
 /**
- * Curate a memory using the curator model
+ * Main curator process (runs with user context)
  */
-async function curateMemory(memory: EpisodicMemory): Promise<CuratedMemory> {
-  console.log(`[Curator] Processing memory ${memory.id}`);
+async function mainWithContext() {
+  const ctx = getUserContext();
 
-  const systemPrompt = `You are a memory curator preparing training data for a personal AI assistant.
-
-Your task:
-1. Extract the conversational essence from this memory
-2. Remove any tool syntax, JSON, file paths, or technical jargon
-3. Convert operator/skill transcripts into natural dialogue
-4. Flag any sensitive information (passwords, API keys, private data)
-5. Determine if this memory is suitable for personality training
-
-Respond with JSON:
-{
-  "conversationalEssence": "Natural language summary",
-  "userMessage": "What the user said (if applicable)",
-  "assistantResponse": "What the assistant said (if applicable)",
-  "context": "Additional context if needed",
-  "flags": ["sensitive-data", "tool-syntax", "etc"],
-  "suitableForTraining": true/false
-}`;
-
-  const messages: RouterMessage[] = [
-    {
-      role: 'system',
-      content: systemPrompt,
-    },
-    {
-      role: 'user',
-      content: `Memory content:\n${memory.content}\n\n${memory.response ? `Response: ${memory.response}` : ''}`,
-    },
-  ];
-
-  try {
-    const response = await callLLM({
-      role: 'curator',
-      messages,
-      options: {
-        temperature: 0.3,
-      },
-    });
-
-    // Parse the JSON response
-    const result = JSON.parse(response.content);
-
-    return {
-      id: memory.id,
-      originalTimestamp: memory.timestamp,
-      conversationalEssence: result.conversationalEssence || memory.content,
-      context: result.context,
-      userMessage: result.userMessage,
-      assistantResponse: result.assistantResponse,
-      curatedAt: new Date().toISOString(),
-      flags: result.flags || [],
-      suitableForTraining: result.suitableForTraining !== false,
-    };
-  } catch (error) {
-    console.error(`[Curator] Failed to parse curator response for ${memory.id}:`, error);
-
-    // Fallback: mark as unsuitable but keep the content
-    return {
-      id: memory.id,
-      originalTimestamp: memory.timestamp,
-      conversationalEssence: memory.content,
-      curatedAt: new Date().toISOString(),
-      flags: ['curator-error'],
-      suitableForTraining: false,
-    };
-  }
-}
-
-/**
- * Convert curated memory to training pair
- */
-function toTrainingPair(curated: CuratedMemory): TrainingPair | null {
-  if (!curated.suitableForTraining) {
-    return null;
+  if (!ctx || !ctx.profilePaths) {
+    console.error('[Curator] ERROR: No user context found');
+    process.exit(1);
   }
 
-  // If we have explicit user/assistant messages, use them
-  if (curated.userMessage && curated.assistantResponse) {
-    return {
-      messages: [
-        {
-          role: 'user',
-          content: curated.userMessage,
-        },
-        {
-          role: 'assistant',
-          content: curated.assistantResponse,
-        },
-      ],
-      metadata: {
-        sourceId: curated.id,
-        timestamp: curated.originalTimestamp,
-        curatedAt: curated.curatedAt,
-      },
-    };
-  }
-
-  // Otherwise, use the conversational essence as context
-  // (suitable for pre-training but not fine-tuning pairs)
-  return null;
-}
-
-/**
- * Load unprocessed episodic memories
- */
-async function loadUnprocessedMemories(limit = 50): Promise<EpisodicMemory[]> {
-  const episodicPath = path.join(ROOT, 'memory', 'episodic');
-  const memories: EpisodicMemory[] = [];
-
-  // Get all year directories
-  const years = fs.readdirSync(episodicPath).filter(f => /^\d{4}$/.test(f));
-
-  for (const year of years.sort().reverse()) {
-    const yearPath = path.join(episodicPath, year);
-    const files = fs.readdirSync(yearPath).filter(f => f.endsWith('.json'));
-
-    for (const file of files.sort().reverse()) {
-      if (memories.length >= limit) break;
-
-      const filePath = path.join(yearPath, file);
-      try {
-        const content = fs.readFileSync(filePath, 'utf-8');
-        const memory = JSON.parse(content) as EpisodicMemory;
-
-        // Skip if already curated
-        if (memory.metadata?.curated) continue;
-
-        // Skip inner dialogues and reflections (not suitable for persona training)
-        if (memory.type === 'inner_dialogue' || memory.tags?.includes('reflection')) continue;
-
-        memories.push(memory);
-      } catch (error) {
-        console.error(`[Curator] Failed to load ${filePath}:`, error);
-      }
-    }
-
-    if (memories.length >= limit) break;
-  }
-
-  return memories;
-}
-
-/**
- * Save curated memory
- */
-function saveCuratedMemory(curated: CuratedMemory, outputDir: string): void {
-  const dateStr = new Date(curated.originalTimestamp).toISOString().split('T')[0];
-  const filename = `${dateStr}-${curated.id}.json`;
-  const filepath = path.join(outputDir, filename);
-
-  fs.writeFileSync(filepath, JSON.stringify(curated, null, 2), 'utf-8');
-  console.log(`[Curator] Saved curated memory: ${filepath}`);
-}
-
-/**
- * Save training pair to JSONL
- */
-function saveTrainingPair(pair: TrainingPair, outputFile: string): void {
-  const line = JSON.stringify(pair) + '\n';
-  fs.appendFileSync(outputFile, line, 'utf-8');
-}
-
-/**
- * Mark original memory as curated
- */
-function markAsCurated(memoryId: string, timestamp: string): void {
-  const year = new Date(timestamp).getFullYear();
-  const episodicPath = path.join(ROOT, 'memory', 'episodic', String(year));
-  const files = fs.readdirSync(episodicPath).filter(f => f.includes(memoryId));
-
-  if (files.length === 0) {
-    console.warn(`[Curator] Could not find file for memory ${memoryId}`);
-    return;
-  }
-
-  const filepath = path.join(episodicPath, files[0]);
-  try {
-    const content = fs.readFileSync(filepath, 'utf-8');
-    const memory = JSON.parse(content);
-
-    memory.metadata = memory.metadata || {};
-    memory.metadata.curated = true;
-    memory.metadata.curatedAt = new Date().toISOString();
-
-    fs.writeFileSync(filepath, JSON.stringify(memory, null, 2), 'utf-8');
-  } catch (error) {
-    console.error(`[Curator] Failed to mark as curated: ${filepath}`, error);
-  }
-}
-
-/**
- * Main curator process
- */
-async function main() {
-  initGlobalLogger();
-
-  const lockName = 'curator';
+  const lockName = `curator-${ctx.username}`;
   if (isLocked(lockName)) {
-    console.log('[Curator] Another instance is already running. Exiting.');
+    console.log(`[Curator] Another instance is already running for user ${ctx.username}. Exiting.`);
     process.exit(0);
   }
 
@@ -276,82 +63,91 @@ async function main() {
   try {
     lockHandle = acquireLock(lockName);
 
-    auditAction({
-      event: 'curator_started',
-      details: { timestamp: new Date().toISOString() },
-    });
+    // Register in agent monitor so it shows up while running
+    registerAgent('curator', process.pid);
 
-    // Create output directories
-    const curatedDir = path.join(ROOT, 'memory', 'curated', 'conversations');
-    const trainingDir = path.join(ROOT, 'memory', 'curated', 'training-datasets');
-    fs.mkdirSync(curatedDir, { recursive: true });
-    fs.mkdirSync(trainingDir, { recursive: true });
+    console.log(`[Curator] Starting LLM-based curation for user: ${ctx.username}`);
 
-    // Load unprocessed memories
-    console.log('[Curator] Loading unprocessed memories...');
-    const memories = await loadUnprocessedMemories(50);
-    console.log(`[Curator] Found ${memories.length} memories to curate`);
+    // Load curator cognitive graph
+    const graph = await loadCuratorGraph();
 
-    if (memories.length === 0) {
-      console.log('[Curator] No memories to process. Exiting.');
-      auditAction({
-        event: 'curator_completed',
-        details: { processed: 0 },
-      });
-      return;
-    }
+    // Execute graph with context
+    const graphContext = {
+      userId: ctx.username,
+      allowMemoryWrites: true,
+      cognitiveMode: 'dual' as const,  // Use dual mode to get the 30B coder model
+    };
 
-    // Process each memory
-    const trainingFile = path.join(trainingDir, `persona-training-${new Date().toISOString().split('T')[0]}.jsonl`);
-    let processed = 0;
-    let trainingPairs = 0;
+    console.log('[Curator] Executing curator workflow graph...');
+    const graphResult = await executeGraph(graph, graphContext);
 
-    for (const memory of memories) {
-      try {
-        const curated = await curateMemory(memory);
+    // Extract results from graph execution
+    const curatorLLMNode = graphResult.nodes.get(4);
+    const memoriesProcessed = curatorLLMNode?.outputs?.count || 0;
 
-        // Save curated memory
-        saveCuratedMemory(curated, curatedDir);
+    console.log(`[Curator] ✅ Processed ${memoriesProcessed} memories`);
 
-        // Generate training pair if suitable
-        const pair = toTrainingPair(curated);
-        if (pair) {
-          saveTrainingPair(pair, trainingFile);
-          trainingPairs++;
-        }
-
-        // Mark original as curated
-        markAsCurated(memory.id, memory.timestamp);
-
-        processed++;
-      } catch (error) {
-        console.error(`[Curator] Failed to process memory ${memory.id}:`, error);
-      }
-    }
-
-    console.log(`[Curator] Processed ${processed} memories, generated ${trainingPairs} training pairs`);
-
-    auditAction({
+    audit({
+      category: 'action',
+      level: 'info',
       event: 'curator_completed',
+      actor: 'curator',
       details: {
-        processed,
-        trainingPairs,
-        outputFile: trainingFile,
+        username: ctx.username,
+        memoriesProcessed,
       },
     });
 
   } catch (error) {
     console.error('[Curator] Fatal error:', error);
-    auditAction({
-      event: 'curator_error',
-      details: { error: (error as Error).message },
+    audit({
+      category: 'action',
+      level: 'error',
+      event: 'curator_failed',
+      actor: 'curator',
+      details: {
+        error: (error as Error).message,
+      },
     });
     process.exit(1);
   } finally {
+    // Unregister from agent monitor
+    unregisterAgent('curator');
+
     if (lockHandle) {
       lockHandle.release();
     }
   }
+}
+
+/**
+ * Main entry point (handles multi-user context)
+ */
+async function main() {
+  initGlobalLogger('curator');
+
+  // Try to get username from environment variable first (API trigger), then CLI args
+  let username: string | null = process.env.MH_TRIGGER_USERNAME || null;
+
+  if (!username) {
+    const args = process.argv.slice(2);
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--username' && i + 1 < args.length) {
+        username = args[i + 1];
+        break;
+      }
+    }
+  }
+
+  if (!username) {
+    console.error('[Curator] ERROR: --username <name> is required');
+    console.error('\nUsage: tsx brain/agents/curator.ts --username <username>');
+    console.error('Or set MH_TRIGGER_USERNAME environment variable when running from API');
+    process.exit(1);
+  }
+
+  const userInfo = requireUserInfo(username);
+  await withUserContext(userInfo, mainWithContext);
 }
 
 // Run if called directly

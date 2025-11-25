@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { loadPersonaCore, loadPersonaWithFacet, getActiveFacet, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, type RouterMessage, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, pruneHistory, type Message, getConversationBufferPath, executeGraph, getGraphOutput, type CognitiveGraph, validateCognitiveGraph } from '@metahuman/core';
+import { loadPersonaCore, loadPersonaWithFacet, getActiveFacet, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, type RouterMessage, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, pruneHistory, type Message, getConversationBufferPath, executeGraph, getGraphOutput, type CognitiveGraph, validateCognitiveGraph, withUserContext } from '@metahuman/core';
 import { loadCognitiveMode, getModeDefinition, canWriteMemory as modeAllowsMemoryWrites, canUseOperator } from '@metahuman/core/cognitive-mode';
 import { canWriteMemory as policyCanWriteMemory } from '@metahuman/core/memory-policy';
 import { loadChatSettings } from '@metahuman/core/chat-settings';
@@ -103,12 +103,22 @@ const ENABLE_RESPONSE_REFINEMENT = process.env.ENABLE_RESPONSE_REFINEMENT !== 'f
 // Default: false (non-blocking mode, explicit opt-in required for safety)
 const ENABLE_BLOCKING_MODE = process.env.ENABLE_BLOCKING_MODE === 'true';
 
-// In-memory message histories per mode
+// In-memory message histories per session
 // NOTE: These are automatically pruned to stay within token limits (max 20 messages / ~8k tokens)
-const histories: Record<Mode, ConversationMessage[]> = {
-  inner: [],
-  conversation: [],
-};
+// Key format: "${mode}:${sessionId}" for complete session isolation
+const histories: Map<string, ConversationMessage[]> = new Map();
+
+function getHistoryKey(mode: Mode, sessionId: string): string {
+  return `${mode}:${sessionId}`;
+}
+
+function getHistory(mode: Mode, sessionId: string): ConversationMessage[] {
+  const key = getHistoryKey(mode, sessionId);
+  if (!histories.has(key)) {
+    histories.set(key, []);
+  }
+  return histories.get(key)!;
+}
 
 type GraphCacheEntry = { source: string; mtimeMs: number; graph: CognitiveGraph };
 const graphCache: Record<string, GraphCacheEntry | null> = {};
@@ -184,8 +194,9 @@ async function loadGraphForMode(graphKey: string): Promise<{ graph: CognitiveGra
   return null;
 }
 
-function getConversationHistorySnapshot(mode: Mode): Array<{ role: Role; content: string; meta?: any; timestamp?: number }> {
-  return histories[mode].map(entry => ({
+function getConversationHistorySnapshot(mode: Mode, sessionId: string): Array<{ role: Role; content: string; meta?: any; timestamp?: number }> {
+  const history = getHistory(mode, sessionId);
+  return history.map(entry => ({
     role: entry.role,
     content: entry.content,
     meta: entry.meta,
@@ -222,7 +233,7 @@ function streamGraphExecutionWithProgress(params: GraphPipelineParams) {
 
       try {
         console.log('[streamGraphExecutionWithProgress] Starting graph execution...');
-        const { cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator } = params;
+        const { cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator, yoloMode } = params;
         const graphKey = cognitiveMode || mode;
         const timeoutMs = 300000; // 5 minutes - very long timeout, user can interrupt manually
 
@@ -255,6 +266,7 @@ function streamGraphExecutionWithProgress(params: GraphPipelineParams) {
           contextInfo,
           allowMemoryWrites,
           useOperator,
+          yoloMode,
           timeoutMs,
         };
 
@@ -345,7 +357,33 @@ function streamGraphExecutionWithProgress(params: GraphPipelineParams) {
           }
         };
 
-        const graphPromise = executeGraph(loaded.graph, contextData, eventHandler);
+        // CRITICAL FIX: Wrap executeGraph in withUserContext to ensure AsyncLocalStorage context
+        // persists throughout the entire graph execution (skills need this for getSecurityPolicy())
+        console.log('[streamGraphExecutionWithProgress] Setting user context:', {
+          userId: userContext?.userId,
+          username: userContext?.username,
+          role: userContext?.role,
+        });
+
+        const graphPromise = withUserContext(
+          {
+            userId: userContext?.userId || 'anonymous',
+            username: userContext?.username || 'anonymous',
+            role: (userContext?.role || 'anonymous') as any,
+          },
+          async () => {
+            // Verify context is set inside the async scope
+            const { getUserContext } = await import('@metahuman/core');
+            const ctx = getUserContext();
+            console.log('[streamGraphExecutionWithProgress] Context inside withUserContext:', {
+              hasContext: !!ctx,
+              username: ctx?.username,
+              role: ctx?.role,
+            });
+
+            return executeGraph(loaded.graph, contextData, eventHandler);
+          }
+        );
 
         const timeoutPromise = new Promise<null>(resolve => {
           timeoutHandle = setTimeout(() => {
@@ -542,10 +580,11 @@ interface GraphPipelineParams {
   contextInfo: string;
   allowMemoryWrites: boolean;
   useOperator: boolean;
+  yoloMode: boolean;
 }
 
 async function tryExecuteGraphPipeline(params: GraphPipelineParams): Promise<GraphPipelineResult | null> {
-  const { mode, message, sessionId, cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator } = params;
+  const { mode, message, sessionId, cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator, yoloMode } = params;
 
   try {
     const graphKey = cognitiveMode || mode;
@@ -569,6 +608,7 @@ async function tryExecuteGraphPipeline(params: GraphPipelineParams): Promise<Gra
       contextInfo,
       allowMemoryWrites,
       useOperator,
+      yoloMode,
     };
 
     const startedAt = Date.now();
@@ -643,10 +683,9 @@ async function tryExecuteGraphPipeline(params: GraphPipelineParams): Promise<Gra
   }
 }
 
-const historyLoadedForUser: Record<Mode, string | null> = {
-  inner: null,
-  conversation: null,
-};
+// Track which sessions have had their history loaded from disk
+// Key format: "${mode}:${sessionId}"
+const historyLoadedForSession: Set<string> = new Set();
 
 const bufferMeta: Record<Mode, { lastSummarizedIndex: number | null }> = {
   inner: { lastSummarizedIndex: null },
@@ -769,13 +808,14 @@ function loadPersistedBuffer(mode: Mode): ConversationMessage[] {
   return [];
 }
 
-function persistBuffer(mode: Mode): void {
+function persistBuffer(mode: Mode, sessionId: string): void {
   const bufferPath = getBufferPath(mode);
   if (!bufferPath) return;
 
   try {
-    const summaryMarkers = histories[mode].filter(msg => msg.meta?.summaryMarker);
-    const conversationMessages = histories[mode].filter(msg => !msg.meta?.summaryMarker);
+    const history = getHistory(mode, sessionId);
+    const summaryMarkers = history.filter((msg: ConversationMessage) => msg.meta?.summaryMarker);
+    const conversationMessages = history.filter((msg: ConversationMessage) => !msg.meta?.summaryMarker);
     const payload = JSON.stringify(
       {
         summaryMarkers,
@@ -792,14 +832,19 @@ function persistBuffer(mode: Mode): void {
   }
 }
 
-function ensureHistoryLoaded(mode: Mode, userId: string = 'anonymous'): void {
-  if (historyLoadedForUser[mode] === userId && histories[mode].length > 0) {
+function ensureHistoryLoaded(mode: Mode, sessionId: string, userId: string = 'anonymous'): void {
+  const key = getHistoryKey(mode, sessionId);
+
+  // If this session's history is already loaded, skip
+  if (historyLoadedForSession.has(key)) {
     return;
   }
 
-  histories[mode] = loadPersistedBuffer(mode);
-  historyLoadedForUser[mode] = userId;
-  ensureSystemPrompt(mode);
+  // Load persisted buffer from disk (user-specific)
+  const loaded = loadPersistedBuffer(mode);
+  histories.set(key, loaded);
+  historyLoadedForSession.add(key);
+  ensureSystemPrompt(mode, sessionId);
 }
 
 function upsertSummaryMarker(
@@ -829,53 +874,58 @@ function upsertSummaryMarker(
     }
   };
 
-  histories[mode] = histories[mode].filter(
-    msg => !(msg.meta?.summaryMarker && msg.meta.sessionId === summary.sessionId)
+  const history = getHistory(mode, summary.sessionId);
+  const filtered = history.filter(
+    (msg: ConversationMessage) => !(msg.meta?.summaryMarker && msg.meta.sessionId === summary.sessionId)
   );
+  history.length = 0;
+  history.push(...filtered);
 
   const insertionIndex =
-    histories[mode].length > 0 &&
-    histories[mode][0].role === 'system' &&
-    !histories[mode][0].meta?.summaryMarker
+    history.length > 0 &&
+    history[0].role === 'system' &&
+    !history[0].meta?.summaryMarker
       ? 1
       : 0;
 
-  histories[mode].splice(insertionIndex, 0, marker);
+  history.splice(insertionIndex, 0, marker);
   bufferMeta[mode].lastSummarizedIndex = summary.messageCount;
-  persistBuffer(mode);
+  persistBuffer(mode, summary.sessionId);
 }
 
 /**
  * Add message to history and automatically prune to stay within limits
  * Triggers auto-summarization when pruning occurs (Phase 3: Memory Continuity)
  */
-function pushMessage(mode: Mode, message: ConversationMessage, sessionId?: string): void {
+function pushMessage(mode: Mode, message: ConversationMessage, sessionId: string): void {
   const normalized: ConversationMessage =
     typeof message.timestamp === 'number' ? message : { ...message, timestamp: Date.now() };
 
-  const beforeCount = histories[mode].length;
-  histories[mode].push(normalized);
+  const history = getHistory(mode, sessionId);
+  const beforeCount = history.length;
+  history.push(normalized);
 
   // Auto-prune to stay within token/message limits
-  histories[mode] = pruneHistory(histories[mode] as Message[], {
+  const pruned = pruneHistory(history as Message[], {
     maxTokens: 8000,
     maxMessages: 20,
     preserveSystemMessages: true,
   }) as ConversationMessage[];
 
-  const afterCount = histories[mode].length;
+  history.length = 0;
+  history.push(...pruned);
+
+  const afterCount = history.length;
   if (beforeCount + 1 !== afterCount) {
     console.log(`[context-window] Pruned ${mode} history: ${beforeCount + 1} → ${afterCount} messages`);
 
     // Trigger async summarization when buffer overflow occurs (Phase 3)
-    if (sessionId) {
-      triggerAutoSummarization(sessionId, mode).catch(error => {
-        console.error('[auto-summarization] Failed to trigger summarization:', error);
-      });
-    }
+    triggerAutoSummarization(sessionId, mode).catch(error => {
+      console.error('[auto-summarization] Failed to trigger summarization:', error);
+    });
   }
 
-  persistBuffer(mode);
+  persistBuffer(mode, sessionId);
 }
 
 /**
@@ -1218,39 +1268,43 @@ You are having a ${mode}.
   return systemPrompt;
 }
 
-function initializeChat(mode: Mode, reason = false, usingLora = false, includePersonaSummary = true): void {
+function initializeChat(mode: Mode, sessionId: string, reason = false, usingLora = false, includePersonaSummary = true): void {
   const systemPrompt = buildSystemPrompt(mode, includePersonaSummary);
-  histories[mode] = [{ role: 'system', content: systemPrompt }];
+  const history = getHistory(mode, sessionId);
+  history.length = 0; // Clear existing
+  history.push({ role: 'system', content: systemPrompt });
   bufferMeta[mode].lastSummarizedIndex = null;
-  persistBuffer(mode);
+  persistBuffer(mode, sessionId);
 }
 
-function ensureSystemPrompt(mode: Mode, includePersonaSummary = true): void {
-  if (histories[mode].length === 0) {
-    initializeChat(mode, false, false, includePersonaSummary);
+function ensureSystemPrompt(mode: Mode, sessionId: string, includePersonaSummary = true): void {
+  const history = getHistory(mode, sessionId);
+  if (history.length === 0) {
+    initializeChat(mode, sessionId, false, false, includePersonaSummary);
     return;
   }
 
-  if (histories[mode][0].role !== 'system') {
-    histories[mode].unshift({
+  if (history[0].role !== 'system') {
+    history.unshift({
       role: 'system',
       content: buildSystemPrompt(mode, includePersonaSummary)
     });
-    persistBuffer(mode);
+    persistBuffer(mode, sessionId);
   }
 }
 
 /**
  * Update the system prompt with current facet (refreshes persona without clearing history)
  */
-function refreshSystemPrompt(mode: Mode, includePersonaSummary = true): void {
-  if (histories[mode].length === 0 || histories[mode][0].role !== 'system') {
-    ensureSystemPrompt(mode, includePersonaSummary);
+function refreshSystemPrompt(mode: Mode, sessionId: string, includePersonaSummary = true): void {
+  const history = getHistory(mode, sessionId);
+  if (history.length === 0 || history[0].role !== 'system') {
+    ensureSystemPrompt(mode, sessionId, includePersonaSummary);
     return;
   }
 
-  histories[mode][0].content = buildSystemPrompt(mode, includePersonaSummary);
-  persistBuffer(mode);
+  history[0].content = buildSystemPrompt(mode, includePersonaSummary);
+  persistBuffer(mode, sessionId);
 }
 
 // GET handler - no middleware bullshit, simple and explicit
@@ -1563,8 +1617,8 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   const userId = user.id;
 
   const m: Mode = mode === 'conversation' ? 'conversation' : 'inner';
-  ensureHistoryLoaded(m, userId);
   sessionId = sessionId || `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  ensureHistoryLoaded(m, sessionId, userId);
 
   // Reasoning depth settings
   const depthCandidate = Number(reasoningDepth);
@@ -1600,10 +1654,11 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     return new Response(JSON.stringify({ error: 'Failed to initialize chat context: ' + (error as Error).message }), { status: 500 });
   }
   const trimmedMessage = String(message ?? '').trim();
-  const recentDialogue = histories[m]
-    .filter(turn => turn.role !== 'system')
+  const history = getHistory(m, sessionId);
+  const recentDialogue = history
+    .filter((turn: ConversationMessage) => turn.role !== 'system')
     .slice(-8)
-    .map(turn => {
+    .map((turn: ConversationMessage) => {
       if (turn.role === 'assistant') return `Assistant: ${turn.content}`;
       if (turn.role === 'user') return `User: ${turn.content}`;
       return '';
@@ -1690,11 +1745,11 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     // Add a system message to inform the user about limited capabilities
     const authWarning = `_Note: I'm currently in **Emulation Mode** (read-only) because you're not authenticated. Some features like file operations, task management, and code execution require authentication. [Learn more about modes](/user-guide) or contact the owner for access._`;
 
-    histories[m].push({
+    history.push({
       role: 'system',
       content: authWarning
     });
-    persistBuffer(m);
+    persistBuffer(m, sessionId);
   }
 
   // ============================================================================
@@ -1704,11 +1759,11 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   // ============================================================================
 
   // Proceed with graph pipeline or chat-only flow (below)
-  console.log(`[${new Date().toISOString()}] handleChatRequest: mode=${m}, history length=${histories[m].length}`);
-  console.log(JSON.stringify(histories[m], null, 2));
+  console.log(`[${new Date().toISOString()}] handleChatRequest: mode=${m}, history length=${history.length}, sessionId=${sessionId}`);
+  console.log(JSON.stringify(history, null, 2));
 
-  if (newSession || histories[m].length === 0) {
-    initializeChat(m, reasoningRequested);
+  if (newSession || history.length === 0) {
+    initializeChat(m, sessionId, reasoningRequested);
     if (!message) {
       return new Response(JSON.stringify({ response: 'Chat session initialized.' }), { status: 200 });
     }
@@ -1727,7 +1782,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   }
   lastUserTurn[m] = { text: trimmedMessage, ts: nowTs };
 
-  const conversationHistorySnapshot = getConversationHistorySnapshot(m);
+  const conversationHistorySnapshot = getConversationHistorySnapshot(m, sessionId);
 
   // ============================================================================
   // PRIORITY 1: Try graph-based node pipeline (for all modes when enabled)
@@ -1749,6 +1804,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
       contextInfo,
       allowMemoryWrites,
       useOperator,
+      yoloMode: yolo,
     });
 
     return streamResult;
@@ -1858,7 +1914,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
               const planResp = await callLLM({
                 role: 'planner',
-                messages: [...histories[m], { role: 'system', content: plannerPrompt }] as RouterMessage[],
+                messages: [...history, { role: 'system', content: plannerPrompt }] as RouterMessage[],
                 cognitiveMode: mode,
                 options: {
                   temperature: plannerTemperature,
@@ -1889,7 +1945,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
                   : [];
                 const sections: string[] = [];
                 if (analysis) sections.push(`Analysis:\n${analysis}`);
-                if (ambiguitiesList.length) sections.push(`Ambiguities:\n${ambiguitiesList.map(a => `- ${a}`).join('\n')}`);
+                if (ambiguitiesList.length) sections.push(`Ambiguities:\n${ambiguitiesList.map((a: string) => `- ${a}`).join('\n')}`);
                 if (steps.length) sections.push(`Plan:\n${steps.map((s, idx) => `${idx + 1}. ${s}`).join('\n')}`);
                 if (considerations.length) sections.push(`Considerations:\n${considerations.map(c => `- ${c}`).join('\n')}`);
                 planSummary = sections.filter(Boolean).join('\n\n');
@@ -1906,7 +1962,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               const criticPrompt = `You are a rigorous critique assistant evaluating the plan below for a conversational AI. Review the plan carefully. Respond ONLY as JSON with keys: \`approve\` (boolean), \`issues\` (array of strings describing problems), \`questions\` (array of follow-up questions or missing info), \`suggestions\` (array of improvements), and \`confidence\` (number between 0 and 1).\n\n[PLAN]\n${planSummary}`;
               const criticResp = await callLLM({
                 role: 'planner',
-                messages: [...histories[m], { role: 'system', content: criticPrompt }] as RouterMessage[],
+                messages: [...history, { role: 'system', content: criticPrompt }] as RouterMessage[],
                 cognitiveMode: mode,
                 options: {
                   temperature: Math.min(0.4, plannerTemperature),
@@ -1960,7 +2016,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
             const finalPlanSection = finalPlan ? `\n\n[APPROVED PLAN]\n${finalPlan}` : '';
             const answerResp = await callLLM({
               role: 'persona',
-              messages: [...histories[m], { role: 'system', content: `${answerGuard}${finalPlanSection}${guidanceNote}` }] as RouterMessage[],
+              messages: [...history, { role: 'system', content: `${answerGuard}${finalPlanSection}${guidanceNote}` }] as RouterMessage[],
               cognitiveMode: mode,
               options: {
                 temperature,
@@ -1972,7 +2028,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
             assistantResponse = answerResp.content || '';
           } else {
             // Refresh system prompt with current facet before generating response
-            refreshSystemPrompt(m, includePersonaSummary);
+            refreshSystemPrompt(m, sessionId, true);
 
             // Resolve and log the persona model being used
             const personaModel = resolveModelForCognitiveMode(cognitiveMode, 'persona' as ModelRole);
@@ -1990,7 +2046,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               const layer2Output = await layer2.process(
                 {
                   // Pass pre-built chat history for full conversation context
-                  chatHistory: histories[m].map(h => ({
+                  chatHistory: history.map((h: ConversationMessage) => ({
                     role: h.role as 'system' | 'user' | 'assistant',
                     content: h.content
                   })),
@@ -2015,13 +2071,13 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
               // Convert Layer 2 output to format expected by existing code
               llmResponse = {
                 content: layer2Output.response,
-                model: layer2Output.voiceMetrics.model,
+                model: layer2Output.metadata.modelUsed,
                 thinking: '' // Layer 2 doesn't expose thinking field yet
               };
             } else {
               // === ORIGINAL CODE PATH ===
               // Build messages for this LLM call with ephemeral context injection
-              const messagesForLLM = histories[m].map(h => ({
+              const messagesForLLM = history.map((h: ConversationMessage) => ({
                 role: h.role as 'system' | 'user' | 'assistant',
                 content: h.content
               }));
@@ -2145,7 +2201,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
                     role: 'user',
                     content: `User message:\n"${message}"\n\nInternal reasoning you produced earlier:\n${thinking}\n\nNow respond to the user. Output only the final reply text they should see.`,
                   },
-                ] as typeof histories[m];
+                ] as ConversationMessage[];
                 try {
                   const followResp = await callLLM({
                     role: 'persona',
@@ -2244,7 +2300,7 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
           const activeFacet = getActiveFacet();
 
           // Store history
-          histories[m].pop();
+          history.pop();
           pushMessage(m, { role: 'user', content: message }, sessionId);
           pushMessage(m, { role: 'assistant', content: assistantResponse, meta: { facet: activeFacet } }, sessionId);
 
@@ -2357,8 +2413,8 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
       },
     });
   } catch (error) {
-    histories[m].pop();
-    persistBuffer(m);
+    history.pop();
+    persistBuffer(m, sessionId);
     console.error('Persona chat API error:', error);
     audit({
       level: 'error',

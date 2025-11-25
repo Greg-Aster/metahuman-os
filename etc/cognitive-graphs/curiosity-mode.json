@@ -1,0 +1,103 @@
+{
+  "version": "2.0",
+  "name": "Curiosity Service Workflow",
+  "description": "Generates curiosity questions from weighted memory sampling with user privacy isolation",
+  "cognitiveMode": "agent",
+  "last_modified": "2025-11-24",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "cognitive/curiosity_activity_check",
+      "pos": [100, 100],
+      "size": [220, 100],
+      "properties": {
+        "questionIntervalSeconds": 1800
+      },
+      "title": "Check Question Timing"
+    },
+    {
+      "id": 2,
+      "type": "cognitive/curiosity_weighted_sampler",
+      "pos": [400, 100],
+      "size": [220, 100],
+      "properties": {
+        "sampleSize": 5,
+        "decayFactor": 14
+      },
+      "title": "Sample Memories"
+    },
+    {
+      "id": 3,
+      "type": "cognitive/curiosity_question_generator",
+      "pos": [700, 100],
+      "size": [220, 120],
+      "properties": {
+        "temperature": 0.6
+      },
+      "title": "Generate Question"
+    },
+    {
+      "id": 4,
+      "type": "cognitive/curiosity_question_saver",
+      "pos": [1000, 100],
+      "size": [220, 100],
+      "properties": {},
+      "title": "Save Question"
+    },
+    {
+      "id": 5,
+      "type": "cognitive/audit_logger",
+      "pos": [1300, 100],
+      "size": [180, 60],
+      "properties": {},
+      "title": "Audit Completion"
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 2,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Activity check result → Sample Memories"
+    },
+    {
+      "id": 2,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Sampled memories → Generate Question"
+    },
+    {
+      "id": 3,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Generated question → Save Question"
+    },
+    {
+      "id": 4,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Sampled memories → Save (for seed memories)"
+    },
+    {
+      "id": 5,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Save result → Audit Logger"
+    }
+  ]
+}

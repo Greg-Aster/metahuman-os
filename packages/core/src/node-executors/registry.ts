@@ -8,7 +8,7 @@ import type { NodeExecutor } from './types.js';
 // Import all executor modules
 import { textInputExecutor, micInputExecutor, speechToTextExecutor, userInputExecutor } from './input-executors.js';
 import { sessionContextExecutor, systemSettingsExecutor, semanticSearchExecutor, conversationHistoryExecutor, contextBuilderExecutor, authCheckExecutor } from './context-executors.js';
-import { cognitiveModeRouterExecutor, operatorEligibilityExecutor } from './routing-executors.js';
+import { cognitiveModeRouterExecutor, operatorEligibilityExecutor, smartRouterExecutor } from './routing-executors.js';
 import {
   reactPlannerExecutor,
   skillExecutorExecutor,
@@ -62,6 +62,21 @@ import {
   agentTriggerExecutor,
   loopMemorySearchExecutor,
 } from './thought-executors.js';
+import {
+  curiosityWeightedSamplerExecutor,
+  curiosityQuestionGeneratorExecutor,
+  curiosityQuestionSaverExecutor,
+  curiosityActivityCheckExecutor,
+} from './curiosity-executors.js';
+import {
+  uncuratedMemoryLoaderExecutor,
+  personaSummaryLoaderExecutor,
+  curatorLLMExecutor,
+  curatedMemorySaverExecutor,
+  trainingPairGeneratorExecutor,
+  trainingPairAppenderExecutor,
+  memoryMarkerExecutor,
+} from './curator-executors.js';
 
 /**
  * Master registry of all node executors
@@ -78,6 +93,7 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
   // Router nodes
   'cognitive_mode_router': cognitiveModeRouterExecutor,
   'operator_eligibility': operatorEligibilityExecutor,
+  'smart_router': smartRouterExecutor,
   'auth_check': authCheckExecutor,
 
   // Context nodes
@@ -183,6 +199,21 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
   'thought_aggregator': thoughtAggregatorExecutor,
   'agent_trigger': agentTriggerExecutor,
   'loop_memory_search': loopMemorySearchExecutor,
+
+  // Curiosity Service nodes (user-aware question generation)
+  'curiosity_weighted_sampler': curiosityWeightedSamplerExecutor,
+  'curiosity_question_generator': curiosityQuestionGeneratorExecutor,
+  'curiosity_question_saver': curiosityQuestionSaverExecutor,
+  'curiosity_activity_check': curiosityActivityCheckExecutor,
+
+  // Curator nodes (training data preparation)
+  'uncurated_memory_loader': uncuratedMemoryLoaderExecutor,
+  'persona_summary_loader': personaSummaryLoaderExecutor,
+  'curator_llm': curatorLLMExecutor,
+  'curated_memory_saver': curatedMemorySaverExecutor,
+  'training_pair_generator': trainingPairGeneratorExecutor,
+  'training_pair_appender': trainingPairAppenderExecutor,
+  'memory_marker': memoryMarkerExecutor,
 };
 
 /**

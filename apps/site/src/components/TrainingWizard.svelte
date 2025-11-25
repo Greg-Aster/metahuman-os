@@ -50,6 +50,35 @@
     max_seq_length: number;
   }
 
+  // Training config presets
+  const loraConfigPreset: TrainingConfig = {
+    base_model: 'unsloth/Qwen3-14B',
+    num_train_epochs: 3,
+    max_samples: 3000,
+    monthly_training: true,
+    days_recent: 30,
+    old_samples: 3000,
+    lora_rank: 8,
+    learning_rate: 0.0002, // 2e-4 (higher for LoRA)
+    per_device_train_batch_size: 1,
+    gradient_accumulation_steps: 16,
+    max_seq_length: 2048
+  };
+
+  const fineTuneConfigPreset: TrainingConfig = {
+    base_model: 'unsloth/Qwen3-30B-Instruct',
+    num_train_epochs: 2,
+    max_samples: 5000,
+    monthly_training: true,
+    days_recent: 30,
+    old_samples: 5000,
+    lora_rank: 0, // Not used for fine-tuning
+    learning_rate: 0.00002, // 2e-5 (lower for fine-tuning)
+    per_device_train_batch_size: 4,
+    gradient_accumulation_steps: 8,
+    max_seq_length: 2048
+  };
+
   // State
   let currentStep: WizardStep = 1;
   let selectedMethod: TrainingMethod = null;
@@ -64,24 +93,12 @@
   let runpodConfig: RunpodConfig = {
     apiKey: '',
     templateId: 'metahuman-runpod-trainer',
-    gpuType: 'NVIDIA GeForce RTX 4090'
+    gpuType: 'NVIDIA H100 PCIe'
   };
   let customGpuType = '';
   let useCustomGpu = false;
   let datasetStats: DatasetStats | null = null;
-  let trainingConfig: TrainingConfig = {
-    base_model: 'unsloth/Qwen3-14B',
-    num_train_epochs: 3,
-    max_samples: null,
-    monthly_training: true,
-    days_recent: 30,
-    old_samples: 3000,
-    lora_rank: 8,
-    learning_rate: 0.0002,
-    per_device_train_batch_size: 1,
-    gradient_accumulation_steps: 16,
-    max_seq_length: 2048
-  };
+  let trainingConfig: TrainingConfig = { ...loraConfigPreset };
 
   // Loading states
   let loading = false;
@@ -122,6 +139,19 @@
       default: return 'Training Wizard';
     }
   })();
+
+  // Auto-switch config preset when method changes
+  $: if (selectedMethod) {
+    if (selectedMethod === 'fine-tune') {
+      trainingConfig = { ...fineTuneConfigPreset };
+    } else {
+      // Both local-lora and remote-lora use LoRA config
+      trainingConfig = { ...loraConfigPreset };
+    }
+  }
+
+  // Check if current method uses LoRA
+  $: usesLoRA = selectedMethod === 'local-lora' || selectedMethod === 'remote-lora';
 
   // System capability detection
   async function detectCapabilities() {
@@ -169,7 +199,10 @@
           const predefinedGpus = [
             'NVIDIA GeForce RTX 5090',
             'NVIDIA GeForce RTX 4090',
-            'H100 PCIe'
+            'NVIDIA A100-PCIE-40GB',
+            'NVIDIA A100 80GB PCIe',
+            'NVIDIA H100 PCIe',
+            'NVIDIA H100 80GB HBM3'
           ];
 
           if (predefinedGpus.includes(data.gpuType)) {
@@ -271,21 +304,25 @@
   // Poll training logs and status
   async function pollTrainingLogs() {
     try {
-      // Load audit events
-      const logsRes = await fetch('/api/training/logs?maxLines=50');
+      // Load audit events (reduced from 50 to 30 lines)
+      const logsRes = await fetch('/api/training/logs?maxLines=30');
       if (logsRes.ok) {
         const logsData = await logsRes.json();
         if (logsData.success && logsData.logs) {
           trainingLogs = logsData.logs;
+          // Auto-scroll only if user is near bottom
+          requestAnimationFrame(() => scrollLogsIfNeeded('events'));
         }
       }
 
-      // Load console logs
-      const consoleRes = await fetch('/api/training/console-logs?maxLines=100');
+      // Load console logs (reduced from 100 to 50 lines)
+      const consoleRes = await fetch('/api/training/console-logs?maxLines=50');
       if (consoleRes.ok) {
         const consoleData = await consoleRes.json();
         if (consoleData.success && consoleData.logs) {
           consoleLogs = consoleData.logs;
+          // Auto-scroll only if user is near bottom
+          requestAnimationFrame(() => scrollLogsIfNeeded('console'));
         }
       }
 
@@ -308,6 +345,17 @@
     }
   }
 
+  // Smart scroll: only scroll if user is already near bottom
+  function scrollLogsIfNeeded(type: 'console' | 'events') {
+    const container = type === 'console' ? consoleScrollContainer : eventsScrollContainer;
+    if (!container) return;
+
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    if (isNearBottom) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }
+
   function startLogsPolling() {
     if (logsInterval) {
       clearInterval(logsInterval);
@@ -316,8 +364,8 @@
     // Initial poll
     pollTrainingLogs();
 
-    // Poll every 5 seconds
-    logsInterval = window.setInterval(pollTrainingLogs, 5000);
+    // Poll every 10 seconds (reduced from 5 to reduce CPU load)
+    logsInterval = window.setInterval(pollTrainingLogs, 10000);
   }
 
   function stopLogsPolling() {
@@ -362,15 +410,26 @@
     error = '';
 
     try {
-      // Use existing /api/adapters endpoint with fullCycle action
-      const res = await fetch('/api/adapters', {
+      // Build the launch request payload
+      const payload: any = {
+        method: selectedMethod,
+        trainingConfig: trainingConfig
+      };
+
+      // Include RunPod config for remote training methods
+      if (selectedMethod === 'remote-lora' || selectedMethod === 'fine-tune') {
+        payload.runpodConfig = {
+          apiKey: runpodConfig.apiKey,
+          templateId: runpodConfig.templateId,
+          gpuType: useCustomGpu ? customGpuType : runpodConfig.gpuType
+        };
+      }
+
+      // Call the new training launch endpoint
+      const res = await fetch('/api/training/launch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'fullCycle',
-          model: trainingConfig.base_model,
-          dualMode: true // Enable dual mode by default
-        })
+        body: JSON.stringify(payload)
       });
 
       if (!res.ok) throw new Error('Failed to launch training');
@@ -382,6 +441,7 @@
 
       // Training started successfully
       trainingComplete = false;
+      trainingPid = data.pid || null;
       startLogsPolling();
     } catch (err) {
       console.error('[TrainingWizard] Failed to launch training:', err);
@@ -433,13 +493,8 @@
     loadDatasetStats();
   }
 
-  // Auto-scroll logs to bottom when updated
-  $: if (consoleLogs.length > 0 && consoleScrollContainer) {
-    consoleScrollContainer.scrollTop = consoleScrollContainer.scrollHeight;
-  }
-  $: if (trainingLogs.length > 0 && eventsScrollContainer) {
-    eventsScrollContainer.scrollTop = eventsScrollContainer.scrollHeight;
-  }
+  // Auto-scroll is now handled in pollTrainingLogs() using requestAnimationFrame
+  // This prevents constant reactive re-renders and DOM reflows
 </script>
 
 <div class="training-wizard">
@@ -616,10 +671,13 @@
             <select id="gpuType" bind:value={runpodConfig.gpuType} on:change={() => useCustomGpu = runpodConfig.gpuType === 'custom'}>
               <option value="NVIDIA GeForce RTX 5090">NVIDIA GeForce RTX 5090 (~$0.60/hr)</option>
               <option value="NVIDIA GeForce RTX 4090">NVIDIA GeForce RTX 4090 (~$0.40/hr)</option>
-              <option value="H100 PCIe">H100 PCIe (~$2.50/hr)</option>
+              <option value="NVIDIA A100-PCIE-40GB">NVIDIA A100 PCIe 40GB (~$1.00/hr)</option>
+              <option value="NVIDIA A100 80GB PCIe">NVIDIA A100 PCIe 80GB (~$1.50/hr)</option>
+              <option value="NVIDIA H100 PCIe">NVIDIA H100 PCIe (~$2.50/hr)</option>
+              <option value="NVIDIA H100 80GB HBM3">NVIDIA H100 SXM (~$2.70/hr)</option>
               <option value="custom">Custom GPU Type...</option>
             </select>
-            <small>Higher-end GPUs are faster but more expensive</small>
+            <small>Higher-end GPUs are faster but more expensive. <a href="https://docs.runpod.io/references/gpu-types" target="_blank">View all GPU types</a></small>
           </div>
 
           {#if useCustomGpu}
@@ -629,7 +687,7 @@
                 type="text"
                 id="customGpuType"
                 bind:value={customGpuType}
-                placeholder="e.g., NVIDIA A100 80GB"
+                placeholder="e.g., NVIDIA L40S"
                 on:input={() => runpodConfig.gpuType = customGpuType}
               />
               <small>Enter the exact GPU name as it appears in RunPod</small>
@@ -745,9 +803,21 @@
     {:else if currentStep === 4}
       <!-- Step 4: Training Configuration -->
       <div class="training-config">
-        <p class="step-description">
-          Configure training parameters. Defaults are optimized for most use cases.
-        </p>
+        <div class="method-info-banner" class:lora={usesLoRA} class:finetune={!usesLoRA}>
+          <div class="banner-icon">{usesLoRA ? '🎯' : '🔥'}</div>
+          <div class="banner-content">
+            <h4>{usesLoRA ? 'LoRA Training Configuration' : 'Full Fine-Tuning Configuration'}</h4>
+            <p>
+              {#if usesLoRA}
+                LoRA (Low-Rank Adaptation) trains only a small set of adapter weights while freezing the base model.
+                This is faster, uses less VRAM, and is perfect for personalizing conversational style.
+              {:else}
+                Full fine-tuning updates all model weights for maximum performance.
+                Requires high-end GPU (40GB+ VRAM) and longer training time (8-24 hours).
+              {/if}
+            </p>
+          </div>
+        </div>
 
         <div class="config-form">
           <div class="form-group">
@@ -781,31 +851,68 @@
           <details class="advanced-config">
             <summary>Advanced Settings</summary>
             <div class="advanced-fields">
-              <div class="form-group">
-                <label for="loraRank">LoRA Rank</label>
-                <select id="loraRank" bind:value={trainingConfig.lora_rank}>
-                  <option value={8}>8 (Balanced)</option>
-                  <option value={16}>16 (Higher Capacity)</option>
-                  <option value={32}>32 (Maximum)</option>
-                </select>
-              </div>
+              {#if usesLoRA}
+                <!-- LoRA-specific settings -->
+                <div class="form-group">
+                  <label for="loraRank">LoRA Rank</label>
+                  <select id="loraRank" bind:value={trainingConfig.lora_rank}>
+                    <option value={8}>8 (Balanced)</option>
+                    <option value={16}>16 (Higher Capacity)</option>
+                    <option value={32}>32 (Maximum)</option>
+                  </select>
+                  <small>Higher rank = more parameters but longer training</small>
+                </div>
+              {/if}
 
               <div class="form-group">
                 <label for="learningRate">Learning Rate</label>
                 <select id="learningRate" bind:value={trainingConfig.learning_rate}>
-                  <option value={0.0001}>1e-4</option>
-                  <option value={0.0002}>2e-4 (Recommended)</option>
-                  <option value={0.00005}>5e-5</option>
+                  {#if usesLoRA}
+                    <!-- LoRA uses higher learning rates -->
+                    <option value={0.0001}>1e-4</option>
+                    <option value={0.0002}>2e-4 (Recommended for LoRA)</option>
+                    <option value={0.0003}>3e-4</option>
+                  {:else}
+                    <!-- Fine-tuning uses lower learning rates -->
+                    <option value={0.00001}>1e-5</option>
+                    <option value={0.00002}>2e-5 (Recommended for Fine-Tune)</option>
+                    <option value={0.00005}>5e-5</option>
+                  {/if}
                 </select>
+                <small>{usesLoRA ? 'LoRA uses higher learning rates' : 'Fine-tuning requires lower rates to preserve base model'}</small>
               </div>
+
+              {#if !usesLoRA}
+                <!-- Fine-tuning specific settings -->
+                <div class="form-group">
+                  <label for="batchSize">Batch Size</label>
+                  <select id="batchSize" bind:value={trainingConfig.per_device_train_batch_size}>
+                    <option value={2}>2</option>
+                    <option value={4}>4 (Recommended)</option>
+                    <option value={8}>8 (High VRAM)</option>
+                  </select>
+                  <small>Larger batch size requires more VRAM (40GB+ recommended)</small>
+                </div>
+
+                <div class="form-group">
+                  <label for="gradAccum">Gradient Accumulation Steps</label>
+                  <select id="gradAccum" bind:value={trainingConfig.gradient_accumulation_steps}>
+                    <option value={4}>4</option>
+                    <option value={8}>8 (Recommended)</option>
+                    <option value={16}>16</option>
+                  </select>
+                  <small>Effective batch size = batch_size × accumulation_steps</small>
+                </div>
+              {/if}
 
               <div class="form-group">
                 <label for="contextWindow">Context Window</label>
                 <select id="contextWindow" bind:value={trainingConfig.max_seq_length}>
-                  <option value={2048}>2048 tokens</option>
-                  <option value={4096}>4096 tokens</option>
-                  <option value={8192}>8192 tokens</option>
+                  <option value={2048}>2048 tokens (~1500 words)</option>
+                  <option value={4096}>4096 tokens (~3000 words)</option>
+                  <option value={8192}>8192 tokens (~6000 words)</option>
                 </select>
+                <small>Longer context = more VRAM required</small>
               </div>
             </div>
           </details>
@@ -1099,6 +1206,48 @@
   .info-icon {
     font-size: 1.25rem;
     font-weight: bold;
+  }
+
+  .method-info-banner {
+    padding: 1.5rem;
+    border-radius: 0.75rem;
+    margin-bottom: 2rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    border: 2px solid;
+  }
+
+  .method-info-banner.lora {
+    background: rgba(0, 166, 126, 0.1);
+    border-color: #00a67e;
+  }
+
+  .method-info-banner.finetune {
+    background: rgba(255, 136, 0, 0.1);
+    border-color: #ff8800;
+  }
+
+  .banner-icon {
+    font-size: 2rem;
+    line-height: 1;
+  }
+
+  .banner-content {
+    flex: 1;
+  }
+
+  .banner-content h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.125rem;
+    color: var(--text-primary, #fff);
+  }
+
+  .banner-content p {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--text-secondary, #888);
+    line-height: 1.5;
   }
 
   .info-text {

@@ -1,7 +1,7 @@
 /**
- * API endpoint for checking if full-cycle training is currently running
+ * API endpoint for checking if any training is currently running
  *
- * GET: Returns whether a full-cycle process is active
+ * GET: Returns whether a training process is active (any method)
  */
 
 import type { APIRoute } from 'astro';
@@ -23,13 +23,14 @@ function isProcessRunning(pid: number): boolean {
 }
 
 /**
- * GET handler - Check if full-cycle is running
+ * GET handler - Check if any training is running
+ * Checks for: full-cycle.pid, full-cycle-local.pid, fine-tune-cycle.pid
  */
 export const GET: APIRoute = async () => {
   try {
-    const pidPath = path.join(systemPaths.logs, 'run', 'full-cycle.pid');
+    const logsRunDir = path.join(systemPaths.logs, 'run');
 
-    if (!fs.existsSync(pidPath)) {
+    if (!fs.existsSync(logsRunDir)) {
       return new Response(
         JSON.stringify({
           success: true,
@@ -43,37 +44,53 @@ export const GET: APIRoute = async () => {
       );
     }
 
-    const pidStr = fs.readFileSync(pidPath, 'utf-8').trim();
-    const pid = parseInt(pidStr, 10);
-
-    if (isNaN(pid)) {
-      // Invalid PID file, clean it up
-      fs.unlinkSync(pidPath);
-      return new Response(
-        JSON.stringify({
-          success: true,
-          running: false,
-          pid: null,
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }
+    // Check for any training PID files
+    const pidFiles = fs.readdirSync(logsRunDir)
+      .filter(f =>
+        f.endsWith('.pid') &&
+        (f.includes('full-cycle') || f.includes('fine-tune-cycle'))
       );
+
+    // Check each PID file and return the first running process
+    for (const pidFile of pidFiles) {
+      const pidPath = path.join(logsRunDir, pidFile);
+      const pidStr = fs.readFileSync(pidPath, 'utf-8').trim();
+      const pid = parseInt(pidStr, 10);
+
+      if (isNaN(pid)) {
+        // Invalid PID file, clean it up
+        fs.unlinkSync(pidPath);
+        continue;
+      }
+
+      const running = isProcessRunning(pid);
+
+      if (running) {
+        // Found a running training process
+        return new Response(
+          JSON.stringify({
+            success: true,
+            running: true,
+            pid,
+            method: pidFile.replace('.pid', ''),
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      } else {
+        // Clean up stale PID file
+        fs.unlinkSync(pidPath);
+      }
     }
 
-    const running = isProcessRunning(pid);
-
-    // Clean up stale PID file if process is dead
-    if (!running) {
-      fs.unlinkSync(pidPath);
-    }
-
+    // No running training found
     return new Response(
       JSON.stringify({
         success: true,
-        running,
-        pid: running ? pid : null,
+        running: false,
+        pid: null,
       }),
       {
         status: 200,

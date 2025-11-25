@@ -79,6 +79,54 @@ export const reactPlannerExecutor: NodeExecutor = async (inputs, context) => {
 
   if (process.env.DEBUG_GRAPH) console.log(`[ReactPlanner] User message: "${userMessage.substring(0, 80)}..."`);
 
+  // Extract conversation history for context continuity across turns
+  const conversationHistory = context.conversationHistory || [];
+  const recentHistory = conversationHistory.slice(-4); // Last 2 exchanges (4 messages)
+  const historyText = recentHistory.length > 0
+    ? recentHistory.map((msg: any) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`).join('\n')
+    : 'No previous conversation';
+
+  // Extract user context for profile-aware file operations
+  const username = context.username || 'anonymous';
+  const userRole = context.role || 'anonymous';
+  const isOwner = userRole === 'owner';
+  const profilePath = username !== 'anonymous' ? `profiles/${username}` : null;
+
+  // Build profile-aware search strategy guidance
+  let searchStrategyGuidance = '';
+  if (profilePath) {
+    searchStrategyGuidance = `
+YOUR PROFILE CONTEXT:
+- Username: ${username}
+- Role: ${userRole}
+- Your profile directory: ${profilePath}/
+- Your output directory: ${profilePath}/out/
+
+FILE SEARCH STRATEGY (follow this order):
+1. **First**: Search your profile's out directory: {"pattern": "filename", "cwd": "${profilePath}/out"}
+2. **Second**: Search your entire profile: {"pattern": "**/filename", "cwd": "${profilePath}"}
+${isOwner ? '3. **Third** (owner privilege): Search entire project: {"pattern": "**/filename"}' : ''}
+
+FILE WRITE STRATEGY:
+- **Default location**: ALWAYS write files to "${profilePath}/out/" unless user specifies otherwise
+- Example: To create "notes.md", use path "${profilePath}/out/notes.md"
+- If user provides explicit path (e.g., "docs/file.md"), use that path directly
+${isOwner ? '- As owner, you CAN write to system directories (e.g., "out/", "docs/"), but prefer your profile directory' : ''}
+
+IMPORTANT:
+- ALWAYS start searches in your profile directories (${profilePath}/)
+- ALWAYS write files to your profile out directory (${profilePath}/out/) by default
+- Use recursive patterns (**/) to search subdirectories
+- Pattern "filename" ONLY searches the cwd, NOT subdirectories`;
+  } else {
+    searchStrategyGuidance = `
+FILE SEARCH PATTERNS:
+- Files are stored in the "out/" directory
+- Use RECURSIVE patterns: "**/filename.md" (searches all subdirectories)
+- Or specify directory: {"pattern": "filename.md", "cwd": "out"}
+- Pattern "filename.md" ONLY searches project root, NOT subdirectories`;
+  }
+
   const messages = [
     {
       role: 'system' as const,
@@ -87,24 +135,38 @@ export const reactPlannerExecutor: NodeExecutor = async (inputs, context) => {
 Available Skills:
 ${skillDescriptions}
 
-IMPORTANT: Use "Final Answer:" for conversational responses. Only use skills when you need to take an actual action (read files, create tasks, search data, etc.). Do NOT use conversational_response skill - just use Final Answer directly.
+IMPORTANT RULES:
+1. Use "Final Answer:" for conversational responses. Only use skills when you need to take an actual action (read files, create tasks, search data, etc.).
+2. Do NOT use conversational_response skill - just use Final Answer directly.
+3. CRITICAL: If you output "Action:", do NOT include "Final Answer:" in the same response.
+4. After an Action, you must WAIT for the Observation before deciding if you can provide a Final Answer.
+5. Never assume an action succeeded - wait for the observation to confirm it.
+6. MEMORY PERSISTENCE: When you find/create/reference files or data, ALWAYS include specific details (file paths, IDs, names) in your Final Answer so you can reference them in follow-up questions.
+   - Good: "I found bean.md at profiles/greggles/out/bean.md"
+   - Bad: "The file was found" (no path for follow-up)
+7. CONVERSATION CONTEXT: Check the scratchpad for previous actions in THIS turn. For follow-up questions across turns, parse YOUR OWN previous responses in the conversation history to extract file paths, IDs, or references.
+   - Example: User says "what's inside?" after you said "I found bean.md at path/to/file" → Extract "path/to/file" from your previous message
+${searchStrategyGuidance}
 
 Output your response in this format:
 
-If you need to use a tool/skill:
+If you need to use a tool/skill (DO NOT include Final Answer):
 Thought: [your reasoning]
 Action: [skill_id]
 Action Input: {"param": "value"}
 
-If you can answer directly without tools:
+If you can answer directly without tools OR after receiving observations:
 Thought: [your reasoning]
 Final Answer: [your response]`,
     },
     {
       role: 'user' as const,
-      content: `Query: ${userMessage}
+      content: `Recent Conversation Context:
+${historyText}
 
-Scratchpad:
+Current Query: ${userMessage}
+
+Scratchpad (current turn only):
 ${scratchpad.map((s: any) => `${s.thought}\n${s.action}\n${s.observation}`).join('\n\n')}
 
 What should I do next?`,
@@ -146,6 +208,7 @@ What should I do next?`,
 export const skillExecutorExecutor: NodeExecutor = async (inputs, context) => {
   console.log('[SkillExecutor] ========== SKILL EXECUTOR ENTRY ==========');
   console.log('[SkillExecutor] useOperator:', context.useOperator);
+  console.log('[SkillExecutor] yoloMode:', context.yoloMode);
   console.log('[SkillExecutor] Inputs:', inputs.length, 'items');
   console.log('[SkillExecutor] Input[0] type:', typeof inputs[0], 'keys:', inputs[0] ? Object.keys(inputs[0]) : []);
 
@@ -535,20 +598,22 @@ export const responseSynthesizerExecutor: NodeExecutor = async (inputs, context)
   const latest = scratchpad[scratchpad.length - 1] || {};
   const obsText = latest.observation || '';
 
-  // Try to parse observation as JSON and pull { outputs: { response } }
+  // Try to parse observation as JSON and pull { outputs: { response } } or { finalResponse }
   try {
     const parsed = typeof obsText === 'string' ? JSON.parse(obsText) : obsText;
-    const candidate = parsed?.outputs?.response || parsed?.response;
+    const candidate = parsed?.outputs?.response || parsed?.response || parsed?.finalResponse;
     if (candidate && typeof candidate === 'string') {
       console.log('[ResponseSynthesizer] Using response from last observation (fast-path)');
+      console.log('[ResponseSynthesizer] Extracted:', candidate.substring(0, 100));
       return {
         response: candidate,
         loopComplete: loopResult.completed,
         iterations: scratchpad.length,
       };
     }
-  } catch {
+  } catch (error) {
     // Observation wasn't JSON – fall through to LLM-based synthesis
+    console.log('[ResponseSynthesizer] Fast-path failed:', (error as Error).message);
   }
 
   const messages = [

@@ -125,32 +125,45 @@ async function mainWithContext(options: FineTuneOptions) {
   });
 
   try {
-    // Step 1: Curate memories
-    console.log('\n[fine-tune-cycle] ===== STEP 1: CURATING MEMORIES =====');
-    const curatorArgs = [
+    // Step 0: Pre-curation pass - LLM curator finishes any uncurated memories
+    console.log('\n[fine-tune-cycle] ===== STEP 0: PRE-CURATION PASS =====');
+    console.log('[fine-tune-cycle] Processing remaining uncurated memories before aggregation');
+
+    try {
+      const llmCuratorCode = await runAgent('curator', ['--username', ctx.username]);
+      if (llmCuratorCode === 0) {
+        console.log('[fine-tune-cycle] ✅ Pre-curation pass completed successfully');
+      } else {
+        console.warn(`[fine-tune-cycle] ⚠️  Pre-curation pass exited with code ${llmCuratorCode}, continuing...`);
+      }
+    } catch (curatorError) {
+      console.warn('[fine-tune-cycle] ⚠️  Pre-curation pass failed:', (curatorError as Error).message);
+      console.warn('[fine-tune-cycle] Continuing with available curated memories...');
+    }
+
+    // Step 1: Aggregate curated conversations from curator.ts output
+    console.log('\n[fine-tune-cycle] ===== STEP 1: AGGREGATING CURATED CONVERSATIONS =====');
+    console.log('[fine-tune-cycle] Using LLM-curated conversations from curator agent');
+
+    const aggregatorArgs = [
       '--username', ctx.username,
       '--output', CURATED_PATH,
     ];
 
-    // Monthly training strategy
-    if (options.monthlyTraining || (options.daysRecent && options.oldSamples)) {
-      const daysRecent = options.daysRecent || 30;
-      const oldSamples = options.oldSamples || 3000;
-      curatorArgs.push('--days-recent', String(daysRecent));
-      curatorArgs.push('--old-samples', String(oldSamples));
-      console.log(`[fine-tune-cycle] Using monthly training strategy (${daysRecent} days recent + ${oldSamples} old)`);
-    }
+    // Note: Monthly training strategy is handled by curator.ts incrementally
+    // The curator processes ~50 memories per run and maintains quality over time
+    // For training, we simply aggregate all available curated conversations
 
     if (options.maxSamples) {
-      curatorArgs.push('--max', String(options.maxSamples));
+      aggregatorArgs.push('--max', String(options.maxSamples));
     }
     if (options.modeFilter) {
-      curatorArgs.push('--mode', options.modeFilter);
+      aggregatorArgs.push('--mode', options.modeFilter);
     }
 
-    const curatorCode = await runAgent('memory-curator', curatorArgs);
-    if (curatorCode !== 0) {
-      throw new Error('Memory curation failed');
+    const aggregatorCode = await runAgent('curated-aggregator', aggregatorArgs);
+    if (aggregatorCode !== 0) {
+      throw new Error('Curated conversation aggregation failed');
     }
 
     // Step 2: Format samples
@@ -293,9 +306,10 @@ async function mainWithContext(options: FineTuneOptions) {
       CONFIG_FILE,
       SUMMARY_FILE,
       samples_used: datasetLines,
+      username: ctx.username,
     });
 
-    console.log(`[fine-tune-cycle] Training result: success=${trainingResult.success}`);
+    console.log(`[fine-tune-cycle] Training result: success=${trainingResult.training_success}`);
 
     // Write run summary
     const summary = {
@@ -309,18 +323,18 @@ async function mainWithContext(options: FineTuneOptions) {
       totalSamples: datasetLines,
       datasetSizeKB: Math.round(datasetStats.size / 1024),
       createdAt: new Date().toISOString(),
-      status: trainingResult.success ? 'training_complete' : 'training_failed',
-      trainingSuccess: trainingResult.success,
+      status: trainingResult.training_success ? 'training_complete' : 'training_failed',
+      trainingSuccess: trainingResult.training_success,
       podId: trainingResult.pod_id,
       sshUser: trainingResult.ssh_user,
       sshHost: trainingResult.ssh_host,
-      modelPath: trainingResult.modelPath,
+      modelPath: trainingResult.gguf_path || trainingResult.ollama_model,
       error: trainingResult.error || null,
     };
 
     fs.writeFileSync(SUMMARY_PATH, JSON.stringify(summary, null, 2));
 
-    if (!trainingResult.success) {
+    if (!trainingResult.training_success) {
       throw new Error(`Training failed: ${trainingResult.error || 'Unknown error'}`);
     }
 

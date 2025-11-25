@@ -40,7 +40,23 @@
     status?: string;
   } | null;
 
+  type FineTuneModel = {
+    runId: string;
+    runLabel: string;
+    username: string;
+    baseModel: string;
+    totalSamples: number;
+    datasetSizeKB: number;
+    createdAt: string;
+    status: 'training_complete' | 'training_failed' | 'active';
+    trainingSuccess: boolean;
+    modelPath?: string;
+    error?: string;
+    isActive?: boolean;
+  };
+
   let datasets: DatasetStatus[] = [];
+  let fineTuneModels: FineTuneModel[] = [];
   let autoApproval: AutoApprovalConfig | null = null;
   let activeAdapter: ActiveAdapterInfo = null;
   let loading = true;
@@ -52,6 +68,7 @@
     loading = true;
     error = null;
     try {
+      // Load LoRA adapters
       const { data, error: fetchError } = await fetchJSONSafe('/api/adapters', {
         timeout: 15000,
         retries: 1,
@@ -69,11 +86,31 @@
       datasets = Array.isArray(data.datasets) ? data.datasets : [];
       autoApproval = data.autoApproval ?? null;
       activeAdapter = data.activeAdapter ?? null;
+
+      // Load fine-tune models
+      await loadFineTuneModels();
     } catch (err) {
       console.error('[DatasetManagement] Load error:', err);
       error = (err as Error).message;
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadFineTuneModels() {
+    try {
+      const res = await fetch('/api/fine-tune/models');
+      if (!res.ok) {
+        console.warn('[DatasetManagement] Failed to load fine-tune models');
+        return;
+      }
+
+      const data = await res.json();
+      if (data.success) {
+        fineTuneModels = data.models || [];
+      }
+    } catch (err) {
+      console.warn('[DatasetManagement] Error loading fine-tune models:', err);
     }
   }
 
@@ -432,6 +469,72 @@
                     <button class="btn-danger-small" on:click={() => handleReject(dataset.date)} disabled={isWorking(dataset.date, 'reject')}>
                       {isWorking(dataset.date, 'reject') ? 'Archiving…' : '🗄️ Archive'}
                     </button>
+                  {/if}
+                </div>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+  </section>
+
+  <!-- Fine-Tuned Models -->
+  <section class="card">
+    <header>
+      <h3>🎯 Fine-Tuned Models</h3>
+      <p>Full model fine-tuning runs (not LoRA adapters).</p>
+    </header>
+
+    {#if loading}
+      <div class="loading">Loading fine-tuned models…</div>
+    {:else if fineTuneModels.length === 0}
+      <div class="empty">
+        <div class="empty-icon">🎯</div>
+        <div class="empty-title">No fine-tuned models</div>
+        <p class="muted">Run fine-tune training from the Training Wizard to create full fine-tuned models.</p>
+      </div>
+    {:else}
+      <table class="dataset-table">
+        <thead>
+          <tr>
+            <th>Run Label</th>
+            <th>Base Model</th>
+            <th>Samples</th>
+            <th>Dataset Size</th>
+            <th>Created</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each fineTuneModels as model (model.runId)}
+            <tr>
+              <td>
+                <div class="date-cell">
+                  <div class="date-value">{model.runLabel}</div>
+                  {#if model.isActive}
+                    <span class="badge badge-active">Active</span>
+                  {/if}
+                </div>
+              </td>
+              <td>{model.baseModel}</td>
+              <td>{model.totalSamples.toLocaleString()}</td>
+              <td>{model.datasetSizeKB.toLocaleString()} KB</td>
+              <td>
+                <div class="meta-cell">
+                  <div>{new Date(model.createdAt).toLocaleString()}</div>
+                  <div class="muted">by {model.username}</div>
+                </div>
+              </td>
+              <td>
+                <div class="status-cell">
+                  {#if model.status === 'training_complete'}
+                    <span class="status-badge status-active">✅ Complete</span>
+                  {:else}
+                    <span class="status-badge status-pending">❌ Failed</span>
+                  {/if}
+                  {#if model.error}
+                    <div class="muted error">{model.error}</div>
                   {/if}
                 </div>
               </td>
@@ -807,5 +910,16 @@
   .btn-danger-small:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .status-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .error {
+    color: #dc2626 !important;
+    font-size: 0.75rem;
   }
 </style>

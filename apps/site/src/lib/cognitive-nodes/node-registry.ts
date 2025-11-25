@@ -36,7 +36,12 @@ import {
   PersonaFormatterNode,
   IterationCounterNode,
   ScratchpadCompletionCheckerNode,
-  ScratchpadFormatterNode
+  ScratchpadFormatterNode,
+  CuriosityWeightedSamplerNode,
+  CuriosityQuestionGeneratorNode,
+  CuriosityQuestionSaverNode,
+  CuriosityActivityCheckNode,
+  SmartRouterNode
 } from './node-schemas';
 
 /**
@@ -322,6 +327,36 @@ class OperatorEligibilityNodeImpl extends CognitiveNodeBase {
     }
 
     this.setOutputData(0, useOperator);
+  }
+}
+
+class SmartRouterNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'smart_router')!;
+
+  constructor() {
+    super(SmartRouterNodeImpl.schema);
+  }
+
+  onExecute() {
+    const orchestratorAnalysis = this.getInputData(0);
+
+    // Extract complexity and other metadata from orchestrator analysis
+    const complexity = orchestratorAnalysis?.complexity || 0.5;
+    const needsMemory = orchestratorAnalysis?.needsMemory || false;
+    const simpleThreshold = this.properties.simpleThreshold || 0.3;
+
+    // Route based on complexity threshold
+    const isSimple = complexity < simpleThreshold && !needsMemory;
+
+    if (isSimple) {
+      // Simple path: Output on slot 1 (simplePath)
+      this.setOutputData(0, null); // complexPath = null
+      this.setOutputData(1, orchestratorAnalysis); // simplePath = analysis
+    } else {
+      // Complex path: Output on slot 0 (complexPath)
+      this.setOutputData(0, orchestratorAnalysis); // complexPath = analysis
+      this.setOutputData(1, null); // simplePath = null
+    }
   }
 }
 
@@ -1155,6 +1190,30 @@ class AgentTimerNodeImpl extends CognitiveNodeBase {
 }
 
 // ============================================================================
+// CURIOSITY SERVICE NODE IMPLEMENTATIONS
+// ============================================================================
+
+class CuriosityWeightedSamplerNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'curiosity_weighted_sampler')!;
+  constructor() { super(CuriosityWeightedSamplerNodeImpl.schema); }
+}
+
+class CuriosityQuestionGeneratorNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'curiosity_question_generator')!;
+  constructor() { super(CuriosityQuestionGeneratorNodeImpl.schema); }
+}
+
+class CuriosityQuestionSaverNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'curiosity_question_saver')!;
+  constructor() { super(CuriosityQuestionSaverNodeImpl.schema); }
+}
+
+class CuriosityActivityCheckNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'curiosity_activity_check')!;
+  constructor() { super(CuriosityActivityCheckNodeImpl.schema); }
+}
+
+// ============================================================================
 // CONFIGURATION NODE IMPLEMENTATIONS
 // ============================================================================
 
@@ -1394,6 +1453,7 @@ class AgentTriggerNodeImpl extends CognitiveNodeBase {
     CognitiveModeRouterNodeImpl,
     AuthCheckNodeImpl,
     OperatorEligibilityNodeImpl,
+    SmartRouterNodeImpl,
     ContextBuilderNodeImpl,
     SemanticSearchNodeImpl,
     BufferManagerNodeImpl,
@@ -1454,6 +1514,11 @@ class AgentTriggerNodeImpl extends CognitiveNodeBase {
     MemorySaverNodeImpl,
     LLMEnricherNodeImpl,
     AgentTimerNodeImpl,
+    // Curiosity Service
+    CuriosityWeightedSamplerNodeImpl,
+    CuriosityQuestionGeneratorNodeImpl,
+    CuriosityQuestionSaverNodeImpl,
+    CuriosityActivityCheckNodeImpl,
     // Configuration
     PersonaLoaderNodeImpl,
     PersonaFormatterNodeImpl,
@@ -1536,6 +1601,7 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
     LiteGraph.registerNodeType('cognitive/cognitive_mode_router', nodeImpls.CognitiveModeRouterNodeImpl);
     LiteGraph.registerNodeType('cognitive/auth_check', nodeImpls.AuthCheckNodeImpl);
     LiteGraph.registerNodeType('cognitive/operator_eligibility', nodeImpls.OperatorEligibilityNodeImpl);
+    LiteGraph.registerNodeType('cognitive/smart_router', nodeImpls.SmartRouterNodeImpl);
 
     // Context nodes
     LiteGraph.registerNodeType('cognitive/context_builder', nodeImpls.ContextBuilderNodeImpl);
@@ -1613,6 +1679,12 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
     LiteGraph.registerNodeType('cognitive/memory_saver', nodeImpls.MemorySaverNodeImpl);
     LiteGraph.registerNodeType('cognitive/llm_enricher', nodeImpls.LLMEnricherNodeImpl);
     LiteGraph.registerNodeType('cognitive/agent_timer', nodeImpls.AgentTimerNodeImpl);
+
+    // Curiosity Service nodes
+    LiteGraph.registerNodeType('cognitive/curiosity_weighted_sampler', nodeImpls.CuriosityWeightedSamplerNodeImpl);
+    LiteGraph.registerNodeType('cognitive/curiosity_question_generator', nodeImpls.CuriosityQuestionGeneratorNodeImpl);
+    LiteGraph.registerNodeType('cognitive/curiosity_question_saver', nodeImpls.CuriosityQuestionSaverNodeImpl);
+    LiteGraph.registerNodeType('cognitive/curiosity_activity_check', nodeImpls.CuriosityActivityCheckNodeImpl);
 
     // Configuration nodes
     LiteGraph.registerNodeType('cognitive/persona_loader', nodeImpls.PersonaLoaderNodeImpl);

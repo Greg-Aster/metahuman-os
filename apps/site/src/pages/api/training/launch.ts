@@ -85,8 +85,8 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     const trainingConfigPath = path.join(systemPaths.root, 'etc', 'training.json')
     fs.writeFileSync(trainingConfigPath, JSON.stringify(trainingConfig, null, 2))
 
-    // Save RunPod config if provided
-    if (method === 'remote-lora' && runpodConfig) {
+    // Save RunPod config if provided (for remote methods)
+    if ((method === 'remote-lora' || method === 'fine-tune') && runpodConfig) {
       const runpodConfigPath = path.join(systemPaths.root, 'etc', 'runpod.json')
       fs.writeFileSync(
         runpodConfigPath,
@@ -102,11 +102,40 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       )
     }
 
+    // Create log file for training output
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const logPath = path.join(systemPaths.logs, 'run', `${agentFileName.replace('.ts', '')}-${timestamp}.log`);
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    const logStream = fs.openSync(logPath, 'w');
+
+    // Build command-line arguments for the agent
+    const agentArgs: string[] = ['--username', user.username]
+
+    // Add training-specific arguments for fine-tune method
+    if (method === 'fine-tune') {
+      if (trainingConfig.base_model) {
+        agentArgs.push('--base-model', trainingConfig.base_model)
+      }
+      if (trainingConfig.monthly_training) {
+        agentArgs.push('--monthly')
+      } else {
+        if (trainingConfig.days_recent) {
+          agentArgs.push('--days-recent', String(trainingConfig.days_recent))
+        }
+        if (trainingConfig.old_samples) {
+          agentArgs.push('--old-samples', String(trainingConfig.old_samples))
+        }
+      }
+      if (trainingConfig.max_samples) {
+        agentArgs.push('--max', String(trainingConfig.max_samples))
+      }
+    }
+
     // Spawn the training agent
     const tsxPath = path.join(systemPaths.root, 'apps', 'site', 'node_modules', '.bin', 'tsx')
 
-    const child = spawn(tsxPath, [agentPath], {
-      stdio: 'ignore',
+    const child = spawn(tsxPath, [agentPath, ...agentArgs], {
+      stdio: ['ignore', logStream, logStream], // stdout and stderr to log file
       cwd: systemPaths.root,
       env: {
         ...process.env,
@@ -120,6 +149,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     })
 
     if (!child.pid) {
+      fs.closeSync(logStream);
       return new Response(
         JSON.stringify({
           success: false,
@@ -131,6 +161,10 @@ export const POST: APIRoute = async ({ cookies, request }) => {
 
     const agentName = agentFileName.replace('.ts', '')
 
+    // Store PID for status checking
+    const pidPath = path.join(systemPaths.logs, 'run', `${agentName}.pid`);
+    fs.writeFileSync(pidPath, String(child.pid), 'utf-8');
+
     audit({
       level: 'info',
       category: 'system',
@@ -141,6 +175,9 @@ export const POST: APIRoute = async ({ cookies, request }) => {
         pid: child.pid,
         username: user.username,
         config: trainingConfig,
+        runpodConfig: runpodConfig ? { templateId: runpodConfig.templateId, gpuType: runpodConfig.gpuType } : undefined,
+        commandArgs: agentArgs,
+        logPath: path.basename(logPath),
       },
       actor: user.username,
     })
