@@ -125,25 +125,37 @@ async function mainWithContext(options: FineTuneOptions) {
   });
 
   try {
-    // Step 0: Pre-curation pass - LLM curator finishes any uncurated memories
-    console.log('\n[fine-tune-cycle] ===== STEP 0: PRE-CURATION PASS =====');
-    console.log('[fine-tune-cycle] Processing remaining uncurated memories before aggregation');
+    // Check if preprocessing should be skipped FIRST, before running curator
+    const skipPreprocessing = process.env.METAHUMAN_SKIP_PREPROCESSING === '1';
 
-    try {
-      const llmCuratorCode = await runAgent('curator', ['--username', ctx.username]);
-      if (llmCuratorCode === 0) {
-        console.log('[fine-tune-cycle] ✅ Pre-curation pass completed successfully');
-      } else {
-        console.warn(`[fine-tune-cycle] ⚠️  Pre-curation pass exited with code ${llmCuratorCode}, continuing...`);
+    if (skipPreprocessing) {
+      console.log('\n[fine-tune-cycle] ⚠️ PREPROCESSING DISABLED BY USER');
+      console.log('[fine-tune-cycle] Skipping LLM curator - will use all existing curated conversations');
+      console.log('[fine-tune-cycle] WARNING: No new memories will be curated. Only previously curated conversations will be used.');
+      console.log('[fine-tune-cycle] To curate more memories, enable preprocessing or run: tsx brain/agents/curator.ts --username', ctx.username);
+    } else {
+      // Step 0: Pre-curation pass - LLM curator finishes any uncurated memories
+      console.log('\n[fine-tune-cycle] ===== STEP 0: PRE-CURATION PASS =====');
+      console.log('[fine-tune-cycle] Processing remaining uncurated memories before aggregation');
+
+      try {
+        const llmCuratorCode = await runAgent('curator', ['--username', ctx.username]);
+        if (llmCuratorCode === 0) {
+          console.log('[fine-tune-cycle] ✅ Pre-curation pass completed successfully');
+        } else {
+          console.warn(`[fine-tune-cycle] ⚠️  Pre-curation pass exited with code ${llmCuratorCode}, continuing...`);
+        }
+      } catch (curatorError) {
+        console.warn('[fine-tune-cycle] ⚠️  Pre-curation pass failed:', (curatorError as Error).message);
+        console.warn('[fine-tune-cycle] Continuing with available curated memories...');
       }
-    } catch (curatorError) {
-      console.warn('[fine-tune-cycle] ⚠️  Pre-curation pass failed:', (curatorError as Error).message);
-      console.warn('[fine-tune-cycle] Continuing with available curated memories...');
     }
 
     // Step 1: Aggregate curated conversations from curator.ts output
     console.log('\n[fine-tune-cycle] ===== STEP 1: AGGREGATING CURATED CONVERSATIONS =====');
-    console.log('[fine-tune-cycle] Using LLM-curated conversations from curator agent');
+    if (!skipPreprocessing) {
+      console.log('[fine-tune-cycle] Using LLM-curated conversations from curator agent');
+    }
 
     const aggregatorArgs = [
       '--username', ctx.username,

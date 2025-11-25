@@ -24,11 +24,44 @@ When the UI is ready the splash screen fades into the **Authentication Gate**. O
 The active profile (owner or guest) is displayed in the header once authenticated. Switching users logs the current session out and returns to the gate.
 
 ### Web UI (Recommended)
-Modern ChatGPT-style interface with real-time updates:
+
+Modern ChatGPT-style 3-column interface with real-time updates:
 ```bash
 cd apps/site && pnpm dev
 # Open http://localhost:4321
 ```
+
+#### Layout Architecture
+
+The web interface uses a three-column ChatGPT-style layout:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Header (Authentication, Cognitive Mode, Settings)       │
+├─────────┬─────────────────────────────┬─────────────────┤
+│ Left    │ Center                      │ Right           │
+│ Sidebar │ Content                     │ Sidebar         │
+│         │                             │ (Collapsible)   │
+│ Feature │ ChatInterface /             │ Developer       │
+│ Menu    │ Dashboard /                 │ Tools           │
+│         │ Memory Browser /            │                 │
+│         │ TaskManager /               │                 │
+│         │ Terminal / etc.             │                 │
+└─────────┴─────────────────────────────┴─────────────────┘
+```
+
+**Key Components:**
+- **ChatLayout.svelte** - 3-column grid container with collapsible sidebars
+- **LeftSidebar.svelte** - Feature navigation menu with status widget
+- **RightSidebar.svelte** - Developer tools (audit stream, agent monitor, settings)
+- **CenterContent.svelte** - View router that switches content based on selection
+- **stores/navigation.ts** - Svelte store for shared navigation state
+
+**Navigation Flow:**
+1. User clicks menu item in LeftSidebar
+2. Updates `activeView` store (e.g., 'chat', 'dashboard', 'tasks')
+3. CenterContent reactively switches displayed component
+4. Sidebar state persisted to localStorage
 
 #### Header Controls
 - **Profile Indicator** – Shows the active account (role, visibility badge). Owners can open the menu to log out or jump into Settings.
@@ -50,18 +83,200 @@ The UI will display prominent banners at the top of the screen to inform you of 
 - **Read-Only Mode**: A general banner indicating that the current cognitive mode (Emulation) does not allow for write operations.
 
 **Features:**
-- 💬 Chat - Conversation with your digital personality extension.
-- 📊 Dashboard - System status and overview.
-- ✓ Tasks - Task management.
-- ✋ Approvals - Skill execution queue.
-- 🧩 Memory - Browse events & insights with inline expansion and modal editor.
-- 🎤 Voice - Audio upload, transcription, cloning, and per-user training data.
-- 🧠 AI Training - LoRA adapters and training management.
-- 🔗 Node Editor - Visual workflow designer for cognitive graphs (see below).
-- 💻 Terminal - Embedded command line.
-- ⚙️ System - System settings and tools.
-- 🌐 Network - Cloudflare tunnel and connectivity settings.
-- 🔒 Security - User and authentication settings.
+- 💬 **Chat** - Conversation with your digital personality extension
+- 📊 **Dashboard** - System status and overview
+- ✓ **Tasks** - Task management with project organization
+- ✋ **Approvals** - Skill execution queue for trust-based operations
+- 🧩 **Memory Browser** - Browse events & insights with 7 specialized tabs (see below)
+- 🎤 **Voice** - Audio upload, transcription, cloning, and per-user training data
+- 🧠 **AI Training** - LoRA adapters, training monitor, dataset management, and history
+- 🔗 **Node Editor** - Visual workflow designer for cognitive graphs
+- 👤 **Persona Editor** - Manual persona editing interface
+- 🎭 **Persona Generator** - Therapist-style interview system
+- 📊 **Training Wizard** - AI-assisted training configuration
+- 📦 **Dataset Management** - Training dataset curation and review
+- 📈 **Adapter Dashboard** - LoRA adapter management and activation
+- 🔌 **Addons Manager** - Install and manage system addons
+- 📊 **GPU Monitor** - GPU resource monitoring and VRAM usage
+- 💻 **Terminal** - Embedded command line
+- ⚙️ **System** - System settings and tools
+- 🌐 **Network** - Cloudflare tunnel and connectivity settings
+- 🔒 **Security** - User and authentication settings
+
+#### Memory Browser (7 Specialized Tabs)
+
+The Memory Browser provides comprehensive access to your episodic memories with seven specialized views:
+
+**1. Conversations Tab**
+- Shows only `type: 'conversation'` memories
+- User-assistant dialogue exchanges
+- Filterable by date, cognitive mode, participant
+- Inline expansion and full-screen editor
+
+**2. Observations Tab**
+- Shows only `type: 'observation'` memories
+- Manual captures via `mh capture` command
+- Personal notes and event recordings
+- Tagged and entity-enriched by organizer agent
+
+**3. Inner Dialogue Tab**
+- Shows only `type: 'inner_dialogue'` memories
+- Reflections generated by reflector agent
+- Internal questions from inner curiosity agent
+- Associative memory chains (3-5 linked memories)
+- Never shown in main chat (internal thoughts only)
+
+**4. Dreams Tab**
+- Shows only `type: 'dream'` memories
+- Surreal narratives from dreamer agent
+- Generated from lifetime memory fragments
+- Reflective exponential decay weighting
+- Runs during sleep cycle
+
+**5. Tasks Tab**
+- Shows only `type: 'task'` memories
+- Active, completed, and archived tasks
+- Project organization and hierarchies
+- Due dates and priority levels
+
+**6. All Memories Tab**
+- Unified view of all memory types
+- Filterable by type, date, tags, entities
+- Search across all fields
+- Bulk operations and export
+
+**7. Search Tab**
+- Advanced search with multiple filters:
+  - Date range picker
+  - Memory type selector
+  - Tag filtering
+  - Entity search
+  - Full-text search
+  - Cognitive mode filter
+- Results grouped by relevance
+- Semantic search integration (if index built)
+
+**Memory Editor Features:**
+- Full-screen modal (80vh height, 1200px width)
+- Keyboard shortcuts: Ctrl+S to save, Esc to close
+- Auto-save detection with unsaved changes warning
+- Permission-based editing (requires authentication)
+- Read-only in emulation mode for anonymous users
+- All edits logged to audit trail with timestamp and actor
+- JSON auto-formatting for readability
+- Accessed via blue pencil icon (✏️) on memory cards
+
+#### AI Training Components
+
+**Training Wizard** (`TrainingWizard.svelte`)
+- AI-assisted configuration interface
+- Helps users set optimal training parameters
+- Guides through dataset selection
+- Validates configuration before training
+- Real-time cost estimation
+
+**Training Monitor** (`TrainingMonitor.svelte`)
+- Real-time training progress display
+- Epoch/step tracking with progress bars
+- Loss curves and metrics visualization
+- GPU utilization graphs
+- ETA and completion estimates
+- Support for multiple providers (local, RunPod, etc.)
+
+**Training History** (`TrainingHistory.svelte`)
+- Historical training runs
+- Success/failure status
+- Training metrics and evaluation scores
+- Adapter activation status
+- Export/import training configs
+
+**Dataset Management** (`DatasetManagement.svelte`)
+- Training dataset curation interface
+- Review conversation pairs before training
+- Quality metrics and composition analysis
+- Approve/reject datasets
+- Manual dataset editing
+- Export to JSONL format
+
+**Adapter Dashboard** (`AdapterDashboard.svelte`)
+- List all trained LoRA adapters
+- Activation status (active/inactive)
+- Evaluation scores and quality metrics
+- Dual-adapter system management
+- Historical adapter merging
+- Adapter comparison tools
+
+#### Persona Management Components
+
+**Persona Editor** (`PersonaEditor.svelte`)
+- Manual editing of `persona/core.json`
+- Live preview of personality changes
+- Facet configuration interface
+- Decision rules management
+- Relationship and routine editing
+- Version history and backup
+
+**Persona Generator** (`PersonaGenerator.svelte`)
+- Therapist-style interview interface
+- 8 category coverage tracking:
+  - Core Identity
+  - Values & Ethics
+  - Communication Style
+  - Relationships
+  - Goals & Aspirations
+  - Daily Life & Habits
+  - Knowledge & Interests
+  - Emotional Patterns
+- Progress visualization
+- Session save/resume
+- Diff viewer for proposed changes
+- Merge strategy selection (replace, merge, append)
+
+#### Node Editor Components
+
+**Node Editor** (`NodeEditor.svelte`, `NodePalette.svelte`, `NodeEditorLayout.svelte`)
+- Visual workflow editor for cognitive graphs
+- Drag-and-drop node placement
+- Node palette with all available node types:
+  - Memory Search
+  - LLM Prompt
+  - Task Query
+  - Conditional branches
+  - Output display
+  - And 20+ more node types
+- Connection drawing between nodes
+- Parameter configuration per node
+- Workflow save/load
+- Test execution with live results
+- Graph validation and error checking
+
+See [Node-Based Cognitive System](28-node-based-cognitive-system.md) for complete details.
+
+#### System Management Components
+
+**Addons Manager** (`AddonsManager.svelte`)
+- Browse available system addons
+- Install/uninstall addons
+- Enable/disable installed addons
+- Addon configuration interface
+- Dependency management
+- Update notifications
+
+**GPU Monitor** (`GPUMonitor.svelte`)
+- Real-time GPU utilization graphs
+- VRAM usage tracking
+- Temperature monitoring
+- Process-specific GPU usage
+- Multi-GPU support
+- Historical metrics
+
+**Onboarding Wizard** (`OnboardingWizard.svelte`)
+- First-run setup flow
+- Account creation guidance
+- Initial persona configuration
+- Model installation help
+- Voice setup tutorial
+- Welcome tour of features
 
 **Left Sidebar - Status Widget:**
 - **Trust Level**: Click to cycle through trust progression (observe → suggest → supervised_auto → bounded_auto → adaptive_auto → YOLO)

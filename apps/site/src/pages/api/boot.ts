@@ -15,9 +15,10 @@ import { loadCognitiveMode } from '@metahuman/core/cognitive-mode'
 
 // Minimal, idempotent agent boot endpoint used by the UI to ensure
 // core autonomous services are running. Safe to call multiple times.
+//
+// NOTE: headless-watcher removed - agent lifecycle now managed directly
+// by enterHeadlessMode/exitHeadlessMode in runtime-mode.ts
 
-// Always start headless-watcher, conditionally start others
-const ALWAYS_AGENTS = ['headless-watcher'] as const
 const CONDITIONAL_AGENTS = ['boredom-service', 'audio-organizer'] as const
 
 export const GET: APIRoute = async ({ cookies }) => {
@@ -71,9 +72,11 @@ export const GET: APIRoute = async ({ cookies }) => {
   const tsxPath = path.join(systemPaths.root, 'apps', 'site', 'node_modules', '.bin', 'tsx')
 
   // Determine which agents to start based on headless mode
+  // In headless mode: no agents (runtime-mode.ts will start them on exit)
+  // In normal mode: boredom-service, audio-organizer
   const agentsToStart = headlessMode
-    ? [...ALWAYS_AGENTS]
-    : [...ALWAYS_AGENTS, ...CONDITIONAL_AGENTS]
+    ? []
+    : [...CONDITIONAL_AGENTS]
 
   for (const agentName of agentsToStart) {
     try {

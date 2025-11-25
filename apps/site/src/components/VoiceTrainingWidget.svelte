@@ -132,10 +132,14 @@
   }
 
   async function fetchTrainingLogs() {
-    if (provider !== 'kokoro') return;
+    if (provider !== 'kokoro' && provider !== 'rvc') return;
 
     try {
-      const response = await fetch('/api/kokoro-training?action=training-logs&speakerId=default');
+      const endpoint = provider === 'kokoro'
+        ? '/api/kokoro-training?action=training-logs&speakerId=default'
+        : '/api/rvc-training?action=training-logs&speakerId=default';
+
+      const response = await fetch(endpoint);
       if (!response.ok) return;
 
       const data = await response.json();
@@ -384,8 +388,8 @@
         if (!trainingPollInterval) {
           trainingPollInterval = setInterval(pollTrainingStatus, 5000);
         }
-        // Fetch training logs for Kokoro
-        if (provider === 'kokoro') {
+        // Fetch training logs for Kokoro and RVC
+        if (provider === 'kokoro' || provider === 'rvc') {
           await fetchTrainingLogs();
         }
       }
@@ -631,6 +635,29 @@
     }
   }
 
+  async function changeProvider(newProvider: 'piper' | 'sovits' | 'rvc' | 'kokoro') {
+    try {
+      const response = await fetch('/api/voice-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: newProvider }),
+      });
+
+      if (response.ok) {
+        // Update the local provider
+        provider = newProvider;
+        // Reload data for the new provider
+        await loadData();
+      } else {
+        console.error('[VoiceTrainingWidget] Failed to change provider:', await response.text());
+        alert('Failed to change voice provider. Please try again.');
+      }
+    } catch (error) {
+      console.error('[VoiceTrainingWidget] Error changing provider:', error);
+      alert('Error changing voice provider. Please try again.');
+    }
+  }
+
   onMount(() => {
     loadData();
     pollInterval = setInterval(loadData, 30000);
@@ -794,6 +821,9 @@
           <div class="guide-header">
             <span class="guide-icon">🎵</span>
             <strong>Kokoro Voicepack Workflow</strong>
+            <a href="/user-guide/23-voice-system#4-kokoro-styletts2-voicepacks" target="_blank" class="guide-link" title="Open full voice system documentation">
+              📖 Full Guide
+            </a>
           </div>
           <ol class="guide-steps">
             <li>
@@ -1314,7 +1344,7 @@
           {/if}
 
           <!-- Toggle between robot messages and logs -->
-          {#if provider === 'kokoro' && showLogs}
+          {#if (provider === 'kokoro' || provider === 'rvc') && showLogs}
             <!-- Training Logs View -->
             <div class="logs-container">
               <div class="logs-header">
@@ -1349,7 +1379,7 @@
        humans...
                 </pre>
               </div>
-              {#if provider === 'kokoro'}
+              {#if provider === 'kokoro' || provider === 'rvc'}
                 <button class="toggle-view-btn" on:click={() => showLogs = true}>
                   Show Training Logs
                 </button>
@@ -1359,7 +1389,7 @@
 
           <div class="training-info">
             {#if provider === 'kokoro'}
-              <p>⏱️ Estimated time: Eons</p>
+              <p>⏱️ Estimated time: Eons -- Your childern will be dead when this is finished</p>
               <p>🎵 StyleTTS2 voice encoder optimization</p>
               <p>💾 Training voicepack embeddings</p>
               <p>🌐 Skynet connection: Established</p>
@@ -1863,6 +1893,36 @@
 
   .guide-icon {
     font-size: 1.5rem;
+  }
+
+  .guide-link {
+    margin-left: auto;
+    padding: 4px 12px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #1565c0;
+    text-decoration: none;
+    background: rgba(21, 101, 192, 0.1);
+    border: 1px solid rgba(21, 101, 192, 0.3);
+    border-radius: 4px;
+    transition: all 0.2s ease;
+  }
+
+  .guide-link:hover {
+    background: rgba(21, 101, 192, 0.2);
+    border-color: rgba(21, 101, 192, 0.5);
+    transform: translateY(-1px);
+  }
+
+  :global(.dark) .guide-link {
+    color: #93c5fd;
+    background: rgba(147, 197, 253, 0.1);
+    border-color: rgba(147, 197, 253, 0.3);
+  }
+
+  :global(.dark) .guide-link:hover {
+    background: rgba(147, 197, 253, 0.2);
+    border-color: rgba(147, 197, 253, 0.5);
   }
 
   .guide-steps {

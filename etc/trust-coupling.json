@@ -4,7 +4,7 @@
   "description": "Trust level coupling with cognitive modes",
   "coupled": true,
   "mappings": {
-    "dual": "supervised_auto",
+    "dual": "adaptive_auto",
     "agent": "suggest",
     "emulation": "observe"
   },

@@ -27,6 +27,7 @@ export interface AgentConfig {
   type: TriggerType;
   priority: AgentPriority;
   agentPath?: string;  // Path to agent file (e.g., 'reflector.ts')
+  usesLLM?: boolean;   // Does this agent use GPU/LLM? (for queue management)
 
   // Interval-based config
   interval?: number;  // Seconds
@@ -68,6 +69,10 @@ export interface GlobalSchedulerSettings {
     end: string;    // HH:MM
   };
   maxConcurrentAgents: number;
+  maxConcurrentLLMAgents: number;      // Max GPU agents (serialized execution)
+  maxConcurrentNonLLMAgents: number;   // Max non-GPU agents (unlimited by default)
+  pauseQueueOnActivity: boolean;        // Pause queue when user is active
+  activityResumeDelay: number;          // Seconds to wait before resuming queue
 }
 
 export interface SchedulerConfig {
@@ -87,6 +92,12 @@ interface AgentState {
   timerId?: NodeJS.Timeout;
 }
 
+interface QueuedAgent {
+  id: string;
+  priority: AgentPriority;
+  queuedAt: Date;
+}
+
 // ============================================================================
 // Agent Scheduler (Singleton)
 // ============================================================================
@@ -98,6 +109,12 @@ export class AgentScheduler extends EventEmitter {
   private running: boolean = false;
   private activityTimer?: NodeJS.Timeout;
   private lastActivity: Date = new Date();
+
+  // GPU Queue Management
+  private llmQueue: QueuedAgent[] = [];
+  private currentLLMAgent: string | null = null;
+  private queuePaused: boolean = false;
+  private queueResumeTimer?: NodeJS.Timeout;
 
   /**
    * Get config file path (lazy evaluation to allow user context resolution)
@@ -144,8 +161,8 @@ export class AgentScheduler extends EventEmitter {
         event: 'scheduler_config_loaded',
         actor: 'agent_scheduler',
         details: {
-          agentCount: Object.keys(this.config.agents).length,
-          pauseAll: this.config.globalSettings.pauseAll,
+          agentCount: this.config ? Object.keys(this.config.agents).length : 0,
+          pauseAll: this.config?.globalSettings.pauseAll ?? false,
         },
       });
 
@@ -171,6 +188,10 @@ export class AgentScheduler extends EventEmitter {
           end: '08:00',
         },
         maxConcurrentAgents: 3,
+        maxConcurrentLLMAgents: 1,
+        maxConcurrentNonLLMAgents: 10,
+        pauseQueueOnActivity: true,
+        activityResumeDelay: 60,
       },
       agents: {},
     };
@@ -373,6 +394,9 @@ export class AgentScheduler extends EventEmitter {
         this.activityTimer = undefined;
       }
 
+      // Clear LLM queue
+      this.clearLLMQueue();
+
       audit({
         level: 'info',
         category: 'system',
@@ -547,7 +571,7 @@ export class AgentScheduler extends EventEmitter {
   }
 
   /**
-   * Run an agent
+   * Run an agent (with queue management for LLM agents)
    */
   private async runAgent(agentId: string): Promise<void> {
     const state = this.agents.get(agentId);
@@ -571,12 +595,51 @@ export class AgentScheduler extends EventEmitter {
       return;
     }
 
-    // Check max concurrent agents
-    const runningCount = Array.from(this.agents.values()).filter(s => s.status === 'running').length;
-    if (runningCount >= (this.config?.globalSettings.maxConcurrentAgents || 3)) {
-      console.log(`[AgentScheduler] Agent ${agentId} skipped (max concurrent agents reached)`);
-      return;
+    // NEW: Queue-based concurrency management
+    const usesLLM = state.config.usesLLM ?? true;  // Default to true for safety
+
+    if (usesLLM) {
+      // LLM agents: enforce serialization via queue
+      if (this.currentLLMAgent !== null) {
+        // Already running an LLM agent, enqueue this one
+        console.log(`[AgentScheduler] Agent ${agentId} queued (LLM agent ${this.currentLLMAgent} is running)`);
+        this.enqueueLLMAgent(agentId, state.config.priority);
+        return;
+      }
+
+      // No LLM agent running, check global max
+      const runningCount = Array.from(this.agents.values()).filter(s => s.status === 'running').length;
+      if (runningCount >= (this.config?.globalSettings.maxConcurrentAgents || 3)) {
+        console.log(`[AgentScheduler] Agent ${agentId} queued (max concurrent agents reached)`);
+        this.enqueueLLMAgent(agentId, state.config.priority);
+        return;
+      }
+
+      // Can run now
+      await this.executeAgent(agentId);
+    } else {
+      // Non-LLM agents: check separate limit
+      const runningNonLLM = Array.from(this.agents.values()).filter(
+        s => s.status === 'running' && !s.config.usesLLM
+      ).length;
+      const maxNonLLM = this.config?.globalSettings.maxConcurrentNonLLMAgents || 10;
+
+      if (runningNonLLM >= maxNonLLM) {
+        console.log(`[AgentScheduler] Agent ${agentId} skipped (max concurrent non-LLM agents reached)`);
+        return;
+      }
+
+      // Can run now
+      await this.executeAgent(agentId);
     }
+  }
+
+  /**
+   * Execute an agent (actual execution logic)
+   */
+  private async executeAgent(agentId: string): Promise<void> {
+    const state = this.agents.get(agentId);
+    if (!state) return;
 
     state.status = 'running';
     state.lastRun = new Date();
@@ -591,6 +654,7 @@ export class AgentScheduler extends EventEmitter {
         agentId,
         type: state.config.type,
         runCount: state.runCount,
+        usesLLM: state.config.usesLLM ?? true,
       },
     });
 
@@ -654,7 +718,7 @@ export class AgentScheduler extends EventEmitter {
     if (!config.agentPath) return;
 
     return new Promise((resolve, reject) => {
-      const agentFullPath = path.join(paths.brain, 'agents', config.agentPath);
+      const agentFullPath = path.join(paths.brain, 'agents', config.agentPath!);
 
       const child = spawn('tsx', [agentFullPath], {
         stdio: 'inherit',
@@ -760,6 +824,211 @@ export class AgentScheduler extends EventEmitter {
   public recordActivity(): void {
     this.lastActivity = new Date();
     recordSystemActivity(this.lastActivity.getTime());
+
+    // Pause queue on user activity if configured
+    if (this.config?.globalSettings.pauseQueueOnActivity && !this.queuePaused) {
+      this.pauseLLMQueue();
+    }
+  }
+
+  // ==========================================================================
+  // LLM Queue Management
+  // ==========================================================================
+
+  /**
+   * Add an agent to the LLM queue
+   */
+  private enqueueLLMAgent(agentId: string, priority: AgentPriority): void {
+    // Check if already queued
+    if (this.llmQueue.some(q => q.id === agentId)) {
+      console.log(`[AgentScheduler] Agent ${agentId} already in LLM queue`);
+      return;
+    }
+
+    this.llmQueue.push({
+      id: agentId,
+      priority,
+      queuedAt: new Date(),
+    });
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'agent_queued',
+      actor: 'agent_scheduler',
+      details: {
+        agentId,
+        priority,
+        queueSize: this.llmQueue.length,
+      },
+    });
+
+    console.log(`[AgentScheduler] Agent ${agentId} added to LLM queue (${this.llmQueue.length} in queue)`);
+
+    // Try to process queue
+    this.processLLMQueue();
+  }
+
+  /**
+   * Process the LLM queue - runs agents sequentially (one at a time)
+   */
+  private async processLLMQueue(): Promise<void> {
+    // Don't process if queue is paused
+    if (this.queuePaused) {
+      console.log('[AgentScheduler] LLM queue is paused');
+      return;
+    }
+
+    // Don't process if already running an LLM agent
+    if (this.currentLLMAgent) {
+      console.log(`[AgentScheduler] LLM agent ${this.currentLLMAgent} is running, queue processing delayed`);
+      return;
+    }
+
+    // Check if queue is empty
+    if (this.llmQueue.length === 0) {
+      return;
+    }
+
+    // Sort queue by priority (high > normal > low), then by queuedAt
+    this.llmQueue.sort((a, b) => {
+      const priorityOrder = { high: 3, normal: 2, low: 1 };
+      const priorityDiff = priorityOrder[b.priority] - priorityOrder[a.priority];
+      if (priorityDiff !== 0) return priorityDiff;
+      return a.queuedAt.getTime() - b.queuedAt.getTime();
+    });
+
+    // Dequeue next agent
+    const queued = this.llmQueue.shift();
+    if (!queued) return;
+
+    const state = this.agents.get(queued.id);
+    if (!state) {
+      console.warn(`[AgentScheduler] Queued agent ${queued.id} not found in state`);
+      // Continue processing next in queue
+      this.processLLMQueue();
+      return;
+    }
+
+    // Mark as current LLM agent
+    this.currentLLMAgent = queued.id;
+
+    console.log(`[AgentScheduler] Processing LLM agent ${queued.id} from queue (${this.llmQueue.length} remaining)`);
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'agent_dequeued',
+      actor: 'agent_scheduler',
+      details: {
+        agentId: queued.id,
+        priority: queued.priority,
+        queuedFor: Date.now() - queued.queuedAt.getTime(),
+        remainingInQueue: this.llmQueue.length,
+      },
+    });
+
+    // Execute the agent
+    await this.executeAgent(queued.id);
+
+    // Clear current LLM agent
+    this.currentLLMAgent = null;
+
+    // Process next in queue
+    if (this.llmQueue.length > 0) {
+      // Small delay to allow system cleanup between agents
+      setTimeout(() => this.processLLMQueue(), 1000);
+    }
+  }
+
+  /**
+   * Pause the LLM queue (user activity detected)
+   */
+  private pauseLLMQueue(): void {
+    if (this.queuePaused) return;
+
+    this.queuePaused = true;
+    console.log('[AgentScheduler] LLM queue paused (user activity detected)');
+
+    audit({
+      level: 'info',
+      category: 'system',
+      event: 'llm_queue_paused',
+      actor: 'agent_scheduler',
+      details: {
+        queueSize: this.llmQueue.length,
+      },
+    });
+
+    // Clear any existing resume timer
+    if (this.queueResumeTimer) {
+      clearTimeout(this.queueResumeTimer);
+    }
+
+    // Schedule resume after inactivity delay
+    const resumeDelay = (this.config?.globalSettings.activityResumeDelay || 60) * 1000;
+    this.queueResumeTimer = setTimeout(() => {
+      this.resumeLLMQueue();
+    }, resumeDelay);
+  }
+
+  /**
+   * Resume the LLM queue (after inactivity period)
+   */
+  private resumeLLMQueue(): void {
+    if (!this.queuePaused) return;
+
+    // Check if user is still inactive
+    const now = Date.now();
+    const inactiveSeconds = (now - this.lastActivity.getTime()) / 1000;
+    const requiredInactivity = this.config?.globalSettings.activityResumeDelay || 60;
+
+    if (inactiveSeconds < requiredInactivity) {
+      console.log(`[AgentScheduler] Not resuming queue yet (only ${inactiveSeconds.toFixed(0)}s inactive, need ${requiredInactivity}s)`);
+      // Reschedule resume check
+      const remainingDelay = (requiredInactivity - inactiveSeconds) * 1000;
+      this.queueResumeTimer = setTimeout(() => {
+        this.resumeLLMQueue();
+      }, remainingDelay);
+      return;
+    }
+
+    this.queuePaused = false;
+    console.log('[AgentScheduler] LLM queue resumed (user inactive)');
+
+    audit({
+      level: 'info',
+      category: 'system',
+      event: 'llm_queue_resumed',
+      actor: 'agent_scheduler',
+      details: {
+        queueSize: this.llmQueue.length,
+      },
+    });
+
+    // Process queue
+    this.processLLMQueue();
+  }
+
+  /**
+   * Clear the LLM queue
+   */
+  private clearLLMQueue(): void {
+    this.llmQueue = [];
+    this.currentLLMAgent = null;
+    this.queuePaused = false;
+
+    if (this.queueResumeTimer) {
+      clearTimeout(this.queueResumeTimer);
+      this.queueResumeTimer = undefined;
+    }
+
+    audit({
+      level: 'info',
+      category: 'system',
+      event: 'llm_queue_cleared',
+      actor: 'agent_scheduler',
+    });
   }
 
   // ==========================================================================

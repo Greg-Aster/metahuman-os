@@ -20,5 +20,14 @@
     "cacheCatalog": true,
     "catalogTTL": 60000,
     "parallelSkillExecution": false
+  },
+  "bigBrotherMode": {
+    "enabled": true,
+    "provider": "claude-code",
+    "escalateOnStuck": true,
+    "escalateOnRepeatedFailures": true,
+    "maxRetries": 1,
+    "includeFullScratchpad": true,
+    "autoApplySuggestions": false
   }
 }

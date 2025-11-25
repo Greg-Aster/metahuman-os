@@ -287,7 +287,11 @@ export const skillExecutorExecutor: NodeExecutor = async (inputs, context) => {
   let errorRecoveryAnalysis: any = null;
 
   try {
-    const trustLevel: TrustLevel = 'supervised_auto';
+    // Load trust level from decision rules instead of hardcoding
+    const { loadDecisionRules } = await import('../identity.js');
+    const rules = loadDecisionRules();
+    const trustLevel: TrustLevel = rules.trustLevel as TrustLevel;
+
     // Auto-approve skills when yolo mode is enabled
     // Orchestrator already performed permission pre-checks, so we can safely bypass approval queue
     const autoApprove = context.yoloMode === true;

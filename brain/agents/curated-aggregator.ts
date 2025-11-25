@@ -68,6 +68,12 @@ function loadCuratedConversations(curatedDir: string): CuratedConversation[] {
       const content = fs.readFileSync(filePath, 'utf-8');
       const conversation = JSON.parse(content) as CuratedConversation;
 
+      // Normalize legacy files missing cognitiveMode (pre-Nov 24, 2025)
+      if (!conversation.cognitiveMode) {
+        conversation.cognitiveMode = 'dual'; // Default for legacy files
+        console.warn(`[curated-aggregator] Legacy file ${file} missing cognitiveMode, defaulting to 'dual'`);
+      }
+
       // Only include conversations marked suitable for training
       if (conversation.suitableForTraining) {
         conversations.push(conversation);

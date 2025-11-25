@@ -564,11 +564,82 @@ Kokoro is a StyleTTS2-based provider bundled with 50+ high-quality voices across
 7. **Monitor** logs in `logs/run/kokoro-training-<speaker>.log` and status JSON in `logs/run/kokoro-training-<speaker>.json`.
 8. **Activate** the generated `.pt` path in Voice Settings.
 
+#### Training Modes & Parameters
+
+Kokoro training supports three distinct modes for different use cases:
+
+**1. Train from Base Voice (Default)**
+- Starts from a pre-trained Kokoro voice (e.g., `am_michael`, `af_heart`)
+- Regularization pulls voicepack toward base voice for stability
+- **Use when**: You want subtle voice characteristics while maintaining quality
+- **Regularization**: `0.005` (default) - higher values = closer to base voice
+
+**2. Continue from Checkpoint**
+- Resumes training from your existing voicepack
+- Regularization pulls toward the base voice, NOT your custom voicepack
+- **Use when**: Refining an existing voicepack with more samples
+- **⚠️ Important**: Set regularization to `0.0` to avoid reverting to base voice!
+
+**3. Pure Training Mode (Experimental)**
+- Trains from random initialization with NO base voice influence
+- No regularization applied (ignored even if set)
+- Requires 2-3x more epochs (500+ recommended)
+- **Use when**: You want maximum divergence from any base voice
+- **Best for**: Creating truly unique voice characteristics
+
+**Key Training Parameters:**
+
+| Parameter | Default | Range | Effect |
+|-----------|---------|-------|--------|
+| **Epochs** | 120 | 50-500 | More epochs = better learning (diminishing returns after 300) |
+| **Learning Rate** | 0.0005 | 0.0001-0.001 | Higher = faster but less stable training |
+| **Regularization** | 0.005 | 0.0-0.01 | **Set to 0.0 for custom voice!** Prevents reverting to base voice |
+| **Max Samples** | 200 | 50-300 | More samples = better generalization |
+| **Device** | auto | cpu/cuda/auto | GPU training is 10x faster but needs VRAM |
+
+**Why Voicepacks Sound Like Base Voice:**
+
+If your custom voicepack sounds identical to the base voice, you likely trained with **non-zero regularization** in "Continue from Checkpoint" mode. The regularization term actively pulls your voicepack back toward the base voice during training to "maintain character".
+
+**Solution**: Retrain with `regularization = 0.0` to let your voice fully diverge from the base.
+
+**Recommended Training Settings:**
+
+For **custom voice that sounds like YOU**:
+```
+Mode: Continue from Checkpoint (or Train from Base Voice)
+Base Voice: af_heart (or any voice - doesn't matter if regularization is 0)
+Epochs: 200-300
+Learning Rate: 0.0005
+Regularization: 0.0  ← CRITICAL!
+Max Samples: 300
+Device: cuda (if available)
+```
+
+For **refining existing custom voicepack**:
+```
+Mode: Continue from Checkpoint
+Epochs: 100-200
+Learning Rate: 0.0002 (lower for fine-tuning)
+Regularization: 0.0
+```
+
+For **experimental training from scratch**:
+```
+Mode: Pure Training
+Epochs: 500+
+Learning Rate: 0.0005
+Regularization: 0.0 (ignored in pure mode)
+```
+
 **Troubleshooting:**
-- *CUDA out of memory*: Close other GPU workloads or switch Kokoro’s device to CPU before training.
+- *CUDA out of memory*: Close other GPU workloads, switch device to CPU, or reduce max samples to 200. The system auto-pauses Ollama to free VRAM.
+- *Training stops at epoch 100*: Memory fragmentation - fixed automatically with `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` environment variable.
+- *Voicepack sounds like base voice*: Retrain with regularization set to `0.0` (see "Why Voicepacks Sound Like Base Voice" above).
 - *Server not running*: Check `external/kokoro/kokoro_server.py` log (`logs/run/kokoro-server.log`) and start with `./bin/mh kokoro serve start`.
-- *503 from /api/kokoro-training*: Ensure you’re logged in and have at least 10 exported samples (≥2 minutes) in the Kokoro dataset.
-- *“Unsupported provider: kokoro”*: Use the Kokoro tab in the training UI; don’t call the SoVITS endpoint with the Kokoro provider.
+- *503 from /api/kokoro-training*: Ensure you're logged in and have at least 10 exported samples (≥2 minutes) in the Kokoro dataset.
+- *"Unsupported provider: kokoro"*: Use the Kokoro tab in the training UI; don't call the SoVITS endpoint with the Kokoro provider.
+- *Low training loss but poor quality*: Need more diverse samples covering different phonemes, emotions, and speaking styles.
 
 ---
 

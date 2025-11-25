@@ -21,6 +21,9 @@
   let reasoningDepth: number = 0;
   const reasoningLabels = ['Off', 'Quick', 'Focused', 'Deep'];
   const clampReasoningDepth = (value: number) => Math.max(0, Math.min(reasoningLabels.length - 1, Math.round(value)));
+  let bigBrotherEnabled = false;
+  let claudeSessionReady = false;
+  let claudeSessionChecking = false;
   let chatResponseStream: EventSource | null = null;
   let mode: 'conversation' | 'inner' = 'conversation';
   let lengthMode: 'auto' | 'concise' | 'detailed' = 'auto';
@@ -140,6 +143,7 @@
         reasoningDepth = p.reasoningEnabled ? 2 : 0;
       }
       if (typeof p.boredomTtsEnabled === 'boolean') boredomTtsEnabled = p.boredomTtsEnabled;
+      if (typeof p.bigBrotherEnabled === 'boolean') bigBrotherEnabled = p.bigBrotherEnabled;
     } catch {}
   }
   function saveChatPrefs() {
@@ -148,6 +152,7 @@
         ttsEnabled,
         reasoningDepth,
         reasoningEnabled: reasoningDepth > 0,
+        bigBrotherEnabled,
         boredomTtsEnabled,
       };
       localStorage.setItem('chatPrefs', JSON.stringify(prefs));
@@ -182,6 +187,37 @@
     if (ttsEnabled) {
       ttsApi.prefetchVoiceResources();
     }
+
+    // Load Big Brother configuration from server
+    try {
+      const res = await fetch('/api/big-brother-config');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.config) {
+          bigBrotherEnabled = data.config.enabled ?? false;
+          saveChatPrefs(); // Save to local storage
+
+          // If Big Brother is enabled, check/start Claude session
+          if (bigBrotherEnabled) {
+            const status = await checkClaudeSessionStatus();
+            if (!status?.ready && status?.installed) {
+              await startClaudeSession();
+            } else if (status?.ready) {
+              claudeSessionReady = true;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[big-brother] Failed to load config:', error);
+    }
+
+    // Poll Claude session status every 10 seconds when BB is enabled
+    const claudeStatusInterval = setInterval(async () => {
+      if (bigBrotherEnabled) {
+        await checkClaudeSessionStatus();
+      }
+    }, 10000);
 
     // Check Ollama health status
     ollamaApi.checkStatus();
@@ -638,6 +674,105 @@
     }
   }
 
+  async function checkClaudeSessionStatus() {
+    try {
+      const res = await fetch('/api/claude-session');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.status) {
+          claudeSessionReady = data.status.ready;
+          return data.status;
+        }
+      }
+    } catch (error) {
+      console.error('[claude-session] Failed to check status:', error);
+    }
+    return null;
+  }
+
+  async function startClaudeSession() {
+    if (claudeSessionChecking) return;
+
+    claudeSessionChecking = true;
+    try {
+      console.log('[claude-session] Starting Claude CLI session...');
+      const res = await fetch('/api/claude-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'start' })
+      });
+
+      const data = await res.json();
+      if (data.success && data.status) {
+        claudeSessionReady = data.status.ready;
+        console.log('[claude-session] Status:', data.message);
+      } else {
+        console.error('[claude-session] Failed to start:', data.error);
+      }
+    } catch (error) {
+      console.error('[claude-session] Error starting session:', error);
+    } finally {
+      claudeSessionChecking = false;
+    }
+  }
+
+  async function stopClaudeSession() {
+    try {
+      await fetch('/api/claude-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'stop' })
+      });
+      claudeSessionReady = false;
+    } catch (error) {
+      console.error('[claude-session] Error stopping session:', error);
+    }
+  }
+
+  async function toggleBigBrother() {
+    const wasEnabled = bigBrotherEnabled;
+    bigBrotherEnabled = !bigBrotherEnabled;
+    saveChatPrefs();
+
+    // Update server configuration
+    try {
+      const res = await fetch('/api/big-brother-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: bigBrotherEnabled,
+          provider: 'claude-code', // Default provider
+          escalateOnStuck: true,
+          escalateOnRepeatedFailures: true,
+          maxRetries: 1,
+          includeFullScratchpad: true,
+          autoApplySuggestions: false
+        })
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        console.error('[big-brother] Failed to update config:', data.error);
+        // Revert on failure
+        bigBrotherEnabled = wasEnabled;
+        saveChatPrefs();
+        return;
+      }
+
+      // Start or stop Claude session based on BB mode
+      if (bigBrotherEnabled) {
+        await startClaudeSession();
+      } else {
+        await stopClaudeSession();
+      }
+    } catch (error) {
+      console.error('[big-brother] Error updating config:', error);
+      // Revert on failure
+      bigBrotherEnabled = wasEnabled;
+      saveChatPrefs();
+    }
+  }
+
   async function handleValidate(relPath: string, status: 'correct' | 'incorrect') {
     try {
       const res = await fetch('/api/memories/validate', {
@@ -764,6 +899,30 @@
         </div>
       </div>
     </div>
+
+    <!-- Big Brother Mode Toggle -->
+    <button
+      class="big-brother-toggle {bigBrotherEnabled ? 'active' : ''} {claudeSessionReady ? 'ready' : ''}"
+      title={bigBrotherEnabled
+        ? claudeSessionReady
+          ? 'Big Brother active - Claude CLI ready ✓'
+          : claudeSessionChecking
+            ? 'Big Brother active - Starting Claude CLI...'
+            : 'Big Brother active - Claude CLI not ready'
+        : 'Big Brother mode off - Click to enable CLI escalation'}
+      on:click={toggleBigBrother}
+    >
+      <span class="big-brother-icon">🤖</span>
+      {#if bigBrotherEnabled}
+        {#if claudeSessionReady}
+          <span class="big-brother-badge ready">●</span>
+        {:else if claudeSessionChecking}
+          <span class="big-brother-badge checking">⋯</span>
+        {:else}
+          <span class="big-brother-badge">BB</span>
+        {/if}
+      {/if}
+    </button>
 
     <!-- Quick voice/tts controls -->
     <div class="quick-audio">

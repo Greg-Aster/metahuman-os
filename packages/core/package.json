@@ -6,6 +6,7 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./auth": "./src/auth.ts",
     "./identity": "./src/identity.ts",
     "./memory": "./src/memory.ts",
     "./audit": "./src/audit.ts",
@@ -48,9 +49,13 @@
     "./chat-settings": "./src/chat-settings.ts",
     "./tts/server-manager": "./src/tts/server-manager.ts",
     "./cognitive-graph-schema": "./src/cognitive-graph-schema.ts",
-    "./graph-executor": "./src/graph-executor.ts"
+    "./graph-executor": "./src/graph-executor.ts",
+    "./big-brother": "./src/big-brother.ts",
+    "./claude-session": "./src/claude-session.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.939.0",
+    "@aws-sdk/lib-storage": "^3.939.0",
     "bcrypt": "^6.0.0",
     "fast-glob": "^3.3.2",
     "fs-extra": "^11.3.2",

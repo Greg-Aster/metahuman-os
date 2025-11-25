@@ -1434,6 +1434,54 @@
     background: rgba(250,204,21,0.35);
   }
 
+  /* Cognitive Mode badge */
+  .mode-badge {
+    padding: 0.125rem 0.4rem;
+    border-radius: 9999px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: lowercase;
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+  }
+
+  /* Dual mode - Purple (operator/coding enabled) */
+  .mode-badge.mode-dual {
+    background: rgba(147, 51, 234, 0.16);
+    color: rgb(109 40 217);
+    border-color: transparent;
+  }
+
+  /* Agent mode - Blue (heuristic routing) */
+  .mode-badge.mode-agent {
+    background: rgba(59, 130, 246, 0.16);
+    color: rgb(29 78 216);
+    border-color: transparent;
+  }
+
+  /* Emulation mode - Amber (stable snapshot) */
+  .mode-badge.mode-emulation {
+    background: rgba(245, 158, 11, 0.16);
+    color: rgb(180 83 9);
+    border-color: transparent;
+  }
+
+  /* Dark mode */
+  :global(.dark) .mode-badge.mode-dual {
+    background: rgba(167, 139, 250, 0.2);
+    color: rgb(196 181 253);
+  }
+
+  :global(.dark) .mode-badge.mode-agent {
+    background: rgba(96, 165, 250, 0.2);
+    color: rgb(147 197 253);
+  }
+
+  :global(.dark) .mode-badge.mode-emulation {
+    background: rgba(251, 191, 36, 0.2);
+    color: rgb(252 211 77);
+  }
+
   /* Trust level dropdown menu (kept for backward compatibility if needed) */
   .trust-menu {
     display: flex;

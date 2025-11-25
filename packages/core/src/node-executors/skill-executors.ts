@@ -13,7 +13,11 @@ import type { NodeExecutor } from './types.js';
 export const createSkillExecutor = (skillId: string): NodeExecutor => {
   return async (inputs, context) => {
     try {
-      const trustLevel: TrustLevel = 'supervised_auto';
+      // Load trust level from decision rules instead of hardcoding
+      const { loadDecisionRules } = await import('../identity.js');
+      const rules = loadDecisionRules();
+      const trustLevel: TrustLevel = rules.trustLevel as TrustLevel;
+
       const result = await executeSkill(skillId, inputs, trustLevel);
 
       return {

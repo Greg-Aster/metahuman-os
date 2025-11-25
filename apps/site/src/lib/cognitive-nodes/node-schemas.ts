@@ -1167,6 +1167,31 @@ export const StuckDetectorNode: NodeSchema = {
   description: 'Detects failure loops and repeated unsuccessful actions',
 };
 
+export const BigBrotherNode: NodeSchema = {
+  id: 'big_brother',
+  name: 'Big Brother',
+  category: 'operator',
+  ...categoryColors.operator,
+  inputs: [
+    { name: 'goal', type: 'string', description: 'The goal the operator is trying to achieve' },
+    { name: 'scratchpad', type: 'array', description: 'Full scratchpad with actions and observations' },
+    { name: 'errorType', type: 'string', optional: true, description: 'Type of error (repeated_failures, no_progress, etc.)' },
+    { name: 'context', type: 'object', optional: true, description: 'Additional context about the stuck state' },
+  ],
+  outputs: [
+    { name: 'suggestions', type: 'array', description: 'Array of actionable recovery suggestions' },
+    { name: 'reasoning', type: 'string', description: 'Root cause analysis and reasoning' },
+    { name: 'alternativeApproach', type: 'string', description: 'Suggested alternative strategy' },
+    { name: 'success', type: 'boolean', description: 'Whether escalation succeeded' },
+  ],
+  properties: {
+    provider: 'claude-code',
+    maxRetries: 1,
+    autoApplySuggestions: false,
+  },
+  description: 'Escalates stuck states to Claude CLI for expert analysis and recovery guidance',
+};
+
 // ============================================================================
 // AGENT NODES
 // ============================================================================
@@ -1674,6 +1699,117 @@ export const AgentTriggerNode: NodeSchema = {
   description: 'Triggers another agent/workflow from within a graph',
 };
 
+// ============================================================================
+// CURATOR WORKFLOW NODES
+// ============================================================================
+
+export const UncuratedMemoryLoaderNode: NodeSchema = {
+  id: 'uncurated_memory_loader',
+  name: 'Load Uncurated Memories',
+  category: 'memory',
+  ...categoryColors.memory,
+  inputs: [],
+  outputs: [
+    { name: 'memories', type: 'array', description: 'Array of uncurated episodic memories' },
+  ],
+  properties: {
+    limit: 5,
+  },
+  description: 'Loads episodic memories that have not been curated yet',
+};
+
+export const PersonaSummaryLoaderNode: NodeSchema = {
+  id: 'persona_summary_loader',
+  name: 'Load Persona Context',
+  category: 'config',
+  ...categoryColors.config,
+  inputs: [],
+  outputs: [
+    { name: 'personaSummary', type: 'string', description: 'Persona identity summary for context' },
+  ],
+  properties: {},
+  description: 'Loads persona identity summary to provide context for curation',
+};
+
+export const CuratorLLMNode: NodeSchema = {
+  id: 'curator_llm',
+  name: 'Curate Memories (LLM)',
+  category: 'model',
+  ...categoryColors.model,
+  inputs: [
+    { name: 'memories', type: 'array', description: 'Uncurated memories to process' },
+    { name: 'personaSummary', type: 'string', description: 'Persona context', optional: true },
+  ],
+  outputs: [
+    { name: 'curatedMemories', type: 'array', description: 'LLM-curated conversational exchanges' },
+  ],
+  properties: {
+    temperature: 0.3,
+    timeout: 300000,
+  },
+  description: 'Uses LLM to transform raw memories into conversational training data',
+};
+
+export const CuratedMemorySaverNode: NodeSchema = {
+  id: 'curated_memory_saver',
+  name: 'Save Curated Memories',
+  category: 'memory',
+  ...categoryColors.memory,
+  inputs: [
+    { name: 'curatedMemories', type: 'array', description: 'Curated memories to save' },
+  ],
+  outputs: [
+    { name: 'savedCount', type: 'number', description: 'Number of memories saved' },
+  ],
+  properties: {},
+  description: 'Saves curated memories to the training data directory',
+};
+
+export const TrainingPairGeneratorNode: NodeSchema = {
+  id: 'training_pair_generator',
+  name: 'Generate Training Pairs',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [
+    { name: 'curatedMemories', type: 'array', description: 'Curated conversational data' },
+  ],
+  outputs: [
+    { name: 'trainingPairs', type: 'array', description: 'User/assistant message pairs for training' },
+  ],
+  properties: {},
+  description: 'Converts curated memories into training pairs for fine-tuning',
+};
+
+export const TrainingPairAppenderNode: NodeSchema = {
+  id: 'training_pair_appender',
+  name: 'Append to JSONL',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [
+    { name: 'trainingPairs', type: 'array', description: 'Training pairs to append' },
+  ],
+  outputs: [
+    { name: 'appendedCount', type: 'number', description: 'Number of pairs appended' },
+  ],
+  properties: {},
+  description: 'Appends training pairs to the JSONL training data file',
+};
+
+export const MemoryMarkerNode: NodeSchema = {
+  id: 'memory_marker',
+  name: 'Mark as Curated',
+  category: 'memory',
+  ...categoryColors.memory,
+  inputs: [
+    { name: 'curatedMemories', type: 'array', description: 'Memories to mark as curated' },
+  ],
+  outputs: [
+    { name: 'markedCount', type: 'number', description: 'Number of memories marked' },
+  ],
+  properties: {},
+  description: 'Marks memories as curated to prevent reprocessing',
+};
+
 // Export all schemas as a registry
 export const nodeSchemas: NodeSchema[] = [
   // Input
@@ -1760,6 +1896,7 @@ export const nodeSchemas: NodeSchema[] = [
   ScratchpadManagerNode,
   ErrorRecoveryNode,
   StuckDetectorNode,
+  BigBrotherNode,
 
   // Agent
   MemoryLoaderNode,
@@ -1781,6 +1918,15 @@ export const nodeSchemas: NodeSchema[] = [
   ThoughtAggregatorNode,
   LoopMemorySearchNode,
   AgentTriggerNode,
+
+  // Curator Workflow
+  UncuratedMemoryLoaderNode,
+  PersonaSummaryLoaderNode,
+  CuratorLLMNode,
+  CuratedMemorySaverNode,
+  TrainingPairGeneratorNode,
+  TrainingPairAppenderNode,
+  MemoryMarkerNode,
 
   // Configuration
   PersonaLoaderNode,

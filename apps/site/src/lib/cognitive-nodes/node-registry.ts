@@ -41,7 +41,15 @@ import {
   CuriosityQuestionGeneratorNode,
   CuriosityQuestionSaverNode,
   CuriosityActivityCheckNode,
-  SmartRouterNode
+  SmartRouterNode,
+  UncuratedMemoryLoaderNode,
+  PersonaSummaryLoaderNode,
+  CuratorLLMNode,
+  CuratedMemorySaverNode,
+  TrainingPairGeneratorNode,
+  TrainingPairAppenderNode,
+  MemoryMarkerNode,
+  BigBrotherNode
 } from './node-schemas';
 
 /**
@@ -1165,6 +1173,68 @@ class StuckDetectorNodeImpl extends CognitiveNodeBase {
   constructor() { super(StuckDetectorNodeImpl.schema); }
 }
 
+class BigBrotherNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'big_brother')!;
+
+  constructor() {
+    super(BigBrotherNodeImpl.schema);
+  }
+
+  async onExecute() {
+    const goal = this.getInputData(0);
+    const scratchpad = this.getInputData(1);
+    const errorType = this.getInputData(2);
+    const context = this.getInputData(3);
+
+    if (!goal || !scratchpad) {
+      this.setOutputData(0, []);
+      this.setOutputData(1, 'Missing required inputs');
+      this.setOutputData(2, '');
+      this.setOutputData(3, false);
+      this.boxcolor = '#d52'; // Red for error
+      return;
+    }
+
+    try {
+      this.boxcolor = '#25d'; // Blue while processing
+
+      // Call the Big Brother executor
+      const response = await fetch('/api/big-brother-escalate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          goal,
+          scratchpad,
+          errorType,
+          context,
+          stuckReason: context?.reason || 'Unknown',
+          suggestions: context?.suggestions || []
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Big Brother escalation failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      this.setOutputData(0, data.suggestions || []);
+      this.setOutputData(1, data.reasoning || '');
+      this.setOutputData(2, data.alternativeApproach || '');
+      this.setOutputData(3, data.success || false);
+
+      this.boxcolor = data.success ? '#2d5' : '#d52'; // Green if success, red if failed
+    } catch (error) {
+      console.error('[BigBrotherNode] Error:', error);
+      this.setOutputData(0, []);
+      this.setOutputData(1, (error as Error).message);
+      this.setOutputData(2, '');
+      this.setOutputData(3, false);
+      this.boxcolor = '#d52'; // Red for error
+    }
+  }
+}
+
 // ============================================================================
 // AGENT NODE IMPLEMENTATIONS
 // ============================================================================
@@ -1442,6 +1512,79 @@ class AgentTriggerNodeImpl extends CognitiveNodeBase {
   }
 }
 
+// ============================================================================
+// CURATOR WORKFLOW NODE IMPLEMENTATIONS
+// ============================================================================
+
+class UncuratedMemoryLoaderNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'uncurated_memory_loader')!;
+  constructor() { super(UncuratedMemoryLoaderNodeImpl.schema); }
+  onExecute() {
+    // Mock - in real implementation would load uncurated memories from API
+    this.setOutputData(0, []);
+  }
+}
+
+class PersonaSummaryLoaderNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'persona_summary_loader')!;
+  constructor() { super(PersonaSummaryLoaderNodeImpl.schema); }
+  onExecute() {
+    // Mock - in real implementation would load persona summary
+    this.setOutputData(0, 'Persona summary...');
+  }
+}
+
+class CuratorLLMNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'curator_llm')!;
+  constructor() { super(CuratorLLMNodeImpl.schema); }
+  async onExecute() {
+    const memories = this.getInputData(0) || [];
+    const personaSummary = this.getInputData(1) || '';
+    // Mock - in real implementation would call LLM for curation
+    this.setOutputData(0, []);
+  }
+}
+
+class CuratedMemorySaverNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'curated_memory_saver')!;
+  constructor() { super(CuratedMemorySaverNodeImpl.schema); }
+  onExecute() {
+    const curatedMemories = this.getInputData(0) || [];
+    // Mock - in real implementation would save curated memories
+    this.setOutputData(0, curatedMemories.length);
+  }
+}
+
+class TrainingPairGeneratorNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'training_pair_generator')!;
+  constructor() { super(TrainingPairGeneratorNodeImpl.schema); }
+  onExecute() {
+    const curatedMemories = this.getInputData(0) || [];
+    // Mock - in real implementation would generate training pairs
+    this.setOutputData(0, []);
+  }
+}
+
+class TrainingPairAppenderNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'training_pair_appender')!;
+  constructor() { super(TrainingPairAppenderNodeImpl.schema); }
+  onExecute() {
+    const trainingPairs = this.getInputData(0) || [];
+    // Mock - in real implementation would append to JSONL file
+    this.setOutputData(0, trainingPairs.length);
+  }
+}
+
+class MemoryMarkerNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'memory_marker')!;
+  constructor() { super(MemoryMarkerNodeImpl.schema); }
+  onExecute() {
+    const curatedMemories = this.getInputData(0) || [];
+    // Mock - in real implementation would mark memories as curated
+    this.setOutputData(0, curatedMemories.length);
+  }
+}
+
   // Return all node implementation classes
   return {
     MicInputNodeImpl,
@@ -1509,6 +1652,7 @@ class AgentTriggerNodeImpl extends CognitiveNodeBase {
     ScratchpadManagerNodeImpl,
     ErrorRecoveryNodeImpl,
     StuckDetectorNodeImpl,
+    BigBrotherNodeImpl,
     // Agent
     MemoryLoaderNodeImpl,
     MemorySaverNodeImpl,
@@ -1538,6 +1682,14 @@ class AgentTriggerNodeImpl extends CognitiveNodeBase {
     ThoughtAggregatorNodeImpl,
     LoopMemorySearchNodeImpl,
     AgentTriggerNodeImpl,
+    // Curator Workflow
+    UncuratedMemoryLoaderNodeImpl,
+    PersonaSummaryLoaderNodeImpl,
+    CuratorLLMNodeImpl,
+    CuratedMemorySaverNodeImpl,
+    TrainingPairGeneratorNodeImpl,
+    TrainingPairAppenderNodeImpl,
+    MemoryMarkerNodeImpl,
   };
 }
 
@@ -1673,6 +1825,7 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
     LiteGraph.registerNodeType('cognitive/scratchpad_manager', nodeImpls.ScratchpadManagerNodeImpl);
     LiteGraph.registerNodeType('cognitive/error_recovery', nodeImpls.ErrorRecoveryNodeImpl);
     LiteGraph.registerNodeType('cognitive/stuck_detector', nodeImpls.StuckDetectorNodeImpl);
+    LiteGraph.registerNodeType('cognitive/big_brother', nodeImpls.BigBrotherNodeImpl);
 
     // Agent nodes
     LiteGraph.registerNodeType('cognitive/memory_loader', nodeImpls.MemoryLoaderNodeImpl);
@@ -1706,6 +1859,15 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
     LiteGraph.registerNodeType('cognitive/thought_aggregator', nodeImpls.ThoughtAggregatorNodeImpl);
     LiteGraph.registerNodeType('cognitive/loop_memory_search', nodeImpls.LoopMemorySearchNodeImpl);
     LiteGraph.registerNodeType('cognitive/agent_trigger', nodeImpls.AgentTriggerNodeImpl);
+
+    // Curator Workflow nodes
+    LiteGraph.registerNodeType('cognitive/uncurated_memory_loader', nodeImpls.UncuratedMemoryLoaderNodeImpl);
+    LiteGraph.registerNodeType('cognitive/persona_summary_loader', nodeImpls.PersonaSummaryLoaderNodeImpl);
+    LiteGraph.registerNodeType('cognitive/curator_llm', nodeImpls.CuratorLLMNodeImpl);
+    LiteGraph.registerNodeType('cognitive/curated_memory_saver', nodeImpls.CuratedMemorySaverNodeImpl);
+    LiteGraph.registerNodeType('cognitive/training_pair_generator', nodeImpls.TrainingPairGeneratorNodeImpl);
+    LiteGraph.registerNodeType('cognitive/training_pair_appender', nodeImpls.TrainingPairAppenderNodeImpl);
+    LiteGraph.registerNodeType('cognitive/memory_marker', nodeImpls.MemoryMarkerNodeImpl);
 
     console.log('[CognitiveNodes] Registration completed successfully');
   } catch (error) {

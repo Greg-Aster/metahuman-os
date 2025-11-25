@@ -30,6 +30,7 @@
   import PersonaEditor from './PersonaEditor.svelte';
   import AddonsManager from './AddonsManager.svelte';
   import BoredomControl from './BoredomControl.svelte';
+  import TerminalManager from './TerminalManager.svelte';
 
   // Memory/Events (loaded from /api/memories)
   type EventItem = {
@@ -549,7 +550,9 @@ async function loadMemoryContent(relPath: string) {
           <button class="tab-button" class:active={personaTab==='generator'} on:click={() => personaTab='generator'}>Generator</button>
         </div>
         {#if personaTab === 'editor'}
-          <PersonaEditor />
+          <div class="persona-editor-wrapper">
+            <PersonaEditor />
+          </div>
         {:else if personaTab === 'memory'}
           <div class="memory-section">
             <MemoryControls on:captured={loadEvents} />
@@ -1251,10 +1254,10 @@ async function loadMemoryContent(relPath: string) {
     <div class="view-container terminal-view">
       <div class="view-header">
         <h2 class="view-title">💻 Terminal</h2>
-        <p class="view-subtitle">Command line interface</p>
+        <p class="view-subtitle">Multiple terminals with tab management</p>
       </div>
-      <div class="view-content">
-        <Terminal />
+      <div class="view-content terminal-iframe-container">
+        <TerminalManager />
       </div>
     </div>
   {/if}
@@ -1269,6 +1272,20 @@ async function loadMemoryContent(relPath: string) {
 
   .terminal-view {
     padding: 0;
+  }
+
+  .terminal-view .terminal-iframe-container {
+    padding: 0;
+    height: calc(100vh - 120px);
+    width: 100%;
+    position: relative;
+  }
+
+  .terminal-iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: #000;
   }
 
   .audio-grid {
@@ -1955,6 +1972,13 @@ async function loadMemoryContent(relPath: string) {
 
   :global(.dark) .page-indicator {
     color: #9ca3af;
+  }
+
+  /* Persona Editor Wrapper - provides height constraint for PersonaEditor component */
+  .persona-editor-wrapper {
+    height: calc(100vh - 200px);
+    min-height: 500px;
+    overflow: hidden;
   }
 </style>
 

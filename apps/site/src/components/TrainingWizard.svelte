@@ -48,6 +48,7 @@
     per_device_train_batch_size: number;
     gradient_accumulation_steps: number;
     max_seq_length: number;
+    quantization: string; // GGUF quantization level
   }
 
   // Training config presets
@@ -62,7 +63,8 @@
     learning_rate: 0.0002, // 2e-4 (higher for LoRA)
     per_device_train_batch_size: 1,
     gradient_accumulation_steps: 16,
-    max_seq_length: 2048
+    max_seq_length: 2048,
+    quantization: 'Q4_K_M' // Balanced quality/speed
   };
 
   const fineTuneConfigPreset: TrainingConfig = {
@@ -76,7 +78,8 @@
     learning_rate: 0.00002, // 2e-5 (lower for fine-tuning)
     per_device_train_batch_size: 4,
     gradient_accumulation_steps: 8,
-    max_seq_length: 2048
+    max_seq_length: 2048,
+    quantization: 'Q4_K_M' // Balanced quality/speed
   };
 
   // State
@@ -107,6 +110,11 @@
   let runpodValid = false;
   let runpodConfigLoaded = false; // Track if config was auto-loaded
 
+  // Advanced settings
+  let enableS3Upload = true; // Enable S3 upload by default if configured
+  let enablePreprocessing = true; // Enable curation/preprocessing by default
+  let hasS3Configured = false; // Track if S3 credentials exist
+
   // Training monitor state
   let trainingPid: number | null = null;
   let trainingLogs: Array<{ timestamp: string; event: string; details?: any }> = [];
@@ -116,6 +124,18 @@
   let eventsScrollContainer: HTMLDivElement | null = null;
   let cancelling = false;
   let trainingComplete = false;
+  let loadingModel = false;
+  let modelLoadSuccess = '';
+
+  // Progress tracking state
+  interface ProgressInfo {
+    stage: string;
+    percentage: number;
+    attemptCurrent: number;
+    attemptMax: number;
+    message: string;
+  }
+  let currentProgress: ProgressInfo | null = null;
 
   // Computed
   $: canProceed = (() => {
@@ -170,6 +190,9 @@
           hasRunpodKey: data.hasRunpodKey || false,
           hasPreviousModel: data.hasPreviousModel || false
         };
+
+        // Check if S3 is configured
+        hasS3Configured = data.hasS3Configured || false;
       }
     } catch (err) {
       console.error('[TrainingWizard] Failed to detect capabilities:', err);
@@ -301,6 +324,61 @@
     }
   }
 
+  // Check if a log line contains progress information
+  function isProgressLine(line: string): boolean {
+    return /\[ProgressTracker\]|Attempt\s+\d+\/\d+|\bSTEP\s+\d+\/\d+|\bStage\s+\d+\/\d+/i.test(line);
+  }
+
+  // Parse console logs to extract progress indicators
+  function extractProgress(logs: string[]): ProgressInfo | null {
+    // Search logs in reverse order (most recent first)
+    for (let i = logs.length - 1; i >= 0; i--) {
+      const line = logs[i];
+
+      // Match ProgressTracker format: "[ProgressTracker] 📊 stage: 8% - Attempt 10/120 - message"
+      const progressMatch = line.match(/\[ProgressTracker\]\s+📊\s+(\w+):\s+(\d+)%\s+-\s+Attempt\s+(\d+)\/(\d+)\s+-\s+(.+)/);
+      if (progressMatch) {
+        return {
+          stage: progressMatch[1],
+          percentage: parseInt(progressMatch[2]),
+          attemptCurrent: parseInt(progressMatch[3]),
+          attemptMax: parseInt(progressMatch[4]),
+          message: progressMatch[5].trim()
+        };
+      }
+
+      // Match lora-trainer format: "[lora-trainer] Waiting for pod ssh gateway... (Attempt X/120)"
+      const loraMatch = line.match(/\[lora-trainer\]\s+(.+?)\s+\(Attempt\s+(\d+)\/(\d+)\)/);
+      if (loraMatch) {
+        const attemptCurrent = parseInt(loraMatch[2]);
+        const attemptMax = parseInt(loraMatch[3]);
+        return {
+          stage: 'ssh_connection',
+          percentage: Math.round((attemptCurrent / attemptMax) * 100),
+          attemptCurrent,
+          attemptMax,
+          message: loraMatch[1].trim()
+        };
+      }
+
+      // Match other stage indicators
+      const stageMatch = line.match(/\[(?:lora-trainer|full-cycle|fine-tune-cycle)\]\s+(?:STEP|Stage)\s+(\d+)\/(\d+):\s+(.+)/i);
+      if (stageMatch) {
+        const stageCurrent = parseInt(stageMatch[1]);
+        const stageMax = parseInt(stageMatch[2]);
+        return {
+          stage: `step_${stageCurrent}`,
+          percentage: Math.round((stageCurrent / stageMax) * 100),
+          attemptCurrent: stageCurrent,
+          attemptMax: stageMax,
+          message: stageMatch[3].trim()
+        };
+      }
+    }
+
+    return null;
+  }
+
   // Poll training logs and status
   async function pollTrainingLogs() {
     try {
@@ -315,12 +393,16 @@
         }
       }
 
-      // Load console logs (reduced from 100 to 50 lines)
-      const consoleRes = await fetch('/api/training/console-logs?maxLines=50');
+      // Load console logs (increased from 50 to 200 for better progress detection)
+      const consoleRes = await fetch('/api/training/console-logs?maxLines=200');
       if (consoleRes.ok) {
         const consoleData = await consoleRes.json();
         if (consoleData.success && consoleData.logs) {
           consoleLogs = consoleData.logs;
+
+          // Extract progress information from logs
+          currentProgress = extractProgress(consoleData.logs);
+
           // Auto-scroll only if user is near bottom
           requestAnimationFrame(() => scrollLogsIfNeeded('console'));
         }
@@ -336,6 +418,7 @@
           // If process stopped, mark as complete and stop polling
           if (!statusData.running && !trainingComplete) {
             trainingComplete = true;
+            currentProgress = null; // Clear progress on completion
             stopLogsPolling();
           }
         }
@@ -404,6 +487,32 @@
     }
   }
 
+  // Load trained model into Ollama
+  async function loadModel(modelType: 'merged' | 'adapter' | 'both') {
+    loadingModel = true;
+    modelLoadSuccess = '';
+    error = '';
+
+    try {
+      const res = await fetch('/api/training/load-model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelType })
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to load model');
+      }
+
+      modelLoadSuccess = `✅ ${data.message || 'Model loaded successfully!'}`;
+    } catch (err) {
+      error = (err as Error).message;
+    } finally {
+      loadingModel = false;
+    }
+  }
+
   // Launch training
   async function launchTraining() {
     loading = true;
@@ -413,7 +522,11 @@
       // Build the launch request payload
       const payload: any = {
         method: selectedMethod,
-        trainingConfig: trainingConfig
+        trainingConfig: trainingConfig,
+        advancedSettings: {
+          enableS3Upload: enableS3Upload && hasS3Configured, // Only enable if S3 is configured
+          enablePreprocessing: enablePreprocessing
+        }
       };
 
       // Include RunPod config for remote training methods
@@ -914,6 +1027,67 @@
                 </select>
                 <small>Longer context = more VRAM required</small>
               </div>
+
+              <div class="form-group">
+                <label for="quantization">GGUF Quantization</label>
+                <select id="quantization" bind:value={trainingConfig.quantization}>
+                  <option value="Q4_K_M">Q4_K_M (Balanced - 8GB, Recommended)</option>
+                  <option value="Q4_K_S">Q4_K_S (Smallest - 7GB)</option>
+                  <option value="Q5_K_M">Q5_K_M (Higher Quality - 10GB)</option>
+                  <option value="Q5_K_S">Q5_K_S (Medium - 9GB)</option>
+                  <option value="Q6_K">Q6_K (Very High Quality - 11GB)</option>
+                  <option value="Q8_0">Q8_0 (Highest Quality - 14GB)</option>
+                </select>
+                <small>Higher quantization = better quality but larger file size</small>
+              </div>
+
+              <!-- Pipeline Settings -->
+              <div class="form-group toggle-group" style="grid-column: 1 / -1;">
+                <label class="section-label">Pipeline Settings</label>
+
+                <div class="toggle-item">
+                  <label class="toggle-container">
+                    <input type="checkbox" bind:checked={enablePreprocessing} />
+                    <span class="toggle-slider"></span>
+                    <span class="toggle-label">
+                      Enable Data Preprocessing
+                      {#if !enablePreprocessing}<span class="warning-badge">⚠️ Not Recommended</span>{/if}
+                    </span>
+                  </label>
+                  <small class="toggle-description">
+                    Uses LLM curator to select high-quality conversations for training.
+                    Disabling may result in lower quality models.
+                  </small>
+                </div>
+
+                {#if selectedMethod === 'remote-lora' || selectedMethod === 'fine-tune'}
+                  <div class="toggle-item">
+                    <label class="toggle-container">
+                      <input
+                        type="checkbox"
+                        bind:checked={enableS3Upload}
+                        disabled={!hasS3Configured}
+                      />
+                      <span class="toggle-slider" class:disabled={!hasS3Configured}></span>
+                      <span class="toggle-label">
+                        Enable S3 Upload
+                        {#if !hasS3Configured}
+                          <span class="info-badge">⚙️ Not Configured</span>
+                        {:else if enableS3Upload}
+                          <span class="success-badge">✓ Saves ~55% Cost</span>
+                        {/if}
+                      </span>
+                    </label>
+                    <small class="toggle-description">
+                      {#if hasS3Configured}
+                        Upload models to S3 instead of direct download. Pod terminates immediately after upload (~3min vs ~15min download).
+                      {:else}
+                        Configure S3 credentials in .env to enable this feature. See docs/S3-UPLOAD.md for setup instructions.
+                      {/if}
+                    </small>
+                  </div>
+                {/if}
+              </div>
             </div>
           </details>
         </div>
@@ -1001,9 +1175,23 @@
               <div class="status-badge complete">
                 <span>✅ Training Complete!</span>
               </div>
-              <button class="btn-primary-small" on:click={() => currentStep = 1}>
-                🔄 Start New Training
-              </button>
+              <div class="post-training-actions">
+                <button class="btn-primary-small" on:click={() => loadModel('merged')} disabled={loadingModel}>
+                  {loadingModel ? 'Loading...' : '📦 Load Merged Model'}
+                </button>
+                <button class="btn-secondary-small" on:click={() => loadModel('adapter')} disabled={loadingModel}>
+                  {loadingModel ? 'Loading...' : '🔧 Load LoRA Adapter'}
+                </button>
+                <button class="btn-secondary-small" on:click={() => loadModel('both')} disabled={loadingModel}>
+                  {loadingModel ? 'Loading...' : '📦🔧 Load Both'}
+                </button>
+                <button class="btn-tertiary-small" on:click={() => currentStep = 1}>
+                  🔄 New Training
+                </button>
+              </div>
+              {#if modelLoadSuccess}
+                <div class="success-message">{modelLoadSuccess}</div>
+              {/if}
             {:else}
               <div class="status-badge idle">
                 <span>No active training</span>
@@ -1012,6 +1200,26 @@
           </div>
 
           <div class="monitor-content">
+            <!-- Training Progress Banner -->
+            {#if trainingPid && currentProgress}
+              <div class="progress-banner">
+                <div class="progress-header">
+                  <div class="progress-stage">
+                    <span class="stage-icon">⚙️</span>
+                    <span class="stage-name">{currentProgress.stage.replace(/_/g, ' ').toUpperCase()}</span>
+                  </div>
+                  <div class="progress-stats">
+                    <span class="progress-percentage">{currentProgress.percentage}%</span>
+                    <span class="progress-attempts">Attempt {currentProgress.attemptCurrent}/{currentProgress.attemptMax}</span>
+                  </div>
+                </div>
+                <div class="progress-message">{currentProgress.message}</div>
+                <div class="progress-bar-container">
+                  <div class="progress-bar-fill" style="width: {currentProgress.percentage}%"></div>
+                </div>
+              </div>
+            {/if}
+
             <!-- Console Output -->
             <div class="logs-container">
               <h4>🖥️ Console Output</h4>
@@ -1022,7 +1230,7 @@
                   </div>
                 {:else}
                   {#each consoleLogs as line}
-                    <div class="console-line">{line}</div>
+                    <div class="console-line" class:progress-highlight={isProgressLine(line)}>{line}</div>
                   {/each}
                 {/if}
               </div>
@@ -1570,6 +1778,121 @@
     gap: 1rem;
   }
 
+  /* Toggle Switches */
+  .toggle-group {
+    border-top: 1px solid var(--border-color, #333);
+    padding-top: 1rem;
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .section-label {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--text-primary, #fff);
+    margin-bottom: 0.25rem;
+    display: block;
+  }
+
+  .toggle-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .toggle-container {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .toggle-container input[type="checkbox"] {
+    display: none;
+  }
+
+  .toggle-slider {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    background: var(--bg-tertiary, #2a2a2a);
+    border-radius: 12px;
+    transition: background 0.2s ease;
+    flex-shrink: 0;
+  }
+
+  .toggle-slider::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+  }
+
+  .toggle-container input[type="checkbox"]:checked + .toggle-slider {
+    background: var(--primary-color, #00a67e);
+  }
+
+  .toggle-container input[type="checkbox"]:checked + .toggle-slider::after {
+    transform: translateX(20px);
+  }
+
+  .toggle-container input[type="checkbox"]:disabled + .toggle-slider {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .toggle-container input[type="checkbox"]:disabled + .toggle-slider.disabled {
+    background: var(--bg-tertiary, #2a2a2a);
+  }
+
+  .toggle-label {
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .toggle-description {
+    display: block;
+    margin-left: 0;
+    padding-left: 52px;
+    font-size: 0.85rem;
+    color: var(--text-secondary, #888);
+    line-height: 1.4;
+  }
+
+  .warning-badge,
+  .info-badge,
+  .success-badge {
+    font-size: 0.75rem;
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.25rem;
+    font-weight: 600;
+  }
+
+  .warning-badge {
+    background: rgba(255, 193, 7, 0.2);
+    color: #ffc107;
+  }
+
+  .info-badge {
+    background: rgba(33, 150, 243, 0.2);
+    color: #2196f3;
+  }
+
+  .success-badge {
+    background: rgba(76, 175, 80, 0.2);
+    color: #4caf50;
+  }
+
   /* Launch Training */
   .confirmation-dialog {
     max-width: 600px;
@@ -1782,6 +2105,60 @@
     background: var(--primary-hover, #008f6e);
   }
 
+  .btn-secondary-small {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--primary-color, #00a67e);
+    background: transparent;
+    color: var(--primary-color, #00a67e);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-secondary-small:hover:not(:disabled) {
+    background: rgba(0, 166, 126, 0.1);
+  }
+
+  .btn-secondary-small:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-tertiary-small {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border-color, #333);
+    background: var(--bg-tertiary, #111);
+    color: var(--text-secondary, #888);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-tertiary-small:hover:not(:disabled) {
+    background: var(--bg-secondary, #1a1a1a);
+    color: var(--text-primary, #fff);
+  }
+
+  .post-training-actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .success-message {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    background: rgba(76, 175, 80, 0.1);
+    border: 1px solid rgba(76, 175, 80, 0.3);
+    border-radius: 0.5rem;
+    color: #4caf50;
+    font-size: 0.875rem;
+  }
+
   .monitor-content {
     display: flex;
     flex-direction: column;
@@ -1833,6 +2210,15 @@
     word-wrap: break-word;
   }
 
+  .console-line.progress-highlight {
+    color: #00d4ff;
+    font-weight: 600;
+    background: rgba(0, 212, 255, 0.1);
+    padding: 0.25rem 0.5rem;
+    border-left: 3px solid #00d4ff;
+    margin-left: -0.5rem;
+  }
+
   .log-entry {
     display: flex;
     gap: 0.75rem;
@@ -1867,5 +2253,93 @@
     margin: 0;
     color: var(--text-secondary, #888);
     font-size: 0.875rem;
+  }
+
+  /* Progress Banner */
+  .progress-banner {
+    background: linear-gradient(135deg, rgba(0, 166, 126, 0.15) 0%, rgba(0, 212, 255, 0.15) 100%);
+    border: 2px solid var(--primary-color, #00a67e);
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 4px 12px rgba(0, 166, 126, 0.2);
+  }
+
+  .progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+
+  .progress-stage {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .stage-icon {
+    font-size: 1.5rem;
+    animation: spin-slow 3s linear infinite;
+  }
+
+  @keyframes spin-slow {
+    to { transform: rotate(360deg); }
+  }
+
+  .stage-name {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: var(--primary-color, #00a67e);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .progress-stats {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .progress-percentage {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #00d4ff;
+    text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+  }
+
+  .progress-attempts {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-secondary, #aaa);
+    background: rgba(0, 0, 0, 0.3);
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.5rem;
+  }
+
+  .progress-message {
+    font-size: 0.95rem;
+    color: var(--text-primary, #fff);
+    margin-bottom: 1rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 0.5rem;
+    font-style: italic;
+  }
+
+  .progress-bar-container {
+    width: 100%;
+    height: 8px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color, #00a67e) 0%, #00d4ff 100%);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
   }
 </style>

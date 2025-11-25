@@ -127,6 +127,15 @@ export interface OperatorConfig {
     catalogTTL: number;
     parallelSkillExecution: boolean;
   };
+  bigBrotherMode?: {
+    enabled: boolean;
+    provider: 'claude-code' | 'ollama' | 'openai';
+    escalateOnStuck: boolean;
+    escalateOnRepeatedFailures: boolean;
+    maxRetries: number;
+    includeFullScratchpad: boolean;
+    autoApplySuggestions: boolean;
+  };
 }
 
 let operatorConfigCache: OperatorConfig | null = null;
@@ -168,6 +177,15 @@ export function getDefaultOperatorConfig(): OperatorConfig {
       cacheCatalog: true,
       catalogTTL: 60000,
       parallelSkillExecution: false
+    },
+    bigBrotherMode: {
+      enabled: false,
+      provider: 'claude-code',
+      escalateOnStuck: true,
+      escalateOnRepeatedFailures: true,
+      maxRetries: 1,
+      includeFullScratchpad: true,
+      autoApplySuggestions: false
     }
   };
 }

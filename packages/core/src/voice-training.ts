@@ -1534,7 +1534,11 @@ function writeKokoroTrainingStatus(status: KokoroTrainingStatus): void {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  fs.writeFileSync(statusPath, JSON.stringify(status, null, 2), 'utf-8');
+
+  // Atomic write: write to temp file, then rename (prevents race conditions)
+  const tempPath = `${statusPath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(status, null, 2), 'utf-8');
+  fs.renameSync(tempPath, statusPath);
 }
 
 /**
@@ -2415,6 +2419,12 @@ export async function startKokoroVoicepackTraining(
 
   const logFd = fs.openSync(logPath, 'w');
 
+  // Set PyTorch memory optimization environment variable to reduce fragmentation
+  const trainingEnv = {
+    ...process.env,
+    PYTORCH_CUDA_ALLOC_CONF: 'expandable_segments:True',
+  };
+
   const trainingProcess = spawn(
     pythonBin,
     args,
@@ -2422,6 +2432,7 @@ export async function startKokoroVoicepackTraining(
       cwd: kokoroDir,
       detached: true,
       stdio: ['ignore', logFd, logFd],
+      env: trainingEnv,
     }
   );
 

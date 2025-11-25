@@ -23,6 +23,11 @@ interface LaunchRequest {
     per_device_train_batch_size: number
     gradient_accumulation_steps: number
     max_seq_length: number
+    quantization: string
+  }
+  advancedSettings?: {
+    enableS3Upload: boolean
+    enablePreprocessing: boolean
   }
 }
 
@@ -47,7 +52,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     const user = getAuthenticatedUser(cookies)
 
     const body: LaunchRequest = await request.json()
-    const { method, runpodConfig, trainingConfig } = body
+    const { method, runpodConfig, trainingConfig, advancedSettings } = body
 
     // Validate method
     if (!['local-lora', 'remote-lora', 'fine-tune'].includes(method)) {
@@ -81,9 +86,19 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       )
     }
 
-    // Save training config to etc/training.json
+    // Save training config to etc/training.json with GGUF conversion settings
     const trainingConfigPath = path.join(systemPaths.root, 'etc', 'training.json')
-    fs.writeFileSync(trainingConfigPath, JSON.stringify(trainingConfig, null, 2))
+
+    // Build config with GGUF conversion settings for the training script
+    const fullConfig = {
+      ...trainingConfig,
+      gguf_conversion: {
+        enabled: true,
+        quantization_type: trainingConfig.quantization || 'Q4_K_M',
+      }
+    }
+
+    fs.writeFileSync(trainingConfigPath, JSON.stringify(fullConfig, null, 2))
 
     // Save RunPod config if provided (for remote methods)
     if ((method === 'remote-lora' || method === 'fine-tune') && runpodConfig) {
@@ -134,17 +149,31 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     // Spawn the training agent
     const tsxPath = path.join(systemPaths.root, 'apps', 'site', 'node_modules', '.bin', 'tsx')
 
+    // Build environment variables with advanced settings
+    const trainingEnv = {
+      ...process.env,
+      NODE_PATH: [
+        path.join(systemPaths.root, 'node_modules'),
+        path.join(systemPaths.root, 'packages/cli/node_modules'),
+        path.join(systemPaths.root, 'apps/site/node_modules'),
+      ].join(':'),
+    }
+
+    // Add advanced settings via environment variables
+    if (advancedSettings) {
+      if (advancedSettings.enableS3Upload === false) {
+        // Temporarily disable S3 by clearing credentials
+        trainingEnv.METAHUMAN_DISABLE_S3 = '1'
+      }
+      if (advancedSettings.enablePreprocessing === false) {
+        trainingEnv.METAHUMAN_SKIP_PREPROCESSING = '1'
+      }
+    }
+
     const child = spawn(tsxPath, [agentPath, ...agentArgs], {
       stdio: ['ignore', logStream, logStream], // stdout and stderr to log file
       cwd: systemPaths.root,
-      env: {
-        ...process.env,
-        NODE_PATH: [
-          path.join(systemPaths.root, 'node_modules'),
-          path.join(systemPaths.root, 'packages/cli/node_modules'),
-          path.join(systemPaths.root, 'apps/site/node_modules'),
-        ].join(':'),
-      },
+      env: trainingEnv,
       detached: true,
     })
 
@@ -160,6 +189,58 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     }
 
     const agentName = agentFileName.replace('.ts', '')
+
+    // Monitor process exit to detect failures
+    child.on('exit', (code, signal) => {
+      fs.closeSync(logStream);
+
+      if (code !== 0) {
+        // Training failed - log to audit
+        audit({
+          level: 'error',
+          category: 'system',
+          event: 'training_failed',
+          details: {
+            agent: agentName,
+            method,
+            pid: child.pid,
+            username: user.username,
+            exitCode: code,
+            signal,
+            logPath: path.basename(logPath),
+            timestamp: new Date().toISOString(),
+          },
+          actor: user.username,
+        })
+
+        console.error(`[training-launch] ❌ Training ${agentName} (PID ${child.pid}) failed with exit code ${code}`)
+        console.error(`[training-launch] Check logs: ${logPath}`)
+      } else {
+        // Training succeeded
+        audit({
+          level: 'info',
+          category: 'system',
+          event: 'training_completed',
+          details: {
+            agent: agentName,
+            method,
+            pid: child.pid,
+            username: user.username,
+            logPath: path.basename(logPath),
+            timestamp: new Date().toISOString(),
+          },
+          actor: user.username,
+        })
+
+        console.log(`[training-launch] ✅ Training ${agentName} (PID ${child.pid}) completed successfully`)
+      }
+
+      // Clean up PID file
+      const pidPath = path.join(systemPaths.logs, 'run', `${agentName}.pid`);
+      if (fs.existsSync(pidPath)) {
+        fs.unlinkSync(pidPath);
+      }
+    })
 
     // Store PID for status checking
     const pidPath = path.join(systemPaths.logs, 'run', `${agentName}.pid`);

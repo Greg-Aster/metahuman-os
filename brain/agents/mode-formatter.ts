@@ -79,7 +79,14 @@ function formatAgentMode(sample: CuratedSample): FormattedSample {
  * Format a single curated sample based on its mode
  */
 function formatSample(sample: CuratedSample): FormattedSample {
-  switch (sample.mode) {
+  // Handle undefined or invalid modes by defaulting to 'dual'
+  const mode = sample.mode || 'dual';
+
+  if (sample.mode !== mode) {
+    console.warn(`[mode-formatter] Invalid cognitive mode "${sample.mode}" for sample ${sample.metadata.original_id}, defaulting to "dual"`);
+  }
+
+  switch (mode) {
     case 'dual':
       return formatDualMode(sample);
     case 'emulation':
@@ -87,7 +94,9 @@ function formatSample(sample: CuratedSample): FormattedSample {
     case 'agent':
       return formatAgentMode(sample);
     default:
-      throw new Error(`Unknown cognitive mode: ${sample.mode}`);
+      // Final fallback (shouldn't reach here after the fix above)
+      console.warn(`[mode-formatter] Unknown cognitive mode "${mode}", defaulting to dual for sample ${sample.metadata.original_id}`);
+      return formatDualMode(sample);
   }
 }
 

@@ -67,6 +67,10 @@ export * from './users';
 export * from './sessions';
 export * from './profile';
 
+// Big Brother Mode - CLI LLM Escalation
+export * from './big-brother';
+export * from './claude-session';
+
 // Node Editor - Graph Execution
 export * from './cognitive-graph-schema';
 export * from './graph-executor';
