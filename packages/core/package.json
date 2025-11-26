@@ -50,6 +50,7 @@
     "./tts/server-manager": "./src/tts/server-manager.ts",
     "./cognitive-graph-schema": "./src/cognitive-graph-schema.ts",
     "./graph-executor": "./src/graph-executor.ts",
+    "./node-executors": "./src/node-executors/index.ts",
     "./big-brother": "./src/big-brother.ts",
     "./claude-session": "./src/claude-session.ts"
   },

@@ -247,8 +247,20 @@ export const scratchpadCompletionCheckerExecutor: NodeExecutor = async (inputs) 
  * Formats scratchpad for display or LLM consumption
  */
 export const scratchpadFormatterExecutor: NodeExecutor = async (inputs, context) => {
-  const scratchpad = inputs[0]?.scratchpad || [];
+  // Unwrap routedData if present (from conditional_router)
+  let inputData = inputs[0];
+  if (inputData?.routedData) {
+    console.log(`[ScratchpadFormatter] Unwrapping routedData from conditional_router`);
+    inputData = inputData.routedData;
+  }
+
+  const scratchpad = inputData?.scratchpad || [];
   const format = context.format || 'text'; // 'text' | 'json' | 'markdown'
+
+  console.log(`[ScratchpadFormatter] Formatting ${scratchpad.length} scratchpad entries`);
+  if (scratchpad.length === 0) {
+    console.warn(`[ScratchpadFormatter] ⚠️  Empty scratchpad received!`);
+  }
 
   if (format === 'json') {
     return {

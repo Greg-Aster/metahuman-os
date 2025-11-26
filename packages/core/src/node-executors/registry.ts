@@ -18,6 +18,11 @@ import {
   planParserExecutor,
   errorRecoveryExecutor,
   stuckDetectorExecutor,
+  bigBrotherRouterExecutor,
+  bigBrotherExecutorExecutor,
+  bigBrotherExecutor,
+  claudeFullTaskExecutor,
+  conditionalRerouteExecutor,
 } from './operator-executors.js';
 import { personaLLMExecutor, modelResolverExecutor, modelRouterExecutor, reflectorLLMExecutor, orchestratorLLMExecutor } from './llm-executors.js';
 import { chainOfThoughtStripperExecutor, safetyValidatorExecutor, responseRefinerExecutor } from './safety-executors.js';
@@ -105,6 +110,7 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
   'loop_controller': loopControllerExecutor,
   'conditional_branch': conditionalBranchExecutor,
   'conditional_router': conditionalRouterExecutor,
+  'conditional_reroute': conditionalRerouteExecutor,
   'switch': switchExecutor,
   'for_each': forEachExecutor,
 
@@ -124,6 +130,10 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
   'scratchpad_manager': scratchpadManagerExecutor,
   'error_recovery': errorRecoveryExecutor,
   'stuck_detector': stuckDetectorExecutor,
+  'big_brother': bigBrotherExecutor,
+  'big_brother_router': bigBrotherRouterExecutor,
+  'big_brother_executor': bigBrotherExecutorExecutor as NodeExecutor,
+  'claude_full_task': claudeFullTaskExecutor,
 
   // Operator nodes
   'react_planner': reactPlannerExecutor,

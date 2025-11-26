@@ -1,9 +1,9 @@
 {
-  "version": "2.3",
-  "name": "Dual Consciousness Mode (Simplified)",
-  "description": "Streamlined dual mode - orchestrator directly feeds response synthesizer, ReAct nodes removed",
+  "version": "2.1",
+  "name": "Dual Consciousness Mode (Orchestrated)",
+  "description": "Enhanced dual mode with intent orchestrator - intelligently routes simple queries to skip operator overhead, while providing enhanced planning guidance for complex tasks",
   "cognitiveMode": "dual",
-  "last_modified": "2025-11-26",
+  "last_modified": "2025-11-24",
   "nodes": [
     {
       "id": 1,
@@ -38,8 +38,7 @@
         "model": "orchestrator",
         "temperature": 0.1,
         "intentClassification": true,
-        "permissionCheck": true,
-        "timeout": 300000
+        "permissionCheck": true
       },
       "title": "Intent Orchestrator"
     },
@@ -103,9 +102,74 @@
       "title": "Context Builder"
     },
     {
+      "id": 9,
+      "type": "cognitive/scratchpad_initializer",
+      "pos": [1250, 100],
+      "size": [200, 60],
+      "title": "Scratchpad Initializer"
+    },
+    {
+      "id": 10,
+      "type": "cognitive/iteration_counter",
+      "pos": [1250, 200],
+      "size": [200, 60],
+      "properties": {
+        "maxIterations": 10
+      },
+      "title": "Iteration Counter"
+    },
+    {
+      "id": 11,
+      "type": "cognitive/react_planner",
+      "pos": [1500, 200],
+      "size": [200, 80],
+      "properties": {
+        "model": "persona"
+      },
+      "title": "ReAct Planner"
+    },
+    {
+      "id": 12,
+      "type": "cognitive/skill_executor",
+      "pos": [1750, 200],
+      "size": [200, 80],
+      "title": "Skill Executor"
+    },
+    {
+      "id": 13,
+      "type": "cognitive/scratchpad_updater",
+      "pos": [2000, 200],
+      "size": [200, 80],
+      "title": "Scratchpad Updater"
+    },
+    {
+      "id": 14,
+      "type": "cognitive/scratchpad_completion_checker",
+      "pos": [2250, 200],
+      "size": [220, 80],
+      "title": "Completion Checker"
+    },
+    {
+      "id": 15,
+      "type": "cognitive/conditional_router",
+      "pos": [2530, 200],
+      "size": [200, 100],
+      "title": "Loop Router"
+    },
+    {
+      "id": 16,
+      "type": "cognitive/scratchpad_formatter",
+      "pos": [2800, 100],
+      "size": [200, 60],
+      "properties": {
+        "format": "text"
+      },
+      "title": "Scratchpad Formatter"
+    },
+    {
       "id": 17,
       "type": "cognitive/response_synthesizer",
-      "pos": [1300, 180],
+      "pos": [3050, 180],
       "size": [200, 100],
       "properties": {
         "model": "persona",
@@ -116,14 +180,14 @@
     {
       "id": 18,
       "type": "cognitive/cot_stripper",
-      "pos": [1550, 180],
+      "pos": [3300, 180],
       "size": [200, 60],
       "title": "CoT Stripper"
     },
     {
       "id": 19,
       "type": "cognitive/safety_validator",
-      "pos": [1800, 180],
+      "pos": [3550, 180],
       "size": [200, 60],
       "properties": {
         "threshold": 0.75
@@ -133,28 +197,28 @@
     {
       "id": 20,
       "type": "cognitive/response_refiner",
-      "pos": [2050, 180],
+      "pos": [3800, 180],
       "size": [200, 60],
       "title": "Response Refiner"
     },
     {
       "id": 21,
       "type": "cognitive/memory_capture",
-      "pos": [2300, 100],
+      "pos": [4050, 100],
       "size": [180, 80],
       "title": "Memory Capture"
     },
     {
       "id": 22,
       "type": "cognitive/audit_logger",
-      "pos": [2300, 220],
+      "pos": [4050, 220],
       "size": [180, 60],
       "title": "Audit Logger"
     },
     {
       "id": 23,
       "type": "cognitive/stream_writer",
-      "pos": [2540, 160],
+      "pos": [4290, 160],
       "size": [180, 60],
       "title": "Stream Writer"
     }
@@ -188,13 +252,22 @@
       "comment": "Orchestrator analysis → Smart Router"
     },
     {
-      "id": 108,
-      "origin_id": 24,
+      "id": 104,
+      "origin_id": 25,
       "origin_slot": 0,
-      "target_id": 17,
-      "target_slot": 0,
+      "target_id": 5,
+      "target_slot": 2,
       "type": "object",
-      "comment": "Orchestrator guidance → Response Synthesizer"
+      "comment": "Complex path → Operator Eligibility"
+    },
+    {
+      "id": 105,
+      "origin_id": 25,
+      "origin_slot": 1,
+      "target_id": 17,
+      "target_slot": 3,
+      "type": "object",
+      "comment": "Simple path → Direct to Response Synthesizer (with guidance)"
     },
     {
       "id": 1,
@@ -303,6 +376,159 @@
       "target_slot": 2,
       "type": "array",
       "comment": "Conversation history → Context Builder"
+    },
+    {
+      "id": 13,
+      "origin_id": 8,
+      "origin_slot": 0,
+      "target_id": 9,
+      "target_slot": 0,
+      "type": "context",
+      "comment": "Context → Scratchpad Initializer"
+    },
+    {
+      "id": 14,
+      "origin_id": 9,
+      "origin_slot": 0,
+      "target_id": 10,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Empty scratchpad → Iteration Counter"
+    },
+    {
+      "id": 15,
+      "origin_id": 10,
+      "origin_slot": 0,
+      "target_id": 11,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Iteration state → ReAct Planner"
+    },
+    {
+      "id": 16,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 11,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "User message → ReAct Planner"
+    },
+    {
+      "id": 17,
+      "origin_id": 8,
+      "origin_slot": 0,
+      "target_id": 11,
+      "target_slot": 2,
+      "type": "context",
+      "comment": "Context → ReAct Planner"
+    },
+    {
+      "id": 106,
+      "origin_id": 24,
+      "origin_slot": 0,
+      "target_id": 11,
+      "target_slot": 3,
+      "type": "object",
+      "comment": "Orchestrator guidance → ReAct Planner (when operator used)"
+    },
+    {
+      "id": 18,
+      "origin_id": 11,
+      "origin_slot": 0,
+      "target_id": 12,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Plan (action) → Skill Executor"
+    },
+    {
+      "id": 19,
+      "origin_id": 12,
+      "origin_slot": 0,
+      "target_id": 13,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "Observation → Scratchpad Updater"
+    },
+    {
+      "id": 20,
+      "origin_id": 10,
+      "origin_slot": 0,
+      "target_id": 13,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Current scratchpad → Scratchpad Updater"
+    },
+    {
+      "id": 21,
+      "origin_id": 11,
+      "origin_slot": 0,
+      "target_id": 13,
+      "target_slot": 2,
+      "type": "object",
+      "comment": "Thought + Action → Scratchpad Updater"
+    },
+    {
+      "id": 22,
+      "origin_id": 13,
+      "origin_slot": 0,
+      "target_id": 14,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Updated scratchpad → Completion Checker"
+    },
+    {
+      "id": 23,
+      "origin_id": 14,
+      "origin_slot": 0,
+      "target_id": 15,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Completion status → Loop Router"
+    },
+    {
+      "id": 24,
+      "origin_id": 14,
+      "origin_slot": 0,
+      "target_id": 15,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Scratchpad (exit data) → Loop Router"
+    },
+    {
+      "id": 25,
+      "origin_id": 14,
+      "origin_slot": 0,
+      "target_id": 15,
+      "target_slot": 2,
+      "type": "object",
+      "comment": "Scratchpad (loop data) → Loop Router"
+    },
+    {
+      "id": 26,
+      "origin_id": 15,
+      "origin_slot": 0,
+      "target_id": 16,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Exit branch → Scratchpad Formatter"
+    },
+    {
+      "id": 27,
+      "origin_id": 15,
+      "origin_slot": 1,
+      "target_id": 10,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Loop back → Iteration Counter [BACK-EDGE]"
+    },
+    {
+      "id": 28,
+      "origin_id": 16,
+      "origin_slot": 0,
+      "target_id": 17,
+      "target_slot": 0,
+      "type": "string",
+      "comment": "Formatted scratchpad → Response Synthesizer"
     },
     {
       "id": 29,

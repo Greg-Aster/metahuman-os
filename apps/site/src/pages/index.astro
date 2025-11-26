@@ -1,4 +1,7 @@
 ---
+// Pre-warm expensive modules on page load (prevents 50-second first request delay)
+import '../prewarm';
+
 import ChatLayout from '../components/ChatLayout.svelte';
 import LeftSidebar from '../components/LeftSidebar.svelte';
 import RightSidebar from '../components/RightSidebar.svelte';
@@ -34,6 +37,25 @@ import '../styles/chat-animations.css';
         document.documentElement.classList.remove('dark');
       }
     </script>
+
+    <!-- PERFORMANCE FIX: Bootstrap critical data before component hydration -->
+    <!-- This prevents features from being broken until components mount -->
+    <script is:inline type="module">
+      // Fetch critical status data immediately (before Svelte hydration)
+      // This populates the statusStore so components have data when they mount
+      fetch('/api/status', { cache: 'no-store' })
+        .then(res => res.json())
+        .then(async data => {
+          // Import statusStore dynamically
+          const { statusStore } = await import('./src/stores/navigation');
+          // Populate statusStore so components have data when they mount
+          statusStore.set(data);
+          console.log('[bootstrap] Status data loaded before hydration');
+        })
+        .catch(err => {
+          console.error('[bootstrap] Failed to load status:', err);
+        });
+    </script>
   </head>
   <body>
     <!-- Authentication Gate (blocks access until logged in) -->
@@ -41,10 +63,12 @@ import '../styles/chat-animations.css';
 
     <!-- Main Application -->
     <div id="main-app">
-      <ChatLayout client:load>
+      <!-- PERFORMANCE: Use client:idle for faster initial page load -->
+      <!-- Components hydrate after browser is idle, not blocking render -->
+      <ChatLayout client:idle>
         <ThemeToggle slot="header-actions" />
         <LeftSidebar slot="left-sidebar" client:visible />
-        <CenterContent slot="center" client:load />
+        <CenterContent slot="center" client:idle />
         <RightSidebar slot="right-sidebar" client:visible />
       </ChatLayout>
     </div>

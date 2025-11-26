@@ -1,15 +1,21 @@
 {
-  "version": "2.3",
-  "name": "Dual Consciousness Mode (Simplified)",
-  "description": "Streamlined dual mode - orchestrator directly feeds response synthesizer, ReAct nodes removed",
+  "version": "2.1-bigbrother",
+  "name": "Dual Consciousness Mode - Big Brother Variant",
+  "description": "Full dual-mode workflow with Claude Code replacing the local ReAct planner - keeps orchestrator, memory, context, routing, but delegates execution to Claude",
   "cognitiveMode": "dual",
   "last_modified": "2025-11-26",
   "nodes": [
     {
       "id": 1,
       "type": "cognitive/user_input",
-      "pos": [50, 200],
-      "size": [180, 60],
+      "pos": [
+        50,
+        200
+      ],
+      "size": [
+        180,
+        60
+      ],
       "properties": {
         "message": ""
       },
@@ -18,61 +24,66 @@
     {
       "id": 2,
       "type": "cognitive/session_context",
-      "pos": [50, 300],
-      "size": [180, 60],
+      "pos": [
+        50,
+        300
+      ],
+      "size": [
+        180,
+        60
+      ],
       "title": "Session Context"
     },
     {
       "id": 3,
       "type": "cognitive/system_settings",
-      "pos": [50, 400],
-      "size": [180, 80],
+      "pos": [
+        50,
+        400
+      ],
+      "size": [
+        180,
+        80
+      ],
       "title": "System Settings"
-    },
-    {
-      "id": 24,
-      "type": "cognitive/orchestrator_llm",
-      "pos": [280, 180],
-      "size": [200, 100],
-      "properties": {
-        "model": "orchestrator",
-        "temperature": 0.1,
-        "intentClassification": true,
-        "permissionCheck": true,
-        "timeout": 300000
-      },
-      "title": "Intent Orchestrator"
-    },
-    {
-      "id": 25,
-      "type": "cognitive/smart_router",
-      "pos": [530, 180],
-      "size": [200, 120],
-      "properties": {
-        "routeOnComplexity": true,
-        "simpleThreshold": 0.3
-      },
-      "title": "Smart Router"
     },
     {
       "id": 4,
       "type": "cognitive/auth_check",
-      "pos": [280, 320],
-      "size": [180, 60],
+      "pos": [
+        280,
+        320
+      ],
+      "size": [
+        180,
+        60
+      ],
       "title": "Auth Check"
     },
     {
       "id": 5,
       "type": "cognitive/operator_eligibility",
-      "pos": [530, 380],
-      "size": [200, 80],
+      "pos": [
+        530,
+        380
+      ],
+      "size": [
+        200,
+        80
+      ],
       "title": "Operator Eligibility"
     },
     {
       "id": 6,
       "type": "cognitive/semantic_search",
-      "pos": [770, 100],
-      "size": [180, 80],
+      "pos": [
+        770,
+        100
+      ],
+      "size": [
+        180,
+        80
+      ],
       "properties": {
         "similarityThreshold": 0.6,
         "maxResults": 8
@@ -82,8 +93,14 @@
     {
       "id": 7,
       "type": "cognitive/conversation_history",
-      "pos": [770, 220],
-      "size": [200, 80],
+      "pos": [
+        770,
+        220
+      ],
+      "size": [
+        200,
+        80
+      ],
       "properties": {
         "mode": "conversation",
         "maxMessages": 20
@@ -93,8 +110,14 @@
     {
       "id": 8,
       "type": "cognitive/context_builder",
-      "pos": [1010, 160],
-      "size": [180, 80],
+      "pos": [
+        1010,
+        160
+      ],
+      "size": [
+        180,
+        80
+      ],
       "properties": {
         "searchDepth": "normal",
         "maxMemories": 8,
@@ -105,8 +128,14 @@
     {
       "id": 17,
       "type": "cognitive/response_synthesizer",
-      "pos": [1300, 180],
-      "size": [200, 100],
+      "pos": [
+        3050,
+        180
+      ],
+      "size": [
+        200,
+        100
+      ],
       "properties": {
         "model": "persona",
         "style": "default"
@@ -116,15 +145,27 @@
     {
       "id": 18,
       "type": "cognitive/cot_stripper",
-      "pos": [1550, 180],
-      "size": [200, 60],
+      "pos": [
+        3300,
+        180
+      ],
+      "size": [
+        200,
+        60
+      ],
       "title": "CoT Stripper"
     },
     {
       "id": 19,
       "type": "cognitive/safety_validator",
-      "pos": [1800, 180],
-      "size": [200, 60],
+      "pos": [
+        3550,
+        180
+      ],
+      "size": [
+        200,
+        60
+      ],
       "properties": {
         "threshold": 0.75
       },
@@ -133,30 +174,137 @@
     {
       "id": 20,
       "type": "cognitive/response_refiner",
-      "pos": [2050, 180],
-      "size": [200, 60],
+      "pos": [
+        3800,
+        180
+      ],
+      "size": [
+        200,
+        60
+      ],
       "title": "Response Refiner"
     },
     {
       "id": 21,
       "type": "cognitive/memory_capture",
-      "pos": [2300, 100],
-      "size": [180, 80],
+      "pos": [
+        4050,
+        100
+      ],
+      "size": [
+        180,
+        80
+      ],
       "title": "Memory Capture"
     },
     {
       "id": 22,
       "type": "cognitive/audit_logger",
-      "pos": [2300, 220],
-      "size": [180, 60],
+      "pos": [
+        4050,
+        220
+      ],
+      "size": [
+        180,
+        60
+      ],
       "title": "Audit Logger"
     },
     {
       "id": 23,
       "type": "cognitive/stream_writer",
-      "pos": [2540, 160],
-      "size": [180, 60],
+      "pos": [
+        4290,
+        160
+      ],
+      "size": [
+        180,
+        60
+      ],
       "title": "Stream Writer"
+    },
+    {
+      "id": 24,
+      "type": "cognitive/orchestrator_llm",
+      "pos": [
+        280,
+        180
+      ],
+      "size": [
+        200,
+        100
+      ],
+      "properties": {
+        "model": "orchestrator",
+        "temperature": 0.1,
+        "intentClassification": true,
+        "permissionCheck": true
+      },
+      "title": "Intent Orchestrator"
+    },
+    {
+      "id": 25,
+      "type": "cognitive/smart_router",
+      "pos": [
+        530,
+        180
+      ],
+      "size": [
+        200,
+        120
+      ],
+      "properties": {
+        "routeOnComplexity": true,
+        "simpleThreshold": 0.3
+      },
+      "title": "Smart Router"
+    },
+    {
+      "id": 28,
+      "type": "cognitive/claude_full_task",
+      "pos": [
+        1250,
+        150
+      ],
+      "size": [
+        240,
+        100
+      ],
+      "properties": {
+        "timeout": 300000
+      },
+      "title": "Claude Full Task"
+    },
+    {
+      "id": 29,
+      "type": "cognitive/persona_loader",
+      "pos": [
+        2700,
+        80
+      ],
+      "size": [
+        180,
+        60
+      ],
+      "title": "Persona Loader"
+    },
+    {
+      "id": 30,
+      "type": "cognitive/persona_formatter",
+      "pos": [
+        2850,
+        80
+      ],
+      "size": [
+        200,
+        80
+      ],
+      "properties": {
+        "includePersonality": true,
+        "includeValues": true,
+        "includeGoals": true
+      },
+      "title": "Persona Formatter"
     }
   ],
   "links": [
@@ -188,13 +336,13 @@
       "comment": "Orchestrator analysis → Smart Router"
     },
     {
-      "id": 108,
-      "origin_id": 24,
+      "id": 104,
+      "origin_id": 25,
       "origin_slot": 0,
-      "target_id": 17,
-      "target_slot": 0,
+      "target_id": 5,
+      "target_slot": 2,
       "type": "object",
-      "comment": "Orchestrator guidance → Response Synthesizer"
+      "comment": "Complex path → Operator Eligibility"
     },
     {
       "id": 1,
@@ -305,33 +453,6 @@
       "comment": "Conversation history → Context Builder"
     },
     {
-      "id": 29,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 17,
-      "target_slot": 1,
-      "type": "string",
-      "comment": "User message → Response Synthesizer"
-    },
-    {
-      "id": 30,
-      "origin_id": 8,
-      "origin_slot": 0,
-      "target_id": 17,
-      "target_slot": 2,
-      "type": "context",
-      "comment": "Context → Response Synthesizer"
-    },
-    {
-      "id": 31,
-      "origin_id": 17,
-      "origin_slot": 0,
-      "target_id": 18,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Response → CoT Stripper"
-    },
-    {
       "id": 32,
       "origin_id": 18,
       "origin_slot": 0,
@@ -393,6 +514,96 @@
       "target_slot": 1,
       "type": "object",
       "comment": "Refined response → Audit Logger"
+    },
+    {
+      "id": 200,
+      "origin_id": 8,
+      "origin_slot": 0,
+      "target_id": 28,
+      "target_slot": 2,
+      "type": "context",
+      "comment": "Context package → Claude Full Task"
+    },
+    {
+      "id": 201,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 28,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "User message → Claude Full Task"
+    },
+    {
+      "id": 202,
+      "origin_id": 24,
+      "origin_slot": 0,
+      "target_id": 28,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Orchestrator guidance → Claude Full Task"
+    },
+    {
+      "id": 203,
+      "origin_id": 28,
+      "origin_slot": 0,
+      "target_id": 17,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Claude execution result → Response Synthesizer (for persona to synthesize response)"
+    },
+    {
+      "id": 105,
+      "origin_id": 25,
+      "origin_slot": 1,
+      "target_id": 17,
+      "target_slot": 3,
+      "type": "object",
+      "comment": "Simple path → Direct to Response Synthesizer (bypass operator)"
+    },
+    {
+      "id": 29,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 17,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "User message → Response Synthesizer"
+    },
+    {
+      "id": 30,
+      "origin_id": 8,
+      "origin_slot": 0,
+      "target_id": 17,
+      "target_slot": 2,
+      "type": "context",
+      "comment": "Context → Response Synthesizer"
+    },
+    {
+      "id": 31,
+      "origin_id": 17,
+      "origin_slot": 0,
+      "target_id": 18,
+      "target_slot": 0,
+      "type": "string",
+      "comment": "Response → CoT Stripper"
+    },
+    {
+      "id": 204,
+      "origin_id": 29,
+      "origin_slot": 0,
+      "target_id": 30,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Persona data → Persona Formatter"
+    },
+    {
+      "id": 205,
+      "origin_id": 30,
+      "origin_slot": 0,
+      "target_id": 17,
+      "target_slot": 4,
+      "type": "string",
+      "comment": "Formatted persona → Response Synthesizer (for Big Brother voice synthesis)"
     }
   ],
   "config": {},

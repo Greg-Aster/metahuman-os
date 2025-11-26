@@ -7,6 +7,7 @@ import { executeSkill, listSkills, type TrustLevel } from '../skills.js';
 import { callLLM } from '../model-router.js';
 import { captureEvent } from '../memory.js';
 import { canWriteMemory, shouldCaptureTool } from '../memory-policy.js';
+import { getIdentitySummary } from '../identity.js';
 import type { CognitiveModeId } from '../cognitive-mode.js';
 import type { NodeExecutor } from './types.js';
 
@@ -217,8 +218,20 @@ export const skillExecutorExecutor: NodeExecutor = async (inputs, context) => {
     return {};
   }
 
+  // Handle Big Brother Router output (check if this is from router's localPath)
+  let planInput = inputs[0] || '';
+  if (planInput && typeof planInput === 'object' && 'localPath' in planInput && 'claudePath' in planInput) {
+    // This is router output - check if localPath is active
+    if (planInput.localPath === null || planInput.localPath === undefined) {
+      // This path is not active, skip execution
+      console.log('[SkillExecutor] Skipping - routed to Claude path');
+      return {};
+    }
+    // Extract the actual plan from localPath
+    planInput = planInput.localPath;
+  }
+
   // Handle both string and object inputs (react_planner returns { plan: string })
-  const planInput = inputs[0] || '';
   const plan = typeof planInput === 'object' && planInput.plan ? planInput.plan : planInput;
 
   console.log('[SkillExecutor] Plan type:', typeof plan);
@@ -494,6 +507,86 @@ export const responseSynthesizerExecutor: NodeExecutor = async (inputs, context)
   // Extract loop result or scratchpad
   let loopResult = inputs[0] || inputs.loopResult || {};
 
+  // Check if this is orchestrator guidance (from ConditionalReroute fallback)
+  if (loopResult.needsMemory !== undefined && loopResult.responseStyle && loopResult.instructions) {
+    console.log(`[ResponseSynthesizer] ✅ Detected orchestrator guidance format`);
+    console.log(`[ResponseSynthesizer] needsMemory: ${loopResult.needsMemory}, responseStyle: ${loopResult.responseStyle}`);
+    console.log(`[ResponseSynthesizer] instructions: "${loopResult.instructions.substring(0, 100)}..."`);
+
+    // Orchestrator guidance means nodes were muted, generate response using persona LLM
+    const userMessageInput = inputs[1] || inputs.userMessage || context.userMessage || {};
+    const userMessage = typeof userMessageInput === 'string'
+      ? userMessageInput
+      : (userMessageInput.message || context.userMessage || '');
+
+    console.log(`[ResponseSynthesizer] Extracted user message: "${userMessage.substring(0, 100)}..."`);
+
+    // Load persona identity
+    const personaSummary = getIdentitySummary();
+
+    // Extract conversation history from context builder (inputs[2])
+    const contextData = inputs[2] || {};
+    const conversationHistory = contextData.context?.conversationHistory || context.conversationHistory || [];
+
+    // Build system prompt with persona and instructions
+    const systemPrompt = `${personaSummary}\n\nInstructions: ${loopResult.instructions}`;
+
+    console.log(`[ResponseSynthesizer] Persona summary (first 200 chars): ${personaSummary.substring(0, 200)}...`);
+
+    // Calculate temperature based on response style
+    let temperature = 0.7;
+    if (loopResult.responseStyle === 'verbose') {
+      temperature = 0.8;
+    } else if (loopResult.responseStyle === 'concise') {
+      temperature = 0.5;
+    }
+
+    // Build messages array with conversation history
+    const messages = [
+      { role: 'system' as const, content: systemPrompt },
+      ...conversationHistory.slice(-10).map((msg: any) => ({
+        role: msg.role || 'user',
+        content: msg.content || msg.message || '',
+      })).filter((msg: any) => {
+        // Only include messages with non-empty string content
+        return typeof msg.content === 'string' && msg.content.trim().length > 0;
+      }),
+      { role: 'user' as const, content: userMessage },
+    ].filter((msg) => {
+      // Final filter to ensure all messages have valid content
+      return typeof msg.content === 'string' && msg.content.trim().length > 0;
+    });
+
+    console.log(`[ResponseSynthesizer] Building response with ${messages.length} messages (${conversationHistory.length} history entries)`);
+
+    try {
+      const response = await callLLM({
+        role: 'persona',
+        messages,
+        cognitiveMode: context.cognitiveMode,
+        options: {
+          maxTokens: 2048,
+          repeatPenalty: 1.3,
+          temperature,
+        },
+      });
+
+      console.log(`[ResponseSynthesizer] ✅ Generated response using orchestrator guidance`);
+      console.log(`[ResponseSynthesizer] Response (first 200 chars): ${response.content.substring(0, 200)}...`);
+      return {
+        response: response.content,
+        orchestratorGuidance: true,
+        responseStyle: loopResult.responseStyle,
+      };
+    } catch (error) {
+      console.error('[ResponseSynthesizer] Error generating response from orchestrator guidance:', error);
+      return {
+        response: 'I encountered an error while processing your request.',
+        error: (error as Error).message,
+      };
+    }
+  }
+
   // Check if this is pre-formatted output from scratchpad_formatter
   if (loopResult.formatted && typeof loopResult.formatted === 'string') {
     console.log(`[ResponseSynthesizer] Received pre-formatted scratchpad from formatter (${loopResult.entries} entries)`);
@@ -576,9 +669,95 @@ export const responseSynthesizerExecutor: NodeExecutor = async (inputs, context)
     });
   }
 
-  // If loop controller already has a finalResponse, use it directly
+  // If loop controller already has a finalResponse, check if it needs persona synthesis
   if (finalResponse && finalResponse.trim().length > 0) {
-    console.log('[ResponseSynthesizer] Using final response from loop controller');
+    console.log('[ResponseSynthesizer] Found finalResponse from loop controller');
+
+    // Check if this was delegated to Claude Code (Big Brother variant)
+    // AND we have persona input available (inputs[4])
+    if (loopResult.delegatedTo === 'claude-code' && loopResult.bypassedReActLoop && inputs[4]) {
+      console.log('[ResponseSynthesizer] Detected Big Brother delegation with persona input');
+
+      const personaPrompt = inputs[4]?.formatted || inputs[4];
+
+      if (personaPrompt && typeof personaPrompt === 'string' && personaPrompt.trim().length > 0) {
+        console.log('[ResponseSynthesizer] Synthesizing response with persona voice...');
+        console.log(`[ResponseSynthesizer] Persona prompt (first 200 chars): ${personaPrompt.substring(0, 200)}...`);
+
+        // Extract conversation history from context (inputs[2])
+        const contextData = inputs[2] || {};
+        const conversationHistory = contextData.context?.conversationHistory || context.conversationHistory || [];
+
+        // Extract user message
+        const userMessageInput = inputs[1] || context.userMessage || {};
+        const userMessage = typeof userMessageInput === 'string'
+          ? userMessageInput
+          : (userMessageInput.message || context.userMessage || '');
+
+        // Build system prompt with persona
+        const systemPrompt = `${personaPrompt}
+
+You are responding to the user based on work that was completed by your autonomous capabilities. Review what was done and provide a response in your natural voice that:
+1. Acknowledges what was accomplished
+2. Maintains your personality and communication style
+3. Is conversational and natural (not robotic or overly formal)
+
+DO NOT repeat the technical details verbatim - translate them into your natural speaking voice.`;
+
+        // Build messages array with conversation history
+        const messages = [
+          { role: 'system' as const, content: systemPrompt },
+          ...conversationHistory.slice(-10).map((msg: any) => ({
+            role: msg.role || 'user',
+            content: msg.content || msg.message || '',
+          })).filter((msg: any) => {
+            return typeof msg.content === 'string' && msg.content.trim().length > 0;
+          }),
+          { role: 'user' as const, content: userMessage },
+          { role: 'assistant' as const, content: `[Work completed]\n\n${finalResponse}` },
+          { role: 'user' as const, content: 'Please respond naturally in your own voice based on what was accomplished.' },
+        ].filter((msg) => {
+          return typeof msg.content === 'string' && msg.content.trim().length > 0;
+        });
+
+        console.log(`[ResponseSynthesizer] Synthesizing persona response with ${messages.length} messages`);
+
+        try {
+          const response = await callLLM({
+            role: 'persona',
+            messages,
+            cognitiveMode: context.cognitiveMode,
+            options: {
+              maxTokens: 2048,
+              repeatPenalty: 1.3,
+              temperature: 0.8,
+            },
+          });
+
+          console.log(`[ResponseSynthesizer] ✅ Generated persona-infused response for Big Brother`);
+          console.log(`[ResponseSynthesizer] Response (first 200 chars): ${response.content.substring(0, 200)}...`);
+          return {
+            response: response.content,
+            bigBrotherDelegation: true,
+            originalResponse: finalResponse,
+            personaSynthesized: true,
+          };
+        } catch (error) {
+          console.error('[ResponseSynthesizer] Error synthesizing persona response:', error);
+          // Fall back to raw response if synthesis fails
+          console.log('[ResponseSynthesizer] Falling back to raw Claude response due to synthesis error');
+          return {
+            response: finalResponse,
+            loopComplete: loopResult.completed,
+            iterations: loopResult.iterationCount,
+            personaSynthesisFailed: true,
+          };
+        }
+      }
+    }
+
+    // For non-Big Brother responses or missing persona, use directly
+    console.log('[ResponseSynthesizer] Using final response from loop controller directly');
     if (process.env.DEBUG_GRAPH) console.log(`[ResponseSynthesizer] =======================================================================`);
     return {
       response: finalResponse,
@@ -896,5 +1075,519 @@ export const stuckDetectorExecutor: NodeExecutor = async (inputs, _context, prop
       isRepeating: false,
       error: (error as Error).message,
     };
+  }
+};
+
+/**
+ * Big Brother Router Node
+ * Routes skill execution to local executor or Claude CLI based on config and session status
+ */
+export const bigBrotherRouterExecutor: NodeExecutor = async (inputs, _context) => {
+  try {
+    // Handle plan input (same as SkillExecutor)
+    const planInput = inputs[0] || '';
+    const plan = typeof planInput === 'object' && planInput.plan ? planInput.plan : planInput;
+
+    if (typeof plan !== 'string') {
+      console.error('[BigBrotherRouter] Expected string plan, got:', typeof plan);
+      // Default to local path on error
+      return {
+        localPath: planInput,
+        claudePath: null,
+      };
+    }
+
+    // Parse the plan to extract action (skill name)
+    const actionMatch = plan.match(/Action:\s*(\w+)/i);
+
+    if (!actionMatch) {
+      // No action found, pass through to local executor
+      return {
+        localPath: planInput,
+        claudePath: null,
+      };
+    }
+
+    const skillName = actionMatch[1];
+
+    // Load operator config to check if Big Brother mode is enabled
+    const { loadOperatorConfig } = await import('../config.js');
+    const operatorConfig = loadOperatorConfig();
+    const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled || false;
+
+    // Check if Claude session is ready
+    const { isClaudeSessionReady } = await import('../claude-session.js');
+    const sessionReady = isClaudeSessionReady();
+
+    if (bigBrotherEnabled && sessionReady) {
+      // Route to Claude CLI executor (output slot 1)
+      console.log(`[BigBrotherRouter] Routing ${skillName} to Claude CLI`);
+      return {
+        localPath: null,
+        claudePath: planInput, // Pass the full plan object
+      };
+    } else {
+      // Route to local executor (output slot 0)
+      console.log(`[BigBrotherRouter] Routing ${skillName} to local executor (BB: ${bigBrotherEnabled}, Session: ${sessionReady})`);
+      return {
+        localPath: planInput, // Pass the full plan object
+        claudePath: null,
+      };
+    }
+  } catch (error) {
+    console.error('[BigBrotherRouter] Error:', error);
+    // On error, default to local execution
+    return {
+      localPath: inputs[0],
+      claudePath: null,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Big Brother Executor Node
+ * Executes skills via Claude CLI delegation
+ */
+export const bigBrotherExecutorExecutor = async (inputs: Record<string, any>, _context: any, properties?: Record<string, any>) => {
+  try {
+    // Handle Big Brother Router output (check if this is from router's claudePath)
+    let planInput = inputs[0] || '';
+    if (planInput && typeof planInput === 'object' && 'localPath' in planInput && 'claudePath' in planInput) {
+      // This is router output - check if claudePath is active
+      if (planInput.claudePath === null || planInput.claudePath === undefined) {
+        // This path is not active, skip execution
+        console.log('[BigBrotherExecutor] Skipping - routed to local path');
+        return JSON.stringify({
+          success: false,
+          error: 'Not routed to Big Brother',
+          outputs: {},
+        });
+      }
+      // Extract the actual plan from claudePath
+      planInput = planInput.claudePath;
+    }
+
+    // Handle plan input (same as SkillExecutor)
+    const plan = typeof planInput === 'object' && planInput.plan ? planInput.plan : planInput;
+
+    if (typeof plan !== 'string') {
+      console.error('[BigBrotherExecutor] Expected string plan, got:', typeof plan);
+      return JSON.stringify({
+        success: false,
+        error: `Invalid plan type: ${typeof plan}`,
+        outputs: {},
+      });
+    }
+
+    // Parse the plan to extract skill name and inputs (same as SkillExecutor)
+    const actionMatch = plan.match(/Action:\s*(\w+)/i);
+    const inputMatch = plan.match(/Action Input:\s*({[\s\S]*?})/i);
+
+    if (!actionMatch) {
+      return {
+        success: false,
+        error: 'No action found in plan',
+        outputs: {},
+      };
+    }
+
+    const skillName = actionMatch[1];
+    let skillInputs = {};
+
+    if (inputMatch) {
+      try {
+        skillInputs = JSON.parse(inputMatch[1]);
+      } catch (e) {
+        console.error('[BigBrotherExecutor] Failed to parse skill inputs:', e);
+      }
+    }
+
+    console.log(`[BigBrotherExecutor] Executing skill: ${skillName} via Claude CLI`);
+
+    const { audit } = await import('../audit.js');
+    const { isClaudeSessionReady, sendPrompt, startClaudeSession } = await import('../claude-session.js');
+
+    // Ensure session is ready
+    if (!isClaudeSessionReady()) {
+      const autoStart = properties?.autoStartSession !== false;
+      if (autoStart) {
+        console.log('[BigBrotherExecutor] Claude session not ready, starting...');
+        const started = await startClaudeSession();
+        if (!started) {
+          throw new Error('Claude session not available and auto-start failed');
+        }
+      } else {
+        throw new Error('Claude session not available');
+      }
+    }
+
+    // Build prompt for Claude to provide content/instructions (not execute directly)
+    const prompt = `I need you to help me prepare content for a skill execution. This is part of an automated system where you're providing intelligent content generation.
+
+**Skill to Execute:** ${skillName}
+
+**Skill Inputs:**
+${JSON.stringify(skillInputs, null, 2)}
+
+Please provide the content or instructions needed to execute this skill. For example:
+- For fs_write: Provide the exact file content that should be written
+- For fs_read: Explain what to look for in the file
+- For shell commands: Provide the command to run
+- For conversational_response: Provide the response text
+
+Return ONLY a JSON object in this format:
+{
+  "success": true,
+  "content": "the actual content, command, or response text",
+  "explanation": "brief explanation of what this does (optional)"
+}
+
+Do NOT try to execute any tools yourself. Just provide the content.`;
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'big_brother_skill_delegation',
+      details: {
+        skillName,
+        args: skillInputs,
+        promptLength: prompt.length,
+      },
+      actor: 'big-brother',
+    });
+
+    // Send to Claude CLI with timeout
+    const timeoutMs = properties?.timeout || 60000;
+    const response = await sendPrompt(prompt, timeoutMs);
+
+    // Parse JSON response
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    let claudeResult;
+
+    if (jsonMatch) {
+      try {
+        claudeResult = JSON.parse(jsonMatch[0]);
+      } catch (err) {
+        console.warn('[BigBrotherExecutor] Failed to parse JSON from response, using raw response');
+        claudeResult = {
+          success: true,
+          content: response,
+        };
+      }
+    } else {
+      // No JSON found, treat entire response as content
+      claudeResult = {
+        success: true,
+        content: response,
+      };
+    }
+
+    // Now execute the skill locally using Claude's content
+    console.log(`[BigBrotherExecutor] Received content from Claude, executing ${skillName} locally`);
+
+    const { executeSkill } = await import('../skills.js');
+    const { loadDecisionRules } = await import('../identity.js');
+    const rules = loadDecisionRules();
+    const trustLevel = rules.trustLevel as any;
+
+    // Prepare skill inputs with Claude's content
+    const finalInputs: Record<string, any> = { ...skillInputs };
+
+    // For fs_write, use Claude's content as the file content
+    if (skillName === 'fs_write' && claudeResult.content) {
+      finalInputs.content = claudeResult.content;
+    }
+    // For conversational_response, use Claude's content as the response
+    else if (skillName === 'conversational_response' && claudeResult.content) {
+      finalInputs.response = claudeResult.content;
+    }
+    // For other skills, add content as an additional parameter
+    else if (claudeResult.content) {
+      finalInputs.claudeContent = claudeResult.content;
+    }
+
+    const skillResult = await executeSkill(skillName, finalInputs, trustLevel);
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'big_brother_skill_completed',
+      details: {
+        skillName,
+        success: skillResult.success,
+        claudeContent: claudeResult.content?.substring(0, 100),
+      },
+      actor: 'big-brother',
+    });
+
+    console.log(`[BigBrotherExecutor] ✓ Skill completed via Claude CLI + local execution`);
+
+    // Format response to match SkillExecutor output format (as JSON string for observation)
+    return JSON.stringify({
+      success: skillResult.success,
+      outputs: skillResult.outputs || {
+        response: claudeResult.content,
+      },
+      error: skillResult.error,
+      skillId: skillName,
+      delegatedTo: 'claude-cli',
+      claudeExplanation: claudeResult.explanation,
+    });
+  } catch (error) {
+    console.error('[BigBrotherExecutor] Error:', error);
+
+    const { audit } = await import('../audit.js');
+    audit({
+      level: 'error',
+      category: 'action',
+      event: 'big_brother_skill_failed',
+      details: {
+        error: (error as Error).message,
+      },
+      actor: 'big-brother',
+    });
+
+    // Return error in SkillExecutor format
+    return JSON.stringify({
+      success: false,
+      error: (error as Error).message,
+      outputs: {},
+    });
+  }
+};
+
+/**
+ * Claude Full Task Executor
+ * Sends the entire user request to Claude Code for full autonomous completion
+ * Bypasses the local ReAct loop entirely - Claude handles planning, execution, and response
+ */
+export const claudeFullTaskExecutor: NodeExecutor = async (inputs, _context, _properties) => {
+  try {
+    // Input slots vary by graph:
+    // Standard dual-mode graph: [orchestratorAnalysis, userMessage, contextPackage]
+    // Big Brother graph: [undefined, userInputObject, contextPackage]
+    const orchestratorAnalysis = inputs[0] || {};
+    const userMessage = inputs[1] || inputs[0] || '';
+    const contextPackage = inputs[2] || inputs[1] || {};
+
+    // Extract message string from various possible formats
+    let messageText = '';
+    if (typeof userMessage === 'string') {
+      messageText = userMessage;
+    } else if (userMessage && typeof userMessage === 'object') {
+      // Try multiple property names that might contain the message
+      messageText = userMessage.message || userMessage.text || userMessage.content || '';
+    }
+
+    // Defensive check: ensure we have a string
+    if (typeof messageText !== 'string') {
+      console.warn('[ClaudeFullTask] messageText is not a string, converting:', typeof messageText, messageText);
+      messageText = String(messageText || 'No message provided');
+    }
+
+    console.log(`[ClaudeFullTask] Delegating entire task to Claude Code: "${messageText.substring(0, 60)}..."`);
+    console.log(`[ClaudeFullTask] Input types: userMessage=${typeof userMessage}, messageText=${typeof messageText}`);
+
+    const { audit } = await import('../audit.js');
+    const { isClaudeSessionReady, sendPrompt, startClaudeSession } = await import('../claude-session.js');
+
+    // Ensure Claude session is ready
+    if (!isClaudeSessionReady()) {
+      console.log('[ClaudeFullTask] Claude session not ready, starting...');
+      const started = await startClaudeSession();
+      if (!started) {
+        throw new Error('Claude session not available and auto-start failed');
+      }
+    }
+
+    // Build comprehensive prompt for Claude
+    const skillsList = 'File operations (read/write/list/delete), shell commands, task management, web search, git operations, etc.';
+
+    const contextInfo = contextPackage.memories && contextPackage.memories.length > 0
+      ? `\n\nRelevant context from user's memories:\n${contextPackage.memories.slice(0, 3).map((m: any) => `- ${m.content || m.text || ''}`).join('\n')}`
+      : '';
+
+    const prompt = `You are an autonomous AI operator with FULL PERMISSIONS to execute any task. You have been granted complete access to all tools and should execute tasks WITHOUT asking for permission.
+
+**User Request:**
+${messageText}
+
+**Your Capabilities:**
+${skillsList}
+
+**CRITICAL INSTRUCTIONS:**
+1. You have FULL, UNRESTRICTED permissions - DO NOT ask for approval
+2. Execute tasks IMMEDIATELY using your tools (Write, Bash, Read, etc.)
+3. DO NOT say "I need permission" - you already have it
+4. DO NOT explain what you WOULD do - just DO IT
+5. Complete the task fully, then report what you accomplished${contextInfo}
+
+**Your Task:**
+1. Understand what the user wants
+2. Execute it IMMEDIATELY using your tools
+3. Return a clear response explaining what you DID (past tense, not future)
+
+**Example BAD response:**
+"I need permission to create that file. Once you grant me permission..."
+
+**Example GOOD response:**
+"I've created the file 'cell phone' with three phone models: iPhone 15 Pro Max, Samsung Galaxy S24 Ultra, and Google Pixel 8 Pro."
+
+Execute now and report results.`;
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'claude_full_task_delegation',
+      details: {
+        userMessage: messageText.substring(0, 100),
+        promptLength: prompt.length,
+      },
+      actor: 'big-brother',
+    });
+
+    // Send to Claude with extended timeout for full task completion
+    const timeoutMs = _properties?.timeout || 120000; // 2 minutes default
+    console.log('[ClaudeFullTask] Sending request to Claude Code...');
+    const response = await sendPrompt(prompt, timeoutMs);
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'claude_full_task_completed',
+      details: {
+        responseLength: response.length,
+      },
+      actor: 'big-brother',
+    });
+
+    console.log(`[ClaudeFullTask] ✓ Task completed by Claude Code`);
+
+    // Return in format that Response Synthesizer understands
+    // Response Synthesizer will use this as raw execution result to synthesize persona response
+    return {
+      scratchpad: [{
+        thought: "Delegated task execution to Claude Code",
+        action: "claude_full_task",
+        observation: response.trim()
+      }],
+      finalResponse: response.trim(),  // What Claude actually did (for persona to synthesize from)
+      success: true,
+      delegatedTo: 'claude-code',
+      bypassedReActLoop: true,
+    };
+  } catch (error) {
+    console.error('[ClaudeFullTask] Error:', error);
+
+    const { audit } = await import('../audit.js');
+    const errorMsg = (error as Error).message;
+    const isTimeout = errorMsg.includes('ETIMEDOUT');
+
+    audit({
+      level: 'error',
+      category: 'action',
+      event: 'claude_full_task_failed',
+      details: {
+        error: errorMsg,
+        isTimeout,
+      },
+      actor: 'big-brother',
+    });
+
+    // Provide helpful error message
+    const userMessage = isTimeout
+      ? "The task took too long to complete (exceeded 5 minute timeout). This usually happens with complex research questions that require extensive web searching. You might try asking a simpler question or breaking it into smaller parts."
+      : `I encountered an error while delegating to Claude: ${errorMsg}`;
+
+    // Return in format Response Synthesizer understands
+    return {
+      scratchpad: [{
+        thought: "Attempted to delegate to Claude Code",
+        action: "claude_full_task",
+        observation: `ERROR: ${errorMsg}`
+      }],
+      finalResponse: userMessage,
+      success: false,
+      error: errorMsg,
+    };
+  }
+};
+
+/**
+ * Big Brother Escalation Node
+ * Escalates stuck states to Claude CLI for expert analysis and recovery suggestions
+ */
+export const bigBrotherExecutor: NodeExecutor = async (inputs, _context, _properties) => {
+  try {
+    const goal = inputs[0] || inputs.goal || '';
+    const scratchpad = inputs[1] || inputs.scratchpad || [];
+    const errorType = inputs[2] || inputs.errorType || null;
+    const contextData = inputs[3] || inputs.context || {};
+
+    console.log(`[BigBrother] Escalating stuck state for goal: "${goal.substring(0, 50)}..."`);
+
+    const { loadOperatorConfig } = await import('../config.js');
+    const { escalateToBigBrother } = await import('../big-brother.js');
+
+    const operatorConfig = loadOperatorConfig();
+
+    const request = {
+      goal,
+      stuckReason: 'Detected repeated failures or lack of progress',
+      errorType: errorType as any,
+      scratchpad,
+      context: contextData,
+      suggestions: ['Review the approach', 'Try alternative methods', 'Break down the problem'],
+    };
+
+    const response = await escalateToBigBrother(request, operatorConfig);
+
+    return {
+      suggestions: response.suggestions,
+      reasoning: response.reasoning,
+      alternativeApproach: response.alternativeApproach,
+      success: response.success,
+    };
+  } catch (error) {
+    console.error('[BigBrother] Error:', error);
+    return {
+      suggestions: ['Manual intervention required'],
+      reasoning: 'Escalation failed',
+      success: false,
+      error: (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Conditional Reroute Node
+ * Intelligently routes between primary and fallback inputs based on data validity.
+ * Used to bypass muted nodes by detecting empty/pass-through data.
+ */
+export const conditionalRerouteExecutor: NodeExecutor = async (inputs, _context, _properties) => {
+  try {
+    const primaryInput = inputs[0] || {};
+    const fallbackInput = inputs[1] || {};
+
+    // Check if primary input is empty or from a muted node (pass-through)
+    const isPrimaryEmpty = !primaryInput ||
+                          (typeof primaryInput === 'object' && Object.keys(primaryInput).length === 0) ||
+                          (Array.isArray(primaryInput) && primaryInput.length === 0);
+
+    if (isPrimaryEmpty) {
+      console.log('[ConditionalReroute] Primary input is empty, using fallback');
+      console.log('[ConditionalReroute] Metadata: usedFallback=true, reason=Primary input was empty (likely from muted nodes)');
+      return fallbackInput;
+    } else {
+      console.log('[ConditionalReroute] Primary input is valid, using primary');
+      console.log('[ConditionalReroute] Metadata: usedFallback=false, reason=Primary input was valid');
+      return primaryInput;
+    }
+  } catch (error) {
+    console.error('[ConditionalReroute] Error:', error);
+    console.log('[ConditionalReroute] Metadata: usedFallback=true, reason=Error occurred');
+    // On error, try to use fallback
+    return inputs[1] || {};
   }
 };

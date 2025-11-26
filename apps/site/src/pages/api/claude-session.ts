@@ -73,15 +73,94 @@ export const POST: APIRoute = async ({ cookies, request }) => {
           message = 'Claude session already running';
           success = true;
         } else {
-          success = await startClaudeSession();
-          message = success
-            ? 'Claude session started successfully'
-            : 'Failed to start Claude session. Ensure Claude CLI is installed.';
+          // Start the Claude session
+          success = await startClaudeSession(true);
+
+          // Spawn the Big Brother terminal for visibility
+          if (success) {
+            try {
+              const spawnResponse = await fetch('http://localhost:4321/api/terminal/spawn-claude', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Cookie': request.headers.get('cookie') || ''
+                }
+              });
+
+              if (spawnResponse.ok) {
+                const spawnData = await spawnResponse.json();
+                audit({
+                  level: 'info',
+                  category: 'action',
+                  event: 'big_brother_terminal_spawned',
+                  details: {
+                    port: spawnData.port,
+                    alreadyRunning: spawnData.alreadyRunning
+                  },
+                  actor: user.username,
+                });
+                message = spawnData.alreadyRunning
+                  ? 'Claude session ready (terminal already running)'
+                  : 'Claude session started with terminal';
+              } else {
+                audit({
+                  level: 'warn',
+                  category: 'action',
+                  event: 'big_brother_terminal_spawn_failed',
+                  details: { status: spawnResponse.status },
+                  actor: user.username,
+                });
+                message = 'Claude session started (terminal spawn failed)';
+              }
+            } catch (error) {
+              audit({
+                level: 'warn',
+                category: 'action',
+                event: 'big_brother_terminal_spawn_error',
+                details: { error: (error as Error).message },
+                actor: user.username,
+              });
+              message = 'Claude session started (terminal spawn error)';
+            }
+          } else {
+            message = 'Failed to start Claude session. Ensure Claude CLI is installed.';
+          }
         }
         break;
 
       case 'stop':
         stopClaudeSession();
+
+        // Kill the Big Brother terminal
+        try {
+          const killResponse = await fetch('http://localhost:4321/api/terminal/spawn-claude', {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              'Cookie': request.headers.get('cookie') || ''
+            }
+          });
+
+          if (killResponse.ok) {
+            audit({
+              level: 'info',
+              category: 'action',
+              event: 'big_brother_terminal_killed',
+              details: {},
+              actor: user.username,
+            });
+          }
+        } catch (error) {
+          // Non-critical
+          audit({
+            level: 'warn',
+            category: 'action',
+            event: 'big_brother_terminal_kill_error',
+            details: { error: (error as Error).message },
+            actor: user.username,
+          });
+        }
+
         success = true;
         message = 'Claude session stopped';
         break;

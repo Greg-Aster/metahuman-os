@@ -80,7 +80,7 @@ export async function preloadEmbeddingModel(): Promise<void> {
 
 export async function embedText(
   text: string,
-  opts: { provider?: EmbeddingProvider; model?: string } = {}
+  opts: { provider?: EmbeddingProvider; model?: string; maxRetries?: number } = {}
 ): Promise<number[]> {
   const config = loadEmbeddingConfig()
 
@@ -92,10 +92,64 @@ export async function embedText(
   const provider = opts.provider || config.provider
   if (provider === 'ollama') {
     const model = opts.model || config.model
-    const prompt = typeof text === 'string' ? text : JSON.stringify(text)
+    const originalText = typeof text === 'string' ? text : JSON.stringify(text)
+    const maxRetries = opts.maxRetries ?? 3
+
+    // Conservative truncation limits to minimize retry overhead
+    // nomic-embed-text has 8192 token limit
+    // Estimate: 1 token ≈ 2 characters (conservative for mixed content with code/punctuation)
+    const truncationLimits = [
+      { chars: 12000, label: '12k' },  // ~6k tokens - conservative first try
+      { chars: 6000, label: '6k' },    // ~3k tokens - safe fallback
+      { chars: 3000, label: '3k' },    // ~1.5k tokens - minimal
+    ]
+
     await ensureEmbeddingModelAvailable(model)
-    const res = await ollama.embeddings(model, prompt)
-    return res.embedding
+
+    // Try with progressive truncation
+    for (let attempt = 0; attempt < Math.min(maxRetries, truncationLimits.length); attempt++) {
+      const limit = truncationLimits[attempt]
+      let prompt = originalText
+
+      if (originalText.length > limit.chars) {
+        console.warn(`[embeddings] Text too long (${originalText.length} chars), truncating to ${limit.label}`);
+        // Smart truncation: keep beginning (more important context) + indicator
+        prompt = originalText.substring(0, limit.chars) + '... [truncated]';
+      }
+
+      try {
+        const res = await ollama.embeddings(model, prompt)
+
+        // Log if we had to truncate
+        if (attempt > 0) {
+          console.warn(`[embeddings] ✓ Succeeded with ${limit.label} truncation (attempt ${attempt + 1})`);
+        }
+
+        return res.embedding
+      } catch (error: any) {
+        const isContextError = error?.message?.includes('context length') ||
+                               error?.message?.includes('input length exceeds');
+
+        if (isContextError && attempt < maxRetries - 1) {
+          console.warn(`[embeddings] Context overflow at ${limit.label}, retrying with smaller limit...`);
+          continue; // Try next truncation level
+        }
+
+        // Not a context error, or out of retries
+        if (attempt === truncationLimits.length - 1 && isContextError) {
+          // Exhausted all truncation levels - throw special error
+          const exhaustedError = new Error(
+            `Failed to generate embedding: text exceeds context limit even at minimum truncation (${truncationLimits[truncationLimits.length - 1].label})`
+          );
+          (exhaustedError as any).code = 'TRUNCATION_EXHAUSTED';
+          throw exhaustedError;
+        }
+        throw error;
+      }
+    }
+
+    // Should never reach here due to throw above, but TypeScript needs it
+    throw new Error('Failed to generate embedding after all retry attempts');
   }
 
   // Mock embedding (hash trick) for environments without Ollama

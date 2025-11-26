@@ -12,6 +12,7 @@ export interface CognitiveGraphNode {
   size?: [number, number];
   properties?: Record<string, any>;
   title?: string;
+  muted?: boolean;  // When true, node is skipped during execution
   flags?: {
     collapsed?: boolean;
     pinned?: boolean;

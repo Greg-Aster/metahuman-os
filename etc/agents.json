@@ -80,19 +80,6 @@
       "autoRestart": false,
       "maxRetries": 1
     },
-    "memory-metrics-cache": {
-      "id": "memory-metrics-cache",
-      "enabled": true,
-      "type": "interval",
-      "priority": "low",
-      "agentPath": "memory-metrics-cache.ts",
-      "usesLLM": false,
-      "interval": 300,
-      "runOnBoot": false,
-      "autoRestart": true,
-      "maxRetries": 2,
-      "comment": "Refreshes memory metrics cache every 5 minutes and cleans up orphaned tool outputs"
-    },
     "curiosity": {
       "id": "curiosity",
       "enabled": true,

@@ -209,6 +209,36 @@ async function executeNode(
     throw new Error(`Node ${nodeId} not found in graph`);
   }
 
+  // Skip muted nodes - pass through inputs directly
+  if (node.muted) {
+    log.debug(`   🔇 Node ${nodeId} (${node.type.replace('cognitive/', '')}) MUTED - skipping execution`);
+
+    // Get inputs and pass them through as outputs
+    const inputs = getNodeInputs(nodeId, graph, executionState);
+
+    const state: NodeExecutionState = {
+      nodeId,
+      status: 'completed',
+      startTime: Date.now(),
+      endTime: Date.now(),
+      inputs,
+      outputs: inputs, // Pass through inputs unchanged
+    };
+
+    executionState.set(nodeId, state);
+
+    if (eventHandler) {
+      eventHandler({
+        type: 'node_complete',
+        nodeId,
+        data: { outputs: inputs, muted: true },
+        timestamp: Date.now(),
+      });
+    }
+
+    return;
+  }
+
   const state: NodeExecutionState = {
     nodeId,
     status: 'running',

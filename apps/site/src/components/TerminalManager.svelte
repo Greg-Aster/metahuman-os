@@ -1,27 +1,80 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { bigBrotherTerminal, bigBrotherTerminalOpened } from '../stores/bigBrotherTerminal';
 
   interface TerminalTab {
     id: string;
     port: number;
     title: string;
     url: string;
+    isBigBrother?: boolean;
   }
 
   let tabs: TerminalTab[] = [];
   let activeTabId: string | null = null;
   let isCreating = false;
+  let bigBrotherTabId: string | null = null;
+
+  // Subscribe to Big Brother terminal requests
+  const unsubscribe = bigBrotherTerminal.subscribe(state => {
+    if (state.shouldOpen && !bigBrotherTabId) {
+      openBigBrotherTerminal(state.port, state.url);
+    }
+  });
+
+  async function openBigBrotherTerminal(port: number, url: string) {
+    // Check if Big Brother tab already exists
+    const existingTab = tabs.find(t => t.isBigBrother);
+    if (existingTab) {
+      activeTabId = existingTab.id;
+      bigBrotherTerminalOpened();
+      return;
+    }
+
+    // Create new Big Brother tab
+    const newTab: TerminalTab = {
+      id: crypto.randomUUID(),
+      port,
+      title: '🤖 Big Brother',
+      url,
+      isBigBrother: true
+    };
+
+    tabs = [...tabs, newTab];
+    activeTabId = newTab.id;
+    bigBrotherTabId = newTab.id;
+    bigBrotherTerminalOpened();
+
+    console.log('[TerminalManager] Opened Big Brother terminal on port', port);
+  }
 
   onMount(async () => {
     // Start with one terminal
     await createNewTerminal();
+
+    // Check if Big Brother session is active and create tab if needed
+    try {
+      const res = await fetch('/api/claude-session');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.status?.ready && !bigBrotherTabId) {
+          console.log('[TerminalManager] Big Brother session is active, opening terminal tab');
+          openBigBrotherTerminal(3099, 'http://localhost:3099');
+        }
+      }
+    } catch (error) {
+      console.warn('[TerminalManager] Could not check Claude session status:', error);
+    }
   });
 
   onDestroy(async () => {
-    // Clean up all terminals
+    // Clean up all terminals (except Big Brother - it has its own lifecycle)
     for (const tab of tabs) {
-      await killTerminal(tab.port);
+      if (!tab.isBigBrother) {
+        await killTerminal(tab.port);
+      }
     }
+    unsubscribe();
   });
 
   async function createNewTerminal() {
@@ -63,10 +116,17 @@
   }
 
   async function closeTerminal(tab: TerminalTab) {
+    // If closing Big Brother tab, clear the ID
+    if (tab.isBigBrother) {
+      bigBrotherTabId = null;
+    }
+
     if (tabs.length === 1) {
       // Don't close the last terminal, just create a new one
       await createNewTerminal();
-      await killTerminal(tab.port);
+      if (!tab.isBigBrother) {
+        await killTerminal(tab.port);
+      }
       tabs = tabs.filter(t => t.id !== tab.id);
       if (tabs.length > 0) {
         activeTabId = tabs[0].id;
@@ -74,8 +134,10 @@
       return;
     }
 
-    // Kill the terminal process
-    await killTerminal(tab.port);
+    // Kill the terminal process (Big Brother has its own lifecycle)
+    if (!tab.isBigBrother) {
+      await killTerminal(tab.port);
+    }
 
     // Remove tab
     const tabIndex = tabs.findIndex(t => t.id === tab.id);

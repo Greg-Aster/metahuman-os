@@ -595,6 +595,11 @@
 
             loading = false;
             chatResponseStream?.close();
+          } else if (type === 'system_message') {
+            // System status message (e.g., summarization progress)
+            if (data.content) {
+              messagesApi.pushMessage('system', data.content);
+            }
           } else if (type === 'error') {
             throw new Error(data.message);
           }
@@ -706,6 +711,12 @@
       if (data.success && data.status) {
         claudeSessionReady = data.status.ready;
         console.log('[claude-session] Status:', data.message);
+
+        // Open the Big Brother terminal for visibility
+        if (claudeSessionReady) {
+          const { openBigBrotherTerminal } = await import('../stores/bigBrotherTerminal');
+          openBigBrotherTerminal();
+        }
       } else {
         console.error('[claude-session] Failed to start:', data.error);
       }
