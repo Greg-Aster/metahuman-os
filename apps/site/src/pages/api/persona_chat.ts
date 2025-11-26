@@ -9,6 +9,9 @@ import path from 'node:path';
 import { initializeSkills } from '../../../../../brain/skills/index';
 import { getAvailableSkills, executeSkill, type SkillManifest } from '@metahuman/core/skills';
 import { resolveNodePipelineFlag } from '../../utils/node-pipeline';
+// Proactively import node executors to ensure they're loaded before graph execution
+// This forces the registry to load all executors (including conditionalRerouteExecutor) at module init
+import { nodeExecutors } from '@metahuman/core';
 
 type Role = 'system' | 'user' | 'assistant';
 type Mode = 'inner' | 'conversation';
@@ -16,6 +19,28 @@ type ConversationMessage = { role: Role; content: string; meta?: any; timestamp?
 
 // Ensure skill registry is ready for any inline tool invocations from persona_chat.
 initializeSkills();
+
+// Force node executor registry to load (imported for side effects)
+void nodeExecutors;
+
+// Pre-warm the graph executor by forcing the dynamic import to happen now
+// BLOCKING version - ensures executors are loaded before handling any requests
+let executorsReady = false;
+const executorsReadyPromise = (async () => {
+  const startTime = Date.now();
+  try {
+    const { getNodeExecutor } = await import('@metahuman/core/node-executors');
+    // Test that executors are loaded
+    if (getNodeExecutor('user_input')) {
+      const loadTime = Date.now() - startTime;
+      console.log(`[persona_chat] ✅ Node executors pre-warmed successfully in ${loadTime}ms`);
+      executorsReady = true;
+    }
+  } catch (error) {
+    console.error('[persona_chat] ⚠️ Failed to pre-warm node executors:', error);
+    executorsReady = true; // Don't block forever on error
+  }
+})();
 
 /**
  * Cancellation Manager
@@ -103,8 +128,15 @@ const ENABLE_RESPONSE_REFINEMENT = process.env.ENABLE_RESPONSE_REFINEMENT !== 'f
 // Default: false (non-blocking mode, explicit opt-in required for safety)
 const ENABLE_BLOCKING_MODE = process.env.ENABLE_BLOCKING_MODE === 'true';
 
+// Feature flag: Enable auto-summarization (Phase 3)
+// When true, automatically summarizes conversations when buffer overflows
+// Disable if experiencing GPU memory issues or lockups during summarization
+// Default: true (enabled)
+const ENABLE_AUTO_SUMMARIZATION = process.env.ENABLE_AUTO_SUMMARIZATION !== 'false';
+
 // In-memory message histories per session
-// NOTE: These are automatically pruned to stay within token limits (max 20 messages / ~8k tokens)
+// NOTE: These are automatically pruned to stay within token limits (max 80 messages / ~32k tokens)
+// Extended for qwen3:14b's 40k context window - triggers summarization at 64 messages (80% capacity)
 // Key format: "${mode}:${sessionId}" for complete session isolation
 const histories: Map<string, ConversationMessage[]> = new Map();
 
@@ -148,14 +180,39 @@ async function loadGraphForMode(graphKey: string): Promise<{ graph: CognitiveGra
     console.log('[loadGraphForMode] No graphKey provided');
     return null;
   }
+
   const normalizedKey = graphKey.toLowerCase();
-  const baseName = `${normalizedKey}-mode`;
+
+  // Check if Big Brother Mode is enabled for dual mode
+  let useBigBrotherGraph = false;
+  if (normalizedKey === 'dual') {
+    try {
+      const { loadOperatorConfig } = await import('@metahuman/core');
+      const operatorConfig = loadOperatorConfig();
+      const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
+
+      if (bigBrotherEnabled) {
+        const { isClaudeSessionReady } = await import('@metahuman/core');
+        const claudeSessionReady = isClaudeSessionReady();
+        if (claudeSessionReady) {
+          useBigBrotherGraph = true;
+          console.log('[loadGraphForMode] 🤖 Big Brother Mode active - loading Big Brother graph');
+        } else {
+          console.log('[loadGraphForMode] ⚠️ Big Brother enabled but Claude session not ready - using standard dual graph');
+        }
+      }
+    } catch (error) {
+      console.warn('[loadGraphForMode] Could not check Big Brother status:', error);
+    }
+  }
+
+  const baseName = useBigBrotherGraph ? `${normalizedKey}-mode-bigbrother` : `${normalizedKey}-mode`;
   const pathsToCheck = [
     path.join(ROOT, 'etc', 'cognitive-graphs', 'custom', `${baseName}.json`),
     path.join(ROOT, 'etc', 'cognitive-graphs', `${baseName}.json`),
   ];
 
-  console.log(`[loadGraphForMode] Looking for graph: "${graphKey}" (normalized: "${normalizedKey}")`);
+  console.log(`[loadGraphForMode] Looking for graph: "${graphKey}" (normalized: "${normalizedKey}"${useBigBrotherGraph ? ', Big Brother variant' : ''})`);
   console.log(`[loadGraphForMode] Paths to check:`, pathsToCheck);
 
   for (const filePath of pathsToCheck) {
@@ -479,9 +536,9 @@ function streamGraphExecutionWithProgress(params: GraphPipelineParams) {
         const facet = getActiveFacet();
         push('answer', { response: responseText, facet, saved: null, executionTime: duration });
 
-        // Update history
-        pushMessage(mode, { role: 'user', content: message }, sessionId);
-        pushMessage(mode, { role: 'assistant', content: responseText, meta: { facet, graphPipeline: true } }, sessionId);
+        // Update history (pass push as stream notifier for summarization status)
+        pushMessage(mode, { role: 'user', content: message }, sessionId, push);
+        pushMessage(mode, { role: 'assistant', content: responseText, meta: { facet, graphPipeline: true } }, sessionId, push);
         lastAssistantReplies[mode].push(responseText);
 
         // Close stream
@@ -540,8 +597,9 @@ function streamGraphAnswer(mode: Mode, message: string, sessionId: string, respo
 
       push('answer', { response, facet, saved: null });
 
-      pushMessage(mode, { role: 'user', content: message }, sessionId);
-      pushMessage(mode, { role: 'assistant', content: response, meta: { facet, graphPipeline: true } }, sessionId);
+      // Update history (pass push as stream notifier for summarization status)
+      pushMessage(mode, { role: 'user', content: message }, sessionId, push);
+      pushMessage(mode, { role: 'assistant', content: response, meta: { facet, graphPipeline: true } }, sessionId, push);
       lastAssistantReplies[mode].push(response);
 
       // Close stream asynchronously to ensure client receives the data
@@ -895,20 +953,49 @@ function upsertSummaryMarker(
 
 /**
  * Add message to history and automatically prune to stay within limits
- * Triggers auto-summarization when pruning occurs (Phase 3: Memory Continuity)
+ * PROACTIVE SUMMARIZATION: Triggers at 80% capacity (16/20 messages) to avoid interrupting conversation
  */
-function pushMessage(mode: Mode, message: ConversationMessage, sessionId: string): void {
+function pushMessage(
+  mode: Mode,
+  message: ConversationMessage,
+  sessionId: string,
+  streamNotifier?: (type: string, data: any) => void
+): void {
   const normalized: ConversationMessage =
     typeof message.timestamp === 'number' ? message : { ...message, timestamp: Date.now() };
 
   const history = getHistory(mode, sessionId);
   const beforeCount = history.length;
+
+  // PROACTIVE SUMMARIZATION: Check if approaching capacity (80% = 64/80 messages)
+  // Trigger BEFORE overflow to avoid interrupting mid-conversation
+  // Extended for qwen3:14b's 40k token context window (using ~32k conservatively)
+  const CAPACITY_THRESHOLD = 64; // 80% of 80 max messages
+  const nonSystemMessages = history.filter(msg => msg.role !== 'system' && !msg.meta?.summaryMarker).length;
+
+  if (nonSystemMessages >= CAPACITY_THRESHOLD && message.role !== 'system') {
+    console.log(`[context-window] Approaching capacity (${nonSystemMessages}/${CAPACITY_THRESHOLD}), triggering proactive summarization`);
+
+    // Notify user via chat stream if available
+    if (streamNotifier) {
+      streamNotifier('system_message', {
+        content: '💾 Conversation getting long, summarizing for better context management...'
+      });
+    }
+
+    // Trigger async summarization (non-blocking)
+    triggerAutoSummarization(sessionId, mode, streamNotifier).catch(error => {
+      console.error('[auto-summarization] Failed to trigger summarization:', error);
+    });
+  }
+
   history.push(normalized);
 
   // Auto-prune to stay within token/message limits
+  // Extended for qwen3:14b's 40k context window (using 32k conservatively)
   const pruned = pruneHistory(history as Message[], {
-    maxTokens: 8000,
-    maxMessages: 20,
+    maxTokens: 32000,  // Conservative limit for qwen3:14b (40k capacity)
+    maxMessages: 80,   // ~400 tokens per message average
     preserveSystemMessages: true,
   }) as ConversationMessage[];
 
@@ -918,11 +1005,6 @@ function pushMessage(mode: Mode, message: ConversationMessage, sessionId: string
   const afterCount = history.length;
   if (beforeCount + 1 !== afterCount) {
     console.log(`[context-window] Pruned ${mode} history: ${beforeCount + 1} → ${afterCount} messages`);
-
-    // Trigger async summarization when buffer overflow occurs (Phase 3)
-    triggerAutoSummarization(sessionId, mode).catch(error => {
-      console.error('[auto-summarization] Failed to trigger summarization:', error);
-    });
   }
 
   persistBuffer(mode, sessionId);
@@ -930,10 +1012,46 @@ function pushMessage(mode: Mode, message: ConversationMessage, sessionId: string
 
 /**
  * Trigger background summarization for a conversation session
- * Phase 3: Memory Continuity - auto-summarize when buffer overflows
+ * PROACTIVE: Now triggers at 80% capacity instead of waiting for overflow
+ *
+ * PERFORMANCE FIX: Cooldown mechanism prevents repeated triggers for the same session
+ * within a 60-second window to avoid GPU memory spikes from concurrent LLM calls
  */
-async function triggerAutoSummarization(sessionId: string, mode: Mode): Promise<void> {
+const summarizationCooldown = new Map<string, number>();
+const SUMMARIZATION_COOLDOWN_MS = 60_000; // 60 seconds
+
+async function triggerAutoSummarization(
+  sessionId: string,
+  mode: Mode,
+  streamNotifier?: (type: string, data: any) => void
+): Promise<void> {
   try {
+    // Check if auto-summarization is enabled (kill switch)
+    if (!ENABLE_AUTO_SUMMARIZATION) {
+      console.log('[auto-summarization] Disabled via ENABLE_AUTO_SUMMARIZATION flag');
+      return;
+    }
+
+    // Check cooldown to prevent rapid repeated triggers (race condition fix)
+    const now = Date.now();
+    const lastTrigger = summarizationCooldown.get(sessionId);
+
+    if (lastTrigger && now - lastTrigger < SUMMARIZATION_COOLDOWN_MS) {
+      const remainingSeconds = Math.ceil((SUMMARIZATION_COOLDOWN_MS - (now - lastTrigger)) / 1000);
+      console.log(`[auto-summarization] Cooldown active for session ${sessionId} (${remainingSeconds}s remaining)`);
+      return;
+    }
+
+    // Set cooldown timestamp BEFORE triggering to prevent concurrent calls
+    summarizationCooldown.set(sessionId, now);
+
+    // Clean up old cooldown entries (older than 5 minutes)
+    for (const [key, timestamp] of summarizationCooldown.entries()) {
+      if (now - timestamp > 300_000) {
+        summarizationCooldown.delete(key);
+      }
+    }
+
     // Import summarizer dynamically to avoid circular dependencies
     const { summarizeSession } = await import('../../../../../brain/agents/summarizer.js');
 
@@ -944,14 +1062,33 @@ async function triggerAutoSummarization(sessionId: string, mode: Mode): Promise<
       .then(summary => {
         if (summary) {
           upsertSummaryMarker(mode, summary);
+
+          // Notify user of successful summarization
+          if (streamNotifier) {
+            streamNotifier('system_message', {
+              content: '✓ Conversation summarized successfully'
+            });
+          }
         }
         console.log(`[auto-summarization] Successfully summarized session: ${sessionId}`);
       })
       .catch(error => {
         console.error(`[auto-summarization] Summarization failed for session ${sessionId}:`, error);
+
+        // Notify user of failure
+        if (streamNotifier) {
+          streamNotifier('system_message', {
+            content: '⚠️ Summarization failed (conversation continues normally)'
+          });
+        }
+
+        // Clear cooldown on error so it can be retried later
+        summarizationCooldown.delete(sessionId);
       });
   } catch (error) {
     console.error('[auto-summarization] Failed to import summarizer:', error);
+    // Clear cooldown on error
+    summarizationCooldown.delete(sessionId);
   }
 }
 
@@ -1309,6 +1446,12 @@ function refreshSystemPrompt(mode: Mode, sessionId: string, includePersonaSummar
 
 // GET handler - no middleware bullshit, simple and explicit
 export const GET: APIRoute = async ({ request, cookies }) => {
+  // Wait for node executors to be pre-warmed (prevents 50-second first request delay)
+  if (!executorsReady) {
+    console.log('[persona_chat] Waiting for executors to finish loading...');
+    await executorsReadyPromise;
+  }
+
   console.log('========================================');
   console.log('[persona_chat] GET HANDLER ENTERED');
   console.log('[persona_chat] Request URL:', request.url);
@@ -2299,10 +2442,10 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
           push('content', { content: assistantResponse });
           const activeFacet = getActiveFacet();
 
-          // Store history
+          // Store history (pass push as stream notifier for summarization status)
           history.pop();
-          pushMessage(m, { role: 'user', content: message }, sessionId);
-          pushMessage(m, { role: 'assistant', content: assistantResponse, meta: { facet: activeFacet } }, sessionId);
+          pushMessage(m, { role: 'user', content: message }, sessionId, push);
+          pushMessage(m, { role: 'assistant', content: assistantResponse, meta: { facet: activeFacet } }, sessionId, push);
 
           // Capture event and audit (if user is authenticated)
           // Note: cognitiveMode and allowMemoryWrites are already loaded at function start

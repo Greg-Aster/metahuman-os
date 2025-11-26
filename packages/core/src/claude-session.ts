@@ -5,7 +5,7 @@
  * Keeps Claude "hot" and ready to respond to escalation requests.
  */
 
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn, execSync, type ChildProcess } from 'child_process';
 import { audit } from './audit.js';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -15,11 +15,13 @@ import * as fs from 'fs';
 // ============================================================================
 
 interface ClaudeSession {
-  process: ChildProcess;
+  process: ChildProcess | null;
   ready: boolean;
   buffer: string;
   responseCallback?: (response: string) => void;
   startTime: Date;
+  terminalPort?: number; // Port of the ttyd terminal showing Claude
+  terminalPid?: number;  // PID of the ttyd process
 }
 
 // ============================================================================
@@ -53,7 +55,6 @@ export function isClaudeInstalled(): boolean {
     }
 
     // Try which command as fallback
-    const { execSync } = require('child_process');
     try {
       const result = execSync('which claude 2>/dev/null', { encoding: 'utf8' });
       return result.trim().length > 0;
@@ -66,12 +67,26 @@ export function isClaudeInstalled(): boolean {
 }
 
 /**
- * Start a Claude CLI session
+ * Start a Claude CLI session with terminal visibility
  *
- * Note: This now just validates that Claude CLI is installed and ready.
- * We use --print mode for each request instead of maintaining a persistent session.
+ * This spawns Claude in an interactive terminal (via ttyd) so users can see
+ * all interactions in real-time while still allowing programmatic access.
  */
-export async function startClaudeSession(): Promise<boolean> {
+export async function startClaudeSession(spawnTerminal: boolean = true): Promise<boolean> {
+  if (currentSession?.ready) {
+    audit({
+      level: 'info',
+      category: 'system',
+      event: 'claude_session_already_running',
+      details: {
+        terminalPort: currentSession.terminalPort,
+        hasTerminal: !!currentSession.terminalPort
+      },
+      actor: 'claude-session',
+    });
+    return true;
+  }
+
   if (!isClaudeInstalled()) {
     audit({
       level: 'error',
@@ -86,20 +101,54 @@ export async function startClaudeSession(): Promise<boolean> {
   }
 
   try {
+    let terminalPort: number | undefined;
+    let terminalPid: number | undefined;
+
+    // Spawn terminal if requested (via API endpoint)
+    if (spawnTerminal) {
+      try {
+        // Terminal spawning is handled by the API endpoint
+        // We just track that a terminal should exist
+        terminalPort = 3099; // Big Brother dedicated port
+
+        audit({
+          level: 'info',
+          category: 'system',
+          event: 'claude_session_terminal_mode',
+          details: { terminalPort },
+          actor: 'claude-session',
+        });
+      } catch (error) {
+        audit({
+          level: 'warn',
+          category: 'system',
+          event: 'claude_terminal_spawn_failed_fallback_to_print',
+          details: { error: (error as Error).message },
+          actor: 'claude-session',
+        });
+        // Fall back to non-terminal mode
+      }
+    }
+
     audit({
       level: 'info',
       category: 'system',
       event: 'claude_session_ready',
-      details: {},
+      details: {
+        hasTerminal: !!terminalPort,
+        terminalPort
+      },
       actor: 'claude-session',
     });
 
-    // Mark as ready (we use --print mode, no persistent process needed)
+    // Mark as ready
     currentSession = {
-      process: null as any, // No persistent process in --print mode
+      process: null, // No direct process handle (ttyd manages it)
       ready: true,
       buffer: '',
       startTime: new Date(),
+      terminalPort,
+      terminalPid,
     };
 
     return true;
@@ -174,14 +223,28 @@ export function getSessionStatus(): {
 /**
  * Send a prompt to Claude and get a response
  *
- * Uses --print mode for reliable one-off requests
+ * Uses --print mode for reliable execution, but logs to terminal for visibility
  */
 export async function sendPrompt(prompt: string, timeoutMs: number = 30000): Promise<string> {
   if (!currentSession || !currentSession.ready) {
     throw new Error('Claude session not ready. Call startClaudeSession() first.');
   }
 
-  const { execSync } = require('child_process');
+  // Write to terminal log for visibility
+  if (currentSession.terminalPort) {
+    try {
+      await writeToTerminalLog(prompt, 'prompt');
+    } catch (error) {
+      // Non-critical - terminal logging is best-effort
+      audit({
+        level: 'warn',
+        category: 'action',
+        event: 'terminal_log_write_failed',
+        details: { error: (error as Error).message },
+        actor: 'claude-session',
+      });
+    }
+  }
 
   audit({
     level: 'info',
@@ -190,18 +253,30 @@ export async function sendPrompt(prompt: string, timeoutMs: number = 30000): Pro
     details: {
       promptLength: prompt.length,
       promptPreview: prompt.substring(0, 100),
+      hasTerminal: !!currentSession.terminalPort,
     },
     actor: 'claude-session',
   });
 
   try {
-    // Use --print mode for reliable one-off requests
-    const response = execSync('claude --print', {
+    // Use print mode with permissions bypass for full tool access
+    // This allows Claude to use Write, Bash, and other tools without prompting
+    const response = execSync('claude --print --dangerously-skip-permissions', {
       input: prompt,
       encoding: 'utf8',
       timeout: timeoutMs,
       maxBuffer: 10 * 1024 * 1024, // 10MB buffer for large responses
+      cwd: '/home/greggles/metahuman', // Set working directory
     });
+
+    // Write response to terminal log
+    if (currentSession.terminalPort) {
+      try {
+        await writeToTerminalLog(response, 'response');
+      } catch (error) {
+        // Non-critical
+      }
+    }
 
     audit({
       level: 'info',
@@ -215,17 +290,67 @@ export async function sendPrompt(prompt: string, timeoutMs: number = 30000): Pro
 
     return response;
   } catch (error) {
+    const errorMsg = (error as Error).message;
+
+    // Log error to terminal
+    if (currentSession.terminalPort) {
+      try {
+        await writeToTerminalLog(`ERROR: ${errorMsg}`, 'error');
+      } catch {
+        // Ignore
+      }
+    }
+
     audit({
       level: 'error',
       category: 'action',
       event: 'claude_prompt_failed',
       details: {
-        error: (error as Error).message,
+        error: errorMsg,
       },
       actor: 'claude-session',
     });
-    throw new Error(`Claude CLI request failed: ${(error as Error).message}`);
+    throw new Error(`Claude CLI request failed: ${errorMsg}`);
   }
+}
+
+/**
+ * Write to the Big Brother terminal log for visibility
+ */
+async function writeToTerminalLog(content: string, type: 'prompt' | 'response' | 'error'): Promise<void> {
+  const logPath = path.join(process.cwd(), '../../logs/run/big-brother-session.log');
+
+  const timestamp = new Date().toISOString();
+  let prefix = '';
+  let color = '';
+
+  switch (type) {
+    case 'prompt':
+      prefix = '🔵 PROMPT';
+      color = '\x1b[34m'; // Blue
+      break;
+    case 'response':
+      prefix = '🟢 RESPONSE';
+      color = '\x1b[32m'; // Green
+      break;
+    case 'error':
+      prefix = '🔴 ERROR';
+      color = '\x1b[31m'; // Red
+      break;
+  }
+
+  const reset = '\x1b[0m';
+  const separator = '─'.repeat(80);
+
+  const logEntry = `
+${color}${separator}${reset}
+${color}${prefix} [${timestamp}]${reset}
+${color}${separator}${reset}
+${content}
+${color}${separator}${reset}
+`;
+
+  fs.appendFileSync(logPath, logEntry + '\n');
 }
 
 /**

@@ -7,6 +7,7 @@ import { getUserContext } from './context.js';
 import type { CognitiveModeId } from './cognitive-mode.js';
 import { scheduleIndexUpdate } from './vector-index-queue.js';
 import { appendToolToCache } from './recent-tools-cache.js';
+import { validateEvent } from './memory-validation.js';
 
 /**
  * Enhanced metadata schema for episodic events
@@ -130,7 +131,7 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
   // Get current user context (if any)
   const ctx = getUserContext();
 
-  const event: EpisodicEvent = {
+  const rawEvent: EpisodicEvent = {
     id: generateId('evt'),
     timestamp: timestamp(),
     content,
@@ -143,6 +144,23 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
     userId: ctx?.userId, // NEW: Track owner (undefined for legacy/anonymous)
     metadata: opts.metadata || {},
   };
+
+  // Validate and sanitize the event data
+  const validation = validateEvent(rawEvent);
+
+  // Log validation warnings (non-fatal)
+  if (validation.warnings.length > 0) {
+    console.warn('[memory] Event validation warnings:', validation.warnings);
+  }
+
+  // Log validation errors (fatal - but we'll save sanitized version)
+  if (!validation.valid) {
+    console.error('[memory] Event validation failed:', validation.errors);
+    console.warn('[memory] Attempting to save sanitized version');
+  }
+
+  // Use the sanitized event (even if validation failed, sanitized version is safer)
+  const event = validation.sanitized!;
 
   const category = resolveEventCategory(event);
   const dir = buildEventDirectory(category, event.timestamp);

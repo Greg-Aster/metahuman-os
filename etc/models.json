@@ -42,7 +42,8 @@
         "planner",
         "persona",
         "curator",
-        "psychotherapist"
+        "psychotherapist",
+        "summarizer"
       ],
       "description": "Capable orchestrator using same model as persona for better intent routing",
       "options": {
@@ -363,12 +364,12 @@
   },
   "cognitiveModeMappings": {
     "dual": {
-      "orchestrator": "ollama.greggles-2025-11-25-193635-d7e4e1:latest",
-      "persona": "ollama.greggles-2025-11-25-193635-d7e4e1:latest",
-      "planner": "ollama.greggles-2025-11-25-193635-d7e4e1:latest",
+      "orchestrator": "default.orchestrator",
+      "persona": "default.orchestrator",
+      "planner": "default.orchestrator",
       "coder": "default.coder",
       "curator": "default.coder",
-      "summarizer": "ollama.greggles-2025-11-25-193635-d7e4e1:latest",
+      "summarizer": "default.orchestrator",
       "psychotherapist": "default.coder"
     },
     "agent": {

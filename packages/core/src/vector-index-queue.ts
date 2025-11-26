@@ -17,6 +17,8 @@ interface QueueEvent {
 
 interface QueueItem {
   event: QueueEvent;
+  retryCount?: number;
+  lastError?: string;
 }
 
 interface QueueState {
@@ -63,9 +65,12 @@ async function processQueue(userId: string): Promise<void> {
   }
 
   queue.processing = true;
+  const MAX_RETRIES = 2;  // Reduced from 5 - we have smart error detection now
 
   while (queue.pending.length > 0) {
     const item = queue.pending[0];
+    const retryCount = item.retryCount || 0;
+
     try {
       await appendEventToIndex({
         id: item.event.id,
@@ -75,14 +80,52 @@ async function processQueue(userId: string): Promise<void> {
         entities: item.event.entities,
         path: item.event.path,
       });
+
+      // Success - remove item and persist
       queue.pending.shift();
       persistQueue(userId, queue);
+
       // Small delay to avoid hammering disk
       await delay(50);
-    } catch (error) {
-      console.error('[vector-index-queue] Failed to append event to index:', error);
-      // Re-try after short backoff
-      await delay(1000);
+    } catch (error: any) {
+      const errorMsg = error?.message || String(error);
+      const errorCode = error?.code;
+
+      // Check for unrecoverable errors - skip immediately without retry
+      if (errorCode === 'TRUNCATION_EXHAUSTED') {
+        console.warn(
+          `[vector-index-queue] ⚠️  Skipping event ${item.event.id} - content too large even after aggressive truncation. ` +
+          `Content length: ${item.event.content?.length || 0} chars.`
+        );
+        // Remove immediately - retrying won't help
+        queue.pending.shift();
+        persistQueue(userId, queue);
+        continue;
+      }
+
+      // Check if this is a persistent failure (max retries reached)
+      if (retryCount >= MAX_RETRIES) {
+        console.error(
+          `[vector-index-queue] ❌ Skipping event ${item.event.id} after ${retryCount} failed attempts. ` +
+          `Content length: ${item.event.content?.length || 0} chars. Last error: ${errorMsg}`
+        );
+        // Remove the failing item to prevent infinite loop
+        queue.pending.shift();
+        persistQueue(userId, queue);
+        continue;
+      }
+
+      // Increment retry count
+      item.retryCount = retryCount + 1;
+      item.lastError = errorMsg;
+
+      console.warn(
+        `[vector-index-queue] Failed to append event to index (attempt ${item.retryCount}/${MAX_RETRIES}): ${errorMsg}`
+      );
+
+      // Short backoff: 500ms, 1s (reduced from exponential 500ms→8s)
+      const backoffDelay = 500 * (retryCount + 1);
+      await delay(backoffDelay);
     }
   }
 

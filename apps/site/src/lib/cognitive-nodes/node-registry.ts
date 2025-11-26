@@ -49,8 +49,278 @@ import {
   TrainingPairGeneratorNode,
   TrainingPairAppenderNode,
   MemoryMarkerNode,
-  BigBrotherNode
+  BigBrotherNode,
+  BigBrotherRouterNode,
+  BigBrotherExecutorNode,
+  type PropertySchema
 } from './node-schemas';
+
+// ============================================================================
+// WIDGET AUTO-GENERATION HELPERS
+// ============================================================================
+
+/**
+ * Auto-generates LiteGraph widgets from property schemas
+ * This enables rich, configurable nodes with minimal boilerplate
+ */
+function addWidgetsFromSchema(node: any, schema: NodeSchema) {
+  if (!schema.propertySchemas) return;
+
+  console.log(`[addWidgetsFromSchema] Adding widgets for ${schema.name}:`, Object.keys(schema.propertySchemas));
+
+  // Ensure properties object exists
+  if (!node.properties) {
+    node.properties = {};
+  }
+
+  // Initialize properties with defaults
+  Object.entries(schema.propertySchemas).forEach(([key, propSchema]) => {
+    if (node.properties[key] === undefined) {
+      node.properties[key] = propSchema.default;
+    }
+  });
+
+  // Add widgets based on property type
+  Object.entries(schema.propertySchemas).forEach(([key, propSchema]) => {
+    const label = propSchema.label || key;
+    const currentValue = node.properties[key];
+
+    try {
+      switch (propSchema.type) {
+        case 'string':
+          if (typeof node.addWidget === 'function') {
+            node.addWidget('text', label, currentValue, (value: string) => {
+              if (propSchema.validation) {
+                const result = propSchema.validation(value);
+                if (result !== true) {
+                  console.warn(`[${schema.name}] Validation failed for ${key}:`, result);
+                  return;
+                }
+              }
+              node.properties[key] = value;
+            });
+          }
+          break;
+
+        case 'text_multiline':
+          if (typeof node.addWidget === 'function') {
+            // LiteGraph doesn't have a native multiline widget, use text with larger input
+            const widget = node.addWidget('text', label, currentValue, (value: string) => {
+              node.properties[key] = value;
+            });
+            // Store hint for custom rendering
+            if (widget) {
+              widget.multiline = true;
+              widget.rows = propSchema.rows || 3;
+            }
+          }
+          break;
+
+        case 'number':
+          if (typeof node.addWidget === 'function') {
+            node.addWidget('number', label, currentValue, (value: number) => {
+              // Apply min/max constraints
+              let constrainedValue = value;
+              if (propSchema.min !== undefined) {
+                constrainedValue = Math.max(propSchema.min, constrainedValue);
+              }
+              if (propSchema.max !== undefined) {
+                constrainedValue = Math.min(propSchema.max, constrainedValue);
+              }
+              node.properties[key] = constrainedValue;
+            }, {
+              min: propSchema.min,
+              max: propSchema.max,
+              step: propSchema.step
+            });
+          }
+          break;
+
+        case 'boolean':
+          if (typeof node.addWidget === 'function') {
+            node.addWidget('toggle', label, currentValue, (value: boolean) => {
+              node.properties[key] = value;
+            });
+          }
+          break;
+
+        case 'select':
+          if (typeof node.addWidget === 'function') {
+            // Handle both string[] and {value, label}[] formats
+            let values: string[];
+            if (propSchema.options && propSchema.options.length > 0) {
+              if (typeof propSchema.options[0] === 'string') {
+                values = propSchema.options as string[];
+              } else {
+                values = (propSchema.options as { value: string; label: string }[]).map(o => o.value);
+              }
+            } else {
+              values = [];
+            }
+
+            node.addWidget('combo', label, currentValue, (value: string) => {
+              node.properties[key] = value;
+            }, { values });
+          }
+          break;
+
+        case 'slider':
+          if (typeof node.addWidget === 'function') {
+            node.addWidget('slider', label, currentValue, (value: number) => {
+              node.properties[key] = value;
+            }, {
+              min: propSchema.min || 0,
+              max: propSchema.max || 1,
+              step: propSchema.step || 0.01
+            });
+          }
+          break;
+
+        case 'color':
+          if (typeof node.addWidget === 'function') {
+            // LiteGraph doesn't have native color picker, use text with validation
+            node.addWidget('text', label, currentValue, (value: string) => {
+              // Validate hex color format
+              if (/^#[0-9A-Fa-f]{6}$/.test(value)) {
+                node.properties[key] = value;
+              } else {
+                console.warn(`[${schema.name}] Invalid color format for ${key}:`, value);
+              }
+            });
+          }
+          break;
+
+        case 'json':
+          if (typeof node.addWidget === 'function') {
+            // JSON stored as string, validated on change
+            const jsonString = typeof currentValue === 'string'
+              ? currentValue
+              : JSON.stringify(currentValue, null, 2);
+
+            node.addWidget('text', label, jsonString, (value: string) => {
+              try {
+                const parsed = JSON.parse(value);
+                node.properties[key] = parsed;
+              } catch (e) {
+                console.warn(`[${schema.name}] Invalid JSON for ${key}:`, e);
+              }
+            });
+          }
+          break;
+      }
+    } catch (error) {
+      console.error(`[addWidgetsFromSchema] Error adding widget for ${key}:`, error);
+    }
+  });
+
+  console.log(`[addWidgetsFromSchema] Widgets added successfully for ${schema.name}`);
+}
+
+/**
+ * Draws property values on the node for visual feedback
+ * Enhanced with better typography, colors, and layout
+ */
+function drawPropertiesOverlay(
+  node: any,
+  ctx: CanvasRenderingContext2D,
+  schema: NodeSchema,
+  options?: {
+    startY?: number;
+    fontSize?: number;
+    color?: string;
+    maxProperties?: number;
+  }
+) {
+  if (!schema.propertySchemas || node.flags.collapsed) return;
+
+  const opts = {
+    startY: options?.startY || 60,
+    fontSize: options?.fontSize || 10,
+    color: options?.color || '#aaa',
+    maxProperties: options?.maxProperties || 10
+  };
+
+  ctx.save();
+
+  let y = opts.startY;
+  let count = 0;
+  const lineHeight = opts.fontSize + 6;
+  const padding = 8;
+
+  // Draw a subtle background for the properties section
+  const propertyCount = Math.min(
+    Object.keys(schema.propertySchemas).length,
+    opts.maxProperties
+  );
+  const bgHeight = propertyCount * lineHeight + padding * 2;
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+  ctx.fillRect(padding - 2, y - padding, node.size[0] - padding * 2 + 4, bgHeight);
+
+  // Draw border
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(padding - 2, y - padding, node.size[0] - padding * 2 + 4, bgHeight);
+
+  Object.entries(schema.propertySchemas).forEach(([key, propSchema]) => {
+    if (count >= opts.maxProperties) return;
+
+    const label = propSchema.label || key;
+    const value = node.properties[key];
+
+    // Format value for display
+    let displayValue = value;
+    let valueColor = '#ffffff';
+
+    if (typeof value === 'boolean') {
+      displayValue = value ? '✓ Yes' : '✗ No';
+      valueColor = value ? '#4ade80' : '#f87171';
+    } else if (typeof value === 'number') {
+      const decimals = propSchema.step ? Math.max(0, -Math.log10(propSchema.step)) : 2;
+      displayValue = value.toFixed(decimals);
+      valueColor = '#60a5fa';
+    } else if (typeof value === 'string') {
+      const maxLen = 25;
+      displayValue = value.length > maxLen ? value.substring(0, maxLen - 3) + '...' : value;
+      valueColor = '#a78bfa';
+    } else if (typeof value === 'object') {
+      displayValue = '{...}';
+      valueColor = '#fbbf24';
+    }
+
+    // Draw label (dimmed)
+    ctx.font = `${opts.fontSize}px system-ui, -apple-system, sans-serif`;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.fillText(label + ':', padding, y);
+
+    // Measure label width for value positioning
+    const labelWidth = ctx.measureText(label + ': ').width;
+
+    // Draw value (bright, colored)
+    ctx.font = `bold ${opts.fontSize}px system-ui, -apple-system, sans-serif`;
+    ctx.fillStyle = valueColor;
+
+    // Truncate if it would overflow
+    const availableWidth = node.size[0] - padding * 2 - labelWidth;
+    const valueMetrics = ctx.measureText(displayValue);
+
+    if (valueMetrics.width > availableWidth) {
+      // Binary search for fitting length
+      let testValue = displayValue;
+      while (ctx.measureText(testValue + '...').width > availableWidth && testValue.length > 0) {
+        testValue = testValue.substring(0, testValue.length - 1);
+      }
+      displayValue = testValue + '...';
+    }
+
+    ctx.fillText(displayValue, padding + labelWidth, y);
+
+    y += lineHeight;
+    count++;
+  });
+
+  ctx.restore();
+}
 
 /**
  * Factory function to create the base CognitiveNode class
@@ -59,6 +329,7 @@ import {
 function createCognitiveNodeClass(LGraphNodeRef: any) {
   return class CognitiveNode extends LGraphNodeRef {
     schema: NodeSchema;
+    muted: boolean = false;
 
     constructor(schema: NodeSchema) {
       super();
@@ -67,6 +338,12 @@ function createCognitiveNodeClass(LGraphNodeRef: any) {
       this.desc = schema.description;
       this.color = schema.color;
       this.bgcolor = schema.bgColor;
+      this.muted = false;
+
+      // Set default size if specified
+      if (schema.size) {
+        this.size = [...schema.size];
+      }
 
       // Add inputs
       schema.inputs.forEach((input: any) => {
@@ -82,6 +359,11 @@ function createCognitiveNodeClass(LGraphNodeRef: any) {
       if (schema.properties) {
         this.properties = { ...schema.properties };
       }
+
+      // Auto-generate widgets from property schemas
+      if (schema.propertySchemas) {
+        addWidgetsFromSchema(this, schema);
+      }
     }
 
     /**
@@ -94,6 +376,25 @@ function createCognitiveNodeClass(LGraphNodeRef: any) {
         const value = this.getInputData(0);
         this.setOutputData(0, value);
       }
+    }
+
+    /**
+     * Add context menu options for muting
+     */
+    getExtraMenuOptions(canvas: any) {
+      const options = super.getExtraMenuOptions ? super.getExtraMenuOptions(canvas) : [];
+
+      options.push({
+        content: this.muted ? '🔊 Unmute Node' : '🔇 Mute Node',
+        callback: () => {
+          this.muted = !this.muted;
+          if (this.graph?.canvas) {
+            this.graph.canvas.setDirty(true, true);
+          }
+        }
+      });
+
+      return options;
     }
 
     /**
@@ -124,7 +425,18 @@ function createCognitiveNodeClass(LGraphNodeRef: any) {
   serialize(): any {
     const data = super.serialize();
     data.schema_id = this.schema.id;
+    data.muted = this.muted;
     return data;
+  }
+
+  /**
+   * Configure/deserialize node state
+   */
+  configure(data: any) {
+    super.configure(data);
+    if (data.muted !== undefined) {
+      this.muted = data.muted;
+    }
   }
 
   /**
@@ -132,6 +444,106 @@ function createCognitiveNodeClass(LGraphNodeRef: any) {
    */
   getTitle(): string {
     return this.schema.name;
+  }
+
+  /**
+   * Draw property values on node canvas
+   * Automatically displays all properties from propertySchemas
+   */
+  onDrawForeground(ctx: CanvasRenderingContext2D) {
+    // Only draw if this node has propertySchemas
+    if (!this.schema.propertySchemas) return;
+
+    // Auto-adjust node size to fit properties
+    const propertyCount = Object.keys(this.schema.propertySchemas).length;
+    const widgetHeight = (this.widgets?.length || 0) * 30; // Approximate widget height
+    const inputHeight = (this.inputs?.length || 0) * 20;
+    const outputHeight = (this.outputs?.length || 0) * 20;
+    const baseHeight = Math.max(inputHeight, outputHeight, 60);
+    const propertyDisplayHeight = Math.min(propertyCount, 8) * 16 + 16; // Line height + padding
+
+    const minHeight = baseHeight + widgetHeight + propertyDisplayHeight + 40;
+
+    // Calculate minimum width based on content
+    ctx.save();
+    ctx.font = 'bold 10px system-ui, -apple-system, sans-serif';
+
+    let maxContentWidth = 200; // Absolute minimum
+
+    // Check title width
+    const titleWidth = ctx.measureText(this.title || this.schema.name).width + 80; // Add padding + category badge
+    maxContentWidth = Math.max(maxContentWidth, titleWidth);
+
+    // Check property widths
+    if (this.schema.propertySchemas) {
+      Object.entries(this.schema.propertySchemas).forEach(([key, propSchema]) => {
+        const label = propSchema.label || key;
+        const value = this.properties?.[key] || propSchema.default;
+        let displayValue = String(value);
+
+        // Estimate width
+        const estimatedWidth = ctx.measureText(label + ': ' + displayValue).width + 40; // Add padding
+        maxContentWidth = Math.max(maxContentWidth, estimatedWidth);
+      });
+    }
+
+    ctx.restore();
+
+    const minWidth = Math.min(maxContentWidth, 400); // Cap at 400px to prevent huge nodes
+
+    // Only expand, never shrink (prevent layout thrashing)
+    if (this.size[1] < minHeight) {
+      this.size[1] = minHeight;
+    }
+    if (this.size[0] < minWidth) {
+      this.size[0] = minWidth;
+    }
+
+    // Calculate startY to place properties after widgets
+    const startY = baseHeight + widgetHeight + 10;
+
+    drawPropertiesOverlay(this, ctx, this.schema, {
+      startY,
+      fontSize: 10,
+      color: this.schema.color || '#aaa',
+      maxProperties: 8
+    });
+
+    // Draw muted indicator if node is muted
+    if (this.muted) {
+      ctx.save();
+
+      // Draw muted badge in top-right corner
+      ctx.font = '20px Arial';
+      ctx.fillStyle = '#ff6b6b';
+      ctx.textAlign = 'right';
+      ctx.fillText('🔇', this.size[0] - 5, 20);
+
+      // Slightly dim the entire node
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+      ctx.fillRect(0, 0, this.size[0], this.size[1]);
+
+      ctx.restore();
+    }
+  }
+
+  /**
+   * Custom background rendering with enhanced visuals
+   */
+  onDrawBackground(ctx: CanvasRenderingContext2D) {
+    if (this.flags.collapsed) return;
+
+    ctx.save();
+
+    // Draw a subtle gradient background
+    const gradient = ctx.createLinearGradient(0, 0, 0, this.size[1]);
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 0.02)');
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0.02)');
+
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, this.size[0], this.size[1]);
+
+    ctx.restore();
   }
   };
 }
@@ -467,15 +879,205 @@ class SkillExecutorNodeImpl extends CognitiveNodeBase {
     const skillName = this.getInputData(0);
     const args = this.getInputData(1);
 
-    // In real implementation, would call executeSkill()
     try {
-      const result = { output: `Executed ${skillName}`, data: args };
-      this.setOutputData(0, result);
-      this.setOutputData(1, true);
+      // Execute skill locally
+      const { executeSkill } = await import('@metahuman/core/skills');
+      const { loadDecisionRules } = await import('@metahuman/core/identity');
+
+      const rules = loadDecisionRules();
+      const trustLevel = rules.trustLevel as any;
+
+      const result = await executeSkill(skillName, args, trustLevel);
+
+      this.setOutputData(0, {
+        success: result.success,
+        ...result.outputs,
+        error: result.error,
+      });
+      this.setOutputData(1, result.success);
+      if (!result.success) {
+        this.setOutputData(2, { message: result.error });
+      }
     } catch (error) {
+      console.error(`[SkillExecutor] Error executing ${skillName}:`, error);
       this.setOutputData(1, false);
       this.setOutputData(2, { message: (error as Error).message });
     }
+  }
+}
+
+class BigBrotherRouterNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'big_brother_router')!;
+
+  constructor() {
+    super(BigBrotherRouterNodeImpl.schema);
+  }
+
+  async onExecute() {
+    const skillName = this.getInputData(0);
+    const args = this.getInputData(1);
+
+    try {
+      // Check if Big Brother mode is enabled
+      const { loadOperatorConfig } = await import('@metahuman/core/config');
+      const { isClaudeSessionReady } = await import('@metahuman/core/claude-session');
+
+      const operatorConfig = loadOperatorConfig();
+      const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled || false;
+      const sessionReady = isClaudeSessionReady();
+
+      const payload = { skillName, args };
+
+      if (bigBrotherEnabled && sessionReady) {
+        // Route to Claude CLI executor
+        this.setOutputData(1, payload);
+        console.log(`[BigBrotherRouter] Routing ${skillName} to Claude CLI`);
+      } else {
+        // Route to local executor
+        this.setOutputData(0, payload);
+        console.log(`[BigBrotherRouter] Routing ${skillName} to local executor`);
+      }
+    } catch (error) {
+      console.error(`[BigBrotherRouter] Error:`, error);
+      // On error, default to local execution
+      this.setOutputData(0, { skillName, args });
+    }
+  }
+}
+
+class BigBrotherExecutorNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'big_brother_executor')!;
+
+  constructor() {
+    super(BigBrotherExecutorNodeImpl.schema);
+  }
+
+  async onExecute() {
+    const skillName = this.getInputData(0);
+    const args = this.getInputData(1);
+
+    try {
+      const { audit } = await import('@metahuman/core/audit');
+      const { isClaudeSessionReady, sendPrompt, startClaudeSession } = await import('@metahuman/core/claude-session');
+
+      // Ensure session is ready
+      if (!isClaudeSessionReady()) {
+        audit({
+          level: 'warn',
+          category: 'action',
+          event: 'claude_session_not_ready_auto_start',
+          details: { skillId: skillName },
+          actor: 'big-brother',
+        });
+
+        const started = await startClaudeSession();
+        if (!started) {
+          throw new Error('Claude session not available');
+        }
+      }
+
+      // Log delegation
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'big_brother_skill_delegation',
+        details: {
+          skillId: skillName,
+          inputs: JSON.stringify(args).substring(0, 200),
+        },
+        actor: 'big-brother',
+      });
+
+      // Build prompt for Claude to execute the skill
+      const prompt = `I need you to execute a skill for me. This is part of an automated system where you're acting as the intelligent executor.
+
+**Skill to Execute:** ${skillName}
+
+**Skill Inputs:**
+${JSON.stringify(args, null, 2)}
+
+Please execute this skill and return the result in the following JSON format:
+{
+  "success": true/false,
+  "output": "the result or output from executing the skill",
+  "error": "error message if failed (optional)"
+}
+
+Important:
+- Execute the skill using the appropriate tools available to you
+- Return ONLY the JSON result, no explanations
+- Be precise and accurate`;
+
+      const response = await sendPrompt(prompt, this.properties.timeout || 60000);
+
+      // Try to parse Claude's response as JSON
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      let result;
+
+      if (jsonMatch) {
+        result = JSON.parse(jsonMatch[0]);
+
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'claude_skill_executed',
+          details: {
+            skillId: skillName,
+            success: result.success,
+          },
+          actor: 'big-brother',
+        });
+      } else {
+        // If no JSON found, treat the entire response as output
+        audit({
+          level: 'warn',
+          category: 'action',
+          event: 'claude_skill_response_not_json',
+          details: { skillId: skillName, responseLength: response.length },
+          actor: 'big-brother',
+        });
+
+        result = {
+          success: true,
+          output: response,
+        };
+      }
+
+      this.setOutputData(0, result);
+      this.setOutputData(1, result.success);
+      if (!result.success) {
+        this.setOutputData(2, { message: result.error });
+      }
+    } catch (error) {
+      console.error(`[BigBrotherExecutor] Error executing ${skillName}:`, error);
+
+      const { audit } = await import('@metahuman/core/audit');
+      audit({
+        level: 'error',
+        category: 'action',
+        event: 'claude_skill_execution_failed',
+        details: {
+          skillId: skillName,
+          error: (error as Error).message,
+        },
+        actor: 'big-brother',
+      });
+
+      this.setOutputData(1, false);
+      this.setOutputData(2, { message: (error as Error).message });
+    }
+  }
+}
+
+class ClaudeFullTaskNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'claude_full_task')!;
+
+  constructor() {
+    super(ClaudeFullTaskNodeImpl.schema);
+  }
+
+  async onExecute() {
+    await super.onExecute();
   }
 }
 
@@ -1653,6 +2255,9 @@ class MemoryMarkerNodeImpl extends CognitiveNodeBase {
     ErrorRecoveryNodeImpl,
     StuckDetectorNodeImpl,
     BigBrotherNodeImpl,
+    BigBrotherRouterNodeImpl,
+    BigBrotherExecutorNodeImpl,
+    ClaudeFullTaskNodeImpl,
     // Agent
     MemoryLoaderNodeImpl,
     MemorySaverNodeImpl,
@@ -1826,6 +2431,9 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
     LiteGraph.registerNodeType('cognitive/error_recovery', nodeImpls.ErrorRecoveryNodeImpl);
     LiteGraph.registerNodeType('cognitive/stuck_detector', nodeImpls.StuckDetectorNodeImpl);
     LiteGraph.registerNodeType('cognitive/big_brother', nodeImpls.BigBrotherNodeImpl);
+    LiteGraph.registerNodeType('cognitive/big_brother_router', nodeImpls.BigBrotherRouterNodeImpl);
+    LiteGraph.registerNodeType('cognitive/big_brother_executor', nodeImpls.BigBrotherExecutorNodeImpl);
+    LiteGraph.registerNodeType('cognitive/claude_full_task', nodeImpls.ClaudeFullTaskNodeImpl);
 
     // Agent nodes
     LiteGraph.registerNodeType('cognitive/memory_loader', nodeImpls.MemoryLoaderNodeImpl);

@@ -9,6 +9,7 @@ export * from './path-builder';  // Core path functions (no dependencies)
 export * from './paths';  // Context-aware paths proxy
 export * from './identity';
 export * from './memory';
+// Note: memory-validation and memory-cleanup are internal utilities, not exported
 export * from './memory-metrics-cache';
 export * from './recent-tools-cache';
 export * from './summary-state';

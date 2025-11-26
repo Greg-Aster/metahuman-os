@@ -1,36 +1,117 @@
 <script lang="ts">
   import { activeView } from '../stores/navigation';
+  import type { SvelteComponent } from 'svelte';
 
-  // Load ChatInterface eagerly (it's the default view and most common)
+  // PERFORMANCE OPTIMIZATION: Lazy load components
+  // Only load ChatInterface eagerly (it's the default view and most common)
   import ChatInterface from './ChatInterface.svelte';
-  import Dashboard from './Dashboard.svelte';
-  import TaskManager from './TaskManager.svelte';
-  import ApprovalQueue from './ApprovalQueue.svelte';
-  import Terminal from './Terminal.svelte';
-  import MemoryControls from './MemoryControls.svelte';
-  import AudioUpload from './AudioUpload.svelte';
-  import AudioRecorder from './AudioRecorder.svelte';
-  import VoiceTrainingWidget from './VoiceTrainingWidget.svelte';
-  import VoiceSettings from './VoiceSettings.svelte';
-  import AdapterDashboard from './AdapterDashboard.svelte';
-  import TrainingMonitor from './TrainingMonitor.svelte';
-  import OnboardingWizard from './OnboardingWizard.svelte';
-  import TrainingWizard from './TrainingWizard.svelte';
-  import TrainingHistory from './TrainingHistory.svelte';
-  import DatasetManagement from './DatasetManagement.svelte';
-  import SystemControls from './SystemControls.svelte';
-  import Lifeline from './Lifeline.svelte';
-  import OvernightLearnings from './OvernightLearnings.svelte';
-  import SystemSettings from './SystemSettings.svelte';
-  import SecuritySettings from './SecuritySettings.svelte';
-  import NetworkSettings from './NetworkSettings.svelte';
-  import ChatSettings from './ChatSettings.svelte';
-  import MemoryEditor from './MemoryEditor.svelte';
-  import PersonaGenerator from './PersonaGenerator.svelte';
-  import PersonaEditor from './PersonaEditor.svelte';
-  import AddonsManager from './AddonsManager.svelte';
-  import BoredomControl from './BoredomControl.svelte';
-  import TerminalManager from './TerminalManager.svelte';
+
+  // All other components are loaded dynamically when needed
+  // This reduces initial bundle size from ~33 components to just 1
+
+  // Cache for loaded components to avoid re-importing
+  const componentCache = new Map<string, typeof SvelteComponent>();
+
+  // Dynamic component loader
+  async function loadComponent(name: string): Promise<typeof SvelteComponent> {
+    if (componentCache.has(name)) {
+      return componentCache.get(name)!;
+    }
+
+    let module;
+    switch (name) {
+      case 'Dashboard':
+        module = await import('./Dashboard.svelte');
+        break;
+      case 'TaskManager':
+        module = await import('./TaskManager.svelte');
+        break;
+      case 'ApprovalQueue':
+        module = await import('./ApprovalQueue.svelte');
+        break;
+      case 'Terminal':
+        module = await import('./Terminal.svelte');
+        break;
+      case 'MemoryControls':
+        module = await import('./MemoryControls.svelte');
+        break;
+      case 'AudioUpload':
+        module = await import('./AudioUpload.svelte');
+        break;
+      case 'AudioRecorder':
+        module = await import('./AudioRecorder.svelte');
+        break;
+      case 'VoiceTrainingWidget':
+        module = await import('./VoiceTrainingWidget.svelte');
+        break;
+      case 'VoiceSettings':
+        module = await import('./VoiceSettings.svelte');
+        break;
+      case 'AdapterDashboard':
+        module = await import('./AdapterDashboard.svelte');
+        break;
+      case 'TrainingMonitor':
+        module = await import('./TrainingMonitor.svelte');
+        break;
+      case 'OnboardingWizard':
+        module = await import('./OnboardingWizard.svelte');
+        break;
+      case 'TrainingWizard':
+        module = await import('./TrainingWizard.svelte');
+        break;
+      case 'TrainingHistory':
+        module = await import('./TrainingHistory.svelte');
+        break;
+      case 'DatasetManagement':
+        module = await import('./DatasetManagement.svelte');
+        break;
+      case 'SystemControls':
+        module = await import('./SystemControls.svelte');
+        break;
+      case 'Lifeline':
+        module = await import('./Lifeline.svelte');
+        break;
+      case 'OvernightLearnings':
+        module = await import('./OvernightLearnings.svelte');
+        break;
+      case 'SystemSettings':
+        module = await import('./SystemSettings.svelte');
+        break;
+      case 'SecuritySettings':
+        module = await import('./SecuritySettings.svelte');
+        break;
+      case 'NetworkSettings':
+        module = await import('./NetworkSettings.svelte');
+        break;
+      case 'ChatSettings':
+        module = await import('./ChatSettings.svelte');
+        break;
+      case 'MemoryEditor':
+        module = await import('./MemoryEditor.svelte');
+        break;
+      case 'PersonaGenerator':
+        module = await import('./PersonaGenerator.svelte');
+        break;
+      case 'PersonaEditor':
+        module = await import('./PersonaEditor.svelte');
+        break;
+      case 'AddonsManager':
+        module = await import('./AddonsManager.svelte');
+        break;
+      case 'BoredomControl':
+        module = await import('./BoredomControl.svelte');
+        break;
+      case 'TerminalManager':
+        module = await import('./TerminalManager.svelte');
+        break;
+      default:
+        throw new Error(`Unknown component: ${name}`);
+    }
+
+    const component = module.default;
+    componentCache.set(name, component);
+    return component;
+  }
 
   // Memory/Events (loaded from /api/memories)
   type EventItem = {
@@ -459,6 +540,65 @@ async function loadMemoryContent(relPath: string) {
     // Fast delete without confirmation per user request
     void deleteMemory(item)
   }
+
+  // Lazy component loading helper
+  type LoadedComponent = { component: typeof SvelteComponent; props?: any } | null;
+  let loadedComponents: Record<string, LoadedComponent> = {};
+
+  // Reactive loader for current view's components
+  $: if ($activeView && $activeView !== 'chat') {
+    // Pre-load components for the active view to avoid flash
+    switch ($activeView) {
+      case 'dashboard':
+        void loadComponent('Dashboard');
+        void loadComponent('TaskManager');
+        void loadComponent('ApprovalQueue');
+        break;
+      case 'voice':
+        void loadComponent('AudioUpload');
+        void loadComponent('AudioRecorder');
+        void loadComponent('VoiceTrainingWidget');
+        void loadComponent('VoiceSettings');
+        break;
+      case 'training':
+        void loadComponent('TrainingWizard');
+        void loadComponent('TrainingHistory');
+        void loadComponent('DatasetManagement');
+        void loadComponent('SystemControls');
+        void loadComponent('TrainingMonitor');
+        break;
+      case 'persona':
+        void loadComponent('PersonaEditor');
+        void loadComponent('MemoryControls');
+        void loadComponent('BoredomControl');
+        void loadComponent('PersonaGenerator');
+        break;
+      case 'system':
+        void loadComponent('ChatSettings');
+        void loadComponent('SystemSettings');
+        void loadComponent('SecuritySettings');
+        void loadComponent('NetworkSettings');
+        void loadComponent('AddonsManager');
+        void loadComponent('Lifeline');
+        break;
+      case 'terminal':
+        void loadComponent('TerminalManager');
+        break;
+    }
+  }
+
+  // Helper to render a lazy-loaded component
+  async function getLazyComponent(name: string, props?: any): Promise<LoadedComponent> {
+    const key = `${name}-${JSON.stringify(props || {})}`;
+    if (loadedComponents[key]) {
+      return loadedComponents[key];
+    }
+
+    const component = await loadComponent(name);
+    const loaded = { component, props };
+    loadedComponents = { ...loadedComponents, [key]: loaded };
+    return loaded;
+  }
 </script>
 
 <div class="center-content">
@@ -477,11 +617,23 @@ async function loadMemoryContent(relPath: string) {
           <button class="tab-button" class:active={dashboardTab === 'approvals'} on:click={() => dashboardTab = 'approvals'}>Approvals</button>
         </div>
         {#if dashboardTab === 'overview'}
-          <Dashboard />
+          {#await loadComponent('Dashboard')}
+            <div class="loading-placeholder">Loading dashboard...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {:else if dashboardTab === 'tasks'}
-          <TaskManager />
+          {#await loadComponent('TaskManager')}
+            <div class="loading-placeholder">Loading tasks...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {:else if dashboardTab === 'approvals'}
-          <ApprovalQueue />
+          {#await loadComponent('ApprovalQueue')}
+            <div class="loading-placeholder">Loading approvals...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {/if}
       </div>
     </div>
@@ -499,13 +651,29 @@ async function loadMemoryContent(relPath: string) {
         </div>
         {#if voiceTab === 'upload'}
           <div class="audio-grid">
-            <AudioUpload />
-            <AudioRecorder />
+            {#await loadComponent('AudioUpload')}
+              <div class="loading-placeholder">Loading...</div>
+            {:then Component}
+              <svelte:component this={Component} />
+            {/await}
+            {#await loadComponent('AudioRecorder')}
+              <div class="loading-placeholder">Loading...</div>
+            {:then Component}
+              <svelte:component this={Component} />
+            {/await}
           </div>
         {:else if voiceTab === 'training'}
-          <VoiceTrainingWidget provider={currentVoiceProvider} />
+          {#await loadComponent('VoiceTrainingWidget')}
+            <div class="loading-placeholder">Loading voice training...</div>
+          {:then Component}
+            <svelte:component this={Component} provider={currentVoiceProvider} />
+          {/await}
         {:else if voiceTab === 'settings'}
-          <VoiceSettings />
+          {#await loadComponent('VoiceSettings')}
+            <div class="loading-placeholder">Loading settings...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {/if}
       </div>
     </div>
@@ -524,15 +692,35 @@ async function loadMemoryContent(relPath: string) {
           <button class="tab-button" class:active={trainingTab === 'monitor'} on:click={() => trainingTab = 'monitor'}>📡 Training Monitor</button>
         </div>
         {#if trainingTab === 'wizard'}
-          <TrainingWizard />
+          {#await loadComponent('TrainingWizard')}
+            <div class="loading-placeholder">Loading training wizard...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {:else if trainingTab === 'datasets'}
-          <TrainingHistory />
+          {#await loadComponent('TrainingHistory')}
+            <div class="loading-placeholder">Loading training history...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {:else if trainingTab === 'manage'}
-          <DatasetManagement />
+          {#await loadComponent('DatasetManagement')}
+            <div class="loading-placeholder">Loading dataset management...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {:else if trainingTab === 'system'}
-          <SystemControls />
+          {#await loadComponent('SystemControls')}
+            <div class="loading-placeholder">Loading system controls...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {:else if trainingTab === 'monitor'}
-          <TrainingMonitor />
+          {#await loadComponent('TrainingMonitor')}
+            <div class="loading-placeholder">Loading training monitor...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {/if}
       </div>
     </div>
@@ -551,11 +739,19 @@ async function loadMemoryContent(relPath: string) {
         </div>
         {#if personaTab === 'editor'}
           <div class="persona-editor-wrapper">
-            <PersonaEditor />
+            {#await loadComponent('PersonaEditor')}
+              <div class="loading-placeholder">Loading persona editor...</div>
+            {:then Component}
+              <svelte:component this={Component} />
+            {/await}
           </div>
         {:else if personaTab === 'memory'}
           <div class="memory-section">
-            <MemoryControls on:captured={loadEvents} />
+            {#await loadComponent('MemoryControls')}
+              <div class="loading-placeholder">Loading memory controls...</div>
+            {:then Component}
+              <svelte:component this={Component} on:captured={loadEvents} />
+            {/await}
           </div>
           <div class="tab-group">
             <button class="tab-button" class:active={memoryTab==='episodic'} on:click={() => memoryTab='episodic'}>Episodic</button>
@@ -1170,7 +1366,11 @@ async function loadMemoryContent(relPath: string) {
             <div class="setting-group">
               <label class="setting-label" for="mind-wandering-control">Mind Wandering</label>
               <div id="mind-wandering-control">
-                <BoredomControl />
+                {#await loadComponent('BoredomControl')}
+                  <div class="loading-placeholder">Loading...</div>
+                {:then Component}
+                  <svelte:component this={Component} />
+                {/await}
               </div>
             </div>
 
@@ -1216,7 +1416,11 @@ async function loadMemoryContent(relPath: string) {
             </div>
           </div>
         {:else if personaTab === 'generator'}
-          <PersonaGenerator />
+          {#await loadComponent('PersonaGenerator')}
+            <div class="loading-placeholder">Loading persona generator...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {/if}
       </div>
     </div>
@@ -1236,17 +1440,41 @@ async function loadMemoryContent(relPath: string) {
           <button class="tab-button" class:active={systemTab==='lifeline'} on:click={() => systemTab='lifeline'}>Lifeline</button>
         </div>
         {#if systemTab === 'chat'}
-          <ChatSettings />
+          {#await loadComponent('ChatSettings')}
+            <div class="loading-placeholder">Loading chat settings...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {:else if systemTab === 'settings'}
-          <SystemSettings />
+          {#await loadComponent('SystemSettings')}
+            <div class="loading-placeholder">Loading system settings...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {:else if systemTab === 'security'}
-          <SecuritySettings />
+          {#await loadComponent('SecuritySettings')}
+            <div class="loading-placeholder">Loading security settings...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {:else if systemTab === 'network'}
-          <NetworkSettings />
+          {#await loadComponent('NetworkSettings')}
+            <div class="loading-placeholder">Loading network settings...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {:else if systemTab === 'addons'}
-          <AddonsManager />
+          {#await loadComponent('AddonsManager')}
+            <div class="loading-placeholder">Loading addons manager...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {:else if systemTab === 'lifeline'}
-          <Lifeline />
+          {#await loadComponent('Lifeline')}
+            <div class="loading-placeholder">Loading lifeline...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {/if}
       </div>
     </div>
@@ -1257,7 +1485,11 @@ async function loadMemoryContent(relPath: string) {
         <p class="view-subtitle">Multiple terminals with tab management</p>
       </div>
       <div class="view-content terminal-iframe-container">
-        <TerminalManager />
+        {#await loadComponent('TerminalManager')}
+          <div class="loading-placeholder">Loading terminal manager...</div>
+        {:then Component}
+          <svelte:component this={Component} />
+        {/await}
       </div>
     </div>
   {/if}
@@ -1272,13 +1504,28 @@ async function loadMemoryContent(relPath: string) {
 
   .terminal-view {
     padding: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  .terminal-view .view-header {
+    flex-shrink: 0;
+  }
+
+  .terminal-view .view-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
 
   .terminal-view .terminal-iframe-container {
     padding: 0;
-    height: calc(100vh - 120px);
+    flex: 1;
     width: 100%;
     position: relative;
+    min-height: 0;
   }
 
   .terminal-iframe {
@@ -1980,13 +2227,44 @@ async function loadMemoryContent(relPath: string) {
     min-height: 500px;
     overflow: hidden;
   }
+
+  /* Loading placeholder for lazy-loaded components */
+  .loading-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    color: #9ca3af;
+    font-size: 0.875rem;
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  :global(.dark) .loading-placeholder {
+    color: #6b7280;
+  }
 </style>
 
-<!-- Memory Editor Modal -->
-<MemoryEditor
-  bind:isOpen={editorOpen}
-  relPath={editorRelPath}
-  memoryType={editorMemoryType}
-  on:saved={handleEditorSaved}
-  on:close={() => editorOpen = false}
-/>
+<!-- Memory Editor Modal (lazy-loaded when opened) -->
+{#if editorOpen}
+  {#await loadComponent('MemoryEditor')}
+    <!-- Modal loading state -->
+  {:then Component}
+    <svelte:component
+      this={Component}
+      bind:isOpen={editorOpen}
+      relPath={editorRelPath}
+      memoryType={editorMemoryType}
+      on:saved={handleEditorSaved}
+      on:close={() => editorOpen = false}
+    />
+  {/await}
+{/if}

@@ -8,7 +8,7 @@ import { getIndexStatus } from '@metahuman/core/vector-index';
 import { listAvailableAgents } from '@metahuman/core/agent-monitor';
 import { isRunning as isOllamaRunning } from '@metahuman/core/ollama';
 import { getRuntimeMode } from '@metahuman/core/runtime-mode';
-import { getUserOrAnonymous, getProfilePaths, systemPaths } from '@metahuman/core';
+import { getUserOrAnonymous, getProfilePaths, systemPaths, cleanupOrphanedToolOutputs } from '@metahuman/core';
 import { loadCuriosityConfig } from '@metahuman/core/config';
 import { getMemoryMetrics } from '@metahuman/core/memory-metrics-cache';
 import fs from 'node:fs';
@@ -200,6 +200,13 @@ const handler: APIRoute = async ({ cookies }) => {
 
     if (isAuthenticated) {
       const metrics = await getMemoryMetrics(user.username);
+
+      // Run cleanup in background (fire-and-forget) - removes orphaned tool outputs older than 90 days
+      const profilePaths = getProfilePaths(user.username);
+      void cleanupOrphanedToolOutputs(profilePaths, 90).catch(() => {
+        // Silently fail - this is just housekeeping
+      });
+
       memoryStats = {
         totalFiles: metrics.totalMemories,
         byType: metrics.memoriesByType,
@@ -314,24 +321,11 @@ const handler: APIRoute = async ({ cookies }) => {
       }
     } catch {}
 
+    // PERFORMANCE: Removed expensive recursive directory scanning (getDirSize)
+    // This was causing 2+ second delays on every /api/status request
+    // TODO: Calculate storage size in a background job and cache the result
     try {
-      const getDirSize = (dir: string): number => {
-        if (!fs.existsSync(dir)) return 0;
-        let size = 0;
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-          const fullPath = path.join(dir, entry.name);
-          if (entry.isDirectory()) {
-            size += getDirSize(fullPath);
-          } else {
-            try {
-              size += fs.statSync(fullPath).size;
-            } catch {}
-          }
-        }
-        return size;
-      };
-
-      systemHealth.storageUsed = getDirSize(systemPaths.root);
+      systemHealth.storageUsed = 0; // Placeholder - implement background calculation if needed
     } catch {}
 
     // RECENT ACTIVITY
@@ -339,43 +333,55 @@ const handler: APIRoute = async ({ cookies }) => {
 
     if (isAuthenticated) {
       try {
-        // Get last 5 episodic memories by reading files directly
+        // PERFORMANCE: Only scan recent directories instead of entire tree
+        // Scan last 7 days of episodic memories
         const profilePaths = getProfilePaths(user.username);
         const episodicPath = profilePaths.episodic;
-      const walkDir = (dir: string): string[] => {
-        if (!fs.existsSync(dir)) return [];
-        let files: string[] = [];
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-          const fullPath = path.join(dir, entry.name);
-          if (entry.isDirectory()) {
-            files = files.concat(walkDir(fullPath));
-          } else if (entry.isFile() && entry.name.endsWith('.json')) {
-            files.push(fullPath);
+
+        const recentFiles: Array<{ path: string; mtime: Date }> = [];
+        const now = new Date();
+
+        // Only check the last 7 days to avoid scanning thousands of old files
+        for (let daysAgo = 0; daysAgo < 7 && recentFiles.length < 10; daysAgo++) {
+          const date = new Date(now);
+          date.setDate(date.getDate() - daysAgo);
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+
+          const dayPath = path.join(episodicPath, String(year), month, day);
+
+          if (fs.existsSync(dayPath)) {
+            const entries = fs.readdirSync(dayPath, { withFileTypes: true });
+            for (const entry of entries) {
+              if (entry.isFile() && entry.name.endsWith('.json')) {
+                const fullPath = path.join(dayPath, entry.name);
+                try {
+                  const mtime = fs.statSync(fullPath).mtime;
+                  recentFiles.push({ path: fullPath, mtime });
+                } catch {}
+              }
+            }
           }
         }
-        return files;
-      };
 
-      const allFiles = walkDir(episodicPath);
+        // Get last 5 files sorted by modification time
+        const topFiles = recentFiles
+          .sort((a, b) => b.mtime.getTime() - a.mtime.getTime())
+          .slice(0, 5);
 
-      // Get last 5 files sorted by modification time
-      const recentFiles = allFiles
-        .map(f => ({ path: f, mtime: fs.statSync(f).mtime }))
-        .sort((a, b) => b.mtime.getTime() - a.mtime.getTime())
-        .slice(0, 5);
-
-      recentActivity = recentFiles.map(({ path: filePath }) => {
-        try {
-          const content = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-          return {
-            type: content.type || 'episodic',
-            content: content.content?.substring(0, 100) || '',
-            timestamp: content.timestamp || new Date(fs.statSync(filePath).mtime).toISOString(),
-          };
-        } catch {
-          return null;
-        }
-      }).filter(Boolean);
+        recentActivity = topFiles.map(({ path: filePath }) => {
+          try {
+            const content = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+            return {
+              type: content.type || 'episodic',
+              content: content.content?.substring(0, 100) || '',
+              timestamp: content.timestamp || new Date(fs.statSync(filePath).mtime).toISOString(),
+            };
+          } catch {
+            return null;
+          }
+        }).filter(Boolean);
       } catch {}
     }
 

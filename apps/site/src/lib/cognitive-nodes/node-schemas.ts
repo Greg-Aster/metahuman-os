@@ -43,6 +43,35 @@ export interface NodeSlot {
   description?: string;
 }
 
+/**
+ * Property schema for rich node configuration
+ * Defines metadata for auto-generating widgets and validation
+ */
+export type PropertyType =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'select'
+  | 'slider'
+  | 'color'
+  | 'json'
+  | 'text_multiline';
+
+export interface PropertySchema {
+  type: PropertyType;
+  default: any;
+  label?: string;
+  description?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: string[] | { value: string; label: string }[];
+  required?: boolean;
+  placeholder?: string;
+  rows?: number; // For multiline text
+  validation?: (value: any) => boolean | string; // Return true or error message
+}
+
 export interface NodeSchema {
   id: string;
   name: string;
@@ -52,7 +81,9 @@ export interface NodeSchema {
   inputs: NodeSlot[];
   outputs: NodeSlot[];
   properties?: Record<string, any>;
+  propertySchemas?: Record<string, PropertySchema>; // Rich property definitions
   description: string;
+  size?: [number, number]; // Optional default size [width, height]
 }
 
 // Color scheme for node categories
@@ -271,6 +302,34 @@ export const ContextBuilderNode: NodeSchema = {
     maxMemories: 8,
     maxContextChars: 8000,
   },
+  propertySchemas: {
+    searchDepth: {
+      type: 'select',
+      default: 'normal',
+      label: 'Search Depth',
+      description: 'How deeply to search memory',
+      options: ['shallow', 'normal', 'deep', 'exhaustive']
+    },
+    maxMemories: {
+      type: 'slider',
+      default: 8,
+      label: 'Max Memories',
+      description: 'Maximum number of memories to include',
+      min: 1,
+      max: 20,
+      step: 1
+    },
+    maxContextChars: {
+      type: 'number',
+      default: 8000,
+      label: 'Max Context Length',
+      description: 'Maximum character count for context',
+      min: 1000,
+      max: 32000,
+      step: 1000
+    }
+  },
+  size: [280, 200],
   description: 'Builds context package with memories',
 };
 
@@ -290,6 +349,27 @@ export const SemanticSearchNode: NodeSchema = {
     similarityThreshold: 0.6,
     maxResults: 8,
   },
+  propertySchemas: {
+    similarityThreshold: {
+      type: 'slider',
+      default: 0.6,
+      label: 'Similarity Threshold',
+      description: 'Minimum similarity score (0-1)',
+      min: 0,
+      max: 1,
+      step: 0.05
+    },
+    maxResults: {
+      type: 'slider',
+      default: 8,
+      label: 'Max Results',
+      description: 'Maximum number of results to return',
+      min: 1,
+      max: 20,
+      step: 1
+    }
+  },
+  size: [260, 160],
   description: 'Searches memories using embeddings',
 };
 
@@ -351,6 +431,24 @@ export const ReActPlannerNode: NodeSchema = {
     model: 'default.coder',
     temperature: 0.2,
   },
+  propertySchemas: {
+    model: {
+      type: 'string',
+      default: 'default.coder',
+      label: 'Model',
+      description: 'LLM model to use for planning'
+    },
+    temperature: {
+      type: 'slider',
+      default: 0.2,
+      label: 'Temperature',
+      description: 'Sampling temperature for creativity',
+      min: 0,
+      max: 1,
+      step: 0.1
+    }
+  },
+  size: [240, 180],
   description: 'Plans next action in ReAct loop',
 };
 
@@ -384,8 +482,18 @@ export const ObservationFormatterNode: NodeSchema = {
     { name: 'observation', type: 'string', description: 'Formatted observation text' },
   ],
   properties: {
-    mode: 'narrative', // 'narrative' | 'structured' | 'verbatim'
+    mode: 'narrative',
   },
+  propertySchemas: {
+    mode: {
+      type: 'select',
+      default: 'narrative',
+      label: 'Format Mode',
+      description: 'How to format observation',
+      options: ['narrative', 'structured', 'verbatim']
+    }
+  },
+  size: [240, 140],
   description: 'Formats skill results for LLM',
 };
 
@@ -420,8 +528,24 @@ export const ResponseSynthesizerNode: NodeSchema = {
   ],
   properties: {
     model: 'persona',
-    style: 'default', // 'default' | 'strict' | 'summary'
+    style: 'default',
   },
+  propertySchemas: {
+    model: {
+      type: 'string',
+      default: 'persona',
+      label: 'Model',
+      description: 'LLM model for synthesis'
+    },
+    style: {
+      type: 'select',
+      default: 'default',
+      label: 'Response Style',
+      description: 'How to synthesize the response',
+      options: ['default', 'strict', 'summary']
+    }
+  },
+  size: [260, 180],
   description: 'Synthesizes final response from scratchpad',
 };
 
@@ -447,6 +571,24 @@ export const PersonaLLMNode: NodeSchema = {
     model: 'fallback',
     temperature: 0.7,
   },
+  propertySchemas: {
+    model: {
+      type: 'string',
+      default: 'fallback',
+      label: 'Model',
+      description: 'LLM model for persona responses'
+    },
+    temperature: {
+      type: 'slider',
+      default: 0.7,
+      label: 'Temperature',
+      description: 'Sampling temperature',
+      min: 0,
+      max: 1,
+      step: 0.1
+    }
+  },
+  size: [240, 200],
   description: 'Generates response using persona with orchestrator instructions',
 };
 
@@ -464,6 +606,18 @@ export const OrchestratorLLMNode: NodeSchema = {
   properties: {
     temperature: 0.3,
   },
+  propertySchemas: {
+    temperature: {
+      type: 'slider',
+      default: 0.3,
+      label: 'Temperature',
+      description: 'Analysis temperature',
+      min: 0,
+      max: 1,
+      step: 0.1
+    }
+  },
+  size: [240, 150],
   description: 'Analyzes user intent to determine memory needs and response style',
 };
 
@@ -833,8 +987,18 @@ export const ConversationalResponseNode: NodeSchema = {
     { name: 'response', type: 'string' },
   ],
   properties: {
-    style: 'default', // 'default' | 'strict' | 'summary'
+    style: 'default',
   },
+  propertySchemas: {
+    style: {
+      type: 'select',
+      default: 'default',
+      label: 'Response Style',
+      description: 'Style of conversational response',
+      options: ['default', 'strict', 'summary']
+    }
+  },
+  size: [260, 160],
   description: 'Generates conversational response (terminal skill)',
 };
 
@@ -901,6 +1065,23 @@ export const ConditionalRouterNode: NodeSchema = {
     conditionField: 'isComplete', // Field to check in condition object
   },
   description: 'Routes data based on condition - designed for loop control with exit and loop-back paths',
+};
+
+export const ConditionalRerouteNode: NodeSchema = {
+  id: 'conditional_reroute',
+  name: 'Conditional Reroute',
+  category: 'control_flow',
+  ...categoryColors.control_flow,
+  inputs: [
+    { name: 'primaryInput', type: 'any', description: 'Primary input (checked for validity)' },
+    { name: 'fallbackInput', type: 'any', description: 'Fallback input (used if primary is empty)' },
+  ],
+  outputs: [
+    { name: 'output', type: 'any', description: 'Selected input (primary or fallback)' },
+    { name: 'usedFallback', type: 'boolean', description: 'Whether fallback was used' },
+  ],
+  properties: {},
+  description: 'Intelligently routes between primary and fallback inputs - detects empty/muted node data and uses fallback',
 };
 
 export const SwitchNode: NodeSchema = {
@@ -994,12 +1175,31 @@ export const MemoryFilterNode: NodeSchema = {
     { name: 'count', type: 'number' },
   ],
   properties: {
-    filterType: null, // e.g., 'conversation', 'inner_dialogue'
+    filterType: null,
     filterTags: [],
     startDate: null,
     endDate: null,
     limit: 100,
   },
+  propertySchemas: {
+    filterType: {
+      type: 'select',
+      default: null,
+      label: 'Filter Type',
+      description: 'Memory type to filter by',
+      options: ['all', 'conversation', 'inner_dialogue', 'observation', 'dream']
+    },
+    limit: {
+      type: 'slider',
+      default: 100,
+      label: 'Max Results',
+      description: 'Maximum memories to return',
+      min: 1,
+      max: 500,
+      step: 10
+    }
+  },
+  size: [260, 160],
   description: 'Filters memories by type, tags, or date range',
 };
 
@@ -1077,9 +1277,34 @@ export const CacheNode: NodeSchema = {
   ],
   properties: {
     key: 'default',
-    ttl: 60000, // 1 minute in milliseconds
-    operation: 'get', // get, set, clear, clear_all
+    ttl: 60000,
+    operation: 'get',
   },
+  propertySchemas: {
+    key: {
+      type: 'string',
+      default: 'default',
+      label: 'Cache Key',
+      description: 'Key for cache storage'
+    },
+    ttl: {
+      type: 'number',
+      default: 60000,
+      label: 'TTL (ms)',
+      description: 'Time-to-live in milliseconds',
+      min: 1000,
+      max: 3600000,
+      step: 1000
+    },
+    operation: {
+      type: 'select',
+      default: 'get',
+      label: 'Operation',
+      description: 'Cache operation type',
+      options: ['get', 'set', 'clear', 'clear_all']
+    }
+  },
+  size: [240, 200],
   description: 'Stores intermediate results with TTL',
 };
 
@@ -1190,6 +1415,66 @@ export const BigBrotherNode: NodeSchema = {
     autoApplySuggestions: false,
   },
   description: 'Escalates stuck states to Claude CLI for expert analysis and recovery guidance',
+};
+
+export const BigBrotherRouterNode: NodeSchema = {
+  id: 'big_brother_router',
+  name: 'Big Brother Router',
+  category: 'router',
+  ...categoryColors.router,
+  inputs: [
+    { name: 'skillName', type: 'string', description: 'Name of skill to execute' },
+    { name: 'arguments', type: 'object', description: 'Skill arguments' },
+  ],
+  outputs: [
+    { name: 'localPath', type: 'object', description: 'Route to local SkillExecutor' },
+    { name: 'claudePath', type: 'object', description: 'Route to BigBrotherExecutor (Claude CLI)' },
+  ],
+  properties: {
+    checkConfig: true,
+    checkSession: true,
+  },
+  description: 'Routes skill execution to local executor or Claude CLI based on Big Brother mode',
+};
+
+export const BigBrotherExecutorNode: NodeSchema = {
+  id: 'big_brother_executor',
+  name: 'Big Brother Executor',
+  category: 'operator',
+  ...categoryColors.operator,
+  inputs: [
+    { name: 'skillName', type: 'string', description: 'Name of skill to execute' },
+    { name: 'arguments', type: 'object', description: 'Skill arguments' },
+  ],
+  outputs: [
+    { name: 'result', type: 'skill_result', description: 'Skill execution result from Claude CLI' },
+    { name: 'success', type: 'boolean', description: 'Whether execution succeeded' },
+    { name: 'error', type: 'object', optional: true, description: 'Error details if failed' },
+  ],
+  properties: {
+    timeout: 60000,
+    autoStartSession: true,
+  },
+  description: 'Executes skills via Claude CLI - delegates to Claude Code for intelligent execution',
+};
+
+export const ClaudeFullTaskNode: NodeSchema = {
+  id: 'claude_full_task',
+  name: 'Claude Full Task',
+  category: 'operator',
+  ...categoryColors.operator,
+  inputs: [
+    { name: 'orchestratorAnalysis', type: 'object', optional: true, description: 'Intent analysis from orchestrator' },
+    { name: 'userMessage', type: 'string', description: 'The user\'s request to complete' },
+    { name: 'contextPackage', type: 'context', optional: true, description: 'Memory context and conversation history' },
+  ],
+  outputs: [
+    { name: 'result', type: 'object', description: 'Execution result from Claude Code (scratchpad, finalResponse, success)' },
+  ],
+  properties: {
+    timeout: 120000, // 2 minutes for full task completion
+  },
+  description: 'Delegates entire task to Claude Code for autonomous completion - bypasses local ReAct loop',
 };
 
 // ============================================================================
@@ -1877,6 +2162,7 @@ export const nodeSchemas: NodeSchema[] = [
   LoopControllerNode,
   ConditionalBranchNode,
   ConditionalRouterNode,
+  ConditionalRerouteNode,
   SwitchNode,
   ForEachNode,
 
@@ -1897,6 +2183,9 @@ export const nodeSchemas: NodeSchema[] = [
   ErrorRecoveryNode,
   StuckDetectorNode,
   BigBrotherNode,
+  BigBrotherRouterNode,
+  BigBrotherExecutorNode,
+  ClaudeFullTaskNode,
 
   // Agent
   MemoryLoaderNode,
