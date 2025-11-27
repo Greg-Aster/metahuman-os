@@ -7,8 +7,10 @@
 
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
-  import { codeToHtml } from 'shiki';
   import { isOwner } from '../stores/security-policy';
+
+  // Dynamic import of shiki to avoid bare specifier issues in production bundles
+  let codeToHtml: ((code: string, options: { lang: string; theme: string }) => Promise<string>) | null = null;
 
   interface CodeApproval {
     id: string;
@@ -31,6 +33,7 @@
   let highlightedCode: string = '';
   let isEditing = false;
   let editedCode: string = '';
+  let shikiLoaded = false;
 
   // Get current approval
   $: currentApproval = approvals[currentIndex];
@@ -177,11 +180,34 @@
     return path.replace(/^\/home\/[^/]+\/metahuman\//, '');
   }
 
+  // Load shiki dynamically
+  async function loadShiki(): Promise<boolean> {
+    if (shikiLoaded && codeToHtml) return true;
+
+    try {
+      const shiki = await import('shiki');
+      codeToHtml = shiki.codeToHtml;
+      shikiLoaded = true;
+      return true;
+    } catch (error) {
+      console.warn('[ApprovalBox] Shiki not available, syntax highlighting disabled:', error);
+      return false;
+    }
+  }
+
   // Highlight code with Shiki
   async function highlightCode(approval: CodeApproval) {
     try {
       const code = approval.preview || approval.newContent || approval.patch || '';
       if (!code) {
+        highlightedCode = '';
+        return;
+      }
+
+      // Try to load shiki if not already loaded
+      const shikiAvailable = await loadShiki();
+      if (!shikiAvailable || !codeToHtml) {
+        // Fallback: no highlighting, just show plain code
         highlightedCode = '';
         return;
       }
@@ -222,6 +248,9 @@
 
   // Lifecycle
   onMount(() => {
+    // Pre-load shiki for syntax highlighting
+    loadShiki();
+
     fetchApprovals();
     // Poll every 5 seconds for new approvals
     pollInterval = setInterval(fetchApprovals, 5000) as unknown as number;

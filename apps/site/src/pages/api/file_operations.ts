@@ -4,7 +4,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { initializeSkills } from '../../brain/skills/index.ts';
+import { initializeSkills } from '@brain/skills/index.js';
 import { executeSkill, loadTrustLevel, getAvailableSkills } from '@metahuman/core/skills';
 import { paths } from '@metahuman/core/paths';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';

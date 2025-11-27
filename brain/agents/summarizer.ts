@@ -23,20 +23,19 @@ import {
   audit,
   loadPersonaCore,
   acquireLock,
-  releaseLock,
-  isLocked,
+  type LockHandle,
   initGlobalLogger,
   listUsers,
   withUserContext,
   getUserContext,
   loadCognitiveMode,
-  canWriteMemory,
   markSummarizing,
   markSummaryCompleted,
   clearSummaryMarker,
   isSummarizing,
   getConversationBufferPath,
 } from '../../packages/core/src/index';
+import { canWriteMemory } from '../../packages/core/src/cognitive-mode.js';
 import fs from 'node:fs/promises';
 
 interface ConversationEvent {
@@ -232,7 +231,7 @@ Respond in JSON format:
 
   try {
     const response = await callLLM({
-      role: 'curator',
+      role: 'persona',
       messages,
       options: {
         temperature: 0.3, // Lower temperature for consistent summaries
@@ -504,9 +503,11 @@ async function main() {
   }
 
   // Single-instance lock
-  if (acquireLock('summarizer')) {
+  let lock: LockHandle;
+  try {
+    lock = acquireLock('summarizer');
     console.log('[summarizer] Lock acquired');
-  } else {
+  } catch (error) {
     console.error('[summarizer] Another instance is already running');
     process.exit(1);
   }
@@ -539,7 +540,7 @@ async function main() {
       details: { error: (error as Error).message }
     });
   } finally {
-    releaseLock('summarizer');
+    lock.release();
     console.log('[summarizer] Lock released');
   }
 }

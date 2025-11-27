@@ -1,7 +1,8 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, audit, loadModelRegistry } from '@metahuman/core';
+import { paths, audit } from '@metahuman/core';
+import { loadModelRegistry } from '@metahuman/core/model-resolver';
 
 export const POST: APIRoute = async ({ request }) => {
   try {

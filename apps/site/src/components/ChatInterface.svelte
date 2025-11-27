@@ -97,7 +97,13 @@
     },
     isComponentMounted: () => isComponentMounted,
   });
-  const { isRecording: micIsRecording, isContinuousMode: micIsContinuousMode, queuedMessage: micQueuedMessage } = mic;
+  const {
+    isRecording: micIsRecording,
+    isContinuousMode: micIsContinuousMode,
+    queuedMessage: micQueuedMessage,
+    interimTranscript: micInterimTranscript,
+    isNativeMode: micIsNativeMode
+  } = mic;
 
   // Initialize Thinking Trace composable
   const thinkingTraceApi = useThinkingTrace({
@@ -157,6 +163,33 @@
       };
       localStorage.setItem('chatPrefs', JSON.stringify(prefs));
     } catch {}
+  }
+
+  /**
+   * Persist a message to the inner dialogue buffer on the server
+   * This ensures reflections/dreams are saved and appear when switching to inner tab
+   */
+  async function persistToInnerBuffer(role: MessageRole, content: string, meta?: Record<string, any>): Promise<void> {
+    try {
+      const response = await fetch('/api/conversation-buffer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'inner',
+          message: {
+            role,
+            content,
+            timestamp: Date.now(),
+            meta,
+          },
+        }),
+      });
+      if (!response.ok) {
+        console.error('[inner-buffer] Failed to persist message');
+      }
+    } catch (error) {
+      console.error('[inner-buffer] Error persisting message:', error);
+    }
   }
 
   function updateReasoningDepth(value: number, persist = false) {
@@ -236,12 +269,10 @@
       messagesApi.generateSessionId();
     }
 
-    // Load messages from server (server-first architecture)
-    const serverMessages = await messagesApi.loadMessagesFromServer();
-    if (serverMessages && serverMessages.length > 0) {
-      messages.set(serverMessages);
-      console.log(`[ChatInterface] Hydrated ${serverMessages.length} messages from server`);
-    }
+    // Load conversation history from episodic memory and buffer
+    // This loads the full history including past conversations
+    await messagesApi.loadHistoryForMode();
+    console.log(`[ChatInterface] Loaded conversation history for mode: ${mode}`);
 
     scrollObserver = new IntersectionObserver(
       (entries) => {
@@ -279,6 +310,9 @@
           if (!isDuplicate) {
             messagesApi.pushMessage('reflection', data.reflection);
 
+            // Persist to inner dialogue buffer for history
+            void persistToInnerBuffer('reflection', data.reflection, { type: 'reflection' });
+
             // Add voice support for inner dialog if enabled
             if (boredomTtsEnabled && mode === 'inner' && data.reflection) {
               void ttsApi.speakText(data.reflection);
@@ -301,6 +335,9 @@
 
           if (!isDuplicate) {
             messagesApi.pushMessage('dream', data.dream);
+
+            // Persist to inner dialogue buffer for history
+            void persistToInnerBuffer('dream', data.dream, { type: 'dream' });
 
             // Add voice support for dreams if enabled
             if (boredomTtsEnabled && mode === 'inner' && data.dream) {
@@ -349,6 +386,18 @@
             console.log('[curiosity] Speaking question via TTS');
             void ttsApi.speakText(data.question);
           }
+        }
+
+        // Handle agent activity notifications
+        if (data.type === 'agent_activity' && data.message) {
+          console.log(`[agent] ${data.agent}: ${data.status}`);
+
+          // Add as a system notification in the chat
+          messagesApi.pushMessage('system', data.message, undefined, {
+            isAgentNotification: true,
+            agent: data.agent,
+            status: data.status,
+          });
         }
       } catch (e) {
         console.error('Failed to parse reflection/dream/curiosity event:', e);
@@ -1069,6 +1118,7 @@
       isRecording={$micIsRecording}
       isContinuousMode={$micIsContinuousMode}
       ttsIsPlaying={$ttsIsPlaying}
+      interimTranscript={$micInterimTranscript}
       {lengthMode}
       on:send={sendMessage}
       on:stop={stopRequest}
@@ -1080,7 +1130,15 @@
           $micIsRecording ? mic.stopMic() : mic.startMic();
         }
       }}
+      on:micLongPress={() => {
+        // Long-press triggers continuous mode (mobile-friendly)
+        if (!$micIsContinuousMode && !$micIsRecording) {
+          console.log('[chat-mic] Long press detected, starting continuous mode');
+          mic.toggleContinuousMode();
+        }
+      }}
       on:micContextMenu={() => {
+        // Right-click also triggers continuous mode (desktop)
         if (!$micIsContinuousMode && !$micIsRecording) {
           mic.toggleContinuousMode();
         }

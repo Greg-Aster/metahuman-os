@@ -22,6 +22,7 @@ export interface ChatSettings {
   userInputPriority: boolean;
   innerDialogHistoryLimit: number;
   innerDialogHistoryDays: number;
+  unifiedConsciousness: boolean;
 }
 
 export interface ChatSettingsConfig {
@@ -106,6 +107,7 @@ function extractSettings(config: ChatSettingsConfig): ChatSettings {
     userInputPriority: config.settings.userInputPriority?.value ?? true,
     innerDialogHistoryLimit: config.settings.innerDialogHistoryLimit?.value ?? 80,
     innerDialogHistoryDays: config.settings.innerDialogHistoryDays?.value ?? 7,
+    unifiedConsciousness: config.settings.unifiedConsciousness?.value ?? false,
   };
 }
 
@@ -251,6 +253,7 @@ export function getDefaultSettings(): ChatSettings {
     userInputPriority: true,
     innerDialogHistoryLimit: 80,
     innerDialogHistoryDays: 7,
+    unifiedConsciousness: false,
   };
 }
 

@@ -52,12 +52,13 @@
     "./graph-executor": "./src/graph-executor.ts",
     "./node-executors": "./src/node-executors/index.ts",
     "./big-brother": "./src/big-brother.ts",
-    "./claude-session": "./src/claude-session.ts"
+    "./claude-session": "./src/claude-session.ts",
+    "./graph-error-handler": "./src/graph-error-handler.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.939.0",
     "@aws-sdk/lib-storage": "^3.939.0",
-    "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.3",
     "fast-glob": "^3.3.2",
     "fs-extra": "^11.3.2",
     "gray-matter": "^4.0.3",
@@ -65,7 +66,7 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
-    "@types/bcrypt": "^6.0.0",
+    "@types/bcryptjs": "^3.0.0",
     "@types/fs-extra": "^11.0.4",
     "@types/uuid": "^11.0.0",
     "typescript": "^5.5.0"

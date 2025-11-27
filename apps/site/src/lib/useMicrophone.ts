@@ -1,17 +1,83 @@
 /**
  * Microphone & Voice Activity Detection (VAD) Composable
  * Handles voice input, speech-to-text, and auto-send functionality
+ *
+ * Supports two STT backends:
+ * - Native: Uses browser's SpeechRecognition API (fast, on-device, mobile-friendly)
+ * - Whisper: Records audio and sends to server for transcription (more accurate, requires upload)
  */
 
 import { writable, get } from 'svelte/store';
-import type { Writable } from 'svelte/store';
 import { calculateVoiceVolume } from './audio-utils.js';
 
+// TypeScript declarations for Web Speech API
+interface SpeechRecognitionEvent extends Event {
+  resultIndex: number;
+  results: SpeechRecognitionResultList;
+}
+
+interface SpeechRecognitionResultList {
+  length: number;
+  item(index: number): SpeechRecognitionResult;
+  [index: number]: SpeechRecognitionResult;
+}
+
+interface SpeechRecognitionResult {
+  isFinal: boolean;
+  length: number;
+  item(index: number): SpeechRecognitionAlternative;
+  [index: number]: SpeechRecognitionAlternative;
+}
+
+interface SpeechRecognitionAlternative {
+  transcript: string;
+  confidence: number;
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+  error: string;
+  message: string;
+}
+
+interface ISpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  onstart: (() => void) | null;
+  onspeechend: (() => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+}
+
+interface ISpeechRecognitionConstructor {
+  new(): ISpeechRecognition;
+}
+
 // Types
-interface MicrophoneSettings {
-  voiceThreshold: number;
-  silenceDelay: number;
-  minDuration: number;
+type STTBackend = 'native' | 'whisper' | 'auto';
+
+// Check for native SpeechRecognition support
+const NativeSpeechRecognition: ISpeechRecognitionConstructor | null = typeof window !== 'undefined'
+  ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) as ISpeechRecognitionConstructor
+  : null;
+
+/**
+ * Detect if running on a mobile device
+ */
+function isMobileDevice(): boolean {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+
+/**
+ * Check if native speech recognition is available
+ */
+function isNativeSpeechAvailable(): boolean {
+  return !!NativeSpeechRecognition;
 }
 
 interface UseMicrophoneOptions {
@@ -62,6 +128,38 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   const isRecording = writable(false);
   const isContinuousMode = writable(false);
   const queuedMessage = writable('');
+  const isNativeMode = writable(false); // Track if using native speech recognition
+  const interimTranscript = writable(''); // Real-time transcript preview
+
+  // Native speech recognition state
+  let speechRecognition: ISpeechRecognition | null = null;
+  let useNativeSTT = isMobileDevice() && isNativeSpeechAvailable(); // Auto-detect mobile
+
+  /**
+   * Get the current STT backend being used
+   */
+  function getSTTBackend(): STTBackend {
+    return useNativeSTT ? 'native' : 'whisper';
+  }
+
+  /**
+   * Set the STT backend manually
+   */
+  function setSTTBackend(backend: STTBackend): void {
+    if (backend === 'auto') {
+      useNativeSTT = isMobileDevice() && isNativeSpeechAvailable();
+    } else if (backend === 'native') {
+      if (!isNativeSpeechAvailable()) {
+        console.warn('[useMicrophone] Native speech recognition not available, falling back to Whisper');
+        useNativeSTT = false;
+      } else {
+        useNativeSTT = true;
+      }
+    } else {
+      useNativeSTT = false;
+    }
+    console.log('[useMicrophone] STT backend set to:', getSTTBackend());
+  }
 
   /**
    * Load VAD settings from voice config
@@ -89,9 +187,211 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   }
 
   /**
-   * Start microphone recording
+   * Start native speech recognition (single utterance mode)
+   * Uses browser's built-in speech-to-text - fast, on-device, no upload
    */
-  async function startMic(): Promise<void> {
+  function startNativeSpeech(continuous: boolean = false): void {
+    if (!NativeSpeechRecognition) {
+      console.warn('[useMicrophone] Native speech recognition not available');
+      onSystemMessage('⚠️ Native speech recognition not available on this device');
+      return;
+    }
+
+    // Don't start if TTS is playing (would hear its own voice)
+    if (getTTSPlaying()) {
+      console.log('[useMicrophone] TTS playing, not starting speech recognition');
+      return;
+    }
+
+    // Clean up any existing instance
+    if (speechRecognition) {
+      try {
+        speechRecognition.abort();
+      } catch {}
+      speechRecognition = null;
+    }
+
+    try {
+      speechRecognition = new NativeSpeechRecognition();
+      speechRecognition.continuous = continuous;
+      speechRecognition.interimResults = true; // Show words as they're spoken
+      speechRecognition.lang = 'en-US'; // Could make configurable
+
+      speechRecognition.onstart = () => {
+        console.log('[useMicrophone] Native speech recognition started (continuous:', continuous, ')');
+        isRecording.set(true);
+        isNativeMode.set(true);
+        interimTranscript.set('');
+      };
+
+      speechRecognition.onresult = (event: SpeechRecognitionEvent) => {
+        let interim = '';
+        let final = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const result = event.results[i];
+          if (result.isFinal) {
+            final += result[0].transcript;
+          } else {
+            interim += result[0].transcript;
+          }
+        }
+
+        // Update interim transcript for real-time display
+        if (interim) {
+          interimTranscript.set(interim);
+        }
+
+        // When we get a final result, send it
+        if (final.trim()) {
+          console.log('[useMicrophone] Native transcript (final):', final);
+          interimTranscript.set('');
+
+          // In continuous mode, keep going; in single mode, this auto-stops
+          onTranscript(final.trim());
+        }
+      };
+
+      speechRecognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+        console.error('[useMicrophone] Native speech error:', event.error, event.message);
+
+        // Handle common errors gracefully
+        if (event.error === 'no-speech') {
+          // User didn't say anything - not really an error
+          console.log('[useMicrophone] No speech detected');
+        } else if (event.error === 'aborted') {
+          // Intentionally stopped - not an error
+        } else if (event.error === 'not-allowed') {
+          onSystemMessage('🎤 Microphone access denied. Please allow microphone access.');
+        } else if (event.error === 'network') {
+          onSystemMessage('🌐 Network error during speech recognition. Check your connection.');
+        } else {
+          onSystemMessage(`⚠️ Speech recognition error: ${event.error}`);
+        }
+
+        stopNativeSpeech();
+      };
+
+      speechRecognition.onend = () => {
+        console.log('[useMicrophone] Native speech recognition ended');
+
+        // In continuous mode, restart if we're still supposed to be recording
+        if (continuous && get(isContinuousMode) && isComponentMounted() && !getTTSPlaying()) {
+          console.log('[useMicrophone] Restarting continuous native speech recognition...');
+          // Small delay to prevent rapid restart loops
+          setTimeout(() => {
+            if (get(isContinuousMode) && isComponentMounted() && !getTTSPlaying()) {
+              startNativeSpeech(true);
+            }
+          }, 100);
+        } else {
+          isRecording.set(false);
+          isNativeMode.set(false);
+          interimTranscript.set('');
+        }
+      };
+
+      speechRecognition.onspeechend = () => {
+        console.log('[useMicrophone] Speech ended (user stopped talking)');
+        // In single-utterance mode, this will trigger onend
+        // In continuous mode, recognition continues
+      };
+
+      speechRecognition.start();
+    } catch (e) {
+      console.error('[useMicrophone] Failed to start native speech:', e);
+      onSystemMessage('⚠️ Failed to start speech recognition');
+      isRecording.set(false);
+      isNativeMode.set(false);
+    }
+  }
+
+  /**
+   * Stop native speech recognition
+   */
+  function stopNativeSpeech(): void {
+    if (speechRecognition) {
+      try {
+        speechRecognition.stop();
+      } catch {}
+      speechRecognition = null;
+    }
+    isRecording.set(false);
+    isNativeMode.set(false);
+    interimTranscript.set('');
+  }
+
+  /**
+   * Start microphone - routes to appropriate backend (native or Whisper)
+   * @param forceContinuous - Force continuous mode (used by long-press)
+   */
+  async function startMic(forceContinuous: boolean = false): Promise<void> {
+    if (get(isRecording)) return;
+
+    const continuous = forceContinuous || get(isContinuousMode);
+
+    if (useNativeSTT) {
+      console.log('[useMicrophone] Using native speech recognition (mobile-optimized)');
+      startNativeSpeech(continuous);
+    } else {
+      console.log('[useMicrophone] Using Whisper backend');
+      await startWhisperMic();
+    }
+  }
+
+  /**
+   * Stop microphone - handles both native and Whisper modes
+   */
+  function stopMic(): void {
+    // Check if we're in native mode
+    if (speechRecognition) {
+      stopNativeSpeech();
+      return;
+    }
+
+    // Otherwise, stop Whisper recording
+    stopWhisperMic();
+  }
+
+  /**
+   * Stop Whisper recording
+   */
+  function stopWhisperMic(): void {
+    if (!get(isRecording)) return;
+
+    console.log('[useMicrophone] Stopping Whisper recording, chunks collected:', micChunks.length);
+
+    try {
+      if (micRecorder && micRecorder.state !== 'inactive') {
+        micRecorder.stop();
+      }
+    } catch (e) {
+      console.error('[useMicrophone] Error stopping recorder:', e);
+    }
+
+    if (micSilenceTimer) {
+      clearTimeout(micSilenceTimer);
+      micSilenceTimer = null;
+    }
+
+    isRecording.set(false);
+    micSpeaking = false;
+    micSilenceTimerStarted = false;
+
+    // In continuous mode, keep the stream alive for next speech detection
+    if (!get(isContinuousMode)) {
+      try { micStream?.getTracks().forEach(t => t.stop()); } catch {}
+      micStream = null;
+      try { micAudioCtx?.close(); } catch {}
+      micAudioCtx = null;
+      micAnalyser = null;
+    }
+  }
+
+  /**
+   * Start microphone recording (Whisper backend)
+   */
+  async function startWhisperMic(): Promise<void> {
     if (get(isRecording)) return;
 
     try {
@@ -142,43 +442,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   }
 
   /**
-   * Stop microphone recording
-   */
-  function stopMic(): void {
-    if (!get(isRecording)) return;
-
-    console.log('[useMicrophone] Stopping recording, chunks collected:', micChunks.length);
-
-    try {
-      if (micRecorder && micRecorder.state !== 'inactive') {
-        micRecorder.stop();
-      }
-    } catch (e) {
-      console.error('[useMicrophone] Error stopping recorder:', e);
-    }
-
-    if (micSilenceTimer) {
-      clearTimeout(micSilenceTimer);
-      micSilenceTimer = null;
-    }
-
-    isRecording.set(false);
-    micSpeaking = false; // Reset speaking state
-    micSilenceTimerStarted = false;
-
-    // In continuous mode, keep the stream alive for next speech detection
-    // In normal mode, close everything
-    if (!get(isContinuousMode)) {
-      try { micStream?.getTracks().forEach(t => t.stop()); } catch {}
-      micStream = null;
-      try { micAudioCtx?.close(); } catch {}
-      micAudioCtx = null;
-      micAnalyser = null;
-    }
-  }
-
-  /**
-   * Finalize recording and send to STT
+   * Finalize recording and send to STT (Whisper)
    */
   async function finalizeMic(): Promise<void> {
     try {
@@ -355,7 +619,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   }
 
   /**
-   * Toggle continuous mode
+   * Toggle continuous mode (used by long-press on mobile, right-click on desktop)
    */
   function toggleContinuousMode(): void {
     const currentMode = get(isContinuousMode);
@@ -363,8 +627,16 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     if (currentMode) {
       // Stop continuous mode and clean up
       isContinuousMode.set(false);
+
+      // Stop native speech if active
+      if (speechRecognition) {
+        stopNativeSpeech();
+      }
+
+      // Stop Whisper recording if active
       if (get(isRecording)) stopMic();
-      // Clean up the stream
+
+      // Clean up Whisper resources
       try { micStream?.getTracks().forEach(t => t.stop()); } catch {}
       micStream = null;
       try { micAudioCtx?.close(); } catch {}
@@ -373,7 +645,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     } else {
       // Start continuous mode
       isContinuousMode.set(true);
-      startMic();
+      startMic(true); // Force continuous mode
     }
   }
 
@@ -381,6 +653,15 @@ export function useMicrophone(options: UseMicrophoneOptions) {
    * Cleanup function to call on component unmount
    */
   function cleanup(): void {
+    // Clean up native speech recognition
+    if (speechRecognition) {
+      try {
+        speechRecognition.abort();
+      } catch {}
+      speechRecognition = null;
+    }
+
+    // Clean up Whisper resources
     if (micSilenceTimer) {
       clearTimeout(micSilenceTimer);
       micSilenceTimer = null;
@@ -390,6 +671,11 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     try { micAudioCtx?.close(); } catch {}
     micAudioCtx = null;
     micAnalyser = null;
+
+    // Reset stores
+    isRecording.set(false);
+    isNativeMode.set(false);
+    interimTranscript.set('');
   }
 
   return {
@@ -397,6 +683,8 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     isRecording,
     isContinuousMode,
     queuedMessage,
+    isNativeMode,       // Whether currently using native speech recognition
+    interimTranscript,  // Real-time transcript preview (native mode only)
 
     // Methods
     loadVADSettings,
@@ -404,5 +692,13 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     stopMic,
     toggleContinuousMode,
     cleanup,
+
+    // Configuration
+    getSTTBackend,
+    setSTTBackend,
+
+    // Utilities
+    isNativeSpeechAvailable,
+    isMobileDevice,
   };
 }

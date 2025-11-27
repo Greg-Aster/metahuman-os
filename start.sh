@@ -56,6 +56,21 @@ is_running() {
     pgrep -f "$1" >/dev/null 2>&1
 }
 
+wait_for_exit() {
+    local pattern="$1"
+    local attempts="${2:-5}"
+    local delay="${3:-1}"
+
+    for _ in $(seq 1 "$attempts"); do
+        if ! is_running "$pattern"; then
+            return 0
+        fi
+        sleep "$delay"
+    done
+
+    return 1
+}
+
 # Check if we're in the right directory structure
 if [ ! -f "$REPO_ROOT/package.json" ] || [ ! -d "$REPO_ROOT/apps/site" ]; then
     print_error "This script must be run from the MetaHuman OS root directory"
@@ -202,23 +217,72 @@ fi
 # Function to stop existing processes
 stop_existing() {
     echo "Checking for existing processes..."
-    
+
     # Kill any existing Astro dev servers
     if is_running "astro dev"; then
         echo "Stopping existing Astro dev server..."
         pkill -f "astro dev" 2>/dev/null || true
         sleep 2
     fi
-    
+
+    # Kill any existing production servers
+    if is_running "node dist/server/entry.mjs"; then
+        echo "Stopping existing production server..."
+        pkill -f "node dist/server/entry.mjs" 2>/dev/null || true
+        if ! wait_for_exit "node dist/server/entry.mjs" 5 1; then
+            echo "Force killing production server..."
+            pkill -9 -f "node dist/server/entry.mjs" 2>/dev/null || true
+            sleep 1
+        fi
+    fi
+
     # Kill any existing mh agents
     if is_running "mh agent"; then
         echo "Stopping existing MetaHuman agents..."
         ./bin/mh agent stop --all 2>/dev/null || true
         sleep 2
     fi
-    
+
+    # Ensure port 4321 is available before starting
+    PORT_PIDS=$(lsof -i :4321 -sTCP:LISTEN -t 2>/dev/null || true)
+    if [ -n "$PORT_PIDS" ]; then
+        echo "Port 4321 in use (PIDs: $PORT_PIDS). Terminating..."
+        echo "$PORT_PIDS" | xargs -r kill 2>/dev/null || true
+        for _ in $(seq 1 5); do
+            if ! lsof -i :4321 -sTCP:LISTEN >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+
+        if lsof -i :4321 -sTCP:LISTEN >/dev/null 2>&1; then
+            echo "Force killing processes on port 4321..."
+            echo "$PORT_PIDS" | xargs -r kill -9 2>/dev/null || true
+            sleep 1
+        fi
+    fi
+
     print_status "Existing processes stopped"
     echo
+}
+
+# Function to check if production build is needed
+needs_rebuild() {
+    DIST_DIR="$REPO_ROOT/apps/site/dist"
+    SRC_DIR="$REPO_ROOT/apps/site/src"
+
+    # If dist doesn't exist, we need to build
+    if [ ! -d "$DIST_DIR" ]; then
+        return 0
+    fi
+
+    # If any source file is newer than dist, we need to rebuild
+    if [ -n "$(find "$SRC_DIR" -newer "$DIST_DIR/server/entry.mjs" 2>/dev/null | head -1)" ]; then
+        return 0
+    fi
+
+    # No rebuild needed
+    return 1
 }
 
 # Stop existing processes
@@ -230,13 +294,25 @@ echo
 
 cd "$REPO_ROOT/apps/site"
 
-print_status "Starting development server..."
+# Check if we need to build
+if needs_rebuild; then
+    print_status "Building production bundle..."
+    pnpm build
+    if [ $? -ne 0 ]; then
+        print_error "Build failed. Falling back to development server."
+        exec pnpm dev
+    fi
+    print_status "Production build complete"
+    echo
+fi
+
+print_status "Starting production server..."
 print_status "Web interface will be available at: http://localhost:4321"
 echo
 
 # Display helpful information
 echo "=========================================="
-echo "  MetaHuman OS Web Interface Starting     "
+echo "  MetaHuman OS Production Server          "
 echo "=========================================="
 echo "URL: http://localhost:4321"
 echo "Press Ctrl+C to stop the server"
@@ -271,5 +347,5 @@ elif command -v open >/dev/null 2>&1; then
   open_browser_when_ready "open"
 fi
 
-# Start the development server
-exec pnpm dev
+# Start the production server
+exec node dist/server/entry.mjs

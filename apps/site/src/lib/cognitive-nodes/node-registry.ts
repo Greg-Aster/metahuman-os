@@ -2187,6 +2187,95 @@ class MemoryMarkerNodeImpl extends CognitiveNodeBase {
   }
 }
 
+// ============================================================================
+// DREAMER WORKFLOW NODE IMPLEMENTATIONS
+// ============================================================================
+
+class DreamerMemoryCuratorNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'dreamer_memory_curator')!;
+  constructor() { super(DreamerMemoryCuratorNodeImpl.schema); }
+  onExecute() {
+    // Mock - in real implementation would curate weighted memories
+    this.setOutputData(0, []); // memories
+    this.setOutputData(1, 0);  // count
+    this.setOutputData(2, 0);  // avgAgeDays
+    this.setOutputData(3, 0);  // oldestAgeDays
+    this.setOutputData(4, 'unknown'); // username
+  }
+}
+
+class DreamerDreamGeneratorNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'dreamer_dream_generator')!;
+  constructor() { super(DreamerDreamGeneratorNodeImpl.schema); }
+  async onExecute() {
+    const memories = this.getInputData(0) || [];
+    const personaPrompt = this.getInputData(1) || '';
+    // Mock - in real implementation would generate dream via LLM
+    this.setOutputData(0, 'A surreal dream...'); // dream
+    this.setOutputData(1, memories.length);      // memoryCount
+    this.setOutputData(2, []);                   // sourceIds
+    this.setOutputData(3, 'unknown');            // username
+  }
+}
+
+class DreamerDreamSaverNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'dreamer_dream_saver')!;
+  constructor() { super(DreamerDreamSaverNodeImpl.schema); }
+  onExecute() {
+    const dreamData = this.getInputData(0) || {};
+    const memoriesData = this.getInputData(1) || {};
+    // Mock - in real implementation would save dream to memory
+    this.setOutputData(0, true);                  // saved
+    this.setOutputData(1, 'dream-' + Date.now()); // eventId
+    this.setOutputData(2, dreamData.dream || ''); // dream
+    this.setOutputData(3, 0);                     // sourceCount
+    this.setOutputData(4, 'unknown');             // username
+  }
+}
+
+class DreamerContinuationGeneratorNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'dreamer_continuation_generator')!;
+  constructor() { super(DreamerContinuationGeneratorNodeImpl.schema); }
+  async onExecute() {
+    const previousDream = this.getInputData(0) || {};
+    // Mock - in real implementation would generate continuation dreams
+    this.setOutputData(0, []);        // dreams array
+    this.setOutputData(1, 0);         // count
+    this.setOutputData(2, 'unknown'); // username
+  }
+}
+
+class DreamerLearningsExtractorNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'dreamer_learnings_extractor')!;
+  constructor() { super(DreamerLearningsExtractorNodeImpl.schema); }
+  async onExecute() {
+    const memoriesData = this.getInputData(0) || {};
+    // Mock - in real implementation would extract learnings via LLM
+    this.setOutputData(0, []);        // preferences
+    this.setOutputData(1, []);        // heuristics
+    this.setOutputData(2, []);        // styleNotes
+    this.setOutputData(3, []);        // avoidances
+    this.setOutputData(4, 0);         // memoryCount
+    this.setOutputData(5, 'unknown'); // username
+  }
+}
+
+class DreamerLearningsWriterNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'dreamer_learnings_writer')!;
+  constructor() { super(DreamerLearningsWriterNodeImpl.schema); }
+  onExecute() {
+    const learningsData = this.getInputData(0) || {};
+    const memoriesData = this.getInputData(1) || {};
+    // Mock - in real implementation would write learnings to file
+    const today = new Date().toISOString().split('T')[0];
+    this.setOutputData(0, true);                           // written
+    this.setOutputData(1, `/procedural/${today}.md`);      // filepath
+    this.setOutputData(2, `${today}.md`);                  // filename
+    this.setOutputData(3, today);                          // date
+    this.setOutputData(4, 'unknown');                      // username
+  }
+}
+
   // Return all node implementation classes
   return {
     MicInputNodeImpl,
@@ -2295,6 +2384,13 @@ class MemoryMarkerNodeImpl extends CognitiveNodeBase {
     TrainingPairGeneratorNodeImpl,
     TrainingPairAppenderNodeImpl,
     MemoryMarkerNodeImpl,
+    // Dreamer Workflow
+    DreamerMemoryCuratorNodeImpl,
+    DreamerDreamGeneratorNodeImpl,
+    DreamerDreamSaverNodeImpl,
+    DreamerContinuationGeneratorNodeImpl,
+    DreamerLearningsExtractorNodeImpl,
+    DreamerLearningsWriterNodeImpl,
   };
 }
 

@@ -5,8 +5,8 @@
  */
 
 import type { APIRoute } from 'astro';
-import { initializeSkills } from '../../../../../../brain/skills/index';
-import { runReActLoop, type ReActStep, type ReActContext, type OperatorTask } from '../../../../../../brain/agents/operator-react';
+import { initializeSkills } from '@brain/skills/index.js';
+import { runReActLoop, type ReActStep, type ReActContext, type OperatorTask } from '@brain/agents/operator-react.js';
 import { audit } from '@metahuman/core/audit';
 import { requireOperatorMode } from '../../../middleware/cognitiveModeGuard';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';

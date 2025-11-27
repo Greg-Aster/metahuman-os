@@ -8,7 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { paths } from './paths.js';
 import { audit } from './audit.js';
 import type { OnboardingState } from './types/onboarding.js';

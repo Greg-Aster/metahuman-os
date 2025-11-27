@@ -80,6 +80,11 @@
       "max": 365,
       "step": 1,
       "notes": "Recent reflections/dreams only. Increase to see older inner thoughts"
+    },
+    "unifiedConsciousness": {
+      "description": "Include inner dialogue (reflections, dreams) in conversation context",
+      "value": false,
+      "notes": "When enabled, inner thoughts influence conversational responses. Creates more integrated consciousness but may cause inner thoughts to 'bleed' into conversation."
     }
   },
   "presets": {
@@ -94,7 +99,8 @@
       "maxHistoryMessages": 30,
       "userInputPriority": true,
       "innerDialogHistoryLimit": 80,
-      "innerDialogHistoryDays": 7
+      "innerDialogHistoryDays": 7,
+      "unifiedConsciousness": false
     },
     "focused": {
       "description": "Prioritize user's current question, minimal context interference",
@@ -107,7 +113,8 @@
       "maxHistoryMessages": 15,
       "userInputPriority": true,
       "innerDialogHistoryLimit": 50,
-      "innerDialogHistoryDays": 3
+      "innerDialogHistoryDays": 3,
+      "unifiedConsciousness": false
     },
     "immersive": {
       "description": "Deep context awareness, strong personality, rich history",
@@ -120,7 +127,8 @@
       "maxHistoryMessages": 50,
       "userInputPriority": false,
       "innerDialogHistoryLimit": 150,
-      "innerDialogHistoryDays": 30
+      "innerDialogHistoryDays": 30,
+      "unifiedConsciousness": true
     },
     "minimal": {
       "description": "Clean slate, minimal context, direct responses",
@@ -133,7 +141,8 @@
       "maxHistoryMessages": 10,
       "userInputPriority": true,
       "innerDialogHistoryLimit": 30,
-      "innerDialogHistoryDays": 1
+      "innerDialogHistoryDays": 1,
+      "unifiedConsciousness": false
     }
   },
   "activePreset": "focused"

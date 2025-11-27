@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
-import { tryResolveProfilePath } from '@metahuman/core/paths';
-import { audit } from '@metahuman/core';
+import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
+import { getProfilePaths, getUserOrAnonymous, audit } from '@metahuman/core';
 
 /**
  * Conversation Buffer API
@@ -31,19 +31,15 @@ interface ConversationBuffer {
 }
 
 const DEFAULT_MESSAGE_LIMIT = 50;
-const MIN_MESSAGE_LIMIT = 10;
-const MAX_MESSAGE_LIMIT = 100;
 
-function getBufferPath(mode: Mode): string | null {
-  const result = tryResolveProfilePath('state');
-  if (!result.ok) return null;
-
-  return `${result.path}/conversation-buffer-${mode}.json`;
+function getBufferPath(username: string, mode: Mode): string {
+  const profilePaths = getProfilePaths(username);
+  return path.join(profilePaths.state, `conversation-buffer-${mode}.json`);
 }
 
-function loadBuffer(mode: Mode): ConversationBuffer | null {
-  const bufferPath = getBufferPath(mode);
-  if (!bufferPath || !existsSync(bufferPath)) {
+function loadBuffer(username: string, mode: Mode): ConversationBuffer | null {
+  const bufferPath = getBufferPath(username, mode);
+  if (!existsSync(bufferPath)) {
     return null;
   }
 
@@ -69,11 +65,16 @@ function loadBuffer(mode: Mode): ConversationBuffer | null {
   }
 }
 
-function saveBuffer(buffer: ConversationBuffer): boolean {
-  const bufferPath = getBufferPath(buffer.mode);
-  if (!bufferPath) return false;
+function saveBuffer(username: string, buffer: ConversationBuffer): boolean {
+  const bufferPath = getBufferPath(username, buffer.mode);
 
   try {
+    // Ensure directory exists
+    const dir = path.dirname(bufferPath);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+
     const data = {
       mode: buffer.mode,
       messages: buffer.messages,
@@ -105,9 +106,8 @@ function pruneBuffer(buffer: ConversationBuffer): void {
   });
 }
 
-function deleteBuffer(mode: Mode): boolean {
-  const bufferPath = getBufferPath(mode);
-  if (!bufferPath) return false;
+function deleteBuffer(username: string, mode: Mode): boolean {
+  const bufferPath = getBufferPath(username, mode);
 
   try {
     if (existsSync(bufferPath)) {
@@ -122,6 +122,7 @@ function deleteBuffer(mode: Mode): boolean {
 
 // GET: Fetch conversation buffer
 const getHandler: APIRoute = async ({ cookies, request }) => {
+  const user = getUserOrAnonymous(cookies);
   const url = new URL(request.url);
   const mode = (url.searchParams.get('mode') || 'conversation') as Mode;
 
@@ -132,7 +133,20 @@ const getHandler: APIRoute = async ({ cookies, request }) => {
     );
   }
 
-  const buffer = loadBuffer(mode);
+  // Anonymous users get empty buffer
+  if (user.role === 'anonymous') {
+    return new Response(
+      JSON.stringify({
+        mode,
+        messages: [],
+        lastUpdated: new Date().toISOString(),
+        messageLimit: DEFAULT_MESSAGE_LIMIT,
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  const buffer = loadBuffer(user.username, mode);
 
   if (!buffer) {
     // Return empty buffer structure
@@ -155,6 +169,17 @@ const getHandler: APIRoute = async ({ cookies, request }) => {
 
 // POST: Append message to buffer
 const postHandler: APIRoute = async ({ cookies, request }) => {
+  const user = getUserOrAnonymous(cookies);
+
+  // Anonymous users can't write to buffer
+  if (user.role === 'anonymous') {
+    console.warn('[conversation-buffer] Anonymous user cannot write to buffer');
+    return new Response(
+      JSON.stringify({ error: 'Authentication required to save messages' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   const body = await request.json();
   const { mode, message } = body;
 
@@ -173,7 +198,7 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
   }
 
   // Load or create buffer
-  let buffer = loadBuffer(mode);
+  let buffer = loadBuffer(user.username, mode);
   if (!buffer) {
     buffer = {
       mode,
@@ -195,7 +220,7 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
   pruneBuffer(buffer);
 
   // Save buffer
-  const saved = saveBuffer(buffer);
+  const saved = saveBuffer(user.username, buffer);
 
   if (!saved) {
     return new Response(
@@ -203,6 +228,8 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
+
+  console.log(`[conversation-buffer] ✅ Saved ${message.role} message to ${mode} buffer (${buffer.messages.length} total)`);
 
   return new Response(
     JSON.stringify({ success: true, messageCount: buffer.messages.length }),
@@ -212,6 +239,16 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
 
 // DELETE: Clear conversation buffer
 const deleteHandler: APIRoute = async ({ cookies, request }) => {
+  const user = getUserOrAnonymous(cookies);
+
+  // Anonymous users can't delete buffer
+  if (user.role === 'anonymous') {
+    return new Response(
+      JSON.stringify({ error: 'Authentication required' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   const url = new URL(request.url);
   const mode = (url.searchParams.get('mode') || 'conversation') as Mode;
 
@@ -222,14 +259,14 @@ const deleteHandler: APIRoute = async ({ cookies, request }) => {
     );
   }
 
-  const deleted = deleteBuffer(mode);
+  const deleted = deleteBuffer(user.username, mode);
 
   audit({
     level: 'info',
     category: 'action',
     event: 'conversation_buffer_cleared',
     details: { mode },
-    actor: 'user',
+    actor: user.username,
   });
 
   return new Response(
@@ -238,7 +275,7 @@ const deleteHandler: APIRoute = async ({ cookies, request }) => {
   );
 };
 
-// MIGRATED: 2025-11-20 - Explicit authentication pattern
+// MIGRATED: 2025-11-26 - Fixed explicit authentication pattern
 export const GET = getHandler;
 export const POST = postHandler;
 export const DELETE = deleteHandler;

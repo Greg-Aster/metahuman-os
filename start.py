@@ -258,12 +258,60 @@ def install_dependencies(repo_root, skip=False):
         print_colored("✓ Node.js dependencies already installed", "green")
         return True
 
+def needs_rebuild(repo_root):
+    """Check if production build is needed"""
+    dist_dir = repo_root / "apps" / "site" / "dist"
+    src_dir = repo_root / "apps" / "site" / "src"
+    entry_file = dist_dir / "server" / "entry.mjs"
+
+    # If dist doesn't exist, we need to build
+    if not entry_file.exists():
+        return True
+
+    # Check if any source file is newer than the entry file
+    entry_mtime = entry_file.stat().st_mtime
+    for src_file in src_dir.rglob("*"):
+        if src_file.is_file() and src_file.stat().st_mtime > entry_mtime:
+            return True
+
+    return False
+
+
+def build_production(repo_root):
+    """Build the production bundle"""
+    site_dir = repo_root / "apps" / "site"
+
+    print_colored("Building production bundle...", "yellow")
+    try:
+        subprocess.run(["pnpm", "build"], cwd=site_dir, check=True)
+        print_colored("✓ Production build complete", "green")
+        return True
+    except subprocess.CalledProcessError:
+        print_colored("✗ Build failed", "red")
+        return False
+
+
 def start_web_server(repo_root):
     """Start the web server"""
     site_dir = repo_root / "apps" / "site"
-    
+
+    # Check if we need to build
+    if needs_rebuild(repo_root):
+        if not build_production(repo_root):
+            print_colored("Falling back to development server...", "yellow")
+            try:
+                os.chdir(site_dir)
+                subprocess.run(["pnpm", "dev"], check=True)
+                return True
+            except KeyboardInterrupt:
+                print_colored("\n\nServer stopped by user", "yellow")
+                return True
+            except subprocess.CalledProcessError as e:
+                print_colored(f"\n✗ Failed to start web server: {e}", "red")
+                return False
+
     print_colored("\n" + "=" * 50, "blue")
-    print_colored("  Starting MetaHuman OS Web Interface", "blue")
+    print_colored("  Starting MetaHuman OS Production Server", "blue")
     print_colored("=" * 50, "blue")
     print()
     print_colored("URL: http://localhost:4321", "green")
@@ -276,7 +324,7 @@ def start_web_server(repo_root):
     print("  - Persona customization")
     print("  - Agent monitoring")
     print()
-    
+
     def wait_and_open():
         for _ in range(120):
             try:
@@ -288,11 +336,11 @@ def start_web_server(repo_root):
         # timed out without opening
 
     threading.Thread(target=wait_and_open, daemon=True).start()
-    
+
     try:
-        # Change to the site directory and start the dev server
+        # Change to the site directory and start the production server
         os.chdir(site_dir)
-        subprocess.run(["pnpm", "dev"], check=True)
+        subprocess.run(["node", "dist/server/entry.mjs"], check=True)
         return True
     except KeyboardInterrupt:
         print_colored("\n\nServer stopped by user", "yellow")
@@ -359,7 +407,8 @@ def main():
         start_web_server(repo_root)
     else:
         print_colored("Startup script completed. You can start the web server later with:", "yellow")
-        print("  cd apps/site && pnpm dev")
+        print("  cd apps/site && pnpm build && node dist/server/entry.mjs")
+        print("  Or for development: cd apps/site && pnpm dev")
         print("  Then open http://localhost:4321")
 
 if __name__ == "__main__":

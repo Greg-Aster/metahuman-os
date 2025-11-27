@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
 import { paths, timestamp } from '@metahuman/core'
-import { requireWriteMode } from '../../../../../../packages/core/src/security-policy.js'
+import { requireWriteMode } from '../../../middleware/cognitiveModeGuard'
 
 export const POST: APIRoute = requireWriteMode(async (context) => {
   try {

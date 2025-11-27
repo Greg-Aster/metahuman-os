@@ -143,6 +143,25 @@
       "pos": [1740, 320],
       "size": [200, 80],
       "title": "Response Refiner"
+    },
+    {
+      "id": 29,
+      "type": "cognitive/persona_loader",
+      "pos": [1050, 80],
+      "size": [180, 60],
+      "title": "Persona Loader"
+    },
+    {
+      "id": 30,
+      "type": "cognitive/persona_formatter",
+      "pos": [1200, 80],
+      "size": [200, 80],
+      "properties": {
+        "includePersonality": true,
+        "includeValues": true,
+        "includeGoals": true
+      },
+      "title": "Persona Formatter"
     }
   ],
   "links": [
@@ -332,6 +351,24 @@
       "target_id": 16,
       "target_slot": 1,
       "type": "object"
+    },
+    {
+      "id": 24,
+      "origin_id": 29,
+      "origin_slot": 0,
+      "target_id": 30,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Persona data → Persona Formatter"
+    },
+    {
+      "id": 25,
+      "origin_id": 30,
+      "origin_slot": 0,
+      "target_id": 9,
+      "target_slot": 4,
+      "type": "string",
+      "comment": "Formatted persona → Response Synthesizer (for persona voice synthesis)"
     }
   ],
   "config": {},

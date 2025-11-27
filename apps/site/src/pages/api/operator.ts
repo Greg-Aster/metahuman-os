@@ -4,9 +4,9 @@
  */
 
 import type { APIRoute } from 'astro';
-import { initializeSkills } from '../../../../../brain/skills/index';
-import { runOperatorWithFeatureFlag } from '../../../../../brain/agents/operator-react';
-import { loadTrustLevel, getAvailableSkills, listSkills } from '../../../../../packages/core/src/skills';
+import { initializeSkills } from '@brain/skills/index.js';
+import { runOperatorWithFeatureFlag } from '@brain/agents/operator-react.js';
+import { loadTrustLevel, getAvailableSkills, listSkills } from '@metahuman/core/skills';
 import { audit } from '@metahuman/core/audit';
 import { requireOperatorMode } from '../../middleware/cognitiveModeGuard';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';

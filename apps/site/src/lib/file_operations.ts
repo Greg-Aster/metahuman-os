@@ -3,7 +3,7 @@
  * Detects file operations and routes them to the skills system
  */
 
-import { initializeSkills } from '../../../../brain/skills/index';
+import { initializeSkills } from '@brain/skills/index.js';
 import { executeSkill, loadTrustLevel, getAvailableSkills } from '@metahuman/core/skills';
 import path from 'node:path';
 import { paths } from '@metahuman/core/paths';

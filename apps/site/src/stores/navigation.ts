@@ -6,7 +6,13 @@ const savedView = typeof localStorage !== 'undefined'
   : 'chat';
 
 export const activeView = writable<string>(savedView);
-export const statusStore = writable(null);
+
+// Check for bootstrap data from index.astro inline script
+const bootstrapStatus = typeof window !== 'undefined'
+  ? (window as any).__MH_BOOTSTRAP_STATUS__ || null
+  : null;
+
+export const statusStore = writable(bootstrapStatus);
 export const statusRefreshTrigger = writable<number>(0); // Increment to trigger refresh
 
 // YOLO mode store - shared between components

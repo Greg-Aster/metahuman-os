@@ -197,12 +197,32 @@ export function invalidateOperatorConfig(): void {
   operatorConfigCache = null;
 }
 
+// ============================================================================
+// Runtime Configuration
+// ============================================================================
+
+export interface RuntimeConfig {
+  operator?: {
+    reactV2?: boolean;
+    useReasoningService?: boolean;
+    useContextPackage?: boolean;
+  };
+  [key: string]: any;
+}
+
+/**
+ * Load runtime configuration from etc/runtime.json
+ */
+export function loadRuntimeConfig(): RuntimeConfig {
+  return loadUserConfig<RuntimeConfig>('runtime.json', {});
+}
+
 /**
  * Check if ReAct V2 is enabled
  */
 export function isReactV2Enabled(): boolean {
   try {
-    const runtime = loadUserConfig<any>('runtime.json', {});
+    const runtime = loadRuntimeConfig();
     return runtime.operator?.reactV2 === true;
   } catch {
     return false; // Default to v1 if config missing

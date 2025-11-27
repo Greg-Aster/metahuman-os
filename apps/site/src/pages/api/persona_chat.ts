@@ -1,12 +1,12 @@
 import type { APIRoute } from 'astro';
-import { loadPersonaCore, loadPersonaWithFacet, getActiveFacet, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, type RouterMessage, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, pruneHistory, type Message, getConversationBufferPath, executeGraph, getGraphOutput, type CognitiveGraph, validateCognitiveGraph, withUserContext } from '@metahuman/core';
+import { loadPersonaCore, loadPersonaWithFacet, getActiveFacet, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, type RouterMessage, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, executeGraph, getGraphOutput, type CognitiveGraph, validateCognitiveGraph, withUserContext } from '@metahuman/core';
 import { loadCognitiveMode, getModeDefinition, canWriteMemory as modeAllowsMemoryWrites, canUseOperator } from '@metahuman/core/cognitive-mode';
 import { canWriteMemory as policyCanWriteMemory } from '@metahuman/core/memory-policy';
 import { loadChatSettings } from '@metahuman/core/chat-settings';
 import { getUserOrAnonymous, getUserPaths, getProfilePaths } from '@metahuman/core';
 import { readFileSync, existsSync, appendFileSync, writeFileSync, promises as fs } from 'node:fs';
 import path from 'node:path';
-import { initializeSkills } from '../../../../../brain/skills/index';
+import { initializeSkills } from '@brain/skills/index.js';
 import { getAvailableSkills, executeSkill, type SkillManifest } from '@metahuman/core/skills';
 import { resolveNodePipelineFlag } from '../../utils/node-pipeline';
 // Proactively import node executors to ensure they're loaded before graph execution
@@ -139,6 +139,10 @@ const ENABLE_AUTO_SUMMARIZATION = process.env.ENABLE_AUTO_SUMMARIZATION !== 'fal
 // Extended for qwen3:14b's 40k context window - triggers summarization at 64 messages (80% capacity)
 // Key format: "${mode}:${sessionId}" for complete session isolation
 const histories: Map<string, ConversationMessage[]> = new Map();
+
+// Track username per session for buffer persistence (replaces deprecated getUserContext)
+// Key format: "${mode}:${sessionId}" → username
+// DELETED: sessionUsernames, sessionUsingGraph, and related functions - BufferManager handles ALL persistence
 
 function getHistoryKey(mode: Mode, sessionId: string): string {
   return `${mode}:${sessionId}`;
@@ -784,126 +788,16 @@ function dedupeConversationMessages(
   return { deduped, removed };
 }
 
-function getBufferPath(mode: Mode): string | null {
+function getBufferPath(mode: Mode, username: string): string | null {
   try {
-    return getConversationBufferPath(mode);
+    const profilePaths = getProfilePaths(username);
+    return path.join(profilePaths.state, `conversation-buffer-${mode}.json`);
   } catch (error) {
     console.warn('[persona_chat] Failed to determine buffer path:', error);
     return null;
   }
 }
 
-function loadPersistedBuffer(mode: Mode): ConversationMessage[] {
-  const bufferPath = getBufferPath(mode);
-  if (!bufferPath || !existsSync(bufferPath)) return [];
-
-  try {
-    const raw = readFileSync(bufferPath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    const persistedMessages: ConversationMessage[] = Array.isArray(parsed.messages)
-      ? parsed.messages
-      : [];
-    const persistedSummaryMarkers: ConversationMessage[] = Array.isArray(parsed.summaryMarkers)
-      ? parsed.summaryMarkers
-      : persistedMessages.filter(msg => msg.meta?.summaryMarker);
-
-    // Remove any summary markers from the main messages array to avoid duplication
-    const conversationMessages = persistedMessages.filter(msg => !msg.meta?.summaryMarker);
-    const { deduped, removed } = dedupeConversationMessages(conversationMessages);
-    if (removed > 0) {
-      console.log(`[persona_chat] Removed ${removed} duplicate ${mode} messages from persisted buffer`);
-    }
-
-    const combined = [...deduped];
-    if (persistedSummaryMarkers.length > 0) {
-      if (
-        combined.length > 0 &&
-        combined[0].role === 'system' &&
-        !combined[0].meta?.summaryMarker
-      ) {
-        combined.splice(1, 0, ...persistedSummaryMarkers);
-      } else {
-        combined.unshift(...persistedSummaryMarkers);
-      }
-    }
-
-    const derivedLastSummarized =
-      typeof parsed.lastSummarizedIndex === 'number'
-        ? parsed.lastSummarizedIndex
-        : (persistedSummaryMarkers.length > 0
-            ? persistedSummaryMarkers.reduce((max, marker) => {
-                const count = marker.meta?.summaryCount;
-                return typeof count === 'number' && count > max ? count : max;
-              }, 0)
-            : null);
-
-    bufferMeta[mode].lastSummarizedIndex = derivedLastSummarized ?? null;
-
-    if (removed > 0) {
-      try {
-        const payload = JSON.stringify(
-          {
-            summaryMarkers: persistedSummaryMarkers,
-            messages: deduped,
-            lastSummarizedIndex: bufferMeta[mode].lastSummarizedIndex,
-            lastUpdated: new Date().toISOString(),
-          },
-          null,
-          2
-        );
-        writeFileSync(bufferPath, payload);
-      } catch (error) {
-        console.warn('[persona_chat] Failed to persist deduplicated buffer:', error);
-      }
-    }
-
-    return combined;
-  } catch (error) {
-    console.warn('[persona_chat] Failed to load conversation buffer:', error);
-  }
-
-  bufferMeta[mode].lastSummarizedIndex = null;
-  return [];
-}
-
-function persistBuffer(mode: Mode, sessionId: string): void {
-  const bufferPath = getBufferPath(mode);
-  if (!bufferPath) return;
-
-  try {
-    const history = getHistory(mode, sessionId);
-    const summaryMarkers = history.filter((msg: ConversationMessage) => msg.meta?.summaryMarker);
-    const conversationMessages = history.filter((msg: ConversationMessage) => !msg.meta?.summaryMarker);
-    const payload = JSON.stringify(
-      {
-        summaryMarkers,
-        messages: conversationMessages,
-        lastSummarizedIndex: bufferMeta[mode].lastSummarizedIndex,
-        lastUpdated: new Date().toISOString(),
-      },
-      null,
-      2
-    );
-    writeFileSync(bufferPath, payload);
-  } catch (error) {
-    console.warn('[persona_chat] Failed to persist conversation buffer:', error);
-  }
-}
-
-function ensureHistoryLoaded(mode: Mode, sessionId: string, userId: string = 'anonymous'): void {
-  const key = getHistoryKey(mode, sessionId);
-
-  // If this session's history is already loaded, skip
-  if (historyLoadedForSession.has(key)) {
-    return;
-  }
-
-  // Load persisted buffer from disk (user-specific)
-  const loaded = loadPersistedBuffer(mode);
-  histories.set(key, loaded);
-  historyLoadedForSession.add(key);
-  ensureSystemPrompt(mode, sessionId);
-}
 
 function upsertSummaryMarker(
   mode: Mode,
@@ -948,66 +842,29 @@ function upsertSummaryMarker(
 
   history.splice(insertionIndex, 0, marker);
   bufferMeta[mode].lastSummarizedIndex = summary.messageCount;
-  persistBuffer(mode, summary.sessionId);
+  // DELETED: persistBuffer call - BufferManager handles this
 }
 
 /**
  * Add message to history and automatically prune to stay within limits
  * PROACTIVE SUMMARIZATION: Triggers at 80% capacity (16/20 messages) to avoid interrupting conversation
  */
+/**
+ * DEPRECATED: pushMessage is now a no-op
+ * BufferManager node in cognitive graph handles ALL message persistence and capacity management
+ * Keeping function signature for backwards compatibility with legacy code paths
+ */
 function pushMessage(
-  mode: Mode,
-  message: ConversationMessage,
-  sessionId: string,
-  streamNotifier?: (type: string, data: any) => void
+  _mode: Mode,
+  _message: ConversationMessage,
+  _sessionId: string,
+  _streamNotifier?: (type: string, data: any) => void
 ): void {
-  const normalized: ConversationMessage =
-    typeof message.timestamp === 'number' ? message : { ...message, timestamp: Date.now() };
-
-  const history = getHistory(mode, sessionId);
-  const beforeCount = history.length;
-
-  // PROACTIVE SUMMARIZATION: Check if approaching capacity (80% = 64/80 messages)
-  // Trigger BEFORE overflow to avoid interrupting mid-conversation
-  // Extended for qwen3:14b's 40k token context window (using ~32k conservatively)
-  const CAPACITY_THRESHOLD = 64; // 80% of 80 max messages
-  const nonSystemMessages = history.filter(msg => msg.role !== 'system' && !msg.meta?.summaryMarker).length;
-
-  if (nonSystemMessages >= CAPACITY_THRESHOLD && message.role !== 'system') {
-    console.log(`[context-window] Approaching capacity (${nonSystemMessages}/${CAPACITY_THRESHOLD}), triggering proactive summarization`);
-
-    // Notify user via chat stream if available
-    if (streamNotifier) {
-      streamNotifier('system_message', {
-        content: '💾 Conversation getting long, summarizing for better context management...'
-      });
-    }
-
-    // Trigger async summarization (non-blocking)
-    triggerAutoSummarization(sessionId, mode, streamNotifier).catch(error => {
-      console.error('[auto-summarization] Failed to trigger summarization:', error);
-    });
-  }
-
-  history.push(normalized);
-
-  // Auto-prune to stay within token/message limits
-  // Extended for qwen3:14b's 40k context window (using 32k conservatively)
-  const pruned = pruneHistory(history as Message[], {
-    maxTokens: 32000,  // Conservative limit for qwen3:14b (40k capacity)
-    maxMessages: 80,   // ~400 tokens per message average
-    preserveSystemMessages: true,
-  }) as ConversationMessage[];
-
-  history.length = 0;
-  history.push(...pruned);
-
-  const afterCount = history.length;
-  if (beforeCount + 1 !== afterCount) {
-    console.log(`[context-window] Pruned ${mode} history: ${beforeCount + 1} → ${afterCount} messages`);
-  }
-
-  persistBuffer(mode, sessionId);
+  // NO-OP: BufferManager handles:
+  // - Message persistence to buffer file
+  // - Capacity checking (64/80 threshold)
+  // - Pruning (max 80 messages)
+  // - Summarization flagging (needsSummarization field)
 }
 
 /**
@@ -1053,7 +910,7 @@ async function triggerAutoSummarization(
     }
 
     // Import summarizer dynamically to avoid circular dependencies
-    const { summarizeSession } = await import('../../../../../brain/agents/summarizer.js');
+    const { summarizeSession } = await import('@brain/agents/summarizer.js');
 
     console.log(`[auto-summarization] Triggering summarization for session: ${sessionId}`);
 
@@ -1411,7 +1268,7 @@ function initializeChat(mode: Mode, sessionId: string, reason = false, usingLora
   history.length = 0; // Clear existing
   history.push({ role: 'system', content: systemPrompt });
   bufferMeta[mode].lastSummarizedIndex = null;
-  persistBuffer(mode, sessionId);
+  // DELETED: persistBuffer call - BufferManager handles this
 }
 
 function ensureSystemPrompt(mode: Mode, sessionId: string, includePersonaSummary = true): void {
@@ -1426,7 +1283,6 @@ function ensureSystemPrompt(mode: Mode, sessionId: string, includePersonaSummary
       role: 'system',
       content: buildSystemPrompt(mode, includePersonaSummary)
     });
-    persistBuffer(mode, sessionId);
   }
 }
 
@@ -1441,7 +1297,7 @@ function refreshSystemPrompt(mode: Mode, sessionId: string, includePersonaSummar
   }
 
   history[0].content = buildSystemPrompt(mode, includePersonaSummary);
-  persistBuffer(mode, sessionId);
+  // DELETED: persistBuffer call - BufferManager handles this
 }
 
 // GET handler - no middleware bullshit, simple and explicit
@@ -1758,10 +1614,11 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   // Get user ID from cookies (no middleware)
   const user = getUserOrAnonymous(cookies);
   const userId = user.id;
+  const username = user.username || 'anonymous';
 
   const m: Mode = mode === 'conversation' ? 'conversation' : 'inner';
   sessionId = sessionId || `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  ensureHistoryLoaded(m, sessionId, userId);
+  // DELETED:   ensureHistoryLoaded(m, sessionId, username);
 
   // Reasoning depth settings
   const depthCandidate = Number(reasoningDepth);
@@ -1892,7 +1749,6 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
       role: 'system',
       content: authWarning
     });
-    persistBuffer(m, sessionId);
   }
 
   // ============================================================================
@@ -1934,6 +1790,9 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
 
   if (graphEnabled) {
     console.log(`[persona_chat] 🔄 Attempting graph pipeline for mode: ${cognitiveMode}`);
+
+    // Mark session as using graph mode (prevents legacy persistBuffer from overwriting BufferManager's data)
+    // DELETED: markSessionUsingGraph - all sessions use graph mode now
 
     // Use streaming version that shows real-time progress
     const streamResult = streamGraphExecutionWithProgress({
@@ -2557,7 +2416,6 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
     });
   } catch (error) {
     history.pop();
-    persistBuffer(m, sessionId);
     console.error('Persona chat API error:', error);
     audit({
       level: 'error',

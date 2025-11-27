@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { updateActivity } from '../../../../../brain/agents/sleep-service'; // Adjust import path
+import { updateActivity } from '@brain/agents/sleep-service.js';
 import { scheduler } from '@metahuman/core';
 
 export const POST: APIRoute = async ({ request }) => {

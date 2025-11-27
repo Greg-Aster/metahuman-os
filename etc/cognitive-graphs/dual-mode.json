@@ -157,6 +157,32 @@
       "pos": [2540, 160],
       "size": [180, 60],
       "title": "Stream Writer"
+    },
+    {
+      "id": 29,
+      "type": "cognitive/persona_loader",
+      "pos": [1050, 80],
+      "size": [180, 60],
+      "title": "Persona Loader"
+    },
+    {
+      "id": 30,
+      "type": "cognitive/persona_formatter",
+      "pos": [1200, 80],
+      "size": [200, 80],
+      "properties": {
+        "includePersonality": true,
+        "includeValues": true,
+        "includeGoals": true
+      },
+      "title": "Persona Formatter"
+    },
+    {
+      "id": 26,
+      "type": "cognitive/buffer_manager",
+      "pos": [770, 340],
+      "size": [180, 80],
+      "title": "Buffer Manager"
     }
   ],
   "links": [
@@ -393,6 +419,42 @@
       "target_slot": 1,
       "type": "object",
       "comment": "Refined response → Audit Logger"
+    },
+    {
+      "id": 109,
+      "origin_id": 29,
+      "origin_slot": 0,
+      "target_id": 30,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Persona data → Persona Formatter"
+    },
+    {
+      "id": 110,
+      "origin_id": 30,
+      "origin_slot": 0,
+      "target_id": 17,
+      "target_slot": 4,
+      "type": "string",
+      "comment": "Formatted persona → Response Synthesizer (for persona voice synthesis)"
+    },
+    {
+      "id": 111,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 26,
+      "target_slot": 0,
+      "type": "array",
+      "comment": "Conversation history → Buffer Manager"
+    },
+    {
+      "id": 112,
+      "origin_id": 20,
+      "origin_slot": 0,
+      "target_id": 26,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "Refined response → Buffer Manager (assistant message)"
     }
   ],
   "config": {},

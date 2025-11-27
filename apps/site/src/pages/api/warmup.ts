@@ -7,7 +7,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { callLLM } from '../../../../../packages/core/src/model-router.js';
+import { callLLM } from '@metahuman/core/model-router';
 import { audit } from '@metahuman/core/audit';
 
 export const GET: APIRoute = async () => {

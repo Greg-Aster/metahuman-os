@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
-import { validateSession } from '../../../../../../packages/core/src/sessions.js';
-import { getUser, updatePassword, verifyUserPassword } from '../../../../../../packages/core/src/users.js';
+import { validateSession } from '@metahuman/core/sessions';
+import { getUser, updatePassword, verifyUserPassword } from '@metahuman/core/users';
 
 /**
  * POST /api/auth/change-password
