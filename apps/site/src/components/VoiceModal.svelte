@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { calculateVoiceVolume } from '../lib/audio-utils.js';
+  import { calculateVoiceVolume } from '../lib/client/utils/audio-utils.js';
 
   // Props inherited from ChatInterface
   export let cognitiveMode: 'dual' | 'agent' | 'emulation' = 'dual';

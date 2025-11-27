@@ -4,7 +4,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getTemplate } from '../../../lib/cognitive-nodes/template-loader';
+import { getTemplate } from '../../../lib/client/visual-editor/template-loader';
 import { validateGraph } from '@metahuman/core/graph-error-handler';
 
 /**

@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import ReferenceAudioSelector from './ReferenceAudioSelector.svelte';
   import DirectVoiceRecorder from './DirectVoiceRecorder.svelte';
-  import { createDefaultKokoroConfig, startKokoroTrainingRequest } from '../lib/kokoro-training';
+  import { createDefaultKokoroConfig, startKokoroTrainingRequest } from '../lib/client/utils/kokoro-training';
 
   export let provider: 'piper' | 'sovits' | 'rvc' | 'kokoro' = 'rvc';
 
@@ -111,6 +111,7 @@
   let totalEpochs = 300;
   let saveEveryEpoch = 50;
   let batchSize = 8;
+  let rvcDevice: 'auto' | 'cuda' | 'cpu' = 'auto';
   let showAdvancedSettings = false;
 
   function getRandomRobotMessage() {
@@ -436,7 +437,8 @@
           speakerId: 'default',
           totalEpochs,
           saveEveryEpoch,
-          batchSize
+          batchSize,
+          device: rvcDevice
         })
       });
 
@@ -1112,6 +1114,24 @@
               />
               <div class="setting-note">
                 Default: 8. Lower if you run out of GPU memory. Higher for faster training (if GPU allows).
+              </div>
+            </div>
+            <div class="setting-group">
+              <label for="rvcDevice">
+                Device:
+                <span class="setting-help">Training device</span>
+              </label>
+              <select
+                id="rvcDevice"
+                bind:value={rvcDevice}
+                disabled={training}
+              >
+                <option value="auto">Auto (GPU if available)</option>
+                <option value="cuda">CUDA (GPU)</option>
+                <option value="cpu">CPU</option>
+              </select>
+              <div class="setting-note">
+                GPU is much faster (30-60 min). CPU training is slower but works without NVIDIA GPU.
               </div>
             </div>
           </div>

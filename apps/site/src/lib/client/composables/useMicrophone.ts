@@ -8,7 +8,7 @@
  */
 
 import { writable, get } from 'svelte/store';
-import { calculateVoiceVolume } from './audio-utils.js';
+import { calculateVoiceVolume } from '../utils/audio-utils.js';
 
 // TypeScript declarations for Web Speech API
 interface SpeechRecognitionEvent extends Event {

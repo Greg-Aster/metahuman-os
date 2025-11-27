@@ -53,7 +53,7 @@ import {
   BigBrotherRouterNode,
   BigBrotherExecutorNode,
   type PropertySchema
-} from './node-schemas';
+} from '../../shared/node-schemas';
 
 // ============================================================================
 // WIDGET AUTO-GENERATION HELPERS
