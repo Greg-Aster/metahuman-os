@@ -134,8 +134,12 @@ export const POST: APIRoute = async ({ request }) => {
       }
 
       case 'auto-export': {
-        // Auto-export best samples for RVC training
-        const samples = getReferenceSamples(minQuality);
+        // Auto-export best samples for RVC training with configurable options
+        const selectionMethod = body.selectionMethod || 'quality';
+        const targetDuration = body.targetDuration; // in seconds
+        const maxSamples = body.maxSamples || 200;
+
+        const samples = getReferenceSamples(minQuality, selectionMethod);
 
         if (samples.length === 0) {
           return new Response(JSON.stringify({
@@ -146,16 +150,32 @@ export const POST: APIRoute = async ({ request }) => {
           });
         }
 
+        // Select samples based on duration and count limits
+        let selectedSamples = samples;
+        if (targetDuration || maxSamples) {
+          let totalDuration = 0;
+          selectedSamples = [];
+          for (const sample of samples) {
+            if (maxSamples && selectedSamples.length >= maxSamples) break;
+            if (targetDuration && totalDuration >= targetDuration) break;
+            selectedSamples.push(sample);
+            totalDuration += sample.duration;
+          }
+        }
+
         // Get sample IDs
-        const sampleIds = samples.map(s => s.id);
+        const sampleIds = selectedSamples.map(s => s.id);
 
         // Copy to RVC directory
         const copiedCount = copyToRVC(sampleIds, speakerId);
 
         return new Response(JSON.stringify({
           success: true,
-          message: `Auto-exported ${copiedCount} high-quality samples to RVC training directory`,
-          copiedCount
+          message: `Auto-exported ${copiedCount} samples to RVC training directory (${selectionMethod} selection)`,
+          copiedCount,
+          selectionMethod,
+          targetDuration,
+          maxSamples
         }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' }

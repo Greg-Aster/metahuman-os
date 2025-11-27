@@ -2,12 +2,121 @@
  * Global Astro Middleware
  *
  * Automatically applies user context to ALL API routes
+ * Also handles Big Brother auto-start on server boot
  */
 
 import { defineMiddleware } from 'astro:middleware';
 import { withUserContext as runWithUserContext } from '@metahuman/core/context';
 import { validateSession } from '@metahuman/core/sessions';
 import { getUser } from '@metahuman/core/users';
+
+// ============================================================================
+// Big Brother Auto-Start (runs once on module load = server start)
+// ============================================================================
+let bigBrotherInitialized = false;
+
+async function initializeBigBrother(): Promise<void> {
+  if (bigBrotherInitialized) return;
+  bigBrotherInitialized = true;
+
+  try {
+    const { loadOperatorConfig } = await import('@metahuman/core/config');
+    const config = loadOperatorConfig();
+    const bigBrotherEnabled = config.bigBrotherMode?.enabled === true;
+
+    if (bigBrotherEnabled) {
+      console.log('[middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...');
+
+      const { startClaudeSession, isClaudeSessionReady } = await import('@metahuman/core/claude-session');
+
+      if (!isClaudeSessionReady()) {
+        const started = await startClaudeSession(true);
+        if (started) {
+          console.log('[middleware] ✅ Claude session started automatically');
+          await spawnBigBrotherTerminal();
+        } else {
+          console.warn('[middleware] ⚠️ Failed to start Claude session - Claude CLI may not be installed');
+        }
+      } else {
+        console.log('[middleware] ✅ Claude session already running');
+      }
+    }
+  } catch (err) {
+    console.error('[middleware] ⚠️ Failed to auto-start Big Brother mode:', err);
+  }
+}
+
+async function spawnBigBrotherTerminal(): Promise<void> {
+  try {
+    const { spawn, execSync } = await import('child_process');
+    const fs = await import('fs');
+    const path = await import('path');
+
+    const REPO_ROOT = process.cwd().includes('/apps/site')
+      ? path.resolve(process.cwd(), '../..')
+      : process.cwd();
+    const LOG_DIR = path.join(REPO_ROOT, 'logs/run');
+    const TTYD_BIN = path.join(REPO_ROOT, 'bin/ttyd');
+    const CLAUDE_PORT = 3099;
+
+    // Check if ttyd is already running on this port
+    try {
+      const result = execSync(`ss -tlnp 2>/dev/null | grep :${CLAUDE_PORT}`, { encoding: 'utf8' });
+      if (result.includes('ttyd')) {
+        console.log('[middleware] ✅ Big Brother terminal already running on port', CLAUDE_PORT);
+        return;
+      }
+    } catch {
+      // Port not in use, continue to spawn
+    }
+
+    // Ensure log directory exists
+    if (!fs.existsSync(LOG_DIR)) {
+      fs.mkdirSync(LOG_DIR, { recursive: true });
+    }
+
+    // Create/clear the session log file
+    const sessionLogPath = path.join(LOG_DIR, 'big-brother-session.log');
+    fs.writeFileSync(sessionLogPath, `
+════════════════════════════════════════════════════════════════════════════════
+🤖 BIG BROTHER MODE - Claude Code Session Log
+════════════════════════════════════════════════════════════════════════════════
+Started: ${new Date().toISOString()}
+
+This terminal shows all Big Brother escalations in real-time.
+When the operator gets stuck, it will send prompts to Claude Code for guidance.
+
+Waiting for escalations...
+════════════════════════════════════════════════════════════════════════════════
+
+`);
+
+    // Spawn ttyd (note: --title-format not supported in ttyd 1.7.x)
+    const logFile = path.join(LOG_DIR, 'big-brother-terminal.log');
+    const ttydProcess = spawn(TTYD_BIN, [
+      '--port', CLAUDE_PORT.toString(),
+      '--writable',
+      '--cwd', REPO_ROOT,
+      '/usr/bin/tail', '-f', sessionLogPath
+    ], {
+      detached: true,
+      stdio: ['ignore', fs.openSync(logFile, 'a'), fs.openSync(logFile, 'a')]
+    });
+
+    ttydProcess.unref();
+
+    // Save PID file
+    const pidFile = path.join(LOG_DIR, 'big-brother-terminal.pid');
+    fs.writeFileSync(pidFile, ttydProcess.pid!.toString());
+
+    console.log('[middleware] ✅ Big Brother terminal spawned on port', CLAUDE_PORT);
+  } catch (err) {
+    console.error('[middleware] ⚠️ Failed to spawn Big Brother terminal:', err);
+  }
+}
+
+// Initialize Big Brother on module load (server start)
+initializeBigBrother();
 
 export const onRequest = defineMiddleware(async (context, next) => {
   // Only apply to API routes

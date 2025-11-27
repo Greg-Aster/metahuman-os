@@ -1,84 +1,150 @@
-# Migration Plan: ChatInterface to Cognitive Graph API
+# Migration Plan: persona_chat.ts Refactoring
 
-**Status**: Planning
+**Status**: Phases 1-4 Complete
 **Created**: 2025-11-26
-**Priority**: High
-**Complexity**: Large Refactor
+**Updated**: 2025-11-27 (Implementation complete)
+**Priority**: Medium (Refactoring, not migration)
+**Complexity**: Medium Refactor (not Large)
 
 ## Executive Summary
 
-Migrate the ChatInterface component from the legacy `persona_chat.ts` API to use the cognitive graph system, eliminating hidden persona injection and aligning chat with the visible, editable graph-based architecture.
+**UPDATED AFTER ANALYSIS**: The original assumption that `persona_chat.ts` bypasses cognitive graphs was **incorrect**.
 
-## Current State Analysis
+The file **already uses cognitive graphs** via `streamGraphExecutionWithProgress()`. The actual problem is:
+1. The file is 2429 lines with mixed responsibilities
+2. There's duplicate conversation history management (API file + graph nodes)
+3. `buildSystemPrompt()` adds persona to buffers, while graphs also handle persona
+4. The streaming graph execution code should be extracted to a shared module
 
-### Legacy System (`/api/persona_chat`)
+This is a **refactoring/simplification** project, not a migration.
 
-**File**: `apps/site/src/pages/api/persona_chat.ts`
+## Phase 1 Analysis Findings
 
-**Problems**:
-1. **Hidden Persona Injection**: `buildSystemPrompt()` function (line 1384) loads and injects persona into system messages without user visibility
-2. **Bypasses Cognitive Graphs**: Completely separate code path from the graph-based workflow
-3. **Manual History Management**: Custom buffer management instead of using graph context
-4. **Duplicate Logic**: Reimplements persona formatting that already exists in `persona_formatter` node
-5. **Not Editable**: Users cannot modify persona injection via graph editor
+### What Works (Keep)
 
-**Current Flow**:
+1. **Graph Execution**: `streamGraphExecutionWithProgress()` (line 271) already:
+   - Loads cognitive graphs via `loadGraphForMode(graphKey)`
+   - Streams progress events via `ReadableStream` + `text/event-stream`
+   - Supports cognitive mode switching (dual/agent/emulation)
+   - Has timeout handling, cancellation support, and progress reporting
+
+2. **Graph Nodes**: Cognitive graphs already have:
+   - `cognitive/conversation_history` node - loads from `state/conversation-buffer-{mode}.json`
+   - `cognitive/persona_loader` and `cognitive/persona_formatter` nodes
+   - Full persona handling in the graph pipeline
+
+### What's Redundant (Remove)
+
+1. **`buildSystemPrompt()`** (line 1217): Duplicates persona injection that graphs already handle
+2. **`initializeChat()`** (line 1265): Manual buffer initialization
+3. **`ensureSystemPrompt()`** (line 1274): Redundant system prompt management
+4. **`refreshSystemPrompt()`**: More duplicate persona handling
+
+### Current Architecture
+
 ```
-User Message → /api/persona_chat → buildSystemPrompt() → LLM → Response
-                      ↓
-                Hidden persona injection
-                (loadPersonaWithFacet + manual formatting)
+User Message → /api/persona_chat → streamGraphExecutionWithProgress()
+                      ↓                         ↓
+              Buffer Management         Graph Execution
+              (buildSystemPrompt)       (persona nodes)
+                      ↓                         ↓
+              [REDUNDANT]              [WORKS CORRECTLY]
 ```
 
-**Dependencies**:
-- `ChatInterface.svelte` (line 493) - Main chat UI
-- `PersonaChat.svelte` - Legacy chat component
-- Uses EventSource for streaming responses
-- Manages conversation history in local buffers
+## Revised Refactoring Plan
 
-### New System (Cognitive Graphs)
+### Goal
 
-**Files**:
-- `etc/cognitive-graphs/dual-mode.json`
-- `etc/cognitive-graphs/agent-mode.json`
-- `etc/cognitive-graphs/dual-mode-bigbrother.json`
+Reduce `persona_chat.ts` from 2429 lines to ~500 lines by:
+1. Extracting streaming graph execution to `packages/core/src/graph-streaming.ts`
+2. Removing redundant persona/buffer management code
+3. Letting cognitive graph nodes handle all persona and history concerns
+
+### Phase 1: Analysis (COMPLETED)
+
+- [x] Found graph execution: `streamGraphExecutionWithProgress()` already uses cognitive graphs
+- [x] Found streaming: Uses `ReadableStream` + `text/event-stream`
+- [x] Found history management: Graph's `conversation_history` node loads from buffer files
+- [x] Found duplicate code: `buildSystemPrompt()` duplicates graph persona handling
+
+### Phase 2: Extract Graph Streaming Module (COMPLETED)
+
+**Created**: `packages/core/src/graph-streaming.ts`
+
+Extracted from `persona_chat.ts`:
+- `streamGraphExecution()` function - streaming graph execution with SSE
+- `loadGraphForMode()` function - graph loading with caching
+- `requestCancellation()`, `checkCancellation()`, `clearCancellation()` - cancellation management
+- `clearGraphCache()` - cache management
+- Types: `GraphStreamingParams`, `StreamEvent`, `LoadedGraph`
 
 **Benefits**:
-1. **Visible Persona Flow**: Persona nodes visible in graph editor
-2. **User Editable**: Can modify graph structure to change persona injection
-3. **Consistent Pattern**: All workflows use same persona mechanism
-4. **Single Source of Truth**: `persona_formatter` node handles all formatting
-5. **Graph Execution**: Full workflow orchestration via node system
+- ✅ Reusable for other endpoints (not just chat)
+- ✅ Testable in isolation
+- ✅ Cleaner separation of concerns
 
-**Current Flow**:
-```
-User Message → Graph Executor → persona_loader → persona_formatter → Response Synthesizer → Response
-                                      ↓                  ↓
-                                 Visible in UI    User can edit
-```
+### Phase 3: Remove Duplicate Code (COMPLETED)
 
-## Migration Strategy
+**Removed from persona_chat.ts**:
+- `graphCache` and `GraphCacheEntry` type
+- `readGraphFromFile()` function
+- `loadGraphForMode()` function (now imported from core)
+- `requestCancellation()`, `checkCancellation()`, `clearCancellation()` (now imported from core)
 
-### Phase 1: Analysis & Design (2-3 days)
+**Result**: Reduced file from 2429 to 2318 lines (~111 lines removed)
 
-#### 1.1 Identify Cognitive Graph API Endpoint
+### Phase 4: Document Legacy Path (COMPLETED)
 
-**Tasks**:
-- [ ] Find existing cognitive graph execution endpoint (likely `/api/cognitive-graph/execute` or similar)
-- [ ] Document API contract (request/response format, streaming support)
-- [ ] Identify how conversation history is managed in graph system
-- [ ] Verify streaming response support
+**Decision**: Keep legacy fallback as safety mechanism
 
-**Deliverable**: API specification document
+The legacy code path (buildSystemPrompt, etc.) is kept but comprehensively documented as deprecated:
+- Added detailed deprecation comments explaining why it exists
+- Listed all functions that become obsolete when legacy path is removed
+- Documented the removal process (2+ weeks of stability, then delete)
 
-#### 1.2 Map Feature Parity
+**Why not removed**:
+- Legacy fallback allows disabling graph pipeline via `USE_NODE_PIPELINE=false`
+- Safety mechanism for production issues
+- Can be removed after extended stability period
 
-**Current persona_chat.ts Features**:
-- [ ] Streaming responses (EventSource)
-- [ ] Conversation history management
-- [ ] Session management
-- [ ] Inner dialogue mode vs conversation mode
-- [ ] Persona facet switching
+**Future work**: After 2+ weeks of stable graph execution, delete legacy code path (~600 lines)
+
+### Timeline
+
+| Phase | Duration | Status |
+|-------|----------|--------|
+| 1. Analysis | 1 day | ✅ COMPLETE |
+| 2. Extract streaming module | 1 day | ✅ COMPLETE |
+| 3. Remove duplicate code | 1 day | ✅ COMPLETE |
+| 4. Document legacy path | 1 day | ✅ COMPLETE |
+| 5. Remove legacy fallback | Future | ⏳ After 2 weeks stability |
+
+**Total completed**: 4 days
+**Future work**: Remove legacy fallback after stability period
+
+---
+
+## Original Migration Strategy (DEPRECATED)
+
+> **Note**: The following sections contain the original plan that was based on incorrect assumptions. Kept for reference.
+
+### Phase 1: Analysis & Design (2-3 days) - SUPERSEDED
+
+#### 1.1 Identify Cognitive Graph API Endpoint - COMPLETED
+
+**Findings**:
+- Graph execution exists in `packages/core/src/graph-executor.ts`
+- `/api/execute-graph.ts` provides REST endpoint (no streaming)
+- `persona_chat.ts` has streaming via `streamGraphExecutionWithProgress()`
+
+#### 1.2 Map Feature Parity - COMPLETED
+
+**All features already work via cognitive graphs**:
+- ✅ Streaming responses (EventSource)
+- ✅ Conversation history management
+- ✅ Session management
+- ✅ Inner dialogue mode vs conversation mode
+- ✅ Persona facet switching
 - [ ] Reply-to specific messages
 - [ ] Context building with semantic search
 - [ ] Memory grounding

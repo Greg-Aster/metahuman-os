@@ -309,9 +309,7 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
       },
     });
 
-    child.unref();
-
-    // Register in running.json
+    // Register in running.json FIRST (before potential early exit)
     if (child.pid) {
       registerAgent(agentName, child.pid);
 
@@ -324,6 +322,7 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
       });
     }
 
+    // Attach event handlers BEFORE unref() to catch events while parent runs
     child.on('close', (code: number) => {
       if (code !== 0) console.error(`Agent ${agentName} exited with code ${code}`);
       audit({
@@ -340,6 +339,10 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
       console.error(`Failed to start ${agentName}: ${err.message}`);
       unregisterAgent(agentName);
     });
+
+    // IMPORTANT: unref() AFTER event handlers are attached
+    // Events will still work while parent process is alive
+    child.unref();
   };
 
   defaults.forEach(spawnAgent);

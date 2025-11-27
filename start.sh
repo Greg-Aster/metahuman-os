@@ -56,6 +56,45 @@ is_running() {
     pgrep -f "$1" >/dev/null 2>&1
 }
 
+# Track child process for cleanup
+SERVER_PID=""
+
+# Cleanup function for graceful shutdown
+cleanup_services() {
+    echo ""
+    echo "Shutting down MetaHuman services..."
+
+    # Kill the server first if running
+    if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "Stopping web server (PID: $SERVER_PID)..."
+        kill "$SERVER_PID" 2>/dev/null || true
+        # Wait briefly for graceful shutdown
+        for i in 1 2 3; do
+            kill -0 "$SERVER_PID" 2>/dev/null || break
+            sleep 1
+        done
+        # Force kill if still running
+        kill -9 "$SERVER_PID" 2>/dev/null || true
+    fi
+
+    # Stop agents with timeout
+    timeout 5 "$REPO_ROOT/bin/mh" agent stop --all 2>/dev/null || true
+
+    # Stop terminal server
+    "$REPO_ROOT/bin/stop-terminal" 2>/dev/null || true
+
+    # Force kill any remaining agents
+    pkill -f "brain/agents" 2>/dev/null || true
+    pkill -f "scheduler-service" 2>/dev/null || true
+    pkill -f "audio-organizer" 2>/dev/null || true
+
+    echo "Goodbye!"
+    exit 0
+}
+
+trap cleanup_services INT TERM
+trap 'exit 0' EXIT
+
 wait_for_exit() {
     local pattern="$1"
     local attempts="${2:-5}"
@@ -288,6 +327,89 @@ needs_rebuild() {
 # Stop existing processes
 stop_existing
 
+# Clean up stale PID and lock files before starting
+echo "Cleaning up stale process files..."
+cleanup_stale_files() {
+    # Clean up stale PID files
+    PID_DIR="$REPO_ROOT/logs/run"
+    if [ -d "$PID_DIR" ]; then
+        for pidfile in "$PID_DIR"/*.pid; do
+            [ -f "$pidfile" ] || continue
+            pid=$(cat "$pidfile" 2>/dev/null || echo "")
+            if [ -n "$pid" ]; then
+                if ! kill -0 "$pid" 2>/dev/null; then
+                    rm -f "$pidfile"
+                fi
+            else
+                rm -f "$pidfile"
+            fi
+        done
+    fi
+
+    # Clean up stale lock files
+    LOCK_DIR="$REPO_ROOT/logs/run/locks"
+    if [ -d "$LOCK_DIR" ]; then
+        for lockfile in "$LOCK_DIR"/*.lock; do
+            [ -f "$lockfile" ] || continue
+            pid=$(grep -o '"pid"[[:space:]]*:[[:space:]]*[0-9]*' "$lockfile" 2>/dev/null | grep -o '[0-9]*' || echo "")
+            if [ -n "$pid" ]; then
+                if ! kill -0 "$pid" 2>/dev/null; then
+                    rm -f "$lockfile"
+                fi
+            else
+                rm -f "$lockfile"
+            fi
+        done
+    fi
+
+    # Clean up agent registry
+    REGISTRY_FILE="$REPO_ROOT/logs/agents/running.json"
+    if [ -f "$REGISTRY_FILE" ] && command -v node >/dev/null 2>&1; then
+        node -e "
+const fs = require('fs');
+try {
+    const registry = JSON.parse(fs.readFileSync('$REGISTRY_FILE', 'utf-8'));
+    const clean = {};
+    for (const [name, info] of Object.entries(registry)) {
+        try { process.kill(info.pid, 0); clean[name] = info; } catch (e) {}
+    }
+    fs.writeFileSync('$REGISTRY_FILE', JSON.stringify(clean, null, 2));
+} catch (e) {}
+" 2>/dev/null || true
+    fi
+}
+cleanup_stale_files
+print_status "Stale files cleaned"
+echo
+
+# Start agents and services (like run-with-agents does for pnpm dev)
+echo "Starting MetaHuman agents and services..."
+
+# Check headless mode before starting agents
+RUNTIME_CONFIG="$REPO_ROOT/etc/runtime.json"
+if [ -f "$RUNTIME_CONFIG" ]; then
+  HEADLESS=$(grep -o '"headless"[[:space:]]*:[[:space:]]*true' "$RUNTIME_CONFIG" || echo "")
+  if [ -n "$HEADLESS" ]; then
+    print_warning "Headless mode active - skipping agent startup"
+  else
+    "$REPO_ROOT/bin/mh" start --restart 2>/dev/null || print_warning "Failed to start agents"
+  fi
+else
+  "$REPO_ROOT/bin/mh" start --restart 2>/dev/null || print_warning "Failed to start agents"
+fi
+
+# Auto-start Cloudflare tunnel if enabled
+"$REPO_ROOT/bin/start-cloudflare" 2>/dev/null || true
+
+# Auto-start voice server based on active TTS provider
+"$REPO_ROOT/bin/start-voice-server" 2>/dev/null || true
+
+# Auto-start terminal server
+"$REPO_ROOT/bin/start-terminal" 2>/dev/null || true
+
+print_status "Services started"
+echo
+
 # Start the web server
 echo "Starting MetaHuman OS web interface..."
 echo
@@ -347,5 +469,10 @@ elif command -v open >/dev/null 2>&1; then
   open_browser_when_ready "open"
 fi
 
-# Start the production server
-exec node dist/server/entry.mjs
+# Start the production server (run in foreground, not exec, so trap works)
+node dist/server/entry.mjs &
+SERVER_PID=$!
+echo "Server started with PID: $SERVER_PID"
+
+# Wait for server to exit
+wait $SERVER_PID

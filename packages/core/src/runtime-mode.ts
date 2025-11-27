@@ -196,8 +196,6 @@ function startDefaultAgents(actor?: string): void {
         },
       });
 
-      child.unref();
-
       if (child.pid) {
         registerAgent(agentName, child.pid);
         console.log(`[runtime-mode] Started ${agentName} (PID: ${child.pid})`);
@@ -210,6 +208,7 @@ function startDefaultAgents(actor?: string): void {
           actor: actor || 'system',
         });
 
+        // Attach event handlers BEFORE unref()
         child.on('close', (code: number) => {
           audit({
             level: code === 0 ? 'info' : 'error',
@@ -221,6 +220,9 @@ function startDefaultAgents(actor?: string): void {
           unregisterAgent(agentName);
         });
       }
+
+      // IMPORTANT: unref() AFTER event handlers
+      child.unref();
     } catch (error) {
       console.error(`[runtime-mode] Failed to start ${agentName}:`, error);
     }

@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { loadPersonaCore, loadPersonaWithFacet, getActiveFacet, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, type RouterMessage, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, executeGraph, getGraphOutput, type CognitiveGraph, validateCognitiveGraph, withUserContext } from '@metahuman/core';
+import { loadPersonaCore, loadPersonaWithFacet, getActiveFacet, ollama, captureEvent, ROOT, listActiveTasks, audit, getIndexStatus, queryIndex, buildRagContext, searchMemory, loadTrustLevel, callLLM, type ModelRole, type RouterMessage, getOrchestratorContext, getPersonaContext, updateConversationContext, updateCurrentFocus, resolveModelForCognitiveMode, buildContextPackage, formatContextForPrompt, PersonalityCoreLayer, checkResponseSafety, refineResponseSafely, executeGraph, getGraphOutput, withUserContext, loadGraphForMode, checkCancellation, clearCancellation } from '@metahuman/core';
 import { loadCognitiveMode, getModeDefinition, canWriteMemory as modeAllowsMemoryWrites, canUseOperator } from '@metahuman/core/cognitive-mode';
 import { canWriteMemory as policyCanWriteMemory } from '@metahuman/core/memory-policy';
 import { loadChatSettings } from '@metahuman/core/chat-settings';
@@ -42,24 +42,9 @@ const executorsReadyPromise = (async () => {
   }
 })();
 
-/**
- * Cancellation Manager
- * Tracks active requests that can be interrupted by the user
- */
-const activeCancellations = new Map<string, { cancelled: boolean; reason?: string }>();
-
-export function requestCancellation(requestId: string, reason: string = 'User requested stop'): void {
-  activeCancellations.set(requestId, { cancelled: true, reason });
-  console.log(`[cancellation] Request ${requestId} marked for cancellation: ${reason}`);
-}
-
-export function checkCancellation(requestId: string): { cancelled: boolean; reason?: string } {
-  return activeCancellations.get(requestId) || { cancelled: false };
-}
-
-export function clearCancellation(requestId: string): void {
-  activeCancellations.delete(requestId);
-}
+// Cancellation functions are now imported from @metahuman/core/graph-streaming
+// Re-export for backward compatibility with other modules that import from here
+export { requestCancellation, checkCancellation, clearCancellation } from '@metahuman/core';
 
 /**
  * Retrieve curiosity question from audit logs
@@ -156,104 +141,8 @@ function getHistory(mode: Mode, sessionId: string): ConversationMessage[] {
   return histories.get(key)!;
 }
 
-type GraphCacheEntry = { source: string; mtimeMs: number; graph: CognitiveGraph };
-const graphCache: Record<string, GraphCacheEntry | null> = {};
-
-async function readGraphFromFile(filePath: string): Promise<CognitiveGraph | null> {
-  try {
-    console.log(`[readGraphFromFile] Reading: ${filePath}`);
-    const raw = await fs.readFile(filePath, 'utf-8');
-    console.log(`[readGraphFromFile] File size: ${raw.length} bytes`);
-    const parsed = JSON.parse(raw);
-    console.log(`[readGraphFromFile] JSON parsed: ${parsed.nodes?.length || 0} nodes`);
-    const validated = validateCognitiveGraph(parsed);
-    console.log(`[readGraphFromFile] Validation PASSED`);
-    return validated;
-  } catch (error) {
-    console.error('[readGraphFromFile] ERROR:', error);
-    if (error instanceof Error) {
-      console.error('[readGraphFromFile] Error message:', error.message);
-      console.error('[readGraphFromFile] Error stack:', error.stack);
-    }
-    return null;
-  }
-}
-
-async function loadGraphForMode(graphKey: string): Promise<{ graph: CognitiveGraph; source: string } | null> {
-  if (!graphKey) {
-    console.log('[loadGraphForMode] No graphKey provided');
-    return null;
-  }
-
-  const normalizedKey = graphKey.toLowerCase();
-
-  // Check if Big Brother Mode is enabled for dual mode
-  let useBigBrotherGraph = false;
-  if (normalizedKey === 'dual') {
-    try {
-      const { loadOperatorConfig } = await import('@metahuman/core');
-      const operatorConfig = loadOperatorConfig();
-      const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
-
-      if (bigBrotherEnabled) {
-        const { isClaudeSessionReady } = await import('@metahuman/core');
-        const claudeSessionReady = isClaudeSessionReady();
-        if (claudeSessionReady) {
-          useBigBrotherGraph = true;
-          console.log('[loadGraphForMode] 🤖 Big Brother Mode active - loading Big Brother graph');
-        } else {
-          console.log('[loadGraphForMode] ⚠️ Big Brother enabled but Claude session not ready - using standard dual graph');
-        }
-      }
-    } catch (error) {
-      console.warn('[loadGraphForMode] Could not check Big Brother status:', error);
-    }
-  }
-
-  const baseName = useBigBrotherGraph ? `${normalizedKey}-mode-bigbrother` : `${normalizedKey}-mode`;
-  const pathsToCheck = [
-    path.join(ROOT, 'etc', 'cognitive-graphs', 'custom', `${baseName}.json`),
-    path.join(ROOT, 'etc', 'cognitive-graphs', `${baseName}.json`),
-  ];
-
-  console.log(`[loadGraphForMode] Looking for graph: "${graphKey}" (normalized: "${normalizedKey}"${useBigBrotherGraph ? ', Big Brother variant' : ''})`);
-  console.log(`[loadGraphForMode] Paths to check:`, pathsToCheck);
-
-  for (const filePath of pathsToCheck) {
-    try {
-      console.log(`[loadGraphForMode] Checking: ${filePath}`);
-      if (!existsSync(filePath)) {
-        console.log(`[loadGraphForMode] ❌ File not found: ${filePath}`);
-        continue;
-      }
-      console.log(`[loadGraphForMode] ✅ File exists: ${filePath}`);
-      const stats = await fs.stat(filePath);
-      const cached = graphCache[normalizedKey];
-      if (cached && cached.source === filePath && cached.mtimeMs === stats.mtimeMs) {
-        console.log(`[loadGraphForMode] 🎯 Using cached graph from ${filePath}`);
-        return { graph: cached.graph, source: filePath };
-      }
-      console.log(`[loadGraphForMode] 📖 Reading graph file (not cached or stale)`);
-      const graph = await readGraphFromFile(filePath);
-      if (graph) {
-        console.log(`[loadGraphForMode] ✅ Graph loaded successfully: ${graph.nodes.length} nodes, ${graph.links.length} links`);
-        graphCache[normalizedKey] = {
-          source: filePath,
-          mtimeMs: stats.mtimeMs,
-          graph,
-        };
-        return { graph, source: filePath };
-      } else {
-        console.warn(`[loadGraphForMode] ❌ readGraphFromFile returned null for ${filePath}`);
-      }
-    } catch (error) {
-      console.error(`[loadGraphForMode] ❌ Failed to load graph ${filePath}:`, error);
-    }
-  }
-
-  console.warn(`[loadGraphForMode] ❌ No valid graph found for "${graphKey}"`);
-  return null;
-}
+// Graph loading and caching is now handled by @metahuman/core/graph-streaming
+// loadGraphForMode is imported from @metahuman/core
 
 function getConversationHistorySnapshot(mode: Mode, sessionId: string): Array<{ role: Role; content: string; meta?: any; timestamp?: number }> {
   const history = getHistory(mode, sessionId);
@@ -846,25 +735,29 @@ function upsertSummaryMarker(
 }
 
 /**
- * Add message to history and automatically prune to stay within limits
- * PROACTIVE SUMMARIZATION: Triggers at 80% capacity (16/20 messages) to avoid interrupting conversation
- */
-/**
- * DEPRECATED: pushMessage is now a no-op
- * BufferManager node in cognitive graph handles ALL message persistence and capacity management
- * Keeping function signature for backwards compatibility with legacy code paths
+ * Push message to in-memory history for context continuity
+ * BufferManager node handles disk persistence, but we need in-memory updates
+ * for getConversationHistorySnapshot() to return current context
  */
 function pushMessage(
-  _mode: Mode,
-  _message: ConversationMessage,
-  _sessionId: string,
+  mode: Mode,
+  message: ConversationMessage,
+  sessionId: string,
   _streamNotifier?: (type: string, data: any) => void
 ): void {
-  // NO-OP: BufferManager handles:
-  // - Message persistence to buffer file
-  // - Capacity checking (64/80 threshold)
-  // - Pruning (max 80 messages)
-  // - Summarization flagging (needsSummarization field)
+  const history = getHistory(mode, sessionId);
+  history.push(message);
+
+  // Prune to max 80 messages to prevent memory bloat
+  const MAX_HISTORY = 80;
+  if (history.length > MAX_HISTORY) {
+    // Keep system prompt (first message) and last MAX_HISTORY-1 messages
+    const systemPrompt = history[0]?.role === 'system' ? history.shift() : null;
+    const recentMessages = history.slice(-(MAX_HISTORY - (systemPrompt ? 1 : 0)));
+    history.length = 0;
+    if (systemPrompt) history.push(systemPrompt);
+    history.push(...recentMessages);
+  }
 }
 
 /**
@@ -1815,8 +1708,26 @@ async function handleChatRequest({ message, mode = 'inner', newSession = false, 
   // ============================================================================
   // PRIORITY 2 (FALLBACK): Legacy operator or chat-only
   // ============================================================================
-  // @deprecated This entire code path should be removed once graph pipeline is stable
-  // The graph pipeline replaces all of this with modular nodes
+  // @deprecated LEGACY CODE PATH - Scheduled for removal
+  //
+  // This entire section (from here to end of POST handler) is DEPRECATED.
+  // The graph pipeline (above) replaces all of this with modular nodes.
+  //
+  // Why it still exists:
+  //   - Safety fallback when graph pipeline is disabled via USE_NODE_PIPELINE=false
+  //   - Can be removed after extended stability period (2+ weeks of stable graph execution)
+  //
+  // Functions that become obsolete when this is removed:
+  //   - buildSystemPrompt() - Graphs have persona_loader + persona_formatter nodes
+  //   - initializeChat() - Graph nodes handle initialization
+  //   - ensureSystemPrompt() - Redundant with graph persona handling
+  //   - refreshSystemPrompt() - Redundant
+  //   - getRelevantContext() - Graph has semantic_search node
+  //   - loadPersonaFallbackContext() - Graph has persona nodes
+  //
+  // To remove this code: Set USE_NODE_PIPELINE=true for 2+ weeks, monitor for issues,
+  // then delete everything from this comment block to the end of the POST handler.
+  // ============================================================================
   console.warn(`[persona_chat] ⚠️ FALLBACK TO LEGACY PATH - Graph pipeline not available`);
 
   if (m === 'conversation' && audience && forceOperator) {
