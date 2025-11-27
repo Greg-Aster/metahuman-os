@@ -14,7 +14,13 @@ import time
 import threading
 import socket
 import webbrowser
+import atexit
+import json
+import signal
 from pathlib import Path
+
+# Global for cleanup
+_repo_root = None
 
 def env_flag(value):
     return str(value).lower() in ("1", "true", "yes", "on")
@@ -291,6 +297,195 @@ def build_production(repo_root):
         return False
 
 
+def is_headless_mode(repo_root):
+    """Check if headless mode is enabled in runtime.json"""
+    runtime_config = repo_root / "etc" / "runtime.json"
+    if not runtime_config.exists():
+        return False
+    try:
+        with open(runtime_config, 'r') as f:
+            config = json.load(f)
+            return config.get("headless", False)
+    except:
+        return False
+
+
+def cleanup_stale_files(repo_root):
+    """Clean up stale PID files, lock files, and registry entries"""
+    print_colored("Cleaning up stale process files...", "yellow")
+
+    def is_process_running(pid):
+        try:
+            os.kill(pid, 0)
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+
+    # Clean up stale PID files
+    pid_dir = repo_root / "logs" / "run"
+    if pid_dir.exists():
+        for pidfile in pid_dir.glob("*.pid"):
+            try:
+                pid_text = pidfile.read_text().strip()
+                if pid_text:
+                    pid = int(pid_text)
+                    if not is_process_running(pid):
+                        pidfile.unlink()
+                else:
+                    pidfile.unlink()
+            except (ValueError, OSError):
+                try:
+                    pidfile.unlink()
+                except:
+                    pass
+
+    # Clean up stale lock files
+    lock_dir = repo_root / "logs" / "run" / "locks"
+    if lock_dir.exists():
+        for lockfile in lock_dir.glob("*.lock"):
+            try:
+                data = json.loads(lockfile.read_text())
+                pid = data.get("pid")
+                if pid and not is_process_running(pid):
+                    lockfile.unlink()
+            except (json.JSONDecodeError, OSError):
+                try:
+                    lockfile.unlink()
+                except:
+                    pass
+
+    # Clean up agent registry
+    registry_file = repo_root / "logs" / "agents" / "running.json"
+    if registry_file.exists():
+        try:
+            registry = json.loads(registry_file.read_text())
+            clean_registry = {}
+            for name, info in registry.items():
+                pid = info.get("pid")
+                if pid and is_process_running(pid):
+                    clean_registry[name] = info
+            registry_file.write_text(json.dumps(clean_registry, indent=2))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    print_colored("✓ Stale files cleaned", "green")
+
+
+def start_agents_and_services(repo_root):
+    """Start MetaHuman agents and services (like run-with-agents does)"""
+    global _repo_root
+    _repo_root = repo_root
+
+    # Clean up stale files first
+    cleanup_stale_files(repo_root)
+    print()
+
+    print_colored("Starting MetaHuman agents and services...", "yellow")
+
+    # Check headless mode
+    if is_headless_mode(repo_root):
+        print_colored("! Headless mode active - skipping agent startup", "yellow")
+    else:
+        try:
+            subprocess.run(
+                ["./bin/mh", "start", "--restart"],
+                cwd=repo_root,
+                capture_output=True,
+                timeout=30
+            )
+            print_colored("✓ Agents started", "green")
+        except subprocess.CalledProcessError:
+            print_colored("! Failed to start agents", "yellow")
+        except subprocess.TimeoutExpired:
+            print_colored("! Agent startup timed out", "yellow")
+        except FileNotFoundError:
+            print_colored("! Could not find mh command", "yellow")
+
+    # Auto-start Cloudflare tunnel if enabled
+    try:
+        subprocess.run(
+            ["./bin/start-cloudflare"],
+            cwd=repo_root,
+            capture_output=True,
+            timeout=10
+        )
+    except:
+        pass  # Optional service
+
+    # Auto-start voice server
+    try:
+        subprocess.run(
+            ["./bin/start-voice-server"],
+            cwd=repo_root,
+            capture_output=True,
+            timeout=10
+        )
+    except:
+        pass  # Optional service
+
+    # Auto-start terminal server
+    try:
+        subprocess.run(
+            ["./bin/start-terminal"],
+            cwd=repo_root,
+            capture_output=True,
+            timeout=10
+        )
+    except:
+        pass  # Optional service
+
+    print_colored("✓ Services started", "green")
+
+
+def cleanup_services():
+    """Stop agents and services on exit"""
+    global _repo_root
+    if _repo_root is None:
+        return
+
+    print_colored("\nShutting down MetaHuman services...", "yellow")
+
+    # Stop agents with short timeout
+    try:
+        subprocess.run(
+            ["./bin/mh", "agent", "stop", "--all"],
+            cwd=_repo_root,
+            capture_output=True,
+            timeout=5  # Reduced timeout
+        )
+    except subprocess.TimeoutExpired:
+        print_colored("Agent stop timed out, force killing...", "yellow")
+    except:
+        pass
+
+    # Stop terminal server
+    try:
+        subprocess.run(
+            ["./bin/stop-terminal"],
+            cwd=_repo_root,
+            capture_output=True,
+            timeout=3
+        )
+    except:
+        pass
+
+    # Force kill any remaining agents
+    try:
+        subprocess.run(["pkill", "-f", "brain/agents"], capture_output=True, timeout=2)
+    except:
+        pass
+    try:
+        subprocess.run(["pkill", "-f", "scheduler-service"], capture_output=True, timeout=2)
+    except:
+        pass
+    try:
+        subprocess.run(["pkill", "-f", "audio-organizer"], capture_output=True, timeout=2)
+    except:
+        pass
+
+    print_colored("Goodbye!", "green")
+
+
 def start_web_server(repo_root):
     """Start the web server"""
     site_dir = repo_root / "apps" / "site"
@@ -404,6 +599,16 @@ def main():
     # Ask user if they want to start the web server
     response = input("Do you want to start the web server? (Y/n): ").strip().lower()
     if response in ["", "y", "yes"]:
+        # Register cleanup handler for graceful shutdown
+        atexit.register(cleanup_services)
+        signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
+        signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))
+
+        # Start agents and services (like run-with-agents does for pnpm dev)
+        print("Starting agents and services...")
+        start_agents_and_services(repo_root)
+        print()
+
         start_web_server(repo_root)
     else:
         print_colored("Startup script completed. You can start the web server later with:", "yellow")

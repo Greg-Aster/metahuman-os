@@ -75,6 +75,7 @@ export * from './claude-session';
 // Node Editor - Graph Execution
 export * from './cognitive-graph-schema';
 export * from './graph-executor';
+export * from './graph-streaming';
 export * from './node-executors/index.js';
 export * from './agent-graph-executor';
 export * from './graph-error-handler';

@@ -93,12 +93,12 @@ Waiting for escalations...
 `);
 
     // Spawn ttyd with tail -f to show the session log
+    // Note: --title-format not supported in ttyd 1.7.x
     const ttydProcess = spawn(TTYD_BIN, [
       '--port', CLAUDE_PORT.toString(),
       '--writable',
       '--cwd', REPO_ROOT,
-      '--title-format', '🤖 Big Brother (Claude Code)',
-      'tail', '-f', sessionLogPath // Tail the session log
+      '/usr/bin/tail', '-f', sessionLogPath // Tail the session log (full path required)
     ], {
       detached: true,
       stdio: ['ignore', fs.openSync(logFile, 'a'), fs.openSync(logFile, 'a')]

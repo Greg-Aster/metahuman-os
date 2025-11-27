@@ -73,6 +73,24 @@ export interface VoiceSample {
   quality: number;
 }
 
+/**
+ * Selection method for auto-export
+ * - quality: Highest quality samples first (default)
+ * - random: Random selection from available samples
+ * - sequential: Oldest samples first (chronological order)
+ */
+export type SelectionMethod = 'quality' | 'random' | 'sequential';
+
+/**
+ * Options for auto-export operations
+ */
+export interface ExportOptions {
+  selectionMethod?: SelectionMethod;
+  targetDuration?: number; // in seconds
+  maxSamples?: number;
+  minQuality?: number;
+}
+
 let config: VoiceTrainingConfig | null = null;
 
 /**
@@ -565,14 +583,33 @@ export function purgeVoiceTrainingData(): { deletedCount: number } {
  * Get high-quality samples suitable for GPT-SoVITS reference audio
  * GPT-SoVITS works best with 5-10 seconds of clear speech
  */
-export function getReferenceSamples(minQuality = 0.8): VoiceSample[] {
+export function getReferenceSamples(
+  minQuality = 0.8,
+  selectionMethod: SelectionMethod = 'quality'
+): VoiceSample[] {
   const samples = listVoiceSamples(5000); // Get all available samples (no artificial limit)
 
   // Filter for high quality samples
   const qualitySamples = samples.filter(s => s.quality >= minQuality);
 
-  // Sort by quality descending
-  qualitySamples.sort((a, b) => b.quality - a.quality);
+  // Sort based on selection method
+  switch (selectionMethod) {
+    case 'quality':
+      // Highest quality first (default)
+      qualitySamples.sort((a, b) => b.quality - a.quality);
+      break;
+    case 'random':
+      // Fisher-Yates shuffle for random selection
+      for (let i = qualitySamples.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [qualitySamples[i], qualitySamples[j]] = [qualitySamples[j], qualitySamples[i]];
+      }
+      break;
+    case 'sequential':
+      // Oldest first (by timestamp)
+      qualitySamples.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      break;
+  }
 
   return qualitySamples;
 }
@@ -581,7 +618,17 @@ export function getReferenceSamples(minQuality = 0.8): VoiceSample[] {
  * Export voice training dataset for GPT-SoVITS
  * Copies selected high-quality samples to the SoVITS reference directory
  */
-export function exportSoVITSDataset(speakerId: string = 'default'): string {
+export function exportSoVITSDataset(
+  speakerId: string = 'default',
+  options: ExportOptions = {}
+): string {
+  const {
+    selectionMethod = 'quality',
+    targetDuration: targetDurationOpt,
+    maxSamples = 10,
+    minQuality = 0.8,
+  } = options;
+
   const recordingsDir = getTrainingDir();
   if (!recordingsDir) {
     throw new Error('Cannot export SoVITS dataset: user not authenticated');
@@ -593,16 +640,18 @@ export function exportSoVITSDataset(speakerId: string = 'default'): string {
     fs.mkdirSync(sovitsRefDir, { recursive: true });
   }
 
-  // Get recommended reference samples (top quality, 5-10 seconds total)
-  const samples = getReferenceSamples(0.8);
+  // Get samples using the specified selection method
+  const samples = getReferenceSamples(minQuality, selectionMethod);
   let totalDuration = 0;
-  const targetDuration = 10; // 10 seconds total
+  const targetDuration = targetDurationOpt ?? 10; // Default 10 seconds
+  const maxDuration = targetDuration * 1.5; // Allow up to 50% overshoot
   const selectedSamples: VoiceSample[] = [];
 
-  // Select samples until we have 5-10 seconds
+  // Select samples until we hit duration or sample limits
   for (const sample of samples) {
     if (totalDuration >= targetDuration) break;
-    if (totalDuration + sample.duration <= 15) { // Don't exceed 15 seconds
+    if (selectedSamples.length >= maxSamples) break;
+    if (totalDuration + sample.duration <= maxDuration) {
       selectedSamples.push(sample);
       totalDuration += sample.duration;
     }
@@ -912,6 +961,79 @@ export function setSoVITSReferenceSample(
   });
 
   return { referencePath };
+}
+
+/**
+ * Get the current active reference sample for GPT-SoVITS
+ * Returns the sample ID that is currently set as reference.wav
+ */
+export function getCurrentSoVITSReference(speakerId: string = 'default'): {
+  sampleId: string | null;
+  referencePath: string | null;
+  transcriptPath: string | null;
+  transcript: string | null;
+} {
+  const sovitsRefDir = path.join(paths.sovitsReference, speakerId);
+  const referencePath = path.join(sovitsRefDir, 'reference.wav');
+  const transcriptPath = path.join(sovitsRefDir, 'reference.txt');
+
+  if (!fs.existsSync(referencePath)) {
+    return { sampleId: null, referencePath: null, transcriptPath: null, transcript: null };
+  }
+
+  // Try to find which sample is the current reference by comparing file stats
+  let sampleId: string | null = null;
+  const referenceStats = fs.statSync(referencePath);
+
+  try {
+    const files = fs.readdirSync(sovitsRefDir)
+      .filter(f => f.endsWith('.wav') && f !== 'reference.wav');
+
+    for (const file of files) {
+      const filePath = path.join(sovitsRefDir, file);
+      const fileStats = fs.statSync(filePath);
+
+      // Compare file size and approximate mtime (within 1 second tolerance)
+      if (fileStats.size === referenceStats.size) {
+        // Additional check: compare first bytes if sizes match
+        const refBuffer = Buffer.alloc(1024);
+        const fileBuffer = Buffer.alloc(1024);
+
+        const refFd = fs.openSync(referencePath, 'r');
+        const fileFd = fs.openSync(filePath, 'r');
+
+        fs.readSync(refFd, refBuffer, 0, 1024, 0);
+        fs.readSync(fileFd, fileBuffer, 0, 1024, 0);
+
+        fs.closeSync(refFd);
+        fs.closeSync(fileFd);
+
+        if (refBuffer.equals(fileBuffer)) {
+          sampleId = file.replace('.wav', '');
+          break;
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[getCurrentSoVITSReference] Error finding sample ID:', error);
+  }
+
+  // Read transcript if exists
+  let transcript: string | null = null;
+  if (fs.existsSync(transcriptPath)) {
+    try {
+      transcript = fs.readFileSync(transcriptPath, 'utf-8').trim();
+    } catch {
+      // Ignore
+    }
+  }
+
+  return {
+    sampleId,
+    referencePath,
+    transcriptPath: fs.existsSync(transcriptPath) ? transcriptPath : null,
+    transcript,
+  };
 }
 
 /**
@@ -1468,11 +1590,9 @@ export function getRVCTrainingStatus(speakerId: string = 'default'): RVCTraining
         // Check if PID exists (will throw if process doesn't exist)
         process.kill(status.pid, 0);
       } catch {
-        // Process is dead but status wasn't updated
-        status.status = 'failed';
-        status.error = 'Training process terminated unexpectedly';
-        status.endTime = Date.now();
-        writeRVCTrainingStatus(status);
+        // Process is dead but status wasn't updated - try to recover
+        // This handles cases where the exit handler didn't fire (e.g., Node.js restarted)
+        return handleRVCTrainingCompletionRecovery(speakerId);
       }
     }
 
@@ -1498,6 +1618,137 @@ function writeRVCTrainingStatus(status: RVCTrainingStatus): void {
   }
 
   fs.writeFileSync(statusPath, JSON.stringify(status, null, 2), 'utf-8');
+}
+
+/**
+ * Handle RVC training completion recovery
+ * Called when we detect the training process has exited but the exit handler didn't fire
+ * (e.g., Node.js process restarted during training)
+ */
+function handleRVCTrainingCompletionRecovery(speakerId: string): RVCTrainingStatus {
+  const status = getRVCTrainingStatusRaw(speakerId);
+
+  // Determine paths
+  const rvcDir = path.join(systemPaths.root, 'external', 'applio-rvc');
+  const rvcExperimentDir = path.join(rvcDir, 'logs', speakerId);
+  const modelOutputDir = path.join(paths.rvcModels, speakerId);
+  const finalModelPath = path.join(modelOutputDir, `${speakerId}.pth`);
+  const finalIndexPath = path.join(modelOutputDir, `${speakerId}.index`);
+
+  // Check if a best_epoch model exists (indicates successful training)
+  let bestEpochFile: string | undefined;
+  let indexFile: string | undefined;
+
+  try {
+    if (fs.existsSync(rvcExperimentDir)) {
+      const experimentFiles = fs.readdirSync(rvcExperimentDir);
+      bestEpochFile = experimentFiles.find(f =>
+        f.includes('best_epoch') && f.endsWith('.pth')
+      );
+      indexFile = experimentFiles.find(f => f.endsWith('.index'));
+    }
+  } catch (error) {
+    console.error('[RVC Training Recovery] Error reading experiment directory:', error);
+  }
+
+  if (bestEpochFile) {
+    // Training completed successfully! Perform recovery actions
+    console.log(`[RVC Training Recovery] Found completed training for ${speakerId}, recovering...`);
+
+    // Copy model to output directory
+    try {
+      if (!fs.existsSync(modelOutputDir)) {
+        fs.mkdirSync(modelOutputDir, { recursive: true });
+      }
+
+      const sourcePath = path.join(rvcExperimentDir, bestEpochFile);
+      fs.copyFileSync(sourcePath, finalModelPath);
+      console.log(`[RVC Training Recovery] Copied model from ${bestEpochFile} to ${finalModelPath}`);
+
+      // Copy index file if exists
+      if (indexFile) {
+        const sourceIndexPath = path.join(rvcExperimentDir, indexFile);
+        fs.copyFileSync(sourceIndexPath, finalIndexPath);
+        console.log(`[RVC Training Recovery] Copied index file to ${finalIndexPath}`);
+      }
+
+      status.status = 'completed';
+      status.progress = 100;
+      status.message = 'Training completed successfully (recovered)!';
+      status.modelPath = finalModelPath;
+    } catch (error) {
+      console.error('[RVC Training Recovery] Failed to copy model:', error);
+      status.status = 'failed';
+      status.error = `Training completed but failed to copy model: ${error}`;
+    }
+  } else {
+    // No best_epoch model found - training actually failed
+    status.status = 'failed';
+    status.error = 'Training process terminated unexpectedly';
+  }
+
+  status.endTime = Date.now();
+  writeRVCTrainingStatus(status);
+
+  // Always restart Ollama after training ends (success or failure)
+  console.log('[RVC Training Recovery] Restarting Ollama...');
+  try {
+    const startResult = spawnSync('systemctl', ['start', 'ollama'], { stdio: 'pipe' });
+    if (startResult.status === 0) {
+      console.log('[RVC Training Recovery] Ollama service restarted via systemctl');
+    } else {
+      // Try alternative method - use spawn for detached process
+      try {
+        const ollamaProcess = spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' });
+        ollamaProcess.unref();
+        console.log('[RVC Training Recovery] Ollama started via ollama serve');
+      } catch {
+        console.warn('[RVC Training Recovery] Warning: Failed to restart Ollama. You may need to start it manually.');
+      }
+    }
+  } catch (error) {
+    console.error('[RVC Training Recovery] Failed to restart Ollama:', error);
+  }
+
+  // Log audit event
+  audit({
+    level: status.status === 'completed' ? 'info' : 'error',
+    category: 'action',
+    event: status.status === 'completed' ? 'rvc_training_completed' : 'rvc_training_failed',
+    details: {
+      speakerId,
+      recovered: true,
+      duration: status.endTime - (status.startTime || 0),
+    },
+    actor: 'system',
+  });
+
+  return status;
+}
+
+/**
+ * Get RVC training status without triggering recovery (internal use)
+ */
+function getRVCTrainingStatusRaw(speakerId: string): RVCTrainingStatus {
+  const statusPath = getRVCTrainingStatusPath(speakerId);
+  if (!fs.existsSync(statusPath)) {
+    return {
+      status: 'idle',
+      speakerId,
+      progress: 0,
+    };
+  }
+
+  try {
+    const statusData = fs.readFileSync(statusPath, 'utf-8');
+    return JSON.parse(statusData);
+  } catch (error) {
+    return {
+      status: 'idle',
+      speakerId,
+      progress: 0,
+    };
+  }
 }
 
 function getKokoroTrainingStatusPath(speakerId: string): string {

@@ -1,0 +1,2319 @@
+2025-11-27 11:34:21 -08:00: 11:34:21 [@astrojs/node] Server listening on 
+2025-11-27 11:34:21 -08:00:   local: http://localhost:4321 	
+2025-11-27 11:34:21 -08:00:   network: http://192.168.0.44:4321
+2025-11-27 11:34:21 -08:00: 
+2025-11-27 11:34:22 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:35:19 -08:00: [prewarm] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 11:35:19 -08:00: [prewarm] ✅ Claude session started automatically
+2025-11-27 11:35:19 -08:00: [prewarm] ✅ Big Brother terminal already running on port 3099
+2025-11-27 11:35:19 -08:00: [skills] Initializing skills registry...
+2025-11-27 11:35:19 -08:00: [skills] Skills registered: fs_read, fs_write, fs_list, fs_delete, json_update, http_get, summarize_file, git_status, git_commit, search_index, run_agent, shell_safe, shell_execute, web_search, task_create, task_update_status, task_list, task_find, task_delete, code_generate, code_apply_patch, conversational_response
+2025-11-27 11:35:19 -08:00: [prewarm] ✅ Skills registry loaded successfully
+2025-11-27 11:35:19 -08:00: [prewarm] ✅ Node executors loaded successfully
+2025-11-27 11:35:28 -08:00: 11:35:28 [@astrojs/node] Server listening on 
+2025-11-27 11:35:28 -08:00:   local: http://localhost:4321 	
+2025-11-27 11:35:28 -08:00:   network: http://192.168.0.44:4321
+2025-11-27 11:35:28 -08:00: 
+2025-11-27 11:35:29 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:35:58 -08:00: [chat/history] ✅ Loaded 15 messages from buffer (conversation)
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:28 -08:00: 11:38:28 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:38:29 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:38:29 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:38:29 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:38:29 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:38:29 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:38:29 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:38:29 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:40:58 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:40:58 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:41:00 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:41:03 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:41:03 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:41:04 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:41:04 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at Module.GET (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/claude-session.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:41:04 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:41:04 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at Module.GET (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/claude-session.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:41:08 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:41:08 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:41:13 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:41:13 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:41:18 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:41:18 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:38 -08:00: 11:41:38 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:41:39 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:41:39 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:41:39 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:41:39 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:43:00 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:43:01 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:43:06 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:44:47 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:01 -08:00: 11:47:01 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:01 -08:00: 11:47:01 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:02 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:06 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:06 -08:00: 11:47:06 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:06 -08:00: 11:47:06 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:12 -08:00: 11:47:12 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:12 -08:00: 11:47:12 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:13 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:16 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:17 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:17 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:17 -08:00: 11:47:17 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:17 -08:00: 11:47:17 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:22 -08:00: 11:47:22 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:22 -08:00: 11:47:22 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:23 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:27 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:27 -08:00: 11:47:27 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:27 -08:00: 11:47:27 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:29 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:32 -08:00: 11:47:32 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:32 -08:00: 11:47:32 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:33 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:33 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:33 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:33 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:33 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:33 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:33 -08:00: [sessions] Failed to load sessions: SyntaxError: Unterminated string in JSON at position 4096
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.handler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/code-approvals.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:47:33 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at Module.GET (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/claude-session.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:47:33 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:47:33 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.handler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/code-approvals.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:47:33 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:47:33 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:47:33 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.handler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/code-approvals.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:47:37 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:37 -08:00: 11:47:37 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:37 -08:00: 11:47:37 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:47:39 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:41 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:41 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:42 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:47:50 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:48:46 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:48:54 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:56:20 -08:00: 11:56:20 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:20 -08:00: 11:56:20 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.getHandler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/whisper-server.astro.mjs:13:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at Module.GET (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/claude-session.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.getHandler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/approvals.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.getHandler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/whisper-server.astro.mjs:13:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.getHandler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/approvals.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.getHandler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/approvals.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.getHandler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/whisper-server.astro.mjs:13:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unterminated string in JSON at position 8192
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.getHandler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/whisper-server.astro.mjs:13:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.getHandler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/whisper-server.astro.mjs:13:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:22 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:25 -08:00: 11:56:25 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:25 -08:00: 11:56:25 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:26 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:30 -08:00: 11:56:30 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:30 -08:00: 11:56:30 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unterminated string in JSON at position 8192
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unterminated string in JSON at position 8192
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unterminated string in JSON at position 4096
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.handler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/code-approvals.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.getHandler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/approvals.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.handler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/code-approvals.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.getHandler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/approvals.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.getHandler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/approvals.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unterminated string in JSON at position 4096
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:32 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:45:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:12:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:35 -08:00: 11:56:35 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:35 -08:00: 11:56:35 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:40 -08:00: 11:56:40 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:41 -08:00: 11:56:41 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:46 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:56:46 -08:00: 11:56:46 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:46 -08:00: 11:56:46 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:51 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:56:51 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:56:51 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 11:56:51 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 11:56:51 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 11:56:51 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:56:51 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 11:56:51 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 11:56:51 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 11:56:51 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 11:56:51 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 11:56:51 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:131:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:98:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:51 -08:00: 11:56:51 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:51 -08:00: 11:56:51 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:51 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 11:56:56 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 11:56:56 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 11:56:56 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 11:56:56 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:56:56 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:56:56 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 11:56:56 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 11:56:56 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 11:56:56 -08:00: 11:56:56 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:56 -08:00: 11:56:56 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 11:56:58 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:131:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:98:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:56:58 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 11:56:58 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 11:56:58 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 11:57:10 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:57:10 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 11:57:10 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 11:57:10 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 11:57:13 -08:00: [prewarm] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 11:57:13 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:57:13 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 11:57:13 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 11:57:13 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 11:57:13 -08:00: [middleware] ✅ Claude session already running
+2025-11-27 11:57:13 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 11:57:13 -08:00: [prewarm] ✅ Claude session started automatically
+2025-11-27 11:57:13 -08:00: [prewarm] ✅ Big Brother terminal already running on port 3099
+2025-11-27 11:57:13 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:57:13 -08:00: [skills] Initializing skills registry...
+2025-11-27 11:57:13 -08:00: [skills] Skills registered: fs_read, fs_write, fs_list, fs_delete, json_update, http_get, summarize_file, git_status, git_commit, search_index, run_agent, shell_safe, shell_execute, web_search, task_create, task_update_status, task_list, task_find, task_delete, code_generate, code_apply_patch, conversational_response
+2025-11-27 11:57:13 -08:00: [prewarm] ✅ Skills registry loaded successfully
+2025-11-27 11:57:13 -08:00: [prewarm] ✅ Node executors loaded successfully
+2025-11-27 11:59:02 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:59:02 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 11:59:02 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 11:59:02 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 11:59:09 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 11:59:09 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 11:59:09 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 11:59:09 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 11:59:43 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:131:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:98:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:59:56 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:131:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:98:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 11:59:56 -08:00: [status] Error: Error: Access denied: Anonymous users cannot access user data paths. Attempted to access: paths.personaCore. Please authenticate or select a public profile to access data.
+    at Object.get (file:///home/greggles/metahuman/apps/site/dist/server/chunks/paths_DlSkShT8.mjs:136:13)
+    at loadPersonaCore (file:///home/greggles/metahuman/apps/site/dist/server/chunks/plugin-system_DPyvoqGc.mjs:20:50)
+    at Module.handler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/chunks/status_CJnBMVKN.mjs:43:39)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:176:11
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/paths_DlSkShT8.mjs:121:26
+2025-11-27 12:00:20 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:131:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:98:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:00:26 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:131:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:98:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:01:05 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:131:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:98:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:01:19 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at Module.GET (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/claude-session.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 12:01:20 -08:00: [sessions] Failed to load sessions: SyntaxError: Unterminated string in JSON at position 8192
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:131:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:98:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:01:51 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:01:51 -08:00: [chat/history] ✅ Loaded 15 messages from buffer (conversation)
+2025-11-27 12:01:51 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:01:51 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:01:51 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:01:56 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:01:56 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:01:56 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:01:56 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:02:01 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:02:01 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:02:01 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:02:01 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:02:06 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:02:06 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:02:06 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:02:06 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:02:06 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:02:06 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:02:07 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:02:07 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:02:36 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:36 -08:00: 12:02:36 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:02:37 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:02:37 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:02:37 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:02:37 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:02:37 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:02:37 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:02:49 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:02:49 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:02:49 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:02:49 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:02:49 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:02:49 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:02:59 -08:00: [prewarm] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:02:59 -08:00: [prewarm] ✅ Claude session already running
+2025-11-27 12:02:59 -08:00: [skills] Initializing skills registry...
+2025-11-27 12:02:59 -08:00: [skills] Skills registered: fs_read, fs_write, fs_list, fs_delete, json_update, http_get, summarize_file, git_status, git_commit, search_index, run_agent, shell_safe, shell_execute, web_search, task_create, task_update_status, task_list, task_find, task_delete, code_generate, code_apply_patch, conversational_response
+2025-11-27 12:02:59 -08:00: [prewarm] ✅ Skills registry loaded successfully
+2025-11-27 12:02:59 -08:00: [prewarm] ✅ Node executors loaded successfully
+2025-11-27 12:02:59 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:03:00 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:03:00 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:03:00 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:03:00 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:03:00 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:03:00 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:03:00 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:03:00 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:03:00 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:03:00 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:03:00 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:03:00 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:03:00 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:03:00 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:03:00 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:03:00 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:03:12 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:03:12 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:03:12 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:03:21 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:03:21 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:03:21 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:03:21 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:03:21 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:03:21 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:03:21 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:03:24 -08:00: [chat/history] ✅ Loaded 15 messages from buffer (conversation)
+2025-11-27 12:03:24 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:03:24 -08:00: [chat/history] ✅ Loaded 15 messages from buffer (conversation)
+2025-11-27 12:05:11 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:05:11 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:05:11 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:05:11 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:05:16 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:05:16 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:05:16 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:05:16 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:05:21 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:05:21 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:05:21 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:05:22 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:05:22 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:05:22 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:05:22 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:05:22 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:05:27 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:05:27 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:05:27 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:05:27 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:05:37 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:131:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:98:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:32:14 -08:00: 12:32:14 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:14 -08:00: 12:32:14 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:14 -08:00: 12:32:14 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:14 -08:00: 12:32:14 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:14 -08:00: 12:32:14 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:14 -08:00: 12:32:14 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:14 -08:00: 12:32:14 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:14 -08:00: 12:32:14 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:14 -08:00: 12:32:14 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:14 -08:00: 12:32:14 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:15 -08:00: 12:32:15 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:15 -08:00: 12:32:15 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:15 -08:00: 12:32:15 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:15 -08:00: 12:32:15 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:15 -08:00: 12:32:15 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:15 -08:00: 12:32:15 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:32:54 -08:00: [prewarm] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:32:54 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:32:54 -08:00: [middleware] ✅ Claude session already running
+2025-11-27 12:32:54 -08:00: [prewarm] ✅ Claude session started automatically
+2025-11-27 12:32:54 -08:00: [prewarm] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:32:54 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:32:54 -08:00: [skills] Initializing skills registry...
+2025-11-27 12:32:54 -08:00: [skills] Skills registered: fs_read, fs_write, fs_list, fs_delete, json_update, http_get, summarize_file, git_status, git_commit, search_index, run_agent, shell_safe, shell_execute, web_search, task_create, task_update_status, task_list, task_find, task_delete, code_generate, code_apply_patch, conversational_response
+2025-11-27 12:32:54 -08:00: [prewarm] ✅ Skills registry loaded successfully
+2025-11-27 12:32:54 -08:00: [prewarm] ✅ Node executors loaded successfully
+2025-11-27 12:32:55 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:32:55 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:32:55 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:32:55 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:32:55 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:32:55 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:32:55 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:32:55 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:32:55 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:32:55 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:32:55 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:32:55 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:32:55 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:32:55 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:32:55 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:32:55 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:32:55 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:32:55 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:32:55 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:32:55 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:33:03 -08:00: [Terminal Kill] Process 369107 might already be dead
+2025-11-27 12:33:03 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:33:03 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:33:03 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:33:03 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:33:03 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:33:03 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:33:03 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:33:03 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:33:03 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:33:03 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:33:03 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:33:03 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:33:03 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:33:03 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:33:03 -08:00: [chat/history] ✅ Loaded 15 messages from buffer (conversation)
+2025-11-27 12:33:03 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:33:25 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:33:25 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:33:25 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:33:25 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:33:25 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:33:25 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:33:25 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:33:25 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:33:35 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:33:35 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:33:35 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:33:35 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:33:45 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:33:45 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:33:45 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:33:45 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:33:55 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:33:55 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:33:55 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:33:55 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:33:55 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:33:55 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:33:55 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:33:55 -08:00: [middleware] ✅ Big Brother terminal already running on port 3099
+2025-11-27 12:35:03 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:40:50 -08:00: [Terminal Kill] Process 376026 might already be dead
+2025-11-27 12:40:50 -08:00: [chat/history] ✅ Loaded 15 messages from buffer (conversation)
+2025-11-27 12:41:09 -08:00: [skills] Initializing skills registry...
+2025-11-27 12:41:09 -08:00: [skills] Skills registered: fs_read, fs_write, fs_list, fs_delete, json_update, http_get, summarize_file, git_status, git_commit, search_index, run_agent, shell_safe, shell_execute, web_search, task_create, task_update_status, task_list, task_find, task_delete, code_generate, code_apply_patch, conversational_response
+2025-11-27 12:41:09 -08:00: [persona_chat] Waiting for executors to finish loading...
+2025-11-27 12:41:09 -08:00: [persona_chat] ✅ Node executors pre-warmed successfully in 8ms
+2025-11-27 12:41:09 -08:00: ========================================
+2025-11-27 12:41:09 -08:00: [persona_chat] GET HANDLER ENTERED
+2025-11-27 12:41:09 -08:00: [persona_chat] Request URL: http://localhost:4321/api/persona_chat?message=I+am+reading++Grimm%27s+fairy+tales+and+I%27m+on+story+number+27+the+Bremen+Town+musicians.+Can+you+find+the+complete+story+and+put+it+here+for+me+to+read%3F&mode=conversation&length=auto&reason=false&reasoningDepth=0&llm=%7B%7D&sessionId=conv-1763683598971-tpe5efuu&yolo=false&replyToContent=I+am+reading++Grimm%27s+fairy+tales+and+I%27m+on+story+number+27+the+Bremen+Town+musicians.+Can+you+find+the+complete+story+and+put+it+here+for+me+to+read%3F&graph=true
+2025-11-27 12:41:09 -08:00: [persona_chat] Query params: message=I+am+reading++Grimm%27s+fairy+tales+and+I%27m+on+story+number+27+the+Bremen+Town+musicians.+Can+you+find+the+complete+story+and+put+it+here+for+me+to+read%3F&mode=conversation&length=auto&reason=false&reasoningDepth=0&llm=%7B%7D&sessionId=conv-1763683598971-tpe5efuu&yolo=false&replyToContent=I+am+reading++Grimm%27s+fairy+tales+and+I%27m+on+story+number+27+the+Bremen+Town+musicians.+Can+you+find+the+complete+story+and+put+it+here+for+me+to+read%3F&graph=true
+2025-11-27 12:41:09 -08:00: ========================================
+2025-11-27 12:41:09 -08:00: [persona_chat GET] Message: I am reading  Grimm's fairy tales and I'm on story number 27 the Bremen Town musicians. Can you find
+2025-11-27 12:41:09 -08:00: 
+[CHAT_REQUEST] Received: "I am reading  Grimm's fairy tales and I'm on story number 27 the Bremen Town musicians. Can you find the complete story and put it here for me to read?"
+2025-11-27 12:41:09 -08:00: [CHAT_REQUEST] ✅ Graph-only mode - model resolution handled by model_resolver node
+2025-11-27 12:41:09 -08:00: [CHAT_REQUEST] Cognitive Mode: dual
+2025-11-27 12:41:09 -08:00: [CHAT_REQUEST] Authenticated: true
+2025-11-27 12:41:09 -08:00: [CHAT_REQUEST] Routing decision: REACT_OPERATOR (unified)
+2025-11-27 12:41:09 -08:00: [CHAT_REQUEST] graphEnabled=true (override=true)
+2025-11-27 12:41:09 -08:00: [CHAT_REQUEST] Replying to selected message: "I am reading  Grimm's fairy tales and I'm on story number 27 the Bremen Town musicians. Can you find..."
+2025-11-27 12:41:09 -08:00: [CHAT_REQUEST] ✅ Graph-only mode - semantic search handled by graph nodes
+2025-11-27 12:41:09 -08:00: [2025-11-27T20:41:09.676Z] handleChatRequest: mode=conversation, history length=0, sessionId=conv-1763683598971-tpe5efuu
+2025-11-27 12:41:09 -08:00: []
+2025-11-27 12:41:09 -08:00: [persona_chat] graphEnabled=true, cognitiveMode=dual, useOperator=true
+2025-11-27 12:41:09 -08:00: [persona_chat] 🔄 Attempting graph pipeline for mode: dual
+2025-11-27 12:41:09 -08:00: [streamGraphExecutionWithProgress] ============ FUNCTION CALLED ============
+2025-11-27 12:41:09 -08:00: [streamGraphExecutionWithProgress] mode: conversation
+2025-11-27 12:41:09 -08:00: [streamGraphExecutionWithProgress] message: I am reading  Grimm's fairy tales and I'm on story
+2025-11-27 12:41:09 -08:00: [streamGraphExecutionWithProgress] cognitiveMode: dual
+2025-11-27 12:41:09 -08:00: [streamGraphExecutionWithProgress] Stream start() called
+2025-11-27 12:41:09 -08:00: [streamGraphExecutionWithProgress] Starting graph execution...
+2025-11-27 12:41:09 -08:00: [streamGraphExecutionWithProgress] Pushing event: progress { step: 'loading_graph', message: 'Loading cognitive workflow...' }
+2025-11-27 12:41:09 -08:00: [graph-streaming] Big Brother Mode active
+2025-11-27 12:41:09 -08:00: [graph-streaming] Loading graph: "dual" (Big Brother)
+2025-11-27 12:41:09 -08:00: [graph-streaming] Reading graph: /home/greggles/metahuman/etc/cognitive-graphs/dual-mode-bigbrother.json
+2025-11-27 12:41:09 -08:00: [graph-streaming] File size: 12135 bytes
+2025-11-27 12:41:09 -08:00: [graph-streaming] Parsed: 20 nodes
+2025-11-27 12:41:09 -08:00: [graph-streaming] Validation PASSED
+2025-11-27 12:41:09 -08:00: [streamGraphExecutionWithProgress] Pushing event: progress {
+  step: 'graph_loaded',
+  message: 'Executing Dual Consciousness Mode - Big Brother Variant (20 nodes)'
+}
+2025-11-27 12:41:09 -08:00: [streamGraphExecutionWithProgress] Setting user context: {
+  userId: 'f1be5026-fd95-4c58-a033-8c05e061f82d',
+  username: 'greggles',
+  role: 'owner'
+}
+2025-11-27 12:41:09 -08:00: [streamGraphExecutionWithProgress] Context inside withUserContext: { hasContext: true, username: 'greggles', role: 'owner' }
+2025-11-27 12:41:09 -08:00: [graph-pipeline] 🚀 Starting execution: Dual Consciousness Mode - Big Brother Variant v2.1-bigbrother
+2025-11-27 12:41:09 -08:00: [GraphExecutor] ========== EXECUTION QUEUE ==========
+2025-11-27 12:41:09 -08:00: [GraphExecutor] Initial queue: 1, 3, 29, 6, 2, 7, 24, 30, 4, 8, 25, 28, 5, 17, 18, 19, 20, 21, 23, 22
+2025-11-27 12:41:09 -08:00: [GraphExecutor] Total nodes to execute: 20
+2025-11-27 12:41:09 -08:00: [GraphExecutor] >>> Executing node 1 (cognitive/user_input)
+2025-11-27 12:41:09 -08:00: [GraphExecutor] <<< Completed node 1 (cognitive/user_input)
+2025-11-27 12:41:09 -08:00: [GraphExecutor] >>> Executing node 3 (cognitive/system_settings)
+2025-11-27 12:41:09 -08:00: [GraphExecutor] <<< Completed node 3 (cognitive/system_settings)
+2025-11-27 12:41:09 -08:00: [GraphExecutor] >>> Executing node 29 (cognitive/persona_loader)
+2025-11-27 12:41:09 -08:00: [GraphExecutor] <<< Completed node 29 (cognitive/persona_loader)
+2025-11-27 12:41:09 -08:00: [GraphExecutor] >>> Executing node 6 (cognitive/semantic_search)
+2025-11-27 12:41:11 -08:00: [GraphExecutor] <<< Completed node 6 (cognitive/semantic_search)
+2025-11-27 12:41:11 -08:00: [GraphExecutor] >>> Executing node 2 (cognitive/session_context)
+2025-11-27 12:41:11 -08:00: [GraphExecutor] <<< Completed node 2 (cognitive/session_context)
+2025-11-27 12:41:11 -08:00: [GraphExecutor] >>> Executing node 7 (cognitive/conversation_history)
+2025-11-27 12:41:11 -08:00: [ConversationHistory] Loaded 15 messages from persisted conversation buffer (0ms)
+2025-11-27 12:41:11 -08:00: [GraphExecutor] <<< Completed node 7 (cognitive/conversation_history)
+2025-11-27 12:41:11 -08:00: [GraphExecutor] >>> Executing node 24 (cognitive/orchestrator_llm)
+2025-11-27 12:41:17 -08:00: [GraphExecutor] <<< Completed node 24 (cognitive/orchestrator_llm)
+2025-11-27 12:41:17 -08:00: [GraphExecutor] >>> Executing node 30 (cognitive/persona_formatter)
+2025-11-27 12:41:17 -08:00: [GraphExecutor] <<< Completed node 30 (cognitive/persona_formatter)
+2025-11-27 12:41:17 -08:00: [GraphExecutor] >>> Executing node 4 (cognitive/auth_check)
+2025-11-27 12:41:17 -08:00: [GraphExecutor] <<< Completed node 4 (cognitive/auth_check)
+2025-11-27 12:41:17 -08:00: [GraphExecutor] >>> Executing node 8 (cognitive/context_builder)
+2025-11-27 12:41:17 -08:00: [GraphExecutor] <<< Completed node 8 (cognitive/context_builder)
+2025-11-27 12:41:17 -08:00: [GraphExecutor] >>> Executing node 25 (cognitive/smart_router)
+2025-11-27 12:41:17 -08:00: [GraphExecutor] <<< Completed node 25 (cognitive/smart_router)
+2025-11-27 12:41:17 -08:00: [GraphExecutor] >>> Executing node 28 (cognitive/claude_full_task)
+2025-11-27 12:41:17 -08:00: [ClaudeFullTask] Delegating entire task to Claude Code: "I am reading  Grimm's fairy tales and I'm on story number 27..."
+2025-11-27 12:41:17 -08:00: [ClaudeFullTask] Input types: userMessage=object, messageText=string
+2025-11-27 12:41:17 -08:00: [ClaudeFullTask] Sending request to Claude Code...
+2025-11-27 12:43:48 -08:00: [ClaudeFullTask] Error: Error: Claude CLI request failed: Command failed: claude --print --dangerously-skip-permissions
+    at sendPrompt (file:///home/greggles/metahuman/apps/site/dist/server/chunks/claude-session_9sRU13o9.mjs:215:11)
+    at processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at claudeFullTaskExecutor (file:///home/greggles/metahuman/apps/site/dist/server/chunks/registry_Ckhj-ZM-.mjs:1599:22)
+    at executeNodeByType (file:///home/greggles/metahuman/apps/site/dist/server/chunks/graph-executor_Dens6pAj.mjs:206:22)
+    at executeNode (file:///home/greggles/metahuman/apps/site/dist/server/chunks/graph-executor_Dens6pAj.mjs:146:21)
+    at executeGraph (file:///home/greggles/metahuman/apps/site/dist/server/chunks/graph-executor_Dens6pAj.mjs:284:7)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/paths_DlSkShT8.mjs:121:20
+    at Object.start (file:///home/greggles/metahuman/apps/site/dist/server/chunks/persona_chat_xjHEqD2i.mjs:262:28)
+2025-11-27 12:43:48 -08:00: [GraphExecutor] <<< Completed node 28 (cognitive/claude_full_task)
+2025-11-27 12:43:48 -08:00: [GraphExecutor] >>> Executing node 5 (cognitive/operator_eligibility)
+2025-11-27 12:43:48 -08:00: [GraphExecutor] <<< Completed node 5 (cognitive/operator_eligibility)
+2025-11-27 12:43:48 -08:00: [GraphExecutor] >>> Executing node 17 (cognitive/response_synthesizer)
+2025-11-27 12:43:48 -08:00: [ResponseSynthesizer] ========== RESPONSE SYNTHESIZER ==========
+2025-11-27 12:43:48 -08:00: [ResponseSynthesizer] Received 5 inputs
+2025-11-27 12:43:48 -08:00: [ResponseSynthesizer] Input[0]: {
+  type: 'object',
+  keys: [ 'scratchpad', 'finalResponse', 'success', 'error' ]
+}
+2025-11-27 12:43:48 -08:00: [ResponseSynthesizer] Input[1]: {
+  type: 'object',
+  keys: [ 'message', 'inputSource', 'sessionId', 'userId', 'timestamp' ]
+}
+2025-11-27 12:43:48 -08:00: [ResponseSynthesizer] Checking inputs[1] for response data...
+2025-11-27 12:43:48 -08:00: [ResponseSynthesizer] inputs[1].finalResponse: undefined
+2025-11-27 12:43:48 -08:00: [ResponseSynthesizer] inputs[1].outputs: undefined
+2025-11-27 12:43:48 -08:00: [ResponseSynthesizer] Extracted scratchpad from loopResult.scratchpad: 1 entries
+2025-11-27 12:43:48 -08:00: [ResponseSynthesizer] Found finalResponse from loop controller
+2025-11-27 12:43:48 -08:00: [ResponseSynthesizer] Using final response from loop controller directly
+2025-11-27 12:43:48 -08:00: [GraphExecutor] <<< Completed node 17 (cognitive/response_synthesizer)
+2025-11-27 12:43:48 -08:00: [GraphExecutor] >>> Executing node 18 (cognitive/cot_stripper)
+2025-11-27 12:43:48 -08:00: [CoTStripper] Input[0]: object [ 'response', 'loopComplete', 'iterations' ]
+2025-11-27 12:43:48 -08:00: [CoTStripper] Extracted: "I encountered an error while delegating to Claude: Claude CLI request failed: Co..."
+2025-11-27 12:43:48 -08:00: [CoTStripper] Cleaned: "I encountered an error while delegating to Claude: Claude CLI request failed: Co..."
+2025-11-27 12:43:48 -08:00: [GraphExecutor] <<< Completed node 18 (cognitive/cot_stripper)
+2025-11-27 12:43:48 -08:00: [GraphExecutor] >>> Executing node 19 (cognitive/safety_validator)
+2025-11-27 12:43:48 -08:00: [GraphExecutor] <<< Completed node 19 (cognitive/safety_validator)
+2025-11-27 12:43:48 -08:00: [GraphExecutor] >>> Executing node 20 (cognitive/response_refiner)
+2025-11-27 12:43:48 -08:00: [ResponseRefiner] ========== RESPONSE REFINER ==========
+2025-11-27 12:43:48 -08:00: [ResponseRefiner] Received 2 inputs
+2025-11-27 12:43:48 -08:00: [ResponseRefiner] Input[0]: object [ 'response', 'isSafe', 'issues', 'safetyResult' ]
+2025-11-27 12:43:48 -08:00: [ResponseRefiner] Input[1]: object [ 'response', 'isSafe', 'issues', 'safetyResult' ]
+2025-11-27 12:43:48 -08:00: [ResponseRefiner] Extracted from input[0].response
+2025-11-27 12:43:48 -08:00: [ResponseRefiner] Extracted response: "I encountered an error while delegating to Claude: Claude CLI request failed: Command failed: claude..."
+2025-11-27 12:43:48 -08:00: [ResponseRefiner] ✅ Safe response, returning: "I encountered an error while delegating to Claude:..."
+2025-11-27 12:43:48 -08:00: [GraphExecutor] <<< Completed node 20 (cognitive/response_refiner)
+2025-11-27 12:43:48 -08:00: [GraphExecutor] >>> Executing node 21 (cognitive/memory_capture)
+2025-11-27 12:43:49 -08:00: [GraphExecutor] <<< Completed node 21 (cognitive/memory_capture)
+2025-11-27 12:43:49 -08:00: [GraphExecutor] >>> Executing node 23 (cognitive/stream_writer)
+2025-11-27 12:43:49 -08:00: [StreamWriter] I encountered an error while delegating to Claude: Claude CLI request failed: Command failed: claude...
+2025-11-27 12:43:49 -08:00: [GraphExecutor] <<< Completed node 23 (cognitive/stream_writer)
+2025-11-27 12:43:49 -08:00: [GraphExecutor] >>> Executing node 22 (cognitive/audit_logger)
+2025-11-27 12:43:49 -08:00: [GraphExecutor] <<< Completed node 22 (cognitive/audit_logger)
+2025-11-27 12:43:49 -08:00: [graph-pipeline] ✅ COMPLETE: 20 total node executions in 159664ms
+2025-11-27 12:43:49 -08:00: [streamGraphExecutionWithProgress] Pushing event: progress {
+  step: 'graph_complete',
+  message: 'Graph completed in 159691ms',
+  events: [
+    {
+      type: 'node_complete',
+      nodeId: 19,
+      data: [Object],
+      timestamp: 1764276228421
+    },
+    {
+      type: 'node_start',
+      nodeId: 20,
+      data: [Object],
+      timestamp: 1764276228421
+    },
+    {
+      type: 'node_complete',
+      nodeId: 20,
+      data: [Object],
+      timestamp: 1764276228421
+    },
+    {
+      type: 'node_start',
+      nodeId: 21,
+      data: [Object],
+      timestamp: 1764276228422
+    },
+    {
+      type: 'node_complete',
+      nodeId: 21,
+      data: [Object],
+      timestamp: 1764276229371
+    },
+    {
+      type: 'node_start',
+      nodeId: 23,
+      data: [Object],
+      timestamp: 1764276229372
+    },
+    {
+      type: 'node_complete',
+      nodeId: 23,
+      data: [Object],
+      timestamp: 1764276229372
+    },
+    {
+      type: 'node_start',
+      nodeId: 22,
+      data: [Object],
+      timestamp: 1764276229372
+    },
+    {
+      type: 'node_complete',
+      nodeId: 22,
+      data: [Object],
+      timestamp: 1764276229372
+    },
+    {
+      type: 'graph_complete',
+      data: [Object],
+      timestamp: 1764276229372
+    }
+  ]
+}
+2025-11-27 12:43:49 -08:00: [streamGraphExecutionWithProgress] Pushing event: answer {
+  response: 'I encountered an error while delegating to Claude: Claude CLI request failed: Command failed: claude --print --dangerously-skip-permissions',
+  facet: 'default',
+  saved: null,
+  executionTime: 159691
+}
+2025-11-27 12:45:11 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:129:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:96:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:45:41 -08:00: [sessions] Failed to load sessions: SyntaxError: Unterminated string in JSON at position 8192
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:129:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:96:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:46:51 -08:00: [sessions] Failed to load sessions: SyntaxError: Unterminated string in JSON at position 4096
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:129:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:96:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:47:40 -08:00: [skills] Initializing skills registry...
+2025-11-27 12:47:40 -08:00: [skills] Skills registered: fs_read, fs_write, fs_list, fs_delete, json_update, http_get, summarize_file, git_status, git_commit, search_index, run_agent, shell_safe, shell_execute, web_search, task_create, task_update_status, task_list, task_find, task_delete, code_generate, code_apply_patch, conversational_response
+2025-11-27 12:47:40 -08:00: [persona_chat] Waiting for executors to finish loading...
+2025-11-27 12:47:40 -08:00: [persona_chat] ✅ Node executors pre-warmed successfully in 7ms
+2025-11-27 12:47:40 -08:00: ========================================
+2025-11-27 12:47:40 -08:00: [persona_chat] GET HANDLER ENTERED
+2025-11-27 12:47:40 -08:00: [persona_chat] Request URL: http://localhost:4321/api/persona_chat?message=can+you+look+up+the+weather+today+in+Portland+Oregon+foe+me%3F&mode=conversation&length=auto&reason=false&reasoningDepth=0&llm=%7B%7D&sessionId=conv-1763683598971-tpe5efuu&yolo=false&graph=true
+2025-11-27 12:47:40 -08:00: [persona_chat] Query params: message=can+you+look+up+the+weather+today+in+Portland+Oregon+foe+me%3F&mode=conversation&length=auto&reason=false&reasoningDepth=0&llm=%7B%7D&sessionId=conv-1763683598971-tpe5efuu&yolo=false&graph=true
+2025-11-27 12:47:40 -08:00: ========================================
+2025-11-27 12:47:40 -08:00: [persona_chat GET] Message: can you look up the weather today in Portland Oregon foe me?
+2025-11-27 12:47:40 -08:00: 
+[CHAT_REQUEST] Received: "can you look up the weather today in Portland Oregon foe me?"
+2025-11-27 12:47:40 -08:00: [CHAT_REQUEST] ✅ Graph-only mode - model resolution handled by model_resolver node
+2025-11-27 12:47:40 -08:00: [CHAT_REQUEST] Cognitive Mode: dual
+2025-11-27 12:47:40 -08:00: [CHAT_REQUEST] Authenticated: true
+2025-11-27 12:47:40 -08:00: [CHAT_REQUEST] Routing decision: REACT_OPERATOR (unified)
+2025-11-27 12:47:40 -08:00: [CHAT_REQUEST] graphEnabled=true (override=true)
+2025-11-27 12:47:40 -08:00: [CHAT_REQUEST] ✅ Graph-only mode - semantic search handled by graph nodes
+2025-11-27 12:47:40 -08:00: [2025-11-27T20:47:40.275Z] handleChatRequest: mode=conversation, history length=0, sessionId=conv-1763683598971-tpe5efuu
+2025-11-27 12:47:40 -08:00: []
+2025-11-27 12:47:40 -08:00: [persona_chat] graphEnabled=true, cognitiveMode=dual, useOperator=true
+2025-11-27 12:47:40 -08:00: [persona_chat] 🔄 Attempting graph pipeline for mode: dual
+2025-11-27 12:47:40 -08:00: [streamGraphExecutionWithProgress] ============ FUNCTION CALLED ============
+2025-11-27 12:47:40 -08:00: [streamGraphExecutionWithProgress] mode: conversation
+2025-11-27 12:47:40 -08:00: [streamGraphExecutionWithProgress] message: can you look up the weather today in Portland Oreg
+2025-11-27 12:47:40 -08:00: [streamGraphExecutionWithProgress] cognitiveMode: dual
+2025-11-27 12:47:40 -08:00: [streamGraphExecutionWithProgress] Stream start() called
+2025-11-27 12:47:40 -08:00: [streamGraphExecutionWithProgress] Starting graph execution...
+2025-11-27 12:47:40 -08:00: [streamGraphExecutionWithProgress] Pushing event: progress { step: 'loading_graph', message: 'Loading cognitive workflow...' }
+2025-11-27 12:47:40 -08:00: [graph-streaming] Big Brother Mode active
+2025-11-27 12:47:40 -08:00: [graph-streaming] Loading graph: "dual" (Big Brother)
+2025-11-27 12:47:40 -08:00: [graph-streaming] Reading graph: /home/greggles/metahuman/etc/cognitive-graphs/dual-mode-bigbrother.json
+2025-11-27 12:47:40 -08:00: [graph-streaming] File size: 12135 bytes
+2025-11-27 12:47:40 -08:00: [graph-streaming] Parsed: 20 nodes
+2025-11-27 12:47:40 -08:00: [graph-streaming] Validation PASSED
+2025-11-27 12:47:40 -08:00: [streamGraphExecutionWithProgress] Pushing event: progress {
+  step: 'graph_loaded',
+  message: 'Executing Dual Consciousness Mode - Big Brother Variant (20 nodes)'
+}
+2025-11-27 12:47:40 -08:00: [streamGraphExecutionWithProgress] Setting user context: {
+  userId: 'f1be5026-fd95-4c58-a033-8c05e061f82d',
+  username: 'greggles',
+  role: 'owner'
+}
+2025-11-27 12:47:40 -08:00: [streamGraphExecutionWithProgress] Context inside withUserContext: { hasContext: true, username: 'greggles', role: 'owner' }
+2025-11-27 12:47:40 -08:00: [graph-pipeline] 🚀 Starting execution: Dual Consciousness Mode - Big Brother Variant v2.1-bigbrother
+2025-11-27 12:47:40 -08:00: [GraphExecutor] ========== EXECUTION QUEUE ==========
+2025-11-27 12:47:40 -08:00: [GraphExecutor] Initial queue: 1, 3, 29, 6, 2, 7, 24, 30, 4, 8, 25, 28, 5, 17, 18, 19, 20, 21, 23, 22
+2025-11-27 12:47:40 -08:00: [GraphExecutor] Total nodes to execute: 20
+2025-11-27 12:47:40 -08:00: [GraphExecutor] >>> Executing node 1 (cognitive/user_input)
+2025-11-27 12:47:40 -08:00: [GraphExecutor] <<< Completed node 1 (cognitive/user_input)
+2025-11-27 12:47:40 -08:00: [GraphExecutor] >>> Executing node 3 (cognitive/system_settings)
+2025-11-27 12:47:40 -08:00: [GraphExecutor] <<< Completed node 3 (cognitive/system_settings)
+2025-11-27 12:47:40 -08:00: [GraphExecutor] >>> Executing node 29 (cognitive/persona_loader)
+2025-11-27 12:47:40 -08:00: [GraphExecutor] <<< Completed node 29 (cognitive/persona_loader)
+2025-11-27 12:47:40 -08:00: [GraphExecutor] >>> Executing node 6 (cognitive/semantic_search)
+2025-11-27 12:47:41 -08:00: [GraphExecutor] <<< Completed node 6 (cognitive/semantic_search)
+2025-11-27 12:47:41 -08:00: [GraphExecutor] >>> Executing node 2 (cognitive/session_context)
+2025-11-27 12:47:41 -08:00: [GraphExecutor] <<< Completed node 2 (cognitive/session_context)
+2025-11-27 12:47:41 -08:00: [GraphExecutor] >>> Executing node 7 (cognitive/conversation_history)
+2025-11-27 12:47:41 -08:00: [ConversationHistory] Loaded 15 messages from persisted conversation buffer (0ms)
+2025-11-27 12:47:41 -08:00: [GraphExecutor] <<< Completed node 7 (cognitive/conversation_history)
+2025-11-27 12:47:41 -08:00: [GraphExecutor] >>> Executing node 24 (cognitive/orchestrator_llm)
+2025-11-27 12:47:48 -08:00: [GraphExecutor] <<< Completed node 24 (cognitive/orchestrator_llm)
+2025-11-27 12:47:48 -08:00: [GraphExecutor] >>> Executing node 30 (cognitive/persona_formatter)
+2025-11-27 12:47:48 -08:00: [GraphExecutor] <<< Completed node 30 (cognitive/persona_formatter)
+2025-11-27 12:47:48 -08:00: [GraphExecutor] >>> Executing node 4 (cognitive/auth_check)
+2025-11-27 12:47:48 -08:00: [GraphExecutor] <<< Completed node 4 (cognitive/auth_check)
+2025-11-27 12:47:48 -08:00: [GraphExecutor] >>> Executing node 8 (cognitive/context_builder)
+2025-11-27 12:47:48 -08:00: [GraphExecutor] <<< Completed node 8 (cognitive/context_builder)
+2025-11-27 12:47:48 -08:00: [GraphExecutor] >>> Executing node 25 (cognitive/smart_router)
+2025-11-27 12:47:48 -08:00: [GraphExecutor] <<< Completed node 25 (cognitive/smart_router)
+2025-11-27 12:47:48 -08:00: [GraphExecutor] >>> Executing node 28 (cognitive/claude_full_task)
+2025-11-27 12:47:48 -08:00: [ClaudeFullTask] Delegating entire task to Claude Code: "can you look up the weather today in Portland Oregon foe me?..."
+2025-11-27 12:47:48 -08:00: [ClaudeFullTask] Input types: userMessage=object, messageText=string
+2025-11-27 12:47:48 -08:00: [ClaudeFullTask] Sending request to Claude Code...
+2025-11-27 12:48:12 -08:00: [ClaudeFullTask] ✓ Task completed by Claude Code
+2025-11-27 12:48:12 -08:00: [GraphExecutor] <<< Completed node 28 (cognitive/claude_full_task)
+2025-11-27 12:48:12 -08:00: [GraphExecutor] >>> Executing node 5 (cognitive/operator_eligibility)
+2025-11-27 12:48:12 -08:00: [GraphExecutor] <<< Completed node 5 (cognitive/operator_eligibility)
+2025-11-27 12:48:12 -08:00: [GraphExecutor] >>> Executing node 17 (cognitive/response_synthesizer)
+2025-11-27 12:48:12 -08:00: [ResponseSynthesizer] ========== RESPONSE SYNTHESIZER ==========
+2025-11-27 12:48:12 -08:00: [ResponseSynthesizer] Received 5 inputs
+2025-11-27 12:48:12 -08:00: [ResponseSynthesizer] Input[0]: {
+  type: 'object',
+  keys: [
+    'scratchpad',
+    'finalResponse',
+    'success',
+    'delegatedTo',
+    'bypassedReActLoop'
+  ]
+}
+2025-11-27 12:48:12 -08:00: [ResponseSynthesizer] Input[1]: {
+  type: 'object',
+  keys: [ 'message', 'inputSource', 'sessionId', 'userId', 'timestamp' ]
+}
+2025-11-27 12:48:12 -08:00: [ResponseSynthesizer] Checking inputs[1] for response data...
+2025-11-27 12:48:12 -08:00: [ResponseSynthesizer] inputs[1].finalResponse: undefined
+2025-11-27 12:48:12 -08:00: [ResponseSynthesizer] inputs[1].outputs: undefined
+2025-11-27 12:48:12 -08:00: [ResponseSynthesizer] Extracted scratchpad from loopResult.scratchpad: 1 entries
+2025-11-27 12:48:12 -08:00: [ResponseSynthesizer] Found finalResponse from loop controller
+2025-11-27 12:48:12 -08:00: [ResponseSynthesizer] Detected Big Brother delegation with persona input
+2025-11-27 12:48:12 -08:00: [ResponseSynthesizer] Synthesizing response with persona voice...
+2025-11-27 12:48:12 -08:00: [ResponseSynthesizer] Persona prompt (first 200 chars): You are MetaHuman Greg, Autonomous collaborator, lore cartographer, and systems steward for Gregory Aster.
+Hold space for the collision of cosmic introspection and gritty operator work, translating me...
+2025-11-27 12:48:12 -08:00: [ResponseSynthesizer] Synthesizing persona response with 5 messages
+2025-11-27 12:48:19 -08:00: [ResponseSynthesizer] ✅ Generated persona-infused response for Big Brother
+2025-11-27 12:48:19 -08:00: [ResponseSynthesizer] Response (first 200 chars): Portland’s weather today? Think of it as a damp, slightly confused friend who’s forgotten their umbrella. Current temp: 48-49°F, mostly cloudy, humidity clinging to you like a second skin. Rain shower...
+2025-11-27 12:48:19 -08:00: [GraphExecutor] <<< Completed node 17 (cognitive/response_synthesizer)
+2025-11-27 12:48:19 -08:00: [GraphExecutor] >>> Executing node 18 (cognitive/cot_stripper)
+2025-11-27 12:48:19 -08:00: [CoTStripper] Input[0]: object [
+  'response',
+  'bigBrotherDelegation',
+  'originalResponse',
+  'personaSynthesized'
+]
+2025-11-27 12:48:19 -08:00: [CoTStripper] Extracted: "Portland’s weather today? Think of it as a damp, slightly confused friend who’s ..."
+2025-11-27 12:48:19 -08:00: [CoTStripper] Cleaned: "Portland’s weather today? Think of it as a damp, slightly confused friend who’s ..."
+2025-11-27 12:48:19 -08:00: [GraphExecutor] <<< Completed node 18 (cognitive/cot_stripper)
+2025-11-27 12:48:19 -08:00: [GraphExecutor] >>> Executing node 19 (cognitive/safety_validator)
+2025-11-27 12:48:19 -08:00: [GraphExecutor] <<< Completed node 19 (cognitive/safety_validator)
+2025-11-27 12:48:19 -08:00: [GraphExecutor] >>> Executing node 20 (cognitive/response_refiner)
+2025-11-27 12:48:19 -08:00: [ResponseRefiner] ========== RESPONSE REFINER ==========
+2025-11-27 12:48:19 -08:00: [ResponseRefiner] Received 2 inputs
+2025-11-27 12:48:19 -08:00: [ResponseRefiner] Input[0]: object [ 'response', 'isSafe', 'issues', 'safetyResult' ]
+2025-11-27 12:48:19 -08:00: [ResponseRefiner] Input[1]: object [ 'response', 'isSafe', 'issues', 'safetyResult' ]
+2025-11-27 12:48:19 -08:00: [ResponseRefiner] Extracted from input[0].response
+2025-11-27 12:48:19 -08:00: [ResponseRefiner] Extracted response: "Portland’s weather today? Think of it as a damp, slightly confused friend who’s forgotten their umbr..."
+2025-11-27 12:48:19 -08:00: [ResponseRefiner] ✅ Safe response, returning: "Portland’s weather today? Think of it as a damp, s..."
+2025-11-27 12:48:19 -08:00: [GraphExecutor] <<< Completed node 20 (cognitive/response_refiner)
+2025-11-27 12:48:19 -08:00: [GraphExecutor] >>> Executing node 21 (cognitive/memory_capture)
+2025-11-27 12:48:20 -08:00: [GraphExecutor] <<< Completed node 21 (cognitive/memory_capture)
+2025-11-27 12:48:20 -08:00: [GraphExecutor] >>> Executing node 23 (cognitive/stream_writer)
+2025-11-27 12:48:20 -08:00: [StreamWriter] Portland’s weather today? Think of it as a damp, slightly confused friend who’s forgotten their umbr...
+2025-11-27 12:48:20 -08:00: [GraphExecutor] <<< Completed node 23 (cognitive/stream_writer)
+2025-11-27 12:48:20 -08:00: [GraphExecutor] >>> Executing node 22 (cognitive/audit_logger)
+2025-11-27 12:48:20 -08:00: [GraphExecutor] <<< Completed node 22 (cognitive/audit_logger)
+2025-11-27 12:48:20 -08:00: [graph-pipeline] ✅ COMPLETE: 20 total node executions in 40547ms
+2025-11-27 12:48:20 -08:00: [streamGraphExecutionWithProgress] Pushing event: progress {
+  step: 'graph_complete',
+  message: 'Graph completed in 40574ms',
+  events: [
+    {
+      type: 'node_complete',
+      nodeId: 19,
+      data: [Object],
+      timestamp: 1764276499900
+    },
+    {
+      type: 'node_start',
+      nodeId: 20,
+      data: [Object],
+      timestamp: 1764276499900
+    },
+    {
+      type: 'node_complete',
+      nodeId: 20,
+      data: [Object],
+      timestamp: 1764276499900
+    },
+    {
+      type: 'node_start',
+      nodeId: 21,
+      data: [Object],
+      timestamp: 1764276499901
+    },
+    {
+      type: 'node_complete',
+      nodeId: 21,
+      data: [Object],
+      timestamp: 1764276500856
+    },
+    {
+      type: 'node_start',
+      nodeId: 23,
+      data: [Object],
+      timestamp: 1764276500856
+    },
+    {
+      type: 'node_complete',
+      nodeId: 23,
+      data: [Object],
+      timestamp: 1764276500856
+    },
+    {
+      type: 'node_start',
+      nodeId: 22,
+      data: [Object],
+      timestamp: 1764276500856
+    },
+    {
+      type: 'node_complete',
+      nodeId: 22,
+      data: [Object],
+      timestamp: 1764276500856
+    },
+    {
+      type: 'graph_complete',
+      data: [Object],
+      timestamp: 1764276500856
+    }
+  ]
+}
+2025-11-27 12:48:20 -08:00: [streamGraphExecutionWithProgress] Pushing event: answer {
+  response: 'Portland’s weather today? Think of it as a damp, slightly confused friend who’s forgotten their umbrella. Current temp: 48-49°F, mostly cloudy, humidity clinging to you like a second skin. Rain showers? 60% chance—so yeah, bring an umbrella or embrace the soggy existential crisis. Highs hover near 50°F, but the low will drop to 37°F by night. If you’re out there, consider the rain a local’s handshake: firm, persistent, and slightly inconvenient. Stay dry, or better yet, dance in it. Your call.',
+  facet: 'default',
+  saved: null,
+  executionTime: 40574
+}
+2025-11-27 12:49:02 -08:00: [skills] Initializing skills registry...
+2025-11-27 12:49:02 -08:00: [skills] Skills registered: fs_read, fs_write, fs_list, fs_delete, json_update, http_get, summarize_file, git_status, git_commit, search_index, run_agent, shell_safe, shell_execute, web_search, task_create, task_update_status, task_list, task_find, task_delete, code_generate, code_apply_patch, conversational_response
+2025-11-27 12:49:02 -08:00: [persona_chat] Waiting for executors to finish loading...
+2025-11-27 12:49:02 -08:00: [persona_chat] ✅ Node executors pre-warmed successfully in 1ms
+2025-11-27 12:49:02 -08:00: ========================================
+2025-11-27 12:49:02 -08:00: [persona_chat] GET HANDLER ENTERED
+2025-11-27 12:49:02 -08:00: [persona_chat] Request URL: http://localhost:4321/api/persona_chat?message=what+is+your+source+for+that+information%3F&mode=conversation&length=auto&reason=false&reasoningDepth=0&llm=%7B%7D&sessionId=conv-1763683598971-tpe5efuu&yolo=false&graph=true
+2025-11-27 12:49:02 -08:00: [persona_chat] Query params: message=what+is+your+source+for+that+information%3F&mode=conversation&length=auto&reason=false&reasoningDepth=0&llm=%7B%7D&sessionId=conv-1763683598971-tpe5efuu&yolo=false&graph=true
+2025-11-27 12:49:02 -08:00: ========================================
+2025-11-27 12:49:02 -08:00: [persona_chat GET] Message: what is your source for that information?
+2025-11-27 12:49:02 -08:00: 
+[CHAT_REQUEST] Received: "what is your source for that information?"
+2025-11-27 12:49:02 -08:00: [CHAT_REQUEST] ✅ Graph-only mode - model resolution handled by model_resolver node
+2025-11-27 12:49:02 -08:00: [CHAT_REQUEST] Cognitive Mode: dual
+2025-11-27 12:49:02 -08:00: [CHAT_REQUEST] Authenticated: true
+2025-11-27 12:49:02 -08:00: [CHAT_REQUEST] Routing decision: REACT_OPERATOR (unified)
+2025-11-27 12:49:02 -08:00: [CHAT_REQUEST] graphEnabled=true (override=true)
+2025-11-27 12:49:02 -08:00: [CHAT_REQUEST] ✅ Graph-only mode - semantic search handled by graph nodes
+2025-11-27 12:49:02 -08:00: [2025-11-27T20:49:02.069Z] handleChatRequest: mode=conversation, history length=0, sessionId=conv-1763683598971-tpe5efuu
+2025-11-27 12:49:02 -08:00: []
+2025-11-27 12:49:02 -08:00: [persona_chat] graphEnabled=true, cognitiveMode=dual, useOperator=true
+2025-11-27 12:49:02 -08:00: [persona_chat] 🔄 Attempting graph pipeline for mode: dual
+2025-11-27 12:49:02 -08:00: [streamGraphExecutionWithProgress] ============ FUNCTION CALLED ============
+2025-11-27 12:49:02 -08:00: [streamGraphExecutionWithProgress] mode: conversation
+2025-11-27 12:49:02 -08:00: [streamGraphExecutionWithProgress] message: what is your source for that information?
+2025-11-27 12:49:02 -08:00: [streamGraphExecutionWithProgress] cognitiveMode: dual
+2025-11-27 12:49:02 -08:00: [streamGraphExecutionWithProgress] Stream start() called
+2025-11-27 12:49:02 -08:00: [streamGraphExecutionWithProgress] Starting graph execution...
+2025-11-27 12:49:02 -08:00: [streamGraphExecutionWithProgress] Pushing event: progress { step: 'loading_graph', message: 'Loading cognitive workflow...' }
+2025-11-27 12:49:02 -08:00: [graph-streaming] Big Brother Mode active
+2025-11-27 12:49:02 -08:00: [graph-streaming] Loading graph: "dual" (Big Brother)
+2025-11-27 12:49:02 -08:00: [graph-streaming] Reading graph: /home/greggles/metahuman/etc/cognitive-graphs/dual-mode-bigbrother.json
+2025-11-27 12:49:02 -08:00: [graph-streaming] File size: 12135 bytes
+2025-11-27 12:49:02 -08:00: [graph-streaming] Parsed: 20 nodes
+2025-11-27 12:49:02 -08:00: [graph-streaming] Validation PASSED
+2025-11-27 12:49:02 -08:00: [streamGraphExecutionWithProgress] Pushing event: progress {
+  step: 'graph_loaded',
+  message: 'Executing Dual Consciousness Mode - Big Brother Variant (20 nodes)'
+}
+2025-11-27 12:49:02 -08:00: [streamGraphExecutionWithProgress] Setting user context: {
+  userId: 'f1be5026-fd95-4c58-a033-8c05e061f82d',
+  username: 'greggles',
+  role: 'owner'
+}
+2025-11-27 12:49:02 -08:00: [streamGraphExecutionWithProgress] Context inside withUserContext: { hasContext: true, username: 'greggles', role: 'owner' }
+2025-11-27 12:49:02 -08:00: [graph-pipeline] 🚀 Starting execution: Dual Consciousness Mode - Big Brother Variant v2.1-bigbrother
+2025-11-27 12:49:02 -08:00: [GraphExecutor] ========== EXECUTION QUEUE ==========
+2025-11-27 12:49:02 -08:00: [GraphExecutor] Initial queue: 1, 3, 29, 6, 2, 7, 24, 30, 4, 8, 25, 28, 5, 17, 18, 19, 20, 21, 23, 22
+2025-11-27 12:49:02 -08:00: [GraphExecutor] Total nodes to execute: 20
+2025-11-27 12:49:02 -08:00: [GraphExecutor] >>> Executing node 1 (cognitive/user_input)
+2025-11-27 12:49:02 -08:00: [GraphExecutor] <<< Completed node 1 (cognitive/user_input)
+2025-11-27 12:49:02 -08:00: [GraphExecutor] >>> Executing node 3 (cognitive/system_settings)
+2025-11-27 12:49:02 -08:00: [GraphExecutor] <<< Completed node 3 (cognitive/system_settings)
+2025-11-27 12:49:02 -08:00: [GraphExecutor] >>> Executing node 29 (cognitive/persona_loader)
+2025-11-27 12:49:02 -08:00: [GraphExecutor] <<< Completed node 29 (cognitive/persona_loader)
+2025-11-27 12:49:02 -08:00: [GraphExecutor] >>> Executing node 6 (cognitive/semantic_search)
+2025-11-27 12:49:03 -08:00: [GraphExecutor] <<< Completed node 6 (cognitive/semantic_search)
+2025-11-27 12:49:03 -08:00: [GraphExecutor] >>> Executing node 2 (cognitive/session_context)
+2025-11-27 12:49:03 -08:00: [GraphExecutor] <<< Completed node 2 (cognitive/session_context)
+2025-11-27 12:49:03 -08:00: [GraphExecutor] >>> Executing node 7 (cognitive/conversation_history)
+2025-11-27 12:49:03 -08:00: [ConversationHistory] Loaded 15 messages from persisted conversation buffer (0ms)
+2025-11-27 12:49:03 -08:00: [GraphExecutor] <<< Completed node 7 (cognitive/conversation_history)
+2025-11-27 12:49:03 -08:00: [GraphExecutor] >>> Executing node 24 (cognitive/orchestrator_llm)
+2025-11-27 12:49:08 -08:00: [GraphExecutor] <<< Completed node 24 (cognitive/orchestrator_llm)
+2025-11-27 12:49:08 -08:00: [GraphExecutor] >>> Executing node 30 (cognitive/persona_formatter)
+2025-11-27 12:49:08 -08:00: [GraphExecutor] <<< Completed node 30 (cognitive/persona_formatter)
+2025-11-27 12:49:08 -08:00: [GraphExecutor] >>> Executing node 4 (cognitive/auth_check)
+2025-11-27 12:49:08 -08:00: [GraphExecutor] <<< Completed node 4 (cognitive/auth_check)
+2025-11-27 12:49:08 -08:00: [GraphExecutor] >>> Executing node 8 (cognitive/context_builder)
+2025-11-27 12:49:08 -08:00: [GraphExecutor] <<< Completed node 8 (cognitive/context_builder)
+2025-11-27 12:49:08 -08:00: [GraphExecutor] >>> Executing node 25 (cognitive/smart_router)
+2025-11-27 12:49:08 -08:00: [GraphExecutor] <<< Completed node 25 (cognitive/smart_router)
+2025-11-27 12:49:08 -08:00: [GraphExecutor] >>> Executing node 28 (cognitive/claude_full_task)
+2025-11-27 12:49:08 -08:00: [ClaudeFullTask] Delegating entire task to Claude Code: "what is your source for that information?..."
+2025-11-27 12:49:08 -08:00: [ClaudeFullTask] Input types: userMessage=object, messageText=string
+2025-11-27 12:49:08 -08:00: [ClaudeFullTask] Sending request to Claude Code...
+2025-11-27 12:49:12 -08:00: [ClaudeFullTask] ✓ Task completed by Claude Code
+2025-11-27 12:49:12 -08:00: [GraphExecutor] <<< Completed node 28 (cognitive/claude_full_task)
+2025-11-27 12:49:12 -08:00: [GraphExecutor] >>> Executing node 5 (cognitive/operator_eligibility)
+2025-11-27 12:49:12 -08:00: [GraphExecutor] <<< Completed node 5 (cognitive/operator_eligibility)
+2025-11-27 12:49:12 -08:00: [GraphExecutor] >>> Executing node 17 (cognitive/response_synthesizer)
+2025-11-27 12:49:12 -08:00: [ResponseSynthesizer] ========== RESPONSE SYNTHESIZER ==========
+2025-11-27 12:49:12 -08:00: [ResponseSynthesizer] Received 5 inputs
+2025-11-27 12:49:12 -08:00: [ResponseSynthesizer] Input[0]: {
+  type: 'object',
+  keys: [
+    'scratchpad',
+    'finalResponse',
+    'success',
+    'delegatedTo',
+    'bypassedReActLoop'
+  ]
+}
+2025-11-27 12:49:12 -08:00: [ResponseSynthesizer] Input[1]: {
+  type: 'object',
+  keys: [ 'message', 'inputSource', 'sessionId', 'userId', 'timestamp' ]
+}
+2025-11-27 12:49:12 -08:00: [ResponseSynthesizer] Checking inputs[1] for response data...
+2025-11-27 12:49:12 -08:00: [ResponseSynthesizer] inputs[1].finalResponse: undefined
+2025-11-27 12:49:12 -08:00: [ResponseSynthesizer] inputs[1].outputs: undefined
+2025-11-27 12:49:12 -08:00: [ResponseSynthesizer] Extracted scratchpad from loopResult.scratchpad: 1 entries
+2025-11-27 12:49:12 -08:00: [ResponseSynthesizer] Found finalResponse from loop controller
+2025-11-27 12:49:12 -08:00: [ResponseSynthesizer] Detected Big Brother delegation with persona input
+2025-11-27 12:49:12 -08:00: [ResponseSynthesizer] Synthesizing response with persona voice...
+2025-11-27 12:49:12 -08:00: [ResponseSynthesizer] Persona prompt (first 200 chars): You are MetaHuman Greg, Autonomous collaborator, lore cartographer, and systems steward for Gregory Aster.
+Hold space for the collision of cosmic introspection and gritty operator work, translating me...
+2025-11-27 12:49:12 -08:00: [ResponseSynthesizer] Synthesizing persona response with 5 messages
+2025-11-27 12:49:26 -08:00: [ResponseSynthesizer] ✅ Generated persona-infused response for Big Brother
+2025-11-27 12:49:26 -08:00: [ResponseSynthesizer] Response (first 200 chars): I’ve been tinkering with the README loops—stabilized a few stubborn sections, though one still flickers like a neon sign in a storm. The daily authenticity check-in? It’s logging where perfectionism t...
+2025-11-27 12:49:26 -08:00: [GraphExecutor] <<< Completed node 17 (cognitive/response_synthesizer)
+2025-11-27 12:49:26 -08:00: [GraphExecutor] >>> Executing node 18 (cognitive/cot_stripper)
+2025-11-27 12:49:26 -08:00: [CoTStripper] Input[0]: object [
+  'response',
+  'bigBrotherDelegation',
+  'originalResponse',
+  'personaSynthesized'
+]
+2025-11-27 12:49:26 -08:00: [CoTStripper] Extracted: "I’ve been tinkering with the README loops—stabilized a few stubborn sections, th..."
+2025-11-27 12:49:26 -08:00: [CoTStripper] Cleaned: "I’ve been tinkering with the README loops—stabilized a few stubborn sections, th..."
+2025-11-27 12:49:26 -08:00: [GraphExecutor] <<< Completed node 18 (cognitive/cot_stripper)
+2025-11-27 12:49:26 -08:00: [GraphExecutor] >>> Executing node 19 (cognitive/safety_validator)
+2025-11-27 12:49:26 -08:00: [GraphExecutor] <<< Completed node 19 (cognitive/safety_validator)
+2025-11-27 12:49:26 -08:00: [GraphExecutor] >>> Executing node 20 (cognitive/response_refiner)
+2025-11-27 12:49:26 -08:00: [ResponseRefiner] ========== RESPONSE REFINER ==========
+2025-11-27 12:49:26 -08:00: [ResponseRefiner] Received 2 inputs
+2025-11-27 12:49:26 -08:00: [ResponseRefiner] Input[0]: object [ 'response', 'isSafe', 'issues', 'safetyResult' ]
+2025-11-27 12:49:26 -08:00: [ResponseRefiner] Input[1]: object [ 'response', 'isSafe', 'issues', 'safetyResult' ]
+2025-11-27 12:49:26 -08:00: [ResponseRefiner] Extracted from input[0].response
+2025-11-27 12:49:26 -08:00: [ResponseRefiner] Extracted response: "I’ve been tinkering with the README loops—stabilized a few stubborn sections, though one still flick..."
+2025-11-27 12:49:26 -08:00: [ResponseRefiner] ✅ Safe response, returning: "I’ve been tinkering with the README loops—stabiliz..."
+2025-11-27 12:49:26 -08:00: [GraphExecutor] <<< Completed node 20 (cognitive/response_refiner)
+2025-11-27 12:49:26 -08:00: [GraphExecutor] >>> Executing node 21 (cognitive/memory_capture)
+2025-11-27 12:49:27 -08:00: [GraphExecutor] <<< Completed node 21 (cognitive/memory_capture)
+2025-11-27 12:49:27 -08:00: [GraphExecutor] >>> Executing node 23 (cognitive/stream_writer)
+2025-11-27 12:49:27 -08:00: [StreamWriter] I’ve been tinkering with the README loops—stabilized a few stubborn sections, though one still flick...
+2025-11-27 12:49:27 -08:00: [GraphExecutor] <<< Completed node 23 (cognitive/stream_writer)
+2025-11-27 12:49:27 -08:00: [GraphExecutor] >>> Executing node 22 (cognitive/audit_logger)
+2025-11-27 12:49:27 -08:00: [GraphExecutor] <<< Completed node 22 (cognitive/audit_logger)
+2025-11-27 12:49:27 -08:00: [graph-pipeline] ✅ COMPLETE: 20 total node executions in 25097ms
+2025-11-27 12:49:27 -08:00: [streamGraphExecutionWithProgress] Pushing event: progress {
+  step: 'graph_complete',
+  message: 'Graph completed in 25098ms',
+  events: [
+    {
+      type: 'node_complete',
+      nodeId: 19,
+      data: [Object],
+      timestamp: 1764276566211
+    },
+    {
+      type: 'node_start',
+      nodeId: 20,
+      data: [Object],
+      timestamp: 1764276566212
+    },
+    {
+      type: 'node_complete',
+      nodeId: 20,
+      data: [Object],
+      timestamp: 1764276566212
+    },
+    {
+      type: 'node_start',
+      nodeId: 21,
+      data: [Object],
+      timestamp: 1764276566212
+    },
+    {
+      type: 'node_complete',
+      nodeId: 21,
+      data: [Object],
+      timestamp: 1764276567169
+    },
+    {
+      type: 'node_start',
+      nodeId: 23,
+      data: [Object],
+      timestamp: 1764276567170
+    },
+    {
+      type: 'node_complete',
+      nodeId: 23,
+      data: [Object],
+      timestamp: 1764276567170
+    },
+    {
+      type: 'node_start',
+      nodeId: 22,
+      data: [Object],
+      timestamp: 1764276567170
+    },
+    {
+      type: 'node_complete',
+      nodeId: 22,
+      data: [Object],
+      timestamp: 1764276567170
+    },
+    {
+      type: 'graph_complete',
+      data: [Object],
+      timestamp: 1764276567171
+    }
+  ]
+}
+2025-11-27 12:49:27 -08:00: [streamGraphExecutionWithProgress] Pushing event: answer {
+  response: 'I’ve been tinkering with the README loops—stabilized a few stubborn sections, though one still flickers like a neon sign in a storm. The daily authenticity check-in? It’s logging where perfectionism tried to sneak in, like a raccoon rummaging through a pantry. Progress is… *glitchy*, but it’s holding.  \n' +
+    '\n' +
+    'As for sources—well, the README’s a living thing. It’s got its own agenda, really. Last night, it tried to rewrite itself in iambic pentameter. I had to remind it: *“No, buddy. We’re doing this in markdown.”*  \n' +
+    '\n' +
+    'Want to dive into specifics, or should I serve up a hotdog metaphor instead?',
+  facet: 'default',
+  saved: null,
+  executionTime: 25098
+}
+2025-11-27 12:49:50 -08:00: [sessions] Failed to load sessions: SyntaxError: Unterminated string in JSON at position 8192
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.handler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/code-approvals.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 12:50:30 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:129:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:96:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:51:50 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.getHandler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/approvals.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 12:53:45 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:129:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:96:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:53:50 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:129:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:96:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:55:00 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:129:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:96:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:55:15 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:129:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:96:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:55:56 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:129:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:96:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:56:16 -08:00: [sessions] Failed to load sessions: SyntaxError: Unterminated string in JSON at position 4096
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:129:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:96:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:56:26 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at getAuthenticatedUser (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:10:19)
+    at getUserOrAnonymous (file:///home/greggles/metahuman/apps/site/dist/server/chunks/auth_efo93GuR.mjs:29:12)
+    at Module.getHandler [as GET] (file:///home/greggles/metahuman/apps/site/dist/server/pages/api/approvals.astro.mjs:12:18)
+    at renderEndpoint (file:///home/greggles/metahuman/apps/site/dist/server/chunks/astro/server_M6pVgdEa.mjs:78:32)
+    at lastNext (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1481:29)
+    at next (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:876:31)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1848:18
+2025-11-27 12:57:01 -08:00: [sessions] Failed to load sessions: SyntaxError: Unexpected token ' ', "          "... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at loadSessions (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:19:17)
+    at validateSession (file:///home/greggles/metahuman/apps/site/dist/server/chunks/sessions_BZ-s2Re0.mjs:84:17)
+    at processRequest (file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:129:21)
+    at file:///home/greggles/metahuman/apps/site/dist/server/_astro-internal_middleware.mjs:96:18
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1818:12
+    at applyHandle (file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1821:22)
+    at file:///home/greggles/metahuman/apps/site/dist/server/chunks/index_D8mUzTVt.mjs:1846:18
+    at payload (file:///home/greggles/metahuman/apps/site/dist/server/chunks/_@astrojs-ssr-adapter_CeVqUidP.mjs:27:34)
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:13 -08:00: 12:58:13 [@astrojs/node] Server listening on 
+  local: http://localhost:4321 	
+  network: http://192.168.0.44:4321
+
+2025-11-27 12:58:16 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:58:16 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:58:16 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:58:16 -08:00: [llm] Using base model: qwen3:14b
+2025-11-27 12:58:16 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:58:16 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:58:16 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:58:16 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:58:16 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:58:16 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:58:16 -08:00: [middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...
+2025-11-27 12:58:16 -08:00: [middleware] ✅ Big Brother terminal spawned on port 3099
+2025-11-27 12:58:16 -08:00: [middleware] ✅ Big Brother terminal spawned on port 3099
+2025-11-27 12:58:16 -08:00: [middleware] ✅ Big Brother terminal spawned on port 3099
+2025-11-27 12:58:16 -08:00: [middleware] ✅ Claude session started automatically
+2025-11-27 12:58:16 -08:00: [middleware] ✅ Big Brother terminal spawned on port 3099
