@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
-  import type { ChatMessage } from '../../lib/useMessages';
+  import type { ChatMessage } from '../../lib/client/composables/useMessages';
 
   export let input: string = '';
   export let loading: boolean = false;

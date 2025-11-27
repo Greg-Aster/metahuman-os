@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, afterUpdate } from 'svelte';
-  import { fetchJSONSafe, FetchTimeoutError } from '../lib/fetch-timeout';
+  import { fetchJSONSafe, FetchTimeoutError } from '../lib/client/utils/fetch-timeout';
 
   type DatasetStatus = {
     date: string;

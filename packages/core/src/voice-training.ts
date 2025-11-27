@@ -1602,7 +1602,8 @@ function runRVCFeatureExtraction(
   speakerId: string,
   outputDir: string,
   sampleRate: number,
-  f0Method: string = 'rmvpe'
+  f0Method: string = 'rmvpe',
+  useGpu: boolean = true
 ): boolean {
   const rvcDir = path.join(systemPaths.root, 'external', 'applio-rvc');
   const venvPython = path.join(rvcDir, 'venv', 'bin', 'python');
@@ -1610,7 +1611,7 @@ function runRVCFeatureExtraction(
 
   // Feature extraction parameters
   const numProcesses = 4; // Number of parallel processes
-  const gpus = '-'; // Use CPU (no GPU) - change to "0" for GPU
+  const gpus = useGpu ? '0' : '-'; // '0' for GPU, '-' for CPU
   const embedderModel = 'contentvec'; // Default embedder model
   const includeMutes = '2'; // Include 2 mute samples per speaker
 
@@ -1838,6 +1839,7 @@ export interface RVCTrainingOptions {
   totalEpochs?: number;
   saveEveryEpoch?: number;
   batchSize?: number;
+  device?: 'auto' | 'cpu' | 'cuda';
 }
 
 /**
@@ -1978,47 +1980,56 @@ export function startRVCTraining(
   // RVC uses 40kHz sample rate
   const rvcSampleRate = 40000;
 
-  // Stop Ollama to free up GPU VRAM for training (RVC needs ~10GB, Ollama uses ~9.5GB)
-  console.log('[RVC Training] Stopping Ollama to free GPU VRAM...');
-  try {
-    // Try systemctl first (if Ollama is a service)
-    const systemctlResult = spawnSync('systemctl', ['stop', 'ollama'], { stdio: 'pipe' });
+  // Determine device preference early so we know whether to stop Ollama
+  const devicePrefEarly = options?.device ?? 'auto';
+  const useGpuEarly = devicePrefEarly === 'cuda' || (devicePrefEarly === 'auto' && process.env.CUDA_VISIBLE_DEVICES !== '-1');
 
-    if (systemctlResult.status === 0) {
-      console.log('[RVC Training] Stopped Ollama service via systemctl');
-    } else {
-      // Fallback to pkill if systemctl fails
-      spawnSync('pkill', ['-f', 'ollama'], { stdio: 'ignore' });
-      console.log('[RVC Training] Stopped Ollama via pkill');
-    }
+  // Only stop Ollama if we're using GPU (to free VRAM)
+  if (useGpuEarly) {
+    // Stop Ollama to free up GPU VRAM for training (RVC needs ~10GB, Ollama uses ~9.5GB)
+    console.log('[RVC Training] Stopping Ollama to free GPU VRAM...');
+    try {
+      // Try systemctl first (if Ollama is a service)
+      const systemctlResult = spawnSync('systemctl', ['stop', 'ollama'], { stdio: 'pipe' });
 
-    // Wait for GPU VRAM to be fully released
-    console.log('[RVC Training] Waiting for GPU VRAM to be released...');
-    let vramFreed = false;
-    for (let i = 0; i < 15; i++) {
-      spawnSync('sleep', ['1']);
-
-      // Check if Ollama process is gone
-      const psResult = spawnSync('pgrep', ['-f', 'ollama'], { stdio: 'pipe' });
-      if (psResult.status !== 0) {
-        vramFreed = true;
-        console.log('[RVC Training] Ollama stopped, VRAM freed');
-        break;
+      if (systemctlResult.status === 0) {
+        console.log('[RVC Training] Stopped Ollama service via systemctl');
+      } else {
+        // Fallback to pkill if systemctl fails
+        spawnSync('pkill', ['-f', 'ollama'], { stdio: 'ignore' });
+        console.log('[RVC Training] Stopped Ollama via pkill');
       }
 
-      // If still running after 5 seconds, try force kill
-      if (i === 4) {
-        console.log('[RVC Training] Ollama still running, attempting force kill...');
-        spawnSync('pkill', ['-9', '-f', 'ollama'], { stdio: 'ignore' });
-      }
-    }
+      // Wait for GPU VRAM to be fully released
+      console.log('[RVC Training] Waiting for GPU VRAM to be released...');
+      let vramFreed = false;
+      for (let i = 0; i < 15; i++) {
+        spawnSync('sleep', ['1']);
 
-    if (!vramFreed) {
-      console.warn('[RVC Training] Warning: Ollama may still be using GPU memory');
-      console.warn('[RVC Training] Training may fail due to insufficient GPU VRAM');
+        // Check if Ollama process is gone
+        const psResult = spawnSync('pgrep', ['-f', 'ollama'], { stdio: 'pipe' });
+        if (psResult.status !== 0) {
+          vramFreed = true;
+          console.log('[RVC Training] Ollama stopped, VRAM freed');
+          break;
+        }
+
+        // If still running after 5 seconds, try force kill
+        if (i === 4) {
+          console.log('[RVC Training] Ollama still running, attempting force kill...');
+          spawnSync('pkill', ['-9', '-f', 'ollama'], { stdio: 'ignore' });
+        }
+      }
+
+      if (!vramFreed) {
+        console.warn('[RVC Training] Warning: Ollama may still be using GPU memory');
+        console.warn('[RVC Training] Training may fail due to insufficient GPU VRAM');
+      }
+    } catch (error) {
+      console.log('[RVC Training] Ollama may not be running (this is OK)');
     }
-  } catch (error) {
-    console.log('[RVC Training] Ollama may not be running (this is OK)');
+  } else {
+    console.log('[RVC Training] Using CPU mode - Ollama will remain running');
   }
 
   // Step 1: Run preprocessing (slice, normalize, resample)
@@ -2046,7 +2057,7 @@ export function startRVCTraining(
 
   // Step 2: Run feature extraction (f0 pitch and embeddings)
   console.log('[RVC Training] Step 2/3: Extracting features (pitch and embeddings)...');
-  const extractionSuccess = runRVCFeatureExtraction(speakerId, rvcExperimentDir, rvcSampleRate);
+  const extractionSuccess = runRVCFeatureExtraction(speakerId, rvcExperimentDir, rvcSampleRate, 'rmvpe', useGpuEarly);
   if (!extractionSuccess) {
     // Restart Ollama before returning error
     console.log('[RVC Training] Restarting Ollama after feature extraction failure...');
@@ -2074,8 +2085,13 @@ export function startRVCTraining(
   const totalEpochs = options?.totalEpochs ?? 300; // Standard for RVC
   const saveEveryEpoch = options?.saveEveryEpoch ?? 50; // Save checkpoints every 50 epochs
   const batchSize = options?.batchSize ?? 8;
+  const devicePref = options?.device ?? 'auto';
 
-  console.log(`[RVC Training] Configuration: ${totalEpochs} epochs, saving every ${saveEveryEpoch}, batch size ${batchSize}`);
+  // Determine GPU usage based on device preference
+  const useGpu = devicePref === 'cuda' || (devicePref === 'auto' && process.env.CUDA_VISIBLE_DEVICES !== '-1');
+  const gpuId = useGpu ? '0' : '-'; // '-' means use CPU in RVC
+
+  console.log(`[RVC Training] Configuration: ${totalEpochs} epochs, saving every ${saveEveryEpoch}, batch size ${batchSize}, device: ${devicePref} (${useGpu ? 'GPU' : 'CPU'})`);
 
   // Initialize training status
   const trainingStatus: RVCTrainingStatus = {
@@ -2103,7 +2119,7 @@ export function startRVCTraining(
   // RVC training script expects these exact arguments in this order
   const pretrainG = ''; // Empty string = use default pretrained model
   const pretrainD = ''; // Empty string = use default pretrained model
-  const gpus = '0'; // Use first GPU (or CPU if no GPU)
+  // gpuId is set above based on device preference ('0' for GPU, '-' for CPU)
   const sampleRateStr = rvcSampleRate.toString(); // Convert to string for spawn args
   const saveOnlyLatest = '0'; // Save all checkpoints
   const saveEveryWeights = '1'; // Save weights at intervals
@@ -2123,7 +2139,7 @@ export function startRVCTraining(
       totalEpochs.toString(),       // arg 3: total_epoch
       pretrainG,                    // arg 4: pretrainG path
       pretrainD,                    // arg 5: pretrainD path
-      gpus,                         // arg 6: GPU IDs
+      gpuId,                        // arg 6: GPU IDs ('0' for GPU, '-' for CPU)
       batchSize.toString(),         // arg 7: batch_size
       sampleRateStr,                // arg 8: sample_rate
       saveOnlyLatest,               // arg 9: save_only_latest
@@ -2141,7 +2157,7 @@ export function startRVCTraining(
       stdio: ['ignore', logFd, logFd] as const,
       env: {
         ...process.env,
-        CUDA_VISIBLE_DEVICES: '0', // Use first GPU if available
+        CUDA_VISIBLE_DEVICES: useGpu ? '0' : '', // Empty string disables CUDA
       },
     }
   );

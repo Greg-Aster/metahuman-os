@@ -179,12 +179,13 @@ export const POST: APIRoute = async ({ request }) => {
       }
 
       case 'start-training': {
-        const { totalEpochs, saveEveryEpoch, batchSize } = body;
+        const { totalEpochs, saveEveryEpoch, batchSize, device } = body;
 
         const result = startRVCTraining(speakerId, {
           totalEpochs,
           saveEveryEpoch,
-          batchSize
+          batchSize,
+          device
         });
 
         if (!result.success) {
