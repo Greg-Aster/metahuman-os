@@ -321,6 +321,15 @@
       "target_slot": 0,
       "type": "array",
       "comment": "Updated conversation history → Buffer Manager"
+    },
+    {
+      "id": 21,
+      "origin_id": 13,
+      "origin_slot": 0,
+      "target_id": 15,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "Refined response → Buffer Manager (assistant message)"
     }
   ],
   "config": {},

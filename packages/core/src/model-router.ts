@@ -8,7 +8,6 @@
 import { resolveModel, resolveModelForCognitiveMode, type ModelRole, type ResolvedModel, loadModelRegistry } from './model-resolver.js';
 import { audit } from './audit.js';
 import { ollama } from './ollama.js';
-import { loadPersonaWithFacet, getActiveFacet } from './identity.js';
 import { loadCognitiveMode } from './cognitive-mode.js';
 import { getUserContext } from './context.js';
 
@@ -80,67 +79,8 @@ function getContextualCognitiveMode(explicitMode: string | undefined): string | 
   }
 }
 
-/**
- * Build persona context summary from persona files
- * This is injected as a system message when includePersonaSummary is enabled
- * MIGRATED: 2025-11-20 - Now uses getUserContext() to get username
- */
-function buildPersonaContext(): string {
-  try {
-    const activeFacet = getActiveFacet();
-    if (activeFacet === 'inactive') {
-      return '';
-    }
-    const persona = loadPersonaWithFacet();
-
-    // Build a concise summary of identity, values, and goals
-    const parts: string[] = [];
-
-    // Identity
-    parts.push(`You are ${persona.identity.name}, ${persona.identity.role}.`);
-    parts.push(persona.identity.purpose);
-
-    // Core values (top 3)
-    if (persona.values?.core && Array.isArray(persona.values.core)) {
-      const topValues = persona.values.core.slice(0, 3);
-      const valueNames = topValues.map((v: any) => v.value || v).filter(Boolean);
-      if (valueNames.length > 0) {
-        parts.push(`\nCore values: ${valueNames.join(', ')}.`);
-      }
-    }
-
-    // Short-term goals
-    if (persona.goals?.shortTerm && Array.isArray(persona.goals.shortTerm)) {
-      parts.push(`\nCurrent goals:`);
-      persona.goals.shortTerm.forEach((goal: any) => {
-        const goalText = goal.goal || goal;
-        parts.push(`- ${goalText}`);
-      });
-    }
-
-    // Long-term goals (just titles or descriptions)
-    if (persona.goals?.longTerm && Array.isArray(persona.goals.longTerm)) {
-      const aspirations = persona.goals.longTerm
-        .map((g: any) => g.goal || g.title || g.description || g)
-        .filter(Boolean);
-      if (aspirations.length > 0) {
-        parts.push(`\nLong-term goals: ${aspirations.slice(0, 3).join(', ')}.`);
-      }
-    }
-
-    // Don't inject communication style - let the AI adapt naturally based on context and memories
-    // Hardcoding "concise" or "detailed" limits versatility
-
-    return parts.join('\n');
-  } catch (error) {
-    // Silently handle anonymous user errors (expected for warmup, guest sessions without profile)
-    const errorMsg = (error as Error).message || '';
-    if (!errorMsg.includes('Anonymous users cannot access')) {
-      console.warn('[model-router] Failed to load persona context:', error);
-    }
-    return ''; // Fail silently - don't block LLM calls if persona can't be loaded
-  }
-}
+// NOTE: buildPersonaContext() removed (2025-11-26)
+// Persona injection now handled exclusively by persona_loader and persona_formatter graph nodes
 
 /**
  * Call an LLM using role-based routing
@@ -155,54 +95,11 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
     ? resolveModelForCognitiveMode(effectiveCognitiveMode, callOptions.role)
     : resolveModel(callOptions.role, callOptions.overrides);
 
-  // Check if we should include persona summary
-  let shouldIncludePersona = false;
-  if (callOptions.role === 'persona') {
-    try {
-      const registry = loadModelRegistry();
-      shouldIncludePersona = registry.globalSettings?.includePersonaSummary ?? true;
-    } catch {
-      // If registry can't be loaded, default to true for backward compatibility
-      shouldIncludePersona = true;
-    }
-
-    try {
-      if (getActiveFacet() === 'inactive') {
-        shouldIncludePersona = false;
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  // Inject persona context if needed
+  // NOTE: Legacy persona injection removed (2025-11-26)
+  // Persona is now explicitly injected via persona_loader and persona_formatter nodes
+  // in the cognitive graphs. This makes persona flow visible and editable in the graph editor.
+  // Response Synthesizer applies persona voice to final output only.
   let messages = callOptions.messages;
-  if (shouldIncludePersona) {
-    const personaContext = buildPersonaContext();
-    if (personaContext) {
-      // Check if there's already a system message
-      const hasSystemMessage = messages.some(m => m.role === 'system');
-
-      if (hasSystemMessage) {
-        // Prepend persona context to existing system message
-        messages = messages.map(m => {
-          if (m.role === 'system') {
-            return {
-              ...m,
-              content: `${personaContext}\n\n${m.content}`
-            };
-          }
-          return m;
-        });
-      } else {
-        // Add persona context as a new system message at the start
-        messages = [
-          { role: 'system', content: personaContext },
-          ...messages
-        ];
-      }
-    }
-  }
 
   // Merge options: model defaults + call-specific options
   const mergedOptions = {

@@ -156,31 +156,86 @@ export const semanticSearchExecutor: NodeExecutor = async (inputs, context, prop
 /**
  * Conversation History Node
  * Retrieves recent conversation messages from persisted buffer
+ * Supports unified consciousness mode - merges inner dialogue into conversation context
  */
 export const conversationHistoryExecutor: NodeExecutor = async (inputs, context, properties) => {
   const startTime = Date.now();
   const limit = properties?.limit || 20;
   const mode = context.mode || context.dialogueType || 'conversation';
+  const username = context.username;
 
   // First, try to load from persisted buffer files
   let messages = context.conversationHistory || [];
   let summaryMarkers: any[] = [];
   let loadedFromBuffer = false;
+  let innerDialogueCount = 0;
 
-  try {
-    const loadStart = Date.now();
-    const { loadPersistedBuffer } = await import('../conversation-buffer.js');
-    const bufferData = loadPersistedBuffer(mode as 'inner' | 'conversation');
-    const loadTime = Date.now() - loadStart;
+  // FIXED: Use explicit username instead of deprecated getUserContext()
+  if (username) {
+    try {
+      const loadStart = Date.now();
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const { getProfilePaths } = await import('../paths.js');
 
-    if (bufferData.messages.length > 0) {
-      messages = bufferData.messages;
-      summaryMarkers = bufferData.summaryMarkers;
-      loadedFromBuffer = true;
-      console.log(`[ConversationHistory] Loaded ${messages.length} messages from persisted ${mode} buffer (${loadTime}ms)`);
+      const profilePaths = getProfilePaths(username);
+      const bufferPath = path.join(profilePaths.state, `conversation-buffer-${mode}.json`);
+
+      if (fs.existsSync(bufferPath)) {
+        const raw = fs.readFileSync(bufferPath, 'utf-8');
+        const parsed = JSON.parse(raw);
+
+        if (parsed.messages && Array.isArray(parsed.messages)) {
+          messages = parsed.messages;
+          summaryMarkers = parsed.summaryMarkers || [];
+          loadedFromBuffer = true;
+          const loadTime = Date.now() - loadStart;
+          console.log(`[ConversationHistory] Loaded ${messages.length} messages from persisted ${mode} buffer (${loadTime}ms)`);
+        }
+      }
+
+      // Unified Consciousness: Load inner dialogue buffer and merge if enabled
+      if (mode === 'conversation') {
+        try {
+          const { loadChatSettings } = await import('../chat-settings.js');
+          const chatSettings = loadChatSettings();
+
+          if (chatSettings.unifiedConsciousness) {
+            const innerBufferPath = path.join(profilePaths.state, 'conversation-buffer-inner.json');
+
+            if (fs.existsSync(innerBufferPath)) {
+              const innerRaw = fs.readFileSync(innerBufferPath, 'utf-8');
+              const innerParsed = JSON.parse(innerRaw);
+
+              if (innerParsed.messages && Array.isArray(innerParsed.messages)) {
+                // Get recent inner dialogue (limit to 10 most recent to avoid overwhelming)
+                const innerLimit = 10;
+                const innerMessages = innerParsed.messages
+                  .slice(-innerLimit)
+                  .map((msg: any) => ({
+                    ...msg,
+                    // Mark as inner thought for LLM context
+                    role: 'system',
+                    content: `[Inner thought - ${msg.role}]: ${msg.content}`,
+                    meta: { ...msg.meta, isInnerDialogue: true, originalRole: msg.role },
+                  }));
+
+                // Merge: inner thoughts go at the start of context (older context)
+                messages = [...innerMessages, ...messages];
+                innerDialogueCount = innerMessages.length;
+                console.log(`[ConversationHistory] 🧠 Unified consciousness: Added ${innerDialogueCount} inner dialogue messages`);
+              }
+            }
+          }
+        } catch (error) {
+          console.warn('[ConversationHistory] Could not load inner dialogue for unified consciousness:', error);
+        }
+      }
+    } catch (error) {
+      console.warn('[ConversationHistory] Could not load persisted buffer:', error);
     }
-  } catch (error) {
-    console.warn('[ConversationHistory] Could not load persisted buffer, using context:', error);
+  } else {
+    console.warn('[ConversationHistory] No username in context, cannot load buffer');
   }
 
   // Auto-prune to stay within limits (max 20 messages, ~8000 tokens)
@@ -220,6 +275,8 @@ export const conversationHistoryExecutor: NodeExecutor = async (inputs, context,
     loadedFromBuffer,
     estimatedTokens,
     mode,
+    innerDialogueCount,
+    unifiedConsciousness: innerDialogueCount > 0,
   };
 };
 

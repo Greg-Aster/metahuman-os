@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
-import { verifyRecoveryCode } from '../../../../../packages/core/src/recovery-codes.js';
-import { updatePassword, getUserByUsername } from '../../../../../packages/core/src/users.js';
-import { auditSecurity } from '../../../../../packages/core/src/audit.js';
+import { verifyRecoveryCode } from '@metahuman/core/recovery-codes';
+import { updatePassword, getUserByUsername } from '@metahuman/core/users';
+import { auditSecurity } from '@metahuman/core/audit';
 
 /**
  * POST /api/auth/reset-password

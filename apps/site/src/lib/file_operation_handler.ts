@@ -3,7 +3,7 @@
  * Adds direct file operation support to the chat API
  */
 
-import { initializeSkills } from '../../../../brain/skills/index.js';
+import { initializeSkills } from '@brain/skills/index.js';
 import { executeSkill, loadTrustLevel, getAvailableSkills } from '@metahuman/core/skills';
 import { paths } from '@metahuman/core/paths';
 import path from 'node:path';

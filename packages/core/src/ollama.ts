@@ -359,3 +359,11 @@ export async function checkOllamaHealth(): Promise<{
 }> {
   return ollama.getHealthStatus();
 }
+
+/**
+ * Check if Ollama is running
+ * Convenience function that uses the singleton OllamaClient instance
+ */
+export async function isRunning(): Promise<boolean> {
+  return ollama.isRunning();
+}

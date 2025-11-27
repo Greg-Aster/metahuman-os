@@ -247,10 +247,24 @@ echo.
 
 cd /d "%REPO_ROOT%\apps\site"
 
+REM Check if production build exists
+if not exist "%REPO_ROOT%\apps\site\dist\server\entry.mjs" (
+    echo Building production bundle...
+    call pnpm build
+    if %ERRORLEVEL% neq 0 (
+        echo ERROR: Build failed. Falling back to development server.
+        call pnpm dev
+        pause
+        exit /b 1
+    )
+    echo Production build complete
+    echo.
+)
+
 start "" powershell -NoProfile -WindowStyle Hidden -Command "while (-not (Test-NetConnection localhost -Port 4321 -InformationLevel Quiet)) { Start-Sleep 1 } ; Start-Process 'http://localhost:4321'" >nul 2>&1
 
 echo ==================================
-echo   MetaHuman OS Web Interface     
+echo   MetaHuman OS Production Server
 echo ==================================
 echo URL: http://localhost:4321
 echo Press Ctrl+C to stop the server
@@ -266,7 +280,7 @@ echo To stop the server, press Ctrl+C
 echo ==================================
 echo.
 
-REM Start the development server
-call pnpm dev
+REM Start the production server
+node dist\server\entry.mjs
 
 pause

@@ -42,10 +42,11 @@ export const GET: APIRoute = async ({ request, cookies }) => {
       }
 
       // Filter out system messages and summary markers to get actual conversation
+      // Preserve all role types including reflection, dream, reasoning for inner dialogue
       const bufferMessages = buffer.messages
         .filter((msg: any) => msg.role !== 'system' && !msg.meta?.summaryMarker)
         .map((msg: any) => ({
-          role: msg.role as 'user' | 'assistant',
+          role: msg.role as 'user' | 'assistant' | 'reflection' | 'dream' | 'reasoning',
           content: msg.content,
           timestamp: msg.timestamp || Date.now(),
           meta: msg.meta

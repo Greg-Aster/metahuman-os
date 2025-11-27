@@ -19,6 +19,7 @@
   let userInputPriority = true;
   let innerDialogHistoryLimit = 80;
   let innerDialogHistoryDays = 7;
+  let unifiedConsciousness = false;
 
   onMount(async () => {
     await loadSettings();
@@ -45,6 +46,7 @@
         userInputPriority = settings.userInputPriority;
         innerDialogHistoryLimit = settings.innerDialogHistoryLimit ?? 80;
         innerDialogHistoryDays = settings.innerDialogHistoryDays ?? 7;
+        unifiedConsciousness = settings.unifiedConsciousness ?? false;
       }
     } catch (error) {
       console.error('Failed to load chat settings:', error);
@@ -67,6 +69,7 @@
         userInputPriority,
         innerDialogHistoryLimit,
         innerDialogHistoryDays,
+        unifiedConsciousness,
       };
 
       const res = await fetch('/api/chat-settings', {
@@ -328,6 +331,32 @@
         />
       </div>
 
+      <!-- Consciousness Settings -->
+      <h4 style="margin-top: 1.5rem;">🧠 Consciousness Integration</h4>
+
+      <!-- Unified Consciousness -->
+      <div class="setting-group">
+        <label class="checkbox-label consciousness-toggle">
+          <input
+            type="checkbox"
+            bind:checked={unifiedConsciousness}
+            on:change={saveSettings}
+          />
+          <span class="toggle-text">
+            Unified Consciousness
+            {#if unifiedConsciousness}
+              <span class="status-badge active">Active</span>
+            {:else}
+              <span class="status-badge">Off</span>
+            {/if}
+          </span>
+          <span class="help">
+            When enabled, inner thoughts (reflections, dreams) influence conversation responses.
+            Creates more integrated consciousness but may cause inner thoughts to "bleed" into conversation.
+          </span>
+        </label>
+      </div>
+
       {#if saving}
         <p class="saving">Saving...</p>
       {/if}
@@ -484,5 +513,47 @@
     color: var(--color-muted, #999);
     font-size: 0.9rem;
     font-style: italic;
+  }
+
+  .consciousness-toggle {
+    flex-direction: column;
+    align-items: flex-start;
+    background: rgba(139, 92, 246, 0.1);
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    border-radius: 8px;
+    padding: 1rem;
+  }
+
+  .consciousness-toggle input[type="checkbox"] {
+    position: absolute;
+    left: 1rem;
+    top: 1rem;
+  }
+
+  .toggle-text {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    padding-left: 1.75rem;
+  }
+
+  .status-badge {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--color-muted, #999);
+  }
+
+  .status-badge.active {
+    background: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+  }
+
+  .consciousness-toggle .help {
+    padding-left: 1.75rem;
+    margin-top: 0.5rem;
+    line-height: 1.4;
   }
 </style>

@@ -36,11 +36,11 @@
       "priority": "high",
       "agentPath": "organizer.ts",
       "usesLLM": true,
-      "inactivityThreshold": 300,
+      "inactivityThreshold": 600,
       "runOnBoot": false,
       "autoRestart": false,
       "maxRetries": 3,
-      "comment": "Runs after 5 minutes of inactivity to avoid competing with user for VRAM"
+      "comment": "Runs after 10 minutes of inactivity to avoid competing with user for VRAM"
     },
     "curator": {
       "id": "curator",

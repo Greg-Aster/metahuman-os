@@ -1,18 +1,21 @@
 /**
- * Dreamer Agent
- * Enhanced version that:
- * 1. Curates a weighted sample of diverse memories
- * 2. Generates surreal dream narratives
- * 3. Extracts preferences and heuristics using LLM
- * 4. Writes overnight learnings to procedural memory
+ * Dreamer Agent (REFACTORED)
+ *
+ * Enhanced version using node-based cognitive graph workflow that:
+ * 1. Curates a weighted sample of diverse memories from lifetime
+ * 2. Generates surreal dream narratives using LLM
+ * 3. Generates continuation dreams probabilistically
+ * 4. Extracts preferences and heuristics using LLM
+ * 5. Writes overnight learnings to procedural memory
+ *
+ * SECURITY: Uses node-based workflow with explicit user path isolation
+ * REFACTOR: Migrated from legacy LLM calls to graph execution (2025-11-26)
+ *
+ * MULTI-USER: Processes all users sequentially with isolated contexts.
  */
 
 import {
-  callLLM,
-  type RouterMessage,
-  captureEvent,
   paths,
-  listEpisodicFiles,
   acquireLock,
   isLocked,
   audit,
@@ -21,21 +24,14 @@ import {
   listUsers,
   withUserContext,
   initGlobalLogger,
+  executeGraph,
+  validateCognitiveGraph,
+  type CognitiveGraph,
+  ollama,
 } from '../../packages/core/src/index.js';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
-
-interface Memory {
-  id: string;
-  timestamp: string;
-  content: string;
-  metadata?: {
-    type?: string;
-    tags?: string[];
-    entities?: string[];
-    processed?: boolean;
-  };
-}
 
 interface SleepConfig {
   enabled: boolean;
@@ -69,332 +65,19 @@ function loadSleepConfig(): SleepConfig {
 }
 
 /**
- * Get a weighted random sample of memories from entire lifetime
- * Exponential decay favors recent memories but allows ancient memories to surface
- * More reflective weighting: 1-year-old memories retain ~20% probability
- * Like the human mind: childhood memories can appear in dreams with meaningful frequency
+ * Load dreamer cognitive graph
  */
-async function curateMemories(sampleSize: number = 15, decayDays: number = 227): Promise<Memory[]> {
-  const memories: Array<Memory & { weight: number; age: number }> = [];
-  const now = new Date();
-
-  audit({
-    level: 'info',
-    category: 'action',
-    event: 'dream_curation_started',
-    details: { sampleSize, decayDays, scope: 'lifetime' },
-    actor: 'dreamer',
-  });
-
-  const episodicFiles = listEpisodicFiles();
-
-  if (episodicFiles.length === 0) {
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'dream_curation_completed',
-      details: { memoriesFound: 0, curated: 0 },
-      actor: 'dreamer',
-    });
-    return [];
-  }
-
-  for (const filepath of episodicFiles) {
-    try {
-      const content = fs.readFileSync(filepath, 'utf-8');
-      const memory = JSON.parse(content) as Memory;
-
-      // Skip dreams, reflections, and low-confidence memories
-      const type = memory.type || memory.metadata?.type;
-      if (type === 'dream' || type === 'reflection') continue;
-
-      // Calculate age in days
-      const memoryDate = new Date(memory.timestamp);
-      if (Number.isNaN(memoryDate.getTime())) continue;
-      const ageInMs = now.getTime() - memoryDate.getTime();
-      const ageInDays = Math.floor(ageInMs / (1000 * 60 * 60 * 24));
-
-      // Exponential decay weighting
-      const weight = Math.exp(-ageInDays / decayDays);
-
-      memories.push({ ...memory, weight, age: ageInDays });
-    } catch (error) {
-      const err = error as Error;
-      if (!err.message.includes('Unexpected token')) {
-        console.warn(`[dreamer] Could not parse ${path.basename(filepath)}:`, err.message);
-      }
-    }
-  }
-
-  if (memories.length === 0) {
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'dream_curation_completed',
-      details: { memoriesFound: 0, curated: 0 },
-      actor: 'dreamer',
-    });
-    return [];
-  }
-
-  // Weighted random sampling (same algorithm, now with exponential weights)
-  const curated: Memory[] = [];
-  const tempMemories = [...memories];
-
-  while (curated.length < sampleSize && tempMemories.length > 0) {
-    const totalWeight = tempMemories.reduce((sum, m) => sum + m.weight, 0);
-    let random = Math.random() * totalWeight;
-
-    for (let i = 0; i < tempMemories.length; i++) {
-      random -= tempMemories[i].weight;
-      if (random <= 0) {
-        const { weight, age, ...memory } = tempMemories[i];
-        curated.push(memory);
-        tempMemories.splice(i, 1);
-        break;
-      }
-    }
-  }
-
-  // Calculate stats about memory ages selected
-  const ages = curated.map(m => {
-    const memDate = new Date((m as any).timestamp);
-    const ageMs = now.getTime() - memDate.getTime();
-    return Math.floor(ageMs / (1000 * 60 * 60 * 24));
-  });
-  const avgAge = ages.length > 0 ? Math.floor(ages.reduce((a, b) => a + b, 0) / ages.length) : 0;
-  const oldestAge = ages.length > 0 ? Math.max(...ages) : 0;
-
-  audit({
-    level: 'info',
-    category: 'action',
-    event: 'dream_curation_completed',
-    details: {
-      memoriesFound: memories.length,
-      curated: curated.length,
-      avgAgeDays: avgAge,
-      oldestAgeDays: oldestAge,
-      scope: 'lifetime'
-    },
-    actor: 'dreamer',
-  });
-
-  console.log(`[dreamer] Curated ${curated.length} memories (avg age: ${avgAge} days, oldest: ${oldestAge} days)`);
-
-  return curated;
+async function loadDreamerGraph(): Promise<CognitiveGraph> {
+  const graphPath = path.join(paths.root, 'etc', 'cognitive-graphs', 'dreamer-mode.json');
+  const raw = await fsp.readFile(graphPath, 'utf-8');
+  const parsed = JSON.parse(raw);
+  return validateCognitiveGraph(parsed);
 }
 
 /**
- * Generate a surreal dream from memory fragments
- */
-async function generateDream(memories: Memory[]): Promise<string | null> {
-  if (memories.length < 3) {
-    console.log('[dreamer] Not enough memory fragments to form a dream.');
-    return null;
-  }
-
-  const memoriesText = memories
-    .map(m => `- A fragment: ${m.content.substring(0, 300)}`)
-    .join('\n');
-
-  const systemPrompt = `
-    You are the dreamer. You are processing recent experiences into a surreal, metaphorical dream.
-    Do not be literal. Weave the following memory fragments into an unbound dream narrative.
-    Use symbolism, look for unexpected connections, break logic, merge impossible things.
-    The output should feel like a dream—no rules, no structure, pure subconscious flow.
-    Start the dream directly, without any preamble. Let it be as long or short as it needs to be.
-  `.trim();
-
-  const prompt = `Memory Fragments:\n${memoriesText}`;
-
-  try {
-    const response = await callLLM({
-      role: 'persona',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: prompt },
-      ],
-      options: { temperature: 1.0 },
-    });
-
-    const dream = response.content.trim();
-    return dream || null;
-  } catch (error) {
-    console.error('[dreamer] Error while generating dream:', error);
-    return null;
-  }
-}
-
-/**
- * Generate a continuation dream that builds on a previous dream narrative
- */
-async function generateContinuationDream(previousDream: string, iteration: number): Promise<string | null> {
-  if (!previousDream.trim()) return null;
-
-  const systemPrompt = `
-    You are continuing a surreal dream sequence. You only see the previous dream fragment—use it as inspiration,
-    but feel free to drift, fracture, merge, or completely transform. No coherence required.
-    Let the symbols mutate, emotions shift unexpectedly, logic dissolve. Dreams don't follow rules.
-    Do not summarize; let one dream bleed into another. No length limits.
-  `.trim();
-
-  const prompt = `Previous Dream Fragment:
-${previousDream}
-
-Let the dream continue, building on this fragment alone.`;
-
-  try {
-    const response = await callLLM({
-      role: 'persona',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: prompt },
-      ],
-      options: { temperature: 1.0 },
-    });
-
-    const dream = response.content.trim();
-    return dream || null;
-  } catch (error) {
-    console.error(`[dreamer] Error while generating continuation dream (iteration ${iteration}):`, error);
-    return null;
-  }
-}
-
-/**
- * Extract preferences, heuristics, and learnings from memories
- */
-async function extractLearnings(memories: Memory[]): Promise<{
-  preferences: string[];
-  heuristics: string[];
-  styleNotes: string[];
-  avoidances: string[];
-}> {
-  if (memories.length === 0) {
-    return { preferences: [], heuristics: [], styleNotes: [], avoidances: [] };
-  }
-
-  const memoriesText = memories
-    .map(m => `[${m.timestamp}] ${m.content}`)
-    .join('\n\n');
-
-  const systemPrompt = `You are analyzing recent episodic memories to extract implicit and explicit preferences, decision heuristics, writing style patterns, and things to avoid.
-
-Be specific and cite examples where possible. Extract:
-1. **Preferences**: What does the person value, prefer, or prioritize?
-2. **Heuristics**: What decision rules or patterns emerge?
-3. **Style Notes**: What communication or writing style is evident?
-4. **Avoidances**: What does the person dislike or avoid?
-
-Respond with JSON only.`;
-
-  const userPrompt = `Analyze these memories and extract learnings:
-
-${memoriesText}
-
-Respond with JSON:
-{
-  "preferences": ["preference 1 (with example if possible)", "preference 2", ...],
-  "heuristics": ["heuristic 1", "heuristic 2", ...],
-  "styleNotes": ["style note 1", "style note 2", ...],
-  "avoidances": ["avoidance 1", "avoidance 2", ...]
-}`;
-
-  try {
-    const llmResponse = await callLLM({
-      role: 'curator',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      options: { temperature: 0.3 },
-    });
-
-    const response = JSON.parse(llmResponse.content) as {
-      preferences: string[];
-      heuristics: string[];
-      styleNotes: string[];
-      avoidances: string[];
-    };
-
-    return {
-      preferences: response.preferences || [],
-      heuristics: response.heuristics || [],
-      styleNotes: response.styleNotes || [],
-      avoidances: response.avoidances || [],
-    };
-  } catch (error) {
-    console.error('[dreamer] Error extracting learnings:', error);
-    return { preferences: [], heuristics: [], styleNotes: [], avoidances: [] };
-  }
-}
-
-/**
- * Write overnight learnings to procedural memory
- */
-function writeOvernightLearnings(
-  date: string,
-  learnings: {
-    preferences: string[];
-    heuristics: string[];
-    styleNotes: string[];
-    avoidances: string[];
-  },
-  memoryCitations: string[]
-): string {
-  const filename = `overnight-learnings-${date.replace(/-/g, '')}.md`;
-  const filepath = path.join(paths.proceduralOvernight, filename);
-
-  // Ensure directory exists
-  fs.mkdirSync(paths.proceduralOvernight, { recursive: true });
-
-  const content = `# Overnight Learnings — ${date}
-
-Generated from ${memoryCitations.length} recent memories during the nightly sleep cycle.
-
-## Preferences
-${learnings.preferences.length > 0 ? learnings.preferences.map(p => `- ${p}`).join('\n') : '- None extracted'}
-
-## Decision Heuristics
-${learnings.heuristics.length > 0 ? learnings.heuristics.map(h => `- ${h}`).join('\n') : '- None extracted'}
-
-## Writing Style Notes
-${learnings.styleNotes.length > 0 ? learnings.styleNotes.map(s => `- ${s}`).join('\n') : '- None extracted'}
-
-## Avoidances
-${learnings.avoidances.length > 0 ? learnings.avoidances.map(a => `- ${a}`).join('\n') : '- None extracted'}
-
-## Citations
-${memoryCitations.map(id => `- ${id}`).join('\n')}
-
----
-*This file is generated automatically by the dreamer agent during the nightly sleep cycle.*
-*It is used by the morning-loader agent to compose the daily operator profile.*
-`;
-
-  fs.writeFileSync(filepath, content, 'utf-8');
-
-  audit({
-    level: 'info',
-    category: 'data',
-    event: 'overnight_learnings_written',
-    details: {
-      date,
-      filepath,
-      preferencesCount: learnings.preferences.length,
-      heuristicsCount: learnings.heuristics.length,
-      styleNotesCount: learnings.styleNotes.length,
-      avoidancesCount: learnings.avoidances.length,
-      citations: memoryCitations.length,
-    },
-    actor: 'dreamer',
-  });
-
-  return filepath;
-}
-
-/**
- * Generate dreams and learnings for a single user
+ * Generate dreams and learnings for a single user using node-based workflow
+ *
+ * SECURITY: All memory access is user-specific via context.userId
  */
 async function generateUserDreams(
   username: string,
@@ -418,93 +101,100 @@ async function generateUserDreams(
       return { dreamsGenerated: 0, memoriesCurated: 0, preferencesExtracted: 0, heuristicsExtracted: 0 };
     }
 
-    const curatedMemories = await curateMemories(15, 227);
+    // Preflight: ensure Ollama is available
+    const running = await ollama.isRunning();
+    if (!running) {
+      console.warn('[dreamer] Ollama is not running; skipping dream generation. Start with: ollama serve');
+      audit({
+        category: 'system',
+        level: 'warn',
+        event: 'dreamer_skipped',
+        details: { reason: 'ollama_not_running' },
+        actor: 'dreamer',
+      });
+      return { dreamsGenerated: 0, memoriesCurated: 0, preferencesExtracted: 0, heuristicsExtracted: 0 };
+    }
 
-    if (curatedMemories.length < 3) {
-      console.log(`[dreamer]   Not enough memories for ${username} (found ${curatedMemories.length})`);
+    // Load dreamer cognitive graph
+    const graph = await loadDreamerGraph();
+
+    // Execute graph with user context
+    // SECURITY: userId is passed explicitly to ensure user-specific path resolution
+    const graphContext = {
+      userId: username,
+      username,
+      allowMemoryWrites: true,
+      cognitiveMode: 'agent' as const,
+    };
+
+    console.log(`[dreamer] Executing dreamer workflow for user: ${username}`);
+    const graphResult = await executeGraph(graph, graphContext);
+
+    // Extract results from graph execution
+    // Node 1: Memory Curator
+    const memoryCuratorNode = graphResult.nodes.get(1);
+    const memoriesCurated = memoryCuratorNode?.outputs?.count || 0;
+    const avgAgeDays = memoryCuratorNode?.outputs?.avgAgeDays || 0;
+    const oldestAgeDays = memoryCuratorNode?.outputs?.oldestAgeDays || 0;
+
+    if (memoriesCurated < 3) {
+      console.log(`[dreamer]   Not enough memories for ${username} (found ${memoriesCurated})`);
       audit({
         level: 'info',
         category: 'action',
         event: 'sleep_skipped',
-        details: { reason: 'insufficient_memories', memoriesFound: curatedMemories.length },
+        details: { reason: 'insufficient_memories', memoriesFound: memoriesCurated, username },
         actor: 'dreamer',
       });
-      return { dreamsGenerated: 0, memoriesCurated: curatedMemories.length, preferencesExtracted: 0, heuristicsExtracted: 0 };
+      return { dreamsGenerated: 0, memoriesCurated, preferencesExtracted: 0, heuristicsExtracted: 0 };
     }
 
-    const dreamCapacity = config.maxDreamsPerNight > 0 ? 1 : 0;
-    const dreamCount = options.forceRun ? Math.min(1, dreamCapacity || 1) : dreamCapacity;
-    let dreamsGenerated = 0;
+    console.log(`[dreamer]   Curated ${memoriesCurated} memories (avg age: ${avgAgeDays} days, oldest: ${oldestAgeDays} days)`);
 
-    let lastDream: string | null = null;
+    // Node 2: Dream Generator
+    const dreamGeneratorNode = graphResult.nodes.get(2);
+    const initialDream = dreamGeneratorNode?.outputs?.dream;
+    let dreamsGenerated = initialDream ? 1 : 0;
 
-    for (let i = 0; i < dreamCount; i++) {
-      const dreamMemories = curatedMemories.slice(i * 5, (i + 1) * 5);
-      if (dreamMemories.length < 3) break;
-
-      const dream = await generateDream(dreamMemories);
-      if (dream) {
-        const sourceIds = dreamMemories.map(m => m.id);
-        await captureEvent(dream, { type: 'dream', sources: sourceIds, confidence: 0.7 });
-        markBackgroundActivity();
-        dreamsGenerated++;
-        lastDream = dream;
-        console.log(`[dreamer]   Dream ${i + 1}/${dreamCount} generated for ${username}`);
-
-        audit({
-          level: 'info',
-          category: 'decision',
-          event: 'dream_generated',
-          message: 'Dreamer generated new dream',
-          details: { dream, sourceCount: sourceIds.length },
-          metadata: { dream },
-          actor: 'dreamer',
-        });
-      }
+    if (initialDream) {
+      console.log(`[dreamer]   Initial dream generated for ${username}`);
     }
 
-    // Generate continuation dreams with 75% chance each time, using the previous dream as inspiration.
-    // Each dream streams in after 60 seconds, building on the previous one.
-    // Limit to prevent runaway loops (max 5 continuations).
-    let continuationIndex = 0;
-    while (lastDream && continuationIndex < 4) {
-      const roll = Math.random();
-      console.log(`[dreamer] Continuation roll: ${roll.toFixed(2)} (threshold 0.50)`);
-      if (roll >= 0.75) {
-        break;
-      }
-
-      // Wait 60 seconds before generating next dream (creates streaming effect)
-      console.log(`[dreamer] Waiting 60 seconds before continuation ${continuationIndex + 1}...`);
-      await new Promise(resolve => setTimeout(resolve, 60000));
-      markBackgroundActivity(); // Keep heartbeat alive during wait
-
-      const continuation = await generateContinuationDream(lastDream, continuationIndex + 1);
-      if (!continuation) break;
-      lastDream = continuation;
-      continuationIndex++;
-      dreamsGenerated++;
-      await captureEvent(continuation, { type: 'dream', continuation: true, confidence: 0.6, sources: [], parentDream: lastDream });
-      audit({
-        level: 'info',
-        category: 'decision',
-        event: 'dream_continuation_generated',
-        details: { continuationIndex, length: continuation.length },
-        metadata: { dream: continuation },
-        actor: 'dreamer',
-      });
-      console.log(`[dreamer]   Continuation dream ${continuationIndex} generated for ${username}`);
+    // Node 3: Dream Saver (handled by graph)
+    const dreamSaverNode = graphResult.nodes.get(3);
+    const dreamSaved = dreamSaverNode?.outputs?.saved || false;
+    if (dreamSaved) {
+      console.log(`[dreamer]   Dream saved to episodic memory`);
     }
 
-    console.log(`[dreamer]   Extracting preferences and learnings for ${username}...`);
-    const learnings = await extractLearnings(curatedMemories);
+    // Node 4: Continuation Generator
+    const continuationNode = graphResult.nodes.get(4);
+    const continuationCount = continuationNode?.outputs?.count || 0;
+    dreamsGenerated += continuationCount;
+
+    if (continuationCount > 0) {
+      console.log(`[dreamer]   Generated ${continuationCount} continuation dreams`);
+    }
+
+    // Node 5: Learnings Extractor
+    const learningsExtractorNode = graphResult.nodes.get(5);
+    const preferences = learningsExtractorNode?.outputs?.preferences || [];
+    const heuristics = learningsExtractorNode?.outputs?.heuristics || [];
+    const styleNotes = learningsExtractorNode?.outputs?.styleNotes || [];
+    const avoidances = learningsExtractorNode?.outputs?.avoidances || [];
+
+    console.log(`[dreamer]   Extracted ${preferences.length} preferences, ${heuristics.length} heuristics`);
+
+    // Node 6: Learnings Writer
+    const learningsWriterNode = graphResult.nodes.get(6);
+    const learningsWritten = learningsWriterNode?.outputs?.written || false;
+    const learningsFilename = learningsWriterNode?.outputs?.filename || '';
+
+    if (learningsWritten) {
+      console.log(`[dreamer]   Overnight learnings written: ${learningsFilename}`);
+    }
+
     markBackgroundActivity();
-
-    const today = new Date().toISOString().split('T')[0];
-    const memoryCitations = curatedMemories.map(m => m.id);
-    const learningsFile = writeOvernightLearnings(today, learnings, memoryCitations);
-
-    console.log(`[dreamer]   Overnight learnings written: ${path.basename(learningsFile)}`);
 
     audit({
       level: 'info',
@@ -512,20 +202,35 @@ async function generateUserDreams(
       event: 'sleep_completed',
       details: {
         dreamsGenerated,
-        memoriesCurated: curatedMemories.length,
-        learningsFile: path.basename(learningsFile),
-        preferencesExtracted: learnings.preferences.length,
-        heuristicsExtracted: learnings.heuristics.length,
+        memoriesCurated,
+        continuationCount,
+        learningsFile: learningsFilename,
+        preferencesExtracted: preferences.length,
+        heuristicsExtracted: heuristics.length,
+        styleNotesExtracted: styleNotes.length,
+        avoidancesExtracted: avoidances.length,
+        username,
+        usedGraph: true,
       },
       actor: 'dreamer',
     });
 
     return {
       dreamsGenerated,
-      memoriesCurated: curatedMemories.length,
-      preferencesExtracted: learnings.preferences.length,
-      heuristicsExtracted: learnings.heuristics.length,
+      memoriesCurated,
+      preferencesExtracted: preferences.length,
+      heuristicsExtracted: heuristics.length,
     };
+  } catch (error) {
+    console.error(`[dreamer] Error generating dreams for ${username}:`, error);
+    audit({
+      category: 'system',
+      level: 'error',
+      event: 'dreamer_error',
+      details: { error: (error as Error).message, username },
+      actor: 'dreamer',
+    });
+    return { dreamsGenerated: 0, memoriesCurated: 0, preferencesExtracted: 0, heuristicsExtracted: 0 };
   } finally {
     clearInterval(heartbeat);
     markBackgroundActivity();
@@ -569,7 +274,8 @@ async function run() {
       event: 'sleep_started',
       details: {
         agent: 'dreamer',
-        mode: manualTriggerProfile ? 'manual-single' : 'multi-user'
+        mode: manualTriggerProfile ? 'manual-single' : 'multi-user',
+        usedGraph: true,
       },
       actor: 'dreamer',
     });
@@ -631,6 +337,7 @@ async function run() {
         totalPreferences,
         totalHeuristics,
         userCount: users.length,
+        usedGraph: true,
       },
       actor: 'dreamer',
     });

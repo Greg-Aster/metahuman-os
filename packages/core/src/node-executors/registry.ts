@@ -82,6 +82,14 @@ import {
   trainingPairAppenderExecutor,
   memoryMarkerExecutor,
 } from './curator-executors.js';
+import {
+  dreamerMemoryCuratorExecutor,
+  dreamerDreamGeneratorExecutor,
+  dreamerDreamSaverExecutor,
+  dreamerContinuationGeneratorExecutor,
+  dreamerLearningsExtractorExecutor,
+  dreamerLearningsWriterExecutor,
+} from './dreamer-executors.js';
 
 /**
  * Master registry of all node executors
@@ -224,6 +232,14 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
   'training_pair_generator': trainingPairGeneratorExecutor,
   'training_pair_appender': trainingPairAppenderExecutor,
   'memory_marker': memoryMarkerExecutor,
+
+  // Dreamer nodes (dream generation and overnight learning)
+  'dreamer_memory_curator': dreamerMemoryCuratorExecutor,
+  'dreamer_dream_generator': dreamerDreamGeneratorExecutor,
+  'dreamer_dream_saver': dreamerDreamSaverExecutor,
+  'dreamer_continuation_generator': dreamerContinuationGeneratorExecutor,
+  'dreamer_learnings_extractor': dreamerLearningsExtractorExecutor,
+  'dreamer_learnings_writer': dreamerLearningsWriterExecutor,
 };
 
 /**

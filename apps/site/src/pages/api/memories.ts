@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
 import { getAuthenticatedUser, getProfilePaths, systemPaths } from '@metahuman/core'
-import { getSecurityPolicy } from '../../../../../packages/core/src/security-policy.js'
+import { getSecurityPolicy } from '@metahuman/core/security-policy'
 
 type EventItem = {
   id: string

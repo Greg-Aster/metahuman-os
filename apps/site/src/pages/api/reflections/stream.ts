@@ -94,6 +94,61 @@ export const GET: APIRoute = ({ request }) => {
                       timestamp: entry.timestamp,
                     });
                   }
+
+                  // Send agent activity notifications
+                  // These show in the chat as system messages when background agents run
+                  const notifiableAgents = ['organizer', 'curator', 'reflector', 'dreamer', 'summarizer', 'curiosity-service', 'inner-curiosity'];
+                  const agentName = entry.details?.agent || entry.actor;
+
+                  if (
+                    entry.event === 'agent_cycle_started' &&
+                    notifiableAgents.includes(agentName)
+                  ) {
+                    const friendlyNames: Record<string, string> = {
+                      'organizer': '🗂️ Memory Organizer',
+                      'curator': '📚 Memory Curator',
+                      'reflector': '🤔 Reflector',
+                      'dreamer': '💭 Dreamer',
+                      'summarizer': '📝 Summarizer',
+                      'curiosity-service': '❓ Curiosity',
+                      'inner-curiosity': '🧠 Inner Curiosity',
+                    };
+                    sendEvent({
+                      type: 'agent_activity',
+                      agent: agentName,
+                      status: 'started',
+                      message: `${friendlyNames[agentName] || agentName} is running...`,
+                      timestamp: entry.timestamp,
+                    });
+                  }
+
+                  if (
+                    entry.event === 'agent_cycle_completed' &&
+                    notifiableAgents.includes(agentName)
+                  ) {
+                    const friendlyNames: Record<string, string> = {
+                      'organizer': '🗂️ Memory Organizer',
+                      'curator': '📚 Memory Curator',
+                      'reflector': '🤔 Reflector',
+                      'dreamer': '💭 Dreamer',
+                      'summarizer': '📝 Summarizer',
+                      'curiosity-service': '❓ Curiosity',
+                      'inner-curiosity': '🧠 Inner Curiosity',
+                    };
+                    const details = entry.details || {};
+                    let summary = '';
+                    if (details.memoriesProcessed) summary = `Processed ${details.memoriesProcessed} memories`;
+                    if (details.itemsProcessed) summary = `Processed ${details.itemsProcessed} items`;
+                    if (details.duration) summary += summary ? ` in ${Math.round(details.duration / 1000)}s` : `Completed in ${Math.round(details.duration / 1000)}s`;
+
+                    sendEvent({
+                      type: 'agent_activity',
+                      agent: agentName,
+                      status: 'completed',
+                      message: `${friendlyNames[agentName] || agentName} finished${summary ? ': ' + summary : ''}`,
+                      timestamp: entry.timestamp,
+                    });
+                  }
                 } catch (e) {
                   /* ignore malformed json */
                 }

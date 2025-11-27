@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Model registry for multi-model orchestration. Defines roles and their associated models.",
   "globalSettings": {
-    "includePersonaSummary": true,
+    "includePersonaSummary": false,
     "useAdapter": false,
     "activeAdapter": {
       "modelName": "greggles-2025-11-25",
@@ -382,8 +382,8 @@
       "psychotherapist": "default.psychotherapist"
     },
     "emulation": {
-      "orchestrator": "ollama.greggles-finetune-q6k-2025-11-22:latest",
-      "persona": "ollama.greggles-2025-11-22:latest"
+      "orchestrator": "default.orchestrator",
+      "persona": "default.orchestrator"
     }
   },
   "providers": {

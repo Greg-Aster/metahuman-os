@@ -6,7 +6,7 @@
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { callLLM, type RouterMessage, loadPersonaCore, audit, getProfilePaths } from '../index.js';
+import { callLLM, type RouterMessage, audit, getProfilePaths } from '../index.js';
 import type { NodeExecutor } from './types.js';
 
 /**
@@ -187,10 +187,11 @@ export const curiosityWeightedSamplerExecutor: NodeExecutor = async (_inputs, co
  * Curiosity Question Generator Node
  *
  * Generates a natural, conversational curiosity question via LLM
- * Uses persona-aware prompt construction
+ * Uses persona-aware prompt construction from graph nodes
  *
  * Inputs:
- *   - memories: Array of memory objects to base question on
+ *   - [0] memories: Array of memory objects to base question on
+ *   - [1] personaPrompt: Formatted persona string from persona_formatter node
  *
  * Properties:
  *   - temperature: LLM temperature (default: 0.6)
@@ -201,6 +202,7 @@ export const curiosityWeightedSamplerExecutor: NodeExecutor = async (_inputs, co
  */
 export const curiosityQuestionGeneratorExecutor: NodeExecutor = async (inputs, context, properties) => {
   const memories = inputs[0]?.memories || [];
+  const personaInput = inputs[1];
   const temperature = properties?.temperature || 0.6;
   const username = context.userId;
 
@@ -219,27 +221,16 @@ export const curiosityQuestionGeneratorExecutor: NodeExecutor = async (inputs, c
   }
 
   try {
-    // Load persona (user-specific)
-    const profilePaths = getProfilePaths(username);
-    const personaPath = profilePaths.personaCore;
-    const persona = JSON.parse(await fs.readFile(personaPath, 'utf-8'));
-
     const memoriesText = memories.map((m: any, i: number) => `${i + 1}. ${m.content}`).join('\n');
 
-    // Build personality context from persona
-    const tone = persona.personality?.communicationStyle?.tone || 'conversational';
-    const archetypes = persona.personality?.archetypes ? persona.personality.archetypes.join(', ') : '';
-    const topValues = persona.values?.core ?
-      persona.values.core.slice(0, 3).map((v: any) => v.value).join(', ') : '';
+    // Get formatted persona from input (injected via graph nodes)
+    const personaPrompt = personaInput?.formatted || personaInput || '';
 
+    // Build system prompt with persona context
     const systemPrompt = `
-You are ${persona.identity.name}. ${persona.identity.role || ''}
+${personaPrompt}
 
-Your communication style: ${tone}
-${archetypes ? `Your nature: ${archetypes}` : ''}
-${topValues ? `What matters to you: ${topValues}` : ''}
-
-Looking back at these recent memories, you're genuinely curious about something. Ask ${persona.identity.humanName || 'the user'} ONE natural, conversational question that reflects your authentic curiosity.
+Looking back at these recent memories, you're genuinely curious about something. Ask the user ONE natural, conversational question that reflects your authentic curiosity.
 
 Be yourself - ask in your own voice, not like an AI. Keep it under 20 words and make it feel like a real question you'd ask a friend.
     `.trim();

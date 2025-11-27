@@ -398,7 +398,8 @@ export const BufferManagerNode: NodeSchema = {
   category: 'context',
   ...categoryColors.context,
   inputs: [
-    { name: 'messages', type: 'array', description: 'Conversation messages to persist' },
+    { name: 'history', type: 'array', description: 'Existing conversation history' },
+    { name: 'response', type: 'string', description: 'New assistant response to append' },
   ],
   outputs: [
     { name: 'result', type: 'object', description: 'Persistence result with persisted, mode, messageCount' },
@@ -2095,6 +2096,139 @@ export const MemoryMarkerNode: NodeSchema = {
   description: 'Marks memories as curated to prevent reprocessing',
 };
 
+// ============================================================================
+// DREAMER WORKFLOW NODES (Dream Generation and Overnight Learning)
+// ============================================================================
+
+export const DreamerMemoryCuratorNode: NodeSchema = {
+  id: 'dreamer_memory_curator',
+  name: 'Curate Dream Memories',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [],
+  outputs: [
+    { name: 'memories', type: 'array', description: 'Array of curated memory objects' },
+    { name: 'count', type: 'number', description: 'Number of memories curated' },
+    { name: 'avgAgeDays', type: 'number', description: 'Average age of curated memories in days' },
+    { name: 'oldestAgeDays', type: 'number', description: 'Age of oldest curated memory in days' },
+    { name: 'username', type: 'string', description: 'User whose memories were curated' },
+  ],
+  properties: {
+    sampleSize: 15,
+    decayDays: 227, // ~20% weight at 1 year
+  },
+  description: 'Curates weighted sample of memories from entire lifetime using exponential decay. Older memories retain meaningful probability like human dream formation.',
+};
+
+export const DreamerDreamGeneratorNode: NodeSchema = {
+  id: 'dreamer_dream_generator',
+  name: 'Generate Dream',
+  category: 'model',
+  ...categoryColors.model,
+  inputs: [
+    { name: 'memories', type: 'array', description: 'Curated memory objects from dreamer_memory_curator' },
+    { name: 'personaPrompt', type: 'string', optional: true, description: 'Formatted persona string from persona_formatter' },
+  ],
+  outputs: [
+    { name: 'dream', type: 'string', description: 'Generated surreal dream narrative' },
+    { name: 'memoryCount', type: 'number', description: 'Number of memories used' },
+    { name: 'sourceIds', type: 'array', description: 'IDs of source memories' },
+    { name: 'username', type: 'string', description: 'User for whom dream was generated' },
+  ],
+  properties: {
+    temperature: 1.0, // Maximum creativity for dreams
+    role: 'persona',
+  },
+  description: 'Generates surreal, metaphorical dream narratives from memory fragments using LLM. Dreams break logic and merge impossible things.',
+};
+
+export const DreamerDreamSaverNode: NodeSchema = {
+  id: 'dreamer_dream_saver',
+  name: 'Save Dream',
+  category: 'memory',
+  ...categoryColors.memory,
+  inputs: [
+    { name: 'dreamData', type: 'object', description: 'Object with dream text from dreamer_dream_generator' },
+    { name: 'memoriesData', type: 'object', optional: true, description: 'Object with source memories for citations' },
+  ],
+  outputs: [
+    { name: 'saved', type: 'boolean', description: 'Whether save was successful' },
+    { name: 'eventId', type: 'string', description: 'ID of saved event' },
+    { name: 'dream', type: 'string', description: 'The saved dream text' },
+    { name: 'sourceCount', type: 'number', description: 'Number of source citations' },
+    { name: 'username', type: 'string', description: 'User for whom dream was saved' },
+  ],
+  properties: {
+    type: 'dream',
+  },
+  description: 'Saves generated dream to episodic memory and emits audit event for SSE streaming to web UI.',
+};
+
+export const DreamerContinuationGeneratorNode: NodeSchema = {
+  id: 'dreamer_continuation_generator',
+  name: 'Generate Continuation Dreams',
+  category: 'model',
+  ...categoryColors.model,
+  inputs: [
+    { name: 'previousDream', type: 'object', description: 'Object with dream text from previous node' },
+  ],
+  outputs: [
+    { name: 'dreams', type: 'array', description: 'Array of continuation dreams' },
+    { name: 'count', type: 'number', description: 'Number of continuations generated' },
+    { name: 'username', type: 'string', description: 'User for whom dreams were generated' },
+  ],
+  properties: {
+    temperature: 1.0,
+    continuationChance: 0.75, // 75% probability to continue
+    maxContinuations: 4,
+    delaySeconds: 60, // Delay between continuations for streaming effect
+  },
+  description: 'Generates continuation dreams that build on previous dream narrative. Uses probability-based decision to continue or stop.',
+};
+
+export const DreamerLearningsExtractorNode: NodeSchema = {
+  id: 'dreamer_learnings_extractor',
+  name: 'Extract Learnings',
+  category: 'agent',
+  ...categoryColors.agent,
+  inputs: [
+    { name: 'memoriesData', type: 'object', description: 'Object with curated memories from dreamer_memory_curator' },
+  ],
+  outputs: [
+    { name: 'preferences', type: 'array', description: 'Array of preference strings' },
+    { name: 'heuristics', type: 'array', description: 'Array of decision heuristic strings' },
+    { name: 'styleNotes', type: 'array', description: 'Array of style note strings' },
+    { name: 'avoidances', type: 'array', description: 'Array of avoidance strings' },
+    { name: 'memoryCount', type: 'number', description: 'Number of memories analyzed' },
+    { name: 'username', type: 'string', description: 'User whose learnings were extracted' },
+  ],
+  properties: {
+    temperature: 0.3,
+    role: 'persona',
+  },
+  description: 'Extracts preferences, heuristics, style notes, and avoidances from memories using LLM analysis.',
+};
+
+export const DreamerLearningsWriterNode: NodeSchema = {
+  id: 'dreamer_learnings_writer',
+  name: 'Write Overnight Learnings',
+  category: 'memory',
+  ...categoryColors.memory,
+  inputs: [
+    { name: 'learningsData', type: 'object', description: 'Object with preferences, heuristics, etc from extractor' },
+    { name: 'memoriesData', type: 'object', optional: true, description: 'Object with memories for citations' },
+  ],
+  outputs: [
+    { name: 'written', type: 'boolean', description: 'Whether write was successful' },
+    { name: 'filepath', type: 'string', description: 'Path to written file' },
+    { name: 'filename', type: 'string', description: 'Name of written file' },
+    { name: 'date', type: 'string', description: 'Date of learnings' },
+    { name: 'username', type: 'string', description: 'User for whom learnings were written' },
+  ],
+  properties: {},
+  description: 'Writes overnight learnings to procedural memory as markdown file for morning-loader agent.',
+};
+
 // Export all schemas as a registry
 export const nodeSchemas: NodeSchema[] = [
   // Input
@@ -2216,6 +2350,14 @@ export const nodeSchemas: NodeSchema[] = [
   TrainingPairGeneratorNode,
   TrainingPairAppenderNode,
   MemoryMarkerNode,
+
+  // Dreamer Workflow (Dream Generation and Overnight Learning)
+  DreamerMemoryCuratorNode,
+  DreamerDreamGeneratorNode,
+  DreamerDreamSaverNode,
+  DreamerContinuationGeneratorNode,
+  DreamerLearningsExtractorNode,
+  DreamerLearningsWriterNode,
 
   // Configuration
   PersonaLoaderNode,

@@ -1,18 +1,18 @@
 /**
  * Server-Sent Events endpoint for template hot-reload
- * Watches template files and notifies clients when they change
+ * Watches cognitive graph template files and notifies clients when they change
+ *
+ * NOTE: This is a dev-time feature. In production, templates rarely change.
  */
 
 import type { APIRoute } from 'astro';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { ROOT } from '@metahuman/core';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Template directory path
-const TEMPLATES_DIR = path.resolve(__dirname, '../../lib/cognitive-nodes/templates');
+// Template directory path - cognitive graphs are stored in etc/cognitive-graphs/
+// Use ROOT from @metahuman/core to get the correct repo root in both dev and production
+const TEMPLATES_DIR = path.join(ROOT, 'etc', 'cognitive-graphs');
 
 // Track active watchers
 const watchers = new Map<string, fs.FSWatcher>();
@@ -22,7 +22,7 @@ const watchers = new Map<string, fs.FSWatcher>();
  * Establishes an SSE connection and streams template change events
  */
 export const GET: APIRoute = async () => {
-  const clientId = `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
   console.log(`[TemplateWatch] Client ${clientId} connected`);
 
@@ -42,6 +42,16 @@ export const GET: APIRoute = async () => {
         clientId,
         timestamp: Date.now(),
       });
+
+      // Check if templates directory exists before watching
+      if (!fs.existsSync(TEMPLATES_DIR)) {
+        console.warn(`[TemplateWatch] Templates directory not found: ${TEMPLATES_DIR}`);
+        sendEvent('info', {
+          message: 'Template watching disabled - directory not found',
+          path: TEMPLATES_DIR,
+        });
+        return; // Don't attempt to watch non-existent directory
+      }
 
       // Watch templates directory for changes
       try {

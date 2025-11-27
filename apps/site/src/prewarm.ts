@@ -4,7 +4,7 @@
  */
 
 // Force import of node executors (heaviest module)
-import('../../../packages/core/src/node-executors/index.js').then(({ getNodeExecutor }) => {
+import('@metahuman/core/node-executors').then(({ getNodeExecutor }) => {
   if (getNodeExecutor('user_input')) {
     console.log('[prewarm] ✅ Node executors loaded successfully');
   }
@@ -13,7 +13,7 @@ import('../../../packages/core/src/node-executors/index.js').then(({ getNodeExec
 });
 
 // Force import of skills
-import('../../../brain/skills/index.js').then(({ initializeSkills }) => {
+import('@brain/skills/index.js').then(({ initializeSkills }) => {
   initializeSkills();
   console.log('[prewarm] ✅ Skills registry loaded successfully');
 }).catch(err => {

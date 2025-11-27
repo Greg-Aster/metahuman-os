@@ -63,7 +63,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 
     try {
       // Dynamic import to avoid circular dependencies
-      const { summarizeSession } = await import('../../../../brain/agents/summarizer.js');
+      const { summarizeSession } = await import('@brain/agents/summarizer.js');
 
       // Run summarization with explicit username and profilePaths
       const summary = await summarizeSession(sessionId, { username: user.username, profilePaths });

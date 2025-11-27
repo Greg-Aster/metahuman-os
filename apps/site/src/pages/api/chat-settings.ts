@@ -46,7 +46,7 @@ const getHandler: APIRoute = async ({ cookies }) => {
 const putHandler: APIRoute = async ({ cookies, request }) => {
   try {
     const user = getUserOrAnonymous(cookies);
-    const actor = ctx?.username || 'anonymous';
+    const actor = user.username || 'anonymous';
 
     const body = await request.json();
     const updates: Partial<ChatSettings> = body.updates;
@@ -86,7 +86,7 @@ const putHandler: APIRoute = async ({ cookies, request }) => {
 const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
     const user = getUserOrAnonymous(cookies);
-    const actor = ctx?.username || 'anonymous';
+    const actor = user.username || 'anonymous';
 
     const body = await request.json();
     const { preset } = body;

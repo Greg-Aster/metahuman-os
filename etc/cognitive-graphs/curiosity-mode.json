@@ -3,7 +3,7 @@
   "name": "Curiosity Service Workflow",
   "description": "Generates curiosity questions from weighted memory sampling with user privacy isolation",
   "cognitiveMode": "agent",
-  "last_modified": "2025-11-24",
+  "last_modified": "2025-11-26",
   "nodes": [
     {
       "id": 1,
@@ -51,6 +51,25 @@
       "size": [180, 60],
       "properties": {},
       "title": "Audit Completion"
+    },
+    {
+      "id": 6,
+      "type": "cognitive/persona_loader",
+      "pos": [600, 0],
+      "size": [180, 60],
+      "title": "Persona Loader"
+    },
+    {
+      "id": 7,
+      "type": "cognitive/persona_formatter",
+      "pos": [750, 0],
+      "size": [200, 80],
+      "properties": {
+        "includePersonality": true,
+        "includeValues": true,
+        "includeGoals": true
+      },
+      "title": "Persona Formatter"
     }
   ],
   "links": [
@@ -98,6 +117,24 @@
       "target_slot": 0,
       "type": "object",
       "comment": "Save result → Audit Logger"
+    },
+    {
+      "id": 6,
+      "origin_id": 6,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Persona data → Persona Formatter"
+    },
+    {
+      "id": 7,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "Formatted persona → Question Generator (for persona voice)"
     }
   ]
 }

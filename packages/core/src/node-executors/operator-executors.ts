@@ -464,8 +464,80 @@ export const completionCheckerExecutor: NodeExecutor = async (inputs) => {
 };
 
 /**
+ * Helper: Apply persona voice to a response if persona input is available
+ */
+async function applyPersonaVoice(
+  responseText: string,
+  personaInput: any,
+  userMessage: string,
+  conversationHistory: any[],
+  cognitiveMode: string,
+  metadata: Record<string, any> = {}
+): Promise<{ response: string; personaSynthesized: boolean }> {
+  // Check if persona input is available and valid
+  const personaPrompt = personaInput?.formatted || personaInput;
+
+  if (!personaPrompt || typeof personaPrompt !== 'string' || personaPrompt.trim().length === 0) {
+    console.log('[ResponseSynthesizer] No persona input available, returning original response');
+    return { response: responseText, personaSynthesized: false };
+  }
+
+  console.log('[ResponseSynthesizer] Applying persona voice to response...');
+  console.log(`[ResponseSynthesizer] Persona prompt (first 200 chars): ${personaPrompt.substring(0, 200)}...`);
+
+  // Build system prompt with persona
+  const systemPrompt = `${personaPrompt}
+
+You are responding based on information that was gathered or generated. Your task is to deliver this information in your natural voice while:
+1. Maintaining your personality and communication style
+2. Being conversational and natural (not robotic or formal)
+3. Preserving all factual content and technical details
+4. NOT repeating technical output verbatim - translate into your speaking voice`;
+
+  // Build messages array
+  const messages = [
+    { role: 'system' as const, content: systemPrompt },
+    ...conversationHistory.slice(-10).map((msg: any) => ({
+      role: msg.role || 'user',
+      content: msg.content || msg.message || '',
+    })).filter((msg: any) => {
+      return typeof msg.content === 'string' && msg.content.trim().length > 0;
+    }),
+    { role: 'user' as const, content: userMessage },
+    { role: 'assistant' as const, content: `[Generated response]\n\n${responseText}` },
+    { role: 'user' as const, content: 'Please respond naturally in your own voice based on the information above.' },
+  ].filter((msg) => {
+    return typeof msg.content === 'string' && msg.content.trim().length > 0;
+  });
+
+  console.log(`[ResponseSynthesizer] Synthesizing persona response with ${messages.length} messages`);
+
+  try {
+    const response = await callLLM({
+      role: 'persona',
+      messages,
+      cognitiveMode,
+      options: {
+        maxTokens: 2048,
+        repeatPenalty: 1.3,
+        temperature: 0.8,
+      },
+    });
+
+    console.log(`[ResponseSynthesizer] ✅ Applied persona voice successfully`);
+    console.log(`[ResponseSynthesizer] Response (first 200 chars): ${response.content.substring(0, 200)}...`);
+
+    return { response: response.content, personaSynthesized: true };
+  } catch (error) {
+    console.error('[ResponseSynthesizer] Error applying persona voice:', error);
+    return { response: responseText, personaSynthesized: false };
+  }
+}
+
+/**
  * Response Synthesizer Node
  * Synthesizes final response from loop controller output or scratchpad
+ * Applies persona voice to final output if persona input is connected
  */
 export const responseSynthesizerExecutor: NodeExecutor = async (inputs, context) => {
   console.log(`[ResponseSynthesizer] ========== RESPONSE SYNTHESIZER ==========`);
@@ -478,6 +550,10 @@ export const responseSynthesizerExecutor: NodeExecutor = async (inputs, context)
     type: typeof inputs[1],
     keys: inputs[1] ? Object.keys(inputs[1]) : [],
   });
+
+  // Store persona input for later synthesis (inputs[4])
+  const personaInput = inputs[4];
+  const hasPersona = personaInput && (personaInput.formatted || typeof personaInput === 'string');
 
   // Check if inputs[1] has the SkillExecutor output (slot 1 in agent-mode graph)
   if (inputs[1]) {
@@ -831,17 +907,71 @@ Based on these execution steps, provide a clear, helpful response to the user's 
       },
     });
 
-    return {
+    let result: any = {
       response: response.content,
       loopComplete: loopResult.completed,
       iterations: scratchpad.length,
     };
+
+    // Apply persona voice if persona input is available
+    if (hasPersona) {
+      const contextData = inputs[2] || {};
+      const conversationHistory = contextData.context?.conversationHistory || context.conversationHistory || [];
+      const userMessageInput = inputs[1] || context.userMessage || {};
+      const userMessage = typeof userMessageInput === 'string'
+        ? userMessageInput
+        : (userMessageInput.message || context.userMessage || '');
+
+      const synthesized = await applyPersonaVoice(
+        result.response,
+        personaInput,
+        userMessage,
+        conversationHistory,
+        context.cognitiveMode || 'dual'
+      );
+
+      if (synthesized.personaSynthesized) {
+        result.response = synthesized.response;
+        result.personaSynthesized = true;
+      }
+    }
+
+    return result;
   } catch (error) {
     console.error('[ResponseSynthesizer] Error:', error);
-    return {
+    let result: any = {
       response: finalResponse || 'I encountered an error while processing your request.',
       error: (error as Error).message,
     };
+
+    // Apply persona voice even to error responses if persona input is available
+    if (hasPersona && result.response) {
+      const contextData = inputs[2] || {};
+      const conversationHistory = contextData.context?.conversationHistory || context.conversationHistory || [];
+      const userMessageInput = inputs[1] || context.userMessage || {};
+      const userMessage = typeof userMessageInput === 'string'
+        ? userMessageInput
+        : (userMessageInput.message || context.userMessage || '');
+
+      try {
+        const synthesized = await applyPersonaVoice(
+          result.response,
+          personaInput,
+          userMessage,
+          conversationHistory,
+          context.cognitiveMode || 'dual'
+        );
+
+        if (synthesized.personaSynthesized) {
+          result.response = synthesized.response;
+          result.personaSynthesized = true;
+        }
+      } catch (personaError) {
+        console.error('[ResponseSynthesizer] Error applying persona to error response:', personaError);
+      }
+    }
+
+    return result;
   }
 };
 

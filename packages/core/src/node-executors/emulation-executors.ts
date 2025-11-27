@@ -92,27 +92,159 @@ export const replyToHandlerExecutor: NodeExecutor = async (inputs, context) => {
 /**
  * Buffer Manager Node
  * Persists conversation buffer to disk
+ * FIX: Appends NEW user+assistant messages to existing history
  */
 export const bufferManagerExecutor: NodeExecutor = async (inputs, context) => {
-  const messages = inputs[0]?.messages || context.conversationHistory || [];
   const mode = context.mode || context.dialogueType || 'conversation';
   const sessionId = context.sessionId;
+  const username = context.username;
+  const userMessage = context.userMessage;
+
+  if (!username) {
+    console.warn('[BufferManager] No username in context, cannot persist buffer');
+    return {
+      persisted: false,
+      error: 'No username in context',
+    };
+  }
 
   try {
-    const { persistBuffer } = await import('../conversation-buffer.js');
+    const { getProfilePaths } = await import('../paths.js');
+    const fs = await import('node:fs');
+    const path = await import('node:path');
 
-    persistBuffer(mode as 'inner' | 'conversation', messages);
+    const profilePaths = getProfilePaths(username);
+    const bufferPath = path.join(profilePaths.state, `conversation-buffer-${mode}.json`);
 
-    console.log(`[BufferManager] Persisted ${messages.length} messages for ${mode} mode`);
+    // Ensure state directory exists
+    fs.mkdirSync(profilePaths.state, { recursive: true });
 
-    // Note: Auto-summarization is triggered asynchronously in the background
-    // when buffer size exceeds limits. This is handled by the summarization service.
+    // Load existing buffer
+    let existingMessages: any[] = [];
+    let summaryMarkers: any[] = [];
+    try {
+      if (fs.existsSync(bufferPath)) {
+        const existingRaw = fs.readFileSync(bufferPath, 'utf-8');
+        const existing = JSON.parse(existingRaw);
+        existingMessages = existing.messages || [];
+        summaryMarkers = existing.summaryMarkers || [];
+      }
+    } catch (err) {
+      console.warn('[BufferManager] Failed to load existing buffer, starting fresh:', err);
+    }
+
+    // Get response from inputs[1] (persona_llm or response_synthesizer output)
+    // inputs[0] = conversation history (array), inputs[1] = response (string/object)
+    console.log(`[BufferManager] inputs.length=${inputs.length}, inputs[0] type=${Array.isArray(inputs[0]) ? 'array' : typeof inputs[0]}, inputs[1] type=${typeof inputs[1]}`);
+    const assistantResponse = inputs[1]?.response || inputs[1]?.content || inputs[1]?.text || inputs[1];
+    console.log(`[BufferManager] Extracted assistant response length: ${typeof assistantResponse === 'string' ? assistantResponse.length : 'N/A'}`);
+
+    // Build updated message list: existing + user + assistant
+    const updatedMessages = [...existingMessages];
+
+    // Add user message if present
+    if (userMessage) {
+      console.log(`[BufferManager] Adding user message: "${userMessage.substring(0, 50)}..."`);
+      updatedMessages.push({
+        role: 'user',
+        content: userMessage,
+        timestamp: Date.now(),
+      });
+    } else {
+      console.log(`[BufferManager] ⚠️ No userMessage in context`);
+    }
+
+    // Add assistant response if present
+    if (assistantResponse) {
+      console.log(`[BufferManager] Adding assistant response: "${typeof assistantResponse === 'string' ? assistantResponse.substring(0, 50) : JSON.stringify(assistantResponse).substring(0, 50)}..."`);
+      updatedMessages.push({
+        role: 'assistant',
+        content: assistantResponse,
+        timestamp: Date.now(),
+      });
+    } else {
+      console.log(`[BufferManager] ⚠️ No assistant response in inputs[1]`);
+    }
+
+    console.log(`[BufferManager] updatedMessages length BEFORE filtering: ${updatedMessages.length}`);
+
+    // Filter out system messages
+    const conversationMessages = updatedMessages.filter((msg: any) => msg.role !== 'system');
+
+    console.log(`[BufferManager] conversationMessages length AFTER filtering: ${conversationMessages.length}`);
+
+    // Load max messages from chat settings (user configurable via UI)
+    let maxMessages = 80; // Default fallback
+    try {
+      const settingsPath = path.join(profilePaths.root, 'chat-settings.json');
+      if (fs.existsSync(settingsPath)) {
+        const settingsRaw = fs.readFileSync(settingsPath, 'utf-8');
+        const settings = JSON.parse(settingsRaw);
+        maxMessages = settings.settings?.maxHistoryMessages?.value ?? 80;
+      } else {
+        // Fall back to global settings
+        const { systemPaths } = await import('../paths.js');
+        const globalPath = path.join(systemPaths.root, 'etc', 'chat-settings.json');
+        if (fs.existsSync(globalPath)) {
+          const globalRaw = fs.readFileSync(globalPath, 'utf-8');
+          const globalSettings = JSON.parse(globalRaw);
+          maxMessages = globalSettings.settings?.maxHistoryMessages?.value ?? 80;
+        }
+      }
+    } catch (err) {
+      console.warn('[BufferManager] Could not load chat settings, using defaults:', err);
+    }
+
+    // Capacity management: Check if approaching limit and prune if needed
+    const CAPACITY_THRESHOLD = Math.floor(maxMessages * 0.8); // 80% of max - trigger summarization
+    const MAX_MESSAGES = maxMessages;
+    let needsSummarization = false;
+    let finalMessages = conversationMessages;
+
+    if (conversationMessages.length >= CAPACITY_THRESHOLD) {
+      console.log(`[BufferManager] ⚠️ Approaching capacity (${conversationMessages.length}/${MAX_MESSAGES}), flagging for summarization`);
+      needsSummarization = true;
+
+      // Fire-and-forget summarization (async, non-blocking)
+      if (sessionId) {
+        (async () => {
+          try {
+            const { summarizeSession } = await import('../../../../brain/agents/summarizer.js');
+            console.log(`[BufferManager] Starting background summarization for session: ${sessionId}`);
+            await summarizeSession(sessionId, { bufferMode: mode as 'conversation' | 'inner', username });
+            console.log(`[BufferManager] Summarization complete for session: ${sessionId}`);
+          } catch (err) {
+            console.error(`[BufferManager] Summarization failed:`, err);
+          }
+        })();
+      }
+    }
+
+    // Hard prune if over max (keep most recent messages)
+    if (conversationMessages.length > MAX_MESSAGES) {
+      console.log(`[BufferManager] 🔄 Pruning from ${conversationMessages.length} to ${MAX_MESSAGES} messages`);
+      finalMessages = conversationMessages.slice(-MAX_MESSAGES);
+    }
+
+    const payload = {
+      summaryMarkers,
+      messages: finalMessages,
+      lastSummarizedIndex: null,
+      lastUpdated: new Date().toISOString(),
+      needsSummarization, // Flag for external summarization trigger
+    };
+
+    fs.writeFileSync(bufferPath, JSON.stringify(payload, null, 2));
+
+    console.log(`[BufferManager] ✅ Persisted ${finalMessages.length} messages (${existingMessages.length} existing + ${userMessage ? 1 : 0} user + ${assistantResponse ? 1 : 0} assistant)`);
 
     return {
       persisted: true,
       mode,
-      messageCount: messages.length,
+      messageCount: finalMessages.length,
       sessionId,
+      bufferPath,
+      needsSummarization,
     };
   } catch (error) {
     console.error('[BufferManager] Error persisting buffer:', error);
