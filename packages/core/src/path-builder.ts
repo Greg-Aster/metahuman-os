@@ -5,14 +5,56 @@
  * This file breaks the circular dependency between paths.ts and context.ts.
  *
  * Import hierarchy:
- * - path-builder.ts (this file) → no internal dependencies
+ * - path-builder.ts (this file) → no internal dependencies (except lazy imports)
  * - context.ts → imports from path-builder.ts
  * - paths.ts → imports from path-builder.ts AND context.ts (for Proxy)
+ *
+ * Custom Profile Paths:
+ * - Users can configure custom profile locations via metadata.profileStorage
+ * - This file lazily imports users.ts to check for custom paths
+ * - Falls back to default profiles/{username}/ if custom path is invalid
  */
 
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+
+/**
+ * Profile path resolution result
+ */
+export interface ProfilePathResolution {
+  /** Resolved profile root path */
+  root: string;
+  /** Whether using fallback (custom path unavailable) */
+  usingFallback: boolean;
+  /** Error message if fallback is being used */
+  fallbackReason?: string;
+  /** Storage type (internal, external, encrypted) */
+  storageType: 'internal' | 'external' | 'encrypted' | 'unknown';
+}
+
+// Lazy-loaded function to get profile storage config
+// This avoids circular dependency with users.ts
+let _getProfileStorageConfig: ((username: string) => { path: string; type?: string } | undefined) | null = null;
+
+/**
+ * Lazily load the profile storage config getter
+ * Returns null if users module isn't available yet (during bootstrap)
+ */
+function getProfileStorageConfigLazy(username: string): { path: string; type?: string } | undefined {
+  if (_getProfileStorageConfig === null) {
+    try {
+      // Dynamic import to avoid circular dependency
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const usersModule = require('./users.js');
+      _getProfileStorageConfig = usersModule.getProfileStorageConfig;
+    } catch {
+      // Users module not available (during init/bootstrap)
+      return undefined;
+    }
+  }
+  return _getProfileStorageConfig?.(username);
+}
 
 /**
  * Find metahuman root by looking for pnpm-workspace.yaml
@@ -36,16 +78,99 @@ export function findRepoRoot(): string {
 export const ROOT = findRepoRoot();
 
 /**
+ * Resolve the profile root directory for a user
+ *
+ * Checks for custom profile path in user metadata.
+ * Falls back to default location if custom path is invalid.
+ *
+ * @param username - Username
+ * @returns Profile path resolution result
+ */
+export function resolveProfileRoot(username: string): ProfilePathResolution {
+  const defaultRoot = path.join(ROOT, 'profiles', username);
+
+  // Try to get custom storage config
+  const storageConfig = getProfileStorageConfigLazy(username);
+
+  if (!storageConfig?.path) {
+    // No custom path configured, use default
+    return {
+      root: defaultRoot,
+      usingFallback: false,
+      storageType: 'internal',
+    };
+  }
+
+  const customPath = storageConfig.path;
+
+  // Validate the custom path
+  // 1. Must be absolute
+  if (!path.isAbsolute(customPath)) {
+    console.warn(`[path-builder] Custom path for ${username} is not absolute, using default`);
+    return {
+      root: defaultRoot,
+      usingFallback: true,
+      fallbackReason: 'Custom path is not absolute',
+      storageType: 'internal',
+    };
+  }
+
+  // 2. Must exist and be accessible
+  try {
+    fs.accessSync(customPath, fs.constants.R_OK);
+  } catch {
+    console.warn(`[path-builder] Custom path for ${username} is not accessible, using default`);
+    return {
+      root: defaultRoot,
+      usingFallback: true,
+      fallbackReason: 'Custom path is not accessible (external storage may be disconnected)',
+      storageType: 'internal',
+    };
+  }
+
+  // 3. Must be a directory
+  try {
+    const stats = fs.statSync(customPath);
+    if (!stats.isDirectory()) {
+      console.warn(`[path-builder] Custom path for ${username} is not a directory, using default`);
+      return {
+        root: defaultRoot,
+        usingFallback: true,
+        fallbackReason: 'Custom path is not a directory',
+        storageType: 'internal',
+      };
+    }
+  } catch {
+    return {
+      root: defaultRoot,
+      usingFallback: true,
+      fallbackReason: 'Cannot stat custom path',
+      storageType: 'internal',
+    };
+  }
+
+  // Custom path is valid
+  const storageType = (storageConfig.type as ProfilePathResolution['storageType']) || 'unknown';
+  return {
+    root: customPath,
+    usingFallback: false,
+    storageType,
+  };
+}
+
+/**
  * Get user-specific profile paths
  *
  * Returns paths for a specific user's profile directory.
- * Profile structure: profiles/{username}/
+ * Checks for custom profile location in user metadata.
+ * Falls back to profiles/{username}/ if custom path is unavailable.
  *
  * @param username - Username for profile directory (NOT userId!)
  * @returns Object with all user-specific paths
  */
 export function getProfilePaths(username: string) {
-  const profileRoot = path.join(ROOT, 'profiles', username);
+  const resolution = resolveProfileRoot(username);
+  const profileRoot = resolution.root;
 
   return {
     root: profileRoot,
@@ -145,3 +270,46 @@ export const systemPaths = {
   // Voice models (shared system-wide - these are large 60-120MB files)
   voiceModels: path.join(ROOT, 'out', 'voices'),
 };
+
+/**
+ * Get the default profile path for a username
+ *
+ * Returns the standard location without checking for custom paths.
+ * Useful for migration and initialization.
+ *
+ * @param username - Username
+ * @returns Default profile path
+ */
+export function getDefaultProfilePath(username: string): string {
+  return path.join(ROOT, 'profiles', username);
+}
+
+/**
+ * Check if a user has a custom profile path configured
+ *
+ * @param username - Username
+ * @returns true if custom path is configured
+ */
+export function hasCustomProfilePath(username: string): boolean {
+  const config = getProfileStorageConfigLazy(username);
+  return !!config?.path;
+}
+
+/**
+ * Get profile paths with resolution metadata
+ *
+ * Returns both the paths and information about how they were resolved.
+ * Useful for UI to show storage status.
+ *
+ * @param username - Username
+ * @returns Profile paths and resolution info
+ */
+export function getProfilePathsWithStatus(username: string) {
+  const resolution = resolveProfileRoot(username);
+  const paths = getProfilePaths(username);
+
+  return {
+    paths,
+    resolution,
+  };
+}
