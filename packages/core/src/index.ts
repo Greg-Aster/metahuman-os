@@ -102,7 +102,12 @@ export {
   decryptDirectory,
   changePassword,
   getEncryptionStats,
+  isChunkedEncryptedFile,
+  decryptChunkedFile,
+  decryptChunkedFileToFile,
+  decryptChunkedFileInPlace,
   ENCRYPTED_EXTENSION,
+  CHUNKED_EXTENSION,
   ENCRYPTION_META_FILE,
 } from './encryption.js';
 export type { EncryptionMeta, EncryptedData } from './encryption.js';

@@ -12,13 +12,15 @@ import('@metahuman/core/node-executors').then(({ getNodeExecutor }) => {
   console.error('[prewarm] ⚠️ Failed to pre-warm executors:', err);
 });
 
-// Force import of skills
-import('@brain/skills/index.js').then(({ initializeSkills }) => {
-  initializeSkills();
-  console.log('[prewarm] ✅ Skills registry loaded successfully');
-}).catch(err => {
-  console.error('[prewarm] ⚠️ Failed to pre-warm skills:', err);
-});
+// DISABLED: Legacy skills system not used by cognitive graph pipeline (dual-mode.json v2.3)
+// ReAct operator nodes were removed - skills are never executed
+// Keeping code for reference in case skills are re-enabled in future
+// import('@brain/skills/index.js').then(({ initializeSkills }) => {
+//   initializeSkills();
+//   console.log('[prewarm] ✅ Skills registry loaded successfully');
+// }).catch(err => {
+//   console.error('[prewarm] ⚠️ Failed to pre-warm skills:', err);
+// });
 
 // Auto-start Big Brother mode if enabled in config
 import('@metahuman/core/config').then(async ({ loadOperatorConfig }) => {

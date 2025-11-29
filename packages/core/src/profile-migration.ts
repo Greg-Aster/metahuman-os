@@ -24,6 +24,7 @@ import {
   createVerificationFile,
   saveEncryptionMeta,
   ENCRYPTED_EXTENSION,
+  CHUNKED_EXTENSION,
   type EncryptionMeta,
 } from './encryption.js';
 import {
@@ -185,8 +186,78 @@ async function copyFileWithProgress(
   await fs.promises.utimes(destination, stats.atime, stats.mtime);
 }
 
+// Threshold for switching to streaming encryption (500MB)
+const LARGE_FILE_THRESHOLD = 500 * 1024 * 1024;
+
+// Chunk size for streaming encryption (64MB)
+const ENCRYPTION_CHUNK_SIZE = 64 * 1024 * 1024;
+
+// File extensions to skip encryption for (not human-readable, expensive to decrypt)
+const SKIP_ENCRYPTION_EXTENSIONS = [
+  // Model files
+  /\.gguf$/i,           // GGUF models (llama.cpp)
+  /\.safetensors$/i,    // SafeTensors model weights
+  /\.pt$/i,             // PyTorch models
+  /\.pth$/i,            // PyTorch checkpoints
+  /\.onnx$/i,           // ONNX models
+  /\.tflite$/i,         // TensorFlow Lite models
+  /\.h5$/i,             // Keras/HDF5 models
+  /\.pb$/i,             // TensorFlow protobuf models
+  /\.ckpt$/i,           // Checkpoint files
+
+  // Vector embeddings (numerical, not readable)
+  /\.faiss$/i,          // FAISS index files
+  /\.annoy$/i,          // Annoy index files
+  /\.hnsw$/i,           // HNSW index files
+  /\.usearch$/i,        // USearch index files
+
+  // NOTE: Audio files ARE encrypted (contain voice = biometric data)
+  // NOTE: Video files ARE encrypted (contain face/voice = biometric data)
+
+  // Images (could encrypt if privacy is paramount - face recognition risk)
+  /\.png$/i,
+  /\.jpg$/i,
+  /\.jpeg$/i,
+  /\.webp$/i,
+  /\.gif$/i,
+];
+
+// Path patterns to skip encryption for
+const SKIP_ENCRYPTION_PATHS = [
+  /[/\\]memory[/\\]index[/\\]/i,     // Vector embedding index directory
+  /[/\\]logs[/\\]run[/\\]/i,          // Runtime logs (PIDs, locks)
+  /[/\\]node_modules[/\\]/i,          // Dependencies (shouldn't be in profile, but just in case)
+  /[/\\]\.git[/\\]/i,                 // Git directory
+];
+
 /**
- * Copy a file with encryption
+ * Check if a file should skip encryption
+ * Skips: model files, embeddings, images, and certain directories
+ * Encrypts: audio/video (biometric data), JSON configs, memories, etc.
+ */
+function shouldSkipEncryption(filePath: string): boolean {
+  // Check path patterns first
+  if (SKIP_ENCRYPTION_PATHS.some(pattern => pattern.test(filePath))) {
+    return true;
+  }
+  // Check extension patterns
+  return SKIP_ENCRYPTION_EXTENSIONS.some(pattern => pattern.test(filePath));
+}
+
+/**
+ * Chunked encrypted file header
+ */
+interface ChunkedEncryptionHeader {
+  version: 2;
+  format: 'chunked';
+  algorithm: 'aes-256-gcm';
+  originalSize: number;
+  chunkSize: number;
+  chunkCount: number;
+}
+
+/**
+ * Copy a file with encryption (handles large files via streaming)
  */
 async function copyFileWithEncryption(
   source: string,
@@ -197,16 +268,88 @@ async function copyFileWithEncryption(
   // Ensure destination directory exists
   await fs.promises.mkdir(path.dirname(destination), { recursive: true });
 
-  // Read source file
-  const content = await fs.promises.readFile(source);
-  onProgress?.(content.length);
+  // Check file size
+  const stats = await fs.promises.stat(source);
+  const fileSize = stats.size;
 
-  // Encrypt content
-  const encrypted = encrypt(content, encryptionKey);
+  if (fileSize > LARGE_FILE_THRESHOLD) {
+    // Use streaming chunk-based encryption for large files
+    await copyLargeFileWithEncryption(source, destination, encryptionKey, fileSize, onProgress);
+  } else {
+    // Use in-memory encryption for smaller files
+    const content = await fs.promises.readFile(source);
+    onProgress?.(content.length);
 
-  // Write encrypted file (add .enc extension)
-  const encryptedDest = destination + ENCRYPTED_EXTENSION;
-  await fs.promises.writeFile(encryptedDest, JSON.stringify(encrypted), 'utf8');
+    // Encrypt content
+    const encrypted = encrypt(content, encryptionKey);
+
+    // Write encrypted file (add .enc extension)
+    const encryptedDest = destination + ENCRYPTED_EXTENSION;
+    await fs.promises.writeFile(encryptedDest, JSON.stringify(encrypted), 'utf8');
+  }
+}
+
+/**
+ * Copy a large file with streaming chunk-based encryption
+ */
+async function copyLargeFileWithEncryption(
+  source: string,
+  destination: string,
+  encryptionKey: Buffer,
+  fileSize: number,
+  onProgress?: (bytes: number) => void
+): Promise<void> {
+  const chunkCount = Math.ceil(fileSize / ENCRYPTION_CHUNK_SIZE);
+
+  // Create header
+  const header: ChunkedEncryptionHeader = {
+    version: 2,
+    format: 'chunked',
+    algorithm: 'aes-256-gcm',
+    originalSize: fileSize,
+    chunkSize: ENCRYPTION_CHUNK_SIZE,
+    chunkCount,
+  };
+
+  const encryptedDest = destination + CHUNKED_EXTENSION;
+  const writeStream = createWriteStream(encryptedDest);
+
+  // Write header as first line
+  writeStream.write(JSON.stringify(header) + '\n');
+
+  // Open file for reading
+  const fileHandle = await fs.promises.open(source, 'r');
+  let bytesRead = 0;
+
+  try {
+    for (let i = 0; i < chunkCount; i++) {
+      const chunkSize = Math.min(ENCRYPTION_CHUNK_SIZE, fileSize - bytesRead);
+      const buffer = Buffer.alloc(chunkSize);
+
+      // Read chunk
+      const result = await fileHandle.read(buffer, 0, chunkSize, bytesRead);
+      const chunk = buffer.subarray(0, result.bytesRead);
+      bytesRead += result.bytesRead;
+
+      // Encrypt chunk
+      const encrypted = encrypt(chunk, encryptionKey);
+
+      // Write encrypted chunk as JSON line
+      writeStream.write(JSON.stringify(encrypted) + '\n');
+
+      onProgress?.(bytesRead);
+    }
+  } finally {
+    await fileHandle.close();
+  }
+
+  // Close write stream
+  await new Promise<void>((resolve, reject) => {
+    writeStream.end((err: Error | null) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
 }
 
 /**
@@ -429,8 +572,9 @@ export async function* migrateProfile(
 
   // For VeraCrypt, the actual destination is the mount point which is already set up
   // For AES-256 or no encryption, validate the destination path
+  // Use checkExists: false since we'll create the directory structure ourselves
   const pathToValidate = encryption?.type === 'veracrypt' ? destination : actualDestination;
-  const validation = validateProfilePath(pathToValidate);
+  const validation = validateProfilePath(pathToValidate, { checkExists: false });
   if (!validation.valid && encryption?.type !== 'veracrypt') {
     yield {
       step: 'validate',
@@ -600,28 +744,41 @@ export async function* migrateProfile(
     const destFile = path.join(actualDestination, relativePath);
 
     try {
-      if (encryption?.type === 'aes256' && encryptionKey) {
+      // Check if this file should skip encryption (model files - not human-readable)
+      const skipEncryption = shouldSkipEncryption(sourceFile);
+
+      if (encryption?.type === 'aes256' && encryptionKey && !skipEncryption) {
         // Encrypt file during copy
         await copyFileWithEncryption(sourceFile, destFile, encryptionKey, (bytes) => {
           // Progress callback
         });
         filesEncrypted++;
       } else {
-        // Regular copy (for VeraCrypt or no encryption)
+        // Regular copy (for VeraCrypt, no encryption, or skipped model files)
         await copyFileWithProgress(sourceFile, destFile, (bytes) => {
           // Progress callback
         });
       }
 
-      // For encrypted files, the actual file has .enc extension
-      const actualDestFile = encryption?.type === 'aes256'
-        ? destFile + ENCRYPTED_EXTENSION
-        : destFile;
+      // For encrypted files, the actual file has .enc or .enc.chunked extension
+      let actualDestFile = destFile;
+      if (encryption?.type === 'aes256' && !skipEncryption) {
+        // Check which extension was used (depends on file size)
+        if (fs.existsSync(destFile + CHUNKED_EXTENSION)) {
+          actualDestFile = destFile + CHUNKED_EXTENSION;
+        } else {
+          actualDestFile = destFile + ENCRYPTED_EXTENSION;
+        }
+      }
       const stats = await fs.promises.stat(actualDestFile);
       bytesProcessed += stats.size;
       filesProcessed++;
 
-      const actionVerb = encryption?.type === 'aes256' ? 'Encrypting' : 'Copying';
+      // Show appropriate action verb
+      let actionVerb = 'Copying';
+      if (encryption?.type === 'aes256') {
+        actionVerb = skipEncryption ? 'Copying (model)' : 'Encrypting';
+      }
       yield {
         step: 'copy',
         status: 'running',

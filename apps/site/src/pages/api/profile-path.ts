@@ -15,6 +15,8 @@ import {
 import { validateProfilePath } from '@metahuman/core/path-security';
 import { migrateProfile, estimateMigrationDuration } from '@metahuman/core/profile-migration';
 import { getStorageInfo } from '@metahuman/core/external-storage';
+import { isProfileEncrypted, getEncryptionMeta } from '@metahuman/core/encryption';
+import { getProfileStorageConfig } from '@metahuman/core/users';
 
 /**
  * GET /api/profile-path
@@ -39,6 +41,19 @@ export const GET: APIRoute = async ({ cookies }) => {
       }
     }
 
+    // Get encryption status
+    const profileEncrypted = isProfileEncrypted(paths.root);
+    const encryptionMeta = profileEncrypted ? getEncryptionMeta(paths.root) : null;
+    const storageConfig = getProfileStorageConfig(user.username);
+
+    // Determine encryption type from metadata or storage config
+    let encryptionType: 'none' | 'aes256' | 'veracrypt' = 'none';
+    if (profileEncrypted) {
+      encryptionType = 'aes256'; // Currently only AES-256 is supported
+    } else if (storageConfig?.encryption?.type === 'veracrypt') {
+      encryptionType = 'veracrypt';
+    }
+
     return new Response(
       JSON.stringify({
         currentPath: paths.root,
@@ -60,6 +75,16 @@ export const GET: APIRoute = async ({ cookies }) => {
             }
           : null,
         migrationEstimate,
+        // Encryption status
+        isEncrypted: profileEncrypted,
+        encryptionType,
+        encryptionInfo: encryptionMeta
+          ? {
+              algorithm: encryptionMeta.algorithm,
+              createdAt: encryptionMeta.createdAt,
+              encryptedFiles: encryptionMeta.encryptedFiles,
+            }
+          : null,
       }),
       {
         status: 200,
@@ -92,7 +117,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     const user = getAuthenticatedUser(cookies);
 
     const body = await request.json();
-    const { path: newPath, keepSource = true, encryption } = body;
+    const { path: newPath, keepSource = true, overwrite = false, encryption } = body;
 
     if (!newPath) {
       return new Response(
@@ -101,8 +126,8 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       );
     }
 
-    // Validate the new path
-    const validation = validateProfilePath(newPath);
+    // Validate the new path (checkExists: false because we'll create the directory)
+    const validation = validateProfilePath(newPath, { checkExists: false });
     if (!validation.valid) {
       audit({
         level: 'warn',
@@ -140,6 +165,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     // Build migration options
     const migrationOptions: Parameters<typeof migrateProfile>[3] = {
       keepSource,
+      overwrite,
       validateIntegrity: encryption?.type !== 'aes256', // Skip for encrypted files
       encryption: encryption?.type && encryption.type !== 'none'
         ? {

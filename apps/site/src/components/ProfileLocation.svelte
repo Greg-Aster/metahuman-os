@@ -93,6 +93,7 @@
   let migrationProgress: MigrationProgress[] = [];
   let migrationTarget = '';
   let keepSourceFiles = true;
+  let overwriteExisting = false;
 
   // Encryption state
   let encryptionType: EncryptionType = 'none';
@@ -106,12 +107,32 @@
   let showConfirmDialog = false;
   let pendingPath = '';
 
+  // Editable device paths (keyed by device.id)
+  let devicePaths: Record<string, string> = {};
+
+  // In-place encryption/decryption state
+  let showEncryptModal = false;
+  let showDecryptModal = false;
+  let encryptInPlacePassword = '';
+  let encryptInPlacePasswordConfirm = '';
+  let decryptPassword = '';
+  let encryptingInPlace = false;
+  let decryptingInPlace = false;
+  let encryptInPlaceType: 'aes256' = 'aes256'; // Only AES-256 supported for in-place
+  let encryptInPlaceProgress: MigrationProgress[] = [];
+  let editingDeviceId: string | null = null;
+
   // Password validation
   $: passwordsMatch = encryptionPassword === encryptionPasswordConfirm;
   $: passwordValid = encryptionPassword.length >= 8;
   $: encryptionReady = encryptionType === 'none' ||
     (passwordValid && passwordsMatch &&
       (encryptionType === 'aes256' || (encryptionType === 'veracrypt' && veracryptStatus?.installed)));
+
+  // In-place encryption validation
+  $: encryptInPlacePasswordsMatch = encryptInPlacePassword === encryptInPlacePasswordConfirm;
+  $: encryptInPlacePasswordValid = encryptInPlacePassword.length >= 8;
+  $: encryptInPlaceReady = encryptInPlacePasswordValid && encryptInPlacePasswordsMatch;
 
   onMount(async () => {
     await Promise.all([loadProfileConfig(), loadDevices(), checkVeraCryptStatus()]);
@@ -161,12 +182,37 @@
       if (response.ok) {
         const data = await response.json();
         devices = data.devices || [];
+        // Initialize editable paths for each device
+        for (const device of devices) {
+          if (!devicePaths[device.id]) {
+            devicePaths[device.id] = device.suggestedPath;
+          }
+        }
       }
     } catch (err) {
       console.error('Failed to load storage devices:', err);
     } finally {
       devicesLoading = false;
     }
+  }
+
+  function getDevicePath(device: StorageDevice): string {
+    return devicePaths[device.id] || device.suggestedPath;
+  }
+
+  function startEditingPath(device: StorageDevice) {
+    editingDeviceId = device.id;
+    if (!devicePaths[device.id]) {
+      devicePaths[device.id] = device.suggestedPath;
+    }
+  }
+
+  function stopEditingPath() {
+    editingDeviceId = null;
+  }
+
+  function resetDevicePath(device: StorageDevice) {
+    devicePaths[device.id] = device.suggestedPath;
   }
 
   async function validatePath(path: string): Promise<ValidationResult | null> {
@@ -240,9 +286,23 @@
         body: JSON.stringify({
           path: targetPath,
           keepSource: keepSourceFiles,
+          overwrite: overwriteExisting,
           encryption: encryptionOptions,
         }),
       });
+
+      // Check for error responses first
+      if (!response.ok && !response.headers.get('content-type')?.includes('text/event-stream')) {
+        const data = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        error = data.error || data.details?.join(', ') || `Migration failed (${response.status})`;
+        migrationProgress = [{
+          step: 'error',
+          status: 'failed',
+          message: 'Request failed',
+          error: error,
+        }];
+        return;
+      }
 
       // Handle SSE streaming response
       if (response.headers.get('content-type')?.includes('text/event-stream')) {
@@ -335,6 +395,174 @@
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to reset profile location';
       console.error(err);
+    }
+  }
+
+  /**
+   * Encrypt existing profile data in-place with AES-256
+   */
+  async function encryptProfileInPlace() {
+    if (!encryptInPlaceReady) return;
+
+    encryptingInPlace = true;
+    encryptInPlaceProgress = [];
+    error = '';
+    success = '';
+
+    try {
+      const response = await fetch('/api/profile-path/encrypt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password: encryptInPlacePassword,
+          type: encryptInPlaceType,
+        }),
+      });
+
+      // Handle SSE streaming response
+      if (response.headers.get('content-type')?.includes('text/event-stream')) {
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+
+        if (reader) {
+          let buffer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  if (data.progress) {
+                    encryptInPlaceProgress = [...encryptInPlaceProgress, data.progress];
+                    if (data.progress.status === 'completed' && data.progress.step === 'complete') {
+                      success = 'Profile encrypted successfully!';
+                      await loadProfileConfig();
+                    } else if (data.progress.status === 'failed') {
+                      error = data.progress.error || 'Encryption failed';
+                    }
+                  }
+                  if (data.result) {
+                    if (data.result.success) {
+                      success = `Profile encrypted! ${data.result.filesProcessed} files (${formatBytes(data.result.bytesProcessed)}) encrypted.`;
+                    } else {
+                      error = data.result.error || 'Encryption failed';
+                    }
+                  }
+                  if (data.error) {
+                    error = data.error;
+                  }
+                } catch {
+                  // Skip malformed JSON
+                }
+              }
+            }
+          }
+        }
+      } else {
+        const data = await response.json();
+        if (data.error) {
+          error = data.error;
+        } else if (data.success) {
+          success = 'Profile encrypted successfully!';
+          await loadProfileConfig();
+        }
+      }
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Encryption failed';
+      console.error(err);
+    } finally {
+      encryptingInPlace = false;
+      encryptInPlacePassword = '';
+      encryptInPlacePasswordConfirm = '';
+    }
+  }
+
+  /**
+   * Decrypt existing encrypted profile data in-place
+   */
+  async function decryptProfileInPlace() {
+    if (!decryptPassword) return;
+
+    decryptingInPlace = true;
+    encryptInPlaceProgress = [];
+    error = '';
+    success = '';
+
+    try {
+      const response = await fetch('/api/profile-path/decrypt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password: decryptPassword,
+        }),
+      });
+
+      // Handle SSE streaming response
+      if (response.headers.get('content-type')?.includes('text/event-stream')) {
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+
+        if (reader) {
+          let buffer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  if (data.progress) {
+                    encryptInPlaceProgress = [...encryptInPlaceProgress, data.progress];
+                    if (data.progress.status === 'completed' && data.progress.step === 'complete') {
+                      success = 'Profile decrypted successfully!';
+                      await loadProfileConfig();
+                    } else if (data.progress.status === 'failed') {
+                      error = data.progress.error || 'Decryption failed';
+                    }
+                  }
+                  if (data.result) {
+                    if (data.result.success) {
+                      success = `Profile decrypted! ${data.result.filesProcessed} files restored.`;
+                    } else {
+                      error = data.result.error || 'Decryption failed';
+                    }
+                  }
+                  if (data.error) {
+                    error = data.error;
+                  }
+                } catch {
+                  // Skip malformed JSON
+                }
+              }
+            }
+          }
+        }
+      } else {
+        const data = await response.json();
+        if (data.error) {
+          error = data.error;
+        } else if (data.success) {
+          success = 'Profile decrypted successfully!';
+          await loadProfileConfig();
+        }
+      }
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Decryption failed';
+      console.error(err);
+    } finally {
+      decryptingInPlace = false;
+      decryptPassword = '';
     }
   }
 
@@ -461,6 +689,54 @@
             </div>
           {/if}
 
+          <!-- Encryption Status & Controls -->
+          <div class="encryption-status-card">
+            <h3>🔐 Encryption Status</h3>
+            <div class="encryption-status-content">
+              {#if profileConfig.isEncrypted}
+                <div class="status-badge encrypted">
+                  <span class="status-icon">🔒</span>
+                  <span class="status-text">
+                    Encrypted ({profileConfig.encryptionType === 'veracrypt' ? 'VeraCrypt' : 'AES-256'})
+                  </span>
+                </div>
+                <p class="status-description">
+                  Your profile data is protected with encryption.
+                  {#if profileConfig.encryptionType === 'aes256'}
+                    Individual files are encrypted with AES-256-GCM.
+                  {:else}
+                    Data is stored in an encrypted VeraCrypt container.
+                  {/if}
+                </p>
+                {#if profileConfig.encryptionType === 'aes256'}
+                  <button
+                    class="btn btn-secondary btn-sm"
+                    on:click={() => showDecryptModal = true}
+                    disabled={decryptingInPlace}
+                  >
+                    🔓 Decrypt Profile
+                  </button>
+                {/if}
+              {:else}
+                <div class="status-badge unencrypted">
+                  <span class="status-icon">📁</span>
+                  <span class="status-text">Not Encrypted</span>
+                </div>
+                <p class="status-description">
+                  Your profile data is stored as plain files. Consider encrypting for better security,
+                  especially if using external storage.
+                </p>
+                <button
+                  class="btn btn-primary btn-sm"
+                  on:click={() => showEncryptModal = true}
+                  disabled={encryptingInPlace}
+                >
+                  🔒 Encrypt Profile
+                </button>
+              {/if}
+            </div>
+          </div>
+
           {#if profileConfig.isCustom}
             <button class="btn btn-secondary" on:click={resetToDefault}>
               Reset to Default Location
@@ -478,13 +754,16 @@
           {devicesLoading ? 'Scanning...' : '🔄 Refresh'}
         </button>
       </div>
+      <p class="card-note">
+        💡 Plugged in a new drive? Click <strong>Refresh</strong> to detect it.
+      </p>
 
       {#if devicesLoading}
         <div class="loading-text">Scanning for storage devices...</div>
       {:else if devices.length === 0}
         <div class="empty-state">
           <p>No external storage devices detected.</p>
-          <small>Connect a USB drive or network storage to see it here.</small>
+          <small>Connect a USB drive or network storage and click Refresh to see it here.</small>
         </div>
       {:else}
         <div class="devices-list">
@@ -508,10 +787,46 @@
                 {/if}
               </div>
               <div class="device-actions">
-                <code class="suggested-path">{device.suggestedPath}</code>
+                <div class="path-editor">
+                  {#if editingDeviceId === device.id}
+                    <input
+                      type="text"
+                      class="path-input"
+                      bind:value={devicePaths[device.id]}
+                      on:blur={stopEditingPath}
+                      on:keydown={(e) => e.key === 'Enter' && stopEditingPath()}
+                      placeholder={device.suggestedPath}
+                    />
+                    {#if devicePaths[device.id] !== device.suggestedPath}
+                      <button
+                        class="btn btn-icon"
+                        title="Reset to default"
+                        on:click={() => resetDevicePath(device)}
+                      >
+                        ↺
+                      </button>
+                    {/if}
+                  {:else}
+                    <code
+                      class="suggested-path"
+                      class:modified={devicePaths[device.id] && devicePaths[device.id] !== device.suggestedPath}
+                      on:click={() => startEditingPath(device)}
+                      title="Click to edit path"
+                    >
+                      {getDevicePath(device)}
+                    </code>
+                    <button
+                      class="btn btn-icon"
+                      title="Edit path"
+                      on:click={() => startEditingPath(device)}
+                    >
+                      ✏️
+                    </button>
+                  {/if}
+                </div>
                 <button
                   class="btn btn-primary btn-sm"
-                  on:click={() => initiateMove(device.suggestedPath)}
+                  on:click={() => initiateMove(getDevicePath(device))}
                   disabled={!device.writable || migrating}
                 >
                   Move Here
@@ -603,153 +918,6 @@
       {/if}
     </div>
 
-    <!-- Migration Options -->
-    <div class="card options-card">
-      <h2>Migration Options</h2>
-      <label class="toggle-label">
-        <input type="checkbox" bind:checked={keepSourceFiles} />
-        <span class="toggle-switch"></span>
-        <span class="toggle-text">Keep source files after migration</span>
-      </label>
-      <small class="option-description">
-        When enabled, your original files will be preserved after copying to the new location.
-        Disable to delete source files after successful migration.
-      </small>
-    </div>
-
-    <!-- Encryption Options -->
-    <div class="card encryption-card">
-      <h2>🔐 Encryption</h2>
-      <p class="card-description">Protect your profile data with encryption</p>
-
-      <div class="encryption-type-selector">
-        <label class="encryption-option" class:selected={encryptionType === 'none'}>
-          <input type="radio" bind:group={encryptionType} value="none" />
-          <div class="option-content">
-            <span class="option-icon">📁</span>
-            <span class="option-label">No Encryption</span>
-            <span class="option-desc">Files stored as-is</span>
-          </div>
-        </label>
-
-        <label class="encryption-option" class:selected={encryptionType === 'aes256'}>
-          <input type="radio" bind:group={encryptionType} value="aes256" />
-          <div class="option-content">
-            <span class="option-icon">🔒</span>
-            <span class="option-label">AES-256 Encryption</span>
-            <span class="option-desc">Fast, app-level encryption</span>
-          </div>
-        </label>
-
-        <label class="encryption-option" class:selected={encryptionType === 'veracrypt'}>
-          <input type="radio" bind:group={encryptionType} value="veracrypt" />
-          <div class="option-content">
-            <span class="option-icon">🛡️</span>
-            <span class="option-label">VeraCrypt Container</span>
-            <span class="option-desc">Industry-standard, cross-platform</span>
-          </div>
-        </label>
-      </div>
-
-      {#if encryptionType !== 'none'}
-        <div class="encryption-settings">
-          <!-- Password fields -->
-          <div class="form-group">
-            <label for="encryptionPassword">Encryption Password</label>
-            <input
-              id="encryptionPassword"
-              type="password"
-              bind:value={encryptionPassword}
-              placeholder="Enter a strong password (min 8 characters)"
-              disabled={migrating}
-            />
-            {#if encryptionPassword && !passwordValid}
-              <span class="field-error">Password must be at least 8 characters</span>
-            {/if}
-          </div>
-
-          <div class="form-group">
-            <label for="encryptionPasswordConfirm">Confirm Password</label>
-            <input
-              id="encryptionPasswordConfirm"
-              type="password"
-              bind:value={encryptionPasswordConfirm}
-              placeholder="Confirm your password"
-              disabled={migrating}
-            />
-            {#if encryptionPasswordConfirm && !passwordsMatch}
-              <span class="field-error">Passwords do not match</span>
-            {/if}
-          </div>
-
-          <!-- VeraCrypt specific options -->
-          {#if encryptionType === 'veracrypt'}
-            <div class="veracrypt-options">
-              {#if checkingVeraCrypt}
-                <div class="veracrypt-status checking">
-                  <div class="spinner small"></div>
-                  <span>Checking VeraCrypt installation...</span>
-                </div>
-              {:else if veracryptStatus?.installed}
-                <div class="veracrypt-status installed">
-                  <span class="status-icon">✓</span>
-                  <span>VeraCrypt {veracryptStatus.version} installed</span>
-                </div>
-              {:else}
-                <div class="veracrypt-status not-installed">
-                  <span class="status-icon">✗</span>
-                  <span>VeraCrypt not installed</span>
-                  <a href="https://www.veracrypt.fr/en/Downloads.html" target="_blank" rel="noopener">
-                    Download VeraCrypt
-                  </a>
-                </div>
-              {/if}
-
-              {#if veracryptStatus?.installed}
-                <div class="form-group">
-                  <label for="containerSize">Container Size</label>
-                  <select id="containerSize" bind:value={containerSize} disabled={migrating}>
-                    {#each CONTAINER_SIZES as size}
-                      <option value={size.value}>{size.label} - {size.description}</option>
-                    {/each}
-                  </select>
-                  <small>Container size cannot be changed after creation</small>
-                </div>
-              {/if}
-            </div>
-          {/if}
-
-          <!-- Encryption info box -->
-          <div class="encryption-info">
-            {#if encryptionType === 'aes256'}
-              <h4>AES-256-GCM Encryption</h4>
-              <ul>
-                <li>Military-grade encryption (256-bit)</li>
-                <li>Hardware accelerated on modern CPUs</li>
-                <li>Files encrypted individually</li>
-                <li>Password required to access profile</li>
-                <li>~0.1ms decryption per file (instant)</li>
-              </ul>
-            {:else if encryptionType === 'veracrypt'}
-              <h4>VeraCrypt Container</h4>
-              <ul>
-                <li>Industry-standard encryption</li>
-                <li>Cross-platform (Windows, Mac, Linux)</li>
-                <li>Entire profile in encrypted container</li>
-                <li>Can be opened with VeraCrypt app</li>
-                <li>Portable - move container to any computer</li>
-              </ul>
-            {/if}
-          </div>
-        </div>
-
-        <div class="password-warning">
-          <strong>⚠️ Important:</strong> Your encryption password is never stored.
-          If you forget it, your data cannot be recovered.
-        </div>
-      {/if}
-    </div>
-
     <!-- Security Warning -->
     <div class="card warning-card">
       <h2>⚠️ Security Considerations</h2>
@@ -763,51 +931,115 @@
   {/if}
 </div>
 
-<!-- Confirmation Dialog -->
+<!-- Confirmation Dialog with Migration Options -->
 {#if showConfirmDialog}
   <div class="modal-overlay" on:click={() => showConfirmDialog = false}>
-    <div class="modal-content" on:click|stopPropagation>
-      <h3>{encryptionType !== 'none' ? '🔐' : '📁'} Move Profile Data?</h3>
+    <div class="modal-content migration-config-modal" on:click|stopPropagation>
+      <h3>📁 Configure Migration</h3>
 
       <div class="modal-body">
-        <p>You are about to move your profile data to:</p>
-        <code class="target-path">{pendingPath}</code>
+        <div class="config-section">
+          <label class="config-label">Destination</label>
+          <code class="target-path">{pendingPath}</code>
+        </div>
 
-        {#if encryptionType !== 'none'}
-          <div class="encryption-summary">
-            <strong>Encryption:</strong>
-            {#if encryptionType === 'aes256'}
-              <span class="encryption-badge aes">🔒 AES-256-GCM</span>
-            {:else if encryptionType === 'veracrypt'}
-              <span class="encryption-badge veracrypt">🛡️ VeraCrypt Container ({(containerSize / (1024 * 1024 * 1024)).toFixed(0)} GB)</span>
-            {/if}
+        <!-- Encryption Selection -->
+        <div class="config-section">
+          <label class="config-label">🔐 Encryption</label>
+          <div class="encryption-options-compact">
+            <label class="radio-option" class:selected={encryptionType === 'none'}>
+              <input type="radio" bind:group={encryptionType} value="none" />
+              <span class="radio-label">📁 None</span>
+            </label>
+            <label class="radio-option" class:selected={encryptionType === 'aes256'}>
+              <input type="radio" bind:group={encryptionType} value="aes256" />
+              <span class="radio-label">🔒 AES-256</span>
+            </label>
+            <label class="radio-option" class:selected={encryptionType === 'veracrypt'}>
+              <input type="radio" bind:group={encryptionType} value="veracrypt" />
+              <span class="radio-label">🛡️ VeraCrypt</span>
+            </label>
           </div>
-        {/if}
 
-        <div class="warning-box">
-          <strong>This operation will:</strong>
+          {#if encryptionType !== 'none'}
+            <div class="encryption-fields">
+              <div class="form-row">
+                <input
+                  type="password"
+                  bind:value={encryptionPassword}
+                  placeholder="Password (min 8 characters)"
+                  class="input-field"
+                />
+                <input
+                  type="password"
+                  bind:value={encryptionPasswordConfirm}
+                  placeholder="Confirm password"
+                  class="input-field"
+                />
+              </div>
+              {#if encryptionPassword && !passwordValid}
+                <span class="field-error">Password must be at least 8 characters</span>
+              {/if}
+              {#if encryptionPasswordConfirm && !passwordsMatch}
+                <span class="field-error">Passwords do not match</span>
+              {/if}
+
+              {#if encryptionType === 'veracrypt'}
+                {#if !veracryptStatus?.installed}
+                  <div class="veracrypt-warning">
+                    ⚠️ VeraCrypt not installed. <a href="https://www.veracrypt.fr/en/Downloads.html" target="_blank">Download</a>
+                  </div>
+                {:else}
+                  <div class="form-row">
+                    <label class="inline-label">Container Size:</label>
+                    <select bind:value={containerSize} class="select-field">
+                      {#each CONTAINER_SIZES as size}
+                        <option value={size.value}>{size.label}</option>
+                      {/each}
+                    </select>
+                  </div>
+                {/if}
+              {/if}
+
+              <p class="password-note">
+                ⚠️ Password is never stored. If forgotten, data cannot be recovered.
+              </p>
+            </div>
+          {/if}
+        </div>
+
+        <!-- Migration Options -->
+        <div class="config-section">
+          <label class="config-label">⚙️ Options</label>
+          <div class="toggle-options">
+            <label class="checkbox-option">
+              <input type="checkbox" bind:checked={keepSourceFiles} />
+              <span>Keep source files after migration</span>
+            </label>
+            <label class="checkbox-option">
+              <input type="checkbox" bind:checked={overwriteExisting} />
+              <span>Overwrite existing files at destination</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Summary -->
+        <div class="migration-summary">
+          <strong>This will:</strong>
           <ul>
             {#if encryptionType === 'veracrypt'}
-              <li>Create a VeraCrypt encrypted container</li>
-              <li>Copy all profile files into the container</li>
+              <li>Create encrypted VeraCrypt container</li>
             {:else if encryptionType === 'aes256'}
-              <li>Copy and encrypt all profile files (AES-256)</li>
+              <li>Encrypt files with AES-256-GCM</li>
             {:else}
-              <li>Copy all profile files to the new location</li>
+              <li>Copy files to new location</li>
             {/if}
-            {#if encryptionType !== 'aes256'}
-              <li>Verify file integrity</li>
-            {/if}
-            <li>Update the system configuration</li>
+            <li>Update system configuration</li>
             {#if !keepSourceFiles}
-              <li><strong>Delete the original files</strong></li>
+              <li class="destructive">Delete original files</li>
             {/if}
           </ul>
         </div>
-
-        <p class="time-warning">
-          This may take a few minutes depending on the size of your profile data.
-        </p>
       </div>
 
       <div class="modal-actions">
@@ -818,9 +1050,9 @@
           class="btn btn-primary"
           on:click={confirmMove}
           disabled={!encryptionReady}
-          title={!encryptionReady ? 'Please complete encryption settings' : ''}
+          title={!encryptionReady ? 'Complete encryption settings first' : ''}
         >
-          {encryptionType !== 'none' ? '🔐 Start Encrypted Migration' : 'Start Migration'}
+          {encryptionType !== 'none' ? '🔐 Start Encrypted Migration' : '📦 Start Migration'}
         </button>
       </div>
     </div>
@@ -868,6 +1100,187 @@
           <div class="spinner"></div>
           <span>Please wait...</span>
         </div>
+      {/if}
+    </div>
+  </div>
+{/if}
+
+<!-- Encrypt Profile Modal -->
+{#if showEncryptModal}
+  <div class="modal-overlay" on:click={() => !encryptingInPlace && (showEncryptModal = false)}>
+    <div class="modal-content encryption-modal" on:click|stopPropagation>
+      <h3>🔒 Encrypt Profile Data</h3>
+
+      {#if !encryptingInPlace && encryptInPlaceProgress.length === 0}
+        <div class="modal-body">
+          <p class="encryption-modal-description">
+            Encrypt all existing profile data with AES-256-GCM encryption. This will convert
+            all plain JSON files to encrypted format in-place.
+          </p>
+
+          <div class="encryption-fields">
+            <div class="form-group">
+              <label for="encryptInPlacePassword">Encryption Password</label>
+              <input
+                id="encryptInPlacePassword"
+                type="password"
+                bind:value={encryptInPlacePassword}
+                placeholder="Enter password (min 8 characters)"
+                class="input-field"
+              />
+            </div>
+            <div class="form-group">
+              <label for="encryptInPlacePasswordConfirm">Confirm Password</label>
+              <input
+                id="encryptInPlacePasswordConfirm"
+                type="password"
+                bind:value={encryptInPlacePasswordConfirm}
+                placeholder="Confirm password"
+                class="input-field"
+              />
+            </div>
+
+            {#if encryptInPlacePassword && !encryptInPlacePasswordValid}
+              <span class="field-error">Password must be at least 8 characters</span>
+            {/if}
+            {#if encryptInPlacePasswordConfirm && !encryptInPlacePasswordsMatch}
+              <span class="field-error">Passwords do not match</span>
+            {/if}
+
+            <div class="password-warning">
+              <strong>⚠️ Important:</strong> Your password is never stored. If you forget it,
+              your data cannot be recovered. Write it down somewhere safe!
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn btn-secondary" on:click={() => showEncryptModal = false}>
+            Cancel
+          </button>
+          <button
+            class="btn btn-primary"
+            on:click={encryptProfileInPlace}
+            disabled={!encryptInPlaceReady}
+          >
+            🔒 Start Encryption
+          </button>
+        </div>
+      {:else}
+        <!-- Progress view -->
+        <div class="progress-container">
+          {#each encryptInPlaceProgress as step}
+            <div class="progress-step" class:completed={step.status === 'completed'} class:failed={step.status === 'failed'} class:running={step.status === 'running'}>
+              <span class="step-icon">{getStatusIcon(step.status)}</span>
+              <div class="step-content">
+                <span class="step-message">{step.message}</span>
+                {#if step.progress !== undefined}
+                  <div class="progress-bar">
+                    <div class="progress-fill" style="width: {step.progress}%"></div>
+                  </div>
+                {/if}
+                {#if step.error}
+                  <span class="step-error">{step.error}</span>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+
+        {#if !encryptingInPlace}
+          <div class="modal-actions">
+            <button class="btn btn-primary" on:click={() => { showEncryptModal = false; encryptInPlaceProgress = []; }}>
+              Close
+            </button>
+          </div>
+        {:else}
+          <div class="migrating-indicator">
+            <div class="spinner"></div>
+            <span>Encrypting files...</span>
+          </div>
+        {/if}
+      {/if}
+    </div>
+  </div>
+{/if}
+
+<!-- Decrypt Profile Modal -->
+{#if showDecryptModal}
+  <div class="modal-overlay" on:click={() => !decryptingInPlace && (showDecryptModal = false)}>
+    <div class="modal-content encryption-modal" on:click|stopPropagation>
+      <h3>🔓 Decrypt Profile Data</h3>
+
+      {#if !decryptingInPlace && encryptInPlaceProgress.length === 0}
+        <div class="modal-body">
+          <p class="encryption-modal-description">
+            Decrypt all encrypted profile data back to plain JSON files. You will need
+            your encryption password to proceed.
+          </p>
+
+          <div class="encryption-fields">
+            <div class="form-group">
+              <label for="decryptPassword">Encryption Password</label>
+              <input
+                id="decryptPassword"
+                type="password"
+                bind:value={decryptPassword}
+                placeholder="Enter your encryption password"
+                class="input-field"
+              />
+            </div>
+
+            <div class="warning-box">
+              <strong>⚠️ Security Note:</strong> After decryption, your profile data will be
+              stored as plain files. Anyone with access to this location can read your data.
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn btn-secondary" on:click={() => showDecryptModal = false}>
+            Cancel
+          </button>
+          <button
+            class="btn btn-primary"
+            on:click={decryptProfileInPlace}
+            disabled={!decryptPassword}
+          >
+            🔓 Start Decryption
+          </button>
+        </div>
+      {:else}
+        <!-- Progress view -->
+        <div class="progress-container">
+          {#each encryptInPlaceProgress as step}
+            <div class="progress-step" class:completed={step.status === 'completed'} class:failed={step.status === 'failed'} class:running={step.status === 'running'}>
+              <span class="step-icon">{getStatusIcon(step.status)}</span>
+              <div class="step-content">
+                <span class="step-message">{step.message}</span>
+                {#if step.progress !== undefined}
+                  <div class="progress-bar">
+                    <div class="progress-fill" style="width: {step.progress}%"></div>
+                  </div>
+                {/if}
+                {#if step.error}
+                  <span class="step-error">{step.error}</span>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+
+        {#if !decryptingInPlace}
+          <div class="modal-actions">
+            <button class="btn btn-primary" on:click={() => { showDecryptModal = false; encryptInPlaceProgress = []; }}>
+              Close
+            </button>
+          </div>
+        {:else}
+          <div class="migrating-indicator">
+            <div class="spinner"></div>
+            <span>Decrypting files...</span>
+          </div>
+        {/if}
       {/if}
     </div>
   </div>
@@ -1036,6 +1449,20 @@
 
   :global(.dark) .card-description {
     color: rgb(156 163 175);
+  }
+
+  .card-note {
+    font-size: 0.875rem;
+    color: rgb(107 114 128);
+    background: rgb(249 250 251);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    margin: 0 0 1rem 0;
+  }
+
+  :global(.dark) .card-note {
+    color: rgb(156 163 175);
+    background: rgb(31 41 55);
   }
 
   .current-config {
@@ -1371,12 +1798,88 @@
     gap: 1rem;
   }
 
+  .path-editor {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .path-input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid rgb(139, 92, 246);
+    border-radius: 0.375rem;
+    font-size: 0.75rem;
+    font-family: monospace;
+    background: white;
+    color: rgb(55 65 81);
+  }
+
+  :global(.dark) .path-input {
+    background: rgb(31 41 55);
+    border-color: rgb(139, 92, 246);
+    color: rgb(209 213 219);
+  }
+
+  .path-input:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2);
+  }
+
   .suggested-path {
     flex: 1;
     font-size: 0.75rem;
     color: rgb(139, 92, 246);
     background: transparent;
     word-break: break-all;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    transition: background-color 0.15s;
+  }
+
+  .suggested-path:hover {
+    background: rgba(139, 92, 246, 0.1);
+  }
+
+  .suggested-path.modified {
+    color: rgb(245, 158, 11);
+    font-weight: 500;
+  }
+
+  :global(.dark) .suggested-path.modified {
+    color: rgb(253, 224, 71);
+  }
+
+  .btn-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    font-size: 0.875rem;
+    background: transparent;
+    border: 1px solid rgb(209 213 219);
+    border-radius: 0.375rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  :global(.dark) .btn-icon {
+    border-color: rgb(55 65 81);
+  }
+
+  .btn-icon:hover {
+    background: rgb(243 244 246);
+    border-color: rgb(139, 92, 246);
+  }
+
+  :global(.dark) .btn-icon:hover {
+    background: rgb(55 65 81);
   }
 
   /* Custom Path Form */
@@ -2030,6 +2533,274 @@
     justify-content: flex-end;
   }
 
+  /* Migration Configuration Modal */
+  .migration-config-modal {
+    max-width: 500px;
+  }
+
+  .migration-config-modal h3 {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .config-section {
+    margin-bottom: 1.25rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid rgb(229 231 235);
+  }
+
+  :global(.dark) .config-section {
+    border-bottom-color: rgb(55 65 81);
+  }
+
+  .config-section:last-of-type {
+    border-bottom: none;
+    padding-bottom: 0;
+    margin-bottom: 0;
+  }
+
+  .config-label {
+    display: block;
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: rgb(55 65 81);
+    margin-bottom: 0.75rem;
+  }
+
+  :global(.dark) .config-label {
+    color: rgb(209 213 219);
+  }
+
+  .encryption-options-compact {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .radio-option {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 0.75rem;
+    background: rgb(243 244 246);
+    border: 2px solid transparent;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  :global(.dark) .radio-option {
+    background: rgb(31 41 55);
+  }
+
+  .radio-option:hover {
+    border-color: rgb(139, 92, 246);
+  }
+
+  .radio-option.selected {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(219, 39, 119, 0.1) 100%);
+    border-color: rgb(139, 92, 246);
+  }
+
+  .radio-option input {
+    display: none;
+  }
+
+  .radio-label {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: rgb(55 65 81);
+    white-space: nowrap;
+  }
+
+  :global(.dark) .radio-label {
+    color: rgb(209 213 219);
+  }
+
+  .radio-option.selected .radio-label {
+    color: rgb(139, 92, 246);
+  }
+
+  .encryption-fields {
+    background: rgb(249 250 251);
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+  }
+
+  :global(.dark) .encryption-fields {
+    background: rgb(31 41 55);
+  }
+
+  .form-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .input-field {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid rgb(209 213 219);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    background: white;
+    color: rgb(17 24 39);
+  }
+
+  :global(.dark) .input-field {
+    background: rgb(17 24 39);
+    border-color: rgb(55 65 81);
+    color: rgb(243 244 246);
+  }
+
+  .input-field:focus {
+    outline: none;
+    border-color: rgb(139, 92, 246);
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.1);
+  }
+
+  .select-field {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid rgb(209 213 219);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    background: white;
+    color: rgb(17 24 39);
+    cursor: pointer;
+  }
+
+  :global(.dark) .select-field {
+    background: rgb(17 24 39);
+    border-color: rgb(55 65 81);
+    color: rgb(243 244 246);
+  }
+
+  .inline-label {
+    font-size: 0.8rem;
+    color: rgb(107 114 128);
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+  }
+
+  :global(.dark) .inline-label {
+    color: rgb(156 163 175);
+  }
+
+  .veracrypt-warning {
+    padding: 0.5rem;
+    background: rgb(254 243 199);
+    border-radius: 0.375rem;
+    font-size: 0.75rem;
+    color: rgb(120 53 15);
+    margin-bottom: 0.5rem;
+  }
+
+  :global(.dark) .veracrypt-warning {
+    background: rgb(120 53 15 / 0.3);
+    color: rgb(253 224 71);
+  }
+
+  .veracrypt-warning a {
+    color: rgb(59 130 246);
+    text-decoration: underline;
+    margin-left: 0.25rem;
+  }
+
+  .password-note {
+    font-size: 0.7rem;
+    color: rgb(161 98 7);
+    margin: 0.5rem 0 0 0;
+    padding: 0.5rem;
+    background: rgb(254 252 232);
+    border-radius: 0.375rem;
+  }
+
+  :global(.dark) .password-note {
+    background: rgb(113 63 18 / 0.2);
+    color: rgb(250 204 21);
+  }
+
+  .toggle-options {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .checkbox-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-size: 0.875rem;
+    color: rgb(55 65 81);
+  }
+
+  :global(.dark) .checkbox-option {
+    color: rgb(209 213 219);
+  }
+
+  .checkbox-option input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: rgb(139, 92, 246);
+    cursor: pointer;
+  }
+
+  .checkbox-option:hover {
+    color: rgb(139, 92, 246);
+  }
+
+  .migration-summary {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background: rgb(249 250 251);
+    border-radius: 0.5rem;
+    border-left: 3px solid rgb(139, 92, 246);
+  }
+
+  :global(.dark) .migration-summary {
+    background: rgb(31 41 55);
+  }
+
+  .migration-summary strong {
+    display: block;
+    font-size: 0.8rem;
+    color: rgb(107 114 128);
+    margin-bottom: 0.5rem;
+  }
+
+  :global(.dark) .migration-summary strong {
+    color: rgb(156 163 175);
+  }
+
+  .migration-summary ul {
+    margin: 0;
+    padding-left: 1.25rem;
+    font-size: 0.8rem;
+  }
+
+  .migration-summary li {
+    color: rgb(55 65 81);
+    margin-bottom: 0.25rem;
+  }
+
+  :global(.dark) .migration-summary li {
+    color: rgb(209 213 219);
+  }
+
+  .migration-summary li.destructive {
+    color: rgb(220 38 38);
+    font-weight: 500;
+  }
+
+  :global(.dark) .migration-summary li.destructive {
+    color: rgb(252 165 165);
+  }
+
   /* Migration Modal */
   .migration-modal {
     max-width: 700px;
@@ -2183,5 +2954,145 @@
 
   :global(.dark) .migrating-indicator {
     color: rgb(156 163 175);
+  }
+
+  /* Encryption Status Card */
+  .encryption-status-card {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: linear-gradient(135deg, rgb(249 250 251) 0%, rgb(243 244 246) 100%);
+    border: 1px solid rgb(229 231 235);
+    border-radius: 0.75rem;
+  }
+
+  :global(.dark) .encryption-status-card {
+    background: linear-gradient(135deg, rgb(17 24 39) 0%, rgb(31 41 55) 100%);
+    border-color: rgb(55 65 81);
+  }
+
+  .encryption-status-card h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: rgb(17 24 39);
+    margin: 0 0 1rem 0;
+  }
+
+  :global(.dark) .encryption-status-card h3 {
+    color: rgb(243 244 246);
+  }
+
+  .encryption-status-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 9999px;
+    font-weight: 500;
+    width: fit-content;
+  }
+
+  .status-badge.encrypted {
+    background: rgb(220 252 231);
+    color: rgb(22 101 52);
+  }
+
+  :global(.dark) .status-badge.encrypted {
+    background: rgb(20 83 45 / 0.4);
+    color: rgb(134 239 172);
+  }
+
+  .status-badge.unencrypted {
+    background: rgb(254 243 199);
+    color: rgb(120 53 15);
+  }
+
+  :global(.dark) .status-badge.unencrypted {
+    background: rgb(120 53 15 / 0.3);
+    color: rgb(253 224 71);
+  }
+
+  .status-badge .status-icon {
+    font-size: 1.25rem;
+  }
+
+  .status-badge .status-text {
+    font-size: 0.875rem;
+  }
+
+  .status-description {
+    font-size: 0.875rem;
+    color: rgb(107 114 128);
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  :global(.dark) .status-description {
+    color: rgb(156 163 175);
+  }
+
+  /* Encryption Modal */
+  .encryption-modal {
+    max-width: 450px;
+  }
+
+  .encryption-modal-description {
+    font-size: 0.875rem;
+    color: rgb(55 65 81);
+    margin: 0 0 1rem 0;
+    line-height: 1.5;
+  }
+
+  :global(.dark) .encryption-modal-description {
+    color: rgb(209 213 219);
+  }
+
+  .encryption-modal .encryption-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .encryption-modal .encryption-fields .form-group {
+    margin-bottom: 0;
+  }
+
+  .encryption-modal .encryption-fields .form-group label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: rgb(55 65 81);
+    margin-bottom: 0.375rem;
+  }
+
+  :global(.dark) .encryption-modal .encryption-fields .form-group label {
+    color: rgb(209 213 219);
+  }
+
+  .encryption-modal .encryption-fields .input-field {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid rgb(209 213 219);
+    border-radius: 0.5rem;
+    font-size: 1rem;
+    background: white;
+    color: rgb(17 24 39);
+  }
+
+  :global(.dark) .encryption-modal .encryption-fields .input-field {
+    background: rgb(31 41 55);
+    border-color: rgb(55 65 81);
+    color: rgb(243 244 246);
+  }
+
+  .encryption-modal .encryption-fields .input-field:focus {
+    outline: none;
+    border-color: rgb(139, 92, 246);
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
   }
 </style>

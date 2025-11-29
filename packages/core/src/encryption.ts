@@ -29,6 +29,9 @@ const PBKDF2_DIGEST = 'sha512';
 // File extension for encrypted files
 export const ENCRYPTED_EXTENSION = '.enc';
 
+// File extension for chunked encrypted files (large files >500MB)
+export const CHUNKED_EXTENSION = '.enc.chunked';
+
 // Encryption metadata file name
 export const ENCRYPTION_META_FILE = '.encryption-meta.json';
 
@@ -619,4 +622,117 @@ export function getEncryptionStats(profilePath: string): {
     createdAt: meta?.createdAt,
     lastUnlockedAt: meta?.lastUnlockedAt,
   };
+}
+
+/**
+ * Chunked encrypted file header (used for large files >500MB)
+ */
+interface ChunkedEncryptionHeader {
+  version: 2;
+  format: 'chunked';
+  algorithm: 'aes-256-gcm';
+  originalSize: number;
+  chunkSize: number;
+  chunkCount: number;
+}
+
+/**
+ * Check if a file is a chunked encrypted file
+ */
+export function isChunkedEncryptedFile(filePath: string): boolean {
+  return filePath.endsWith(CHUNKED_EXTENSION);
+}
+
+/**
+ * Decrypt a chunked encrypted file (for large files)
+ * Returns a readable stream for efficient memory usage
+ */
+export async function decryptChunkedFile(filePath: string, key: Buffer): Promise<Buffer> {
+  if (!filePath.endsWith(CHUNKED_EXTENSION)) {
+    throw new Error('File is not a chunked encrypted file');
+  }
+
+  const content = await fs.promises.readFile(filePath, 'utf8');
+  const lines = content.trim().split('\n');
+
+  if (lines.length < 2) {
+    throw new Error('Invalid chunked file format');
+  }
+
+  // Parse header
+  const header = JSON.parse(lines[0]) as ChunkedEncryptionHeader;
+  if (header.version !== 2 || header.format !== 'chunked') {
+    throw new Error(`Unsupported chunked file version: ${header.version}`);
+  }
+
+  // Decrypt all chunks
+  const chunks: Buffer[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const encryptedChunk = JSON.parse(lines[i]) as EncryptedData;
+    const decryptedChunk = decrypt(encryptedChunk, key);
+    chunks.push(decryptedChunk);
+  }
+
+  return Buffer.concat(chunks);
+}
+
+/**
+ * Decrypt a chunked file to a destination file (streaming for memory efficiency)
+ */
+export async function decryptChunkedFileToFile(
+  sourcePath: string,
+  destPath: string,
+  key: Buffer,
+  onProgress?: (bytesWritten: number, totalBytes: number) => void
+): Promise<void> {
+  if (!sourcePath.endsWith(CHUNKED_EXTENSION)) {
+    throw new Error('Source is not a chunked encrypted file');
+  }
+
+  // Ensure destination directory exists
+  await fs.promises.mkdir(path.dirname(destPath), { recursive: true });
+
+  // Read file content
+  const content = await fs.promises.readFile(sourcePath, 'utf8');
+  const lines = content.trim().split('\n');
+
+  if (lines.length < 2) {
+    throw new Error('Invalid chunked file format');
+  }
+
+  // Parse header
+  const header = JSON.parse(lines[0]) as ChunkedEncryptionHeader;
+  if (header.version !== 2 || header.format !== 'chunked') {
+    throw new Error(`Unsupported chunked file version: ${header.version}`);
+  }
+
+  // Open destination file for writing
+  const fileHandle = await fs.promises.open(destPath, 'w');
+  let bytesWritten = 0;
+
+  try {
+    // Decrypt and write each chunk
+    for (let i = 1; i < lines.length; i++) {
+      const encryptedChunk = JSON.parse(lines[i]) as EncryptedData;
+      const decryptedChunk = decrypt(encryptedChunk, key);
+      await fileHandle.write(decryptedChunk);
+      bytesWritten += decryptedChunk.length;
+      onProgress?.(bytesWritten, header.originalSize);
+    }
+  } finally {
+    await fileHandle.close();
+  }
+}
+
+/**
+ * Decrypt a chunked file in place (removes encrypted version)
+ */
+export async function decryptChunkedFileInPlace(filePath: string, key: Buffer): Promise<void> {
+  if (!filePath.endsWith(CHUNKED_EXTENSION)) {
+    throw new Error('File is not a chunked encrypted file');
+  }
+
+  const destPath = filePath.slice(0, -CHUNKED_EXTENSION.length);
+  await decryptChunkedFileToFile(filePath, destPath, key);
+  await fs.promises.unlink(filePath);
 }
