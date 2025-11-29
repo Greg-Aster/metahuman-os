@@ -1,7 +1,7 @@
 /**
- * Profile Encryption API
+ * Profile Decryption API
  *
- * POST: Encrypt existing profile data in-place with AES-256-GCM
+ * POST: Decrypt encrypted profile data in-place
  */
 
 import type { APIRoute } from 'astro';
@@ -11,26 +11,23 @@ import {
   audit,
 } from '@metahuman/core';
 import {
-  deriveKey,
-  generateSalt,
-  encryptDirectory,
-  saveEncryptionMeta,
-  createVerificationFile,
+  deriveKeyFromMeta,
+  decryptDirectory,
+  loadEncryptionMeta,
+  removeEncryptionMeta,
+  removeVerificationFile,
   isProfileEncrypted,
-  type EncryptionMeta,
-  type PasswordMode,
+  verifyPassword,
 } from '@metahuman/core/encryption';
 import { updateUserMetadata, verifyUserPassword } from '@metahuman/core/users';
 
 /**
- * POST /api/profile-path/encrypt
+ * POST /api/profile-path/decrypt
  *
- * Encrypt existing profile data in-place
+ * Decrypt encrypted profile data in-place
  *
  * Body:
- * - password: string - Encryption password (user's login password or separate)
- * - passwordMode: 'user' | 'separate' - Which password type to use (default: 'user')
- * - type: 'aes256' - Encryption type (only AES-256 supported for in-place)
+ * - password: string - Decryption password
  */
 export const POST: APIRoute = async ({ cookies, request }) => {
   try {
@@ -38,29 +35,35 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     const profilePaths = getProfilePaths(user.username);
 
     const body = await request.json();
-    const { password, passwordMode = 'user', type = 'aes256' } = body as {
-      password: string;
-      passwordMode?: PasswordMode;
-      type?: string;
-    };
+    const { password } = body;
 
-    // Validate password mode
-    if (passwordMode !== 'user' && passwordMode !== 'separate') {
+    // Validate inputs
+    if (!password) {
       return new Response(
-        JSON.stringify({ error: 'Invalid password mode. Must be "user" or "separate"' }),
+        JSON.stringify({ error: 'Password is required' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    // Validate password
-    if (!password || password.length < 8) {
+    // Check if encrypted
+    if (!isProfileEncrypted(profilePaths.root)) {
       return new Response(
-        JSON.stringify({ error: 'Password must be at least 8 characters' }),
+        JSON.stringify({ error: 'Profile is not encrypted' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    // For 'user' mode, verify the password matches their login password
+    // Load encryption metadata
+    const meta = loadEncryptionMeta(profilePaths.root);
+    if (!meta) {
+      return new Response(
+        JSON.stringify({ error: 'Encryption metadata not found' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // For 'user' mode, also verify it matches their login password
+    const passwordMode = meta.passwordMode || 'separate'; // Default to separate for legacy
     if (passwordMode === 'user') {
       if (!verifyUserPassword(user.username, password)) {
         return new Response(
@@ -70,18 +73,12 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       }
     }
 
-    if (type !== 'aes256') {
+    // Derive key and verify against encryption verification file
+    const key = deriveKeyFromMeta(password, meta);
+    if (!verifyPassword(profilePaths.root, key)) {
       return new Response(
-        JSON.stringify({ error: 'Only AES-256 encryption is supported for in-place encryption' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Check if already encrypted
-    if (isProfileEncrypted(profilePaths.root)) {
-      return new Response(
-        JSON.stringify({ error: 'Profile is already encrypted' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Invalid decryption password' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
@@ -113,7 +110,6 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     const sendResult = (result: {
       success: boolean;
       filesProcessed?: number;
-      bytesProcessed?: number;
       error?: string;
     }) => {
       try {
@@ -125,17 +121,16 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       }
     };
 
-    // Start encryption process
+    // Start decryption process
     (async () => {
       try {
         audit({
           level: 'info',
           category: 'security',
-          event: 'profile_encryption_started',
+          event: 'profile_decryption_started',
           details: {
             userId: user.id,
             profilePath: profilePaths.root,
-            encryptionType: type,
             passwordMode,
           },
           actor: user.id,
@@ -144,125 +139,104 @@ export const POST: APIRoute = async ({ cookies, request }) => {
         sendProgress({
           step: 'init',
           status: 'running',
-          message: 'Initializing encryption...',
+          message: 'Verifying decryption key...',
         });
-
-        // Generate salt and derive key
-        const salt = generateSalt();
-        const key = deriveKey(password, salt);
 
         sendProgress({
           step: 'init',
           status: 'completed',
-          message: 'Encryption key derived',
+          message: 'Decryption key verified',
         });
 
         sendProgress({
-          step: 'encrypt',
+          step: 'decrypt',
           status: 'running',
-          message: 'Encrypting profile data...',
+          message: 'Decrypting profile data...',
           progress: 0,
         });
 
-        // Encrypt all profile directories
-        let totalEncrypted = 0;
-        const dirsToEncrypt = ['memory', 'persona', 'etc'];
+        // Decrypt all profile directories
+        let totalDecrypted = 0;
+        const dirsToDecrypt = ['memory', 'persona', 'etc'];
 
-        for (const dir of dirsToEncrypt) {
+        for (const dir of dirsToDecrypt) {
           const dirPath = `${profilePaths.root}/${dir}`;
           try {
-            const encrypted = await encryptDirectory(dirPath, key, {
+            const decrypted = await decryptDirectory(dirPath, key, {
               onProgress: (file, current, total) => {
                 const dirProgress = (current / total) * 100;
                 sendProgress({
-                  step: 'encrypt',
+                  step: 'decrypt',
                   status: 'running',
-                  message: `Encrypting ${dir}... (${current}/${total})`,
+                  message: `Decrypting ${dir}... (${current}/${total})`,
                   progress: Math.round(dirProgress),
                 });
               },
             });
-            totalEncrypted += encrypted;
+            totalDecrypted += decrypted;
           } catch (error) {
             // Directory may not exist
-            console.warn(`[encrypt] Skipping ${dir}:`, (error as Error).message);
+            console.warn(`[decrypt] Skipping ${dir}:`, (error as Error).message);
           }
         }
 
         sendProgress({
-          step: 'encrypt',
+          step: 'decrypt',
           status: 'completed',
-          message: `Encrypted ${totalEncrypted} files`,
+          message: `Decrypted ${totalDecrypted} files`,
           progress: 100,
         });
 
         sendProgress({
           step: 'finalize',
           status: 'running',
-          message: 'Saving encryption metadata...',
+          message: 'Removing encryption metadata...',
         });
 
-        // Create encryption metadata
-        const meta: EncryptionMeta = {
-          version: 1,
-          algorithm: 'aes-256-gcm',
-          keyDerivation: 'pbkdf2',
-          pbkdf2Iterations: 100_000,
-          pbkdf2Digest: 'sha512',
-          salt: salt.toString('base64'),
-          createdAt: new Date().toISOString(),
-          encryptedFiles: totalEncrypted,
-          passwordMode,
-        };
+        // Remove encryption metadata
+        removeEncryptionMeta(profilePaths.root);
+        removeVerificationFile(profilePaths.root);
 
-        saveEncryptionMeta(profilePaths.root, meta);
-        createVerificationFile(profilePaths.root, key);
-
-        // Update user metadata with encryption info
+        // Update user metadata to remove encryption info
         updateUserMetadata(user.id, {
-          profileEncryption: {
-            type: 'aes256',
-            passwordMode,
-            encryptedAt: new Date().toISOString(),
-            path: profilePaths.root,
-          },
+          profileEncryption: null,
         });
 
         sendProgress({
           step: 'finalize',
           status: 'completed',
-          message: 'Encryption metadata saved',
+          message: 'Encryption metadata removed',
         });
 
         sendProgress({
           step: 'complete',
           status: 'completed',
-          message: 'Profile encryption complete!',
+          message: 'Profile decryption complete!',
         });
 
         audit({
           level: 'info',
           category: 'security',
-          event: 'profile_encryption_completed',
+          event: 'profile_decryption_completed',
           details: {
             userId: user.id,
             profilePath: profilePaths.root,
-            filesEncrypted: totalEncrypted,
+            filesDecrypted: totalDecrypted,
           },
           actor: user.id,
         });
 
         sendResult({
           success: true,
-          filesProcessed: totalEncrypted,
+          filesProcessed: totalDecrypted,
         });
       } catch (error) {
-        const errorMessage = (error as Error).message || 'Encryption failed';
+        const errorMessage = (error as Error).message || 'Decryption failed';
 
         audit({
           level: 'error',
           category: 'security',
-          event: 'profile_encryption_failed',
+          event: 'profile_decryption_failed',
           details: {
             userId: user.id,
             profilePath: profilePaths.root,
@@ -274,7 +248,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
         sendProgress({
           step: 'error',
           status: 'failed',
-          message: 'Encryption failed',
+          message: 'Decryption failed',
           error: errorMessage,
         });
 

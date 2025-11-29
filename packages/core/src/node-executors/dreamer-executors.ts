@@ -11,6 +11,7 @@ import { captureEvent } from '../memory.js';
 import { getProfilePaths, paths } from '../paths.js';
 import { recordSystemActivity } from '../system-activity.js';
 import { scheduler } from '../agent-scheduler.js';
+import { appendDreamToBuffer } from '../conversation-buffer.js';
 import type { NodeExecutor } from './types.js';
 
 interface Memory {
@@ -341,7 +342,7 @@ export const dreamerDreamSaverExecutor: NodeExecutor = async (inputs, context, p
       confidence: 0.7,
     });
 
-    // Emit audit event for SSE streaming
+    // Emit audit event for logging/debugging
     audit({
       level: 'info',
       category: 'decision',
@@ -355,6 +356,12 @@ export const dreamerDreamSaverExecutor: NodeExecutor = async (inputs, context, p
       metadata: { dream },
       actor: 'dreamer',
     });
+
+    // Write to conversation buffer so UI can load without polling
+    // This eliminates the need for reflections/stream.ts SSE polling
+    if (username) {
+      appendDreamToBuffer(username, dream);
+    }
 
     console.log(`[DreamerDreamSaver] Dream saved with ${sourceIds.length} source citations`);
 

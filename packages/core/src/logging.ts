@@ -1,6 +1,15 @@
 import { audit } from './audit';
 
-export function initGlobalLogger(actor: string) {
+/**
+ * Initialize global logger that captures console output.
+ *
+ * By default, only warn/error are written to audit log to prevent bloat.
+ * console.log and console.info go to stdout only unless auditAll is true.
+ *
+ * @param actor - The actor name for audit entries
+ * @param auditAll - If true, also audit info-level logs (default: false)
+ */
+export function initGlobalLogger(actor: string, auditAll = false) {
   const originalConsoleLog = console.log;
   const originalConsoleInfo = console.info;
   const originalConsoleWarn = console.warn;
@@ -17,26 +26,33 @@ export function initGlobalLogger(actor: string) {
     }).join(' ');
   };
 
+  // console.log - only write to stdout (not audit) unless auditAll is true
   console.log = (...args: any[]) => {
     originalConsoleLog.apply(console, args);
-    audit({
-      level: 'info',
-      category: 'action',
-      event: formatArgs(args),
-      actor,
-    });
+    if (auditAll) {
+      audit({
+        level: 'info',
+        category: 'action',
+        event: formatArgs(args),
+        actor,
+      });
+    }
   };
 
+  // console.info - only write to stdout (not audit) unless auditAll is true
   console.info = (...args: any[]) => {
     originalConsoleInfo.apply(console, args);
-    audit({
-      level: 'info',
-      category: 'action',
-      event: formatArgs(args),
-      actor,
-    });
+    if (auditAll) {
+      audit({
+        level: 'info',
+        category: 'action',
+        event: formatArgs(args),
+        actor,
+      });
+    }
   };
 
+  // console.warn - always write to audit (important)
   console.warn = (...args: any[]) => {
     originalConsoleWarn.apply(console, args);
     audit({
@@ -47,6 +63,7 @@ export function initGlobalLogger(actor: string) {
     });
   };
 
+  // console.error - always write to audit (important)
   console.error = (...args: any[]) => {
     originalConsoleError.apply(console, args);
     audit({

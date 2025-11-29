@@ -4,14 +4,16 @@
  */
 
 import type { APIRoute } from 'astro';
-import { initializeSkills } from '@brain/skills/index.js';
+// DISABLED: Skills system not in use
+// import { initializeSkills } from '@brain/skills/index.js';
 import { executeSkill, loadTrustLevel, getAvailableSkills } from '@metahuman/core/skills';
 import { paths } from '@metahuman/core/paths';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
 import path from 'node:path';
 
+// DISABLED: Skills system not in use
 // Initialize skills when module loads
-initializeSkills();
+// initializeSkills();
 
 interface FileOperationRequest {
   action: 'create' | 'read' | 'write' | 'delete';
