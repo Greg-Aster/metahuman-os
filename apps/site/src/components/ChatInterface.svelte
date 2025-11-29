@@ -29,7 +29,8 @@
   let lengthMode: 'auto' | 'concise' | 'detailed' = 'auto';
   let messagesContainer: HTMLDivElement;
   let shouldAutoScroll = true;
-  let reflectionStream: EventSource | null = null;
+  // reflectionStream removed - dreams/reflections now loaded from buffer on tab focus
+  let visibilityCleanup: (() => void) | null = null;
   // Convenience toggles
   let ttsEnabled = false;
   let boredomTtsEnabled = false; // For inner dialog voice
@@ -165,32 +166,7 @@
     } catch {}
   }
 
-  /**
-   * Persist a message to the inner dialogue buffer on the server
-   * This ensures reflections/dreams are saved and appear when switching to inner tab
-   */
-  async function persistToInnerBuffer(role: MessageRole, content: string, meta?: Record<string, any>): Promise<void> {
-    try {
-      const response = await fetch('/api/conversation-buffer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: 'inner',
-          message: {
-            role,
-            content,
-            timestamp: Date.now(),
-            meta,
-          },
-        }),
-      });
-      if (!response.ok) {
-        console.error('[inner-buffer] Failed to persist message');
-      }
-    } catch (error) {
-      console.error('[inner-buffer] Error persisting message:', error);
-    }
-  }
+  // persistToInnerBuffer removed - agents now write directly to buffer via appendReflectionToBuffer/appendDreamToBuffer
 
   function updateReasoningDepth(value: number, persist = false) {
     const clamped = clampReasoningDepth(value);
@@ -285,132 +261,24 @@
       scrollObserver.observe(scrollSentinel);
     }
 
-    // Connect to reflection stream (close existing connection first to prevent duplicates)
-    if (reflectionStream) {
-      reflectionStream.close();
-      reflectionStream = null;
-    }
-    reflectionStream = new EventSource('/api/reflections/stream');
-
-    reflectionStream.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-
-        // Handle reflections
-        if (data.type === 'reflection' && data.reflection) {
-          const reflectionTimestamp = new Date(data.timestamp).getTime();
-
-          // Check for duplicates based on content and timestamp
-          const isDuplicate = messages.some(msg =>
-            msg.role === 'reflection' &&
-            msg.content === data.reflection &&
-            Math.abs(msg.timestamp - reflectionTimestamp) < 1000 // Within 1 second
-          );
-
-          if (!isDuplicate) {
-            messagesApi.pushMessage('reflection', data.reflection);
-
-            // Persist to inner dialogue buffer for history
-            void persistToInnerBuffer('reflection', data.reflection, { type: 'reflection' });
-
-            // Add voice support for inner dialog if enabled
-            if (boredomTtsEnabled && mode === 'inner' && data.reflection) {
-              void ttsApi.speakText(data.reflection);
-            }
-          } else {
-            console.log('[reflection] Ignoring duplicate reflection');
-          }
-        }
-
-        // Handle dreams
-        if (data.type === 'dream' && data.dream) {
-          const dreamTimestamp = new Date(data.timestamp).getTime();
-
-          // Check for duplicates based on content and timestamp
-          const isDuplicate = $messages.some(msg =>
-            msg.role === 'dream' &&
-            msg.content === data.dream &&
-            Math.abs(msg.timestamp - dreamTimestamp) < 1000 // Within 1 second
-          );
-
-          if (!isDuplicate) {
-            messagesApi.pushMessage('dream', data.dream);
-
-            // Persist to inner dialogue buffer for history
-            void persistToInnerBuffer('dream', data.dream, { type: 'dream' });
-
-            // Add voice support for dreams if enabled
-            if (boredomTtsEnabled && mode === 'inner' && data.dream) {
-              void ttsApi.speakText(data.dream);
-            }
-          } else {
-            console.log('[dream] Ignoring duplicate dream');
-          }
-        }
-
-        // Handle curiosity questions (only in conversation mode)
-        if (data.type === 'curiosity' && data.question && mode === 'conversation') {
-          console.log('[curiosity] Received new question via SSE:', data.questionId);
-
-          // Check for duplicates - prevent same question ID from being added multiple times
-          const isDuplicate = $messages.some(msg =>
-            msg.meta?.curiosityQuestionId === data.questionId
-          );
-
-          if (isDuplicate) {
-            console.log('[curiosity] Ignoring duplicate question:', data.questionId);
-            return;
-          }
-
-          const newMessage = {
-            role: 'assistant' as MessageRole,
-            content: data.question,
-            timestamp: new Date(data.timestamp).getTime(),
-            meta: {
-              curiosityQuestionId: data.questionId,
-              isCuriosityQuestion: true
-            }
-          };
-
-          messagesApi.pushMessage('assistant', data.question, undefined, {
-            curiosityQuestionId: data.questionId,
-            isCuriosityQuestion: true
-          });
-
-          // Auto-select the new question for easy reply
-          messagesApi.selectMessage(newMessage, $messages.length);
-          console.log('[curiosity] Auto-selected new question');
-
-          // Trigger TTS if enabled
-          if (ttsEnabled && data.question) {
-            console.log('[curiosity] Speaking question via TTS');
-            void ttsApi.speakText(data.question);
-          }
-        }
-
-        // Handle agent activity notifications
-        if (data.type === 'agent_activity' && data.message) {
-          console.log(`[agent] ${data.agent}: ${data.status}`);
-
-          // Add as a system notification in the chat
-          messagesApi.pushMessage('system', data.message, undefined, {
-            isAgentNotification: true,
-            agent: data.agent,
-            status: data.status,
-          });
-        }
-      } catch (e) {
-        console.error('Failed to parse reflection/dream/curiosity event:', e);
+    // PERFORMANCE FIX: Removed legacy SSE polling stream (reflections/stream.ts)
+    // Dreams and reflections now write directly to conversation buffer via agents.
+    // We simply refresh from the buffer when the tab becomes visible.
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        console.log('[chat] Tab visible, refreshing messages from buffer');
+        void messagesApi.loadMessagesFromServer();
       }
     };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    reflectionStream.onerror = () => {
-      console.log('Reflection stream disconnected, will auto-reconnect');
+    // Store cleanup function for onDestroy
+    visibilityCleanup = () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
 
-    // Curiosity questions now come through normal conversation stream
-    // They're saved as conversation events by curiosity-service agent
-    // and loaded via /api/chat/history just like regular messages
+    // Curiosity questions and agent notifications now come through normal conversation flow
+    // They're saved as conversation events by agents and loaded via /api/chat/history
 
     // Listen for voice settings changes (triggered when user updates VAD settings in UI)
     window.addEventListener('voice-settings-updated', handleVoiceSettingsUpdate);
@@ -428,7 +296,8 @@
     // Mark component as unmounted to stop animation loops
     isComponentMounted = false;
 
-    reflectionStream?.close();
+    // Clean up visibility listener (replaced legacy SSE polling)
+    visibilityCleanup?.();
     chatResponseStream?.close(); // Fix memory leak: close chat stream
     activityApi.clearActivity();
     ttsApi.cleanup();

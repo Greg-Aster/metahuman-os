@@ -53,7 +53,8 @@
     "./node-executors": "./src/node-executors/index.ts",
     "./big-brother": "./src/big-brother.ts",
     "./claude-session": "./src/claude-session.ts",
-    "./graph-error-handler": "./src/graph-error-handler.ts"
+    "./graph-error-handler": "./src/graph-error-handler.ts",
+    "./encryption": "./src/encryption.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.939.0",

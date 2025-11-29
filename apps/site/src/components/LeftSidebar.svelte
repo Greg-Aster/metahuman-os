@@ -119,8 +119,7 @@
   let statusSubscription = null;
 
   // Real-time activity tracking
-  let activeRoles = new Set<string>();
-  let eventSource: EventSource | null = null;
+  // activeRoles and eventSource removed - llm-activity polling deleted
 
   // Load status from shared store instead of making API call directly
   async function loadStatus() {
@@ -547,42 +546,7 @@
     }
   }
 
-  function connectActivityStream() {
-    if (eventSource) return;
-    eventSource = new EventSource('/api/llm-activity');
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-
-        if (data.type === 'start') {
-          activeRoles.add(data.role);
-          activeRoles = activeRoles; // Trigger reactivity
-        } else if (data.type === 'end') {
-          activeRoles.delete(data.role);
-          activeRoles = activeRoles; // Trigger reactivity
-        }
-      } catch (e) {
-        console.error('Failed to parse activity event:', e);
-      }
-    };
-
-    eventSource.onerror = () => {
-      console.warn('Activity stream disconnected, reconnecting in 5s...');
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-      }
-      setTimeout(connectActivityStream, 5000);
-    };
-  }
-
-  function disconnectActivityStream() {
-    if (eventSource) {
-      eventSource.close();
-      eventSource = null;
-    }
-  }
+  // connectActivityStream and disconnectActivityStream removed - llm-activity polling deleted
 
   async function fetchCurrentUser() {
     try {
@@ -633,21 +597,16 @@
     // Set up document click handler for closing dropdowns
     document.addEventListener('click', handleDocumentClick);
 
-    // Set up visibility change handling to connect/disconnect EventSource and pause polling
+    // Set up visibility change handling to pause polling when tab hidden
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        disconnectActivityStream();
         stopApprovalsPolling();
       } else {
-        connectActivityStream();
         startApprovalsPolling();
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    // Connect after a small delay to allow for any initial page setup
-    setTimeout(connectActivityStream, 1000);
 
     return () => {
       stopApprovalsPolling();
@@ -657,7 +616,6 @@
       }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       document.removeEventListener('click', handleDocumentClick);
-      disconnectActivityStream();
     };
   });
 
@@ -702,7 +660,7 @@
         {#if hasModelRegistry}
           <!-- Multi-model registry view with interactive switching -->
           {#each Object.entries(modelRoles) as [role, info]}
-            <div class="model-role-row" class:active={activeRoles.has(role)}>
+            <div class="model-role-row">
               <span class="activity-indicator">
                 <span class="activity-dot"></span>
               </span>

@@ -12,10 +12,10 @@ import('@metahuman/core/node-executors').then(({ getNodeExecutor }) => {
   console.error('[prewarm] ⚠️ Failed to pre-warm executors:', err);
 });
 
-// Force import of skills
-import('@brain/skills/index.js').then(({ initializeSkills }) => {
-  initializeSkills();
-  console.log('[prewarm] ✅ Skills registry loaded successfully');
-}).catch(err => {
-  console.error('[prewarm] ⚠️ Failed to pre-warm skills:', err);
-});
+// DISABLED: Skills system not in use - removed to save resources
+// import('@brain/skills/index.js').then(({ initializeSkills }) => {
+//   initializeSkills();
+//   console.log('[prewarm] ✅ Skills registry loaded successfully');
+// }).catch(err => {
+//   console.error('[prewarm] ⚠️ Failed to pre-warm skills:', err);
+// });

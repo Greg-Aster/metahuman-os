@@ -12,12 +12,13 @@
   }
 
   let logs: LogEntry[] = [];
-  let connectionStatus = 'Connecting...';
+  let connectionStatus = 'Ready';
   let logContainer: HTMLDivElement;
   let autoScroll = true;
   let bottomSentinel: HTMLDivElement;
   let observer: IntersectionObserver | null = null;
-  let eventSource: EventSource | null = null;
+  let isLoading = false;
+  let lastLoadTime: string | null = null;
 
   // Limit for log rotation to prevent unbounded growth
   const MAX_LOGS = 500;
@@ -35,6 +36,36 @@
     });
   }
 
+  async function loadLogs() {
+    if (isLoading) return;
+    isLoading = true;
+    connectionStatus = 'Loading...';
+
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const response = await fetch(`/api/audit?date=${today}`);
+      if (!response.ok) throw new Error('Failed to fetch audit logs');
+
+      const data = await response.json();
+      // Take only the most recent MAX_LOGS entries
+      logs = (data.entries || []).slice(-MAX_LOGS);
+      lastLoadTime = new Date().toLocaleTimeString();
+      connectionStatus = `Loaded ${logs.length} entries`;
+    } catch (error) {
+      console.error('[LogStream] Failed to load audit logs:', error);
+      connectionStatus = 'Failed to load';
+    } finally {
+      isLoading = false;
+    }
+  }
+
+  function handleVisibilityChange() {
+    if (!document.hidden) {
+      console.log('[LogStream] Tab visible, refreshing audit logs');
+      void loadLogs();
+    }
+  }
+
   onMount(() => {
     if (logContainer && bottomSentinel) {
       observer = new IntersectionObserver(
@@ -48,42 +79,17 @@
     }
 
     window.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    eventSource = new EventSource('/api/stream');
-
-    eventSource.onopen = () => {
-      connectionStatus = 'Connected';
-    };
-
-    eventSource.onmessage = (event) => {
-      try {
-        const newLog = JSON.parse(event.data);
-        if (newLog.type === 'connected') {
-          logs = [...logs, { timestamp: new Date().toISOString(), level: 'info', category: 'system', event: 'stream_connected', actor: 'system' }];
-        } else {
-          logs = [...logs, newLog];
-        }
-        
-        // Rotate logs if too many
-        if (logs.length > MAX_LOGS) {
-          logs = logs.slice(-MAX_LOGS);
-        }
-      } catch (e) {
-        console.error('Failed to parse log event:', e);
-      }
-    };
-
-    eventSource.onerror = () => {
-      connectionStatus = 'Disconnected. Will attempt to reconnect...';
-      // EventSource automatically tries to reconnect
-    };
+    // Load logs on mount
+    void loadLogs();
   });
 
   onDestroy(() => {
-    eventSource?.close();
     observer?.disconnect();
     observer = null;
     window.removeEventListener('keydown', handleKeyDown);
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
   });
 
   function getLevelColor(level: LogEntry['level']) {
@@ -223,10 +229,12 @@
   <!-- Header -->
   <div class="p-2 border-b border-gray-700">
     <div class="flex justify-between items-center mb-2">
-      <h3 class="font-semibold text-white text-sm">Audit Stream</h3>
+      <h3 class="font-semibold text-white text-sm">Audit Log</h3>
       <div class="flex items-center gap-2">
-        <div class="w-2 h-2 rounded-full {connectionStatus === 'Connected' ? 'bg-green-500' : 'bg-yellow-500'}"></div>
         <span class="text-xs text-gray-400">{connectionStatus}</span>
+        {#if lastLoadTime}
+          <span class="text-xs text-gray-500">@ {lastLoadTime}</span>
+        {/if}
         <span class="text-xs text-gray-400">·</span>
         <span class="text-xs text-gray-400">{filteredLogs.length}</span>
       </div>
@@ -261,6 +269,14 @@
       <div class="flex-1"></div>
       <button
         class="filter-pill"
+        on:click={loadLogs}
+        disabled={isLoading}
+        title="Refresh audit logs"
+      >
+        {isLoading ? '...' : 'Refresh'}
+      </button>
+      <button
+        class="filter-pill"
         on:click={clear}
         title="Clear all messages"
       >
@@ -286,7 +302,7 @@
   <div bind:this={logContainer} class="flex-1 overflow-y-auto p-4 min-h-0">
     {#if filteredLogs.length === 0}
       <div class="text-gray-500">
-        {levelFilter === 'all' ? 'Awaiting real-time system events...' : 'No matching messages'}
+        {isLoading ? 'Loading audit entries...' : (levelFilter === 'all' ? 'No audit entries for today. Click Refresh to reload.' : 'No matching messages')}
       </div>
     {/if}
     {#each filteredLogs as log}

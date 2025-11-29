@@ -18,15 +18,17 @@ import { canWriteMemory, shouldCaptureTool } from '@metahuman/core/memory-policy
 import { loadCognitiveMode } from '@metahuman/core/cognitive-mode';
 import { getUserContext } from '@metahuman/core/context';
 import { resolvePathWithFuzzyFallback, type PathResolution } from '@metahuman/core/path-resolver';
-import { initializeSkills } from '../skills/index';
+// DISABLED: Skills system not in use - graph pipeline handles everything
+// import { initializeSkills } from '../skills/index';
 import { ReasoningEngine } from '@metahuman/core/reasoning';
 import { formatContextForPrompt } from '@metahuman/core/context-builder';
 import { loadOperatorConfig } from '@metahuman/core/config';
 
+// DISABLED: Skills system not in use - graph pipeline handles everything
 // Ensure the skills registry is populated before any ReAct loop runs.
 // initializeSkills() is idempotent, so calling on module load avoids missing-skill failures
 // when this module is imported outside of the web operator route.
-initializeSkills();
+// initializeSkills();
 
 // ============================================================================
 // Types

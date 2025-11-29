@@ -8,12 +8,23 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { scheduler, paths, audit, acquireLock, initGlobalLogger } from '@metahuman/core';
+import { scheduler, paths, audit, acquireLock, initGlobalLogger, purgeOldAuditLogs } from '@metahuman/core';
 import { preloadEmbeddingModel } from '@metahuman/core/embeddings';
+
+// Daily log cleanup interval (24 hours in ms)
+const LOG_CLEANUP_INTERVAL = 24 * 60 * 60 * 1000;
 
 async function main() {
   initGlobalLogger('scheduler-service');
   console.log('[scheduler-service] Initializing...');
+
+  // Purge old audit logs on startup
+  try {
+    purgeOldAuditLogs();
+    console.log('[scheduler-service] Old audit logs purged');
+  } catch (err) {
+    console.warn('[scheduler-service] Failed to purge old logs:', err);
+  }
 
   // Single-instance guard
   try {
@@ -59,15 +70,27 @@ async function main() {
     }
   });
 
+  // Schedule daily log cleanup
+  const logCleanupInterval = setInterval(() => {
+    try {
+      purgeOldAuditLogs();
+      console.log('[scheduler-service] Daily log cleanup completed');
+    } catch (err) {
+      console.warn('[scheduler-service] Daily log cleanup failed:', err);
+    }
+  }, LOG_CLEANUP_INTERVAL);
+
   // Graceful shutdown
   process.on('SIGINT', () => {
     console.log('[scheduler-service] Shutting down...');
+    clearInterval(logCleanupInterval);
     scheduler.stop();
     process.exit(0);
   });
 
   process.on('SIGTERM', () => {
     console.log('[scheduler-service] Shutting down...');
+    clearInterval(logCleanupInterval);
     scheduler.stop();
     process.exit(0);
   });

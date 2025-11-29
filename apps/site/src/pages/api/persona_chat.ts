@@ -6,7 +6,8 @@ import { loadChatSettings } from '@metahuman/core/chat-settings';
 import { getUserOrAnonymous, getUserPaths, getProfilePaths } from '@metahuman/core';
 import { readFileSync, existsSync, appendFileSync, writeFileSync, promises as fs } from 'node:fs';
 import path from 'node:path';
-import { initializeSkills } from '@brain/skills/index.js';
+// DISABLED: Skills system not in use - graph pipeline handles everything
+// import { initializeSkills } from '@brain/skills/index.js';
 import { getAvailableSkills, executeSkill, type SkillManifest } from '@metahuman/core/skills';
 import { resolveNodePipelineFlag } from '../../utils/node-pipeline';
 // Proactively import node executors to ensure they're loaded before graph execution
@@ -17,8 +18,9 @@ type Role = 'system' | 'user' | 'assistant';
 type Mode = 'inner' | 'conversation';
 type ConversationMessage = { role: Role; content: string; meta?: any; timestamp?: number };
 
+// DISABLED: Skills system not in use - graph pipeline handles everything
 // Ensure skill registry is ready for any inline tool invocations from persona_chat.
-initializeSkills();
+// initializeSkills();
 
 // Force node executor registry to load (imported for side effects)
 void nodeExecutors;

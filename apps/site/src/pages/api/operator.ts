@@ -4,7 +4,8 @@
  */
 
 import type { APIRoute } from 'astro';
-import { initializeSkills } from '@brain/skills/index.js';
+// DISABLED: Skills system not in use
+// import { initializeSkills } from '@brain/skills/index.js';
 import { runOperatorWithFeatureFlag } from '@brain/agents/operator-react.js';
 import { loadTrustLevel, getAvailableSkills, listSkills } from '@metahuman/core/skills';
 import { audit } from '@metahuman/core/audit';
@@ -13,8 +14,9 @@ import { getSecurityPolicy } from '@metahuman/core/security-policy';
 import { buildContextPackage } from '@metahuman/core/context-builder';
 import { loadRuntimeConfig } from '@metahuman/core/config';
 
+// DISABLED: Skills system not in use
 // Initialize skills when module loads
-initializeSkills();
+// initializeSkills();
 
 interface OperatorRequest {
   goal: string;

@@ -3,13 +3,15 @@
  * Detects file operations and routes them to the skills system
  */
 
-import { initializeSkills } from '@brain/skills/index.js';
+// DISABLED: Skills system not in use
+// import { initializeSkills } from '@brain/skills/index.js';
 import { executeSkill, loadTrustLevel, getAvailableSkills, listSkills } from '@metahuman/core/skills';
 import { paths } from '@metahuman/core/paths';
 import path from 'node:path';
 
+// DISABLED: Skills system not in use
 // Initialize skills when module loads
-initializeSkills();
+// initializeSkills();
 
 /**
  * Check if a message is requesting a file operation

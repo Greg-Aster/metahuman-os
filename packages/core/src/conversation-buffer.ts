@@ -195,3 +195,121 @@ export function persistBuffer(
     console.error('[conversation-buffer] Failed to persist buffer:', error);
   }
 }
+
+// ============================================================================
+// Agent-friendly functions (don't require AsyncLocalStorage context)
+// ============================================================================
+
+import { getProfilePaths } from './paths.js';
+import { getUser, getUserByUsername } from './users.js';
+
+/**
+ * Get buffer path for a specific user (by username)
+ * Used by agents that run outside web request context
+ */
+export function getBufferPathForUser(username: string, mode: ConversationBufferMode): string {
+  const profilePaths = getProfilePaths(username);
+  const bufferDir = profilePaths.state;
+  try {
+    fs.mkdirSync(bufferDir, { recursive: true });
+  } catch {
+    // Ignore mkdir race conditions
+  }
+  return path.join(bufferDir, `conversation-buffer-${mode}.json`);
+}
+
+/**
+ * Append a message to a user's conversation buffer
+ * Can be called from agents without web request context
+ *
+ * @param userIdOrUsername - User UUID or username (both supported for agent compatibility)
+ * @param mode - 'conversation' or 'inner'
+ * @param message - Message to append
+ * @returns true if successful
+ */
+export function appendToUserBuffer(
+  userIdOrUsername: string,
+  mode: ConversationBufferMode,
+  message: { role: string; content: string; meta?: Record<string, unknown> }
+): boolean {
+  // Resolve user - try UUID first, then username (agents often pass username)
+  let user = getUser(userIdOrUsername);
+  if (!user) {
+    user = getUserByUsername(userIdOrUsername);
+  }
+  if (!user) {
+    console.warn(`[conversation-buffer] Cannot append: user ${userIdOrUsername} not found`);
+    return false;
+  }
+
+  const bufferPath = getBufferPathForUser(user.username, mode);
+
+  try {
+    // Load existing buffer
+    let buffer: ConversationBuffer;
+    if (fs.existsSync(bufferPath)) {
+      const raw = fs.readFileSync(bufferPath, 'utf-8');
+      buffer = JSON.parse(raw);
+      if (!Array.isArray(buffer.messages)) {
+        buffer.messages = [];
+      }
+    } else {
+      buffer = {
+        summaryMarkers: [],
+        messages: [],
+        lastSummarizedIndex: null,
+        lastUpdated: new Date().toISOString(),
+      };
+    }
+
+    // Add message with timestamp
+    const newMessage: ConversationMessage = {
+      role: message.role as 'system' | 'user' | 'assistant',
+      content: message.content,
+      meta: message.meta,
+      timestamp: Date.now(),
+    };
+
+    buffer.messages.push(newMessage);
+
+    // Auto-prune to last 50 messages
+    const MAX_MESSAGES = 50;
+    if (buffer.messages.length > MAX_MESSAGES) {
+      buffer.messages = buffer.messages.slice(-MAX_MESSAGES);
+    }
+
+    // Save
+    buffer.lastUpdated = new Date().toISOString();
+    fs.writeFileSync(bufferPath, JSON.stringify(buffer, null, 2));
+
+    console.log(`[conversation-buffer] ✅ Appended ${message.role} to ${mode} buffer for ${user.username}`);
+    return true;
+  } catch (error) {
+    console.error(`[conversation-buffer] Failed to append to ${mode} buffer:`, error);
+    return false;
+  }
+}
+
+/**
+ * Append a reflection to a user's inner dialogue buffer
+ * Convenience function for agents
+ */
+export function appendReflectionToBuffer(userId: string, content: string): boolean {
+  return appendToUserBuffer(userId, 'inner', {
+    role: 'reflection',
+    content,
+    meta: { type: 'reflection', source: 'agent' },
+  });
+}
+
+/**
+ * Append a dream to a user's inner dialogue buffer
+ * Convenience function for agents
+ */
+export function appendDreamToBuffer(userId: string, content: string): boolean {
+  return appendToUserBuffer(userId, 'inner', {
+    role: 'dream',
+    content,
+    meta: { type: 'dream', source: 'agent' },
+  });
+}
