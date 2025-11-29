@@ -7,6 +7,7 @@ import path from 'path';
 import { paths } from '../paths.js';
 import { captureEvent } from '../memory.js';
 import { audit } from '../audit.js';
+import { appendReflectionToBuffer, appendDreamToBuffer } from '../conversation-buffer.js';
 import type { NodeExecutor } from './types.js';
 
 /**
@@ -57,6 +58,17 @@ export const innerDialogueCaptureExecutor: NodeExecutor = async (inputs, context
         textLength: reflectionText.length,
       },
     });
+
+    // Also write to conversation buffer so UI can load it without polling
+    // This eliminates the need for reflections/stream.ts SSE polling
+    if (context.userId) {
+      const isDream = options.tags?.includes('dream') || options.tags?.includes('lucid');
+      if (isDream) {
+        appendDreamToBuffer(context.userId, reflectionText);
+      } else {
+        appendReflectionToBuffer(context.userId, reflectionText);
+      }
+    }
 
     return {
       saved: true,

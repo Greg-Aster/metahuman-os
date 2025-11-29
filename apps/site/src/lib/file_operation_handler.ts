@@ -3,14 +3,16 @@
  * Adds direct file operation support to the chat API
  */
 
-import { initializeSkills } from '@brain/skills/index.js';
+// DISABLED: Skills system not in use
+// import { initializeSkills } from '@brain/skills/index.js';
 import { executeSkill, loadTrustLevel, getAvailableSkills } from '@metahuman/core/skills';
 import { paths } from '@metahuman/core/paths';
 import path from 'node:path';
 import fs from 'node:fs';
 
+// DISABLED: Skills system not in use
 // Initialize skills
-initializeSkills();
+// initializeSkills();
 
 /**
  * Check if a message is requesting a file operation
