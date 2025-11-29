@@ -192,11 +192,36 @@ export function validateProfilePath(
   }
 
   // 7. Check writability
-  if (checkWritable && checkExists && errors.length === 0) {
-    try {
-      fs.accessSync(resolvedPath, fs.constants.W_OK);
-    } catch {
-      errors.push('Directory is not writable');
+  if (checkWritable && errors.length === 0) {
+    if (checkExists) {
+      // Check the path itself is writable
+      try {
+        fs.accessSync(resolvedPath, fs.constants.W_OK);
+      } catch {
+        errors.push('Directory is not writable');
+      }
+    } else {
+      // Path doesn't exist yet - walk up the tree to find first existing ancestor
+      let checkDir = path.dirname(resolvedPath);
+      let foundExisting = false;
+
+      // Walk up until we find an existing directory or hit root
+      while (checkDir && checkDir !== '/') {
+        if (fs.existsSync(checkDir)) {
+          foundExisting = true;
+          try {
+            fs.accessSync(checkDir, fs.constants.W_OK);
+          } catch {
+            errors.push(`Cannot create directories - ${checkDir} is not writable`);
+          }
+          break;
+        }
+        checkDir = path.dirname(checkDir);
+      }
+
+      if (!foundExisting) {
+        errors.push('No writable parent directory found in path');
+      }
     }
   }
 
