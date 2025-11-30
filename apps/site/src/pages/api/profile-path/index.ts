@@ -11,7 +11,7 @@ import {
 } from '@metahuman/core';
 import {
   isProfileEncrypted,
-  loadEncryptionMeta,
+  getEncryptionMeta,
 } from '@metahuman/core/encryption';
 
 /**
@@ -25,19 +25,18 @@ export const GET: APIRoute = async ({ cookies }) => {
     const profilePaths = getProfilePaths(user.username);
 
     const encrypted = isProfileEncrypted(profilePaths.root);
-    const meta = encrypted ? loadEncryptionMeta(profilePaths.root) : null;
+    const meta = encrypted ? getEncryptionMeta(profilePaths.root) : null;
 
     return new Response(
       JSON.stringify({
         path: profilePaths.root,
         isEncrypted: encrypted,
-        passwordMode: meta?.passwordMode || null,
         encryptionInfo: meta
           ? {
               algorithm: meta.algorithm,
               createdAt: meta.createdAt,
               encryptedFiles: meta.encryptedFiles,
-              passwordMode: meta.passwordMode || 'separate',
+              lastUnlockedAt: meta.lastUnlockedAt,
             }
           : null,
       }),
