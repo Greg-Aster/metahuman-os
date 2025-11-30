@@ -2,6 +2,7 @@
   /**
    * ReferenceAudioSelector
    * UI for selecting voice samples to use as reference audio
+   * For GPT-SoVITS: Allows setting specific samples as the active reference
    */
 
   import { onMount } from 'svelte';
@@ -10,6 +11,7 @@
   export let speakerId: string = 'default';
   export let minQuality: number = 0.8;
   export let onSelectionChange: (selectedIds: string[]) => void = () => {};
+  export let onReferenceSet: (sampleId: string) => void = () => {};
 
   interface VoiceSample {
     id: string;
@@ -20,6 +22,12 @@
     quality: number;
   }
 
+  interface CurrentReference {
+    sampleId: string | null;
+    referencePath: string | null;
+    transcript: string | null;
+  }
+
   let samples: VoiceSample[] = [];
   let selectedIds: Set<string> = new Set();
   let loading = false;
@@ -28,9 +36,15 @@
   let avgQuality = 0;
   let playingId: string | null = null;
   let audioElement: HTMLAudioElement | null = null;
+  let currentReference: CurrentReference | null = null;
+  let settingReference = false;
+  let testingVoice = false;
 
   onMount(() => {
     loadSamples();
+    if (provider === 'gpt-sovits' || provider === 'sovits') {
+      loadCurrentReference();
+    }
   });
 
   async function loadSamples() {
@@ -55,6 +69,93 @@
       console.error('[ReferenceAudioSelector] Error loading samples:', err);
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadCurrentReference() {
+    try {
+      const response = await fetch(
+        `/api/sovits-training?action=current-reference&provider=gpt-sovits&speakerId=${speakerId}`
+      );
+      if (response.ok) {
+        currentReference = await response.json();
+      }
+    } catch (err) {
+      console.error('[ReferenceAudioSelector] Error loading current reference:', err);
+    }
+  }
+
+  async function setAsReference(sampleId: string, event: Event) {
+    event.stopPropagation();
+    settingReference = true;
+    error = '';
+
+    try {
+      const response = await fetch('/api/sovits-training', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'set-reference',
+          provider: 'gpt-sovits',
+          speakerId,
+          sampleId,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to set reference');
+      }
+
+      // Reload current reference
+      await loadCurrentReference();
+      onReferenceSet(sampleId);
+    } catch (err) {
+      error = String(err);
+      console.error('[ReferenceAudioSelector] Error setting reference:', err);
+    } finally {
+      settingReference = false;
+    }
+  }
+
+  async function testVoiceWithSample(sampleId: string, event: Event) {
+    event.stopPropagation();
+    testingVoice = true;
+    error = '';
+
+    try {
+      // First set this sample as the reference
+      await setAsReference(sampleId, event);
+
+      // Then trigger a voice test via TTS API
+      const testText = 'Testing voice with this reference sample.';
+      const response = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: testText,
+          provider: 'gpt-sovits',
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to generate test audio');
+      }
+
+      // Play the generated audio
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      audio.play();
+
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+      };
+    } catch (err) {
+      error = String(err);
+      console.error('[ReferenceAudioSelector] Error testing voice:', err);
+    } finally {
+      testingVoice = false;
     }
   }
 
@@ -158,13 +259,32 @@
   <div class="selector-header">
     <h3>Select Reference Audio Samples</h3>
     <p class="help-text">
-      {#if provider === 'gpt-sovits'}
-        Select 3-5 high-quality samples (5-10 seconds total) for best results
+      {#if provider === 'gpt-sovits' || provider === 'sovits'}
+        GPT-SoVITS voice cloning - Select a sample and click "🎯 Set Reference" to use it, then "🔊 Test" to hear your cloned voice
       {:else}
-        Select samples for Piper voice training (more is better)
+        Select samples for voice training (more is better)
       {/if}
     </p>
   </div>
+
+  <!-- Current Reference Display for GPT-SoVITS -->
+  {#if (provider === 'gpt-sovits' || provider === 'sovits') && currentReference?.sampleId}
+    <div class="current-reference">
+      <div class="current-reference-header">
+        <span class="reference-icon">🎯</span>
+        <strong>Active Reference:</strong>
+        <span class="reference-id">{currentReference.sampleId}</span>
+      </div>
+      {#if currentReference.transcript}
+        <div class="reference-transcript">"{currentReference.transcript}"</div>
+      {/if}
+    </div>
+  {:else if (provider === 'gpt-sovits' || provider === 'sovits')}
+    <div class="current-reference no-reference">
+      <span class="reference-icon">⚠️</span>
+      <span>No reference set. Select a sample below and click "🎯 Set Reference"</span>
+    </div>
+  {/if}
 
   {#if loading}
     <div class="loading">Loading samples...</div>
@@ -238,13 +358,35 @@
               </div>
             </div>
 
-            <button
-              class="play-button"
-              on:click={(e) => togglePlayAudio(sample, e)}
-              title={playingId === sample.id ? 'Stop' : 'Play'}
-            >
-              {playingId === sample.id ? '⏸️' : '▶️'}
-            </button>
+            <div class="sample-actions">
+              <button
+                class="play-button"
+                on:click={(e) => togglePlayAudio(sample, e)}
+                title={playingId === sample.id ? 'Stop' : 'Play sample'}
+              >
+                {playingId === sample.id ? '⏸️' : '▶️'}
+              </button>
+
+              {#if provider === 'gpt-sovits' || provider === 'sovits'}
+                <button
+                  class="action-button set-reference"
+                  class:active={currentReference?.sampleId === sample.id}
+                  on:click={(e) => setAsReference(sample.id, e)}
+                  disabled={settingReference}
+                  title="Set as active reference for voice cloning"
+                >
+                  {currentReference?.sampleId === sample.id ? '✓' : '🎯'}
+                </button>
+                <button
+                  class="action-button test-voice"
+                  on:click={(e) => testVoiceWithSample(sample.id, e)}
+                  disabled={testingVoice}
+                  title="Test voice with this sample"
+                >
+                  {testingVoice ? '...' : '🔊'}
+                </button>
+              {/if}
+            </div>
 
             <div class="sample-quality-bar">
               <div class="quality-fill" style="width: {sample.quality * 100}%"></div>
@@ -301,6 +443,59 @@
     font-size: 0.9rem;
     color: var(--text-secondary, #888);
     opacity: 0.8;
+  }
+
+  /* Current Reference Display */
+  .current-reference {
+    background: var(--bg-accent, #1a3a5a);
+    border: 1px solid var(--border-accent, #2a5a8a);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .current-reference.no-reference {
+    background: var(--bg-warning, #3a3a1a);
+    border-color: var(--border-warning, #8a8a2a);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  :global(.dark) .current-reference {
+    background: #1a3a5a;
+    border-color: #2a5a8a;
+  }
+
+  :global(.dark) .current-reference.no-reference {
+    background: #3a3a1a;
+    border-color: #5a5a2a;
+  }
+
+  .current-reference-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.95rem;
+  }
+
+  .reference-icon {
+    font-size: 1.2rem;
+  }
+
+  .reference-id {
+    color: var(--text-accent, #8ab4ff);
+    font-family: monospace;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+  }
+
+  .reference-transcript {
+    margin-top: 0.5rem;
+    font-style: italic;
+    color: var(--text-secondary, #aaa);
+    font-size: 0.9rem;
   }
 
   .loading,
@@ -448,6 +643,81 @@
 
   :global(.dark) .play-button:hover {
     background: #1e3a8a;
+  }
+
+  /* Sample Actions Container */
+  .sample-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-right: 0.5rem;
+  }
+
+  .action-button {
+    padding: 0.4rem;
+    background: var(--bg-button, #333);
+    color: white;
+    border: 1px solid var(--border, #444);
+    border-radius: 6px;
+    width: 2.2rem;
+    height: 2.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+  }
+
+  .action-button:hover:not(:disabled) {
+    transform: scale(1.1);
+  }
+
+  .action-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .action-button.set-reference {
+    background: var(--bg-success, #1a4a3a);
+    border-color: var(--border-success, #2a6a4a);
+  }
+
+  .action-button.set-reference:hover:not(:disabled) {
+    background: var(--bg-success-hover, #2a5a4a);
+  }
+
+  .action-button.set-reference.active {
+    background: #22c55e;
+    border-color: #22c55e;
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
+  }
+
+  .action-button.test-voice {
+    background: var(--bg-info, #1a3a6a);
+    border-color: var(--border-info, #2a5a8a);
+  }
+
+  .action-button.test-voice:hover:not(:disabled) {
+    background: var(--bg-info-hover, #2a4a7a);
+  }
+
+  :global(.dark) .action-button.set-reference {
+    background: #1a4a3a;
+    border-color: #2a6a4a;
+  }
+
+  :global(.dark) .action-button.set-reference:hover:not(:disabled) {
+    background: #2a5a4a;
+  }
+
+  :global(.dark) .action-button.test-voice {
+    background: #1a3a6a;
+    border-color: #2a5a8a;
+  }
+
+  :global(.dark) .action-button.test-voice:hover:not(:disabled) {
+    background: #2a4a7a;
   }
 
   .sample-info {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getCognitiveNodesList } from '../lib/cognitive-nodes/node-registry';
+  import { getCognitiveNodesList } from '../lib/client/visual-editor/node-registry';
 
   export let onNodeSelected: (nodeType: string) => void;
   export let collapsed = false;

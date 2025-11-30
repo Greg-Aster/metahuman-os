@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import { getUserOrAnonymous, getProfilePaths, systemPaths } from '@metahuman/core';
-import { startSovitsServer, stopSovitsServer } from '../../lib/sovits-server';
+import { startSovitsServer, stopSovitsServer } from '../../lib/server/sovits-server';
 import { stopServer } from '@metahuman/core/tts/server-manager';
 import fs from 'node:fs';
 import path from 'node:path';

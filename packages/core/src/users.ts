@@ -18,6 +18,32 @@ const BCRYPT_ROUNDS = 12; // Standard secure rounds for bcrypt
 /**
  * User account
  */
+/**
+ * Encryption configuration for profile storage
+ */
+export interface ProfileEncryptionConfig {
+  /** Encryption type used */
+  type: 'none' | 'aes256' | 'veracrypt';
+  /** Path to VeraCrypt container file (if type === 'veracrypt') */
+  containerPath?: string;
+}
+
+/**
+ * Profile storage configuration
+ */
+export interface ProfileStorageConfig {
+  /** Custom profile directory path (absolute) */
+  path: string;
+  /** Storage type for UI display */
+  type: 'internal' | 'external' | 'encrypted';
+  /** Device UUID for external drives (optional) */
+  deviceId?: string;
+  /** Behavior when external storage unavailable */
+  fallbackBehavior?: 'error' | 'readonly';
+  /** Encryption configuration (if profile is encrypted) */
+  encryption?: ProfileEncryptionConfig;
+}
+
 export interface User {
   id: string;
   username: string;
@@ -30,6 +56,8 @@ export interface User {
     email?: string;
     onboardingState?: OnboardingState;
     profileVisibility?: 'private' | 'public';
+    /** Custom profile storage location */
+    profileStorage?: ProfileStorageConfig;
   };
 }
 
@@ -47,6 +75,8 @@ export interface SafeUser {
     email?: string;
     onboardingState?: OnboardingState;
     profileVisibility?: 'private' | 'public';
+    /** Custom profile storage location */
+    profileStorage?: ProfileStorageConfig;
   };
 }
 
@@ -534,4 +564,77 @@ export function updateProfileVisibility(
   });
 
   return true;
+}
+
+/**
+ * Get user metadata by username (for path resolution)
+ *
+ * Used by path-builder.ts to check for custom profile paths.
+ * Returns undefined if user not found or no metadata.
+ *
+ * @param username - Username to look up
+ * @returns User metadata or undefined
+ */
+export function getUserMetadataByUsername(
+  username: string
+): User['metadata'] | undefined {
+  const store = loadUsers();
+  const user = store.users.find((u) => u.username === username);
+  return user?.metadata;
+}
+
+/**
+ * Get profile storage config for a user
+ *
+ * Convenience function for path resolution.
+ *
+ * @param username - Username to look up
+ * @returns ProfileStorageConfig or undefined
+ */
+export function getProfileStorageConfig(
+  username: string
+): ProfileStorageConfig | undefined {
+  const metadata = getUserMetadataByUsername(username);
+  return metadata?.profileStorage;
+}
+
+/**
+ * Update profile storage configuration for a user
+ *
+ * @param userId - User ID
+ * @param config - New storage configuration (or null to reset to default)
+ */
+export function updateProfileStorage(
+  userId: string,
+  config: ProfileStorageConfig | null
+): void {
+  const store = loadUsers();
+  const user = store.users.find((u) => u.id === userId);
+
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  user.metadata = user.metadata || {};
+
+  if (config === null) {
+    delete user.metadata.profileStorage;
+  } else {
+    user.metadata.profileStorage = config;
+  }
+
+  saveUsers(store);
+
+  audit({
+    level: 'info',
+    category: 'security',
+    event: 'profile_storage_changed',
+    details: {
+      userId,
+      username: user.username,
+      newPath: config?.path ?? 'default',
+      storageType: config?.type ?? 'internal',
+    },
+    actor: userId,
+  });
 }

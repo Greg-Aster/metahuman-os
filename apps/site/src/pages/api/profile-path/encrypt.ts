@@ -18,9 +18,8 @@ import {
   createVerificationFile,
   isProfileEncrypted,
   type EncryptionMeta,
-  type PasswordMode,
 } from '@metahuman/core/encryption';
-import { updateUserMetadata, verifyUserPassword } from '@metahuman/core/users';
+import { updateProfileStorage, getProfileStorageConfig } from '@metahuman/core/users';
 
 /**
  * POST /api/profile-path/encrypt
@@ -28,8 +27,7 @@ import { updateUserMetadata, verifyUserPassword } from '@metahuman/core/users';
  * Encrypt existing profile data in-place
  *
  * Body:
- * - password: string - Encryption password (user's login password or separate)
- * - passwordMode: 'user' | 'separate' - Which password type to use (default: 'user')
+ * - password: string - Encryption password (min 8 chars)
  * - type: 'aes256' - Encryption type (only AES-256 supported for in-place)
  */
 export const POST: APIRoute = async ({ cookies, request }) => {
@@ -38,36 +36,14 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     const profilePaths = getProfilePaths(user.username);
 
     const body = await request.json();
-    const { password, passwordMode = 'user', type = 'aes256' } = body as {
-      password: string;
-      passwordMode?: PasswordMode;
-      type?: string;
-    };
+    const { password, type = 'aes256' } = body;
 
-    // Validate password mode
-    if (passwordMode !== 'user' && passwordMode !== 'separate') {
-      return new Response(
-        JSON.stringify({ error: 'Invalid password mode. Must be "user" or "separate"' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Validate password
+    // Validate inputs
     if (!password || password.length < 8) {
       return new Response(
         JSON.stringify({ error: 'Password must be at least 8 characters' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
-    }
-
-    // For 'user' mode, verify the password matches their login password
-    if (passwordMode === 'user') {
-      if (!verifyUserPassword(user.username, password)) {
-        return new Response(
-          JSON.stringify({ error: 'Password does not match your login password' }),
-          { status: 401, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
     }
 
     if (type !== 'aes256') {
@@ -136,7 +112,6 @@ export const POST: APIRoute = async ({ cookies, request }) => {
             userId: user.id,
             profilePath: profilePaths.root,
             encryptionType: type,
-            passwordMode,
           },
           actor: user.id,
         });
@@ -212,20 +187,19 @@ export const POST: APIRoute = async ({ cookies, request }) => {
           salt: salt.toString('base64'),
           createdAt: new Date().toISOString(),
           encryptedFiles: totalEncrypted,
-          passwordMode,
         };
 
         saveEncryptionMeta(profilePaths.root, meta);
         createVerificationFile(profilePaths.root, key);
 
-        // Update user metadata with encryption info
-        updateUserMetadata(user.id, {
-          profileEncryption: {
+        // Update user profile config
+        const currentConfig = getProfileStorageConfig(user.username);
+        updateProfileStorageConfig(user.username, {
+          encryption: {
             type: 'aes256',
-            passwordMode,
             encryptedAt: new Date().toISOString(),
-            path: profilePaths.root,
           },
+          path: currentConfig?.path || profilePaths.root,
         });
 
         sendProgress({

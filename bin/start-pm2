@@ -1,0 +1,175 @@
+#!/bin/bash
+#
+# MetaHuman OS PM2 Startup Script
+#
+# Starts the web server with PM2 for improved process management,
+# along with background agents and services.
+#
+# Usage:
+#   ./bin/start-pm2
+#
+# Benefits over start.sh:
+#   - Auto-restart on crash
+#   - Centralized logging
+#   - Easy monitoring (pm2 monit)
+#   - Zero-downtime reloads (pm2 reload)
+#
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+echo -e "${BLUE}================================${NC}"
+echo -e "${BLUE}  MetaHuman OS (PM2 Mode)       ${NC}"
+echo -e "${BLUE}================================${NC}"
+echo
+
+print_status() {
+    echo -e "${GREEN}✓${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}!${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}✗${NC} $1"
+}
+
+# Check if PM2 is installed
+if ! command -v pm2 &> /dev/null; then
+    print_warning "PM2 not found. Installing globally..."
+    npm install -g pm2
+    print_status "PM2 installed"
+fi
+
+# Check we're in the right directory
+if [ ! -f "$REPO_ROOT/package.json" ] || [ ! -d "$REPO_ROOT/apps/site" ]; then
+    print_error "This script must be run from the MetaHuman OS root directory"
+    exit 1
+fi
+
+cd "$REPO_ROOT"
+
+# Create PM2 log directory
+mkdir -p "$REPO_ROOT/logs/pm2"
+print_status "PM2 log directory ready"
+
+# Source the virtual environment if it exists
+VENV_PATH="$REPO_ROOT/venv"
+if [ -d "$VENV_PATH" ]; then
+    source "$VENV_PATH/bin/activate"
+    print_status "Python virtual environment activated"
+fi
+
+# Clean up stale process files (reuse from start.sh)
+echo "Cleaning up stale process files..."
+
+# Clean up stale PID files
+PID_DIR="$REPO_ROOT/logs/run"
+if [ -d "$PID_DIR" ]; then
+    for pidfile in "$PID_DIR"/*.pid; do
+        [ -f "$pidfile" ] || continue
+        pid=$(cat "$pidfile" 2>/dev/null || echo "")
+        if [ -n "$pid" ]; then
+            if ! kill -0 "$pid" 2>/dev/null; then
+                rm -f "$pidfile"
+            fi
+        else
+            rm -f "$pidfile"
+        fi
+    done
+fi
+
+# Clean up stale lock files
+LOCK_DIR="$REPO_ROOT/logs/run/locks"
+if [ -d "$LOCK_DIR" ]; then
+    for lockfile in "$LOCK_DIR"/*.lock; do
+        [ -f "$lockfile" ] || continue
+        pid=$(grep -o '"pid"[[:space:]]*:[[:space:]]*[0-9]*' "$lockfile" 2>/dev/null | grep -o '[0-9]*' || echo "")
+        if [ -n "$pid" ]; then
+            if ! kill -0 "$pid" 2>/dev/null; then
+                rm -f "$lockfile"
+            fi
+        else
+            rm -f "$lockfile"
+        fi
+    done
+fi
+
+print_status "Stale files cleaned"
+echo
+
+# Stop any existing PM2 processes for this app
+if pm2 list 2>/dev/null | grep -q "metahuman-web"; then
+    echo "Stopping existing PM2 processes..."
+    pm2 stop metahuman-web 2>/dev/null || true
+    pm2 delete metahuman-web 2>/dev/null || true
+    print_status "Existing PM2 processes stopped"
+fi
+
+# Start background agents (existing system - not managed by PM2)
+echo "Starting MetaHuman agents and services..."
+
+RUNTIME_CONFIG="$REPO_ROOT/etc/runtime.json"
+if [ -f "$RUNTIME_CONFIG" ]; then
+    HEADLESS=$(grep -o '"headless"[[:space:]]*:[[:space:]]*true' "$RUNTIME_CONFIG" || echo "")
+    if [ -n "$HEADLESS" ]; then
+        print_warning "Headless mode active - skipping agent startup"
+    else
+        "$REPO_ROOT/bin/mh" start --restart 2>/dev/null || print_warning "Failed to start agents"
+    fi
+else
+    "$REPO_ROOT/bin/mh" start --restart 2>/dev/null || print_warning "Failed to start agents"
+fi
+
+# Start optional services
+"$REPO_ROOT/bin/start-cloudflare" 2>/dev/null || true
+"$REPO_ROOT/bin/start-voice-server" 2>/dev/null || true
+"$REPO_ROOT/bin/start-terminal" 2>/dev/null || true
+
+print_status "Agents and services started"
+echo
+
+# Build if needed
+cd "$REPO_ROOT/apps/site"
+if [ ! -f "dist/server/entry.mjs" ]; then
+    echo "Building production bundle..."
+    pnpm build
+    print_status "Production build complete"
+    echo
+fi
+
+# Start web server with PM2
+cd "$REPO_ROOT"
+echo "Starting web server with PM2..."
+pm2 start ecosystem.config.js
+
+echo
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}  MetaHuman OS Started (PM2 Mode)      ${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo
+echo "URL: http://localhost:4321"
+echo
+echo "Useful PM2 commands:"
+echo "  pm2 monit              # Real-time monitoring dashboard"
+echo "  pm2 logs               # View live logs"
+echo "  pm2 logs --lines 100   # View last 100 log lines"
+echo "  pm2 list               # Show process status"
+echo "  pm2 restart all        # Restart all processes"
+echo "  pm2 reload all         # Zero-downtime reload"
+echo "  ./bin/stop-pm2         # Stop everything"
+echo
+echo "To enable auto-start on boot:"
+echo "  pm2 startup            # Generate startup script"
+echo "  pm2 save               # Save current process list"
+echo

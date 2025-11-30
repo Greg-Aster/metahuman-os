@@ -125,18 +125,39 @@ export function copyToReference(
 }
 
 /**
+ * Options for auto-export operations
+ */
+export interface AutoExportOptions {
+  selectionMethod?: 'quality' | 'random' | 'sequential';
+  targetDuration?: number; // in seconds
+  maxSamples?: number;
+  minQuality?: number;
+}
+
+/**
  * Automatically select and export best samples for a provider
  *
  * @param provider - Voice provider
  * @param speakerId - Speaker identifier
- * @param minQuality - Minimum quality threshold (0-1)
+ * @param minQuality - Minimum quality threshold (0-1) (deprecated, use options.minQuality)
+ * @param options - Export options (selection method, duration, max samples)
  * @returns Path to created reference directory
  */
 export function autoExportBestSamples(
   provider: VoiceProvider,
   speakerId: string = 'default',
-  minQuality: number = 0.8
+  minQuality: number = 0.8,
+  options: AutoExportOptions = {}
 ): string {
+  const {
+    selectionMethod = 'quality',
+    targetDuration,
+    maxSamples,
+    minQuality: optMinQuality,
+  } = options;
+
+  const effectiveMinQuality = optMinQuality ?? minQuality;
+
   audit({
     level: 'info',
     category: 'action',
@@ -144,7 +165,10 @@ export function autoExportBestSamples(
     details: {
       provider,
       speakerId,
-      minQuality,
+      minQuality: effectiveMinQuality,
+      selectionMethod,
+      targetDuration,
+      maxSamples,
     },
     actor: 'system',
   });
@@ -156,7 +180,7 @@ export function autoExportBestSamples(
       fs.mkdirSync(piperTrainingDir, { recursive: true });
     }
 
-    const samples = listVoiceSamples(1000).filter(s => s.quality >= minQuality);
+    const samples = listVoiceSamples(1000).filter(s => s.quality >= effectiveMinQuality);
     let copiedCount = 0;
 
     for (const sample of samples) {
@@ -186,8 +210,13 @@ export function autoExportBestSamples(
 
     return piperTrainingDir;
   } else if (provider === 'gpt-sovits') {
-    // GPT-SoVITS auto-selects 5-10 seconds of best samples
-    const outputDir = exportSoVITSDataset(speakerId);
+    // GPT-SoVITS: export with configurable options
+    const outputDir = exportSoVITSDataset(speakerId, {
+      selectionMethod,
+      targetDuration,
+      maxSamples,
+      minQuality: effectiveMinQuality,
+    });
 
     audit({
       level: 'info',
@@ -197,6 +226,9 @@ export function autoExportBestSamples(
         provider: 'gpt-sovits',
         speakerId,
         outputDir,
+        selectionMethod,
+        targetDuration,
+        maxSamples,
       },
       actor: 'system',
     });

@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { stopSovitsServer } from '../../../lib/sovits-server';
+import { stopSovitsServer } from '../../../lib/server/sovits-server';
 
 /**
  * POST /api/addons/toggle

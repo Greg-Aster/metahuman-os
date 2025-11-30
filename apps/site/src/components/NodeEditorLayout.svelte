@@ -3,7 +3,7 @@
   import { nodeEditorMode } from '../stores/navigation';
   import NodeEditor from './NodeEditor.svelte';
   import NodePalette from './NodePalette.svelte';
-  import { listTemplates, loadTemplateAsGraph } from '../lib/cognitive-nodes/template-loader';
+  import { listTemplates, loadTemplateAsGraph } from '../lib/client/visual-editor/template-loader';
 
   // Import LiteGraph.js CSS (CSS imports are safe during SSR)
   import 'litegraph.js/css/litegraph.css';

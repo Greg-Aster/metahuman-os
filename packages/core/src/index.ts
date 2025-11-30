@@ -68,6 +68,68 @@ export * from './users';
 export * from './sessions';
 export * from './profile';
 
+// Profile storage management
+export { validateProfilePath, isValidProfilePath, isExternalStoragePath } from './path-security.js';
+export type { PathValidationResult, PathValidationOptions } from './path-security.js';
+export { detectStorageDevices, isExternalStorage, getStorageInfo, formatBytes } from './external-storage.js';
+export type { StorageDevice, StorageEvent } from './external-storage.js';
+export { migrateProfile, resetProfileToDefault, estimateMigrationDuration } from './profile-migration.js';
+export type { MigrationProgress, MigrationOptions, MigrationResult, EncryptionType, EncryptionOptions } from './profile-migration.js';
+
+// Profile encryption
+export {
+  encrypt,
+  decrypt,
+  decryptToString,
+  deriveKey,
+  generateSalt,
+  isProfileEncrypted,
+  getEncryptionMeta,
+  initializeEncryption,
+  unlockProfile,
+  verifyPassword,
+  lockProfile,
+  lockAllProfiles,
+  isProfileUnlocked,
+  getCachedKey,
+  encryptFile,
+  decryptFile,
+  readEncryptedFile,
+  readEncryptedJSON,
+  writeEncryptedFile,
+  writeEncryptedJSON,
+  encryptDirectory,
+  decryptDirectory,
+  changePassword,
+  getEncryptionStats,
+  isChunkedEncryptedFile,
+  decryptChunkedFile,
+  decryptChunkedFileToFile,
+  decryptChunkedFileInPlace,
+  ENCRYPTED_EXTENSION,
+  CHUNKED_EXTENSION,
+  ENCRYPTION_META_FILE,
+} from './encryption.js';
+export type { EncryptionMeta, EncryptedData } from './encryption.js';
+
+// VeraCrypt integration
+export {
+  checkVeraCrypt,
+  getInstallInstructions,
+  createContainer,
+  mountContainer,
+  unmountContainer,
+  listMountedVolumes,
+  isContainerMounted,
+  getContainerInfo,
+  createMetaHumanContainer,
+  isMetaHumanContainer,
+  getContainerProfileInfo,
+  RECOMMENDED_SIZES,
+  CONTAINER_EXTENSION,
+} from './veracrypt.js';
+export type { VeraCryptStatus, VeraCryptContainer, CreateContainerOptions, MountOptions } from './veracrypt.js';
+
 // Big Brother Mode - CLI LLM Escalation
 export * from './big-brother';
 export * from './claude-session';
@@ -75,6 +137,7 @@ export * from './claude-session';
 // Node Editor - Graph Execution
 export * from './cognitive-graph-schema';
 export * from './graph-executor';
+export * from './graph-streaming';
 export * from './node-executors/index.js';
 export * from './agent-graph-executor';
 export * from './graph-error-handler';
