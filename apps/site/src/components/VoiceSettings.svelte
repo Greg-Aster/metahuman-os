@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { calculateVoiceVolume } from '../lib/audio-utils.js';
+  import { calculateVoiceVolume } from '../lib/client/utils/audio-utils.js';
   import ServerStatusIndicator from './ServerStatusIndicator.svelte';
 
   interface PiperVoice {

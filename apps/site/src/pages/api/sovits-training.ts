@@ -9,11 +9,13 @@ import {
   getAvailableSamples,
   type VoiceProvider,
   setSoVITSReferenceSample,
+  getCurrentSoVITSReference,
 } from '@metahuman/core';
 
 function normalizeProvider(provider?: string | null): VoiceProvider {
   if (!provider) return 'gpt-sovits';
-  if (provider === 'sovits' || provider === 'kokoro') return 'gpt-sovits';
+  // Map various voice providers to supported types
+  if (provider === 'sovits' || provider === 'kokoro' || provider === 'rvc') return 'gpt-sovits';
   return provider as VoiceProvider;
 }
 
@@ -34,6 +36,19 @@ export const GET: APIRoute = async ({ request }) => {
       // Get available voice samples for training
       const samples = getAvailableSamples(provider, minQuality, limit);
       return new Response(JSON.stringify({ samples }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } else if (action === 'current-reference') {
+      // Get the current active reference sample for GPT-SoVITS
+      if (provider !== 'gpt-sovits') {
+        return new Response(
+          JSON.stringify({ error: 'Current reference is only available for GPT-SoVITS' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      const currentRef = getCurrentSoVITSReference(speakerId);
+      return new Response(JSON.stringify(currentRef), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -127,8 +142,22 @@ export const POST: APIRoute = async ({ request }) => {
         }
       );
     } else if (action === 'auto-export') {
-      // Automatically select and export best samples
-      const outputDir = autoExportBestSamples(provider as VoiceProvider, speakerId, minQuality);
+      // Automatically select and export best samples with configurable options
+      const selectionMethod = body.selectionMethod || 'quality';
+      const targetDuration = body.targetDuration; // in seconds
+      const maxSamples = body.maxSamples;
+
+      const outputDir = autoExportBestSamples(
+        provider as VoiceProvider,
+        speakerId,
+        minQuality,
+        {
+          selectionMethod,
+          targetDuration,
+          maxSamples,
+          minQuality,
+        }
+      );
       if (provider === 'gpt-sovits') {
         try {
           setSoVITSReferenceSample(speakerId);
@@ -139,8 +168,11 @@ export const POST: APIRoute = async ({ request }) => {
       return new Response(
         JSON.stringify({
           success: true,
-          message: `Exported best samples to ${provider} directory`,
+          message: `Exported best samples to ${provider} directory (${selectionMethod} selection)`,
           outputDir,
+          selectionMethod,
+          targetDuration,
+          maxSamples,
         }),
         {
           status: 200,

@@ -23,6 +23,11 @@ import { resolvePathWithFuzzyFallback, type PathResolution } from '@metahuman/co
 import { ReasoningEngine } from '@metahuman/core/reasoning';
 import { formatContextForPrompt } from '@metahuman/core/context-builder';
 import { loadOperatorConfig } from '@metahuman/core/config';
+import {
+  formatObservation as sharedFormatObservation,
+  formatObservationV2 as sharedFormatObservationV2,
+  type ObservationConfig,
+} from '../../packages/core/src/operator/index.js';
 
 // DISABLED: Skills system not in use - graph pipeline handles everything
 // Ensure the skills registry is populated before any ReAct loop runs.
@@ -836,117 +841,20 @@ async function executeSkill(skillName: string, input: any, sessionId?: string, p
 /**
  * Format a skill execution result into a human-readable observation.
  *
- * This is critical for the LLM to understand what happened and plan the next step.
- * We convert raw data structures into natural language summaries.
+ * Delegates to the shared observation-formatter module for consistent formatting
+ * across both standalone operator and cognitive graph node executors.
  *
  * @param result - Raw skill execution result
  * @param config - Operator configuration
  * @returns Human-readable observation string
  */
 function formatObservation(result: SkillResult, config: ReActConfig): string {
-  if (result === null || result === undefined) {
-    return 'No result returned';
-  }
-
-  // Handle error results
-  if (result.success === false) {
-    return `Error: ${result.error || 'Unknown error'}`;
-  }
-
-  // Handle success results with outputs
-  if (result.success === true && result.outputs) {
-    // Extract the primary output data
-    const outputs = result.outputs;
-
-    // Special formatting for common skill types
-    if (outputs.files && Array.isArray(outputs.files)) {
-      // fs_list result
-      const fileList = outputs.files;
-      if (fileList.length === 0) {
-        return 'No files found';
-      }
-      if (fileList.length <= 10) {
-        return `Found ${fileList.length} file(s): ${fileList.join(', ')}`;
-      }
-      return `Found ${fileList.length} file(s): ${fileList.slice(0, 10).join(', ')} ... and ${fileList.length - 10} more`;
-    }
-
-    if (outputs.content && typeof outputs.content === 'string') {
-      // fs_read result
-      const content = outputs.content;
-      const charCount = content.length;
-      const lineCount = content.split('\n').length;
-
-      if (charCount <= config.observationMaxLength) {
-        return `File content (${charCount} chars, ${lineCount} lines):\n${content}`;
-      }
-
-      // Truncate with preview
-      const preview = content.substring(0, Math.min(200, config.observationMaxLength));
-      return `File content (${charCount} chars, ${lineCount} lines). Preview:\n${preview}\n... (content truncated, ${charCount - preview.length} chars remaining)`;
-    }
-
-    if (outputs.results && Array.isArray(outputs.results)) {
-      // search_index or web_search result
-      const results = outputs.results;
-      if (results.length === 0) {
-        return 'No results found';
-      }
-      return `Found ${results.length} result(s):\n${results.slice(0, 5).map((r: any, i: number) =>
-        `${i + 1}. ${r.title || r.event || r.url || JSON.stringify(r).substring(0, 100)}`
-      ).join('\n')}${results.length > 5 ? `\n... and ${results.length - 5} more` : ''}`;
-    }
-
-    if (outputs.tasks && Array.isArray(outputs.tasks)) {
-      // task_list result
-      const tasks = outputs.tasks;
-      if (tasks.length === 0) {
-        return 'No tasks found';
-      }
-
-      const formatValue = (label: string, value?: string) => value ? `${label}: ${value}` : '';
-
-      const formatTask = (task: any, index: number) => {
-        const parts = [
-          `title: ${task.title || task.goal || task.description || task.id || 'Untitled task'}`,
-          formatValue('status', task.status),
-          formatValue('priority', task.priority),
-          formatValue('tags', Array.isArray(task.tags) ? task.tags.join(', ') : task.tags),
-          formatValue('due', task.due),
-          formatValue('created', task.created),
-          formatValue('description', task.description)
-        ].filter(Boolean);
-        return `${index + 1}. ${parts.join(' | ')}`;
-      };
-
-      return `Found ${tasks.length} task(s):\n${tasks.map((task: any, idx: number) => formatTask(task, idx)).join('\n')}`;
-    }
-
-    if (outputs.response && typeof outputs.response === 'string') {
-      // conversational_response result - return the response directly
-      return outputs.response;
-    }
-
-    // Generic output formatting
-    const dataStr = JSON.stringify(outputs, null, 2);
-    if (dataStr.length <= config.observationMaxLength) {
-      return `Success. Output:\n${dataStr}`;
-    }
-
-    return `Success. Output preview:\n${dataStr.substring(0, config.observationMaxLength)}\n... (output truncated)`;
-  }
-
-  // Simple success with no outputs
-  if (result.success === true) {
-    return 'Success (no output data)';
-  }
-
-  // Fallback
-  const resultStr = JSON.stringify(result, null, 2);
-  if (resultStr.length <= config.observationMaxLength) {
-    return resultStr;
-  }
-  return resultStr.substring(0, config.observationMaxLength) + '... (truncated)';
+  // Map ReActConfig to ObservationConfig for the shared module
+  const obsConfig: ObservationConfig = {
+    maxLength: config.observationMaxLength,
+    includeErrorRecovery: true,
+  };
+  return sharedFormatObservation(result, obsConfig);
 }
 
 /**

@@ -3,7 +3,7 @@ import {
   getSovitsServerStatus,
   startSovitsServer,
   stopSovitsServer,
-} from '../../lib/sovits-server';
+} from '../../lib/server/sovits-server';
 
 /**
  * GET /api/sovits-server

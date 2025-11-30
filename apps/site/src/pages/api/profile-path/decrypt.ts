@@ -1,7 +1,7 @@
 /**
  * Profile Decryption API
  *
- * POST: Decrypt encrypted profile data in-place
+ * POST: Decrypt existing encrypted profile data in-place
  */
 
 import type { APIRoute } from 'astro';
@@ -11,23 +11,23 @@ import {
   audit,
 } from '@metahuman/core';
 import {
-  deriveKeyFromMeta,
   decryptDirectory,
-  loadEncryptionMeta,
-  removeEncryptionMeta,
-  removeVerificationFile,
-  isProfileEncrypted,
   verifyPassword,
+  getEncryptionMeta,
+  isProfileEncrypted,
+  ENCRYPTION_META_FILE,
 } from '@metahuman/core/encryption';
-import { updateUserMetadata, verifyUserPassword } from '@metahuman/core/users';
+import { updateProfileStorage, getProfileStorageConfig } from '@metahuman/core/users';
+import fs from 'node:fs';
+import path from 'node:path';
 
 /**
  * POST /api/profile-path/decrypt
  *
- * Decrypt encrypted profile data in-place
+ * Decrypt existing encrypted profile data in-place
  *
  * Body:
- * - password: string - Decryption password
+ * - password: string - Encryption password to verify and use
  */
 export const POST: APIRoute = async ({ cookies, request }) => {
   try {
@@ -45,7 +45,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       );
     }
 
-    // Check if encrypted
+    // Check if profile is encrypted
     if (!isProfileEncrypted(profilePaths.root)) {
       return new Response(
         JSON.stringify({ error: 'Profile is not encrypted' }),
@@ -53,31 +53,10 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       );
     }
 
-    // Load encryption metadata
-    const meta = loadEncryptionMeta(profilePaths.root);
-    if (!meta) {
+    // Verify password before proceeding
+    if (!verifyPassword(profilePaths.root, password)) {
       return new Response(
-        JSON.stringify({ error: 'Encryption metadata not found' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // For 'user' mode, also verify it matches their login password
-    const passwordMode = meta.passwordMode || 'separate'; // Default to separate for legacy
-    if (passwordMode === 'user') {
-      if (!verifyUserPassword(user.username, password)) {
-        return new Response(
-          JSON.stringify({ error: 'Password does not match your login password' }),
-          { status: 401, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-    }
-
-    // Derive key and verify against encryption verification file
-    const key = deriveKeyFromMeta(password, meta);
-    if (!verifyPassword(profilePaths.root, key)) {
-      return new Response(
-        JSON.stringify({ error: 'Invalid decryption password' }),
+        JSON.stringify({ error: 'Incorrect password' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -131,7 +110,6 @@ export const POST: APIRoute = async ({ cookies, request }) => {
           details: {
             userId: user.id,
             profilePath: profilePaths.root,
-            passwordMode,
           },
           actor: user.id,
         });
@@ -139,13 +117,24 @@ export const POST: APIRoute = async ({ cookies, request }) => {
         sendProgress({
           step: 'init',
           status: 'running',
-          message: 'Verifying decryption key...',
+          message: 'Verifying encryption metadata...',
         });
+
+        // Get encryption metadata to derive key
+        const meta = getEncryptionMeta(profilePaths.root);
+        if (!meta) {
+          throw new Error('Encryption metadata not found');
+        }
+
+        // Import deriveKey for key derivation
+        const { deriveKey } = await import('@metahuman/core/encryption');
+        const salt = Buffer.from(meta.salt, 'base64');
+        const key = deriveKey(password, salt);
 
         sendProgress({
           step: 'init',
           status: 'completed',
-          message: 'Decryption key verified',
+          message: 'Decryption key derived',
         });
 
         sendProgress({
@@ -175,7 +164,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
             });
             totalDecrypted += decrypted;
           } catch (error) {
-            // Directory may not exist
+            // Directory may not exist or have no encrypted files
             console.warn(`[decrypt] Skipping ${dir}:`, (error as Error).message);
           }
         }
@@ -188,22 +177,38 @@ export const POST: APIRoute = async ({ cookies, request }) => {
         });
 
         sendProgress({
-          step: 'finalize',
+          step: 'cleanup',
           status: 'running',
           message: 'Removing encryption metadata...',
         });
 
-        // Remove encryption metadata
-        removeEncryptionMeta(profilePaths.root);
-        removeVerificationFile(profilePaths.root);
+        // Remove encryption metadata files
+        const metaPath = path.join(profilePaths.root, ENCRYPTION_META_FILE);
+        const verifyPath = path.join(profilePaths.root, '.encryption-verify.enc');
 
-        // Update user metadata to remove encryption info
-        updateUserMetadata(user.id, {
-          profileEncryption: null,
+        try {
+          if (fs.existsSync(metaPath)) {
+            fs.unlinkSync(metaPath);
+          }
+          if (fs.existsSync(verifyPath)) {
+            fs.unlinkSync(verifyPath);
+          }
+        } catch (error) {
+          console.warn('[decrypt] Failed to remove metadata files:', error);
+        }
+
+        // Update user profile config to remove encryption
+        const currentConfig = getProfileStorageConfig(user.username);
+        updateProfileStorage(user.id, {
+          ...currentConfig,
+          encryption: {
+            type: 'none',
+          },
+          path: profilePaths.root,
         });
 
         sendProgress({
-          step: 'finalize',
+          step: 'cleanup',
           status: 'completed',
           message: 'Encryption metadata removed',
         });

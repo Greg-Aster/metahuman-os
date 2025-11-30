@@ -5,7 +5,7 @@
 
 import path from 'path';
 import { paths } from '../paths.js';
-import { captureEvent } from '../memory.js';
+import { captureEvent, captureEventWithDetails, type CaptureResult } from '../memory.js';
 import { audit } from '../audit.js';
 import { appendReflectionToBuffer, appendDreamToBuffer } from '../conversation-buffer.js';
 import type { NodeExecutor } from './types.js';
@@ -14,6 +14,7 @@ import type { NodeExecutor } from './types.js';
  * Inner Dialogue Capture Node
  * Saves inner dialogue (reflections, thoughts) to episodic memory
  * Type: 'inner_dialogue' - never shows in main chat, only in Inner Dialogue tab
+ * Returns detailed metadata including file path and encryption status
  */
 export const innerDialogueCaptureExecutor: NodeExecutor = async (inputs, context) => {
   // Extract reflection text (slot 0)
@@ -44,8 +45,9 @@ export const innerDialogueCaptureExecutor: NodeExecutor = async (inputs, context
       links: inputs[1]?.links || undefined,
     };
 
-    const eventPath = captureEvent(reflectionText, options);
-    const relativePath = path.relative(paths.root, eventPath);
+    // Use detailed capture to get full metadata including encryption status
+    const result: CaptureResult = captureEventWithDetails(reflectionText, options);
+    const relativePath = path.relative(paths.root, result.filePath);
 
     audit({
       category: 'data',
@@ -56,6 +58,8 @@ export const innerDialogueCaptureExecutor: NodeExecutor = async (inputs, context
         type: 'inner_dialogue',
         path: relativePath,
         textLength: reflectionText.length,
+        encrypted: result.encrypted,
+        encryptionType: result.encryptionType,
       },
     });
 
@@ -73,8 +77,16 @@ export const innerDialogueCaptureExecutor: NodeExecutor = async (inputs, context
     return {
       saved: true,
       type: 'inner_dialogue',
+      eventId: result.eventId,
       eventPath: relativePath,
+      filePath: result.filePath,
+      encrypted: result.encrypted,
+      encryptionType: result.encryptionType,
+      encryptionWarning: result.encryptionWarning,
+      encryptionFallback: result.encryptionFallback,
+      timestamp: result.timestamp,
       textLength: reflectionText.length,
+      bytesWritten: result.bytesWritten,
     };
   } catch (error) {
     console.error('[InnerDialogueCapture] Error:', error);
@@ -88,6 +100,7 @@ export const innerDialogueCaptureExecutor: NodeExecutor = async (inputs, context
 /**
  * Memory Capture Node
  * Saves conversation to episodic memory
+ * Returns detailed metadata including file path and encryption status
  */
 export const memoryCaptureExecutor: NodeExecutor = async (inputs, context) => {
   // Extract user message (slot 0)
@@ -120,7 +133,8 @@ export const memoryCaptureExecutor: NodeExecutor = async (inputs, context) => {
   }
 
   try {
-    const eventId = captureEvent(`User: ${message}\n\nAssistant: ${response}`, {
+    // Use detailed capture to get full metadata including encryption status
+    const result: CaptureResult = captureEventWithDetails(`User: ${message}\n\nAssistant: ${response}`, {
       type: 'conversation',
       metadata: {
         cognitiveMode: context.cognitiveMode as 'dual' | 'agent' | 'emulation',
@@ -129,10 +143,18 @@ export const memoryCaptureExecutor: NodeExecutor = async (inputs, context) => {
       },
     });
 
+    // Return full metadata for pipeline transparency
     return {
       saved: true,
       type: 'conversation',
-      eventId,
+      eventId: result.eventId,
+      filePath: result.filePath,
+      encrypted: result.encrypted,
+      encryptionType: result.encryptionType,
+      encryptionWarning: result.encryptionWarning,
+      encryptionFallback: result.encryptionFallback,
+      timestamp: result.timestamp,
+      bytesWritten: result.bytesWritten,
     };
   } catch (error) {
     console.error('[MemoryCapture] Error:', error);

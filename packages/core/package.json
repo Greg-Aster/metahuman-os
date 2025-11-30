@@ -54,6 +54,9 @@
     "./big-brother": "./src/big-brother.ts",
     "./claude-session": "./src/claude-session.ts",
     "./graph-error-handler": "./src/graph-error-handler.ts",
+    "./path-security": "./src/path-security.ts",
+    "./external-storage": "./src/external-storage.ts",
+    "./profile-migration": "./src/profile-migration.ts",
     "./encryption": "./src/encryption.ts"
   },
   "dependencies": {

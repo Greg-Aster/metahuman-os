@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { fetchJSONSafe } from '../lib/fetch-timeout';
+  import { fetchJSONSafe } from '../lib/client/utils/fetch-timeout';
 
   let loraEnabled = false;
   let loading = true;
