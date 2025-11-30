@@ -194,7 +194,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
 
         // Update user profile config
         const currentConfig = getProfileStorageConfig(user.username);
-        updateProfileStorageConfig(user.username, {
+        updateProfileStorage(user.id, {
           encryption: {
             type: 'aes256',
             encryptedAt: new Date().toISOString(),
