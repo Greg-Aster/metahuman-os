@@ -104,6 +104,9 @@
       case 'TerminalManager':
         module = await import('./TerminalManager.svelte');
         break;
+      case 'ProfileLocation':
+        module = await import('./ProfileLocation.svelte');
+        break;
       default:
         throw new Error(`Unknown component: ${name}`);
     }
@@ -577,6 +580,7 @@ async function loadMemoryContent(relPath: string) {
         void loadComponent('ChatSettings');
         void loadComponent('SystemSettings');
         void loadComponent('SecuritySettings');
+        void loadComponent('ProfileLocation');
         void loadComponent('NetworkSettings');
         void loadComponent('AddonsManager');
         void loadComponent('Lifeline');
@@ -1435,6 +1439,7 @@ async function loadMemoryContent(relPath: string) {
           <button class="tab-button" class:active={systemTab==='chat'} on:click={() => systemTab='chat'}>Chat</button>
           <button class="tab-button" class:active={systemTab==='settings'} on:click={() => systemTab='settings'}>Settings</button>
           <button class="tab-button" class:active={systemTab==='security'} on:click={() => systemTab='security'}>Security</button>
+          <button class="tab-button" class:active={systemTab==='storage'} on:click={() => systemTab='storage'}>Storage</button>
           <button class="tab-button" class:active={systemTab==='network'} on:click={() => systemTab='network'}>Network</button>
           <button class="tab-button" class:active={systemTab==='addons'} on:click={() => systemTab='addons'}>Addons</button>
           <button class="tab-button" class:active={systemTab==='lifeline'} on:click={() => systemTab='lifeline'}>Lifeline</button>
@@ -1454,6 +1459,12 @@ async function loadMemoryContent(relPath: string) {
         {:else if systemTab === 'security'}
           {#await loadComponent('SecuritySettings')}
             <div class="loading-placeholder">Loading security settings...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
+        {:else if systemTab === 'storage'}
+          {#await loadComponent('ProfileLocation')}
+            <div class="loading-placeholder">Loading storage settings...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}

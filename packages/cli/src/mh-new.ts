@@ -53,6 +53,7 @@ import { adapterCommand } from './commands/adapter.js';
 import { sovitsCommand } from './commands/sovits.js';
 import { rvcCommand } from './commands/rvc.js';
 import { kokoroCommand } from './commands/kokoro.js';
+import { profileCommand } from './commands/profile.js';
 
 const agentScriptOverrides: Record<string, string> = {
   curiosity: 'curiosity-service.ts',
@@ -309,9 +310,7 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
       },
     });
 
-    child.unref();
-
-    // Register in running.json
+    // Register in running.json FIRST (before potential early exit)
     if (child.pid) {
       registerAgent(agentName, child.pid);
 
@@ -324,6 +323,7 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
       });
     }
 
+    // Attach event handlers BEFORE unref() to catch events while parent runs
     child.on('close', (code: number) => {
       if (code !== 0) console.error(`Agent ${agentName} exited with code ${code}`);
       audit({
@@ -340,6 +340,10 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
       console.error(`Failed to start ${agentName}: ${err.message}`);
       unregisterAgent(agentName);
     });
+
+    // IMPORTANT: unref() AFTER event handlers are attached
+    // Events will still work while parent process is alive
+    child.unref();
   };
 
   defaults.forEach(spawnAgent);
@@ -1937,6 +1941,9 @@ async function main() {
         break;
       case 'user':
         userCmd(args);
+        break;
+      case 'profile':
+        profileCommand(args);
         break;
       case 'help':
       case '--help':

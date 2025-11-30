@@ -8,11 +8,11 @@
   import { canUseOperator, currentMode } from '../stores/security-policy';
   import { triggerClearAuditStream } from '../stores/clear-events';
   import { yoloModeStore } from '../stores/navigation';
-  import { calculateVoiceVolume } from '../lib/audio-utils.js';
-  import { useTTS } from '../lib/useTTS';
-  import { useMicrophone } from '../lib/useMicrophone';
-  import { useThinkingTrace } from '../lib/useThinkingTrace';
-  import { useMessages, useActivityTracking, useOllamaStatus, type ChatMessage, type MessageRole, type ReasoningStage } from '../lib/useMessages';
+  import { calculateVoiceVolume } from '../lib/client/utils/audio-utils.js';
+  import { useTTS } from '../lib/client/composables/useTTS';
+  import { useMicrophone } from '../lib/client/composables/useMicrophone';
+  import { useThinkingTrace } from '../lib/client/composables/useThinkingTrace';
+  import { useMessages, useActivityTracking, useOllamaStatus, type ChatMessage, type MessageRole, type ReasoningStage } from '../lib/client/composables/useMessages';
 
   // Component state
   let input = '';

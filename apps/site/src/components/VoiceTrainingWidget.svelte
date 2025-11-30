@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import ReferenceAudioSelector from './ReferenceAudioSelector.svelte';
   import DirectVoiceRecorder from './DirectVoiceRecorder.svelte';
-  import { createDefaultKokoroConfig, startKokoroTrainingRequest } from '../lib/kokoro-training';
+  import { createDefaultKokoroConfig, startKokoroTrainingRequest } from '../lib/client/utils/kokoro-training';
 
   export let provider: 'piper' | 'sovits' | 'rvc' | 'kokoro' = 'rvc';
 
@@ -111,7 +111,31 @@
   let totalEpochs = 300;
   let saveEveryEpoch = 50;
   let batchSize = 8;
+  let rvcDevice: 'auto' | 'cuda' | 'cpu' = 'auto';
   let showAdvancedSettings = false;
+
+  // Auto-export settings (shared across providers)
+  type SelectionMethod = 'quality' | 'random' | 'sequential';
+  let exportSelectionMethod: SelectionMethod = 'quality';
+  let exportTargetDuration = 10; // seconds for GPT-SoVITS, minutes for RVC/Kokoro
+  let exportMaxSamples = 50; // max samples to export
+  let showExportSettings = false;
+
+  // Provider-specific export defaults
+  $: exportDefaults = {
+    sovits: { targetDuration: 10, maxSamples: 5, durationUnit: 'seconds' },
+    rvc: { targetDuration: 15, maxSamples: 200, durationUnit: 'minutes' },
+    kokoro: { targetDuration: 10, maxSamples: 300, durationUnit: 'minutes' },
+    piper: { targetDuration: 60, maxSamples: 500, durationUnit: 'minutes' },
+  };
+
+  // Reset export settings when provider changes
+  function resetExportSettings() {
+    const defaults = exportDefaults[provider] || exportDefaults.sovits;
+    exportTargetDuration = defaults.targetDuration;
+    exportMaxSamples = defaults.maxSamples;
+    exportSelectionMethod = 'quality';
+  }
 
   function getRandomRobotMessage() {
     return robotMessages[Math.floor(Math.random() * robotMessages.length)];
@@ -299,6 +323,11 @@
         endpoint = '/api/sovits-training';
       }
 
+      const defaults = exportDefaults[provider] || exportDefaults.sovits;
+      const targetDurationSeconds = defaults.durationUnit === 'minutes'
+        ? exportTargetDuration * 60
+        : exportTargetDuration;
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -306,7 +335,11 @@
           action: 'auto-export',
           provider: apiProvider,
           speakerId: 'default',
-          minQuality: currentConfig.minQuality
+          minQuality: currentConfig.minQuality,
+          // New export settings
+          selectionMethod: exportSelectionMethod,
+          targetDuration: targetDurationSeconds,
+          maxSamples: exportMaxSamples,
         })
       });
 
@@ -436,7 +469,8 @@
           speakerId: 'default',
           totalEpochs,
           saveEveryEpoch,
-          batchSize
+          batchSize,
+          device: rvcDevice
         })
       });
 
@@ -1038,6 +1072,9 @@
         <button on:click={autoExportBest} disabled={exporting || !readiness.ready} class="success-btn">
           {exporting ? 'Exporting...' : 'Auto-Export Best Samples'}
         </button>
+        <button on:click={() => showExportSettings = !showExportSettings} class="settings-btn export-settings-btn">
+          {showExportSettings ? '📊 Hide' : '📊 Show'} Export Settings
+        </button>
         {#if provider === 'rvc'}
           <button on:click={() => showAdvancedSettings = !showAdvancedSettings} class="settings-btn">
             {showAdvancedSettings ? '⚙️ Hide' : '⚙️ Show'} Training Settings
@@ -1054,6 +1091,84 @@
           {purging ? 'Purging...' : 'Purge All Data'}
         </button>
       </div>
+
+      <!-- Auto-Export Settings Panel -->
+      {#if showExportSettings}
+        <div class="export-settings">
+          <h4>📊 Auto-Export Settings</h4>
+          <div class="settings-grid">
+            <div class="setting-group">
+              <label for="selectionMethod">
+                Selection Method:
+                <span class="setting-help">How to choose samples</span>
+              </label>
+              <select id="selectionMethod" bind:value={exportSelectionMethod}>
+                <option value="quality">Highest Quality First</option>
+                <option value="random">Random Selection</option>
+                <option value="sequential">Sequential (Oldest First)</option>
+              </select>
+              <div class="setting-note">
+                {#if exportSelectionMethod === 'quality'}
+                  Picks highest quality samples first (default, recommended)
+                {:else if exportSelectionMethod === 'random'}
+                  Randomly selects from available samples for variety
+                {:else}
+                  Picks samples in chronological order (oldest first)
+                {/if}
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <label for="targetDuration">
+                Target Duration ({exportDefaults[provider]?.durationUnit || 'seconds'}):
+                <span class="setting-help">Total audio duration to export</span>
+              </label>
+              <input
+                id="targetDuration"
+                type="number"
+                bind:value={exportTargetDuration}
+                min={provider === 'sovits' ? 5 : 1}
+                max={provider === 'sovits' ? 30 : 60}
+                step={provider === 'sovits' ? 1 : 1}
+              />
+              <div class="setting-note">
+                {#if provider === 'sovits'}
+                  GPT-SoVITS: 5-10 seconds recommended for reference audio
+                {:else if provider === 'rvc'}
+                  RVC: 10-15 minutes recommended for quality training
+                {:else if provider === 'kokoro'}
+                  Kokoro: 5-10 minutes minimum, more is better
+                {:else}
+                  Piper: 30-60 minutes for full voice training
+                {/if}
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <label for="maxSamples">
+                Max Samples:
+                <span class="setting-help">Maximum number of samples to export</span>
+              </label>
+              <input
+                id="maxSamples"
+                type="number"
+                bind:value={exportMaxSamples}
+                min="1"
+                max={provider === 'sovits' ? 10 : 500}
+                step="1"
+              />
+              <div class="setting-note">
+                Limits total samples exported (quality threshold still applies)
+              </div>
+            </div>
+          </div>
+          <div class="settings-actions">
+            <button on:click={resetExportSettings} class="secondary-btn">
+              Reset to Defaults
+            </button>
+          </div>
+        </div>
+      {/if}
 
       {#if provider === 'rvc' && showAdvancedSettings}
         <div class="training-settings">
@@ -1112,6 +1227,24 @@
               />
               <div class="setting-note">
                 Default: 8. Lower if you run out of GPU memory. Higher for faster training (if GPU allows).
+              </div>
+            </div>
+            <div class="setting-group">
+              <label for="rvcDevice">
+                Device:
+                <span class="setting-help">Training device</span>
+              </label>
+              <select
+                id="rvcDevice"
+                bind:value={rvcDevice}
+                disabled={training}
+              >
+                <option value="auto">Auto (GPU if available)</option>
+                <option value="cuda">CUDA (GPU)</option>
+                <option value="cpu">CPU</option>
+              </select>
+              <div class="setting-note">
+                GPU is much faster (30-60 min). CPU training is slower but works without NVIDIA GPU.
               </div>
             </div>
           </div>
@@ -2195,6 +2328,60 @@
 
   :global(.dark) .training-settings h4 {
     color: #9f7aea;
+  }
+
+  /* Export Settings Panel */
+  .export-settings {
+    margin-top: 20px;
+    border: 2px solid #3b82f6;
+    border-radius: 8px;
+    padding: 20px;
+    background: #eff6ff;
+  }
+
+  :global(.dark) .export-settings {
+    background: #1a2030;
+    border-color: #60a5fa;
+  }
+
+  .export-settings h4 {
+    margin: 0 0 15px 0;
+    color: #2563eb;
+    font-size: 1.1rem;
+  }
+
+  :global(.dark) .export-settings h4 {
+    color: #60a5fa;
+  }
+
+  .export-settings select {
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    background: white;
+    font-size: 0.95rem;
+  }
+
+  :global(.dark) .export-settings select {
+    background: #2a2a3a;
+    border-color: #444;
+    color: #fff;
+  }
+
+  .export-settings-btn {
+    background: #3b82f6 !important;
+  }
+
+  .export-settings-btn:hover:not(:disabled) {
+    background: #2563eb !important;
+  }
+
+  .settings-actions {
+    margin-top: 15px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
   }
 
   .kokoro-training-card {

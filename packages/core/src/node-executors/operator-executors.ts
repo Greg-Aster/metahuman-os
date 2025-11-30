@@ -10,6 +10,7 @@ import { canWriteMemory, shouldCaptureTool } from '../memory-policy.js';
 import { getIdentitySummary } from '../identity.js';
 import type { CognitiveModeId } from '../cognitive-mode.js';
 import type { NodeExecutor } from './types.js';
+import { formatObservation } from '../operator/observation-formatter.js';
 
 /**
  * ReAct Planner Node
@@ -409,6 +410,7 @@ export const skillExecutorExecutor: NodeExecutor = async (inputs, context) => {
 /**
  * Observation Formatter Node
  * Formats skill execution results for the scratchpad
+ * Uses shared observation-formatter module for consistent formatting
  */
 export const observationFormatterExecutor: NodeExecutor = async (inputs) => {
   if (!inputs || Object.keys(inputs).length === 0) {
@@ -417,26 +419,8 @@ export const observationFormatterExecutor: NodeExecutor = async (inputs) => {
 
   const skillResult = inputs[0] || {};
 
-  let observation = '';
-  if (skillResult.success) {
-    observation = `Observation: ${JSON.stringify(skillResult.outputs, null, 2)}`;
-  } else {
-    observation = `Observation: Error - ${skillResult.error}`;
-
-    // Include error recovery suggestions if available
-    if (skillResult.errorRecovery) {
-      const { errorType, suggestions, wasRetried } = skillResult.errorRecovery;
-      observation += `\nError Type: ${errorType}`;
-
-      if (wasRetried) {
-        observation += ` (auto-retry attempted)`;
-      }
-
-      if (suggestions && suggestions.length > 0) {
-        observation += `\nSuggestions:\n${suggestions.map((s: string) => `  - ${s}`).join('\n')}`;
-      }
-    }
-  }
+  // Use shared formatter for consistent observation formatting
+  const observation = `Observation: ${formatObservation(skillResult)}`;
 
   return {
     observation,
@@ -1578,7 +1562,8 @@ Execute now and report results.`;
     });
 
     // Send to Claude with extended timeout for full task completion
-    const timeoutMs = _properties?.timeout || 120000; // 2 minutes default
+    // Complex tasks like web searches, file operations, etc. can take several minutes
+    const timeoutMs = _properties?.timeout || 300000; // 5 minutes default
     console.log('[ClaudeFullTask] Sending request to Claude Code...');
     const response = await sendPrompt(prompt, timeoutMs);
 
@@ -1612,7 +1597,9 @@ Execute now and report results.`;
 
     const { audit } = await import('../audit.js');
     const errorMsg = (error as Error).message;
-    const isTimeout = errorMsg.includes('ETIMEDOUT');
+    // Node.js execSync timeout sets killed=true and signal='SIGTERM', not ETIMEDOUT
+    const err = error as any;
+    const isTimeout = err.killed === true || errorMsg.includes('ETIMEDOUT') || errorMsg.includes('timed out');
 
     audit({
       level: 'error',

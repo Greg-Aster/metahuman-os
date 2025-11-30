@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { registerCognitiveNodes } from '../lib/cognitive-nodes/node-registry';
-  import { ExecutionMonitor } from '../lib/cognitive-nodes/execution-monitor';
+  import { registerCognitiveNodes } from '../lib/client/visual-editor/node-registry';
+  import { ExecutionMonitor } from '../lib/client/visual-editor/execution-monitor';
 
   let canvasElement: HTMLCanvasElement;
   let containerElement: HTMLDivElement;
@@ -58,7 +58,7 @@
   // Load a specific template by name
   async function loadTemplateByName(templateName: string) {
     try {
-      const { loadTemplateAsGraph } = await import('../lib/cognitive-nodes/template-loader');
+      const { loadTemplateAsGraph } = await import('../lib/client/visual-editor/template-loader');
       const templateGraph = await loadTemplateAsGraph(templateName);
 
       if (templateGraph) {
@@ -633,7 +633,7 @@
       }
 
       // Convert to LiteGraph format
-      const { templateToLiteGraph } = await import('../lib/cognitive-nodes/template-loader');
+      const { templateToLiteGraph } = await import('../lib/client/visual-editor/template-loader');
       const templateGraph = templateToLiteGraph(data.template);
 
       if (!templateGraph) {

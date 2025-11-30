@@ -150,18 +150,40 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
       }
 
       case 'auto-export': {
-        const samples = getReferenceSamples(minQuality);
+        // Auto-export with configurable options
+        const selectionMethod = body.selectionMethod || 'quality';
+        const targetDuration = body.targetDuration; // in seconds
+        const exportMaxSamples = body.maxSamples || 300;
+
+        const samples = getReferenceSamples(minQuality, selectionMethod);
         if (samples.length === 0) {
           return new Response(
             JSON.stringify({ error: 'No suitable samples found. Need high-quality recordings.' }),
             { status: 400, headers: { 'Content-Type': 'application/json' } }
           );
         }
-        const ids = samples.map(s => s.id);
+
+        // Select samples based on duration and count limits
+        let selectedSamples = samples;
+        if (targetDuration || exportMaxSamples) {
+          let totalDuration = 0;
+          selectedSamples = [];
+          for (const sample of samples) {
+            if (exportMaxSamples && selectedSamples.length >= exportMaxSamples) break;
+            if (targetDuration && totalDuration >= targetDuration) break;
+            selectedSamples.push(sample);
+            totalDuration += sample.duration;
+          }
+        }
+
+        const ids = selectedSamples.map(s => s.id);
         const copied = copyToKokoroDataset(ids, speakerId);
         return new Response(JSON.stringify({
           success: true,
-          message: `Auto-exported ${copied} samples to Kokoro dataset`,
+          message: `Auto-exported ${copied} samples to Kokoro dataset (${selectionMethod} selection)`,
+          selectionMethod,
+          targetDuration,
+          maxSamples: exportMaxSamples,
         }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },

@@ -1,13 +1,82 @@
+/**
+ * Memory System
+ * =============
+ *
+ * Core module for episodic memory storage in MetaHuman OS.
+ *
+ * ## Architecture Evolution
+ *
+ * ### Legacy System (Pre-2025-11)
+ * - `captureEvent(content, opts)` - Returns file path string only
+ * - No encryption awareness - all files written as plain JSON
+ * - Synchronous, blocking writes in the main thread
+ * - Used by: CLI commands, older agent code, backward-compatible paths
+ *
+ * ### Current System (2025-11+)
+ * - `captureEventWithDetails(content, opts)` - Returns full CaptureResult with metadata
+ * - Runtime encryption support via `getEncryptionContext()`
+ * - Encryption status included in pipeline responses
+ * - Graceful fallback when encryption unavailable (with audit logging)
+ *
+ * ## Worker Services (Recommended for New Code)
+ *
+ * For performance-critical paths, use the worker-based services:
+ *
+ * - `brain/services/memory-service.ts` - Worker thread for memory I/O
+ *   - Encryption-aware read/write/search/list operations
+ *   - Runs on separate CPU core for non-blocking I/O
+ *
+ * - `brain/services/semantic-search-service.ts` - Worker thread for vector ops
+ *   - Vector embedding generation via Ollama
+ *   - Cosine similarity search
+ *   - Index building and incremental updates
+ *
+ * - `packages/core/src/memory-service-client.ts` - IPC client
+ *   - Request/response routing to memory service worker
+ *   - 30-second timeout with proper cleanup
+ *   - Convenience functions: writeMemoryAsync(), readMemoryAsync(), searchMemoryAsync()
+ *
+ * ## Encryption Behavior
+ *
+ * When a profile has encryption enabled (via ProfileLocation UI):
+ * - AES-256-GCM: Files encrypted with cached key (requires profile unlock)
+ * - VeraCrypt: Transparent filesystem-level encryption (no app-level encryption)
+ *
+ * If encryption is configured but unavailable (e.g., profile not unlocked):
+ * - Files written as plain JSON (fallback behavior)
+ * - Warning logged to console
+ * - Security audit event logged: `memory_encryption_fallback`
+ * - `encryptionFallback: true` in CaptureResult for pipeline awareness
+ *
+ * ## Future Agents: Important Notes
+ *
+ * 1. Always prefer `captureEventWithDetails()` over `captureEvent()` for new code
+ * 2. Check `CaptureResult.encrypted` to know if file was encrypted
+ * 3. Check `CaptureResult.encryptionFallback` to detect security concerns
+ * 4. For high-throughput operations, use the worker services
+ * 5. The legacy `captureEvent()` is a thin wrapper for backward compatibility
+ *
+ * @module memory
+ */
+
 import fs from 'node:fs';
 import path from 'node:path';
 import { paths, generateId, timestamp } from './paths.js';
 import { appendEventToIndex, getIndexStatus } from './vector-index.js';
-import { auditDataChange } from './audit.js';
+import { audit, auditDataChange } from './audit.js';
 import { getUserContext } from './context.js';
 import type { CognitiveModeId } from './cognitive-mode.js';
 import { scheduleIndexUpdate } from './vector-index-queue.js';
 import { appendToolToCache } from './recent-tools-cache.js';
 import { validateEvent } from './memory-validation.js';
+import {
+  encrypt,
+  getCachedKey,
+  isProfileUnlocked,
+  ENCRYPTED_EXTENSION,
+  type EncryptedData,
+} from './encryption.js';
+import { getProfileStorageConfig } from './users.js';
 
 /**
  * Enhanced metadata schema for episodic events
@@ -86,6 +155,31 @@ export interface Task {
   completed?: string;
 }
 
+/**
+ * Result of memory capture operation
+ * Includes file path and encryption status for pipeline transparency
+ */
+export interface CaptureResult {
+  /** Event ID */
+  eventId: string;
+  /** Full file path where event was saved */
+  filePath: string;
+  /** Whether the file was encrypted */
+  encrypted: boolean;
+  /** Encryption type used (if encrypted) */
+  encryptionType?: 'aes256' | 'veracrypt';
+  /** Event timestamp */
+  timestamp: string;
+  /** Event type */
+  eventType: string;
+  /** Bytes written */
+  bytesWritten: number;
+  /** Warning if encryption was expected but couldn't be applied (fallback to plain) */
+  encryptionWarning?: string;
+  /** True if encryption was configured but file was written plain (security concern) */
+  encryptionFallback?: boolean;
+}
+
 const DEFAULT_EVENT_CATEGORY = 'episodic';
 
 function normalizeTag(value: string): string {
@@ -127,7 +221,64 @@ function buildEventDirectory(category: string, timestamp: string): string {
   return path.join(paths.episodic, safeCategory, year, month, day);
 }
 
-export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {}): string {
+/**
+ * Encryption context result
+ */
+interface EncryptionContext {
+  enabled: boolean;
+  key: Buffer | null;
+  type?: 'aes256' | 'veracrypt';
+  /** Warning if encryption was expected but unavailable */
+  warning?: string;
+  /** Whether encryption was configured but couldn't be applied */
+  fallback: boolean;
+}
+
+/**
+ * Check if profile encryption is enabled and get encryption key
+ * Returns fallback=true if encryption was expected but couldn't be applied
+ */
+function getEncryptionContext(username?: string): EncryptionContext {
+  if (!username) {
+    return { enabled: false, key: null, fallback: false };
+  }
+
+  const config = getProfileStorageConfig(username);
+  if (!config?.encryption || config.encryption.type === 'none') {
+    return { enabled: false, key: null, fallback: false };
+  }
+
+  // For VeraCrypt, the container handles encryption at the filesystem level
+  // No application-level encryption needed - the mounted volume is encrypted
+  if (config.encryption.type === 'veracrypt') {
+    return { enabled: false, key: null, type: 'veracrypt', fallback: false };
+  }
+
+  // For AES-256, we need the cached key
+  if (config.encryption.type === 'aes256') {
+    const profilePath = config.path;
+    if (!isProfileUnlocked(profilePath)) {
+      const warning = 'Profile is encrypted but not unlocked - writing plain file. Unlock profile with password to enable encryption.';
+      console.warn(`[memory] ${warning}`);
+      return { enabled: false, key: null, type: 'aes256', warning, fallback: true };
+    }
+    const key = getCachedKey(profilePath);
+    if (!key) {
+      const warning = 'Encryption key not found in cache - writing plain file';
+      console.warn(`[memory] ${warning}`);
+      return { enabled: false, key: null, type: 'aes256', warning, fallback: true };
+    }
+    return { enabled: true, key, type: 'aes256', fallback: false };
+  }
+
+  return { enabled: false, key: null, fallback: false };
+}
+
+/**
+ * Capture event with full metadata (encryption-aware)
+ * Returns detailed result including file path and encryption status
+ */
+export function captureEventWithDetails(content: string, opts: Partial<EpisodicEvent> = {}): CaptureResult {
   // Get current user context (if any)
   const ctx = getUserContext();
 
@@ -141,27 +292,23 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
     tags: opts.tags || [],
     importance: opts.importance || 0.5,
     links: opts.links || [],
-    userId: ctx?.userId, // NEW: Track owner (undefined for legacy/anonymous)
+    userId: ctx?.userId,
     metadata: opts.metadata || {},
   };
 
   // Validate and sanitize the event data
   const validation = validateEvent(rawEvent);
 
-  // Log validation warnings (non-fatal)
   if (validation.warnings.length > 0) {
     console.warn('[memory] Event validation warnings:', validation.warnings);
   }
 
-  // Log validation errors (fatal - but we'll save sanitized version)
   if (!validation.valid) {
     console.error('[memory] Event validation failed:', validation.errors);
     console.warn('[memory] Attempting to save sanitized version');
   }
 
-  // Use the sanitized event (even if validation failed, sanitized version is safer)
   const event = validation.sanitized!;
-
   const category = resolveEventCategory(event);
   const dir = buildEventDirectory(category, event.timestamp);
   fs.mkdirSync(dir, { recursive: true });
@@ -171,13 +318,54 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
     .replace(/^-+|-+$/g, '')
     .slice(0, 50) || 'event';
 
-  const filename = `${event.id}-${slug}.json`;
-  const filepath = path.join(dir, filename);
+  const baseFilename = `${event.id}-${slug}.json`;
 
-  fs.writeFileSync(filepath, JSON.stringify(event, null, 2));
+  // Check encryption status
+  const encryptionCtx = getEncryptionContext(ctx?.username);
+  let filepath: string;
+  let bytesWritten: number;
+  let encrypted = false;
 
-  // Also log to sync
-  logSync('capture', { event });
+  // Log security warning if encryption was expected but unavailable
+  if (encryptionCtx.fallback && encryptionCtx.warning) {
+    audit({
+      level: 'warn',
+      category: 'security',
+      event: 'memory_encryption_fallback',
+      details: {
+        eventId: event.id,
+        eventType: event.type,
+        warning: encryptionCtx.warning,
+        expectedEncryption: encryptionCtx.type,
+        writtenPlain: true,
+      },
+      actor: ctx?.userId || 'system',
+    });
+  }
+
+  if (encryptionCtx.enabled && encryptionCtx.key && encryptionCtx.type === 'aes256') {
+    // Encrypt the event before writing
+    const plaintext = JSON.stringify(event, null, 2);
+    const encryptedData = encrypt(Buffer.from(plaintext, 'utf8'), encryptionCtx.key);
+    const encryptedJson = JSON.stringify(encryptedData);
+
+    filepath = path.join(dir, baseFilename + ENCRYPTED_EXTENSION);
+    fs.writeFileSync(filepath, encryptedJson, 'utf8');
+    bytesWritten = Buffer.byteLength(encryptedJson);
+    encrypted = true;
+
+    // Mark in metadata that this event is encrypted
+    event.metadata = { ...event.metadata, encrypted: true };
+  } else {
+    // Write plain JSON
+    const plaintext = JSON.stringify(event, null, 2);
+    filepath = path.join(dir, baseFilename);
+    fs.writeFileSync(filepath, plaintext, 'utf8');
+    bytesWritten = Buffer.byteLength(plaintext);
+  }
+
+  // Log to sync
+  logSync('capture', { event, encrypted });
 
   const cognitiveMode = (event.metadata?.cognitiveMode as CognitiveModeId) || 'dual';
 
@@ -187,7 +375,6 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
     const success = event.metadata.success !== false;
     const output = JSON.stringify(event.metadata.toolOutputs || {});
 
-    // Fire-and-forget cache write (errors logged internally)
     void appendToolToCache(
       ctx.profilePaths,
       event.metadata.conversationId,
@@ -195,7 +382,7 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
       toolName,
       success,
       output
-    ).catch(() => {}); // Silently fail - cache is optional optimization
+    ).catch(() => {});
   }
 
   if (ctx?.userId && ctx.profilePaths?.state) {
@@ -214,7 +401,6 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
       { statePath: ctx.profilePaths.state }
     );
   } else {
-    // Fallback to immediate append when no user context is available
     try {
       const status = getIndexStatus();
       if ((status as any).exists) {
@@ -230,7 +416,25 @@ export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {})
     } catch {}
   }
 
-  return filepath;
+  return {
+    eventId: event.id,
+    filePath: filepath,
+    encrypted,
+    encryptionType: encrypted ? encryptionCtx.type : undefined,
+    timestamp: event.timestamp,
+    eventType: event.type || 'observation',
+    bytesWritten,
+    encryptionWarning: encryptionCtx.warning,
+    encryptionFallback: encryptionCtx.fallback,
+  };
+}
+
+/**
+ * Capture event (backward compatible - returns file path string)
+ */
+export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {}): string {
+  const result = captureEventWithDetails(content, opts);
+  return result.filePath;
 }
 
 function readTasksFromDirectory(dir: string): Task[] {

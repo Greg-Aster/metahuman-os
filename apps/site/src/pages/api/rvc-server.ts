@@ -3,7 +3,7 @@ import {
   getRvcServerStatus,
   startRvcServer,
   stopRvcServer,
-} from '../../lib/rvc-server';
+} from '../../lib/server/rvc-server';
 
 /**
  * GET /api/rvc-server

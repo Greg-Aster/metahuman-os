@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import Thinking from '../Thinking.svelte';
-  import type { ChatMessage, ReasoningStage } from '../../lib/useMessages';
+  import type { ChatMessage, ReasoningStage } from '../../lib/client/composables/useMessages';
 
   export let messages: ChatMessage[] = [];
   export let mode: 'conversation' | 'inner' = 'conversation';
