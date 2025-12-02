@@ -23,7 +23,8 @@
       "size": [220, 120],
       "properties": {
         "temperature": 1.0,
-        "role": "persona"
+        "role": "persona",
+        "timeout": 300000
       },
       "title": "Generate Dream"
     },
@@ -46,7 +47,8 @@
         "temperature": 1.0,
         "continuationChance": 0.75,
         "maxContinuations": 4,
-        "delaySeconds": 60
+        "delaySeconds": 60,
+        "timeout": 300000
       },
       "title": "Continuation Dreams"
     },
@@ -57,7 +59,8 @@
       "size": [220, 120],
       "properties": {
         "temperature": 0.3,
-        "role": "persona"
+        "role": "persona",
+        "timeout": 300000
       },
       "title": "Extract Learnings"
     },
