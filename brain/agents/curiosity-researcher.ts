@@ -34,8 +34,8 @@ import path from 'node:path';
 /**
  * Perform research on a single question
  */
-async function researchQuestion(questionData: any): Promise<{ notes: string; summary: string } | null> {
-  const config = loadCuriosityConfig();
+async function researchQuestion(questionData: any, username: string): Promise<{ notes: string; summary: string } | null> {
+  const config = loadCuriosityConfig(username);
   const trust = loadTrustLevel();
   const persona = loadPersonaCore();
 
@@ -181,7 +181,7 @@ async function processUserResearch(username: string): Promise<number> {
       }
 
       // Perform research
-      const researchResult = await researchQuestion(questionData);
+      const researchResult = await researchQuestion(questionData, username);
 
       if (researchResult) {
         await fs.writeFile(researchPath, researchResult.notes, 'utf-8');

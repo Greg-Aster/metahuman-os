@@ -17,6 +17,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+// Import users.ts FIRST to ensure profile storage config is registered
+// before getProfilePaths is used (dependency injection pattern)
+import './users.js';
+
 // Re-export core path building functions
 export { findRepoRoot, ROOT, getProfilePaths, systemPaths } from './path-builder.js';
 import { ROOT, getProfilePaths, systemPaths } from './path-builder.js';

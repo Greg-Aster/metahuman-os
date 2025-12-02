@@ -1,6 +1,7 @@
 import { spawn, execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { getProfilePaths } from '@metahuman/core';
 
 const rootPath = path.resolve(process.cwd(), '../..');
 const RVC_DIR = path.join(rootPath, 'external', 'applio-rvc');
@@ -27,7 +28,7 @@ export interface RvcActionResult {
   port?: number;
 }
 
-export async function getRvcServerStatus(): Promise<RvcStatus> {
+export async function getRvcServerStatus(_username?: string): Promise<RvcStatus> {
   const installed = fs.existsSync(RVC_DIR);
 
   if (!installed) {
@@ -88,8 +89,8 @@ export async function getRvcServerStatus(): Promise<RvcStatus> {
   };
 }
 
-export async function startRvcServer(): Promise<RvcActionResult> {
-  const status = await getRvcServerStatus();
+export async function startRvcServer(username: string): Promise<RvcActionResult> {
+  const status = await getRvcServerStatus(username);
 
   if (status.running) {
     return {
@@ -122,14 +123,14 @@ export async function startRvcServer(): Promise<RvcActionResult> {
     };
   }
 
-  // Determine profile and models directory
-  const profile = 'greggles'; // TODO: read from config
-  const modelsDir = path.join(rootPath, 'profiles', profile, 'out', 'voices', 'rvc-models');
+  // Determine profile paths using storage router (respects external/encrypted storage)
+  const profilePaths = getProfilePaths(username);
+  const modelsDir = path.join(profilePaths.out, 'voices', 'rvc-models');
 
   // Read device setting from voice.json
   let device = 'cuda'; // default
   try {
-    const voiceConfigPath = path.join(rootPath, 'profiles', profile, 'etc', 'voice.json');
+    const voiceConfigPath = profilePaths.voiceConfig;
     if (fs.existsSync(voiceConfigPath)) {
       const voiceConfig = JSON.parse(fs.readFileSync(voiceConfigPath, 'utf-8'));
       device = voiceConfig?.tts?.rvc?.device || 'cuda';

@@ -33,26 +33,38 @@ export interface ProfilePathResolution {
   storageType: 'internal' | 'external' | 'encrypted' | 'unknown';
 }
 
-// Lazy-loaded function to get profile storage config
-// This avoids circular dependency with users.ts
-let _getProfileStorageConfig: ((username: string) => { path: string; type?: string } | undefined) | null = null;
+// Profile storage config type (mirrors users.ts ProfileStorageConfig)
+interface ProfileStorageConfigFull {
+  path: string;
+  type?: 'internal' | 'external' | 'encrypted';
+  deviceId?: string;
+  fallbackBehavior?: 'error' | 'readonly';
+  encryption?: {
+    type: 'none' | 'aes256' | 'luks' | 'veracrypt';
+    unlocked?: boolean;
+    [key: string]: unknown;  // Allow additional fields from ProfileEncryptionConfig
+  };
+}
+
+// Profile storage config getter - registered by users.ts via dependency injection
+// This avoids circular dependency (users.ts imports systemPaths from path-builder.ts)
+let _getProfileStorageConfig: ((username: string) => ProfileStorageConfigFull | undefined) | null = null;
 
 /**
- * Lazily load the profile storage config getter
- * Returns null if users module isn't available yet (during bootstrap)
+ * Register the profile storage config getter (called by users.ts at module init)
+ * This is dependency injection to avoid circular imports
  */
-function getProfileStorageConfigLazy(username: string): { path: string; type?: string } | undefined {
-  if (_getProfileStorageConfig === null) {
-    try {
-      // Dynamic import to avoid circular dependency
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const usersModule = require('./users.js');
-      _getProfileStorageConfig = usersModule.getProfileStorageConfig;
-    } catch {
-      // Users module not available (during init/bootstrap)
-      return undefined;
-    }
-  }
+export function registerProfileStorageConfigGetter(
+  getter: (username: string) => ProfileStorageConfigFull | undefined
+): void {
+  _getProfileStorageConfig = getter;
+}
+
+/**
+ * Get profile storage config for a user
+ * Returns undefined if users module hasn't registered yet (during bootstrap)
+ */
+function getProfileStorageConfigLazy(username: string): ProfileStorageConfigFull | undefined {
   return _getProfileStorageConfig?.(username);
 }
 
@@ -78,13 +90,63 @@ export function findRepoRoot(): string {
 export const ROOT = findRepoRoot();
 
 /**
+ * Handle fallback behavior when custom path is unavailable
+ *
+ * SECURITY: When fallbackBehavior is 'error', throws instead of silently
+ * falling back to potentially unencrypted default storage.
+ */
+function handleFallback(
+  username: string,
+  defaultRoot: string,
+  reason: string,
+  config: ProfileStorageConfigFull
+): ProfilePathResolution {
+  const isEncrypted = config.type === 'encrypted' || config.encryption;
+  const fallbackBehavior = config.fallbackBehavior || 'error'; // Default to 'error' for safety
+
+  // SECURITY: If user configured encrypted/external storage and it's unavailable,
+  // we should NOT silently write to unencrypted default location
+  if (fallbackBehavior === 'error') {
+    const errorMsg = `[path-builder] SECURITY: ${reason} for user ${username}. ` +
+      `Custom path: ${config.path}. ` +
+      `Fallback to unencrypted default location is BLOCKED (fallbackBehavior: 'error'). ` +
+      `Please ensure external storage is mounted or change fallbackBehavior setting.`;
+    console.error(errorMsg);
+    throw new Error(errorMsg);
+  }
+
+  // Fallback allowed (readonly mode) - log prominent warning
+  const warnMsg = isEncrypted
+    ? `[path-builder] ⚠️  SECURITY WARNING: Encrypted storage unavailable for ${username}. ` +
+      `Falling back to UNENCRYPTED default location: ${defaultRoot}. ` +
+      `Reason: ${reason}. ` +
+      `Data written here will NOT be encrypted!`
+    : `[path-builder] ⚠️  WARNING: External storage unavailable for ${username}. ` +
+      `Falling back to default location: ${defaultRoot}. ` +
+      `Reason: ${reason}`;
+
+  console.warn(warnMsg);
+
+  return {
+    root: defaultRoot,
+    usingFallback: true,
+    fallbackReason: reason,
+    storageType: 'internal',
+  };
+}
+
+/**
  * Resolve the profile root directory for a user
  *
  * Checks for custom profile path in user metadata.
- * Falls back to default location if custom path is invalid.
+ * Falls back to default location if custom path is invalid AND fallbackBehavior allows it.
+ *
+ * SECURITY: When external/encrypted storage is configured with fallbackBehavior: 'error',
+ * this function throws instead of silently falling back to unencrypted storage.
  *
  * @param username - Username
  * @returns Profile path resolution result
+ * @throws Error if custom path is unavailable and fallbackBehavior is 'error'
  */
 export function resolveProfileRoot(username: string): ProfilePathResolution {
   const defaultRoot = path.join(ROOT, 'profiles', username);
@@ -106,47 +168,44 @@ export function resolveProfileRoot(username: string): ProfilePathResolution {
   // Validate the custom path
   // 1. Must be absolute
   if (!path.isAbsolute(customPath)) {
-    console.warn(`[path-builder] Custom path for ${username} is not absolute, using default`);
-    return {
-      root: defaultRoot,
-      usingFallback: true,
-      fallbackReason: 'Custom path is not absolute',
-      storageType: 'internal',
-    };
+    return handleFallback(
+      username,
+      defaultRoot,
+      'Custom path is not absolute',
+      storageConfig
+    );
   }
 
   // 2. Must exist and be accessible
   try {
     fs.accessSync(customPath, fs.constants.R_OK);
   } catch {
-    console.warn(`[path-builder] Custom path for ${username} is not accessible, using default`);
-    return {
-      root: defaultRoot,
-      usingFallback: true,
-      fallbackReason: 'Custom path is not accessible (external storage may be disconnected)',
-      storageType: 'internal',
-    };
+    return handleFallback(
+      username,
+      defaultRoot,
+      'Custom path is not accessible (external storage may be disconnected)',
+      storageConfig
+    );
   }
 
   // 3. Must be a directory
   try {
     const stats = fs.statSync(customPath);
     if (!stats.isDirectory()) {
-      console.warn(`[path-builder] Custom path for ${username} is not a directory, using default`);
-      return {
-        root: defaultRoot,
-        usingFallback: true,
-        fallbackReason: 'Custom path is not a directory',
-        storageType: 'internal',
-      };
+      return handleFallback(
+        username,
+        defaultRoot,
+        'Custom path is not a directory',
+        storageConfig
+      );
     }
   } catch {
-    return {
-      root: defaultRoot,
-      usingFallback: true,
-      fallbackReason: 'Cannot stat custom path',
-      storageType: 'internal',
-    };
+    return handleFallback(
+      username,
+      defaultRoot,
+      'Cannot stat custom path',
+      storageConfig
+    );
   }
 
   // Custom path is valid

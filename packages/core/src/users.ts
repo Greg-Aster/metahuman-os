@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import bcrypt from 'bcryptjs';
-import { systemPaths } from './path-builder.js';
+import { systemPaths, registerProfileStorageConfigGetter } from './path-builder.js';
 import { audit } from './audit.js';
 import type { OnboardingState } from './types/onboarding.js';
 
@@ -673,3 +673,7 @@ export function updateProfileStorage(
     actor: userId,
   });
 }
+
+// Register the profile storage config getter with path-builder
+// This is dependency injection to avoid circular imports
+registerProfileStorageConfigGetter(getProfileStorageConfig);

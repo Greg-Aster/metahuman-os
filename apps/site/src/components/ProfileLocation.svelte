@@ -75,9 +75,12 @@
 
   // Container size presets
   const CONTAINER_SIZES = [
-    { value: 500 * 1024 * 1024, label: '500 MB', description: 'Basic profile' },
-    { value: 2 * 1024 * 1024 * 1024, label: '2 GB', description: 'Standard profile' },
-    { value: 10 * 1024 * 1024 * 1024, label: '10 GB', description: 'Large profile with voice data' },
+    { value: 2 * 1024 * 1024 * 1024, label: '2 GB', description: 'Basic profile' },
+    { value: 10 * 1024 * 1024 * 1024, label: '10 GB', description: 'Standard profile' },
+    { value: 50 * 1024 * 1024 * 1024, label: '50 GB', description: 'Profile with voice data' },
+    { value: 100 * 1024 * 1024 * 1024, label: '100 GB', description: 'Large profile with LLM adapters' },
+    { value: 200 * 1024 * 1024 * 1024, label: '200 GB', description: 'Full profile with multiple LLMs' },
+    { value: 1000 * 1024 * 1024 * 1024, label: '1000 GB', description: 'Small singularity' },
   ];
 
   let profileConfig: ProfileConfig | null = null;
@@ -1124,7 +1127,7 @@
                     Fast and secure - recommended for Linux systems.
                   </p>
                   <div class="form-row">
-                    <label class="inline-label">Container Size:</label>
+                    <label class="inline-label"></label>
                     <select bind:value={containerSize} class="select-field">
                       {#each CONTAINER_SIZES as size}
                         <option value={size.value}>{size.label}</option>

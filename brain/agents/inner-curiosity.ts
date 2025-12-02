@@ -161,7 +161,7 @@ async function sampleWeightedMemories(count: number): Promise<any[]> {
 async function generateInnerQuestion(username: string): Promise<boolean> {
   console.log(`[inner-curiosity] Processing user: ${username}`);
 
-  const config = loadCuriosityConfig();
+  const config = loadCuriosityConfig(username);
   const persona = loadPersonaCore();
 
   // Check if inner questions are enabled

@@ -174,10 +174,12 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     }
 
     // Build migration options
+    // Skip integrity validation - background agents modify files during migration
+    // (conversation buffers, embeddings, etc. change constantly)
     const migrationOptions: Parameters<typeof migrateProfile>[3] = {
       keepSource,
       overwrite,
-      validateIntegrity: encryption?.type !== 'aes256', // Skip for encrypted files
+      validateIntegrity: false,
       encryption: encryption?.type && encryption.type !== 'none'
         ? {
             type: encryption.type,
