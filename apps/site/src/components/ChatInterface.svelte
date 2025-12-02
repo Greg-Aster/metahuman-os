@@ -289,10 +289,35 @@
   }
 
   /**
+   * Fetch buffer content directly (for initial load and tab switches)
+   * This is simpler and more reliable than waiting for SSE
+   */
+  async function fetchBuffer(streamMode: 'conversation' | 'inner') {
+    try {
+      console.log(`[chat] Fetching ${streamMode} buffer...`);
+      const response = await fetch(`/api/buffer?mode=${streamMode}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data.messages)) {
+          console.log(`[chat] Loaded ${data.messages.length} messages from ${streamMode} buffer`);
+          messages.set(data.messages);
+        }
+      } else {
+        console.error('[chat] Buffer fetch failed:', response.status);
+      }
+    } catch (err) {
+      console.error('[chat] Buffer fetch error:', err);
+    }
+  }
+
+  /**
    * Connect to buffer SSE stream for real-time updates
    * Uses fs.watch on server - no polling needed, instant updates
    */
   function connectBufferStream(streamMode: 'conversation' | 'inner') {
+    // First, fetch buffer directly for immediate display
+    fetchBuffer(streamMode);
+
     if (innerDialogueStream) {
       innerDialogueStream.close();
     }
@@ -303,6 +328,16 @@
     innerDialogueStream.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        console.log(`[chat] Buffer stream message type: ${data.type}`);
+        if (data.type === 'error') {
+          console.error('[chat] Buffer stream auth error:', data.error);
+          messagesApi.pushMessage('system', `⚠️ ${data.error}`);
+          return;
+        }
+        if (data.type === 'connected') {
+          console.log(`[chat] Buffer stream connected, watching: ${data.bufferPath}`);
+          return;
+        }
         if (data.type === 'update' && Array.isArray(data.messages)) {
           console.log(`[chat] Buffer update (${streamMode}): ${data.messages.length} messages`);
           // Update messages store with new data
@@ -314,7 +349,12 @@
     };
 
     innerDialogueStream.onerror = (err) => {
-      console.error('[chat] Buffer stream error:', err);
+      console.error('[chat] Buffer stream error - connection may have been reset:', err);
+      // Attempt reconnection after a delay
+      setTimeout(() => {
+        console.log('[chat] Attempting buffer stream reconnection...');
+        connectBufferStream(streamMode);
+      }, 3000);
     };
   }
 

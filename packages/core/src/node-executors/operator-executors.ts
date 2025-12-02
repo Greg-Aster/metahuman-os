@@ -186,6 +186,7 @@ What should I do next?`,
         repeatPenalty: 1.15,
         temperature: 0.5,
       },
+      onProgress: context.emitProgress,
     });
 
     console.log(`[ReactPlanner] LLM response: "${response.content.substring(0, 150)}..."`);
@@ -456,7 +457,8 @@ async function applyPersonaVoice(
   userMessage: string,
   conversationHistory: any[],
   cognitiveMode: string,
-  metadata: Record<string, any> = {}
+  metadata: Record<string, any> = {},
+  emitProgress?: (event: any) => void
 ): Promise<{ response: string; personaSynthesized: boolean }> {
   // Check if persona input is available and valid
   const personaPrompt = personaInput?.formatted || personaInput;
@@ -506,6 +508,7 @@ You are responding based on information that was gathered or generated. Your tas
         repeatPenalty: 1.3,
         temperature: 0.8,
       },
+      onProgress: emitProgress,
     });
 
     console.log(`[ResponseSynthesizer] ✅ Applied persona voice successfully`);
@@ -629,6 +632,7 @@ export const responseSynthesizerExecutor: NodeExecutor = async (inputs, context)
           repeatPenalty: 1.3,
           temperature,
         },
+        onProgress: context.emitProgress,
       });
 
       console.log(`[ResponseSynthesizer] ✅ Generated response using orchestrator guidance`);
@@ -792,6 +796,7 @@ DO NOT repeat the technical details verbatim - translate them into your natural 
               repeatPenalty: 1.3,
               temperature: 0.8,
             },
+            onProgress: context.emitProgress,
           });
 
           console.log(`[ResponseSynthesizer] ✅ Generated persona-infused response for Big Brother`);
@@ -889,6 +894,7 @@ Based on these execution steps, provide a clear, helpful response to the user's 
         repeatPenalty: 1.2,  // Increased from 1.20 to match persona_llm settings
         temperature: 0.7,
       },
+      onProgress: context.emitProgress,
     });
 
     let result: any = {
@@ -911,7 +917,9 @@ Based on these execution steps, provide a clear, helpful response to the user's 
         personaInput,
         userMessage,
         conversationHistory,
-        context.cognitiveMode || 'dual'
+        context.cognitiveMode || 'dual',
+        {},
+        context.emitProgress
       );
 
       if (synthesized.personaSynthesized) {
@@ -943,7 +951,9 @@ Based on these execution steps, provide a clear, helpful response to the user's 
           personaInput,
           userMessage,
           conversationHistory,
-          context.cognitiveMode || 'dual'
+          context.cognitiveMode || 'dual',
+          {},
+          context.emitProgress
         );
 
         if (synthesized.personaSynthesized) {

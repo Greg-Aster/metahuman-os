@@ -1,8 +1,33 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getUserContext } from './context.js';
+import { systemPaths } from './path-builder.js';
 
 export type ConversationBufferMode = 'inner' | 'conversation';
+
+/**
+ * Touch a notification file on LOCAL disk to signal buffer updates.
+ * This allows fs.watch() to work reliably even when buffer is on LUKS/NFS/FUSE.
+ * The notification file is tiny and just triggers re-reads of the actual buffer.
+ */
+export function touchBufferNotification(username: string, mode: ConversationBufferMode): void {
+  try {
+    const notifyDir = path.join(systemPaths.run, 'buffer-notifications');
+    fs.mkdirSync(notifyDir, { recursive: true });
+    const notifyFile = path.join(notifyDir, `${username}-${mode}.notify`);
+    const now = new Date().toISOString();
+    fs.writeFileSync(notifyFile, now);
+  } catch {
+    // Non-critical - buffer still works, just won't get instant SSE updates
+  }
+}
+
+/**
+ * Get the path to the notification file for a user's buffer
+ */
+export function getBufferNotificationPath(username: string, mode: ConversationBufferMode): string {
+  return path.join(systemPaths.run, 'buffer-notifications', `${username}-${mode}.notify`);
+}
 
 export type ConversationMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -145,6 +170,12 @@ export function loadPersistedBuffer(mode: ConversationBufferMode): {
           lastUpdated: new Date().toISOString(),
         };
         fs.writeFileSync(bufferPath, JSON.stringify(payload, null, 2));
+
+        // Touch notification file on local disk to trigger SSE updates
+        const ctx = getUserContext();
+        if (ctx?.username) {
+          touchBufferNotification(ctx.username, mode);
+        }
       } catch (error) {
         console.warn('[conversation-buffer] Failed to persist deduplicated buffer:', error);
       }
@@ -191,6 +222,12 @@ export function persistBuffer(
     };
 
     fs.writeFileSync(bufferPath, JSON.stringify(payload, null, 2));
+
+    // Touch notification file on local disk to trigger SSE updates
+    const ctx = getUserContext();
+    if (ctx?.username) {
+      touchBufferNotification(ctx.username, mode);
+    }
   } catch (error) {
     console.error('[conversation-buffer] Failed to persist buffer:', error);
   }
@@ -281,6 +318,9 @@ export function appendToUserBuffer(
     // Save
     buffer.lastUpdated = new Date().toISOString();
     fs.writeFileSync(bufferPath, JSON.stringify(buffer, null, 2));
+
+    // Touch notification file on local disk to trigger SSE updates
+    touchBufferNotification(user.username, mode);
 
     console.log(`[conversation-buffer] ✅ Appended ${message.role} to ${mode} buffer for ${user.username}`);
     return true;

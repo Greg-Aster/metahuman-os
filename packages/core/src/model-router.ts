@@ -32,6 +32,19 @@ export interface RouterCallOptions {
     [key: string]: any;
   };
   overrides?: Partial<ResolvedModel>;
+  /**
+   * Callback for progress notifications (model loading, waiting, etc.)
+   * Used to show status messages in the chat stream
+   */
+  onProgress?: (event: ModelProgressEvent) => void;
+}
+
+export interface ModelProgressEvent {
+  type: 'model_loading' | 'model_waiting' | 'model_ready' | 'model_switch';
+  message: string;
+  model?: string;
+  currentModel?: string;
+  elapsedMs?: number;
 }
 
 export interface RouterResponse {
@@ -113,7 +126,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
   try {
     switch (resolved.provider) {
       case 'ollama':
-        response = await callOllama(resolved, messages, mergedOptions);
+        response = await callOllama(resolved, messages, mergedOptions, callOptions.onProgress);
         break;
 
       case 'openai':
@@ -192,13 +205,60 @@ export async function* callLLMStream(callOptions: RouterCallOptions): AsyncGener
 }
 
 /**
- * Call Ollama provider
+ * Call Ollama provider with model availability checking
  */
 async function callOllama(
   resolved: ResolvedModel,
   messages: RouterMessage[],
-  options: Record<string, any>
+  options: Record<string, any>,
+  onProgress?: (event: ModelProgressEvent) => void
 ): Promise<RouterResponse> {
+  // Check if model is already loaded or if we need to wait
+  const isLoaded = await ollama.isModelLoaded(resolved.model);
+
+  if (!isLoaded) {
+    // Check what's currently running
+    const running = await ollama.getRunningModels().catch(() => ({ models: [] }));
+
+    if (running.models.length > 0) {
+      const currentModel = running.models[0]?.name || 'unknown';
+
+      // Notify that we're waiting for model switch
+      onProgress?.({
+        type: 'model_switch',
+        message: `Switching from ${currentModel} to ${resolved.model}...`,
+        model: resolved.model,
+        currentModel,
+      });
+
+      // Wait for model availability (with timeout)
+      const waitResult = await ollama.waitForModelAvailability(resolved.model, {
+        timeoutMs: 60000, // 60 second timeout
+        pollIntervalMs: 2000,
+        onWaiting: (currentModel, elapsedMs) => {
+          onProgress?.({
+            type: 'model_waiting',
+            message: `Waiting for ${currentModel} to finish (${Math.round(elapsedMs / 1000)}s)...`,
+            model: resolved.model,
+            currentModel,
+            elapsedMs,
+          });
+        },
+      });
+
+      if (!waitResult.ready) {
+        console.warn(`[model-router] Timed out waiting for model ${resolved.model}, proceeding anyway`);
+      }
+    }
+
+    // Notify that we're loading the model
+    onProgress?.({
+      type: 'model_loading',
+      message: `Loading ${resolved.model}...`,
+      model: resolved.model,
+    });
+  }
+
   // Convert our message format to Ollama's format
   const ollamaMessages = messages.map(msg => ({
     role: msg.role,
@@ -213,8 +273,44 @@ async function callOllama(
   if (options.maxTokens !== undefined) ollamaOptions.num_predict = options.maxTokens;
   if (options.format !== undefined) ollamaOptions.format = options.format; // Support JSON mode
 
-  // Call Ollama
-  const response = await ollama.chat(resolved.model, ollamaMessages, ollamaOptions);
+  // Call Ollama with OOM error detection
+  let response;
+  try {
+    response = await ollama.chat(resolved.model, ollamaMessages, ollamaOptions);
+  } catch (error) {
+    const errorMsg = (error as Error).message || '';
+
+    // Detect OOM-related errors (EOF, connection refused, CUDA out of memory)
+    const isOOMError = errorMsg.includes('EOF') ||
+      errorMsg.includes('ECONNREFUSED') ||
+      errorMsg.includes('CUDA out of memory') ||
+      errorMsg.includes('out of memory') ||
+      errorMsg.includes('failed to load model') ||
+      errorMsg.includes('GGML_ASSERT') ||
+      (errorMsg.includes('500') && errorMsg.includes('load'));
+
+    if (isOOMError) {
+      // Notify user about potential OOM
+      onProgress?.({
+        type: 'model_loading',
+        message: `⚠️ Model ${resolved.model} failed to load - GPU memory may be full. Try refreshing or wait for other models to unload.`,
+        model: resolved.model,
+      });
+
+      // Re-throw with clearer error message
+      throw new Error(`GPU memory exhausted: Unable to load ${resolved.model}. Another model may be using the GPU. Please wait and try again, or restart the Ollama service.`);
+    }
+
+    // Re-throw other errors
+    throw error;
+  }
+
+  // Notify model is ready
+  onProgress?.({
+    type: 'model_ready',
+    message: `${resolved.model} ready`,
+    model: resolved.model,
+  });
 
   // Extract tokens if available
   let tokens: RouterResponse['tokens'] | undefined;

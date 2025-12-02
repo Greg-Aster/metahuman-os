@@ -185,6 +185,23 @@ function streamGraphExecutionWithProgress(params: GraphPipelineParams) {
 
         push('progress', { step: 'graph_loaded', message: `Executing ${loaded.graph.name} (${loaded.graph.nodes.length} nodes)` });
 
+        // Create emitProgress function that forwards to SSE stream
+        // This allows node executors (especially LLM nodes) to emit model loading status
+        const emitProgress = (event: { type: string; message: string; model?: string; currentModel?: string; elapsedMs?: number }) => {
+          if (closed) return;
+          const emoji = event.type === 'model_loading' ? '⏳' :
+                       event.type === 'model_waiting' ? '⏱️' :
+                       event.type === 'model_switch' ? '🔄' :
+                       event.type === 'model_ready' ? '✅' : '📡';
+          push('progress', {
+            step: event.type,
+            message: `${emoji} ${event.message}`,
+            model: event.model,
+            currentModel: event.currentModel,
+            elapsedMs: event.elapsedMs,
+          });
+        };
+
         const contextData = {
           sessionId,
           userMessage: message,
@@ -202,6 +219,7 @@ function streamGraphExecutionWithProgress(params: GraphPipelineParams) {
           useOperator,
           yoloMode,
           timeoutMs,
+          emitProgress, // Inject progress emitter for model loading notifications
         };
 
         const startedAt = Date.now();

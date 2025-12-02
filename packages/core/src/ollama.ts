@@ -302,6 +302,106 @@ export class OllamaClient {
   }
 
   /**
+   * Get currently running/loaded models (equivalent to `ollama ps`)
+   * Returns list of models currently loaded in memory with GPU usage info
+   */
+  async getRunningModels(): Promise<{
+    models: Array<{
+      name: string;
+      model: string;
+      size: number;
+      sizeVram: number;
+      digest: string;
+      expiresAt: string;
+    }>;
+  }> {
+    const response = await fetch(`${this.endpoint}/api/ps`);
+    if (!response.ok) {
+      throw new Error(`Failed to get running models: ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Check if a specific model is currently loaded in memory
+   */
+  async isModelLoaded(modelName: string): Promise<boolean> {
+    try {
+      const running = await this.getRunningModels();
+      return running.models.some(m =>
+        m.name === modelName ||
+        m.name.startsWith(modelName + ':') ||
+        m.model === modelName
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Wait for a model to become available (GPU not busy with different model)
+   * Returns true if model is ready, false if timed out
+   */
+  async waitForModelAvailability(
+    modelName: string,
+    options?: {
+      timeoutMs?: number;
+      pollIntervalMs?: number;
+      onWaiting?: (currentModel: string, elapsedMs: number) => void;
+    }
+  ): Promise<{ ready: boolean; currentModel?: string; waitedMs: number }> {
+    const timeoutMs = options?.timeoutMs ?? 30000; // 30 second default
+    const pollIntervalMs = options?.pollIntervalMs ?? 1000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        const running = await this.getRunningModels();
+
+        // No models running - GPU is free
+        if (running.models.length === 0) {
+          return { ready: true, waitedMs: Date.now() - startTime };
+        }
+
+        // Check if our model is already loaded
+        const ourModelLoaded = running.models.some(m =>
+          m.name === modelName ||
+          m.name.startsWith(modelName + ':') ||
+          m.model === modelName
+        );
+
+        if (ourModelLoaded) {
+          return { ready: true, waitedMs: Date.now() - startTime };
+        }
+
+        // Another model is running - notify and wait
+        const currentModel = running.models[0]?.name || 'unknown';
+        const elapsed = Date.now() - startTime;
+
+        if (options?.onWaiting) {
+          options.onWaiting(currentModel, elapsed);
+        }
+
+        // Wait before next check
+        await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+
+      } catch (error) {
+        // If we can't check, assume available and let the actual request fail
+        console.warn('[Ollama] Error checking model availability:', error);
+        return { ready: true, waitedMs: Date.now() - startTime };
+      }
+    }
+
+    // Timed out waiting
+    const running = await this.getRunningModels().catch(() => ({ models: [] }));
+    return {
+      ready: false,
+      currentModel: running.models[0]?.name,
+      waitedMs: Date.now() - startTime
+    };
+  }
+
+  /**
    * Get Ollama health status including model availability
    * Returns status object with running state and available models
    */
