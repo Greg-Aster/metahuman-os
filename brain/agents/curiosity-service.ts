@@ -52,7 +52,7 @@ async function loadCuriosityGraph(): Promise<CognitiveGraph> {
 async function generateUserQuestion(username: string): Promise<boolean> {
   console.log(`[curiosity-service] Processing user: ${username}`);
 
-  const config = loadCuriosityConfig();
+  const config = loadCuriosityConfig(username);
   const trust = loadTrustLevel();
 
   // Check if system is enabled

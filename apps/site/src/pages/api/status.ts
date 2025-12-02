@@ -30,17 +30,11 @@ const handler: APIRoute = async ({ cookies }) => {
     const user = getUserOrAnonymous(cookies);
     const isAuthenticated = user.role !== 'anonymous';
 
-    // DEBUG: Log authentication state
-    console.log(`[status] Auth check: isAuthenticated=${isAuthenticated}, role="${user.role}", username="${isAuthenticated ? user.username : 'N/A'}"`);
-
     const now = Date.now();
 
     // Load cognitive mode, but override for unauthenticated users
     const cognitiveConfig = loadCognitiveMode();
     const cognitiveMode = isAuthenticated ? cognitiveConfig.currentMode : 'emulation';
-    console.log(`[status] Cognitive mode: ${cognitiveMode} (config: ${cognitiveConfig.currentMode})`);
-    console.log(`[status] Username being used for model registry: "${isAuthenticated ? user.username : 'undefined (anonymous)'}"`);
-
 
     // Cache key includes cognitive mode for accurate per-mode caching
     const cacheKey = `status-${cognitiveMode}`;

@@ -34,7 +34,6 @@ function resolveEtcPath(username?: string): string {
 
   // Fall back to system etc/ for anonymous users or when storage router fails
   const systemEtcPath = path.join(ROOT, 'etc');
-  console.log(`[config] Falling back to system etc path: ${systemEtcPath} (reason: ${result.error || 'no path returned'})`);
   return systemEtcPath;
 }
 

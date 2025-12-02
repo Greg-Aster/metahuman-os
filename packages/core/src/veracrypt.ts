@@ -540,19 +540,24 @@ function formatBytes(bytes: number): string {
  */
 export const RECOMMENDED_SIZES = {
   small: {
-    bytes: 500 * 1024 * 1024, // 500 MB
-    label: '500 MB',
-    description: 'Basic profile with limited memories',
-  },
-  medium: {
     bytes: 2 * 1024 * 1024 * 1024, // 2 GB
     label: '2 GB',
-    description: 'Standard profile with moderate memory storage',
+    description: 'Basic profile',
+  },
+  medium: {
+    bytes: 50 * 1024 * 1024 * 1024, // 50 GB
+    label: '50 GB',
+    description: 'Standard profile with voice data',
   },
   large: {
-    bytes: 10 * 1024 * 1024 * 1024, // 10 GB
-    label: '10 GB',
-    description: 'Extended profile with voice training data',
+    bytes: 100 * 1024 * 1024 * 1024, // 100 GB
+    label: '100 GB',
+    description: 'Large profile with LLM adapters',
+  },
+  xlarge: {
+    bytes: 200 * 1024 * 1024 * 1024, // 200 GB
+    label: '200 GB',
+    description: 'Full profile with multiple LLMs',
   },
   custom: {
     bytes: 0,

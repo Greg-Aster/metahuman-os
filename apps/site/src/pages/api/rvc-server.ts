@@ -4,14 +4,16 @@ import {
   startRvcServer,
   stopRvcServer,
 } from '../../lib/server/rvc-server';
+import { getAuthenticatedUser } from '@metahuman/core';
 
 /**
  * GET /api/rvc-server
  * Check RVC server status
  */
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ cookies }) => {
   try {
-    const status = await getRvcServerStatus();
+    const user = getAuthenticatedUser(cookies);
+    const status = await getRvcServerStatus(user.username);
     return new Response(JSON.stringify(status), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -29,12 +31,13 @@ export const GET: APIRoute = async () => {
  * POST /api/rvc-server
  * Start or stop RVC server
  */
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, cookies }) => {
   try {
+    const user = getAuthenticatedUser(cookies);
     const { action } = await request.json();
 
     if (action === 'start') {
-      const result = await startRvcServer();
+      const result = await startRvcServer(user.username);
       return new Response(JSON.stringify(result), {
         status: result.success ? 200 : 500,
         headers: { 'Content-Type': 'application/json' },
@@ -49,7 +52,7 @@ export const POST: APIRoute = async ({ request }) => {
       // Stop then start
       await stopRvcServer();
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      const result = await startRvcServer();
+      const result = await startRvcServer(user.username);
       return new Response(JSON.stringify(result), {
         status: result.success ? 200 : 500,
         headers: { 'Content-Type': 'application/json' },
