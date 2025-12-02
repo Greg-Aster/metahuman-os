@@ -6,7 +6,7 @@
 
 import fs from 'fs-extra';
 import path from 'path';
-import { systemPaths, ROOT } from './path-builder.js';
+import { systemPaths, ROOT, getProfilePaths } from './path-builder.js';
 import { audit } from './audit.js';
 
 /**
@@ -368,18 +368,29 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
 
 /**
  * Check if a profile exists for a user
+ * Uses storage router to check the resolved location (respects external/encrypted storage)
  */
 export function profileExists(username: string): boolean {
-  const profileRoot = path.join(systemPaths.profiles, username);
-  return fs.existsSync(profileRoot);
+  try {
+    const profilePaths = getProfilePaths(username);
+    return fs.existsSync(profilePaths.root);
+  } catch {
+    // If storage router throws (e.g., external storage unavailable), check default location
+    const defaultRoot = path.join(systemPaths.profiles, username);
+    return fs.existsSync(defaultRoot);
+  }
 }
 
 /**
  * Ensure an existing profile has all required directories/configs.
  * Safe to run multiple times; only creates missing pieces.
+ * Uses storage router to respect external/encrypted storage configuration.
  */
 export async function ensureProfileIntegrity(username: string): Promise<void> {
-  const profileRoot = path.join(systemPaths.profiles, username);
+  // Use storage router to get correct profile location (respects external/encrypted storage)
+  const profilePaths = getProfilePaths(username);
+  const profileRoot = profilePaths.root;
+
   if (!(await fs.pathExists(profileRoot))) {
     throw new Error(`Profile directory not found: ${profileRoot}`);
   }
@@ -600,15 +611,19 @@ export async function createMutantSuperIntelligence(profileUsernames: string[]):
   await initializeGuestProfile();
 
   try {
-    // Load all public personas
+    // Load all public personas using storage router (respects external/encrypted storage)
     const personas: any[] = [];
     for (const username of profileUsernames) {
-      const profileRoot = path.join(systemPaths.profiles, username);
-      const personaPath = path.join(profileRoot, 'persona', 'core.json');
+      try {
+        const profilePaths = getProfilePaths(username);
+        const personaPath = path.join(profilePaths.root, 'persona', 'core.json');
 
-      if (fs.existsSync(personaPath)) {
-        const persona = await fs.readJson(personaPath);
-        personas.push({ username, persona });
+        if (fs.existsSync(personaPath)) {
+          const persona = await fs.readJson(personaPath);
+          personas.push({ username, persona });
+        }
+      } catch (error) {
+        console.warn(`[profile] Could not access profile for ${username}: ${(error as Error).message}`);
       }
     }
 
@@ -710,25 +725,30 @@ export async function createMutantSuperIntelligence(profileUsernames: string[]):
     const guestCoreJson = path.join(guestRoot, 'persona', 'core.json');
     await fs.writeJson(guestCoreJson, mergedPersona, { spaces: 2 });
 
-    // Merge facets from all profiles
+    // Merge facets from all profiles using storage router (respects external/encrypted storage)
     const allFacets: Record<string, any> = {};
     for (const username of profileUsernames) {
-      const profileRoot = path.join(systemPaths.profiles, username);
-      const facetsPath = path.join(profileRoot, 'persona', 'facets.json');
+      try {
+        const profilePaths = getProfilePaths(username);
+        const facetsPath = path.join(profilePaths.root, 'persona', 'facets.json');
 
-      if (fs.existsSync(facetsPath)) {
-        const facetsData = await fs.readJson(facetsPath);
-        if (facetsData.facets) {
-          // Merge facets, prefixing with source profile name to avoid conflicts
-          for (const [facetKey, facetData] of Object.entries(facetsData.facets)) {
-            const mergedKey = facetKey === 'default' ? `${username}-default` : `${username}-${facetKey}`;
-            allFacets[mergedKey] = {
-              ...facetData,
-              name: `${facetData.name || facetKey} (from ${username})`,
-              sourceProfile: username,
-            };
+        if (fs.existsSync(facetsPath)) {
+          const facetsData = await fs.readJson(facetsPath);
+          if (facetsData.facets) {
+            // Merge facets, prefixing with source profile name to avoid conflicts
+            for (const [facetKey, facetData] of Object.entries(facetsData.facets)) {
+              const mergedKey = facetKey === 'default' ? `${username}-default` : `${username}-${facetKey}`;
+              const facet = facetData as Record<string, unknown>;
+              allFacets[mergedKey] = {
+                ...facet,
+                name: `${facet.name || facetKey} (from ${username})`,
+                sourceProfile: username,
+              };
+            }
           }
         }
+      } catch (error) {
+        console.warn(`[profile] Could not access facets for ${username}: ${(error as Error).message}`);
       }
     }
 
@@ -778,11 +798,15 @@ export async function createMutantSuperIntelligence(profileUsernames: string[]):
 
 /**
  * Copy persona data from source profile to guest profile
+ * Uses storage router to respect external/encrypted storage for source profile
  *
  * @param sourceUsername - Username of the public profile to copy from
  */
 export async function copyPersonaToGuest(sourceUsername: string): Promise<void> {
-  const sourceRoot = path.join(systemPaths.profiles, sourceUsername);
+  // Use storage router to get correct source profile location (respects external/encrypted storage)
+  const sourceProfilePaths = getProfilePaths(sourceUsername);
+  const sourceRoot = sourceProfilePaths.root;
+  // Guest profile always at default location (internal storage)
   const guestRoot = path.join(systemPaths.profiles, 'guest');
 
   if (!fs.existsSync(sourceRoot)) {
@@ -890,13 +914,16 @@ export async function copyPersonaToGuest(sourceUsername: string): Promise<void> 
 
 /**
  * Delete a user's profile (DANGEROUS - requires explicit confirmation)
+ * Uses storage router to delete from the correct location (respects external/encrypted storage)
  */
 export async function deleteProfile(username: string, confirm: boolean = false): Promise<void> {
   if (!confirm) {
     throw new Error('Profile deletion requires explicit confirmation');
   }
 
-  const profileRoot = path.join(systemPaths.profiles, username);
+  // Use storage router to get correct profile location (respects external/encrypted storage)
+  const profilePaths = getProfilePaths(username);
+  const profileRoot = profilePaths.root;
 
   if (!fs.existsSync(profileRoot)) {
     throw new Error(`Profile does not exist: ${username}`);
@@ -1003,9 +1030,16 @@ export async function deleteProfileComplete(
       };
     }
 
-    // Step 3: Check if profile directory exists
-    const profileRoot = path.join(systemPaths.profiles, username);
-    const profileExists = await fs.pathExists(profileRoot);
+    // Step 3: Check if profile directory exists using storage router (respects external/encrypted storage)
+    let profileRoot: string;
+    try {
+      const profilePaths = getProfilePaths(username);
+      profileRoot = profilePaths.root;
+    } catch {
+      // If storage router throws, use default location
+      profileRoot = path.join(systemPaths.profiles, username);
+    }
+    const profileExistsCheck = await fs.pathExists(profileRoot);
 
     audit({
       level: 'warn',
@@ -1015,7 +1049,7 @@ export async function deleteProfileComplete(
         targetUsername: username,
         targetUserId: targetUser.id,
         requestingUserId,
-        profileExists,
+        profileExists: profileExistsCheck,
       },
       actor,
     });
@@ -1028,7 +1062,7 @@ export async function deleteProfileComplete(
 
     // Step 6: Delete profile directory
     let profileDeleted = false;
-    if (profileExists) {
+    if (profileExistsCheck) {
       await fs.remove(profileRoot);
       profileDeleted = true;
 
