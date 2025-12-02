@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { systemPaths } from '../path-builder.js';
+import { getProfilePaths } from '../path-builder.js';
 import { audit } from '../audit.js';
 
 export interface CleanupOptions {
@@ -50,8 +50,9 @@ export async function cleanupSessions(
   };
 
   try {
-    // Resolve interviews directory path
-    const interviewsDir = path.join(systemPaths.profiles, username, 'persona', 'interviews');
+    // Resolve interviews directory path using storage router (respects external/encrypted storage)
+    const profilePaths = getProfilePaths(username);
+    const interviewsDir = path.join(profilePaths.root, 'persona', 'interviews');
 
     if (!fs.existsSync(interviewsDir)) {
       console.log(`[cleanup] No interviews directory found for user: ${username}`);
@@ -185,13 +186,17 @@ export async function cleanupSessions(
 
     // Audit cleanup
     if (!options.dryRun && (result.cleaned > 0 || result.archived > 0)) {
-      await audit('action', 'info', {
-        action: 'persona_sessions_cleaned',
-        username,
-        cleaned: result.cleaned,
-        archived: result.archived,
-        errors: result.errors,
-        maxAgeDays: options.maxAgeInDays,
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'persona_sessions_cleaned',
+        details: {
+          username,
+          cleaned: result.cleaned,
+          archived: result.archived,
+          errors: result.errors,
+          maxAgeDays: options.maxAgeInDays,
+        },
         actor: 'system',
       });
     }

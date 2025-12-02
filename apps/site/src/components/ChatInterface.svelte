@@ -24,11 +24,12 @@
   let claudeSessionReady = false;
   let claudeSessionChecking = false;
   let chatResponseStream: EventSource | null = null;
+  let innerDialogueStream: EventSource | null = null;
   let mode: 'conversation' | 'inner' = 'conversation';
   let lengthMode: 'auto' | 'concise' | 'detailed' = 'auto';
   let messagesContainer: HTMLDivElement;
   let shouldAutoScroll = true;
-  // reflectionStream removed - dreams/reflections now loaded from buffer on tab focus
+  // Buffer stream (innerDialogueStream) provides real-time updates via fs.watch SSE
   let visibilityCleanup: (() => void) | null = null;
   // Convenience toggles
   let ttsEnabled = false;
@@ -244,10 +245,10 @@
       messagesApi.generateSessionId();
     }
 
-    // Load conversation history from episodic memory and buffer
-    // This loads the full history including past conversations
-    await messagesApi.loadHistoryForMode();
-    console.log(`[ChatInterface] Loaded conversation history for mode: ${mode}`);
+    // Connect to buffer stream - this loads initial history AND provides real-time updates
+    // Uses fs.watch on server, no polling needed
+    connectBufferStream(mode);
+    console.log(`[ChatInterface] Connected to ${mode} buffer stream`);
 
     scrollObserver = new IntersectionObserver(
       (entries) => {
@@ -260,13 +261,11 @@
       scrollObserver.observe(scrollSentinel);
     }
 
-    // PERFORMANCE FIX: Removed legacy SSE polling stream (reflections/stream.ts)
-    // Dreams and reflections now write directly to conversation buffer via agents.
-    // We simply refresh from the buffer when the tab becomes visible.
+    // Reconnect buffer stream when tab becomes visible (in case connection dropped)
     const handleVisibilityChange = () => {
-      if (!document.hidden) {
-        console.log('[chat] Tab visible, refreshing messages from buffer');
-        void messagesApi.loadMessagesFromServer();
+      if (!document.hidden && (!innerDialogueStream || innerDialogueStream.readyState === EventSource.CLOSED)) {
+        console.log('[chat] Tab visible, reconnecting buffer stream');
+        connectBufferStream(mode);
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -289,15 +288,54 @@
     mic.loadVADSettings();
   }
 
+  /**
+   * Connect to buffer SSE stream for real-time updates
+   * Uses fs.watch on server - no polling needed, instant updates
+   */
+  function connectBufferStream(streamMode: 'conversation' | 'inner') {
+    if (innerDialogueStream) {
+      innerDialogueStream.close();
+    }
+
+    console.log(`[chat] Connecting to ${streamMode} buffer stream...`);
+    innerDialogueStream = new EventSource(`/api/buffer-stream?mode=${streamMode}`);
+
+    innerDialogueStream.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'update' && Array.isArray(data.messages)) {
+          console.log(`[chat] Buffer update (${streamMode}): ${data.messages.length} messages`);
+          // Update messages store with new data
+          messages.set(data.messages);
+        }
+      } catch (err) {
+        console.error('[chat] Buffer stream parse error:', err);
+      }
+    };
+
+    innerDialogueStream.onerror = (err) => {
+      console.error('[chat] Buffer stream error:', err);
+    };
+  }
+
+  function disconnectBufferStream() {
+    if (innerDialogueStream) {
+      console.log('[chat] Disconnecting buffer stream');
+      innerDialogueStream.close();
+      innerDialogueStream = null;
+    }
+  }
+
 
 
   onDestroy(() => {
     // Mark component as unmounted to stop animation loops
     isComponentMounted = false;
 
-    // Clean up visibility listener (replaced legacy SSE polling)
+    // Clean up event listeners and streams
     visibilityCleanup?.();
-    chatResponseStream?.close(); // Fix memory leak: close chat stream
+    chatResponseStream?.close();
+    disconnectBufferStream();
     activityApi.clearActivity();
     ttsApi.cleanup();
     thinkingTraceApi.cleanup();
@@ -778,7 +816,7 @@
     <div class="mode-toggle">
       <button
         class={mode === 'conversation' ? 'mode-btn active' : 'mode-btn'}
-        on:click={() => { mode = 'conversation'; messagesApi.loadHistoryForMode(); }}
+        on:click={() => { mode = 'conversation'; connectBufferStream('conversation'); }}
         aria-label="Conversation mode"
       >
         <span class="mode-icon" aria-hidden="true">💬</span>
@@ -786,7 +824,7 @@
       </button>
       <button
         class={mode === 'inner' ? 'mode-btn active' : 'mode-btn'}
-        on:click={() => { mode = 'inner'; messagesApi.loadHistoryForMode(); }}
+        on:click={() => { mode = 'inner'; connectBufferStream('inner'); }}
         aria-label="Inner dialogue mode"
       >
         <span class="mode-icon" aria-hidden="true">💭</span>

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { systemPaths } from './path-builder.js';
+import { getProfilePaths } from './path-builder.js';
 
 export interface RecoveryCodes {
   codes: string[];
@@ -31,13 +31,15 @@ export function generateRecoveryCodes(): string[] {
 
 /**
  * Save recovery codes to user's profile directory
+ * Uses storage router to respect external/encrypted storage configuration
  */
 export function saveRecoveryCodes(username: string, codes: string[]): string {
-  const profileDir = path.join(systemPaths.profiles, username);
-  const recoveryFile = path.join(profileDir, 'recovery-codes.json');
+  // Use storage router to get correct profile location (respects external/encrypted storage)
+  const profilePaths = getProfilePaths(username);
+  const recoveryFile = path.join(profilePaths.root, 'recovery-codes.json');
 
   // Ensure profile directory exists
-  fs.mkdirSync(profileDir, { recursive: true });
+  fs.mkdirSync(profilePaths.root, { recursive: true });
 
   const data: RecoveryCodes = {
     codes,
@@ -52,10 +54,12 @@ export function saveRecoveryCodes(username: string, codes: string[]): string {
 
 /**
  * Load recovery codes for a user
+ * Uses storage router to respect external/encrypted storage configuration
  */
 export function loadRecoveryCodes(username: string): RecoveryCodes | null {
-  const profileDir = path.join(systemPaths.profiles, username);
-  const recoveryFile = path.join(profileDir, 'recovery-codes.json');
+  // Use storage router to get correct profile location (respects external/encrypted storage)
+  const profilePaths = getProfilePaths(username);
+  const recoveryFile = path.join(profilePaths.root, 'recovery-codes.json');
 
   if (!fs.existsSync(recoveryFile)) {
     return null;
@@ -90,8 +94,9 @@ export function verifyRecoveryCode(username: string, code: string): boolean {
   // Mark code as used
   data.usedCodes.push(code.toUpperCase());
 
-  const profileDir = path.join(systemPaths.profiles, username);
-  const recoveryFile = path.join(profileDir, 'recovery-codes.json');
+  // Use storage router to get correct profile location (respects external/encrypted storage)
+  const profilePaths = getProfilePaths(username);
+  const recoveryFile = path.join(profilePaths.root, 'recovery-codes.json');
   fs.writeFileSync(recoveryFile, JSON.stringify(data, null, 2));
 
   return true;
