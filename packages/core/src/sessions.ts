@@ -8,7 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { paths } from './paths.js';
+import { systemPaths } from './path-builder.js';
 import { audit } from './audit.js';
 
 /**
@@ -42,7 +42,7 @@ interface SessionStore {
  * Uses system-level path since sessions.json is a global database.
  */
 function getSessionsFilePath(): string {
-  return paths.sessionsFile;
+  return systemPaths.sessionsFile;
 }
 
 // Session expiration times

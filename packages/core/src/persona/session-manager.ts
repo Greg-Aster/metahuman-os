@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { tryResolveProfilePath } from '../paths.js';
+import { storageClient } from '../storage-client.js';
 import { audit } from '../audit.js';
 import { getUserContext } from '../context.js';
 
@@ -95,8 +95,12 @@ export async function startSession(userId: string, username: string): Promise<Se
   }
 
   // Resolve interviews directory path
-  const interviewsPathResult = tryResolveProfilePath('personaInterviews');
-  if (!interviewsPathResult.ok) {
+  const interviewsPathResult = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: 'therapy',
+  });
+  if (!interviewsPathResult.success || !interviewsPathResult.path) {
     throw new Error('Cannot resolve interviews path for user');
   }
 
@@ -139,9 +143,9 @@ export async function startSession(userId: string, username: string): Promise<Se
 
   // Audit log
   await audit({
-    category: 'persona_generation',
+    category: 'action',
     level: 'info',
-    action: 'session_started',
+    event: 'session_started',
     details: {
       sessionId,
       userId,
@@ -156,8 +160,12 @@ export async function startSession(userId: string, username: string): Promise<Se
  * Load an existing session by ID
  */
 export async function loadSession(username: string, sessionId: string): Promise<Session | null> {
-  const interviewsPathResult = tryResolveProfilePath('personaInterviews');
-  if (!interviewsPathResult.ok) {
+  const interviewsPathResult = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: 'therapy',
+  });
+  if (!interviewsPathResult.success || !interviewsPathResult.path) {
     return null;
   }
 
@@ -181,8 +189,12 @@ export async function loadSession(username: string, sessionId: string): Promise<
  * Save updated session
  */
 export async function saveSession(username: string, session: Session): Promise<void> {
-  const interviewsPathResult = tryResolveProfilePath('personaInterviews');
-  if (!interviewsPathResult.ok) {
+  const interviewsPathResult = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: 'therapy',
+  });
+  if (!interviewsPathResult.success || !interviewsPathResult.path) {
     throw new Error('Cannot resolve interviews path');
   }
 
@@ -206,9 +218,13 @@ export async function saveSession(username: string, session: Session): Promise<v
 /**
  * List all sessions for a user
  */
-export async function listSessions(username: string): Promise<SessionMetadata[]> {
-  const indexPathResult = tryResolveProfilePath('personaInterviewsIndex');
-  if (!indexPathResult.ok) {
+export async function listSessions(_username: string): Promise<SessionMetadata[]> {
+  const indexPathResult = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: 'therapy/index.json',
+  });
+  if (!indexPathResult.success || !indexPathResult.path) {
     return [];
   }
 
@@ -235,9 +251,9 @@ export async function discardSession(username: string, sessionId: string): Promi
 
   // Audit log
   await audit({
-    category: 'persona_generation',
+    category: 'action',
     level: 'info',
-    action: 'session_aborted',
+    event: 'session_aborted',
     details: {
       sessionId,
       username,
@@ -269,9 +285,9 @@ export async function addQuestion(
 
   // Audit log
   await audit({
-    category: 'persona_generation',
+    category: 'action',
     level: 'info',
-    action: 'question_asked',
+    event: 'question_asked',
     details: {
       sessionId,
       questionId: question.id,
@@ -320,9 +336,9 @@ export async function recordAnswer(
 
   // Audit log
   await audit({
-    category: 'persona_generation',
+    category: 'action',
     level: 'info',
-    action: 'answer_recorded',
+    event: 'answer_recorded',
     details: {
       sessionId,
       questionId,
@@ -362,9 +378,13 @@ function updateCategoryCoverage(session: Session): void {
 /**
  * Update session index
  */
-async function updateSessionIndex(username: string, session: Session): Promise<void> {
-  const indexPathResult = tryResolveProfilePath('personaInterviewsIndex');
-  if (!indexPathResult.ok) {
+async function updateSessionIndex(_username: string, session: Session): Promise<void> {
+  const indexPathResult = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: 'therapy/index.json',
+  });
+  if (!indexPathResult.success || !indexPathResult.path) {
     throw new Error('Cannot resolve index path');
   }
 

@@ -5,9 +5,9 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, generateId, audit } from '@metahuman/core';
+import { storageClient, systemPaths, generateId, audit } from '@metahuman/core';
 
-const AUDIO_CONFIG_PATH = path.join(paths.etc, 'audio.json');
+const AUDIO_CONFIG_PATH = path.join(systemPaths.etc, 'audio.json');
 
 interface AudioConfig {
   formats: {
@@ -71,10 +71,20 @@ export const POST: APIRoute = async ({ request }) => {
     // Generate unique filename
     const audioId = generateId('audio');
     const filename = `${audioId}.${ext}`;
-    const filepath = path.join(paths.audioInbox, filename);
+
+    // Resolve audio inbox directory using storage router
+    const inboxResult = storageClient.resolvePath({ category: 'voice', subcategory: 'inbox' });
+    if (!inboxResult.success || !inboxResult.path) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Cannot resolve audio inbox path' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    const audioInbox = inboxResult.path;
+    const filepath = path.join(audioInbox, filename);
 
     // Ensure directory exists
-    fs.mkdirSync(paths.audioInbox, { recursive: true });
+    fs.mkdirSync(audioInbox, { recursive: true });
 
     // Save file
     const buffer = Buffer.from(await file.arrayBuffer());

@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths, timestamp } from '@metahuman/core'
+import { storageClient, ROOT, timestamp } from '@metahuman/core'
 import { requireWriteMode } from '../../../middleware/cognitiveModeGuard'
 
 export const POST: APIRoute = requireWriteMode(async (context) => {
@@ -16,9 +16,13 @@ export const POST: APIRoute = requireWriteMode(async (context) => {
       return new Response(JSON.stringify({ error: 'status must be "correct" or "incorrect"' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
     }
 
-    const full = path.join(paths.root, relPath)
+    const full = path.join(ROOT, relPath)
     // Security: ensure target is inside episodic directory and is a JSON file
-    const episodicRoot = paths.episodic
+    const episodicResult = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
+    if (!episodicResult.success || !episodicResult.path) {
+      return new Response(JSON.stringify({ error: 'Cannot resolve episodic path' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    }
+    const episodicRoot = episodicResult.path
     const normalized = path.normalize(full)
     if (!normalized.startsWith(path.normalize(episodicRoot))) {
       return new Response(JSON.stringify({ error: 'Invalid path' }), { status: 400, headers: { 'Content-Type': 'application/json' } })

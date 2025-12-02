@@ -4,7 +4,7 @@
  */
 
 import path from 'path';
-import { paths } from '../paths.js';
+import { ROOT } from '../path-builder.js';
 import { captureEvent, captureEventWithDetails, type CaptureResult } from '../memory.js';
 import { audit } from '../audit.js';
 import { appendReflectionToBuffer, appendDreamToBuffer } from '../conversation-buffer.js';
@@ -47,7 +47,7 @@ export const innerDialogueCaptureExecutor: NodeExecutor = async (inputs, context
 
     // Use detailed capture to get full metadata including encryption status
     const result: CaptureResult = captureEventWithDetails(reflectionText, options);
-    const relativePath = path.relative(paths.root, result.filePath);
+    const relativePath = path.relative(ROOT, result.filePath);
 
     audit({
       category: 'data',

@@ -8,11 +8,11 @@ import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { audit } from '@metahuman/core/audit';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
-import { paths } from '@metahuman/core';
+import { systemPaths } from '@metahuman/core';
 
-// Use paths.etc for user-specific config (context-aware)
+// Use systemPaths.etc for system-wide config
 function getModelsConfigPath(): string {
-  return join(paths.etc, 'models.json');
+  return join(systemPaths.etc, 'models.json');
 }
 
 interface ModelsConfig {

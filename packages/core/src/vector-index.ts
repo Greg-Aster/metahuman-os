@@ -1,7 +1,29 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths } from './paths.js'
+import { storageClient } from './storage-client.js'
 import { embedText, cosineSimilarity } from './embeddings.js'
+
+/**
+ * Resolve user-specific memory paths via storage router
+ */
+function resolveMemoryPaths() {
+  const episodicResult = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
+  const tasksResult = storageClient.resolvePath({ category: 'memory', subcategory: 'tasks' });
+  const semanticResult = storageClient.resolvePath({ category: 'memory', subcategory: 'semantic' });
+  const indexResult = storageClient.resolvePath({ category: 'memory', subcategory: 'index' });
+
+  if (!episodicResult.success || !tasksResult.success || !indexResult.success) {
+    throw new Error('Cannot resolve memory paths via storage router');
+  }
+
+  return {
+    episodic: episodicResult.path!,
+    tasks: tasksResult.path!,
+    semantic: semanticResult.path || path.join(episodicResult.profileRoot || '', 'memory', 'semantic'),
+    indexDir: indexResult.path!,
+    functions: path.join(episodicResult.profileRoot || '', 'memory', 'functions'),
+  };
+}
 
 /**
  * Vector Index Module - Semantic Search
@@ -33,9 +55,10 @@ export interface VectorIndexFile {
 }
 
 export function indexFilePath(model = 'nomic-embed-text'): string {
-  fs.mkdirSync(paths.indexDir, { recursive: true })
+  const { indexDir } = resolveMemoryPaths();
+  fs.mkdirSync(indexDir, { recursive: true })
   const safe = model.replace(/[^a-z0-9_.-]/gi, '_')
-  return path.join(paths.indexDir, `embeddings-${safe}.json`)
+  return path.join(indexDir, `embeddings-${safe}.json`)
 }
 
 function readJSON<T>(p: string): T | null {
@@ -74,8 +97,10 @@ export async function buildMemoryIndex(options: {
 
   const items: VectorIndexItem[] = []
 
+  const memPaths = resolveMemoryPaths();
+
   if (includeEpisodic) {
-    const files = walkFiles(paths.episodic, p => p.endsWith('.json'))
+    const files = walkFiles(memPaths.episodic, p => p.endsWith('.json'))
     for (const f of files) {
       try {
         const obj = readJSON<any>(f)
@@ -93,8 +118,8 @@ export async function buildMemoryIndex(options: {
   }
 
   if (includeTasks) {
-    const active = path.join(paths.tasks, 'active')
-    const completed = path.join(paths.tasks, 'completed')
+    const active = path.join(memPaths.tasks, 'active')
+    const completed = path.join(memPaths.tasks, 'completed')
     const files = [
       ...walkFiles(active, p => p.endsWith('.json')),
       ...walkFiles(completed, p => p.endsWith('.json')),
@@ -113,8 +138,8 @@ export async function buildMemoryIndex(options: {
 
   if (includeFunctions) {
     try {
-      const verified = path.join(paths.functions, 'verified')
-      const drafts = path.join(paths.functions, 'drafts')
+      const verified = path.join(memPaths.functions, 'verified')
+      const drafts = path.join(memPaths.functions, 'drafts')
       const files = [
         ...walkFiles(verified, p => p.endsWith('.json')),
         ...walkFiles(drafts, p => p.endsWith('.json')),
@@ -151,7 +176,7 @@ export async function buildMemoryIndex(options: {
   }
 
   if (includeCurated) {
-    const curatedRoot = path.join(paths.semantic, 'curated')
+    const curatedRoot = path.join(memPaths.semantic, 'curated')
     const files = walkFiles(curatedRoot, p => p.endsWith('.meta.json'))
     for (const f of files) {
       try {

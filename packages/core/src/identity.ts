@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './paths.js';
+import { storageClient } from './storage-client.js';
 
 /**
  * Identity Module - User Profile Management
@@ -37,29 +37,55 @@ export interface DecisionRules {
 }
 
 export function loadPersonaCore(): PersonaCore {
-  const content = fs.readFileSync(paths.personaCore, 'utf8');
+  const result = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: 'core.json',
+  });
+  if (!result.success || !result.path) {
+    throw new Error('Cannot resolve persona core path');
+  }
+  const content = fs.readFileSync(result.path, 'utf8');
   return JSON.parse(content);
 }
 
 export function loadDecisionRules(): DecisionRules {
-  const content = fs.readFileSync(paths.personaDecisionRules, 'utf8');
+  const result = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: 'decision-rules.json',
+  });
+  if (!result.success || !result.path) {
+    throw new Error('Cannot resolve decision rules path');
+  }
+  const content = fs.readFileSync(result.path, 'utf8');
   return JSON.parse(content);
 }
 
 export function savePersonaCore(persona: PersonaCore): void {
+  const result = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: 'core.json',
+  });
+  if (!result.success || !result.path) {
+    throw new Error('Cannot resolve persona core path');
+  }
   persona.lastUpdated = new Date().toISOString();
-  fs.writeFileSync(
-    paths.personaCore,
-    JSON.stringify(persona, null, 2)
-  );
+  fs.writeFileSync(result.path, JSON.stringify(persona, null, 2));
 }
 
 export function saveDecisionRules(rules: DecisionRules): void {
+  const result = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: 'decision-rules.json',
+  });
+  if (!result.success || !result.path) {
+    throw new Error('Cannot resolve decision rules path');
+  }
   rules.lastUpdated = new Date().toISOString();
-  fs.writeFileSync(
-    paths.personaDecisionRules,
-    JSON.stringify(rules, null, 2)
-  );
+  fs.writeFileSync(result.path, JSON.stringify(rules, null, 2));
 }
 
 export function getIdentitySummary(): string {
@@ -107,7 +133,17 @@ export function setTrustLevel(level: string): void {
  */
 export function loadPersonaWithFacet(): PersonaCore {
   try {
-    const facetsPath = path.join(paths.persona, 'facets.json');
+    // Resolve persona directory via storage router
+    const personaResult = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'persona',
+    });
+    if (!personaResult.success || !personaResult.path) {
+      throw new Error('Cannot resolve persona path');
+    }
+    const personaDir = personaResult.path;
+
+    const facetsPath = path.join(personaDir, 'facets.json');
 
     // If no facets config, use core persona
     if (!fs.existsSync(facetsPath)) {
@@ -123,7 +159,7 @@ export function loadPersonaWithFacet(): PersonaCore {
     }
 
     const facetInfo = facetsConfig.facets[activeFacet];
-    const facetFilePath = path.join(paths.persona, facetInfo.personaFile);
+    const facetFilePath = path.join(personaDir, facetInfo.personaFile);
 
     // If facet file doesn't exist, fall back to core
     if (!fs.existsSync(facetFilePath)) {
@@ -153,10 +189,9 @@ export function loadPersonaWithFacet(): PersonaCore {
       },
     };
   } catch (error) {
-    // If error is about anonymous user access, throw it up to be handled silently
-    // Otherwise try to fall back to core persona
+    // If error is about anonymous user access or path resolution, throw it up
     const errorMsg = (error as Error).message || '';
-    if (errorMsg.includes('Anonymous users cannot access')) {
+    if (errorMsg.includes('Anonymous users cannot access') || errorMsg.includes('Cannot resolve')) {
       throw error; // Let buildPersonaContext handle this silently
     }
 
@@ -171,7 +206,16 @@ export function loadPersonaWithFacet(): PersonaCore {
  */
 export function getActiveFacet(): string {
   try {
-    const facetsPath = path.join(paths.persona, 'facets.json');
+    // Resolve persona directory via storage router
+    const personaResult = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'persona',
+    });
+    if (!personaResult.success || !personaResult.path) {
+      return 'default';
+    }
+
+    const facetsPath = path.join(personaResult.path, 'facets.json');
     if (!fs.existsSync(facetsPath)) {
       return 'default';
     }

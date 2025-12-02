@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths } from './paths.js'
+import { storageClient } from './storage-client.js'
+import { systemPaths } from './path-builder.js'
 
 export type AutonomyMode = 'off' | 'supervised' | 'bounded'
 
@@ -24,7 +25,13 @@ const DEFAULT_CONFIG: AutonomyConfig = {
 
 export function readAutonomyConfig(): AutonomyConfig {
   try {
-    const p = path.join(paths.etc, 'autonomy.json')
+    // Try user-specific config first
+    const result = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'etc',
+      relativePath: 'autonomy.json',
+    });
+    const p = result.success && result.path ? result.path : path.join(systemPaths.etc, 'autonomy.json');
     const raw = fs.readFileSync(p, 'utf-8')
     const cfg = JSON.parse(raw)
     return { ...DEFAULT_CONFIG, ...cfg }

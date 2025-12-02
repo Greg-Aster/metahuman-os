@@ -26,8 +26,8 @@ import {
   executeGraph,
   validateCognitiveGraph,
   audit,
+  ROOT,
   type CognitiveGraph,
-  paths,
 } from '../../packages/core/src/index.js';
 import { registerAgent, unregisterAgent } from '../../packages/core/src/agent-monitor.js';
 import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
@@ -36,7 +36,7 @@ import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
  * Load curator cognitive graph
  */
 async function loadCuratorGraph(): Promise<CognitiveGraph> {
-  const graphPath = path.join(paths.root, 'etc', 'cognitive-graphs', 'curator-mode.json');
+  const graphPath = path.join(ROOT, 'etc', 'cognitive-graphs', 'curator-mode.json');
   const raw = await fs.readFile(graphPath, 'utf-8');
   const parsed = JSON.parse(raw);
   return validateCognitiveGraph(parsed);

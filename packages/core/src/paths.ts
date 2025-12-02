@@ -1,306 +1,160 @@
 /**
- * Context-Aware Paths
+ * Path Utilities
  *
- * Re-exports path building functions from path-builder.ts and adds
- * context-aware Proxy that automatically resolves to user-specific paths.
+ * Re-exports path building functions and provides utility functions
+ * for timestamps and IDs.
  *
- * Import hierarchy (circular dependency fixed):
- * - path-builder.ts → no internal dependencies
- * - context.ts → imports from path-builder.ts
- * - paths.ts (this file) → imports from both path-builder.ts AND context.ts
+ * MIGRATION NOTE:
+ * The legacy `paths` proxy is DEPRECATED. Use instead:
+ * - systemPaths: For system-level paths (logs, agents, etc.)
+ * - getProfilePaths(username): For user-specific paths
+ * - storageClient: For category-based path resolution
+ *
+ * The `paths` export below maintains backwards compatibility
+ * but will be removed in a future version.
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
-import { getUserContext } from './context.js';
 
-// Re-export core path building functions (no circular dependency)
+// Re-export core path building functions
 export { findRepoRoot, ROOT, getProfilePaths, systemPaths } from './path-builder.js';
 import { ROOT, getProfilePaths, systemPaths } from './path-builder.js';
 
 /**
- * Context-aware paths proxy
+ * DEPRECATED: Legacy paths proxy for backwards compatibility
  *
- * Automatically resolves to user-specific paths when user context is active,
- * or falls back to root-level paths when no context is set.
+ * This object provides the old paths interface by:
+ * - Using systemPaths for system-level paths
+ * - Using a default owner profile for user-specific paths
  *
- * This provides backward compatibility for existing code while enabling
- * multi-user support through context.
- *
- * @example
- * ```typescript
- * import { paths } from '@metahuman/core/paths';
- *
- * // Without context - uses root paths
- * console.log(paths.episodic); // /home/greggles/metahuman/memory/episodic
- *
- * // With context - uses profile paths
- * await withUserContext({ userId: '123', username: 'alice', role: 'owner' }, () => {
- *   console.log(paths.episodic); // /home/greggles/metahuman/profiles/alice/memory/episodic
- * });
- * ```
+ * Prefer using getProfilePaths(username) or storageClient for new code.
  */
-export const paths = new Proxy({} as ReturnType<typeof getProfilePaths> & typeof systemPaths, {
-  get(target, prop: string) {
-    const context = getUserContext();
-
-    // System paths always return system-level paths
-    if (prop in systemPaths) {
-      return systemPaths[prop as keyof typeof systemPaths];
+function getDefaultOwner(): string | null {
+  try {
+    const usersPath = path.join(ROOT, 'persona', 'users.json');
+    if (fs.existsSync(usersPath)) {
+      const users = JSON.parse(fs.readFileSync(usersPath, 'utf-8'));
+      const owner = Object.values(users).find((u: any) => u.role === 'owner') as any;
+      return owner?.username || null;
     }
+  } catch {}
+  return null;
+}
 
-    // SECURITY: Block anonymous users from accessing user data paths
-    // UNLESS they have selected a public profile (guest mode)
-    // Anonymous context = web request without login (intentional security block)
-    if (context && context.username === 'anonymous' && !context.activeProfile) {
-      throw new Error(
-        `Access denied: Anonymous users cannot access user data paths. ` +
-        `Attempted to access: paths.${prop}. ` +
-        `Please authenticate or select a public profile to access data.`
-      );
+// Cache the default profile paths
+let _defaultProfilePaths: ReturnType<typeof getProfilePaths> | null = null;
+function getDefaultProfilePaths() {
+  if (!_defaultProfilePaths) {
+    const owner = getDefaultOwner();
+    if (owner) {
+      _defaultProfilePaths = getProfilePaths(owner);
+    } else {
+      // Fallback to legacy 'memory/' path at root for backwards compatibility
+      const legacyRoot = ROOT;
+      _defaultProfilePaths = {
+        root: legacyRoot,
+        persona: path.join(legacyRoot, 'persona'),
+        memory: path.join(legacyRoot, 'memory'),
+        etc: path.join(legacyRoot, 'etc'),
+        logs: path.join(legacyRoot, 'logs'),
+        out: path.join(legacyRoot, 'out'),
+        state: path.join(legacyRoot, 'state'),
+        sessions: path.join(legacyRoot, 'sessions'),
+        personaCore: path.join(legacyRoot, 'persona', 'core.json'),
+        personaDecisionRules: path.join(legacyRoot, 'persona', 'decision-rules.json'),
+        personaRoutines: path.join(legacyRoot, 'persona', 'routines.json'),
+        personaRelationships: path.join(legacyRoot, 'persona', 'relationships.json'),
+        episodic: path.join(legacyRoot, 'memory', 'episodic'),
+        semantic: path.join(legacyRoot, 'memory', 'semantic'),
+        procedural: path.join(legacyRoot, 'memory', 'procedural'),
+        proceduralOvernight: path.join(legacyRoot, 'memory', 'procedural', 'overnight'),
+        preferences: path.join(legacyRoot, 'memory', 'preferences'),
+        inbox: path.join(legacyRoot, 'memory', 'inbox'),
+        inboxArchive: path.join(legacyRoot, 'memory', 'inbox', '_archive'),
+        audioInbox: path.join(legacyRoot, 'memory', 'audio-inbox'),
+        audioTranscripts: path.join(legacyRoot, 'memory', 'audio-inbox', 'transcripts'),
+        audioArchive: path.join(legacyRoot, 'memory', 'audio-inbox', '_archive'),
+        tasks: path.join(legacyRoot, 'memory', 'tasks'),
+        vectorIndex: path.join(legacyRoot, 'memory', 'index'),
+        voiceTraining: path.join(legacyRoot, 'out', 'voice-training'),
+        sovitsReference: path.join(legacyRoot, 'out', 'voices', 'sovits'),
+        rvcReference: path.join(legacyRoot, 'out', 'voices', 'rvc'),
+        rvcModels: path.join(legacyRoot, 'out', 'voices', 'rvc-models'),
+        kokoroVoicepacks: path.join(legacyRoot, 'out', 'voices', 'kokoro-voicepacks'),
+        kokoroDatasets: path.join(legacyRoot, 'out', 'voices', 'kokoro-datasets'),
+      } as ReturnType<typeof getProfilePaths>;
     }
+  }
+  return _defaultProfilePaths;
+}
 
-    // If we have authenticated user context OR anonymous with selected profile,
-    // return user-specific paths
-    if (context && (context.username !== 'anonymous' || context.activeProfile)) {
-      return context.profilePaths[prop as keyof typeof context.profilePaths];
-    }
+/**
+ * @deprecated Use systemPaths, getProfilePaths(username), or storageClient instead
+ */
+export const paths = {
+  // System paths (from systemPaths)
+  get root() { return ROOT; },
+  get brain() { return systemPaths.brain; },
+  get agents() { return systemPaths.agents; },
+  get skills() { return path.join(systemPaths.brain, 'skills'); },
+  get policies() { return path.join(systemPaths.brain, 'policies'); },
+  get logs() { return systemPaths.logs; },
+  get decisions() { return path.join(systemPaths.logs, 'decisions'); },
+  get actions() { return path.join(systemPaths.logs, 'actions'); },
+  get sync() { return path.join(ROOT, 'sync'); },
 
-    // No context at all = CLI/system operation (not a web request)
-    // Fall back to root-level paths for backward compatibility
-    // This allows CLI commands like `mh capture` to work
-    const rootPaths = {
-      root: ROOT,
-      persona: path.join(ROOT, 'persona'),
-      memory: path.join(ROOT, 'memory'),
-      etc: path.join(ROOT, 'etc'),
-      inbox: path.join(ROOT, 'memory', 'inbox'),
-      inboxArchive: path.join(ROOT, 'memory', 'inbox', '_archive'),
-      logs: path.join(ROOT, 'logs'),
-      out: path.join(ROOT, 'out'),
-      state: path.join(ROOT, 'state'),
+  // Profile paths (from default owner or legacy fallback)
+  get persona() { return getDefaultProfilePaths().persona; },
+  get personaCore() { return getDefaultProfilePaths().personaCore; },
+  get personaDecisionRules() { return getDefaultProfilePaths().personaDecisionRules; },
+  get personaRoutines() { return getDefaultProfilePaths().personaRoutines; },
+  get personaRelationships() { return getDefaultProfilePaths().personaRelationships; },
+  get memory() { return getDefaultProfilePaths().memory; },
+  get episodic() { return getDefaultProfilePaths().episodic; },
+  get semantic() { return getDefaultProfilePaths().semantic; },
+  get procedural() { return getDefaultProfilePaths().procedural; },
+  get proceduralOvernight() { return getDefaultProfilePaths().proceduralOvernight; },
+  get preferences() { return getDefaultProfilePaths().preferences; },
+  get inbox() { return getDefaultProfilePaths().inbox; },
+  get inboxArchive() { return getDefaultProfilePaths().inboxArchive; },
+  get audioInbox() { return getDefaultProfilePaths().audioInbox; },
+  get audioTranscripts() { return getDefaultProfilePaths().audioTranscripts; },
+  get audioArchive() { return getDefaultProfilePaths().audioArchive; },
+  get tasks() { return getDefaultProfilePaths().tasks; },
+  get vectorIndex() { return getDefaultProfilePaths().vectorIndex; },
+  get out() { return getDefaultProfilePaths().out; },
+  get voiceTraining() { return getDefaultProfilePaths().voiceTraining; },
+  get sovitsReference() { return getDefaultProfilePaths().sovitsReference; },
+  get rvcReference() { return getDefaultProfilePaths().rvcReference; },
+  get rvcModels() { return getDefaultProfilePaths().rvcModels; },
+  get kokoroVoicepacks() { return getDefaultProfilePaths().kokoroVoicepacks; },
+  get kokoroDatasets() { return getDefaultProfilePaths().kokoroDatasets; },
+};
 
-      // Persona files
-      personaCore: path.join(ROOT, 'persona', 'core.json'),
-      personaRelationships: path.join(ROOT, 'persona', 'relationships.json'),
-      personaRoutines: path.join(ROOT, 'persona', 'routines.json'),
-      personaDecisionRules: path.join(ROOT, 'persona', 'decision-rules.json'),
-      personaFacets: path.join(ROOT, 'persona', 'facets.json'),
-      personaFacetsDir: path.join(ROOT, 'persona', 'facets'),
-      personaInterviews: path.join(ROOT, 'persona', 'therapy'),
-      personaInterviewsIndex: path.join(ROOT, 'persona', 'therapy', 'index.json'),
-
-      // Memory directories
-      episodic: path.join(ROOT, 'memory', 'episodic'),
-      semantic: path.join(ROOT, 'memory', 'semantic'),
-      procedural: path.join(ROOT, 'memory', 'procedural'),
-      proceduralOvernight: path.join(ROOT, 'memory', 'procedural', 'overnight'),
-      preferences: path.join(ROOT, 'memory', 'preferences'),
-      tasks: path.join(ROOT, 'memory', 'tasks'),
-      indexDir: path.join(ROOT, 'memory', 'index'),
-      audioInbox: path.join(ROOT, 'memory', 'audio', 'inbox'),
-      audioTranscripts: path.join(ROOT, 'memory', 'audio', 'transcripts'),
-      audioArchive: path.join(ROOT, 'memory', 'audio', 'archive'),
-
-      // Curiosity system
-      curiosity: path.join(ROOT, 'memory', 'curiosity'),
-      curiosityFacts: path.join(ROOT, 'memory', 'curiosity', 'facts'),
-      curiosityResearch: path.join(ROOT, 'memory', 'curiosity', 'research'),
-      curiosityConfig: path.join(ROOT, 'etc', 'curiosity.json'),
-
-      // Function memory
-      functions: path.join(ROOT, 'memory', 'functions'),
-      functionsVerified: path.join(ROOT, 'memory', 'functions', 'verified'),
-      functionsDrafts: path.join(ROOT, 'memory', 'functions', 'drafts'),
-
-      // Logs
-      decisions: path.join(ROOT, 'logs', 'decisions'),
-      actions: path.join(ROOT, 'logs', 'actions'),
-      sync: path.join(ROOT, 'logs', 'sync'),
-    };
-
-    return rootPaths[prop as keyof typeof rootPaths];
-  },
-});
-
+/**
+ * Get today's date in YYYY-MM-DD format
+ */
 export function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * Get current timestamp in ISO format
+ */
 export function timestamp(): string {
   return new Date().toISOString();
 }
 
+/**
+ * Generate a unique ID with a prefix and timestamp
+ * @param prefix - The prefix for the ID (e.g., 'event', 'task')
+ * @returns A unique ID like 'event-20251201123456789'
+ */
 export function generateId(prefix: string): string {
   const now = new Date();
   const dateStr = now.toISOString()
     .replace(/[-:T.Z]/g, '')
     .slice(0, 15);
   return `${prefix}-${dateStr}`;
-}
-
-/**
- * Path resolution result types
- */
-export type PathResolutionSuccess = { ok: true; path: string };
-export type PathResolutionError = { ok: false; error: 'anonymous' | 'no_context' | 'invalid_key' };
-export type PathResolutionResult = PathResolutionSuccess | PathResolutionError;
-
-/**
- * Attempt to resolve a profile-specific path without throwing
- *
- * This is the safe alternative to directly accessing `paths.*` for API endpoints
- * that need to handle anonymous users gracefully.
- *
- * Returns a discriminated union so you can handle each case explicitly:
- * - `{ ok: true, path: '/path/to/file' }` - Path resolved successfully
- * - `{ ok: false, error: 'anonymous' }` - Anonymous user without profile
- * - `{ ok: false, error: 'no_context' }` - No context at all (should fall back to system paths)
- * - `{ ok: false, error: 'invalid_key' }` - Requested key doesn't exist in paths
- *
- * @example
- * ```typescript
- * // For READ operations - return defaults on failure
- * const result = tryResolveProfilePath('personaCore');
- * if (!result.ok) {
- *   return new Response(JSON.stringify({ default: 'data' }), { status: 200 });
- * }
- * const coreData = fs.readFileSync(result.path, 'utf-8');
- * ```
- *
- * @example
- * ```typescript
- * // For WRITE operations - return 401 on failure
- * const result = tryResolveProfilePath('episodic');
- * if (!result.ok) {
- *   return new Response(
- *     JSON.stringify({ error: 'Authentication required' }),
- *     { status: 401 }
- *   );
- * }
- * fs.writeFileSync(path.join(result.path, 'event.json'), data);
- * ```
- */
-export function tryResolveProfilePath(
-  key: keyof ReturnType<typeof getProfilePaths>
-): PathResolutionResult {
-  try {
-    const context = getUserContext();
-
-    // Check if this is an anonymous user without a profile
-    if (context && context.username === 'anonymous' && !context.activeProfile) {
-      return { ok: false, error: 'anonymous' };
-    }
-
-    // If we have context (authenticated or anonymous with profile), resolve the path
-    if (context && (context.username !== 'anonymous' || context.activeProfile)) {
-      const profilePaths = context.profilePaths;
-      if (key in profilePaths) {
-        return { ok: true, path: profilePaths[key as keyof typeof profilePaths] as string };
-      }
-      return { ok: false, error: 'invalid_key' };
-    }
-
-    // No context = CLI/system operation
-    // Return root-level paths for backward compatibility
-    const rootPaths = {
-      root: ROOT,
-      persona: path.join(ROOT, 'persona'),
-      memory: path.join(ROOT, 'memory'),
-      etc: path.join(ROOT, 'etc'),
-      inbox: path.join(ROOT, 'memory', 'inbox'),
-      inboxArchive: path.join(ROOT, 'memory', 'inbox', '_archive'),
-      logs: path.join(ROOT, 'logs'),
-      out: path.join(ROOT, 'out'),
-      state: path.join(ROOT, 'state'),
-      personaCore: path.join(ROOT, 'persona', 'core.json'),
-      personaRelationships: path.join(ROOT, 'persona', 'relationships.json'),
-      personaRoutines: path.join(ROOT, 'persona', 'routines.json'),
-      personaDecisionRules: path.join(ROOT, 'persona', 'decision-rules.json'),
-      personaFacets: path.join(ROOT, 'persona', 'facets.json'),
-      personaFacetsDir: path.join(ROOT, 'persona', 'facets'),
-      episodic: path.join(ROOT, 'memory', 'episodic'),
-      semantic: path.join(ROOT, 'memory', 'semantic'),
-      procedural: path.join(ROOT, 'memory', 'procedural'),
-      proceduralOvernight: path.join(ROOT, 'memory', 'procedural', 'overnight'),
-      preferences: path.join(ROOT, 'memory', 'preferences'),
-      tasks: path.join(ROOT, 'memory', 'tasks'),
-      indexDir: path.join(ROOT, 'memory', 'index'),
-      audioInbox: path.join(ROOT, 'memory', 'audio', 'inbox'),
-      audioTranscripts: path.join(ROOT, 'memory', 'audio', 'transcripts'),
-      audioArchive: path.join(ROOT, 'memory', 'audio', 'archive'),
-      curiosity: path.join(ROOT, 'memory', 'curiosity'),
-      curiosityFacts: path.join(ROOT, 'memory', 'curiosity', 'facts'),
-      curiosityResearch: path.join(ROOT, 'memory', 'curiosity', 'research'),
-      curiosityConfig: path.join(ROOT, 'etc', 'curiosity.json'),
-      functions: path.join(ROOT, 'memory', 'functions'),
-      functionsVerified: path.join(ROOT, 'memory', 'functions', 'verified'),
-      functionsDrafts: path.join(ROOT, 'memory', 'functions', 'drafts'),
-      decisions: path.join(ROOT, 'logs', 'decisions'),
-      actions: path.join(ROOT, 'logs', 'actions'),
-      sync: path.join(ROOT, 'logs', 'sync'),
-      voiceTraining: path.join(ROOT, 'out', 'voice-training', 'recordings'),
-      voiceDataset: path.join(ROOT, 'out', 'voice-training', 'dataset'),
-      voiceConfig: path.join(ROOT, 'etc', 'voice.json'),
-      sovitsReference: path.join(ROOT, 'out', 'voices', 'sovits'),
-      sovitsModels: path.join(ROOT, 'out', 'voices', 'sovits-models'),
-      rvcReference: path.join(ROOT, 'out', 'voices', 'rvc'),
-      rvcModels: path.join(ROOT, 'out', 'voices', 'rvc-models'),
-    };
-
-    if (key in rootPaths) {
-      return { ok: true, path: rootPaths[key as keyof typeof rootPaths] };
-    }
-
-    return { ok: false, error: 'invalid_key' };
-  } catch (error) {
-    // Unexpected error - treat as no context
-    return { ok: false, error: 'no_context' };
-  }
-}
-
-/**
- * Require a profile-specific path or throw a descriptive error
- *
- * Use this for operations that MUST have user context and should fail loudly
- * if called without proper authentication.
- *
- * For API endpoints that should return 401/403 instead of throwing, use
- * `tryResolveProfilePath` instead.
- *
- * @throws {Error} If path cannot be resolved (anonymous user, missing context, etc.)
- *
- * @example
- * ```typescript
- * // For CLI commands that require authentication
- * const episodicPath = requireProfilePath('episodic');
- * const events = fs.readdirSync(episodicPath);
- * ```
- */
-export function requireProfilePath(
-  key: keyof ReturnType<typeof getProfilePaths>
-): string {
-  const result = tryResolveProfilePath(key);
-
-  if (!result.ok) {
-    switch (result.error) {
-      case 'anonymous':
-        throw new Error(
-          `Access denied: Anonymous users cannot access user data paths. ` +
-          `Attempted to access: paths.${key}. ` +
-          `Please authenticate or select a public profile to access data.`
-        );
-      case 'no_context':
-        throw new Error(
-          `No user context available to resolve path: paths.${key}. ` +
-          `This operation requires user context.`
-        );
-      case 'invalid_key':
-        throw new Error(
-          `Invalid path key: paths.${key}. ` +
-          `This path does not exist in the profile paths schema.`
-        );
-    }
-  }
-
-  return result.path;
 }

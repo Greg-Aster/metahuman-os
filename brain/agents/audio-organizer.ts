@@ -4,9 +4,9 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, audit, callLLM, type RouterMessage, captureEvent } from '@metahuman/core';
+import { storageClient, systemPaths, ROOT, audit, callLLM, type RouterMessage, captureEvent } from '@metahuman/core';
 
-const AUDIO_CONFIG_PATH = path.join(paths.etc, 'audio.json');
+const AUDIO_CONFIG_PATH = path.join(systemPaths.etc, 'audio.json');
 const POLL_INTERVAL_MS = 900000; // Check every 15 minutes (15 * 60 * 1000 ms)
 
 interface AudioConfig {
@@ -113,7 +113,7 @@ Respond with JSON only:
       ? summary
       : transcriptText.substring(0, 200) + (transcriptText.length > 200 ? '...' : '');
 
-    const transcriptRel = path.relative(paths.root, transcriptPath);
+    const transcriptRel = path.relative(ROOT, transcriptPath);
     await captureEvent(memoryContent, {
       type: 'audio',
       tags: Array.from(new Set(['audio', 'transcript', ...tags])),
@@ -165,11 +165,14 @@ async function processTranscripts(): Promise<void> {
     return; // Auto-organization disabled
   }
 
-  if (!fs.existsSync(paths.audioTranscripts)) {
+  const transcriptsResult = storageClient.resolvePath({ category: 'voice', subcategory: 'transcripts' });
+  const transcriptsDir = transcriptsResult.success && transcriptsResult.path ? transcriptsResult.path : null;
+
+  if (!transcriptsDir || !fs.existsSync(transcriptsDir)) {
     return; // Transcripts directory doesn't exist
   }
 
-  const files = fs.readdirSync(paths.audioTranscripts);
+  const files = fs.readdirSync(transcriptsDir);
   const metadataFiles = files.filter((f) => f.endsWith('.meta.json'));
 
   if (metadataFiles.length === 0) {
@@ -177,7 +180,7 @@ async function processTranscripts(): Promise<void> {
   }
 
   for (const metaFile of metadataFiles) {
-    const metadataPath = path.join(paths.audioTranscripts, metaFile);
+    const metadataPath = path.join(transcriptsDir, metaFile);
     const metadata: TranscriptMetadata = JSON.parse(
       fs.readFileSync(metadataPath, 'utf8')
     );
@@ -189,7 +192,7 @@ async function processTranscripts(): Promise<void> {
 
     // Find corresponding transcript file
     const transcriptPath = path.join(
-      paths.audioTranscripts,
+      transcriptsDir,
       `${metadata.audioId}.txt`
     );
 

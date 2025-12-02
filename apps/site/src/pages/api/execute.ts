@@ -3,7 +3,7 @@
  */
 import type { APIRoute } from 'astro';
 import { spawn } from 'child_process';
-import { paths } from '@metahuman/core';
+import { ROOT } from '@metahuman/core';
 
 export const POST: APIRoute = async ({ request }) => {
   try {
@@ -30,9 +30,9 @@ export const POST: APIRoute = async ({ request }) => {
     }
 
     // Execute command
-    const mhPath = `${paths.root}/packages/cli/src/mh-new.ts`;
+    const mhPath = `${ROOT}/packages/cli/src/mh-new.ts`;
     const child = spawn('tsx', [mhPath, command, ...args], {
-      cwd: paths.root,
+      cwd: ROOT,
       env: process.env,
     });
 

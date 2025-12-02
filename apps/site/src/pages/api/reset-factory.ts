@@ -1,13 +1,13 @@
 import type { APIRoute } from 'astro';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { paths } from '@metahuman/core';
+import { ROOT } from '@metahuman/core';
 import { audit } from '@metahuman/core';
 import { auditConfigAccess, requireOwner } from '../../middleware/cognitiveModeGuard';
 
-const MEMORY_DIR = path.join(paths.root, 'memory');
-const LOGS_DIR = path.join(paths.root, 'logs');
-const CHAT_ARCHIVE_DIR = path.join(paths.root, 'out', 'chat');
+const MEMORY_DIR = path.join(ROOT, 'memory');
+const LOGS_DIR = path.join(ROOT, 'logs');
+const CHAT_ARCHIVE_DIR = path.join(ROOT, 'out', 'chat');
 
 async function emptyDirectory(dir: string, preserve: Set<string> = new Set()) {
   try {

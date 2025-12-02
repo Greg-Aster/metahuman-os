@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { paths, audit } from '../../packages/core/src/index.js';
+import { storageClient, ROOT, audit } from '../../packages/core/src/index.js';
 
 const DATASET_DATE = process.argv[2];
 
@@ -16,10 +16,12 @@ if (!DATASET_DATE) {
   process.exit(1);
 }
 
-const datasetDir = path.join(paths.out, 'adapters', DATASET_DATE);
+const outResult = storageClient.resolvePath({ category: 'output', subcategory: 'adapters' });
+const adaptersDir = outResult.success && outResult.path ? outResult.path : path.join(ROOT, 'out', 'adapters');
+const datasetDir = path.join(adaptersDir, DATASET_DATE);
 const adapterPath = path.join(datasetDir, 'adapter_model.safetensors');
 const ggufPath = path.join(datasetDir, 'adapter.gguf');
-const llamaCppPath = path.join(paths.root, 'vendor', 'llama.cpp');
+const llamaCppPath = path.join(ROOT, 'vendor', 'llama.cpp');
 const convertScript = path.join(llamaCppPath, 'convert_lora_to_gguf.py');
 
 /**
@@ -46,7 +48,7 @@ function ensureLlamaCpp() {
     try {
       execSync(`git clone https://github.com/ggml-org/llama.cpp.git "${llamaCppPath}"`, {
         stdio: 'inherit',
-        cwd: path.join(paths.root, 'vendor'),
+        cwd: path.join(ROOT, 'vendor'),
       });
       console.log('[gguf-converter] ✓ llama.cpp cloned successfully\n');
     } catch (error) {
@@ -74,7 +76,7 @@ function checkPythonDeps() {
   } catch {
     console.log('[gguf-converter] Installing Python dependencies...');
     try {
-      const venvPython = path.join(paths.root, 'venv', 'bin', 'python3');
+      const venvPython = path.join(ROOT, 'venv', 'bin', 'python3');
       const pipCmd = fs.existsSync(venvPython)
         ? `"${venvPython}" -m pip install gguf`
         : 'pip3 install gguf';
@@ -103,7 +105,7 @@ function convertToGGUF() {
   });
 
   try {
-    const venvPython = path.join(paths.root, 'venv', 'bin', 'python3');
+    const venvPython = path.join(ROOT, 'venv', 'bin', 'python3');
     const pythonCmd = fs.existsSync(venvPython) ? venvPython : 'python3';
 
     execSync(

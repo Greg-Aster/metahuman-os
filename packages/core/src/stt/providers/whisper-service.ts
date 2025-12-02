@@ -6,7 +6,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '../../paths.js';
+import { ROOT, systemPaths } from '../../path-builder.js';
 import { audit } from '../../audit.js';
 
 export interface WhisperServerConfig {
@@ -149,13 +149,13 @@ export class WhisperService {
    * Transcribe via direct Python CLI (fallback method)
    */
   private async transcribeViaCLI(audioBuffer: Buffer, audioFormat: string): Promise<TranscriptionResult> {
-    const venvPython = path.join(paths.root, 'venv', 'bin', 'python3');
+    const venvPython = path.join(ROOT, 'venv', 'bin', 'python3');
     if (!fs.existsSync(venvPython)) {
       throw new Error('Python venv not found. Cannot use CLI mode.');
     }
 
     // Save audio buffer to temp file
-    const cacheDir = path.join(paths.root, 'out', 'voice-cache');
+    const cacheDir = path.join(ROOT, 'out', 'voice-cache');
     fs.mkdirSync(cacheDir, { recursive: true });
     const tempAudioFile = path.join(cacheDir, `stt_${Date.now()}.${audioFormat}`);
     fs.writeFileSync(tempAudioFile, audioBuffer);
@@ -187,7 +187,7 @@ print(json.dumps(result))
 
       const result = await new Promise<string>((resolve, reject) => {
         const proc = spawn(venvPython, ['-c', pythonScript], {
-          cwd: paths.root,
+          cwd: ROOT,
           stdio: ['pipe', 'pipe', 'pipe'],
         });
 
@@ -272,8 +272,8 @@ print(json.dumps(result))
     serverAvailable?: boolean;
     error?: string;
   }> {
-    const whisperDir = path.join(paths.root, 'external', 'whisper');
-    const pythonBin = path.join(paths.root, 'venv', 'bin', 'python3');
+    const whisperDir = path.join(ROOT, 'external', 'whisper');
+    const pythonBin = path.join(ROOT, 'venv', 'bin', 'python3');
     const installed = fs.existsSync(pythonBin);
 
     let serverAvailable = false;
@@ -336,8 +336,8 @@ print(json.dumps(result))
       return false;
     }
 
-    const whisperDir = path.join(paths.root, 'external', 'whisper');
-    const pythonBin = path.join(paths.root, 'venv', 'bin', 'python3');
+    const whisperDir = path.join(ROOT, 'external', 'whisper');
+    const pythonBin = path.join(ROOT, 'venv', 'bin', 'python3');
     const serverScript = path.join(whisperDir, 'whisper_server.py');
 
     // Validate required files exist
@@ -351,7 +351,7 @@ print(json.dumps(result))
     }
 
     const port = this.config.server.port || 9883;
-    const logDir = path.join(paths.root, 'logs', 'run');
+    const logDir = path.join(ROOT, 'logs', 'run');
     const logFile = path.join(logDir, 'whisper-server.log');
     const pidFile = path.join(logDir, 'whisper-server.pid');
 
@@ -378,7 +378,7 @@ print(json.dumps(result))
       const child = spawn(pythonBin, args, {
         detached: true,
         stdio: ['ignore', logFd, logFd],
-        cwd: paths.root,
+        cwd: ROOT,
       });
 
       // Save PID for later management
@@ -423,7 +423,7 @@ print(json.dumps(result))
    * Stop the Whisper server
    */
   async stopServer(): Promise<void> {
-    const pidFile = path.join(paths.root, 'logs', 'run', 'whisper-server.pid');
+    const pidFile = path.join(ROOT, 'logs', 'run', 'whisper-server.pid');
     if (!fs.existsSync(pidFile)) {
       return;
     }

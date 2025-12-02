@@ -45,3 +45,64 @@ metahuman/
 > **Migration note:** Earlier single-user installations stored persona and memory data at the repository root. The `migrate-to-profiles.ts` script moves those directories into `profiles/<owner>/` and creates symbolic links only on demand. New deployments should treat `profiles/` as the canonical data store. The `memory/` directory now serves as legacy storage only.
 
 ---
+
+### Storage Router Architecture
+
+MetaHuman OS uses a **centralized storage router** to manage all file paths throughout the system. This architecture ensures maintainability, allows path rerouting through a single location, and provides clear separation between system-level and user-specific data.
+
+#### Path Categories
+
+The storage router organizes paths into categories:
+
+| Category | Description | Example Paths |
+|----------|-------------|---------------|
+| `memory` | User memories (episodic, semantic, tasks, inbox) | `profiles/<user>/memory/episodic/` |
+| `voice` | Voice training data, samples, transcripts | `profiles/<user>/out/voice-training/` |
+| `config` | User configuration files | `profiles/<user>/etc/` |
+| `output` | Generated artifacts (adapters, reports) | `profiles/<user>/out/` |
+| `training` | LoRA training datasets | `profiles/<user>/out/adapters/` |
+| `cache` | Temporary cached data | `profiles/<user>/state/cache/` |
+
+#### System vs User Paths
+
+**System Paths** (`systemPaths.*`):
+- Used for system-wide infrastructure that doesn't belong to any user
+- Examples: `systemPaths.logs`, `systemPaths.brain`, `systemPaths.agents`
+- Location: Repository root (`/home/greggles/metahuman/logs/`, etc.)
+
+**User Paths** (via `storageClient.resolvePath()`):
+- Used for user-specific data that requires profile isolation
+- Automatically resolves to the correct profile directory
+- Examples: episodic memories, voice training, persona files
+
+#### Code Migration Pattern
+
+The legacy `paths` proxy has been deprecated. Code should now use:
+
+```typescript
+// For system paths (logs, agents, etc.)
+import { ROOT, systemPaths } from '@metahuman/core';
+const agentPath = path.join(systemPaths.brain, 'agents', 'foo.ts');
+const logsDir = systemPaths.logs;
+const cwd = ROOT;
+
+// For user-specific paths (memory, voice, config)
+import { storageClient } from '@metahuman/core';
+const result = storageClient.resolvePath({
+  category: 'memory',
+  subcategory: 'episodic'
+});
+if (result.success) {
+  const episodicDir = result.path;  // profiles/<user>/memory/episodic/
+}
+```
+
+#### Key Benefits
+
+1. **Single Source of Truth**: All path logic centralized in `brain/services/storage-router.ts`
+2. **Easy Rerouting**: Change storage locations by modifying the router, not every file
+3. **Multi-User Support**: Automatic profile isolation without code changes
+4. **Type Safety**: Strongly-typed category and subcategory enums
+5. **Error Handling**: Explicit success/failure responses with descriptive errors
+
+---

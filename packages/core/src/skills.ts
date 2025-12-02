@@ -7,8 +7,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './paths.js';
-import { getProfilePaths } from './path-builder.js';
+import { systemPaths, ROOT } from './path-builder.js';
+import { storageClient } from './storage-client.js';
 import { audit } from './audit';
 import { getUserContext } from './context.js';
 import { filterToolOutputs } from './memory-policy.js';
@@ -172,7 +172,7 @@ export async function queueForApproval(
   approvalQueue.set(id, item);
 
   // Persist to file system
-  const queuePath = path.join(paths.out, 'approval-queue');
+  const queuePath = path.join(systemPaths.out, 'approval-queue');
   if (!fs.existsSync(queuePath)) {
     fs.mkdirSync(queuePath, { recursive: true });
   }
@@ -321,7 +321,7 @@ export function rejectSkillExecution(
  * Load approval queue from disk
  */
 function loadApprovalQueueFromDisk(): void {
-  const queuePath = path.join(paths.out, 'approval-queue');
+  const queuePath = path.join(systemPaths.out, 'approval-queue');
   if (!fs.existsSync(queuePath)) {
     return;
   }
@@ -342,7 +342,7 @@ function loadApprovalQueueFromDisk(): void {
  * Persist an approval item to disk
  */
 function persistApprovalItem(item: ApprovalQueueItem): void {
-  const queuePath = path.join(paths.out, 'approval-queue');
+  const queuePath = path.join(systemPaths.out, 'approval-queue');
   if (!fs.existsSync(queuePath)) {
     fs.mkdirSync(queuePath, { recursive: true });
   }
@@ -362,8 +362,8 @@ export function isPathAllowed(filepath: string, allowedDirs: string[]): boolean 
   // Resolve relative paths against repo root to avoid cwd-dependent behavior
   const normalizedPath = path.isAbsolute(filepath)
     ? path.resolve(filepath)
-    : path.resolve(paths.root, filepath);
-  const normalizedRoot = path.resolve(paths.root);
+    : path.resolve(ROOT, filepath);
+  const normalizedRoot = path.resolve(ROOT);
 
   // Must be within metahuman root
   if (!normalizedPath.startsWith(normalizedRoot)) {
@@ -372,7 +372,7 @@ export function isPathAllowed(filepath: string, allowedDirs: string[]): boolean 
 
   // Check against allowed directories
   for (const allowedDir of allowedDirs) {
-    const allowedPath = path.resolve(paths.root, allowedDir);
+    const allowedPath = path.resolve(ROOT, allowedDir);
     if (normalizedPath.startsWith(allowedPath)) {
       return true;
     }
@@ -388,12 +388,12 @@ export function isPathAllowed(filepath: string, allowedDirs: string[]): boolean 
 export function isCoderWriteAllowed(filepath: string): boolean {
   const normalizedPath = path.isAbsolute(filepath)
     ? path.resolve(filepath)
-    : path.resolve(paths.root, filepath);
+    : path.resolve(ROOT, filepath);
 
   // Explicitly forbidden directories for coder
   const forbidden = ['memory/', 'persona/', 'logs/', 'node_modules/', '.git/'];
   for (const forbiddenDir of forbidden) {
-    const forbiddenPath = path.resolve(paths.root, forbiddenDir);
+    const forbiddenPath = path.resolve(ROOT, forbiddenDir);
     if (normalizedPath.startsWith(forbiddenPath)) {
       return false;
     }
@@ -429,12 +429,12 @@ export function isWriteAllowed(filepath: string): boolean {
 
   const normalizedPath = path.isAbsolute(filepath)
     ? path.resolve(filepath)
-    : path.resolve(paths.root, filepath);
+    : path.resolve(ROOT, filepath);
 
   // Explicitly forbidden directories
   const forbidden = ['persona/', 'brain/', 'packages/', 'apps/', 'node_modules/', 'etc/'];
   for (const forbiddenDir of forbidden) {
-    const forbiddenPath = path.resolve(paths.root, forbiddenDir);
+    const forbiddenPath = path.resolve(ROOT, forbiddenDir);
     if (normalizedPath.startsWith(forbiddenPath)) {
       return false;
     }
@@ -658,7 +658,16 @@ export async function executeSkill(
  */
 export function loadTrustLevel(): TrustLevel {
   try {
-    const data = fs.readFileSync(paths.personaDecisionRules, 'utf-8');
+    const result = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'persona',
+      relativePath: 'decision-rules.json',
+    });
+    if (!result.success || !result.path) {
+      console.warn('[skills] Could not resolve decision-rules path, defaulting to observe');
+      return 'observe';
+    }
+    const data = fs.readFileSync(result.path, 'utf-8');
     const rules = JSON.parse(data);
     // Handle both trustLevel and trust_level for compatibility
     return (rules.trustLevel || rules.trust_level || 'observe') as TrustLevel;

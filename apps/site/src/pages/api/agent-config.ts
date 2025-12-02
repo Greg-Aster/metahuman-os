@@ -1,22 +1,33 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, audit } from '@metahuman/core';
+import { systemPaths, audit, getAuthenticatedUser, getUserOrAnonymous, storageClient } from '@metahuman/core';
 import { loadModelRegistry } from '@metahuman/core/model-resolver';
 import { requireOwner } from '../../middleware/cognitiveModeGuard';
 
-// Use paths.etc for user-specific config (context-aware)
-function getModelsConfigPath(): string {
-  return path.join(paths.etc, 'models.json');
+// Resolve user-specific models.json path via storage router
+function getModelsConfigPath(username: string): string {
+  const result = storageClient.resolvePath({
+    username,
+    category: 'config',
+    subcategory: 'etc',
+    relativePath: 'models.json',
+  });
+  if (result.success && result.path) {
+    return result.path;
+  }
+  return path.join(systemPaths.etc, 'models.json');
 }
 
 /**
  * GET /api/agent-config
  * Retrieve global settings from models.json
  */
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ cookies }) => {
   try {
-    const registry = loadModelRegistry();
+    const user = getUserOrAnonymous(cookies);
+    const username = user.role !== 'anonymous' ? user.username : undefined;
+    const registry = loadModelRegistry(false, username);
     const globalSettings = registry.globalSettings || {
       includePersonaSummary: true,
       useAdapter: false,
@@ -41,12 +52,13 @@ export const GET: APIRoute = async () => {
  * Update global settings in models.json (owner only)
  * Body: { includePersonaSummary?: boolean, useAdapter?: boolean }
  */
-const postHandler: APIRoute = async ({ request }) => {
+const postHandler: APIRoute = async ({ request, cookies }) => {
   try {
+    const user = getAuthenticatedUser(cookies);
     const body = await request.json();
 
-    // Read current registry
-    const configPath = getModelsConfigPath();
+    // Read current registry from user-specific path
+    const configPath = getModelsConfigPath(user.username);
     const registry = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
     // Ensure globalSettings exists
@@ -68,6 +80,7 @@ const postHandler: APIRoute = async ({ request }) => {
     }
 
     // Write updated registry
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(configPath, JSON.stringify(registry, null, 2));
 
     // Audit the change
@@ -79,7 +92,7 @@ const postHandler: APIRoute = async ({ request }) => {
         changes: Object.keys(body),
         includePersonaSummary: registry.globalSettings.includePersonaSummary,
       },
-      actor: 'web_ui',
+      actor: user.username,
     });
 
     return new Response(

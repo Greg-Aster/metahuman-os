@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './paths';
+import { ROOT } from './path-builder.js';
 
 export interface PathResolution {
   resolved: string | null;
@@ -17,7 +17,7 @@ export interface PathResolution {
  *
  * This mimics the behavior of modern AI coding assistants like GitHub Copilot.
  */
-export function resolvePath(userPath: string, workingDir: string = paths.root): PathResolution {
+export function resolvePath(userPath: string, workingDir: string = ROOT): PathResolution {
   const result: PathResolution = {
     resolved: null,
     isDirectory: false,
@@ -200,7 +200,7 @@ export function pathToGlobPattern(userPath: string): string {
 /**
  * Resolves a path and returns a friendly message for the AI
  */
-export function resolvePathWithContext(userPath: string, workingDir: string = paths.root): {
+export function resolvePathWithContext(userPath: string, workingDir: string = ROOT): {
   path: string | null;
   isDirectory: boolean;
   message: string;
@@ -249,6 +249,6 @@ export function resolvePathWithContext(userPath: string, workingDir: string = pa
  *   Output: { resolved: null, suggestions: ["sadsnax", "./docs/sadsnax.md"] }
  */
 export function resolvePathWithFuzzyFallback(userPath: string, options: { cwd?: string } = {}): PathResolution {
-  const workingDir = options.cwd || paths.root;
+  const workingDir = options.cwd || ROOT;
   return resolvePath(userPath, workingDir);
 }

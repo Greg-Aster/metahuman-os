@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '../paths.js';
+import { systemPaths } from '../path-builder.js';
 import { audit } from '../audit.js';
 
 export type TTSProvider = 'piper' | 'gpt-sovits' | 'rvc' | 'kokoro';
@@ -21,7 +21,7 @@ interface ServerInfo {
  * Get server info for a TTS provider
  */
 function getServerInfo(provider: TTSProvider): ServerInfo | null {
-  const runDir = path.join(paths.logs, 'run');
+  const runDir = path.join(systemPaths.logs, 'run');
 
   switch (provider) {
     case 'rvc':

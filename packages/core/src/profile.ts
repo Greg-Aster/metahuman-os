@@ -6,7 +6,7 @@
 
 import fs from 'fs-extra';
 import path from 'path';
-import { paths } from './paths.js';
+import { systemPaths, ROOT } from './path-builder.js';
 import { audit } from './audit.js';
 
 /**
@@ -17,7 +17,7 @@ import { audit } from './audit.js';
  * @param username - Username (used for profile directory name)
  */
 export async function initializeProfile(username: string): Promise<void> {
-  const profileRoot = path.join(paths.root, 'profiles', username);
+  const profileRoot = path.join(systemPaths.profiles, username);
 
   audit({
     level: 'info',
@@ -253,7 +253,7 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
   await writeJsonIfMissing(path.join(personaDir, 'cognitive-mode.json'), cognitiveMode);
 
   // models.json - Copy system-level registry so updates can be managed centrally
-  const systemModelsPath = path.join(paths.root, 'etc', 'models.json');
+  const systemModelsPath = path.join(systemPaths.etc, 'models.json');
   const profileModelsPath = path.join(etcDir, 'models.json');
 
   await ensureModelsRegistry(profileModelsPath, systemModelsPath);
@@ -320,10 +320,10 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
 
   // voice.json - Voice and audio configuration
   // Note: Voice models are system-wide shared resources (not profile-specific)
-  const systemVoicesDir = path.join(paths.root, 'out', 'voices');
+  const systemVoicesDir = path.join(systemPaths.out, 'voices');
   const defaultVoiceModel = path.join(systemVoicesDir, 'en_US-lessac-medium.onnx');
   const defaultVoiceConfig = `${defaultVoiceModel}.json`;
-  const piperBinary = path.join(paths.root, 'bin', 'piper', 'piper');
+  const piperBinary = path.join(ROOT, 'bin', 'piper', 'piper');
   const voice = {
     tts: {
       provider: 'piper',
@@ -370,7 +370,7 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
  * Check if a profile exists for a user
  */
 export function profileExists(username: string): boolean {
-  const profileRoot = path.join(paths.root, 'profiles', username);
+  const profileRoot = path.join(systemPaths.profiles, username);
   return fs.existsSync(profileRoot);
 }
 
@@ -379,7 +379,7 @@ export function profileExists(username: string): boolean {
  * Safe to run multiple times; only creates missing pieces.
  */
 export async function ensureProfileIntegrity(username: string): Promise<void> {
-  const profileRoot = path.join(paths.root, 'profiles', username);
+  const profileRoot = path.join(systemPaths.profiles, username);
   if (!(await fs.pathExists(profileRoot))) {
     throw new Error(`Profile directory not found: ${profileRoot}`);
   }
@@ -455,7 +455,7 @@ async function ensureModelsRegistry(profileModelsPath: string, systemModelsPath:
  * This profile is used by all anonymous users and is locked to emulation mode.
  */
 export async function initializeGuestProfile(): Promise<void> {
-  const guestRoot = path.join(paths.root, 'profiles', 'guest');
+  const guestRoot = path.join(systemPaths.profiles, 'guest');
 
   // If guest profile already exists, don't reinitialize
   if (fs.existsSync(guestRoot)) {
@@ -558,7 +558,7 @@ export async function initializeGuestProfile(): Promise<void> {
     ];
 
     for (const configFile of configFilesToCopy) {
-      const systemConfig = path.join(paths.root, 'etc', configFile);
+      const systemConfig = path.join(systemPaths.etc, configFile);
       const guestConfig = path.join(guestRoot, 'etc', configFile);
 
       if (await fs.pathExists(systemConfig)) {
@@ -594,7 +594,7 @@ export async function initializeGuestProfile(): Promise<void> {
  * @param profileUsernames - Array of profile usernames to merge
  */
 export async function createMutantSuperIntelligence(profileUsernames: string[]): Promise<void> {
-  const guestRoot = path.join(paths.root, 'profiles', 'guest');
+  const guestRoot = path.join(systemPaths.profiles, 'guest');
 
   // Ensure guest profile exists
   await initializeGuestProfile();
@@ -603,7 +603,7 @@ export async function createMutantSuperIntelligence(profileUsernames: string[]):
     // Load all public personas
     const personas: any[] = [];
     for (const username of profileUsernames) {
-      const profileRoot = path.join(paths.root, 'profiles', username);
+      const profileRoot = path.join(systemPaths.profiles, username);
       const personaPath = path.join(profileRoot, 'persona', 'core.json');
 
       if (fs.existsSync(personaPath)) {
@@ -713,7 +713,7 @@ export async function createMutantSuperIntelligence(profileUsernames: string[]):
     // Merge facets from all profiles
     const allFacets: Record<string, any> = {};
     for (const username of profileUsernames) {
-      const profileRoot = path.join(paths.root, 'profiles', username);
+      const profileRoot = path.join(systemPaths.profiles, username);
       const facetsPath = path.join(profileRoot, 'persona', 'facets.json');
 
       if (fs.existsSync(facetsPath)) {
@@ -782,8 +782,8 @@ export async function createMutantSuperIntelligence(profileUsernames: string[]):
  * @param sourceUsername - Username of the public profile to copy from
  */
 export async function copyPersonaToGuest(sourceUsername: string): Promise<void> {
-  const sourceRoot = path.join(paths.root, 'profiles', sourceUsername);
-  const guestRoot = path.join(paths.root, 'profiles', 'guest');
+  const sourceRoot = path.join(systemPaths.profiles, sourceUsername);
+  const guestRoot = path.join(systemPaths.profiles, 'guest');
 
   if (!fs.existsSync(sourceRoot)) {
     throw new Error(`Source profile not found: ${sourceUsername}`);
@@ -896,7 +896,7 @@ export async function deleteProfile(username: string, confirm: boolean = false):
     throw new Error('Profile deletion requires explicit confirmation');
   }
 
-  const profileRoot = path.join(paths.root, 'profiles', username);
+  const profileRoot = path.join(systemPaths.profiles, username);
 
   if (!fs.existsSync(profileRoot)) {
     throw new Error(`Profile does not exist: ${username}`);
@@ -1004,7 +1004,7 @@ export async function deleteProfileComplete(
     }
 
     // Step 3: Check if profile directory exists
-    const profileRoot = path.join(paths.root, 'profiles', username);
+    const profileRoot = path.join(systemPaths.profiles, username);
     const profileExists = await fs.pathExists(profileRoot);
 
     audit({

@@ -9,7 +9,8 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, ChildProcess } from 'node:child_process';
-import { paths } from './paths.js';
+import { systemPaths, ROOT } from './path-builder.js';
+import { storageClient } from './storage-client.js';
 import { audit } from './audit.js';
 import { recordSystemActivity, readSystemActivityTimestamp } from './system-activity.js';
 
@@ -120,7 +121,13 @@ export class AgentScheduler extends EventEmitter {
    * Get config file path (lazy evaluation to allow user context resolution)
    */
   private get configPath(): string {
-    return path.join(paths.etc, 'agents.json');
+    // Try user-specific config first
+    const result = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'etc',
+      relativePath: 'agents.json',
+    });
+    return result.success && result.path ? result.path : path.join(systemPaths.etc, 'agents.json');
   }
 
   private constructor() {
@@ -699,7 +706,7 @@ export class AgentScheduler extends EventEmitter {
     if (!config.task) return;
 
     // Dynamically import operator to avoid circular dependencies
-    const { runTask } = await import(/* @vite-ignore */ path.join(paths.brain, 'agents', 'operator.js'));
+    const { runTask } = await import(/* @vite-ignore */ path.join(systemPaths.agents, 'operator.js'));
 
     await runTask(
       { goal: config.task.goal },
@@ -718,11 +725,11 @@ export class AgentScheduler extends EventEmitter {
     if (!config.agentPath) return;
 
     return new Promise((resolve, reject) => {
-      const agentFullPath = path.join(paths.brain, 'agents', config.agentPath!);
+      const agentFullPath = path.join(systemPaths.agents, config.agentPath!);
 
       const child = spawn('tsx', [agentFullPath], {
         stdio: 'inherit',
-        cwd: paths.root,
+        cwd: ROOT,
       });
 
       child.on('error', reject);

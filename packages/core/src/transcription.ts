@@ -8,7 +8,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './paths.js';
+import { ROOT } from './path-builder.js';
 
 export interface TranscriptionConfig {
   provider: 'mock' | 'whisper.cpp' | 'openai';
@@ -52,8 +52,8 @@ function resolveWhisperBinary(customPath?: string): string | null {
   const candidates = [
     customPath,
     process.env.WHISPER_BIN,
-    path.join(paths.root, 'vendor', 'whisper.cpp', 'build', 'bin', 'whisper-cli'),
-    path.join(paths.root, 'vendor', 'whisper.cpp', 'build', 'bin', 'main'),
+    path.join(ROOT, 'vendor', 'whisper.cpp', 'build', 'bin', 'whisper-cli'),
+    path.join(ROOT, 'vendor', 'whisper.cpp', 'build', 'bin', 'main'),
     'whisper',
   ].filter(Boolean) as string[];
   for (const p of candidates) {
@@ -69,9 +69,9 @@ function resolveWhisperModel(customModelPath?: string): string {
   const candidates = [
     customModelPath,
     process.env.WHISPER_MODEL,
-    path.join(paths.root, 'vendor', 'whisper.cpp', 'models', 'ggml-base.en.bin'),
+    path.join(ROOT, 'vendor', 'whisper.cpp', 'models', 'ggml-base.en.bin'),
     // Do NOT use "for-tests" placeholder models unless nothing else is present
-    path.join(paths.root, 'vendor', 'whisper.cpp', 'models', 'for-tests-ggml-base.en.bin'),
+    path.join(ROOT, 'vendor', 'whisper.cpp', 'models', 'for-tests-ggml-base.en.bin'),
   ].filter(Boolean) as string[];
   for (const p of candidates) {
     if (!p || !fs.existsSync(p)) continue;
@@ -105,7 +105,7 @@ async function transcribeWhisperCpp(
       try {
         const outDir = path.dirname(audioPath);
         tempWav = path.join(outDir, `${path.basename(audioPath, ext)}.wav`);
-        const ff = spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', audioPath, '-ac', '1', '-ar', '16000', tempWav], { cwd: paths.root });
+        const ff = spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', audioPath, '-ac', '1', '-ar', '16000', tempWav], { cwd: ROOT });
         if (ff.status !== 0) throw new Error('ffmpeg conversion failed');
         inputPath = tempWav;
       } catch (e) {
@@ -131,7 +131,7 @@ async function transcribeWhisperCpp(
 
     console.log(`Spawning whisper.cpp: ${whisperPath} ${args.join(' ')}`);
     const whisper = spawn(whisperPath, args, {
-      cwd: paths.root,
+      cwd: ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

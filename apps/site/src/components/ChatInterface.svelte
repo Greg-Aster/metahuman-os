@@ -2,7 +2,6 @@
   import { onMount, afterUpdate, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import Thinking from './Thinking.svelte';
-  import ApprovalBox from './ApprovalBox.svelte';
   import InputArea from './chat/InputArea.svelte';
   import MessageList from './chat/MessageList.svelte';
   import { canUseOperator, currentMode } from '../stores/security-policy';
@@ -977,9 +976,6 @@
   </div>
   <!-- Input Area -->
   <div class="input-container">
-    <!-- Code approval box appears here when there are pending approvals -->
-    <ApprovalBox />
-
     <InputArea
       bind:input
       {loading}

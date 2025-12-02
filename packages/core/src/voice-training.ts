@@ -5,11 +5,12 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, systemPaths, tryResolveProfilePath } from './paths.js';
+import { ROOT, systemPaths } from './paths.js';
 import { spawn, spawnSync, execSync } from 'node:child_process';
 import { audit } from './audit.js';
 import { clearCache } from './tts/cache.js';
 import { createLogger } from './logger.js';
+import { storageClient } from './storage-client.js';
 
 const log = createLogger('voice-training');
 
@@ -95,12 +96,18 @@ let config: VoiceTrainingConfig | null = null;
 
 /**
  * Load voice training configuration
+ * Uses storage router to read from correct profile location
  */
 function loadConfig(): VoiceTrainingConfig {
   // Always read fresh so runtime updates to etc/voice.json take effect immediately
   try {
-    const result = tryResolveProfilePath('voiceConfig');
-    if (result.ok) {
+    const result = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'etc',
+      relativePath: 'voice.json',
+    });
+
+    if (result.success && result.path && fs.existsSync(result.path)) {
       const voiceConfig = JSON.parse(fs.readFileSync(result.path, 'utf-8'));
       config = voiceConfig.training || null;
     } else {
@@ -123,12 +130,17 @@ function loadConfig(): VoiceTrainingConfig {
 
 /**
  * Get voice training data directory
+ * Uses storage router to resolve path based on user context and storage config
  */
 function getTrainingDir(): string | null {
-  // Use safe path resolution to handle anonymous users
-  const result = tryResolveProfilePath('voiceTraining');
-  if (!result.ok) {
-    console.warn('[voice-training] Cannot access voice training directory: user not authenticated');
+  // Use storage router - it will resolve username from context
+  const result = storageClient.resolvePath({
+    category: 'voice',
+    subcategory: 'training-data',
+  });
+
+  if (!result.success || !result.path) {
+    log.warn('Cannot access voice training directory:', result.error);
     return null;
   }
 
@@ -137,6 +149,90 @@ function getTrainingDir(): string | null {
     fs.mkdirSync(dir, { recursive: true });
   }
   return dir;
+}
+
+/**
+ * Get SoVITS reference directory for a speaker
+ * Uses storage router to resolve to correct profile location
+ */
+function getSovitsRefDir(speakerId: string): string | null {
+  const result = storageClient.resolvePath({
+    category: 'output',
+    subcategory: 'voices/sovits',
+    relativePath: speakerId,
+  });
+  if (!result.success || !result.path) {
+    log.warn('Cannot access SoVITS reference directory:', result.error);
+    return null;
+  }
+  return result.path;
+}
+
+/**
+ * Get RVC reference directory for a speaker
+ * Uses storage router to resolve to correct profile location
+ */
+function getRvcRefDir(speakerId: string): string | null {
+  const result = storageClient.resolvePath({
+    category: 'output',
+    subcategory: 'voices/rvc',
+    relativePath: speakerId,
+  });
+  if (!result.success || !result.path) {
+    log.warn('Cannot access RVC reference directory:', result.error);
+    return null;
+  }
+  return result.path;
+}
+
+/**
+ * Get RVC models directory for a speaker
+ * Uses storage router to resolve to correct profile location
+ */
+function getRvcModelsDir(speakerId: string): string | null {
+  const result = storageClient.resolvePath({
+    category: 'output',
+    subcategory: 'voices/rvc-models',
+    relativePath: speakerId,
+  });
+  if (!result.success || !result.path) {
+    log.warn('Cannot access RVC models directory:', result.error);
+    return null;
+  }
+  return result.path;
+}
+
+/**
+ * Get Kokoro datasets directory for a speaker
+ * Uses storage router to resolve to correct profile location
+ */
+function getKokoroDatasetDir(speakerId: string): string | null {
+  const result = storageClient.resolvePath({
+    category: 'output',
+    subcategory: 'voices/kokoro-datasets',
+    relativePath: speakerId,
+  });
+  if (!result.success || !result.path) {
+    log.warn('Cannot access Kokoro datasets directory:', result.error);
+    return null;
+  }
+  return result.path;
+}
+
+/**
+ * Get Kokoro voicepacks directory
+ * Uses storage router to resolve to correct profile location
+ */
+function getKokoroVoicepacksDir(): string | null {
+  const result = storageClient.resolvePath({
+    category: 'output',
+    subcategory: 'voices/kokoro-voicepacks',
+  });
+  if (!result.success || !result.path) {
+    log.warn('Cannot access Kokoro voicepacks directory:', result.error);
+    return null;
+  }
+  return result.path;
 }
 
 /**
@@ -222,7 +318,7 @@ export function saveVoiceSample(
           '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',       // normalize volume to -16 LUFS
           audioPath
         ], {
-          cwd: paths.root,
+          cwd: ROOT,
         });
         if (res.status !== 0) {
           // Fallback: keep WEBM if ffmpeg not available
@@ -423,8 +519,11 @@ export function exportTrainingDataset(): string {
     throw new Error('Cannot export dataset: user not authenticated');
   }
 
-  const datasetResult = tryResolveProfilePath('voiceDataset');
-  if (!datasetResult.ok) {
+  const datasetResult = storageClient.resolvePath({
+    category: 'training',
+    subcategory: 'voice-dataset',
+  });
+  if (!datasetResult.success || !datasetResult.path) {
     throw new Error('Cannot export dataset: user not authenticated');
   }
   const exportDir = datasetResult.path;
@@ -475,8 +574,12 @@ export function getVoiceTrainingStatus(): { enabled: boolean } {
  * Set voice training enabled state
  */
 export function setVoiceTrainingEnabled(enabled: boolean): { enabled: boolean } {
-  const result = tryResolveProfilePath('voiceConfig');
-  if (!result.ok) {
+  const result = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'etc',
+    relativePath: 'voice.json',
+  });
+  if (!result.success || !result.path) {
     throw new Error('Cannot update voice training settings: user not authenticated');
   }
   const configPath = result.path;
@@ -544,8 +647,11 @@ export function purgeVoiceTrainingData(): { deletedCount: number } {
     }
 
     // Also clean up exported datasets
-    const datasetResult = tryResolveProfilePath('voiceDataset');
-    if (datasetResult.ok && fs.existsSync(datasetResult.path)) {
+    const datasetResult = storageClient.resolvePath({
+      category: 'training',
+      subcategory: 'voice-dataset',
+    });
+    if (datasetResult.success && datasetResult.path && fs.existsSync(datasetResult.path)) {
       const exportDir = datasetResult.path;
       const files = fs.readdirSync(exportDir);
       for (const file of files) {
@@ -633,7 +739,10 @@ export function exportSoVITSDataset(
   if (!recordingsDir) {
     throw new Error('Cannot export SoVITS dataset: user not authenticated');
   }
-  const sovitsRefDir = path.join(paths.sovitsReference, speakerId);
+  const sovitsRefDir = getSovitsRefDir(speakerId);
+  if (!sovitsRefDir) {
+    throw new Error('Cannot export SoVITS dataset: user not authenticated');
+  }
 
   // Create SoVITS reference directory
   if (!fs.existsSync(sovitsRefDir)) {
@@ -729,7 +838,7 @@ export function copyToSoVITS(sampleIds: string[], speakerId: string = 'default')
   if (!recordingsDir) {
     throw new Error('Cannot copy to SoVITS: user not authenticated');
   }
-  const sovitsRefDir = path.join(paths.sovitsReference, speakerId);
+  const sovitsRefDir = getSovitsRefDir(speakerId)!;
 
   // Create SoVITS reference directory if it doesn't exist
   if (!fs.existsSync(sovitsRefDir)) {
@@ -861,12 +970,16 @@ export function copyToSoVITS(sampleIds: string[], speakerId: string = 'default')
   // Clear TTS cache since reference audio has changed
   // This ensures next TTS generation uses the new voice profile
   try {
-    const configResult = tryResolveProfilePath('voiceConfig');
-    if (configResult.ok) {
+    const configResult = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'etc',
+      relativePath: 'voice.json',
+    });
+    if (configResult.success && configResult.path && fs.existsSync(configResult.path)) {
       const voiceConfig = JSON.parse(fs.readFileSync(configResult.path, 'utf-8'));
       if (voiceConfig?.cache?.enabled) {
-        const outResult = tryResolveProfilePath('out');
-        const cacheDir = voiceConfig.cache.directory || (outResult.ok ? path.join(outResult.path, 'voice-cache') : null);
+        const outResult = storageClient.resolvePath({ category: 'output' });
+        const cacheDir = voiceConfig.cache.directory || (outResult.success && outResult.path ? path.join(outResult.path, 'voice-cache') : null);
         if (cacheDir) {
           const cacheConfig = {
             enabled: true,
@@ -905,7 +1018,7 @@ export function setSoVITSReferenceSample(
   speakerId: string = 'default',
   sampleId?: string
 ): { referencePath: string } {
-  const sovitsRefDir = path.join(paths.sovitsReference, speakerId);
+  const sovitsRefDir = getSovitsRefDir(speakerId)!;
 
   if (!fs.existsSync(sovitsRefDir)) {
     throw new Error(`SoVITS reference directory not found for speaker ${speakerId}`);
@@ -973,7 +1086,7 @@ export function getCurrentSoVITSReference(speakerId: string = 'default'): {
   transcriptPath: string | null;
   transcript: string | null;
 } {
-  const sovitsRefDir = path.join(paths.sovitsReference, speakerId);
+  const sovitsRefDir = getSovitsRefDir(speakerId)!;
   const referencePath = path.join(sovitsRefDir, 'reference.wav');
   const transcriptPath = path.join(sovitsRefDir, 'reference.txt');
 
@@ -1040,7 +1153,7 @@ export function getCurrentSoVITSReference(speakerId: string = 'default'): {
  * List reference audio files for a GPT-SoVITS speaker
  */
 export function listSoVITSReferences(speakerId: string = 'default'): VoiceSample[] {
-  const sovitsRefDir = path.join(paths.sovitsReference, speakerId);
+  const sovitsRefDir = getSovitsRefDir(speakerId)!;
 
   if (!fs.existsSync(sovitsRefDir)) {
     return [];
@@ -1093,7 +1206,7 @@ export function listSoVITSReferences(speakerId: string = 'default'): VoiceSample
  * Delete reference audio for a GPT-SoVITS speaker
  */
 export function deleteSoVITSReference(speakerId: string, sampleId: string): void {
-  const sovitsRefDir = path.join(paths.sovitsReference, speakerId);
+  const sovitsRefDir = getSovitsRefDir(speakerId)!;
   const wavPath = path.join(sovitsRefDir, `${sampleId}.wav`);
   const txtPath = path.join(sovitsRefDir, `${sampleId}.txt`);
   const metaPath = path.join(sovitsRefDir, `${sampleId}.meta.json`);
@@ -1121,7 +1234,7 @@ export function deleteSoVITSReference(speakerId: string, sampleId: string): void
  * Clear RVC training directory to remove all samples
  */
 export function clearRVCDirectory(speakerId: string = 'default'): number {
-  const rvcRefDir = path.join(paths.rvcReference, speakerId);
+  const rvcRefDir = getRvcRefDir(speakerId)!;
 
   if (!fs.existsSync(rvcRefDir)) {
     return 0; // Nothing to clear
@@ -1164,7 +1277,7 @@ export function copyToRVC(sampleIds: string[], speakerId: string = 'default'): n
   if (!recordingsDir) {
     throw new Error('Cannot copy to RVC: user not authenticated');
   }
-  const rvcRefDir = path.join(paths.rvcReference, speakerId);
+  const rvcRefDir = getRvcRefDir(speakerId)!;
 
   // Create RVC directory if it doesn't exist
   if (!fs.existsSync(rvcRefDir)) {
@@ -1222,7 +1335,7 @@ export function copyToRVC(sampleIds: string[], speakerId: string = 'default'): n
  * List RVC training samples for a speaker
  */
 export function listRVCSamples(speakerId: string = 'default'): VoiceSample[] {
-  const rvcRefDir = path.join(paths.rvcReference, speakerId);
+  const rvcRefDir = getRvcRefDir(speakerId)!;
 
   if (!fs.existsSync(rvcRefDir)) {
     return [];
@@ -1270,7 +1383,7 @@ export function listRVCSamples(speakerId: string = 'default'): VoiceSample[] {
  * Delete RVC training sample
  */
 export function deleteRVCSample(speakerId: string, sampleId: string): void {
-  const rvcRefDir = path.join(paths.rvcReference, speakerId);
+  const rvcRefDir = getRvcRefDir(speakerId)!;
   const wavPath = path.join(rvcRefDir, `${sampleId}.wav`);
   const txtPath = path.join(rvcRefDir, `${sampleId}.txt`);
   const metaPath = path.join(rvcRefDir, `${sampleId}.meta.json`);
@@ -1294,16 +1407,13 @@ export function deleteRVCSample(speakerId: string, sampleId: string): void {
   });
 }
 
-function getKokoroDatasetDir(speakerId: string = 'default'): string {
-  const dir = path.join(paths.kokoroDatasets, speakerId);
+export function listKokoroSamples(speakerId: string = 'default'): VoiceSample[] {
+  const dir = getKokoroDatasetDir(speakerId);
+  if (!dir) return [];
+
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  return dir;
-}
-
-export function listKokoroSamples(speakerId: string = 'default'): VoiceSample[] {
-  const dir = getKokoroDatasetDir(speakerId);
   const files = fs.readdirSync(dir);
   const wavs = files.filter(f => f.endsWith('.wav'));
   const samples: VoiceSample[] = [];
@@ -1341,8 +1451,11 @@ export function listKokoroSamples(speakerId: string = 'default'): VoiceSample[] 
 
 function clearKokoroDataset(speakerId: string = 'default'): number {
   const dir = getKokoroDatasetDir(speakerId);
-  let deleted = 0;
+  if (!dir) return 0;
 
+  if (!fs.existsSync(dir)) return 0;
+
+  let deleted = 0;
   for (const file of fs.readdirSync(dir)) {
     try {
       fs.unlinkSync(path.join(dir, file));
@@ -1361,6 +1474,13 @@ export function copyToKokoroDataset(sampleIds: string[], speakerId: string = 'de
     throw new Error('Cannot copy to Kokoro dataset: user not authenticated');
   }
   const destDir = getKokoroDatasetDir(speakerId);
+  if (!destDir) {
+    throw new Error('Cannot copy to Kokoro dataset: user not authenticated');
+  }
+
+  if (!fs.existsSync(destDir)) {
+    fs.mkdirSync(destDir, { recursive: true });
+  }
 
   clearKokoroDataset(speakerId);
 
@@ -1386,7 +1506,7 @@ export function copyToKokoroDataset(sampleIds: string[], speakerId: string = 'de
       '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
       wavDest
     ], {
-      cwd: paths.root,
+      cwd: ROOT,
     });
 
     if (normalizeResult.status !== 0) {
@@ -1631,7 +1751,7 @@ function handleRVCTrainingCompletionRecovery(speakerId: string): RVCTrainingStat
   // Determine paths
   const rvcDir = path.join(systemPaths.root, 'external', 'applio-rvc');
   const rvcExperimentDir = path.join(rvcDir, 'logs', speakerId);
-  const modelOutputDir = path.join(paths.rvcModels, speakerId);
+  const modelOutputDir = getRvcModelsDir(speakerId)!;
   const finalModelPath = path.join(modelOutputDir, `${speakerId}.pth`);
   const finalIndexPath = path.join(modelOutputDir, `${speakerId}.index`);
 
@@ -1936,7 +2056,7 @@ function generateRVCIndex(
 
   // Copy index file to model output directory
   const sourceIndexPath = path.join(experimentDir, `${speakerId}.index`);
-  const targetIndexPath = path.join(paths.rvcModels, speakerId, `${speakerId}.index`);
+  const targetIndexPath = path.join(getRvcModelsDir(speakerId)!, `${speakerId}.index`);
 
   if (fs.existsSync(sourceIndexPath)) {
     try {
@@ -2157,8 +2277,8 @@ export function startRVCTraining(
     };
   }
 
-  const trainingDataDir = path.join(paths.rvcReference, speakerId);
-  const modelOutputDir = path.join(paths.rvcModels, speakerId);
+  const trainingDataDir = getRvcRefDir(speakerId)!;
+  const modelOutputDir = getRvcModelsDir(speakerId)!;
 
   // Create model output directory
   if (!fs.existsSync(modelOutputDir)) {
@@ -2618,7 +2738,13 @@ export async function startKokoroVoicepackTraining(
   }
 
   const datasetDir = getKokoroDatasetDir(speakerId);
-  const voicepackDir = paths.kokoroVoicepacks;
+  if (!datasetDir) {
+    return { success: false, error: 'Cannot access Kokoro dataset directory: user not authenticated' };
+  }
+  const voicepackDir = getKokoroVoicepacksDir();
+  if (!voicepackDir) {
+    return { success: false, error: 'Cannot access Kokoro voicepacks directory: user not authenticated' };
+  }
   fs.mkdirSync(voicepackDir, { recursive: true });
 
   // Determine output path: pure training saves to {speakerId}-pure.pt for A/B comparison

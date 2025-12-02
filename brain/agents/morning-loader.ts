@@ -11,7 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, audit, acquireLock, isLocked, setActiveAdapter, getActiveAdapter } from '../../packages/core/src/index.js';
+import { storageClient, ROOT, audit, acquireLock, isLocked, setActiveAdapter, getActiveAdapter } from '../../packages/core/src/index.js';
 import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
 
 interface PersonaCore {
@@ -27,8 +27,12 @@ interface PersonaCore {
  */
 function loadBasePersona(): PersonaCore | null {
   try {
-    const personaPath = paths.personaCore;
-    const data = fs.readFileSync(personaPath, 'utf-8');
+    const result = storageClient.resolvePath({ category: 'config', subcategory: 'persona', relativePath: 'core.json' });
+    if (!result.success || !result.path) {
+      console.error('[morning-loader] Cannot resolve persona core path');
+      return null;
+    }
+    const data = fs.readFileSync(result.path, 'utf-8');
     return JSON.parse(data);
   } catch (error) {
     console.error('[morning-loader] Error loading persona/core.json:', error);
@@ -41,7 +45,12 @@ function loadBasePersona(): PersonaCore | null {
  */
 function findLatestOvernightLearnings(): string | null {
   try {
-    const overnightDir = paths.proceduralOvernight;
+    const result = storageClient.resolvePath({ category: 'memory', subcategory: 'procedural', relativePath: 'overnight' });
+    if (!result.success || !result.path) {
+      console.log('[morning-loader] Cannot resolve overnight learnings path.');
+      return null;
+    }
+    const overnightDir = result.path;
 
     if (!fs.existsSync(overnightDir)) {
       console.log('[morning-loader] No overnight learnings directory found.');
@@ -115,7 +124,12 @@ ${overnightContent}
 function saveDailyProfile(profile: string): string {
   const today = new Date().toISOString().split('T')[0];
   const filename = `daily-profile-${today}.md`;
-  const overridesDir = path.join(paths.persona, 'overrides');
+  const personaResult = storageClient.resolvePath({ category: 'config', subcategory: 'persona' });
+  const personaDir = personaResult.success && personaResult.path ? personaResult.path : null;
+  if (!personaDir) {
+    throw new Error('Cannot resolve persona directory');
+  }
+  const overridesDir = path.join(personaDir, 'overrides');
   const filepath = path.join(overridesDir, filename);
 
   // Ensure directory exists
@@ -145,7 +159,13 @@ function saveDailyProfile(profile: string): string {
  */
 function activateProfile(profilePath: string) {
   // Tier 1: Create symlink to latest profile
-  const symlinkPath = path.join(paths.persona, 'active-profile.md');
+  const personaResult = storageClient.resolvePath({ category: 'config', subcategory: 'persona' });
+  const personaDir = personaResult.success && personaResult.path ? personaResult.path : null;
+  if (!personaDir) {
+    console.error('[morning-loader] Cannot resolve persona directory');
+    return;
+  }
+  const symlinkPath = path.join(personaDir, 'active-profile.md');
 
   try {
     // Remove existing symlink if it exists
@@ -186,8 +206,10 @@ function activateProfile(profilePath: string) {
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     // Check both today and yesterday (in case training completed overnight)
+    const outResult = storageClient.resolvePath({ category: 'output', subcategory: 'adapters' });
+    const adaptersDir = outResult.success && outResult.path ? outResult.path : path.join(ROOT, 'out', 'adapters');
     for (const date of [today, yesterday]) {
-      const adapterDir = path.join(paths.out, 'adapters', date);
+      const adapterDir = path.join(adaptersDir, date);
       const evalPath = path.join(adapterDir, 'eval.json');
       const adapterPath = path.join(adapterDir, 'adapter_model.safetensors');
 

@@ -8,7 +8,7 @@
 import { executeGraph, getGraphOutput } from './graph-executor.js';
 import { validateCognitiveGraph, type CognitiveGraph } from './cognitive-graph-schema.js';
 import { withUserContext } from './context.js';
-import { paths } from './paths.js';
+import { ROOT } from './path-builder.js';
 import { existsSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -158,8 +158,8 @@ export async function loadGraphForMode(graphKey: string): Promise<LoadedGraph | 
 
   const baseName = useBigBrotherGraph ? `${normalizedKey}-mode-bigbrother` : `${normalizedKey}-mode`;
   const pathsToCheck = [
-    path.join(paths.root, 'etc', 'cognitive-graphs', 'custom', `${baseName}.json`),
-    path.join(paths.root, 'etc', 'cognitive-graphs', `${baseName}.json`),
+    path.join(ROOT, 'etc', 'cognitive-graphs', 'custom', `${baseName}.json`),
+    path.join(ROOT, 'etc', 'cognitive-graphs', `${baseName}.json`),
   ];
 
   console.log(`[graph-streaming] Loading graph: "${graphKey}" (${useBigBrotherGraph ? 'Big Brother' : 'standard'})`);

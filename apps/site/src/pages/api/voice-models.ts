@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { getSession } from '@metahuman/core/sessions';
 import { getUserByUsername } from '@metahuman/core/users';
-import { paths } from '@metahuman/core/paths';
+import { systemPaths, ROOT } from '@metahuman/core/paths';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -15,7 +15,7 @@ import path from 'node:path';
 
 function getDefaultVoiceModel(): string {
   try {
-    const voiceConfigPath = path.join(paths.etc, 'voice.json');
+    const voiceConfigPath = path.join(systemPaths.etc, 'voice.json');
     if (fs.existsSync(voiceConfigPath)) {
       const voiceConfig = JSON.parse(fs.readFileSync(voiceConfigPath, 'utf-8'));
       return voiceConfig.tts.piper.model;
@@ -24,7 +24,7 @@ function getDefaultVoiceModel(): string {
     console.error('[voice-models] Failed to load default voice config:', error);
   }
   // Fallback to amy voice
-  return path.join(paths.root, 'out', 'voices', 'en_US-amy-medium.onnx');
+  return path.join(ROOT, 'out', 'voices', 'en_US-amy-medium.onnx');
 }
 
 export const GET: APIRoute = async ({ cookies }) => {
@@ -61,7 +61,7 @@ export const GET: APIRoute = async ({ cookies }) => {
 
     if (sourceProfile === 'mutant-super-intelligence' && Array.isArray(mergedProfiles) && mergedProfiles.length > 0) {
       // For mutant mode, use Amy voice twice (will be pitch-shifted for dual-voice effect)
-      const voicesDir = path.join(paths.root, 'out', 'voices');
+      const voicesDir = path.join(ROOT, 'out', 'voices');
       const amyVoice = path.join(voicesDir, 'en_US-amy-medium.onnx');
 
       const voiceModels: string[] = [];
