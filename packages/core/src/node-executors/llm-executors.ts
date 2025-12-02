@@ -104,6 +104,8 @@ export const personaLLMExecutor: NodeExecutor = async (inputs, context) => {
         repeatPenalty: 1.3,  // Increased from 1.15 to prevent repetition loops
         temperature,
       },
+      // Forward progress events to SSE stream (model loading, waiting, etc.)
+      onProgress: context.emitProgress,
     });
 
     return {
@@ -210,6 +212,7 @@ export const modelRouterExecutor: NodeExecutor = async (inputs, context, propert
         repeatPenalty: properties?.repeatPenalty || 1.15,
         temperature: properties?.temperature || 0.7,
       },
+      onProgress: context.emitProgress,
     });
 
     return {
@@ -281,6 +284,7 @@ Respond in JSON format:
         repeatPenalty: 1.15,
         temperature: 0.3, // Low temp for consistent classification
       },
+      onProgress: context.emitProgress,
     });
 
     // Parse JSON response
@@ -378,6 +382,7 @@ export const reflectorLLMExecutor: NodeExecutor = async (inputs, context, proper
         repeatPenalty: properties?.repeatPenalty || 1.15,
         temperature,
       },
+      onProgress: context.emitProgress,
     });
 
     return {

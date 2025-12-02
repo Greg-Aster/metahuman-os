@@ -1,9 +1,10 @@
 /**
  * Text-to-Speech (TTS) Composable
  * Handles all TTS functionality including voice synthesis, audio playback, and voice model management
+ * Supports both batch (full text) and streaming (sentence-by-sentence) modes
  */
 
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 
 // Types
 interface VoiceModelsCache {
@@ -13,6 +14,12 @@ interface VoiceModelsCache {
 
 interface VoiceProviderCache {
   provider?: string;
+}
+
+interface AudioChunk {
+  index: number;
+  audio: HTMLAudioElement;
+  played: boolean;
 }
 
 // Constants
@@ -78,6 +85,14 @@ export function useTTS() {
   // Svelte stores for reactive state
   const isPlaying = writable(false);
   const isLoading = writable(false);
+  const isStreaming = writable(false);
+  const streamProgress = writable({ current: 0, total: 0 });
+
+  // Streaming state
+  let audioQueue: AudioChunk[] = [];
+  let currentChunkIndex = 0;
+  let isPlayingChunk = false;
+  let streamAbortController: AbortController | null = null;
 
   /**
    * Revoke current audio object URL to free memory
@@ -101,6 +116,35 @@ export function useTTS() {
     }
     revokeCurrentUrl();
     isPlaying.set(false);
+
+    // Also stop streaming if active
+    stopStreaming();
+  }
+
+  /**
+   * Stop streaming TTS playback
+   */
+  function stopStreaming() {
+    // Abort the SSE connection
+    if (streamAbortController) {
+      streamAbortController.abort();
+      streamAbortController = null;
+    }
+
+    // Stop any playing chunk
+    for (const chunk of audioQueue) {
+      try {
+        chunk.audio.pause();
+        URL.revokeObjectURL(chunk.audio.src);
+      } catch {}
+    }
+
+    // Reset streaming state
+    audioQueue = [];
+    currentChunkIndex = 0;
+    isPlayingChunk = false;
+    isStreaming.set(false);
+    streamProgress.set({ current: 0, total: 0 });
   }
 
   /**
@@ -293,11 +337,238 @@ export function useTTS() {
   }
 
   /**
+   * Speak text using streaming TTS (sentence-by-sentence)
+   * Audio starts playing as soon as the first chunk is ready
+   *
+   * @param text - Text to speak
+   * @param options - Optional parameters for voice control
+   */
+  async function speakTextStreaming(text: string, options?: {
+    pitchShift?: number;  // RVC pitch shift (-12 to +12)
+    speed?: number;       // Speaking rate (0.5-2.0)
+  }): Promise<void> {
+    console.log('[useTTS] speakTextStreaming called with text length:', text.length);
+    const speechText = normalizeTextForSpeech(text);
+    console.log('[useTTS] normalized text length:', speechText?.length || 0);
+    if (!speechText) {
+      console.log('[useTTS] No speech text after normalization, aborting');
+      return;
+    }
+
+    // Stop any existing playback
+    stopActiveAudio();
+    cancelInFlightTts();
+
+    // Initialize streaming state
+    audioQueue = [];
+    currentChunkIndex = 0;
+    isPlayingChunk = false;
+    streamAbortController = new AbortController();
+
+    isStreaming.set(true);
+    isLoading.set(true);
+
+    try {
+      // Fetch voice provider to determine streaming endpoint
+      const provider = await fetchVoiceProvider();
+      console.log('[useTTS] Streaming with provider:', provider);
+
+      // Build request body with provider-specific parameters
+      const requestBody: Record<string, unknown> = {
+        text: speechText,
+        provider: provider,
+      };
+
+      // Add optional parameters
+      if (options?.pitchShift !== undefined) {
+        requestBody.pitchShift = options.pitchShift;
+      }
+      if (options?.speed !== undefined) {
+        requestBody.speed = options.speed;
+      }
+
+      // Start SSE connection to streaming endpoint
+      const response = await fetch('/api/tts-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+        signal: streamAbortController.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Streaming TTS request failed: ${response.status}`);
+      }
+
+      if (!response.body) {
+        throw new Error('No response body for streaming');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      console.log('[useTTS] SSE stream started');
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          console.log('[useTTS] SSE stream ended');
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete SSE events
+        const events = buffer.split('\n\n');
+        buffer = events.pop() || ''; // Keep incomplete event in buffer
+
+        for (const event of events) {
+          if (!event.startsWith('data: ')) continue;
+
+          try {
+            const data = JSON.parse(event.slice(6));
+
+            // Handle completion event
+            if (data.event === 'complete') {
+              console.log('[useTTS] Stream complete:', data.total_chunks, 'chunks');
+              isLoading.set(false);
+              continue;
+            }
+
+            // Handle error event
+            if (data.event === 'error') {
+              console.error('[useTTS] Stream error:', data.error);
+              throw new Error(data.error);
+            }
+
+            // Handle audio chunk
+            if (data.audio_base64) {
+              console.log(`[useTTS] Received chunk ${data.chunk_index + 1}/${data.total_sentences}`);
+              streamProgress.set({ current: data.chunk_index + 1, total: data.total_sentences });
+
+              // Convert base64 to blob
+              const binaryString = atob(data.audio_base64);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              const blob = new Blob([bytes], { type: 'audio/wav' });
+              const url = URL.createObjectURL(blob);
+
+              // Create audio element
+              const audio = new Audio(url);
+              audioQueue.push({
+                index: data.chunk_index,
+                audio,
+                played: false,
+              });
+
+              // First chunk received - stop showing loading, start playing
+              if (data.chunk_index === 0) {
+                isLoading.set(false);
+                isPlaying.set(true);
+              }
+
+              // Try to play next chunk if not already playing
+              playNextChunk();
+            }
+          } catch (parseError) {
+            console.warn('[useTTS] Failed to parse SSE event:', parseError);
+          }
+        }
+      }
+
+      // Wait for all chunks to finish playing
+      await waitForPlaybackComplete();
+
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') {
+        console.log('[useTTS] Streaming aborted');
+        return;
+      }
+      console.warn('[useTTS] Streaming failed:', e);
+
+      // Fallback to non-streaming mode
+      console.log('[useTTS] Falling back to non-streaming TTS');
+      stopStreaming();
+      await speakText(text);
+    } finally {
+      isLoading.set(false);
+      isStreaming.set(false);
+    }
+  }
+
+  /**
+   * Play the next chunk in the queue
+   */
+  function playNextChunk() {
+    if (isPlayingChunk) return;
+
+    // Find next unplayed chunk
+    const chunk = audioQueue.find(c => c.index === currentChunkIndex && !c.played);
+    if (!chunk) return;
+
+    isPlayingChunk = true;
+    chunk.played = true;
+
+    console.log(`[useTTS] Playing chunk ${chunk.index}`);
+
+    chunk.audio.onended = () => {
+      console.log(`[useTTS] Chunk ${chunk.index} finished`);
+      URL.revokeObjectURL(chunk.audio.src);
+      isPlayingChunk = false;
+      currentChunkIndex++;
+      playNextChunk();
+
+      // Check if all chunks are played
+      const allPlayed = audioQueue.every(c => c.played);
+      if (allPlayed && get(isStreaming) === false) {
+        isPlaying.set(false);
+      }
+    };
+
+    chunk.audio.onerror = () => {
+      console.warn(`[useTTS] Chunk ${chunk.index} playback error`);
+      URL.revokeObjectURL(chunk.audio.src);
+      isPlayingChunk = false;
+      currentChunkIndex++;
+      playNextChunk();
+    };
+
+    chunk.audio.play().catch((err) => {
+      console.warn(`[useTTS] Failed to play chunk ${chunk.index}:`, err);
+      isPlayingChunk = false;
+      currentChunkIndex++;
+      playNextChunk();
+    });
+  }
+
+  /**
+   * Wait for all audio chunks to finish playing
+   */
+  function waitForPlaybackComplete(): Promise<void> {
+    return new Promise((resolve) => {
+      const checkComplete = () => {
+        const allPlayed = audioQueue.every(c => c.played);
+        if (allPlayed && !isPlayingChunk) {
+          isPlaying.set(false);
+          resolve();
+        } else {
+          setTimeout(checkComplete, 100);
+        }
+      };
+      checkComplete();
+    });
+  }
+
+  /**
    * Cleanup function to call on component unmount
    */
   function cleanup() {
     cancelInFlightTts();
     stopActiveAudio();
+    stopStreaming();
     if (audioCtx) {
       try { audioCtx.close(); } catch {}
       audioCtx = null;
@@ -308,10 +579,14 @@ export function useTTS() {
     // Stores
     isPlaying,
     isLoading,
+    isStreaming,
+    streamProgress,
 
     // Methods
     speakText,
+    speakTextStreaming,
     stopActiveAudio,
+    stopStreaming,
     cancelInFlightTts,
     ensureAudioUnlocked,
     prefetchVoiceResources,
