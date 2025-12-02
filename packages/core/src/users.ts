@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import bcrypt from 'bcryptjs';
-import { paths } from './paths.js';
+import { systemPaths } from './path-builder.js';
 import { audit } from './audit.js';
 import type { OnboardingState } from './types/onboarding.js';
 
@@ -20,12 +20,47 @@ const BCRYPT_ROUNDS = 12; // Standard secure rounds for bcrypt
  */
 /**
  * Encryption configuration for profile storage
+ *
+ * Three encryption modes:
+ * - aes256: Per-file encryption using AES-256-GCM (application-level)
+ * - luks: Linux native volume encryption (filesystem-level, fast)
+ * - veracrypt: Cross-platform volume encryption
+ *
+ * For volume encryption (luks/veracrypt):
+ * - Files are stored plaintext on the mounted volume
+ * - Volume must be mounted before access
+ * - Encryption is transparent at filesystem level
+ *
+ * For file encryption (aes256):
+ * - Each file encrypted individually with .enc extension
+ * - Key derived from password using PBKDF2
+ * - Slower but works on any filesystem
  */
 export interface ProfileEncryptionConfig {
   /** Encryption type used */
-  type: 'none' | 'aes256' | 'veracrypt';
-  /** Path to VeraCrypt container file (if type === 'veracrypt') */
-  containerPath?: string;
+  type: 'none' | 'aes256' | 'luks' | 'veracrypt';
+
+  /** Whether encryption is currently unlocked/mounted */
+  unlocked?: boolean;
+
+  /** Timestamp when encryption was enabled */
+  encryptedAt?: string;
+
+  // --- Volume encryption fields (luks/veracrypt) ---
+
+  /** Path to encrypted volume/container */
+  volumePath?: string;
+
+  /** Mount point when volume is mounted */
+  mountPoint?: string;
+
+  /** Device mapper name for LUKS (e.g., 'metahuman-greggles') */
+  mapperName?: string;
+
+  // --- File encryption fields (aes256) ---
+
+  /** Whether using login password for encryption (vs separate password) */
+  useLoginPassword?: boolean;
 }
 
 /**
@@ -93,7 +128,7 @@ interface UserStore {
  * Uses system-level path since users.json is a global database, not user-specific.
  */
 function getUsersFilePath(): string {
-  return paths.usersDb;
+  return systemPaths.usersDb;
 }
 
 /**

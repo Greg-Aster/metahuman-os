@@ -6,7 +6,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { paths } from '../../paths.js';
 import { audit } from '../../audit.js';
 import { getCachedAudio, cacheAudio, getCacheStats, clearCache } from '../cache.js';
 import type {

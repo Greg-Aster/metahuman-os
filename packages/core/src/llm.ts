@@ -33,7 +33,7 @@ export interface LLMOptions {
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT } from './paths';
+import { ROOT } from './path-builder.js';
 
 /**
  * Ollama Provider - Local LLM via Ollama

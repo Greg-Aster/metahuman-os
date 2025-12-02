@@ -1,21 +1,36 @@
 import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
-import { systemPaths, getAuthenticatedUser } from '@metahuman/core'
+import { systemPaths, getAuthenticatedUser, storageClient } from '@metahuman/core'
 import { OllamaClient } from '@metahuman/core/ollama'
 import { listAdapterDatasets, getActiveAdapter } from '@metahuman/core'
 
-function readModelRegistry() {
+function resolveModelsPath(username: string): string {
+  // Use storage router to resolve user-specific config path
+  const result = storageClient.resolvePath({
+    username,
+    category: 'config',
+    subcategory: 'etc',
+    relativePath: 'models.json',
+  })
+  if (result.success && result.path) {
+    return result.path
+  }
+  // Fallback to system path (should not happen for authenticated users)
+  return path.join(systemPaths.etc, 'models.json')
+}
+
+function readModelRegistry(username: string) {
   try {
-    const p = path.join(systemPaths.etc, 'models.json')
+    const p = resolveModelsPath(username)
     return JSON.parse(fs.readFileSync(p, 'utf-8'))
   } catch {
     return { globalSettings: {}, defaults: {}, models: {} }
   }
 }
 
-function writeModelRegistry(registry: any) {
-  const p = path.join(systemPaths.etc, 'models.json')
+function writeModelRegistry(username: string, registry: any) {
+  const p = resolveModelsPath(username)
   fs.mkdirSync(path.dirname(p), { recursive: true })
   fs.writeFileSync(p, JSON.stringify(registry, null, 2))
 }
@@ -32,7 +47,7 @@ const getHandler: APIRoute = async ({ cookies }) => {
       );
     }
 
-    const registry = readModelRegistry()
+    const registry = readModelRegistry(user.username)
     const globalSettings = registry.globalSettings || {}
     const ollama = new OllamaClient()
     let baseModels: string[] = []
@@ -75,13 +90,13 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       )
     }
-    const registry = readModelRegistry()
+    const registry = readModelRegistry(user.username)
     // Update fallback model in defaults
     const fallbackId = registry.defaults?.fallback || 'default.fallback'
     if (registry.models?.[fallbackId]) {
       registry.models[fallbackId].model = baseModel
     }
-    writeModelRegistry(registry)
+    writeModelRegistry(user.username, registry)
     return new Response(
       JSON.stringify({ success: true, agent: registry.globalSettings || {} }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }

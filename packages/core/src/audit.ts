@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, timestamp } from './paths.js';
+import { timestamp } from './paths.js';
+import { systemPaths } from './path-builder.js';
 import { getUserContext } from './context.js';
 
 /**
@@ -41,7 +42,7 @@ export function setAuditRetention(days: number): void {
  * Purge audit logs older than retention period
  */
 export function purgeOldAuditLogs(): void {
-  const auditDir = path.join(paths.logs, 'audit');
+  const auditDir = path.join(systemPaths.logs, 'audit');
   if (!fs.existsSync(auditDir)) return;
 
   const cutoffDate = new Date();
@@ -107,8 +108,8 @@ export function audit(entry: Omit<AuditEntry, 'timestamp'>): void {
   };
 
   const date = new Date().toISOString().slice(0, 10);
-  // paths.logs automatically resolves to user profile or root based on context
-  const logFile = path.join(paths.logs, 'audit', `${date}.ndjson`);
+  // Use system-level audit logs for comprehensive tracking
+  const logFile = path.join(systemPaths.logs, 'audit', `${date}.ndjson`);
 
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   fs.appendFileSync(logFile, JSON.stringify(fullEntry) + '\n');
@@ -118,7 +119,7 @@ export function audit(entry: Omit<AuditEntry, 'timestamp'>): void {
  * Read audit log for a specific date
  */
 export function readAuditLog(date: string): AuditEntry[] {
-  const logFile = path.join(paths.logs, 'audit', `${date}.ndjson`);
+  const logFile = path.join(systemPaths.logs, 'audit', `${date}.ndjson`);
 
   if (!fs.existsSync(logFile)) {
     return [];

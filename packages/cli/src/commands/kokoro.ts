@@ -6,11 +6,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { paths } from '@metahuman/core';
+import { ROOT, systemPaths } from '@metahuman/core';
 import { createTTSService } from '@metahuman/core';
 
-const KOKORO_DIR = path.join(paths.root, 'external', 'kokoro');
-const SERVER_PID_FILE = path.join(paths.logs, 'run', 'kokoro-server.pid');
+const KOKORO_DIR = path.join(ROOT, 'external', 'kokoro');
+const SERVER_PID_FILE = path.join(systemPaths.logs, 'run', 'kokoro-server.pid');
 
 export async function kokoroCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
@@ -73,7 +73,7 @@ Server Options:
 async function installKokoro(): Promise<void> {
   console.log('Starting Kokoro TTS installation...\n');
 
-  const scriptPath = path.join(paths.root, 'bin', 'install-kokoro.sh');
+  const scriptPath = path.join(ROOT, 'bin', 'install-kokoro.sh');
 
   if (!fs.existsSync(scriptPath)) {
     console.error('✗ Installation script not found:', scriptPath);
@@ -82,7 +82,7 @@ async function installKokoro(): Promise<void> {
 
   return new Promise((resolve, reject) => {
     const install = spawn('bash', [scriptPath], {
-      cwd: paths.root,
+      cwd: ROOT,
       stdio: 'inherit',
     });
 
@@ -234,7 +234,7 @@ async function startServer(args: string[]): Promise<void> {
 
   console.log(`Starting Kokoro server on port ${port} (device: ${device})...`);
 
-  const logFile = path.join(paths.logs, 'run', 'kokoro-server.log');
+  const logFile = path.join(systemPaths.logs, 'run', 'kokoro-server.log');
   const logFd = fs.openSync(logFile, 'a');
 
   const server = spawn(pythonBin, [serverScript, '--port', port.toString(), '--lang', lang, '--device', device], {
@@ -390,7 +390,7 @@ async function testSynthesis(args: string[]): Promise<void> {
     const service = createTTSService('kokoro');
     const audioBuffer = await service.synthesize(text, { voice });
 
-    const outDir = path.join(paths.out, 'test-audio');
+    const outDir = path.join(ROOT, 'out', 'test-audio');
     if (!fs.existsSync(outDir)) {
       fs.mkdirSync(outDir, { recursive: true });
     }
@@ -419,8 +419,8 @@ async function trainVoicepack(args: string[]): Promise<void> {
   };
 
   const speaker = getArg('--speaker', 'default');
-  const datasetDir = getArg('--dataset', path.join(paths.kokoroDatasets, speaker));
-  const outputPath = getArg('--output', path.join(paths.kokoroVoicepacks, `${speaker}.pt`));
+  const datasetDir = getArg('--dataset', path.join(ROOT, 'out', 'kokoro', 'datasets', speaker));
+  const outputPath = getArg('--output', path.join(ROOT, 'out', 'kokoro', 'voicepacks', `${speaker}.pt`));
   const langCode = getArg('--lang', 'a');
   const baseVoice = getArg('--base-voice', 'af_heart');
   const epochs = getArg('--epochs', '120');
@@ -450,8 +450,8 @@ async function trainVoicepack(args: string[]): Promise<void> {
 
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
-  const statusFile = path.join(paths.logs, 'run', `kokoro-training-${speaker}.json`);
-  const logFile = path.join(paths.logs, 'run', `kokoro-training-${speaker}.log`);
+  const statusFile = path.join(systemPaths.logs, 'run', `kokoro-training-${speaker}.json`);
+  const logFile = path.join(systemPaths.logs, 'run', `kokoro-training-${speaker}.log`);
   fs.mkdirSync(path.dirname(statusFile), { recursive: true });
 
   const trainerArgs = [
@@ -534,7 +534,7 @@ async function uninstallKokoro(): Promise<void> {
     console.log('\n✓ Kokoro uninstalled successfully');
 
     // Update addons.json
-    const addonsPath = path.join(paths.etc, 'addons.json');
+    const addonsPath = path.join(systemPaths.etc, 'addons.json');
     if (fs.existsSync(addonsPath)) {
       const addons = JSON.parse(fs.readFileSync(addonsPath, 'utf-8'));
       if (addons.addons?.kokoro) {

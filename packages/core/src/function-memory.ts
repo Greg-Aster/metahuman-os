@@ -13,7 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { audit } from './audit';
-import { tryResolveProfilePath } from './paths';
+import { storageClient } from './storage-client.js';
 
 /**
  * Trust level for function memory
@@ -118,13 +118,17 @@ export interface ListFunctionsOptions {
 
 /**
  * Get functions directory path based on trust level
+ * Uses storage router for consistent path resolution
  */
 function getFunctionsPath(trustLevel: FunctionTrustLevel, _profilePaths?: any): string {
-  // Resolve using current user context or fallback to root
-  const pathKey = trustLevel === 'verified' ? 'functionsVerified' : 'functionsDrafts';
-  const result = tryResolveProfilePath(pathKey as any);
+  const subdir = trustLevel === 'verified' ? 'verified' : 'drafts';
+  const result = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'functions',
+    relativePath: subdir,
+  });
 
-  if (!result.ok) {
+  if (!result.success || !result.path) {
     throw new Error('Cannot access function memory: User authentication required');
   }
 

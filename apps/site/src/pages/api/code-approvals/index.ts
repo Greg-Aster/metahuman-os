@@ -7,7 +7,7 @@ import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
-import { paths } from '@metahuman/core/paths';
+import { ROOT } from '@metahuman/core/paths';
 
 interface StagedCodeChange {
   filePath: string;
@@ -36,7 +36,7 @@ const handler: APIRoute = async ({ cookies }) => {
       );
     }
 
-    const stagingDir = path.join(paths.out, 'code-drafts');
+    const stagingDir = path.join(ROOT, 'out', 'code-drafts');
 
     if (!fs.existsSync(stagingDir)) {
       return new Response(JSON.stringify({ approvals: [] }), {

@@ -252,15 +252,47 @@
     }
   }
 
-  onMount(() => {
-    loadTrainingHistory();
+  let historyInterval: number | null = null;
 
-    // Poll every 30 seconds for history updates
-    const historyInterval = setInterval(loadTrainingHistory, 30000);
+  function startHistoryPolling() {
+    if (historyInterval) return;
+    loadTrainingHistory();
+    historyInterval = window.setInterval(loadTrainingHistory, 30000);
+  }
+
+  function stopHistoryPolling() {
+    if (historyInterval) {
+      clearInterval(historyInterval);
+      historyInterval = null;
+    }
+  }
+
+  function handleVisibilityChange() {
+    if (document.hidden) {
+      // Pause all polling when tab hidden
+      stopHistoryPolling();
+      stopLogsPolling();
+    } else {
+      // Resume polling when tab visible
+      startHistoryPolling();
+      // Only resume logs polling if there's a current run
+      if (currentRun) {
+        startLogsPolling();
+      }
+    }
+  }
+
+  onMount(() => {
+    // Only poll when tab is visible
+    if (!document.hidden) {
+      startHistoryPolling();
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      clearInterval(historyInterval);
+      stopHistoryPolling();
       stopLogsPolling();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   });
 

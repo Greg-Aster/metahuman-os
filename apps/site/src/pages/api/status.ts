@@ -30,11 +30,17 @@ const handler: APIRoute = async ({ cookies }) => {
     const user = getUserOrAnonymous(cookies);
     const isAuthenticated = user.role !== 'anonymous';
 
+    // DEBUG: Log authentication state
+    console.log(`[status] Auth check: isAuthenticated=${isAuthenticated}, role="${user.role}", username="${isAuthenticated ? user.username : 'N/A'}"`);
+
     const now = Date.now();
 
     // Load cognitive mode, but override for unauthenticated users
     const cognitiveConfig = loadCognitiveMode();
     const cognitiveMode = isAuthenticated ? cognitiveConfig.currentMode : 'emulation';
+    console.log(`[status] Cognitive mode: ${cognitiveMode} (config: ${cognitiveConfig.currentMode})`);
+    console.log(`[status] Username being used for model registry: "${isAuthenticated ? user.username : 'undefined (anonymous)'}"`);
+
 
     // Cache key includes cognitive mode for accurate per-mode caching
     const cacheKey = `status-${cognitiveMode}`;
@@ -75,7 +81,9 @@ const handler: APIRoute = async ({ cookies }) => {
     let adapterMetaCfg: any = {};
 
     try {
-      const registry = loadModelRegistry();
+      // Pass username to load user-specific model registry (falls back to system default for anonymous)
+      const username = isAuthenticated ? user.username : undefined;
+      const registry = loadModelRegistry(false, username);
       const globalSettings = registry.globalSettings || {};
 
       // Get model info from registry
@@ -139,8 +147,10 @@ const handler: APIRoute = async ({ cookies }) => {
     // Only show roles that are defined for the current cognitive mode
     let modelRoles: Record<string, any> = {};
     let registryVersion: string | null = null;
+    // Use same username for consistent registry resolution
+    const modelUsername = isAuthenticated ? user.username : undefined;
     try {
-      const registry = loadModelRegistry();
+      const registry = loadModelRegistry(false, modelUsername);
       registryVersion = registry.version;
 
       // Get roles defined for this cognitive mode
@@ -156,7 +166,7 @@ const handler: APIRoute = async ({ cookies }) => {
 
           try {
             // Use cognitive-mode-aware resolution to show what's actually being used
-            const resolved = resolveModelForCognitiveMode(cognitiveMode, role as any);
+            const resolved = resolveModelForCognitiveMode(cognitiveMode, role as any, modelUsername);
             modelRoles[role] = {
               modelId: resolved.id,
               provider: resolved.provider,
@@ -172,10 +182,10 @@ const handler: APIRoute = async ({ cookies }) => {
         }
       } else {
         // Fallback: show all available roles if mode mappings not found
-        const roles = listAvailableRoles();
+        const roles = listAvailableRoles(modelUsername);
         for (const role of roles) {
           try {
-            const resolved = resolveModelForCognitiveMode(cognitiveMode, role);
+            const resolved = resolveModelForCognitiveMode(cognitiveMode, role, modelUsername);
             modelRoles[role] = {
               modelId: resolved.id,
               provider: resolved.provider,
@@ -386,7 +396,7 @@ const handler: APIRoute = async ({ cookies }) => {
     }
 
     // CURIOSITY STATS
-    const curiosityConfig = loadCuriosityConfig();
+    const curiosityConfig = loadCuriosityConfig(isAuthenticated ? user.username : undefined);
     let openQuestionCount = 0;
     let lastAskedTimestamp: string | null = null;
 

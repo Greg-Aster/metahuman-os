@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { tryResolveProfilePath } from './paths';
+import { storageClient } from './storage-client.js';
 import { audit } from './audit';
 
 export type CognitiveModeId = 'dual' | 'agent' | 'emulation';
@@ -31,11 +31,15 @@ export interface CognitiveModeConfig {
  * Returns null if the user is anonymous and has no profile.
  */
 function getModeConfigPath(): string | null {
-  const result = tryResolveProfilePath('persona');
-  if (!result.ok) {
+  const result = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: 'cognitive-mode.json',
+  });
+  if (!result.success || !result.path) {
     return null; // Anonymous user or no context
   }
-  return path.join(result.path, 'cognitive-mode.json');
+  return result.path;
 }
 
 const MODE_DEFINITIONS: Record<CognitiveModeId, CognitiveModeDefinition> = {

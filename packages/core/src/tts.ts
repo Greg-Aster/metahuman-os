@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { paths, getProfilePaths } from './paths.js';
+import { ROOT, systemPaths, getProfilePaths } from './path-builder.js';
 import { getUserContext } from './context.js';
 import { audit } from './audit.js';
 import { PiperService } from './tts/providers/piper-service.js';
@@ -40,7 +40,7 @@ let config: VoiceConfig | null = null;
 function loadRawConfig(forceReload = false): VoiceConfig {
   if (config && !forceReload) return config;
 
-  const configPath = path.join(paths.etc, 'voice.json');
+  const configPath = path.join(systemPaths.etc, 'voice.json');
   if (!fs.existsSync(configPath)) {
     throw new Error('Voice configuration not found at etc/voice.json');
   }
@@ -136,7 +136,7 @@ function resolveConfigPaths(rawConfig: VoiceConfig, username?: string): VoiceCon
     if (!maybePath) return maybePath;
 
     // Replace {METAHUMAN_ROOT} with actual root path
-    let resolvedPath = maybePath.replace(/\{METAHUMAN_ROOT\}/g, paths.root);
+    let resolvedPath = maybePath.replace(/\{METAHUMAN_ROOT\}/g, ROOT);
 
     // Replace {PROFILE_DIR} with user-specific profile directory
     if (resolvedPath.includes('{PROFILE_DIR}')) {
@@ -149,13 +149,13 @@ function resolveConfigPaths(rawConfig: VoiceConfig, username?: string): VoiceCon
         resolvedPath = resolvedPath.replace(/\{PROFILE_DIR\}/g, profilePaths.root);
       } else {
         // Fallback: use global out directory if no user context
-        resolvedPath = resolvedPath.replace(/\{PROFILE_DIR\}/g, path.join(paths.root, 'out'));
+        resolvedPath = resolvedPath.replace(/\{PROFILE_DIR\}/g, path.join(ROOT, 'out'));
       }
     }
 
     // Convert relative paths to absolute
     if (!path.isAbsolute(resolvedPath)) {
-      resolvedPath = path.resolve(paths.root, resolvedPath);
+      resolvedPath = path.resolve(ROOT, resolvedPath);
     }
 
     return resolvedPath;

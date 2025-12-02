@@ -8,7 +8,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, audit, ollama } from '../../packages/core/src/index.js';
+import { storageClient, ROOT, audit, ollama } from '../../packages/core/src/index.js';
 
 const DATASET_DATE = process.argv[2];
 
@@ -18,7 +18,9 @@ if (!DATASET_DATE) {
   process.exit(1);
 }
 
-const datasetDir = path.join(paths.out, 'adapters', DATASET_DATE);
+const outResult = storageClient.resolvePath({ category: 'output', subcategory: 'adapters' });
+const adaptersDir = outResult.success && outResult.path ? outResult.path : path.join(ROOT, 'out', 'adapters');
+const datasetDir = path.join(adaptersDir, DATASET_DATE);
 const adapterPath = path.join(datasetDir, 'adapter_model.safetensors');
 const jsonlPath = path.join(datasetDir, 'instructions.jsonl');
 const evalPath = path.join(datasetDir, 'eval.json');

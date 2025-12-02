@@ -7,10 +7,10 @@
 import fs from 'fs';
 import path from 'path';
 import { spawn, ChildProcess } from 'child_process';
-import { paths } from './paths.js';
+import { systemPaths } from './path-builder.js';
 
-const CLOUDFLARE_CONFIG_PATH = path.join(paths.root, 'etc', 'cloudflare.json');
-const TUNNEL_PID_FILE = path.join(paths.logs, 'run', 'cloudflare-tunnel.pid');
+const CLOUDFLARE_CONFIG_PATH = path.join(systemPaths.etc, 'cloudflare.json');
+const TUNNEL_PID_FILE = path.join(systemPaths.logs, 'run', 'cloudflare-tunnel.pid');
 
 interface CloudflareConfig {
   enabled: boolean;

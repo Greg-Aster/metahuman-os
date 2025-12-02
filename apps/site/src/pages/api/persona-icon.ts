@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import { loadPersonaCore } from '@metahuman/core/identity';
-import { tryResolveProfilePath, getUserOrAnonymous } from '@metahuman/core';
+import { storageClient, getUserOrAnonymous } from '@metahuman/core';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -39,8 +39,11 @@ export const GET: APIRoute = async ({ cookies }) => {
       iconPath = iconConfig;
     } else {
       // Relative path - resolve relative to persona/ directory
-      const personaPathResult = tryResolveProfilePath('persona');
-      if (!personaPathResult.ok) {
+      const personaPathResult = storageClient.resolvePath({
+        category: 'config',
+        subcategory: 'persona',
+      });
+      if (!personaPathResult.success || !personaPathResult.path) {
         return new Response('Persona directory not available', { status: 404 });
       }
       iconPath = path.join(personaPathResult.path, iconConfig);

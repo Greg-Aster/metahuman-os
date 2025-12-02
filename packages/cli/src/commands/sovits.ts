@@ -6,10 +6,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { paths } from '@metahuman/core';
+import { ROOT, systemPaths } from '@metahuman/core';
 
-const SOVITS_DIR = path.join(paths.root, 'external', 'gpt-sovits');
-const SOVITS_PID_FILE = path.join(paths.root, 'logs', 'run', 'sovits.pid');
+const SOVITS_DIR = path.join(ROOT, 'external', 'gpt-sovits');
+const SOVITS_PID_FILE = path.join(systemPaths.logs, 'run', 'sovits.pid');
 
 export async function sovitsCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
@@ -77,7 +77,7 @@ Examples:
 async function installSoVITS(): Promise<void> {
   console.log('Starting GPT-SoVITS installation...\n');
 
-  const scriptPath = path.join(paths.root, 'bin', 'install-sovits.sh');
+  const scriptPath = path.join(ROOT, 'bin', 'install-sovits.sh');
 
   if (!fs.existsSync(scriptPath)) {
     console.error('✗ Installation script not found:', scriptPath);
@@ -86,7 +86,7 @@ async function installSoVITS(): Promise<void> {
 
   return new Promise((resolve, reject) => {
     const install = spawn('bash', [scriptPath], {
-      cwd: paths.root,
+      cwd: ROOT,
       stdio: 'inherit',
     });
 
@@ -151,7 +151,7 @@ async function startServer(args: string[]): Promise<void> {
   console.log(`Starting GPT-SoVITS server on port ${port}...`);
 
   // Ensure log directory exists
-  const logDir = path.join(paths.root, 'logs', 'run');
+  const logDir = path.join(systemPaths.logs, 'run');
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true });
   }
@@ -302,7 +302,7 @@ async function checkStatus(): Promise<void> {
   console.log(`Disk usage:   ${formatBytes(sovitsSize)}`);
 
   console.log('\nConfiguration:');
-  const voiceConfig = path.join(paths.etc, 'voice.json');
+  const voiceConfig = path.join(systemPaths.etc, 'voice.json');
   if (fs.existsSync(voiceConfig)) {
     const config = JSON.parse(fs.readFileSync(voiceConfig, 'utf-8'));
     console.log(`  Provider:     ${config.tts.provider}`);
@@ -315,7 +315,7 @@ async function checkStatus(): Promise<void> {
 }
 
 async function showLogs(args: string[]): Promise<void> {
-  const logFile = path.join(paths.root, 'logs', 'run', 'sovits.log');
+  const logFile = path.join(systemPaths.logs, 'run', 'sovits.log');
 
   if (!fs.existsSync(logFile)) {
     console.log('No log file found');
@@ -418,7 +418,7 @@ async function downloadModels(): Promise<void> {
       // Use curl for download with progress
       execSync(`curl -L -o "${model.dest}" "${model.url}"`, {
         stdio: 'inherit',
-        cwd: paths.root,
+        cwd: ROOT,
       });
       console.log(`  ✓ Downloaded\n`);
     } catch (error) {

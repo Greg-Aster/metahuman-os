@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths } from '@metahuman/core'
+import { storageClient, ROOT } from '@metahuman/core'
 
 function walk(dir: string, out: string[] = []) {
   if (!fs.existsSync(dir)) return out
@@ -23,7 +23,11 @@ function extractUserText(content: string): string {
 
 export const POST: APIRoute = async () => {
   try {
-    const episodicRoot = paths.episodic
+    const episodicResult = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
+    if (!episodicResult.success || !episodicResult.path) {
+      return new Response(JSON.stringify({ success: false, error: 'Cannot resolve episodic path' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    }
+    const episodicRoot = episodicResult.path
     const files = walk(episodicRoot)
     const records: Array<{ id: string; text: string; ts: string; type?: string }> = []
 
@@ -44,7 +48,11 @@ export const POST: APIRoute = async () => {
     }
 
     const stamp = new Date().toISOString().replace(/[:T.Z]/g, '').slice(0, 14)
-    const destDir = path.join(paths.inbox, `chat-export-${stamp}`)
+    const inboxResult = storageClient.resolvePath({ category: 'memory', subcategory: 'inbox' });
+    if (!inboxResult.success || !inboxResult.path) {
+      return new Response(JSON.stringify({ success: false, error: 'Cannot resolve inbox path' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    }
+    const destDir = path.join(inboxResult.path, `chat-export-${stamp}`)
     fs.mkdirSync(destDir, { recursive: true })
 
     let n = 0
@@ -56,7 +64,7 @@ export const POST: APIRoute = async () => {
       n++
     }
 
-    return new Response(JSON.stringify({ success: true, count: n, dir: path.relative(paths.root, destDir) }), {
+    return new Response(JSON.stringify({ success: true, count: n, dir: path.relative(ROOT, destDir) }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     })

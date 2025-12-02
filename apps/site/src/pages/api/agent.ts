@@ -5,7 +5,7 @@
 
 import type { APIRoute } from 'astro';
 import { spawn } from 'child_process';
-import { getAuthenticatedUser, paths, audit, registerAgent, unregisterAgent } from '@metahuman/core';
+import { getAuthenticatedUser, systemPaths, ROOT, audit, registerAgent, unregisterAgent } from '@metahuman/core';
 import path from 'node:path';
 import fs from 'node:fs';
 
@@ -22,7 +22,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     );
   }
 
-  const agentPath = `${paths.brain}/agents/${agentName}.ts`;
+  const agentPath = `${systemPaths.brain}/agents/${agentName}.ts`;
 
   if (!fs.existsSync(agentPath)) {
     return new Response(
@@ -38,8 +38,8 @@ export const POST: APIRoute = async ({ cookies, request }) => {
 
     // Resolve tsx path inside workspace for reliability
     const tsxBin = process.platform === 'win32'
-      ? path.join(paths.root, 'node_modules', '.bin', 'tsx.cmd')
-      : path.join(paths.root, 'node_modules', '.bin', 'tsx');
+      ? path.join(ROOT, 'node_modules', '.bin', 'tsx.cmd')
+      : path.join(ROOT, 'node_modules', '.bin', 'tsx');
     const tsxCmd = (tsxBin && fs.existsSync(tsxBin)) ? tsxBin : 'tsx';
 
     // Pass user context to agent via environment variables
@@ -50,15 +50,15 @@ export const POST: APIRoute = async ({ cookies, request }) => {
 
     const child = spawn(tsxCmd, [agentPath], {
       stdio: 'pipe', // Pipe output so we can log it
-      cwd: paths.root,
+      cwd: ROOT,
       detached: true, // Detach from the web server process
       env: {
         ...process.env,
         ...envOverrides,
         NODE_PATH: [
-          `${paths.root}/node_modules`,
-          `${paths.root}/packages/cli/node_modules`,
-          `${paths.root}/apps/site/node_modules`,
+          `${ROOT}/node_modules`,
+          `${ROOT}/packages/cli/node_modules`,
+          `${ROOT}/apps/site/node_modules`,
         ].join(':'),
       },
     });

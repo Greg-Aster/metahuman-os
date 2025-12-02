@@ -5,7 +5,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './paths.js';
+import { systemPaths } from './path-builder.js';
 import { existsSync, readFileSync } from 'node:fs';
 
 export interface AgentStatus {
@@ -55,7 +55,7 @@ export interface AgentLog {
  * Get list of available agents
  */
 export function listAvailableAgents(): string[] {
-  const agentsDir = path.join(paths.brain, 'agents');
+  const agentsDir = systemPaths.agents;
 
   if (!fs.existsSync(agentsDir)) {
     return [];
@@ -71,7 +71,7 @@ export function listAvailableAgents(): string[] {
  */
 export function getAgentLogs(agentName?: string, limit = 50): AgentLog[] {
   const today = new Date().toISOString().slice(0, 10);
-  const auditFile = path.join(paths.logs, 'audit', `${today}.ndjson`);
+  const auditFile = path.join(systemPaths.logs, 'audit', `${today}.ndjson`);
 
   if (!fs.existsSync(auditFile)) {
     return [];
@@ -183,7 +183,7 @@ export function getAgentStats(agentName: string): {
 /**
  * Agent registry path
  */
-const getRegistryPath = () => path.join(paths.logs, 'agents', 'running.json');
+const getRegistryPath = () => path.join(systemPaths.logs, 'agents', 'running.json');
 
 /**
  * Read agent registry
@@ -270,7 +270,7 @@ export function getAgentStatuses(): AgentStatus[] {
     if (!name.endsWith('-service')) return null;
     const base = name.replace(/-service$/, '');
     const lockName = `service-${base}`;
-    const lockPath = path.join(paths.run, 'locks', `${lockName}.lock`);
+    const lockPath = path.join(systemPaths.run, 'locks', `${lockName}.lock`);
     if (!existsSync(lockPath)) return null;
     try {
       const txt = readFileSync(lockPath, 'utf8');

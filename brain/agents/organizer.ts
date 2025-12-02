@@ -22,7 +22,7 @@ const ROOT = path.resolve(__dirname, '..', '..');
 
 // Import from core
 import {
-  paths,
+  storageClient,
   audit,
   auditAction,
   callLLM,
@@ -123,7 +123,12 @@ async function analyzeMemoryContent(content: string): Promise<AnalysisResult> {
  * Find unprocessed memories
  */
 function findUnprocessedMemories(): string[] {
-  const episodicDir = paths.episodic;
+  const result = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
+  if (!result.success || !result.path) {
+    console.error('[Organizer] Cannot resolve episodic path');
+    return [];
+  }
+  const episodicDir = result.path;
   const files: string[] = [];
 
   const walk = (dir: string) => {
@@ -205,7 +210,8 @@ async function processMemory(filepath: string): Promise<void> {
       // Read active model from etc/models.json to record provenance
       let activeModel = 'unknown';
       try {
-        const { loadModelRegistry } = await import('../../packages/core/src/index.js');
+        const { loadModelRegistry } = await import('../../packages/core/src/model-resolver.js');
+        // Agent process uses system default registry (no user context)
         const registry = loadModelRegistry();
         const fallbackId = registry.defaults?.fallback || 'default.fallback';
         const fallbackModel = registry.models?.[fallbackId];

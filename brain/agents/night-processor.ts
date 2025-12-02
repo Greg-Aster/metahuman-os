@@ -1,12 +1,12 @@
 import { spawn } from 'node:child_process'
 import path from 'node:path'
-import { paths, audit } from '../../packages/core/src/index'
+import { ROOT, systemPaths, audit } from '../../packages/core/src/index'
 
 async function runOneShot(agentFile: string, name: string): Promise<number> {
   return new Promise((resolve) => {
     const child = spawn('tsx', [agentFile], {
       stdio: 'inherit',
-      cwd: paths.root,
+      cwd: ROOT,
       env: { ...process.env, ONESHOT: '1' },
     })
     child.on('close', (code) => resolve(code ?? 0))
@@ -17,8 +17,8 @@ async function runOneShot(agentFile: string, name: string): Promise<number> {
 async function main() {
   audit({ level: 'info', category: 'system', event: 'night_processor_started', actor: 'system' })
 
-  const transcriberPath = path.join(paths.brain, 'agents', 'transcriber.ts')
-  const organizerPath = path.join(paths.brain, 'agents', 'audio-organizer.ts')
+  const transcriberPath = path.join(systemPaths.brain, 'agents', 'transcriber.ts')
+  const organizerPath = path.join(systemPaths.brain, 'agents', 'audio-organizer.ts')
 
   const tCode = await runOneShot(transcriberPath, 'transcriber')
   const oCode = await runOneShot(organizerPath, 'audio-organizer')

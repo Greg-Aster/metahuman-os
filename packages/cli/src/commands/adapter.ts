@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { paths, audit, setActiveAdapter } from '@metahuman/core';
+import { ROOT, systemPaths, audit, setActiveAdapter } from '@metahuman/core';
 import type { ActiveAdapterInfo } from '@metahuman/core';
 
 interface ApprovalMetadata {
@@ -19,7 +19,7 @@ interface ApprovalMetadata {
 export function adapterList() {
   console.log('LoRA Adapter Datasets\n');
 
-  const adaptersDir = path.join(paths.out, 'adapters');
+  const adaptersDir = path.join(ROOT, 'out', 'adapters');
 
   if (!fs.existsSync(adaptersDir)) {
     console.log('No adapter datasets found.');
@@ -80,7 +80,7 @@ export function adapterList() {
 export function adapterReview(date: string) {
   console.log(`Reviewing LoRA Dataset: ${date}\n`);
 
-  const datasetDir = path.join(paths.out, 'adapters', date);
+  const datasetDir = path.join(ROOT, 'out', 'adapters', date);
   const jsonlPath = path.join(datasetDir, 'instructions.jsonl');
 
   if (!fs.existsSync(jsonlPath)) {
@@ -146,7 +146,7 @@ export function adapterReview(date: string) {
 }
 
 export function adapterApprove(date: string, notes: string = '') {
-  const datasetDir = path.join(paths.out, 'adapters', date);
+  const datasetDir = path.join(ROOT, 'out', 'adapters', date);
   const jsonlPath = path.join(datasetDir, 'instructions.jsonl');
   const approvedPath = path.join(datasetDir, 'approved.json');
 
@@ -186,7 +186,7 @@ export function adapterApprove(date: string, notes: string = '') {
 }
 
 export function adapterReject(date: string, reason: string = '') {
-  const datasetDir = path.join(paths.out, 'adapters', date);
+  const datasetDir = path.join(ROOT, 'out', 'adapters', date);
   const jsonlPath = path.join(datasetDir, 'instructions.jsonl');
 
   if (!fs.existsSync(jsonlPath)) {
@@ -195,7 +195,7 @@ export function adapterReject(date: string, reason: string = '') {
   }
 
   // Archive the dataset
-  const archiveDir = path.join(paths.out, 'adapters', '_rejected');
+  const archiveDir = path.join(ROOT, 'out', 'adapters', '_rejected');
   fs.mkdirSync(archiveDir, { recursive: true});
 
   const archivePath = path.join(archiveDir, date);
@@ -229,7 +229,7 @@ export function adapterReject(date: string, reason: string = '') {
 export function adapterTrain(date: string) {
   console.log(`Training LoRA Adapter: ${date}\n`);
 
-  const datasetDir = path.join(paths.out, 'adapters', date);
+  const datasetDir = path.join(ROOT, 'out', 'adapters', date);
   const approvedPath = path.join(datasetDir, 'approved.json');
 
   if (!fs.existsSync(approvedPath)) {
@@ -238,7 +238,7 @@ export function adapterTrain(date: string) {
     process.exit(1);
   }
 
-  const trainerPath = path.join(paths.brain, 'agents', 'lora-trainer.ts');
+  const trainerPath = path.join(systemPaths.brain, 'agents', 'lora-trainer.ts');
 
   if (!fs.existsSync(trainerPath)) {
     console.error('lora-trainer agent not found.');
@@ -259,7 +259,7 @@ export function adapterTrain(date: string) {
 
   const child = spawn('tsx', [trainerPath, date], {
     stdio: 'inherit',
-    cwd: paths.root,
+    cwd: ROOT,
   });
 
   child.on('error', (err) => {
@@ -280,8 +280,8 @@ export function adapterTrain(date: string) {
 export function adapterEval(date: string) {
   console.log(`Evaluating LoRA Adapter: ${date}\n`);
 
-  const datasetDir = path.join(paths.out, 'adapters', date);
-  const evalAgentPath = path.join(paths.brain, 'agents', 'eval-adapter.ts');
+  const datasetDir = path.join(ROOT, 'out', 'adapters', date);
+  const evalAgentPath = path.join(systemPaths.brain, 'agents', 'eval-adapter.ts');
 
   if (!fs.existsSync(evalAgentPath)) {
     console.error('eval-adapter agent not found.');
@@ -300,7 +300,7 @@ export function adapterEval(date: string) {
 
   const child = spawn('tsx', [evalAgentPath, date], {
     stdio: 'inherit',
-    cwd: paths.root,
+    cwd: ROOT,
   });
 
   child.on('error', (err) => {
@@ -321,7 +321,7 @@ export function adapterEval(date: string) {
 export function adapterActivate(date: string) {
   console.log(`Activating LoRA Adapter: ${date}\n`);
 
-  const datasetDir = path.join(paths.out, 'adapters', date);
+  const datasetDir = path.join(ROOT, 'out', 'adapters', date);
   const evalPath = path.join(datasetDir, 'eval.json');
   const adapterPath = path.join(datasetDir, 'adapter_model.safetensors');
   const modelfilePath = path.join(datasetDir, 'Modelfile');
@@ -347,9 +347,9 @@ export function adapterActivate(date: string) {
   if (!fs.existsSync(ggufAdapterPath)) {
     console.log('⚠ GGUF adapter not found. Converting from safetensors...\n');
     try {
-      execSync(`tsx ${path.join(paths.brain, 'agents', 'gguf-converter.ts')} ${date}`, {
+      execSync(`tsx ${path.join(systemPaths.brain, 'agents', 'gguf-converter.ts')} ${date}`, {
         stdio: 'inherit',
-        cwd: paths.root,
+        cwd: ROOT,
       });
     } catch (error) {
       console.error(`\n✗ GGUF conversion failed: ${(error as Error).message}`);
@@ -361,7 +361,7 @@ export function adapterActivate(date: string) {
   }
 
   // Check for historical merged adapter (dual-adapter system)
-  const historyMergedPath = path.join(paths.out, 'adapters', 'history-merged', 'adapter-merged.gguf');
+  const historyMergedPath = path.join(ROOT, 'out', 'adapters', 'history-merged', 'adapter-merged.gguf');
   const hasHistoricalAdapter = fs.existsSync(historyMergedPath);
 
   // Create Modelfile with GGUF adapter(s)
@@ -392,7 +392,7 @@ FROM ${baseModel}
   try {
     execSync(`ollama create ${modelName} -f "${modelfilePath}"`, {
       stdio: 'inherit',
-      cwd: paths.root,
+      cwd: ROOT,
     });
 
     console.log(`✓ Ollama model created: ${modelName}\n`);
@@ -470,7 +470,7 @@ FROM ${baseModel}
 export function adapterMerge() {
   console.log('Merging historical LoRA adapters...\n');
 
-  const agentPath = path.join(paths.brain, 'agents', 'adapter-merger.ts');
+  const agentPath = path.join(systemPaths.brain, 'agents', 'adapter-merger.ts');
 
   if (!fs.existsSync(agentPath)) {
     console.error('adapter-merger.ts not found');
@@ -479,7 +479,7 @@ export function adapterMerge() {
 
   const child = spawn('tsx', [agentPath], {
     stdio: 'inherit',
-    cwd: paths.root,
+    cwd: ROOT,
   });
 
   child.on('error', (err) => {

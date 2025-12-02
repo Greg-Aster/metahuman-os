@@ -7,7 +7,7 @@ import type { APIRoute } from 'astro';
 // DISABLED: Skills system not in use
 // import { initializeSkills } from '@brain/skills/index.js';
 import { executeSkill, loadTrustLevel, getAvailableSkills } from '@metahuman/core/skills';
-import { paths } from '@metahuman/core/paths';
+import { ROOT } from '@metahuman/core/paths';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
 import path from 'node:path';
 
@@ -47,7 +47,7 @@ export const POST: APIRoute = async (context) => {
 
     // Validate filename
     const safeFilename = path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, '_');
-    const fullPath = path.join(paths.root, 'out', safeFilename);
+    const fullPath = path.join(ROOT, 'out', safeFilename);
 
     // Check file access permissions
     const policy = getSecurityPolicy(context);
@@ -198,7 +198,7 @@ export const GET: APIRoute = async ({ request }) => {
             trustLevel,
             canWrite: availableSkills.some(s => s.id === 'fs_write'),
             canRead: availableSkills.some(s => s.id === 'fs_read'),
-            basePath: path.join(paths.root, 'out')
+            basePath: path.join(ROOT, 'out')
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } }
         );

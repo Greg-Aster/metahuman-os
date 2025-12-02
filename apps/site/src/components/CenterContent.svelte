@@ -101,11 +101,11 @@
       case 'BoredomControl':
         module = await import('./BoredomControl.svelte');
         break;
-      case 'TerminalManager':
-        module = await import('./TerminalManager.svelte');
-        break;
       case 'ProfileLocation':
         module = await import('./ProfileLocation.svelte');
+        break;
+      case 'TerminalManager':
+        module = await import('./TerminalManager.svelte');
         break;
       default:
         throw new Error(`Unknown component: ${name}`);
@@ -159,7 +159,7 @@ let personaTab: 'editor' | 'memory' | 'behavior' | 'generator' = 'editor'
 let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'wizard' | 'datasets' | 'manage' | 'system' | 'monitor' | 'adapters' = 'wizard'
-let systemTab: 'chat' | 'lifeline' | 'settings' | 'security' | 'network' | 'addons' = 'settings'
+let systemTab: 'chat' | 'lifeline' | 'settings' | 'security' | 'network' | 'storage' | 'addons' = 'settings'
 let dashboardTab: 'overview' | 'tasks' | 'approvals' = 'overview'
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
 

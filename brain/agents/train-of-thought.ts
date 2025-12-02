@@ -12,7 +12,7 @@
  */
 
 import {
-  paths,
+  ROOT,
   audit,
   acquireLock,
   isLocked,
@@ -37,7 +37,7 @@ const technicalKeywords = [
  * Load the train-of-thought cognitive graph
  */
 async function loadTrainOfThoughtGraph(): Promise<CognitiveGraph> {
-  const graphPath = path.join(paths.root, 'etc', 'cognitive-graphs', 'train-of-thought.json');
+  const graphPath = path.join(ROOT, 'etc', 'cognitive-graphs', 'train-of-thought.json');
   const raw = await fs.readFile(graphPath, 'utf-8');
   const parsed = JSON.parse(raw);
   return validateCognitiveGraph(parsed);
@@ -168,7 +168,7 @@ async function executeTrainOfThoughtForUser(username: string): Promise<{
 
   try {
     // Get user-specific paths
-    const userRoot = path.join(paths.root, 'profiles', username);
+    const userRoot = path.join(ROOT, 'profiles', username);
     const episodicDir = path.join(userRoot, 'memory', 'episodic');
 
     // Get all memories

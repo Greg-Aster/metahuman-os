@@ -22,7 +22,7 @@ import {
   type RouterMessage,
   captureEvent,
   searchMemory,
-  paths,
+  storageClient,
   audit,
   acquireLock,
   isLocked,
@@ -40,7 +40,12 @@ import path from 'node:path';
  * Get ALL memories with weighted selection (same as curiosity-service)
  */
 async function getAllMemories(): Promise<Array<{ file: string; timestamp: Date; content: any }>> {
-  const episodicDir = paths.episodic;
+  const result = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
+  if (!result.success || !result.path) {
+    console.error('[inner-curiosity] Cannot resolve episodic path');
+    return [];
+  }
+  const episodicDir = result.path;
   const allMemories: Array<{ file: string; timestamp: Date; content: any }> = [];
 
   async function walk(dir: string, acc: Array<{ file: string; timestamp: Date; content: any }>) {

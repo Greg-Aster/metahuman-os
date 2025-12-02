@@ -23,7 +23,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { paths, audit, setActiveAdapter, recordSystemActivity } from '../../packages/core/src/index.js';
+import { storageClient, systemPaths, ROOT, audit, setActiveAdapter, recordSystemActivity } from '../../packages/core/src/index.js';
 import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
 
 export interface SleepConfig {
@@ -45,7 +45,9 @@ let lastActivityTime = Date.now();
 
 export function loadSleepConfig(): SleepConfig {
   try {
-    const configPath = path.join(paths.etc, 'sleep.json');
+    // Try user-specific config first, fall back to system config
+    const result = storageClient.resolvePath({ category: 'config', subcategory: 'etc', relativePath: 'sleep.json' });
+    const configPath = result.success && result.path ? result.path : path.join(systemPaths.etc, 'sleep.json');
     const data = fs.readFileSync(configPath, 'utf-8');
     return JSON.parse(data);
   } catch (error) {
@@ -105,7 +107,7 @@ function runAgent(agentName: string, description: string, args: string[] = []): 
   return new Promise((resolve, reject) => {
     console.log(`[sleep-service] Starting ${agentName}...`);
 
-    const agentPath = path.join(paths.brain, 'agents', `${agentName}.ts`);
+    const agentPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
 
     if (!fs.existsSync(agentPath)) {
       console.warn(`[sleep-service] ${agentName} not found at ${agentPath}`);
@@ -123,7 +125,7 @@ function runAgent(agentName: string, description: string, args: string[] = []): 
 
     const child = spawn('tsx', [agentPath, ...args], {
       stdio: 'inherit',
-      cwd: paths.root,
+      cwd: ROOT,
     });
 
     child.on('error', (err) => {
@@ -169,8 +171,10 @@ export async function runNightlyPipeline(config: SleepConfig) {
 
     // Step 2: Run night-processor to handle audio backlog (transcriber + audio-organizer)
     // Check if there's work to do first
-    const inboxPath = paths.audioInbox;
-    const transcriptsPath = paths.audioTranscripts;
+    const inboxResult = storageClient.resolvePath({ category: 'voice', subcategory: 'inbox' });
+    const transcriptsResult = storageClient.resolvePath({ category: 'voice', subcategory: 'transcripts' });
+    const inboxPath = inboxResult.success && inboxResult.path ? inboxResult.path : null;
+    const transcriptsPath = transcriptsResult.success && transcriptsResult.path ? transcriptsResult.path : null;
 
     let inboxCount = 0;
     let transcriptsCount = 0;
@@ -249,12 +253,14 @@ export async function runNightlyPipeline(config: SleepConfig) {
 
           // Auto-train/eval/activate if configured and not in dry-run
           try {
-            const aaPath = path.join(paths.etc, 'auto-approval.json');
+            const aaPath = path.join(systemPaths.etc, 'auto-approval.json');
             const autoCfg = fs.existsSync(aaPath)
               ? JSON.parse(fs.readFileSync(aaPath, 'utf-8'))
               : { enabled: true, dryRun: true };
 
-            const datasetDir = path.join(paths.out, 'adapters', today);
+            const outResult = storageClient.resolvePath({ category: 'output', subcategory: 'adapters' });
+            const adaptersDir = outResult.success && outResult.path ? outResult.path : path.join(ROOT, 'out', 'adapters');
+            const datasetDir = path.join(adaptersDir, today);
             const approvedPath = path.join(datasetDir, 'approved.json');
 
             if (!autoCfg.dryRun && fs.existsSync(approvedPath)) {

@@ -14,7 +14,7 @@
 import {
   callLLM,
   type RouterMessage,
-  paths,
+  storageClient,
   audit,
   acquireLock,
   isLocked,
@@ -146,8 +146,14 @@ async function researchQuestion(questionData: any): Promise<{ notes: string; sum
  * Process research for a single user
  */
 async function processUserResearch(username: string): Promise<number> {
-  const pendingDir = path.join(paths.curiosity, 'questions', 'pending');
-  const researchDir = paths.curiosityResearch;
+  // Resolve curiosity paths using storage router
+  const curiosityResult = storageClient.resolvePath({ category: 'memory', subcategory: 'curiosity' });
+  if (!curiosityResult.success || !curiosityResult.path) {
+    console.error('[curiosity-researcher] Cannot resolve curiosity path');
+    return 0;
+  }
+  const pendingDir = path.join(curiosityResult.path, 'questions', 'pending');
+  const researchDir = path.join(curiosityResult.path, 'research');
 
   if (!fsSync.existsSync(pendingDir)) {
     return 0;

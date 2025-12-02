@@ -48,6 +48,7 @@ export interface EncryptionMeta {
   createdAt: string;
   lastUnlockedAt?: string;
   encryptedFiles: number;
+  useLoginPassword?: boolean; // True if encrypted with user's login password
 }
 
 /**

@@ -1,90 +1,43 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { get } from 'svelte/store';
   import { isOwner } from '../stores/security-policy';
+  import {
+    approvalsStore,
+    loadApprovals,
+    approveSkill,
+    rejectSkill,
+    clearApprovalsError,
+  } from '../stores/approvals';
 
-  interface ApprovalItem {
-    id: string;
-    skillId: string;
-    skillName: string;
-    skillDescription: string;
-    inputs: Record<string, any>;
-    timestamp: string;
-    risk: 'low' | 'medium' | 'high';
-    status: 'pending' | 'approved' | 'rejected';
-    resolvedAt?: string;
-    resolvedBy?: string;
-  }
-
-  let approvals: ApprovalItem[] = [];
-  let loading = true;
-  let error = '';
   let processingId: string | null = null;
+  let localError = '';
 
-  async function loadApprovals() {
-    if (!get(isOwner)) {
-      approvals = [];
-      loading = false;
-      return;
-    }
-    try {
-      const res = await fetch('/api/approvals');
-      if (!res.ok) throw new Error('Failed to load approval queue');
-      const data = await res.json();
-      approvals = data.approvals;
-      loading = false;
-    } catch (e) {
-      error = (e as Error).message;
-      loading = false;
-    }
-  }
+  // Subscribe to store
+  $: approvals = $approvalsStore.items;
+  $: loading = $approvalsStore.loading;
+  $: storeError = $approvalsStore.error;
+
+  // Combine store error with local error
+  $: error = localError || storeError || '';
 
   async function handleApprove(id: string) {
     processingId = id;
-    try {
-      const res = await fetch('/api/approvals', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, action: 'approve' }),
-      });
-
-      if (!res.ok) throw new Error('Failed to approve skill execution');
-
-      const data = await res.json();
-      if (data.success) {
-        // Refresh the list
-        await loadApprovals();
-      } else {
-        error = data.result?.error || 'Approval failed';
-        setTimeout(() => error = '', 5000);
-      }
-    } catch (e) {
-      error = (e as Error).message;
-      setTimeout(() => error = '', 5000);
-    } finally {
-      processingId = null;
+    const result = await approveSkill(id);
+    if (!result.success) {
+      localError = result.error || 'Approval failed';
+      setTimeout(() => { localError = ''; clearApprovalsError(); }, 5000);
     }
+    processingId = null;
   }
 
   async function handleReject(id: string) {
     processingId = id;
-    try {
-      const res = await fetch('/api/approvals', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, action: 'reject' }),
-      });
-
-      if (!res.ok) throw new Error('Failed to reject skill execution');
-
-      // Refresh the list
-      await loadApprovals();
-    } catch (e) {
-      error = (e as Error).message;
-      setTimeout(() => error = '', 5000);
-    } finally {
-      processingId = null;
+    const result = await rejectSkill(id);
+    if (!result.success) {
+      localError = result.error || 'Rejection failed';
+      setTimeout(() => { localError = ''; clearApprovalsError(); }, 5000);
     }
+    processingId = null;
   }
 
   function getRiskColor(risk: 'low' | 'medium' | 'high') {
@@ -109,42 +62,22 @@
     return `${diffDays}d ago`;
   }
 
-  let approvalsInterval: ReturnType<typeof setInterval> | null = null;
-
-  function stopApprovalsInterval() {
-    if (approvalsInterval) {
-      clearInterval(approvalsInterval);
-      approvalsInterval = null;
-    }
-  }
-
-  function startApprovalsInterval() {
-    stopApprovalsInterval();
-    if (!get(isOwner)) {
-      approvals = [];
-      loading = false;
-      return;
-    }
-    loadApprovals();
-    approvalsInterval = setInterval(loadApprovals, 5000);
-  }
-
   onMount(() => {
-    startApprovalsInterval();
-    const unsubscribe = isOwner.subscribe(() => startApprovalsInterval());
+    // Load approvals once on mount
+    loadApprovals();
 
-    // Pause polling when tab is hidden to save resources
+    // Reload when owner status changes
+    const unsubscribe = isOwner.subscribe(() => loadApprovals());
+
+    // Refresh when tab becomes visible (no polling!)
     const handleVisibilityChange = () => {
-      if (document.hidden) {
-        stopApprovalsInterval();
-      } else {
-        startApprovalsInterval();
+      if (!document.hidden) {
+        loadApprovals();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      stopApprovalsInterval();
       unsubscribe();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };

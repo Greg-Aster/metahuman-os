@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '../paths.js';
+import { systemPaths } from '../path-builder.js';
 import { audit } from '../audit.js';
 
 export interface CleanupOptions {
@@ -51,7 +51,7 @@ export async function cleanupSessions(
 
   try {
     // Resolve interviews directory path
-    const interviewsDir = path.join(paths.root, 'profiles', username, 'persona', 'interviews');
+    const interviewsDir = path.join(systemPaths.profiles, username, 'persona', 'interviews');
 
     if (!fs.existsSync(interviewsDir)) {
       console.log(`[cleanup] No interviews directory found for user: ${username}`);

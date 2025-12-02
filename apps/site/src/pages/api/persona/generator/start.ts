@@ -6,9 +6,8 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getAuthenticatedUser, systemPaths } from '@metahuman/core';
+import { getAuthenticatedUser, systemPaths, storageClient } from '@metahuman/core';
 import { startSession, addQuestion, type Question } from '@metahuman/core/persona/session-manager';
-import { tryResolveProfilePath } from '@metahuman/core/paths';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -32,8 +31,12 @@ const handler: APIRoute = async ({ cookies, request }) => {
     const user = getAuthenticatedUser(cookies);
 
     // Verify write access (not in emulation mode)
-    const pathResult = tryResolveProfilePath('personaInterviews');
-    if (!pathResult.ok) {
+    const pathResult = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'persona',
+      relativePath: 'therapy',
+    });
+    if (!pathResult.success || !pathResult.path) {
       return new Response(
         JSON.stringify({ error: 'Write access denied' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }

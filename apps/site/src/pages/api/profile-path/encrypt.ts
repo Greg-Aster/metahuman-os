@@ -19,7 +19,7 @@ import {
   isProfileEncrypted,
   type EncryptionMeta,
 } from '@metahuman/core/encryption';
-import { updateProfileStorage, getProfileStorageConfig } from '@metahuman/core/users';
+import { updateProfileStorage, getProfileStorageConfig, verifyUserPassword } from '@metahuman/core/users';
 
 /**
  * POST /api/profile-path/encrypt
@@ -36,7 +36,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     const profilePaths = getProfilePaths(user.username);
 
     const body = await request.json();
-    const { password, type = 'aes256' } = body;
+    const { password, type = 'aes256', useLoginPassword = false } = body;
 
     // Validate inputs
     if (!password || password.length < 8) {
@@ -51,6 +51,16 @@ export const POST: APIRoute = async ({ cookies, request }) => {
         JSON.stringify({ error: 'Only AES-256 encryption is supported for in-place encryption' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
+    }
+
+    // Verify login password if using login password mode
+    if (useLoginPassword) {
+      if (!verifyUserPassword(user.username, password)) {
+        return new Response(
+          JSON.stringify({ error: 'Incorrect login password' }),
+          { status: 401, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
     // Check if already encrypted
@@ -187,6 +197,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
           salt: salt.toString('base64'),
           createdAt: new Date().toISOString(),
           encryptedFiles: totalEncrypted,
+          useLoginPassword,
         };
 
         saveEncryptionMeta(profilePaths.root, meta);

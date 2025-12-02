@@ -4,7 +4,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import {
   stopAllAgents,
-  paths,
+  ROOT,
+  systemPaths,
   registerAgent,
   unregisterAgent,
   audit,
@@ -24,8 +25,8 @@ interface StartResult {
 
 function resolveTsx(): string {
   const candidates = [
-    path.join(paths.root, 'apps', 'site', 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx'),
-    path.join(paths.root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx'),
+    path.join(ROOT, 'apps', 'site', 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx'),
+    path.join(ROOT, 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx'),
   ];
 
   for (const candidate of candidates) {
@@ -39,7 +40,7 @@ function resolveTsx(): string {
 
 function startService(agentName: string, actor: string): StartResult {
   try {
-    const agentPath = path.join(paths.brain, 'agents', `${agentName}.ts`);
+    const agentPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
     if (!fs.existsSync(agentPath)) {
       return { agent: agentName, started: false, error: 'Agent file not found' };
     }
@@ -47,14 +48,14 @@ function startService(agentName: string, actor: string): StartResult {
     const runner = resolveTsx();
     const child = spawn(runner, [agentPath], {
       stdio: 'ignore',
-      cwd: paths.root,
+      cwd: ROOT,
       detached: true,
       env: {
         ...process.env,
         NODE_PATH: [
-          path.join(paths.root, 'node_modules'),
-          path.join(paths.root, 'packages/cli/node_modules'),
-          path.join(paths.root, 'apps/site/node_modules'),
+          path.join(ROOT, 'node_modules'),
+          path.join(ROOT, 'packages/cli/node_modules'),
+          path.join(ROOT, 'apps/site/node_modules'),
         ].join(':'),
       },
     });

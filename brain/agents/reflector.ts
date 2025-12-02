@@ -1,7 +1,8 @@
 
 import {
   searchMemory,
-  paths,
+  storageClient,
+  ROOT,
   audit,
   listActiveTasks,
   ollama,
@@ -34,7 +35,7 @@ const technicalKeywords = [
  * Load reflector cognitive graph
  */
 async function loadReflectorGraph(): Promise<CognitiveGraph> {
-  const graphPath = path.join(paths.root, 'etc', 'cognitive-graphs', 'reflector-mode.json');
+  const graphPath = path.join(ROOT, 'etc', 'cognitive-graphs', 'reflector-mode.json');
   const raw = await fs.readFile(graphPath, 'utf-8');
   const parsed = JSON.parse(raw);
   return validateCognitiveGraph(parsed);
@@ -45,7 +46,12 @@ async function loadReflectorGraph(): Promise<CognitiveGraph> {
  * Returns all episodic memories sorted by timestamp
  */
 async function getAllMemories() {
-  const episodicDir = paths.episodic;
+  const result = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
+  if (!result.success || !result.path) {
+    console.error('[reflector] Cannot resolve episodic path');
+    return [];
+  }
+  const episodicDir = result.path;
 
   async function walk(dir: string, acc: Array<{ file: string; timestamp: Date; content: any }>) {
     let entries: string[];
@@ -206,7 +212,7 @@ async function getAssociativeMemoryChain(chainLength: number = 3): Promise<any[]
     // Load memory contents from paths
     let relatedMemories: any[] = [];
     for (const relPath of relatedMemoryPaths) {
-      const fullPath = path.join(paths.root, relPath);
+      const fullPath = path.join(ROOT, relPath);
       if (usedFiles.has(fullPath)) continue; // Skip already used
 
       try {

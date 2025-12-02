@@ -12,7 +12,7 @@
  */
 
 import {
-  paths,
+  ROOT,
   audit,
   acquireLock,
   isLocked,
@@ -38,7 +38,7 @@ import path from 'node:path';
  * Load curiosity cognitive graph
  */
 async function loadCuriosityGraph(): Promise<CognitiveGraph> {
-  const graphPath = path.join(paths.root, 'etc', 'cognitive-graphs', 'curiosity-mode.json');
+  const graphPath = path.join(ROOT, 'etc', 'cognitive-graphs', 'curiosity-mode.json');
   const raw = await fs.readFile(graphPath, 'utf-8');
   const parsed = JSON.parse(raw);
   return validateCognitiveGraph(parsed);

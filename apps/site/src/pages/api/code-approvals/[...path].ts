@@ -7,7 +7,7 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '@metahuman/core/paths';
+import { ROOT } from '@metahuman/core/paths';
 import { audit } from '@metahuman/core/audit';
 
 interface StagedCodeChange {
@@ -143,7 +143,7 @@ export const POST: APIRoute = async ({ params }) => {
       });
     }
 
-    const stagingDir = path.join(paths.out, 'code-drafts');
+    const stagingDir = path.join(ROOT, 'out', 'code-drafts');
     const stagingPath = path.join(stagingDir, `${id}.json`);
 
     if (!fs.existsSync(stagingPath)) {

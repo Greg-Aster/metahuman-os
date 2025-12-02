@@ -7,8 +7,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getAuthenticatedUser } from '@metahuman/core';
-import { tryResolveProfilePath } from '@metahuman/core/paths';
+import { getAuthenticatedUser, storageClient } from '@metahuman/core';
 import {
   loadSession,
   saveSession,
@@ -35,16 +34,24 @@ const handler: APIRoute = async ({ cookies, request }) => {
     const user = getAuthenticatedUser(cookies);
 
     // Verify write access
-    const pathResult = tryResolveProfilePath('personaInterviews');
-    if (!pathResult.ok) {
+    const pathResult = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'persona',
+      relativePath: 'therapy',
+    });
+    if (!pathResult.success || !pathResult.path) {
       return new Response(
         JSON.stringify({ error: 'Write access denied' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    const personaCoreResult = tryResolveProfilePath('personaCore');
-    if (!personaCoreResult.ok) {
+    const personaCoreResult = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'persona',
+      relativePath: 'core.json',
+    });
+    if (!personaCoreResult.success || !personaCoreResult.path) {
       return new Response(
         JSON.stringify({ error: 'Cannot access persona core' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }

@@ -57,7 +57,6 @@ export default defineConfig({
     },
     optimizeDeps: {
       exclude: ['@metahuman/core'], // Don't pre-bundle workspace packages
-      // shiki is loaded dynamically in ApprovalBox.svelte to avoid bare specifier issues
     },
     ssr: {
       // Bundle workspace packages (they have TypeScript that needs transpiling)

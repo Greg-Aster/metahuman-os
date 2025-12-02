@@ -8,7 +8,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { scheduler, paths, audit, acquireLock, cleanupStaleLocks, initGlobalLogger, purgeOldAuditLogs } from '@metahuman/core';
+import { scheduler, systemPaths, audit, acquireLock, cleanupStaleLocks, initGlobalLogger, purgeOldAuditLogs } from '@metahuman/core';
 import { getAgentStatuses } from '@metahuman/core/agent-monitor';
 import { preloadEmbeddingModel } from '@metahuman/core/embeddings';
 
@@ -107,7 +107,7 @@ async function main() {
   });
 
   // Watch configuration file for changes
-  const configPath = path.join(paths.etc, 'agents.json');
+  const configPath = path.join(systemPaths.etc, 'agents.json');
   fs.watch(configPath, (eventType) => {
     if (eventType === 'change') {
       console.log('[scheduler-service] Configuration changed, reloading...');

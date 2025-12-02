@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './paths';
-import { audit } from './audit';
-import type { CognitiveModeId } from './cognitive-mode';
-import type { TrustLevel } from './skills';
+import { systemPaths } from './path-builder.js';
+import { storageClient } from './storage-client.js';
+import { audit } from './audit.js';
+import type { CognitiveModeId } from './cognitive-mode.js';
+import type { TrustLevel } from './skills.js';
 
 export interface TrustCouplingConfig {
   version: string;
@@ -13,9 +14,14 @@ export interface TrustCouplingConfig {
   description_text: Record<CognitiveModeId, string>;
 }
 
-// Use paths.etc for user-specific config (context-aware)
+// Use storage router for user-specific config, fallback to system etc
 function getCouplingConfigPath(): string {
-  return path.join(paths.etc, 'trust-coupling.json');
+  const result = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'etc',
+    relativePath: 'trust-coupling.json',
+  });
+  return result.success && result.path ? result.path : path.join(systemPaths.etc, 'trust-coupling.json');
 }
 
 /**

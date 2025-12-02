@@ -5,7 +5,7 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, audit } from '@metahuman/core';
+import { systemPaths, audit } from '@metahuman/core';
 
 export const DELETE: APIRoute = async ({ cookies }) => {
   try {
@@ -18,7 +18,7 @@ export const DELETE: APIRoute = async ({ cookies }) => {
       );
     }
 
-    const auditDir = path.join(paths.logs, 'audit');
+    const auditDir = path.join(systemPaths.logs, 'audit');
 
     if (!fs.existsSync(auditDir)) {
       return new Response(

@@ -6,17 +6,20 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getAuthenticatedUser } from '@metahuman/core';
+import { getAuthenticatedUser, storageClient } from '@metahuman/core';
 import { loadSession, listSessions } from '@metahuman/core/persona/session-manager';
-import { tryResolveProfilePath } from '@metahuman/core/paths';
 
 const handler: APIRoute = async ({ cookies, request }) => {
   try {
     const user = getAuthenticatedUser(cookies);
 
     // Verify access to interviews
-    const pathResult = tryResolveProfilePath('personaInterviews');
-    if (!pathResult.ok) {
+    const pathResult = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'persona',
+      relativePath: 'therapy',
+    });
+    if (!pathResult.success || !pathResult.path) {
       return new Response(
         JSON.stringify({ error: 'Access denied' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }

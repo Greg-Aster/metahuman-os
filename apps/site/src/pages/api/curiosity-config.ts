@@ -6,8 +6,9 @@ import path from 'node:path';
 const handler: APIRoute = async ({ cookies, request }) => {
   // SECURITY FIX: 2025-11-20 - Require owner role for system configuration access
   // Curiosity config and agents.json are system-level files
+  let user: { username: string; role: string };
   try {
-    const user = getAuthenticatedUser(cookies);
+    user = getAuthenticatedUser(cookies);
 
     if (user.role !== 'owner') {
       return new Response(
@@ -24,7 +25,7 @@ const handler: APIRoute = async ({ cookies, request }) => {
 
   if (request.method === 'GET') {
     try {
-      const config = loadCuriosityConfig();
+      const config = loadCuriosityConfig(user.username);
       return new Response(JSON.stringify(config), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
@@ -40,7 +41,7 @@ const handler: APIRoute = async ({ cookies, request }) => {
   if (request.method === 'POST') {
     try {
       const updates = await request.json();
-      const current = loadCuriosityConfig();
+      const current = loadCuriosityConfig(user.username);
 
       // Merge updates (validate fields)
       const newConfig = {
@@ -50,7 +51,7 @@ const handler: APIRoute = async ({ cookies, request }) => {
         maxOpenQuestions: Math.max(0, Math.min(5, updates.maxOpenQuestions ?? current.maxOpenQuestions))
       };
 
-      saveCuriosityConfig(newConfig);
+      saveCuriosityConfig(newConfig, user.username);
 
       // Also update agents.json to sync the inactivityThreshold
       // This ensures the scheduler triggers curiosity at the right time

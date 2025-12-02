@@ -31,7 +31,26 @@ System-wide infrastructure settings shared across all users:
 - `lifeline.json` - System service configuration
 - `runtime.json` - Runtime feature flags and implementation choices
 
-**Path Resolution**: The `paths` proxy in `@metahuman/core` automatically resolves to the correct user-specific directory based on session context. For example, `paths.etc` resolves to `profiles/greggles/etc/` for owner "greggles" or `profiles/guest/etc/` for guest sessions.
+**Path Resolution**: MetaHuman OS uses a centralized storage router for all file path resolution:
+
+- **System Paths** (`systemPaths.*`): For system-wide infrastructure (logs, agents, brain)
+  ```typescript
+  import { systemPaths, ROOT } from '@metahuman/core';
+  const logsDir = systemPaths.logs;     // /path/to/metahuman/logs/
+  const agentsDir = systemPaths.agents; // /path/to/metahuman/brain/agents/
+  ```
+
+- **User Paths** (`storageClient.resolvePath()`): For user-specific data with automatic profile isolation
+  ```typescript
+  import { storageClient } from '@metahuman/core';
+  const result = storageClient.resolvePath({
+    category: 'config',   // 'memory', 'voice', 'config', 'output', 'training', 'cache'
+    subcategory: 'etc'    // varies by category
+  });
+  // result.path = profiles/greggles/etc/ for owner "greggles"
+  ```
+
+> **Note**: The legacy `paths` proxy has been deprecated in favor of the storage router pattern. See [Project Structure - Storage Router Architecture](../getting-started/03-project-structure.md#storage-router-architecture) for migration details.
 
 **Template Variables**: Some config files (like `voice.json`) support template variables for portability:
 - `{METAHUMAN_ROOT}` - Replaced with the MetaHuman OS root directory path

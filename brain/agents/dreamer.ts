@@ -15,7 +15,9 @@
  */
 
 import {
-  paths,
+  storageClient,
+  ROOT,
+  systemPaths,
   acquireLock,
   isLocked,
   audit,
@@ -51,7 +53,9 @@ function markBackgroundActivity() {
 
 function loadSleepConfig(): SleepConfig {
   try {
-    const configPath = path.join(paths.etc, 'sleep.json');
+    // Try user-specific config first, fall back to system config
+    const result = storageClient.resolvePath({ category: 'config', subcategory: 'etc', relativePath: 'sleep.json' });
+    const configPath = result.success && result.path ? result.path : path.join(systemPaths.etc, 'sleep.json');
     const data = fs.readFileSync(configPath, 'utf-8');
     return JSON.parse(data);
   } catch (error) {
@@ -68,7 +72,7 @@ function loadSleepConfig(): SleepConfig {
  * Load dreamer cognitive graph
  */
 async function loadDreamerGraph(): Promise<CognitiveGraph> {
-  const graphPath = path.join(paths.root, 'etc', 'cognitive-graphs', 'dreamer-mode.json');
+  const graphPath = path.join(ROOT, 'etc', 'cognitive-graphs', 'dreamer-mode.json');
   const raw = await fsp.readFile(graphPath, 'utf-8');
   const parsed = JSON.parse(raw);
   return validateCognitiveGraph(parsed);

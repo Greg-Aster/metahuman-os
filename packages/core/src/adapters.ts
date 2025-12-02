@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { systemPaths } from './path-builder.js';
-import { paths } from './paths.js';
+import { systemPaths, ROOT } from './path-builder.js';
+import { storageClient } from './storage-client.js';
 
 export interface AdapterDatasetInfo {
   date: string;
@@ -205,9 +205,16 @@ export function getActiveAdapter(): ActiveAdapterInfo | null {
   }
 
   // Fallback to legacy active-adapter.json for backward compatibility
-  // This requires user context (paths.persona), so wrap in try/catch
+  // This requires user context, so wrap in try/catch
   try {
-    const legacyPath = path.join(paths.persona, 'overrides', 'active-adapter.json');
+    const personaResult = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'persona',
+    });
+    if (!personaResult.success || !personaResult.path) {
+      return null;
+    }
+    const legacyPath = path.join(personaResult.path, 'overrides', 'active-adapter.json');
     const legacy = safeReadJSON<ActiveAdapterInfo>(legacyPath);
     if (legacy) {
       // Upgrade legacy config into models.json and remove file to avoid future divergence
@@ -260,8 +267,14 @@ export function setActiveAdapter(info: ActiveAdapterInfo | null): void {
 
   // Remove legacy file if present to prevent stale overrides
   try {
-    const legacyPath = path.join(paths.persona, 'overrides', 'active-adapter.json');
-    fs.rmSync(legacyPath);
+    const personaResult = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'persona',
+    });
+    if (personaResult.success && personaResult.path) {
+      const legacyPath = path.join(personaResult.path, 'overrides', 'active-adapter.json');
+      fs.rmSync(legacyPath);
+    }
   } catch {
     // No user context or file doesn't exist - this is fine
   }

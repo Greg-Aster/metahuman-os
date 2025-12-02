@@ -6,7 +6,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '../../paths.js';
+import { ROOT, systemPaths } from '../../path-builder.js';
 import { audit } from '../../audit.js';
 import { getCachedAudio, cacheAudio, getCacheStats, clearCache } from '../cache.js';
 import { stopServer } from '../server-manager.js';
@@ -164,7 +164,7 @@ export class KokoroService implements ITextToSpeechService {
     customPath: string,
     signal?: AbortSignal
   ): Promise<Buffer> {
-    const kokoroDir = path.join(paths.root, 'external', 'kokoro');
+    const kokoroDir = path.join(ROOT, 'external', 'kokoro');
     const pythonBin = path.join(kokoroDir, 'venv', 'bin', 'python3');
 
     // Validate Python virtual environment exists
@@ -287,7 +287,7 @@ export class KokoroService implements ITextToSpeechService {
   }
 
   async getStatus(): Promise<TTSStatus> {
-    const kokoroDir = path.join(paths.root, 'external', 'kokoro');
+    const kokoroDir = path.join(ROOT, 'external', 'kokoro');
     const pythonBin = path.join(kokoroDir, 'venv', 'bin', 'python3');
     const installed = fs.existsSync(pythonBin);
 
@@ -357,7 +357,7 @@ export class KokoroService implements ITextToSpeechService {
    * This handles cases where the server was started externally (e.g., by start-voice-server)
    */
   private async _repairPidFileIfMissing(): Promise<void> {
-    const logDir = path.join(paths.root, 'logs', 'run');
+    const logDir = path.join(ROOT, 'logs', 'run');
     const pidFile = path.join(logDir, 'kokoro-server.pid');
 
     // Check if PID file already exists
@@ -396,7 +396,7 @@ export class KokoroService implements ITextToSpeechService {
       return false;
     }
 
-    const kokoroDir = path.join(paths.root, 'external', 'kokoro');
+    const kokoroDir = path.join(ROOT, 'external', 'kokoro');
     const pythonBin = path.join(kokoroDir, 'venv', 'bin', 'python3');
     const serverScript = path.join(kokoroDir, 'kokoro_server.py');
 
@@ -411,7 +411,7 @@ export class KokoroService implements ITextToSpeechService {
     }
 
     const port = this.config.server.port || 9882;
-    const logDir = path.join(paths.root, 'logs', 'run');
+    const logDir = path.join(ROOT, 'logs', 'run');
     const logFile = path.join(logDir, 'kokoro-server.log');
     const pidFile = path.join(logDir, 'kokoro-server.pid');
 

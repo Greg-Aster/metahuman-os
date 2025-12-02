@@ -1,18 +1,62 @@
 import type { APIRoute } from 'astro';
-import { deleteSession } from '@metahuman/core/sessions';
-import { audit } from '@metahuman/core/audit';
+import { getSession, deleteSession } from '@metahuman/core/sessions';
+import { getProfileStorageConfig, getUser } from '@metahuman/core/users';
+import { audit, lockProfile } from '@metahuman/core';
 
 /**
  * POST /api/auth/logout
  *
- * Delete session and clear cookie
+ * Delete session, lock encrypted storage, and clear cookie
  */
 export const POST: APIRoute = async (context) => {
   try {
     // Get session cookie
     const sessionCookie = context.cookies.get('mh_session');
+    let userId: string | undefined;
+    let username: string | undefined;
 
     if (sessionCookie) {
+      // Get session info before deleting
+      const session = getSession(sessionCookie.value);
+      if (session) {
+        userId = session.userId;
+
+        // Get user to find username
+        const user = getUser(userId);
+        username = user?.username;
+
+        // Auto-lock encrypted storage if using login password
+        if (username) {
+          try {
+            const storageConfig = getProfileStorageConfig(username);
+            const encType = storageConfig?.encryption?.type;
+            const useLoginPassword = storageConfig?.encryption?.useLoginPassword;
+
+            // Auto-lock for LUKS or AES-256 when using login password
+            if ((encType === 'luks' || encType === 'aes256') && useLoginPassword) {
+              const lockResult = await lockProfile(userId);
+              if (lockResult.success) {
+                audit({
+                  level: 'info',
+                  category: 'security',
+                  event: 'encryption_auto_locked',
+                  details: {
+                    userId,
+                    username,
+                    encryptionType: encType,
+                  },
+                  actor: userId,
+                });
+              } else {
+                console.warn('[auth/logout] Failed to auto-lock encrypted storage:', lockResult.error);
+              }
+            }
+          } catch (lockError) {
+            console.error('[auth/logout] Error during auto-lock:', lockError);
+          }
+        }
+      }
+
       // Delete session
       const deleted = deleteSession(sessionCookie.value);
 
@@ -21,8 +65,8 @@ export const POST: APIRoute = async (context) => {
           level: 'info',
           category: 'security',
           event: 'user_logged_out',
-          details: { sessionId: sessionCookie.value },
-          actor: 'user',
+          details: { sessionId: sessionCookie.value, userId, username },
+          actor: userId || 'user',
         });
       }
     }

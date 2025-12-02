@@ -12,11 +12,11 @@
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
-import { paths } from './paths.js';
+import { systemPaths, ROOT } from './path-builder.js';
 import { audit } from './audit.js';
 import { stopAllAgents, registerAgent, unregisterAgent } from './agent-monitor.js';
 
-const RUNTIME_CONFIG_PATH = path.join(paths.root, 'etc', 'runtime.json');
+const RUNTIME_CONFIG_PATH = path.join(systemPaths.etc, 'runtime.json');
 
 export interface RuntimeState {
   /** True if in headless mode (agents paused, waiting for remote claim) */
@@ -68,7 +68,7 @@ export function setRuntimeMode(
     };
 
     // Ensure etc/ directory exists
-    const etcDir = path.join(paths.root, 'etc');
+    const etcDir = systemPaths.etc;
     if (!fs.existsSync(etcDir)) {
       fs.mkdirSync(etcDir, { recursive: true });
     }
@@ -172,7 +172,7 @@ function startDefaultAgents(actor?: string): void {
 
   for (const agentName of defaultAgents) {
     try {
-      const agentPath = path.join(paths.brain, 'agents', `${agentName}.ts`);
+      const agentPath = path.join(systemPaths.agents, `${agentName}.ts`);
 
       // Check if agent file exists
       if (!fs.existsSync(agentPath)) {
@@ -181,17 +181,17 @@ function startDefaultAgents(actor?: string): void {
       }
 
       // Use bootstrap wrapper to establish user context for agents
-      const bootstrapPath = path.join(paths.brain, 'agents', '_bootstrap.ts');
+      const bootstrapPath = path.join(systemPaths.agents, '_bootstrap.ts');
       const child = spawn('tsx', [bootstrapPath, agentName], {
         detached: true,
         stdio: 'ignore',
-        cwd: paths.root,
+        cwd: ROOT,
         env: {
           ...process.env,
           NODE_PATH: [
-            path.join(paths.root, 'node_modules'),
-            path.join(paths.root, 'packages/cli/node_modules'),
-            path.join(paths.root, 'apps/site/node_modules'),
+            path.join(ROOT, 'node_modules'),
+            path.join(ROOT, 'packages/cli/node_modules'),
+            path.join(ROOT, 'apps/site/node_modules'),
           ].join(':'),
         },
       });

@@ -3,6 +3,7 @@
   import { get } from 'svelte/store';
   import { activeView, statusStore, statusRefreshTrigger, yoloModeStore } from '../stores/navigation';
   import { currentMode, isOwner } from '../stores/security-policy';
+  import { pendingCount, loadApprovals } from '../stores/approvals';
 
   interface MenuItem {
     id: string;
@@ -76,7 +77,6 @@
   let modelRoles: Record<string, ModelRoleInfo> = {};
   let hasModelRegistry = false;
   let taskTotals = { active: 0, inProgress: 0 };
-  let pendingApprovals = 0;
 
   // Persona facet state
   let activeFacet: string = 'default';
@@ -138,22 +138,7 @@
     });
   }
 
-  async function loadPendingApprovals() {
-    if (!get(isOwner)) {
-      pendingApprovals = 0;
-      return;
-    }
-    try {
-      const res = await fetch('/api/approvals');
-      if (res.ok) {
-        const data = await res.json();
-        pendingApprovals = data?.approvals?.length ?? 0;
-      }
-    } catch (err) {
-      console.error('Failed to load pending approvals:', err);
-    }
-  }
-
+  
   async function loadTrustOptions() {
     try {
       const res = await fetch('/api/trust');
@@ -563,53 +548,30 @@
     }
   }
 
-  let approvalsInterval: ReturnType<typeof setInterval> | null = null;
-
-  function stopApprovalsPolling() {
-    if (approvalsInterval) {
-      clearInterval(approvalsInterval);
-      approvalsInterval = null;
-    }
-  }
-
-  function startApprovalsPolling() {
-    stopApprovalsPolling();
-    if (!get(isOwner)) {
-      pendingApprovals = 0;
-      return;
-    }
-    loadPendingApprovals();
-    approvalsInterval = setInterval(loadPendingApprovals, 5000);
-  }
-
   onMount(() => {
     void fetchCurrentUser();
-    // Don't auto-connect initially
     loadStatus();
     loadFacets();
-    loadTrustOptions(); // Load trust level on mount
-    loadModelRegistry(); // Load model registry for switching
-    startApprovalsPolling();
+    loadTrustOptions();
+    loadModelRegistry();
+    loadApprovals(); // Load approvals once on mount (from shared store)
+
     const ownerUnsubscribe = isOwner.subscribe(() => {
-      startApprovalsPolling();
+      loadApprovals(); // Reload when owner status changes
     });
 
     // Set up document click handler for closing dropdowns
     document.addEventListener('click', handleDocumentClick);
 
-    // Set up visibility change handling to pause polling when tab hidden
+    // Refresh approvals when tab becomes visible (no polling!)
     const handleVisibilityChange = () => {
-      if (document.hidden) {
-        stopApprovalsPolling();
-      } else {
-        startApprovalsPolling();
+      if (!document.hidden) {
+        loadApprovals();
       }
     };
-
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      stopApprovalsPolling();
       ownerUnsubscribe();
       if (statusSubscription) {
         statusSubscription();
@@ -637,8 +599,8 @@
         <div class="menu-text">
           <div class="menu-label">
             {item.label}
-            {#if item.id === 'dashboard' && pendingApprovals > 0}
-              <span class="approval-badge">{pendingApprovals}</span>
+            {#if item.id === 'dashboard' && $pendingCount > 0}
+              <span class="approval-badge">{$pendingCount}</span>
             {/if}
           </div>
           {#if item.description}

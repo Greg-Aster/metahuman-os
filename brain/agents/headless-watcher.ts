@@ -30,7 +30,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
-  paths,
+  ROOT,
+  systemPaths,
   audit,
   acquireLock,
   initGlobalLogger,
@@ -41,7 +42,7 @@ import {
   unregisterAgent,
 } from '@metahuman/core';
 
-const runtimeConfigFile = path.join(paths.root, 'etc', 'runtime.json');
+const runtimeConfigFile = path.join(ROOT, 'etc', 'runtime.json');
 
 // Track previous state to detect changes
 let previousHeadlessState = false;
@@ -58,7 +59,7 @@ function startDefaultAgents() {
   console.log('[headless-watcher] Starting default agents...');
 
   for (const agentName of defaults) {
-    const agentPath = path.join(paths.brain, 'agents', `${agentName}.ts`);
+    const agentPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
 
     if (!fs.existsSync(agentPath)) {
       console.warn(`[headless-watcher] Agent not found: ${agentPath}`);
@@ -66,17 +67,17 @@ function startDefaultAgents() {
     }
 
     // Use bootstrap wrapper to establish user context for agents
-    const bootstrapPath = path.join(paths.brain, 'agents', '_bootstrap.ts');
+    const bootstrapPath = path.join(systemPaths.brain, 'agents', '_bootstrap.ts');
     const child = spawn('tsx', [bootstrapPath, agentName], {
       detached: true,
       stdio: 'ignore',
-      cwd: paths.root,
+      cwd: ROOT,
       env: {
         ...process.env,
         NODE_PATH: [
-          path.join(paths.root, 'node_modules'),
-          path.join(paths.root, 'packages/cli/node_modules'),
-          path.join(paths.root, 'apps/site/node_modules'),
+          path.join(ROOT, 'node_modules'),
+          path.join(ROOT, 'packages/cli/node_modules'),
+          path.join(ROOT, 'apps/site/node_modules'),
         ].join(':'),
       },
     });

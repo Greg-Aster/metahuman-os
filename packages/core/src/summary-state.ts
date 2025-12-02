@@ -10,7 +10,7 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
-import { paths } from './paths.js';
+import { systemPaths } from './path-builder.js';
 import { audit } from './audit.js';
 
 export type SummaryMarker = 'idle' | 'summarizing' | 'completed';
@@ -27,7 +27,7 @@ export interface SummaryStateEntry {
  * Get the summary state file path for a user profile
  */
 function getSummaryStatePath(username: string): string {
-  return path.join(paths.root, 'profiles', username, 'state', 'summary-state.json');
+  return path.join(systemPaths.profiles, username, 'state', 'summary-state.json');
 }
 
 /**

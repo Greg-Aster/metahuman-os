@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
-import { authenticateUser } from '@metahuman/core/users';
+import { authenticateUser, getProfileStorageConfig } from '@metahuman/core/users';
 import { createSession } from '@metahuman/core/sessions';
-import { audit } from '@metahuman/core/audit';
+import { audit, unlockProfile } from '@metahuman/core';
 
 /**
  * POST /api/auth/login
@@ -58,6 +58,41 @@ export const POST: APIRoute = async (context) => {
       maxAge: 60 * 60 * 24, // 24 hours
     });
 
+    // Auto-unlock encrypted storage if using login password
+    let encryptionUnlocked = false;
+    let encryptionError: string | undefined;
+
+    try {
+      const storageConfig = getProfileStorageConfig(user.username);
+      const encType = storageConfig?.encryption?.type;
+      const useLoginPassword = storageConfig?.encryption?.useLoginPassword;
+
+      // Auto-unlock for LUKS or AES-256 when using login password
+      if ((encType === 'luks' || encType === 'aes256') && useLoginPassword) {
+        const unlockResult = await unlockProfile(user.id, password);
+        encryptionUnlocked = unlockResult.success;
+        if (!unlockResult.success) {
+          encryptionError = unlockResult.error;
+          console.warn('[auth/login] Failed to auto-unlock encrypted storage:', unlockResult.error);
+        } else {
+          audit({
+            level: 'info',
+            category: 'security',
+            event: 'encryption_auto_unlocked',
+            details: {
+              userId: user.id,
+              username: user.username,
+              encryptionType: encType,
+            },
+            actor: user.id,
+          });
+        }
+      }
+    } catch (unlockError) {
+      console.error('[auth/login] Error during auto-unlock:', unlockError);
+      encryptionError = (unlockError as Error).message;
+    }
+
     audit({
       level: 'info',
       category: 'security',
@@ -67,6 +102,8 @@ export const POST: APIRoute = async (context) => {
         username: user.username,
         role: user.role,
         sessionId: session.id,
+        encryptionUnlocked,
+        encryptionError,
       },
       actor: user.id,
     });

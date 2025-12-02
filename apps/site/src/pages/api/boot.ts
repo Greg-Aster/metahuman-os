@@ -166,10 +166,16 @@ export const GET: APIRoute = async ({ cookies }) => {
       }
     } catch {}
 
-    // Try to get active model info
+    // Try to get active model info (use user-specific registry if authenticated)
     try {
-      const { loadModelRegistry } = await import('@metahuman/core')
-      const registry = loadModelRegistry()
+      const { loadModelRegistry } = await import('@metahuman/core/model-resolver')
+      const { getAuthenticatedUser } = await import('@metahuman/core')
+      let username: string | undefined
+      try {
+        const user = getAuthenticatedUser(cookies)
+        username = user.username
+      } catch {}
+      const registry = loadModelRegistry(false, username)
       const fallbackId = registry.defaults?.fallback || 'default.fallback'
       const fallbackModel = registry.models?.[fallbackId]
       modelInfo = { model: fallbackModel?.model || 'Local Models' }

@@ -4,10 +4,10 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, audit, transcribe, isWhisperCppAvailable, getRecommendedProvider } from '@metahuman/core';
+import { storageClient, systemPaths, audit, transcribe, isWhisperCppAvailable, getRecommendedProvider } from '@metahuman/core';
 import type { TranscriptionConfig } from '@metahuman/core';
 
-const AUDIO_CONFIG_PATH = path.join(paths.etc, 'audio.json');
+const AUDIO_CONFIG_PATH = path.join(systemPaths.etc, 'audio.json');
 const POLL_INTERVAL_MS = 10000; // Check every 10 seconds
 
 interface AudioConfig {
@@ -81,17 +81,21 @@ async function transcribeAudio(audioPath: string, audioId: string): Promise<void
 
     const transcriptText = result.text;
 
+    // Resolve transcripts directory
+    const transcriptsResult = storageClient.resolvePath({ category: 'voice', subcategory: 'transcripts' });
+    const transcriptsDir = transcriptsResult.success && transcriptsResult.path ? transcriptsResult.path : path.join(systemPaths.memory, 'audio', 'transcripts');
+
     // Save transcript
     const transcriptPath = path.join(
-      paths.audioTranscripts,
+      transcriptsDir,
       `${audioId}.txt`
     );
-    fs.mkdirSync(paths.audioTranscripts, { recursive: true });
+    fs.mkdirSync(transcriptsDir, { recursive: true });
     fs.writeFileSync(transcriptPath, transcriptText, 'utf8');
 
     // Save metadata
     const metadataPath = path.join(
-      paths.audioTranscripts,
+      transcriptsDir,
       `${audioId}.meta.json`
     );
     const metadata = {
@@ -105,11 +109,13 @@ async function transcribeAudio(audioPath: string, audioId: string): Promise<void
     fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
 
     // Move audio to archive
+    const archiveResult = storageClient.resolvePath({ category: 'voice', subcategory: 'archive' });
+    const archiveDir = archiveResult.success && archiveResult.path ? archiveResult.path : path.join(systemPaths.memory, 'audio', 'archive');
     const archivePath = path.join(
-      paths.audioArchive,
+      archiveDir,
       path.basename(audioPath)
     );
-    fs.mkdirSync(paths.audioArchive, { recursive: true });
+    fs.mkdirSync(archiveDir, { recursive: true });
     fs.renameSync(audioPath, archivePath);
 
     audit({
@@ -151,11 +157,14 @@ async function processInbox(): Promise<void> {
     return; // Auto-transcription disabled
   }
 
-  if (!fs.existsSync(paths.audioInbox)) {
+  const inboxResult = storageClient.resolvePath({ category: 'voice', subcategory: 'inbox' });
+  const inboxDir = inboxResult.success && inboxResult.path ? inboxResult.path : null;
+
+  if (!inboxDir || !fs.existsSync(inboxDir)) {
     return; // Inbox doesn't exist yet
   }
 
-  const files = fs.readdirSync(paths.audioInbox);
+  const files = fs.readdirSync(inboxDir);
   const audioFiles = files.filter(
     (f) =>
       !f.startsWith('.') &&
@@ -169,7 +178,7 @@ async function processInbox(): Promise<void> {
   console.log(`Found ${audioFiles.length} audio file(s) to transcribe`);
 
   for (const file of audioFiles) {
-    const audioPath = path.join(paths.audioInbox, file);
+    const audioPath = path.join(inboxDir, file);
     const audioId = file.split('.')[0]; // Extract ID from filename
 
     await transcribeAudio(audioPath, audioId);

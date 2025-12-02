@@ -7,7 +7,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './paths.js';
+import { systemPaths } from './path-builder.js';
+import { storageClient } from './storage-client.js';
 import { audit } from './audit.js';
 
 // ============================================================================
@@ -34,7 +35,7 @@ export interface ToolOutput {
   [key: string]: any;
 }
 
-const SHORT_TERM_STATE_PATH = path.join(paths.root, 'out', 'state', 'short-term.json');
+const SHORT_TERM_STATE_PATH = path.join(systemPaths.out, 'state', 'short-term.json');
 
 function ensureStateDir() {
   const stateDir = path.dirname(SHORT_TERM_STATE_PATH);
@@ -206,13 +207,25 @@ export interface PersonaCache {
   lastUpdated: string;
 }
 
-const PERSONA_CACHE_PATH = path.join(paths.persona, 'cache.json');
+function getPersonaCachePath(): string {
+  const result = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: 'cache.json',
+  });
+  if (!result.success || !result.path) {
+    // Fallback to system-level persona path
+    return path.join(systemPaths.root, 'persona', 'cache.json');
+  }
+  return result.path;
+}
 
 /**
  * Load persona cache
  */
 export function loadPersonaCache(): PersonaCache {
-  if (!fs.existsSync(PERSONA_CACHE_PATH)) {
+  const cachePath = getPersonaCachePath();
+  if (!fs.existsSync(cachePath)) {
     // Return default cache
     return {
       catchphrases: [],
@@ -224,7 +237,7 @@ export function loadPersonaCache(): PersonaCache {
   }
 
   try {
-    const content = fs.readFileSync(PERSONA_CACHE_PATH, 'utf-8');
+    const content = fs.readFileSync(cachePath, 'utf-8');
     return JSON.parse(content);
   } catch (error) {
     console.error('[state] Failed to load persona cache:', error);
@@ -243,9 +256,10 @@ export function loadPersonaCache(): PersonaCache {
  */
 export function savePersonaCache(cache: PersonaCache, actor = 'system') {
   cache.lastUpdated = new Date().toISOString();
+  const cachePath = getPersonaCachePath();
 
   try {
-    fs.writeFileSync(PERSONA_CACHE_PATH, JSON.stringify(cache, null, 2), 'utf-8');
+    fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), 'utf-8');
 
     audit({
       level: 'info',

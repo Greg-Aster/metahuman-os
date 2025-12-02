@@ -6,7 +6,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './paths.js';
+import { systemPaths } from './path-builder.js';
 import { transcribe as transcribeFlexible } from './transcription.js';
 import { audit } from './audit.js';
 import { WhisperService } from './stt/providers/whisper-service.js';
@@ -31,7 +31,7 @@ let whisperService: WhisperService | null = null;
 function loadConfig(): VoiceConfig {
   if (config) return config;
 
-  const configPath = path.join(paths.etc, 'voice.json');
+  const configPath = path.join(systemPaths.etc, 'voice.json');
   if (!fs.existsSync(configPath)) {
     throw new Error('Voice configuration not found at etc/voice.json');
   }

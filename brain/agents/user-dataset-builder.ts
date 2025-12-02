@@ -13,7 +13,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '../../packages/core/src/index.js';
+import { ROOT } from '../../packages/core/src/index.js';
 import { callLLM } from '../../packages/core/src/model-router.js';
 import { mkdirpSync } from 'mkdirp';
 
@@ -60,7 +60,7 @@ function parseArgs(): Args {
 }
 
 function getUserProfilePath(username: string): string {
-  return path.join(paths.root, 'profiles', username);
+  return path.join(ROOT, 'profiles', username);
 }
 
 /**

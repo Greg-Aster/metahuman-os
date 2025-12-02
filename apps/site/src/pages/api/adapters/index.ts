@@ -291,8 +291,9 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     // Handle special case for getting config
     if (action === 'config') {
       try {
-        const { loadModelRegistry } = await import('@metahuman/core');
-        const registry = loadModelRegistry();
+        const { loadModelRegistry } = await import('@metahuman/core/model-resolver');
+        // Use user-specific registry
+        const registry = loadModelRegistry(false, user.username);
         const fallbackId = registry.defaults?.fallback || 'default.fallback';
         const fallbackModel = registry.models?.[fallbackId];
         const model = fallbackModel?.model || 'phi3:mini';

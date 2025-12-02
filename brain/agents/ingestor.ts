@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  paths,
+  storageClient,
   audit,
   auditAction,
   captureEvent,
@@ -21,10 +21,28 @@ import {
   initGlobalLogger,
 } from '@metahuman/core';
 
+/**
+ * Resolve inbox and archive paths using storage router
+ */
+function resolveInboxPaths(): { inbox: string; archive: string } | null {
+  const inboxResult = storageClient.resolvePath({ category: 'memory', subcategory: 'inbox' });
+  if (!inboxResult.success || !inboxResult.path) {
+    console.error('[ingestor] Cannot resolve inbox path');
+    return null;
+  }
+
+  return {
+    inbox: inboxResult.path,
+    archive: path.join(inboxResult.path, '_archive'),
+  };
+}
+
 function ensureDirs() {
-  // Use context-aware paths
+  const paths = resolveInboxPaths();
+  if (!paths) return;
+
   fs.mkdirSync(paths.inbox, { recursive: true });
-  fs.mkdirSync(paths.inboxArchive, { recursive: true });
+  fs.mkdirSync(paths.archive, { recursive: true });
 }
 
 function readFileAsText(filePath: string): string {
@@ -81,8 +99,13 @@ async function ingestFile(filePath: string) {
   }
 
   // Archive file after successful ingestion
+  const inboxPaths = resolveInboxPaths();
+  if (!inboxPaths) {
+    console.error('[ingestor] Cannot archive file - inbox paths not resolved');
+    return;
+  }
   const date = new Date().toISOString().slice(0, 10);
-  const archiveDir = path.join(paths.inboxArchive, date);
+  const archiveDir = path.join(inboxPaths.archive, date);
   fs.mkdirSync(archiveDir, { recursive: true });
   const dest = path.join(archiveDir, fileName);
   fs.renameSync(filePath, dest);
@@ -103,8 +126,14 @@ async function ingestUserFiles(username: string): Promise<number> {
 
   ensureDirs();
 
-  const entries = fs.existsSync(paths.inbox) ? fs.readdirSync(paths.inbox, { withFileTypes: true }) : [];
-  const files = entries.filter(e => e.isFile()).map(e => path.join(paths.inbox, e.name));
+  const inboxPaths = resolveInboxPaths();
+  if (!inboxPaths) {
+    console.error(`[ingestor] Cannot resolve inbox paths for ${username}`);
+    return 0;
+  }
+
+  const entries = fs.existsSync(inboxPaths.inbox) ? fs.readdirSync(inboxPaths.inbox, { withFileTypes: true }) : [];
+  const files = entries.filter(e => e.isFile()).map(e => path.join(inboxPaths.inbox, e.name));
 
   if (files.length === 0) {
     console.log(`[ingestor]   No files in inbox for ${username}`);

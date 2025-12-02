@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
-import { systemPaths, audit, getAuthenticatedUser } from '@metahuman/core'
+import { systemPaths, audit, getAuthenticatedUser, storageClient } from '@metahuman/core'
 import { OllamaClient } from '@metahuman/core/ollama'
 import { invalidateModelCache } from '@metahuman/core/model-resolver'
 
@@ -13,17 +13,32 @@ import { invalidateModelCache } from '@metahuman/core/model-resolver'
  * PUT: Update global settings
  */
 
-function readModelRegistry() {
+function resolveModelsPath(username: string): string {
+  // Use storage router to resolve user-specific config path
+  const result = storageClient.resolvePath({
+    username,
+    category: 'config',
+    subcategory: 'etc',
+    relativePath: 'models.json',
+  })
+  if (result.success && result.path) {
+    return result.path
+  }
+  // Fallback to system path (should not happen for authenticated users)
+  return path.join(systemPaths.etc, 'models.json')
+}
+
+function readModelRegistry(username: string) {
   try {
-    const p = path.join(systemPaths.etc, 'models.json')
+    const p = resolveModelsPath(username)
     return JSON.parse(fs.readFileSync(p, 'utf-8'))
   } catch {
     return { globalSettings: {}, defaults: {}, models: {}, cognitiveModeMappings: {}, roleHierarchy: {} }
   }
 }
 
-async function writeModelRegistry(registry: any) {
-  const p = path.join(systemPaths.etc, 'models.json')
+async function writeModelRegistry(username: string, registry: any) {
+  const p = resolveModelsPath(username)
   fs.mkdirSync(path.dirname(p), { recursive: true })
   fs.writeFileSync(p, JSON.stringify(registry, null, 2))
   // Invalidate both caches to force reload
@@ -71,7 +86,7 @@ const getHandler: APIRoute = async ({ cookies }) => {
       )
     }
 
-    const registry = readModelRegistry()
+    const registry = readModelRegistry(user.username)
 
     // Fetch all available models from Ollama
     const ollama = new OllamaClient()
@@ -189,7 +204,7 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
       )
     }
 
-    const registry = readModelRegistry()
+    const registry = readModelRegistry(user.username)
 
     registry.models = registry.models || {}
 
@@ -236,7 +251,7 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
       registry.defaults[role] = modelId
     }
 
-    await writeModelRegistry(registry)
+    await writeModelRegistry(user.username, registry)
 
     await audit({
       category: 'data_change',
@@ -248,7 +263,7 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
         role,
         modelId,
         cognitiveMode: cognitiveMode || 'default',
-        profilePath: systemPaths.etc
+        profilePath: resolveModelsPath(user.username)
       }
     })
 
@@ -295,7 +310,7 @@ const putHandler: APIRoute = async ({ cookies, request }) => {
       )
     }
 
-    const registry = readModelRegistry()
+    const registry = readModelRegistry(user.username)
 
     // Update global settings (merge with existing)
     registry.globalSettings = {
@@ -303,7 +318,7 @@ const putHandler: APIRoute = async ({ cookies, request }) => {
       ...globalSettings
     }
 
-    await writeModelRegistry(registry)
+    await writeModelRegistry(user.username, registry)
 
     await audit({
       category: 'data_change',
@@ -313,7 +328,7 @@ const putHandler: APIRoute = async ({ cookies, request }) => {
       context: {
         userId: user.id,
         settings: globalSettings,
-        profilePath: systemPaths.etc
+        profilePath: resolveModelsPath(user.username)
       }
     })
 

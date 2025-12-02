@@ -6,7 +6,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { paths } from '@metahuman/core';
+import { systemPaths } from '@metahuman/core';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { audit } from '@metahuman/core';
@@ -18,9 +18,9 @@ interface CognitiveLayersConfig {
   enableBlockingMode: boolean;
 }
 
-// Use paths.etc for user-specific config (context-aware)
+// Use systemPaths.etc for system-wide config
 function getConfigPath(): string {
-  return `${paths.etc}/cognitive-layers.json`;
+  return `${systemPaths.etc}/cognitive-layers.json`;
 }
 
 // Default configuration

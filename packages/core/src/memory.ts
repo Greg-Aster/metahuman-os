@@ -61,7 +61,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, generateId, timestamp } from './paths.js';
+import { generateId, timestamp } from './paths.js';
+import { systemPaths } from './path-builder.js';
+import { storageClient } from './storage-client.js';
 import { appendEventToIndex, getIndexStatus } from './vector-index.js';
 import { audit, auditDataChange } from './audit.js';
 import { getUserContext } from './context.js';
@@ -214,11 +216,21 @@ function buildEventDirectory(category: string, timestamp: string): string {
   const month = (date.getMonth() + 1).toString().padStart(2, '0'); // 01-12
   const day = date.getDate().toString().padStart(2, '0'); // 01-31
 
+  // Resolve episodic path via storage router
+  const episodicResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'episodic',
+  });
+  if (!episodicResult.success || !episodicResult.path) {
+    throw new Error('Cannot resolve episodic memory path');
+  }
+  const episodicPath = episodicResult.path;
+
   const safeCategory = category.replace(/[^a-z0-9-_]/g, '-');
   if (!safeCategory || safeCategory === DEFAULT_EVENT_CATEGORY) {
-    return path.join(paths.episodic, year, month, day);
+    return path.join(episodicPath, year, month, day);
   }
-  return path.join(paths.episodic, safeCategory, year, month, day);
+  return path.join(episodicPath, safeCategory, year, month, day);
 }
 
 /**
@@ -474,8 +486,16 @@ export function createTask(title: string, opts: Partial<Task> = {}): string {
     updated: timestamp(),
   };
 
-  // paths.tasks automatically resolves to user profile if context is set
-  const filepath = path.join(paths.tasks, 'active', `${task.id}.json`);
+  // Resolve tasks path via storage router
+  const tasksResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'tasks',
+  });
+  if (!tasksResult.success || !tasksResult.path) {
+    throw new Error('Cannot resolve tasks path');
+  }
+
+  const filepath = path.join(tasksResult.path, 'active', `${task.id}.json`);
   fs.mkdirSync(path.dirname(filepath), { recursive: true });
   fs.writeFileSync(filepath, JSON.stringify(task, null, 2));
 
@@ -483,9 +503,18 @@ export function createTask(title: string, opts: Partial<Task> = {}): string {
 }
 
 export function updateTaskStatus(taskId: string, status: Task['status']): void {
-  // paths.tasks automatically resolves to user profile if context is set
-  const activeDir = path.join(paths.tasks, 'active');
-  const completedDir = path.join(paths.tasks, 'completed');
+  // Resolve tasks path via storage router
+  const tasksResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'tasks',
+  });
+  if (!tasksResult.success || !tasksResult.path) {
+    throw new Error('Cannot resolve tasks path');
+  }
+  const tasksPath = tasksResult.path;
+
+  const activeDir = path.join(tasksPath, 'active');
+  const completedDir = path.join(tasksPath, 'completed');
 
   const activePath = path.join(activeDir, `${taskId}.json`);
   const completedPath = path.join(completedDir, `${taskId}.json`);
@@ -532,8 +561,18 @@ export function updateTaskStatus(taskId: string, status: Task['status']): void {
  * For status changes, use updateTaskStatus instead.
  */
 export function updateTask(taskId: string, updates: Partial<Omit<Task, 'id' | 'created'>>): void {
-  const activeDir = path.join(paths.tasks, 'active');
-  const completedDir = path.join(paths.tasks, 'completed');
+  // Resolve tasks path via storage router
+  const tasksResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'tasks',
+  });
+  if (!tasksResult.success || !tasksResult.path) {
+    throw new Error('Cannot resolve tasks path');
+  }
+  const tasksPath = tasksResult.path;
+
+  const activeDir = path.join(tasksPath, 'active');
+  const completedDir = path.join(tasksPath, 'completed');
 
   const activePath = path.join(activeDir, `${taskId}.json`);
   const completedPath = path.join(completedDir, `${taskId}.json`);
@@ -564,10 +603,19 @@ export function updateTask(taskId: string, updates: Partial<Omit<Task, 'id' | 'c
 }
 
 export function deleteTask(taskId: string): string {
-  // paths.tasks automatically resolves to user profile if context is set
-  const activeDir = path.join(paths.tasks, 'active');
-  const completedDir = path.join(paths.tasks, 'completed');
-  const deletedDir = path.join(paths.tasks, 'deleted');
+  // Resolve tasks path via storage router
+  const tasksResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'tasks',
+  });
+  if (!tasksResult.success || !tasksResult.path) {
+    throw new Error('Cannot resolve tasks path');
+  }
+  const tasksPath = tasksResult.path;
+
+  const activeDir = path.join(tasksPath, 'active');
+  const completedDir = path.join(tasksPath, 'completed');
+  const deletedDir = path.join(tasksPath, 'deleted');
 
   const activePath = path.join(activeDir, `${taskId}.json`);
   const completedPath = path.join(completedDir, `${taskId}.json`);
@@ -610,7 +658,16 @@ export function deleteTask(taskId: string): string {
 }
 
 export function listActiveTasks(): Task[] {
-  const activeDir = path.join(paths.tasks, 'active');
+  // Resolve tasks path via storage router
+  const tasksResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'tasks',
+  });
+  if (!tasksResult.success || !tasksResult.path) {
+    return []; // Return empty if path unavailable
+  }
+
+  const activeDir = path.join(tasksResult.path, 'active');
 
   const tasks = readTasksFromDirectory(activeDir);
   tasks.sort((a, b) => {
@@ -623,7 +680,16 @@ export function listActiveTasks(): Task[] {
 }
 
 export function listCompletedTasks(): Task[] {
-  const completedDir = path.join(paths.tasks, 'completed');
+  // Resolve tasks path via storage router
+  const tasksResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'tasks',
+  });
+  if (!tasksResult.success || !tasksResult.path) {
+    return []; // Return empty if path unavailable
+  }
+
+  const completedDir = path.join(tasksResult.path, 'completed');
   const tasks = readTasksFromDirectory(completedDir);
   tasks.sort((a, b) => {
     const aUpdated = new Date(a.updated || a.completed || 0).getTime();
@@ -635,7 +701,19 @@ export function listCompletedTasks(): Task[] {
 
 export function searchMemory(query: string): string[] {
   const results: string[] = [];
-  const searchIn = [paths.episodic, paths.semantic, paths.tasks];
+
+  // Resolve memory paths via storage router
+  const episodicResult = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
+  const semanticResult = storageClient.resolvePath({ category: 'memory', subcategory: 'semantic' });
+  const tasksResult = storageClient.resolvePath({ category: 'memory', subcategory: 'tasks' });
+  const profileRootResult = storageClient.getProfileRoot();
+
+  const searchIn: string[] = [];
+  if (episodicResult.success && episodicResult.path) searchIn.push(episodicResult.path);
+  if (semanticResult.success && semanticResult.path) searchIn.push(semanticResult.path);
+  if (tasksResult.success && tasksResult.path) searchIn.push(tasksResult.path);
+
+  const profileRoot = profileRootResult.success && profileRootResult.path ? profileRootResult.path : '';
 
   const walk = (dir: string) => {
     if (!fs.existsSync(dir)) return;
@@ -649,7 +727,7 @@ export function searchMemory(query: string): string[] {
         try {
           const content = fs.readFileSync(fullPath, 'utf8');
           if (content.toLowerCase().includes(query.toLowerCase())) {
-            results.push(path.relative(paths.root, fullPath));
+            results.push(profileRoot ? path.relative(profileRoot, fullPath) : fullPath);
           }
         } catch {}
       }
@@ -666,7 +744,16 @@ export function searchMemory(query: string): string[] {
  */
 export function listEpisodicFiles(): string[] {
   const files: string[] = [];
-  const root = paths.episodic;
+
+  // Resolve episodic path via storage router
+  const episodicResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'episodic',
+  });
+  if (!episodicResult.success || !episodicResult.path) {
+    return files; // Return empty if path unavailable
+  }
+  const root = episodicResult.path;
 
   if (!fs.existsSync(root)) {
     return files;
@@ -704,13 +791,17 @@ export function logSync(action: string, data: any): void {
     data,
   };
 
-  const logFile = path.join(paths.sync, `${new Date().toISOString().slice(0, 10)}.ndjson`);
+  // Use system paths for logs (not user-specific)
+  const syncDir = path.join(systemPaths.logs, 'sync');
+  const logFile = path.join(syncDir, `${new Date().toISOString().slice(0, 10)}.ndjson`);
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   fs.appendFileSync(logFile, JSON.stringify(logEntry) + '\n');
 }
 
 export function logDecision(decision: any): void {
-  const logFile = path.join(paths.decisions, `${new Date().toISOString().slice(0, 10)}.ndjson`);
+  // Use system paths for logs (not user-specific)
+  const decisionsDir = path.join(systemPaths.logs, 'decisions');
+  const logFile = path.join(decisionsDir, `${new Date().toISOString().slice(0, 10)}.ndjson`);
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   fs.appendFileSync(logFile, JSON.stringify({
     timestamp: timestamp(),

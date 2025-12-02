@@ -1,7 +1,7 @@
 import { ollama } from './ollama.js'
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths } from './paths.js'
+import { systemPaths } from './path-builder.js'
 
 export type EmbeddingProvider = 'ollama' | 'mock'
 
@@ -13,7 +13,7 @@ export interface EmbeddingConfig {
   description?: string
 }
 
-const CONFIG_PATH = path.join(paths.root, 'etc', 'embeddings.json')
+const CONFIG_PATH = path.join(systemPaths.etc, 'embeddings.json')
 
 let configCache: EmbeddingConfig | null = null
 

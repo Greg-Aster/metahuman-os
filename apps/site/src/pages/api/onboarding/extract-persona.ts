@@ -9,8 +9,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
-import { tryResolveProfilePath } from '@metahuman/core/paths';
+import { getAuthenticatedUser, storageClient } from '@metahuman/core';
 import {
   extractPersonaFromTranscript,
   type ChatMessage,
@@ -47,8 +46,12 @@ const handler: APIRoute = async ({ cookies, request }) => {
     const extracted = await extractPersonaFromTranscript(messages);
 
     // Load existing persona
-    const personaCoreResult = tryResolveProfilePath('personaCore');
-    if (!personaCoreResult.ok) {
+    const personaCoreResult = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'persona',
+      relativePath: 'core.json',
+    });
+    if (!personaCoreResult.success || !personaCoreResult.path) {
       return new Response(
         JSON.stringify({ error: 'Access denied' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }
@@ -89,8 +92,8 @@ const handler: APIRoute = async ({ cookies, request }) => {
     });
 
     // Export as training data (JSONL format)
-    const profileRootResult = tryResolveProfilePath('root');
-    if (!profileRootResult.ok) {
+    const profileRootResult = storageClient.getProfileRoot();
+    if (!profileRootResult.success || !profileRootResult.path) {
       return new Response(
         JSON.stringify({ error: 'Access denied' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }
