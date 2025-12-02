@@ -1,9 +1,9 @@
 {
-  "version": "2.3",
-  "name": "Dual Consciousness Mode (Simplified)",
-  "description": "Streamlined dual mode - orchestrator directly feeds response synthesizer, ReAct nodes removed",
+  "version": "2.4",
+  "name": "Dual Consciousness Mode (Intelligent Memory)",
+  "description": "AI-driven memory routing - orchestrator determines tier, memory_router handles retrieval",
   "cognitiveMode": "dual",
-  "last_modified": "2025-11-26",
+  "last_modified": "2025-12-02",
   "nodes": [
     {
       "id": 1,
@@ -70,14 +70,14 @@
     },
     {
       "id": 6,
-      "type": "cognitive/semantic_search",
+      "type": "cognitive/memory_router",
       "pos": [770, 100],
-      "size": [180, 80],
+      "size": [200, 100],
       "properties": {
-        "similarityThreshold": 0.6,
-        "maxResults": 8
+        "topK": 8,
+        "threshold": 0.5
       },
-      "title": "Semantic Search"
+      "title": "Memory Router"
     },
     {
       "id": 7,
@@ -233,12 +233,21 @@
     },
     {
       "id": 2,
-      "origin_id": 1,
+      "origin_id": 25,
       "origin_slot": 0,
       "target_id": 6,
       "target_slot": 0,
+      "type": "object",
+      "comment": "Smart Router memoryHints → Memory Router (needsMemory, memoryTier, memoryQuery)"
+    },
+    {
+      "id": 200,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 1,
       "type": "string",
-      "comment": "User message → Semantic Search"
+      "comment": "User message → Memory Router (fallback query)"
     },
     {
       "id": 3,

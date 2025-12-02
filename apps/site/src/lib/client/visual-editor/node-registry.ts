@@ -322,6 +322,187 @@ function drawPropertiesOverlay(
   ctx.restore();
 }
 
+// ============================================================================
+// HELP TOOLTIP SYSTEM
+// ============================================================================
+
+let helpTooltipElement: HTMLDivElement | null = null;
+
+/**
+ * Creates or returns the help tooltip DOM element
+ */
+function getHelpTooltip(): HTMLDivElement {
+  if (helpTooltipElement) return helpTooltipElement;
+
+  helpTooltipElement = document.createElement('div');
+  helpTooltipElement.id = 'node-help-tooltip';
+  helpTooltipElement.style.cssText = `
+    position: fixed;
+    z-index: 10000;
+    max-width: 400px;
+    max-height: 500px;
+    overflow-y: auto;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border: 1px solid rgba(138, 180, 248, 0.3);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 13px;
+    color: #e0e0e0;
+    display: none;
+    backdrop-filter: blur(10px);
+  `;
+
+  document.body.appendChild(helpTooltipElement);
+  return helpTooltipElement;
+}
+
+/**
+ * Shows the help tooltip for a node schema
+ */
+function showNodeHelp(schema: NodeSchema, x: number, y: number) {
+  const tooltip = getHelpTooltip();
+
+  // Build rich HTML content
+  let html = `
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+      <div>
+        <div style="font-size: 16px; font-weight: 600; color: #fff; margin-bottom: 4px;">
+          ${schema.name}
+        </div>
+        <div style="font-size: 11px; color: ${schema.color || '#888'}; text-transform: uppercase; letter-spacing: 0.5px;">
+          ${schema.category}
+        </div>
+      </div>
+      <button onclick="document.getElementById('node-help-tooltip').style.display='none'"
+              style="background: rgba(255,255,255,0.1); border: none; color: #888; cursor: pointer; padding: 4px 8px; border-radius: 4px; font-size: 14px;">
+        ✕
+      </button>
+    </div>
+  `;
+
+  // Description
+  if (schema.description) {
+    html += `
+      <div style="margin-bottom: 16px; line-height: 1.5; color: #b0b0b0;">
+        ${schema.description}
+      </div>
+    `;
+  }
+
+  // Inputs
+  if (schema.inputs.length > 0) {
+    html += `
+      <div style="margin-bottom: 12px;">
+        <div style="font-size: 11px; font-weight: 600; color: #4ade80; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
+          ⬅ Inputs
+        </div>
+    `;
+    schema.inputs.forEach((input: any) => {
+      html += `
+        <div style="display: flex; align-items: flex-start; margin-bottom: 6px; padding-left: 8px;">
+          <span style="color: #8ab4f8; font-weight: 500; min-width: 80px;">${input.name}</span>
+          <span style="color: #666; margin: 0 8px;">:</span>
+          <span style="color: #888;">${input.type || 'any'}</span>
+          ${input.description ? `<span style="color: #666; margin-left: 8px; font-style: italic;">- ${input.description}</span>` : ''}
+        </div>
+      `;
+    });
+    html += `</div>`;
+  }
+
+  // Outputs
+  if (schema.outputs.length > 0) {
+    html += `
+      <div style="margin-bottom: 12px;">
+        <div style="font-size: 11px; font-weight: 600; color: #f87171; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
+          ➡ Outputs
+        </div>
+    `;
+    schema.outputs.forEach((output: any) => {
+      html += `
+        <div style="display: flex; align-items: flex-start; margin-bottom: 6px; padding-left: 8px;">
+          <span style="color: #fbbf24; font-weight: 500; min-width: 80px;">${output.name}</span>
+          <span style="color: #666; margin: 0 8px;">:</span>
+          <span style="color: #888;">${output.type || 'any'}</span>
+          ${output.description ? `<span style="color: #666; margin-left: 8px; font-style: italic;">- ${output.description}</span>` : ''}
+        </div>
+      `;
+    });
+    html += `</div>`;
+  }
+
+  // Properties
+  if (schema.propertySchemas && Object.keys(schema.propertySchemas).length > 0) {
+    html += `
+      <div style="margin-bottom: 8px;">
+        <div style="font-size: 11px; font-weight: 600; color: #a78bfa; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
+          ⚙ Properties
+        </div>
+    `;
+    Object.entries(schema.propertySchemas).forEach(([key, propSchema]: [string, any]) => {
+      html += `
+        <div style="margin-bottom: 8px; padding-left: 8px; border-left: 2px solid rgba(167, 139, 250, 0.3);">
+          <div style="display: flex; align-items: center;">
+            <span style="color: #c4b5fd; font-weight: 500;">${propSchema.label || key}</span>
+            <span style="color: #555; margin-left: 8px; font-size: 11px;">(${propSchema.type})</span>
+          </div>
+          ${propSchema.description ? `<div style="color: #666; font-size: 12px; margin-top: 2px;">${propSchema.description}</div>` : ''}
+          ${propSchema.default !== undefined ? `<div style="color: #555; font-size: 11px; margin-top: 2px;">Default: <code style="background: rgba(0,0,0,0.3); padding: 1px 4px; border-radius: 3px;">${JSON.stringify(propSchema.default)}</code></div>` : ''}
+        </div>
+      `;
+    });
+    html += `</div>`;
+  }
+
+  tooltip.innerHTML = html;
+  tooltip.style.display = 'block';
+
+  // Position tooltip near cursor but within viewport
+  const rect = tooltip.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+
+  let left = x + 20;
+  let top = y - 20;
+
+  // Adjust if tooltip would go off-screen
+  if (left + rect.width > viewportWidth - 20) {
+    left = x - rect.width - 20;
+  }
+  if (top + rect.height > viewportHeight - 20) {
+    top = viewportHeight - rect.height - 20;
+  }
+  if (top < 20) top = 20;
+
+  tooltip.style.left = left + 'px';
+  tooltip.style.top = top + 'px';
+}
+
+/**
+ * Hides the help tooltip
+ */
+function hideNodeHelp() {
+  const tooltip = getHelpTooltip();
+  tooltip.style.display = 'none';
+}
+
+// Close tooltip when clicking outside
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', (e) => {
+    const tooltip = document.getElementById('node-help-tooltip');
+    if (tooltip && !tooltip.contains(e.target as Node)) {
+      // Only hide if not clicking on a help icon (we'll handle that separately)
+      tooltip.style.display = 'none';
+    }
+  });
+}
+
+// ============================================================================
+// COGNITIVE NODE BASE CLASS
+// ============================================================================
+
 /**
  * Factory function to create the base CognitiveNode class
  * This is called after LGraphNode is available
@@ -330,6 +511,7 @@ function createCognitiveNodeClass(LGraphNodeRef: any) {
   return class CognitiveNode extends LGraphNodeRef {
     schema: NodeSchema;
     muted: boolean = false;
+    _helpIconBounds: { x: number; y: number; width: number; height: number } | null = null;
 
     constructor(schema: NodeSchema) {
       super();
@@ -447,11 +629,84 @@ function createCognitiveNodeClass(LGraphNodeRef: any) {
   }
 
   /**
+   * Handle mouse down events - check for help icon click
+   */
+  onMouseDown(e: MouseEvent, localPos: [number, number], graphCanvas?: any): boolean {
+    // Check if click is on the help icon
+    if (this._helpIconBounds) {
+      const { x, y, width, height } = this._helpIconBounds;
+      if (
+        localPos[0] >= x &&
+        localPos[0] <= x + width &&
+        localPos[1] >= y &&
+        localPos[1] <= y + height
+      ) {
+        // Get screen position for tooltip
+        // Try to get canvas from graphCanvas param, or fall back to this.graph.canvas
+        const canvas = graphCanvas?.canvas || this.graph?.canvas?.canvas;
+
+        if (canvas) {
+          const canvasRect = canvas.getBoundingClientRect();
+          const ds = graphCanvas?.ds || this.graph?.canvas?.ds;
+          const scale = ds?.scale || 1;
+          const offset = ds?.offset || [0, 0];
+
+          const screenX = canvasRect.left + (this.pos[0] + localPos[0] + offset[0]) * scale;
+          const screenY = canvasRect.top + (this.pos[1] + localPos[1] + offset[1]) * scale;
+
+          // Show help tooltip
+          showNodeHelp(this.schema, screenX, screenY);
+        } else {
+          // Fallback: use mouse event coordinates directly
+          showNodeHelp(this.schema, e.clientX, e.clientY);
+        }
+
+        // Return true to consume the event
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Draw property values on node canvas
    * Automatically displays all properties from propertySchemas
    */
   onDrawForeground(ctx: CanvasRenderingContext2D) {
-    // Only draw if this node has propertySchemas
+    // Draw help icon in top-right corner (always visible)
+    const helpIconSize = 18;
+    const helpIconX = this.size[0] - helpIconSize - 5;
+    const helpIconY = -22; // In title bar area
+
+    // Store bounds for click detection
+    this._helpIconBounds = {
+      x: helpIconX,
+      y: helpIconY,
+      width: helpIconSize,
+      height: helpIconSize,
+    };
+
+    ctx.save();
+
+    // Draw help icon background circle
+    ctx.beginPath();
+    ctx.arc(helpIconX + helpIconSize / 2, helpIconY + helpIconSize / 2, helpIconSize / 2, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(138, 180, 248, 0.15)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(138, 180, 248, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Draw question mark
+    ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
+    ctx.fillStyle = '#8ab4f8';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('?', helpIconX + helpIconSize / 2, helpIconY + helpIconSize / 2 + 1);
+
+    ctx.restore();
+
+    // Only draw properties if this node has propertySchemas
     if (!this.schema.propertySchemas) return;
 
     // Auto-adjust node size to fit properties
@@ -1727,6 +1982,35 @@ class MemoryFilterNodeImpl extends CognitiveNodeBase {
   constructor() { super(MemoryFilterNodeImpl.schema); }
 }
 
+class MemoryRouterNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'memory_router')!;
+
+  constructor() {
+    super(MemoryRouterNodeImpl.schema);
+  }
+
+  async onExecute() {
+    const orchestratorHints = this.getInputData(0) || {};
+    const userMessage = this.getInputData(1) || '';
+
+    // Extract memory routing hints from orchestrator
+    const needsMemory = orchestratorHints.needsMemory || false;
+    const memoryTier = orchestratorHints.memoryTier || 'hot';
+    const memoryQuery = orchestratorHints.memoryQuery || userMessage;
+
+    // In real implementation, would perform intelligent memory retrieval
+    // based on tier and query. For visual editor preview, return mock data.
+    const result = {
+      memories: [],
+      searchPerformed: needsMemory,
+      tier: memoryTier,
+      query: memoryQuery,
+    };
+
+    this.setOutputData(0, result);
+  }
+}
+
 // ============================================================================
 // Utility Node Implementations
 // ============================================================================
@@ -2333,6 +2617,7 @@ class DreamerLearningsWriterNodeImpl extends CognitiveNodeBase {
     WeightedSamplerNodeImpl,
     AssociativeChainNodeImpl,
     MemoryFilterNodeImpl,
+    MemoryRouterNodeImpl,
     // Utility
     JSONParserNodeImpl,
     TextTemplateNodeImpl,
@@ -2514,6 +2799,7 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
     LiteGraph.registerNodeType('cognitive/weighted_sampler', nodeImpls.WeightedSamplerNodeImpl);
     LiteGraph.registerNodeType('cognitive/associative_chain', nodeImpls.AssociativeChainNodeImpl);
     LiteGraph.registerNodeType('cognitive/memory_filter', nodeImpls.MemoryFilterNodeImpl);
+    LiteGraph.registerNodeType('cognitive/memory_router', nodeImpls.MemoryRouterNodeImpl);
 
     // Utility nodes
     LiteGraph.registerNodeType('cognitive/json_parser', nodeImpls.JSONParserNodeImpl);

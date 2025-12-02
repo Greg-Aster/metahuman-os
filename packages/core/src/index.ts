@@ -27,6 +27,7 @@ export * from './specialist-broker';
 export * from './agent-monitor';
 export * from './vector-index';
 export * from './embeddings';
+export * from './intelligent-memory-retrieval';
 export * from './locks';
 export * from './logging';
 export * from './runtime-mode';
