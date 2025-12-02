@@ -7,9 +7,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { systemPaths, tryResolveProfilePath } from './paths.js';
+import { systemPaths } from './paths.js';
 import { getUserContext } from './context.js';
 import { audit } from './audit.js';
+import { storageClient } from './storage-client.js';
 
 export interface ChatSettings {
   contextInfluence: number;
@@ -52,12 +53,15 @@ function getUserSettingsPath(): string | null {
     return null;
   }
 
-  const result = tryResolveProfilePath('root');
-  if (!result.ok) {
+  const result = storageClient.resolvePath({
+    category: 'config',
+    relativePath: 'chat-settings.json',
+  });
+  if (!result.success || !result.path) {
     return null;
   }
 
-  return path.join(result.path, 'chat-settings.json');
+  return result.path;
 }
 
 /**

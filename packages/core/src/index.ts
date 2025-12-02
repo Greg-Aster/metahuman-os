@@ -76,7 +76,12 @@ export type { StorageDevice, StorageEvent } from './external-storage.js';
 export { migrateProfile, resetProfileToDefault, estimateMigrationDuration } from './profile-migration.js';
 export type { MigrationProgress, MigrationOptions, MigrationResult, EncryptionType, EncryptionOptions } from './profile-migration.js';
 
-// Profile encryption
+// Unified storage router
+export { storageClient } from './storage-client.js';
+export type { StorageRequest, WriteRequest, ReadRequest, WriteResult, ReadResult, StorageResponse, FileCategory } from './storage-client.js';
+
+// Profile encryption (low-level)
+// Note: unlockProfile/lockProfile are exported from encryption-manager.js (unified API)
 export {
   encrypt,
   decrypt,
@@ -86,9 +91,7 @@ export {
   isProfileEncrypted,
   getEncryptionMeta,
   initializeEncryption,
-  unlockProfile,
   verifyPassword,
-  lockProfile,
   lockAllProfiles,
   isProfileUnlocked,
   getCachedKey,
@@ -129,6 +132,40 @@ export {
   CONTAINER_EXTENSION,
 } from './veracrypt.js';
 export type { VeraCryptStatus, VeraCryptContainer, CreateContainerOptions, MountOptions } from './veracrypt.js';
+
+// LUKS integration (Linux native encryption)
+export {
+  checkLuks,
+  isLuksOpen,
+  isLuksMounted,
+  getLuksMountPoint,
+  getLuksUUID,
+  getLuksInfo,
+  openLuks,
+  closeLuks,
+  mountLuks,
+  unmountLuks,
+  openAndMountLuks,
+  unmountAndCloseLuks,
+  createLuksContainer,
+  createMetaHumanLuksContainer,
+  isMetaHumanLuksContainer,
+  LUKS_EXTENSION,
+} from './luks.js';
+export type { LuksResult, LuksStatus, LuksVolumeInfo } from './luks.js';
+
+// Unified encryption manager
+export {
+  getEncryptionCapabilities,
+  getEncryptionStatus,
+  unlockProfile,
+  lockProfile,
+  setupEncryption,
+  requiresUnlock,
+  getEffectiveProfilePath,
+  shouldEncryptFiles,
+} from './encryption-manager.js';
+export type { EncryptionStatus, UnlockResult, EncryptionCapabilities } from './encryption-manager.js';
 
 // Big Brother Mode - CLI LLM Escalation
 export * from './big-brother';

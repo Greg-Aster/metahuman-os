@@ -46,14 +46,22 @@
     return true;
   }) || [];
 
-  onMount(() => {
-    // Only load if we don't have data yet
-    if (!$auditDataStore) {
+  function handleVisibilityChange() {
+    if (!document.hidden) {
       loadAudit();
     }
-    // Refresh every 5 seconds
-    const interval = setInterval(loadAudit, 5000);
-    return () => clearInterval(interval);
+  }
+
+  onMount(() => {
+    // Load on mount
+    loadAudit();
+
+    // Refresh when tab becomes visible (no polling!)
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   });
 
   // --- Live Pipeline Derivation ---

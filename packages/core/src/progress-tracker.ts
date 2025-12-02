@@ -11,7 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './paths.js';
+import { systemPaths } from './path-builder.js';
 
 export interface ProgressStage {
   name: string;
@@ -42,7 +42,7 @@ export class ProgressTracker {
   private heartbeatInterval?: NodeJS.Timeout;
 
   constructor(operation: string, stages: string[], statusDir?: string) {
-    const dir = statusDir || path.join(paths.logs, 'status');
+    const dir = statusDir || path.join(systemPaths.logs, 'status');
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }

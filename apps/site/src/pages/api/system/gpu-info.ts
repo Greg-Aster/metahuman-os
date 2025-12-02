@@ -82,7 +82,8 @@ export const GET: APIRoute = async () => {
 
   // 4. Check for previous training models
   try {
-    const { loadModelRegistry } = await import('@metahuman/core')
+    const { loadModelRegistry } = await import('@metahuman/core/model-resolver')
+    // System-level check, no user context needed
     const registry = loadModelRegistry()
 
     // Check if there are any fine-tuned models in the registry

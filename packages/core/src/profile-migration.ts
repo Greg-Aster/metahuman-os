@@ -36,6 +36,47 @@ import {
 } from './veracrypt.js';
 
 /**
+ * Characters that are invalid in filenames on FAT32/exFAT/NTFS filesystems
+ * Colon is commonly found in Ollama model names like "qwen3:8b"
+ */
+const INVALID_FILENAME_CHARS = /[<>:"/\\|?*]/g;
+
+/**
+ * Filesystems that don't support special characters like colons
+ */
+const RESTRICTED_FILESYSTEMS = ['vfat', 'fat32', 'fat16', 'exfat', 'ntfs', 'msdos', 'fuseblk'];
+
+/**
+ * Check if a filesystem requires filename sanitization
+ */
+function needsSanitization(fsType: string | undefined): boolean {
+  if (!fsType) return true; // Be safe if unknown
+  return RESTRICTED_FILESYSTEMS.includes(fsType.toLowerCase());
+}
+
+/**
+ * Sanitize a filename or path segment to be cross-platform compatible
+ * Replaces invalid characters with underscores
+ */
+function sanitizeFilename(filename: string): string {
+  return filename.replace(INVALID_FILENAME_CHARS, '_');
+}
+
+/**
+ * Sanitize a relative path by sanitizing each path segment
+ * Preserves directory structure but makes filenames cross-platform safe
+ * Only sanitizes if the target filesystem requires it
+ */
+function sanitizeRelativePath(relativePath: string, requiresSanitization: boolean): string {
+  if (!requiresSanitization) {
+    return relativePath; // Keep original names on Linux filesystems
+  }
+  const parts = relativePath.split(path.sep);
+  const sanitized = parts.map(part => sanitizeFilename(part));
+  return sanitized.join(path.sep);
+}
+
+/**
  * Migration progress event
  */
 export interface MigrationProgress {
@@ -76,6 +117,8 @@ export interface EncryptionOptions {
   password?: string;
   /** VeraCrypt container size in bytes (required if type === 'veracrypt') */
   containerSize?: number;
+  /** True if password is user's login password (for metadata) */
+  useLoginPassword?: boolean;
 }
 
 /**
@@ -657,6 +700,14 @@ export async function* migrateProfile(
     actor: userId,
   });
 
+  // Detect target filesystem to determine if filename sanitization is needed
+  const destStorageInfo = getStorageInfo(actualDestination);
+  const requiresSanitization = needsSanitization(destStorageInfo?.fsType);
+
+  if (requiresSanitization && destStorageInfo?.fsType) {
+    console.log(`[migration] Target filesystem is ${destStorageInfo.fsType} - filenames with special characters will be sanitized`);
+  }
+
   // Step 2: Scan source files
   yield {
     step: 'scan',
@@ -685,7 +736,8 @@ export async function* migrateProfile(
   const directories = new Set<string>();
   for (const file of sourceFiles) {
     const relativePath = path.relative(sourcePath, file);
-    const destDir = path.dirname(path.join(actualDestination, relativePath));
+    const sanitizedPath = sanitizeRelativePath(relativePath, requiresSanitization);
+    const destDir = path.dirname(path.join(actualDestination, sanitizedPath));
     directories.add(destDir);
   }
 
@@ -705,6 +757,7 @@ export async function* migrateProfile(
       salt: salt.toString('base64'),
       createdAt: new Date().toISOString(),
       encryptedFiles: 0,
+      useLoginPassword: encryption.useLoginPassword ?? false,
     };
 
     // Re-derive key with the salt we're storing
@@ -741,7 +794,8 @@ export async function* migrateProfile(
   for (let i = 0; i < sourceFiles.length; i++) {
     const sourceFile = sourceFiles[i];
     const relativePath = path.relative(sourcePath, sourceFile);
-    const destFile = path.join(actualDestination, relativePath);
+    const sanitizedPath = sanitizeRelativePath(relativePath, requiresSanitization);
+    const destFile = path.join(actualDestination, sanitizedPath);
 
     try {
       // Check if this file should skip encryption (model files - not human-readable)
@@ -831,13 +885,14 @@ export async function* migrateProfile(
     for (let i = 0; i < sourceFiles.length; i++) {
       const sourceFile = sourceFiles[i];
       const relativePath = path.relative(sourcePath, sourceFile);
-      const destFile = path.join(actualDestination, relativePath);
+      const sanitizedPath = sanitizeRelativePath(relativePath, requiresSanitization);
+      const destFile = path.join(actualDestination, sanitizedPath);
 
       const isValid = await verifyFile(sourceFile, destFile);
       if (isValid) {
         verifiedCount++;
       } else {
-        failedVerify.push(relativePath);
+        failedVerify.push(sanitizedPath);
       }
 
       if ((i + 1) % 10 === 0 || i === sourceFiles.length - 1) {

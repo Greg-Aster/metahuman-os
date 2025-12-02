@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, audit } from '../../packages/core/src/index.js';
+import { storageClient, systemPaths, ROOT, audit } from '../../packages/core/src/index.js';
 
 const DATASET_DATE = process.argv[2];
 
@@ -41,7 +41,7 @@ interface DatasetMetadata {
  * Load auto-approval configuration
  */
 function loadConfig(): AutoApprovalConfig {
-  const configPath = path.join(paths.etc, 'auto-approval.json');
+  const configPath = path.join(systemPaths.etc, 'auto-approval.json');
 
   if (!fs.existsSync(configPath)) {
     // Create default config
@@ -57,7 +57,7 @@ function loadConfig(): AutoApprovalConfig {
       alertEmail: undefined,
     };
 
-    fs.mkdirSync(paths.etc, { recursive: true });
+    fs.mkdirSync(systemPaths.etc, { recursive: true });
     fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
 
     console.log(`[auto-approver] Created default config: ${configPath}`);
@@ -179,7 +179,9 @@ async function main() {
     console.log('[auto-approver] ⚠ Running in DRY-RUN mode (no actual approval)\n');
   }
 
-  const datasetDir = path.join(paths.out, 'adapters', DATASET_DATE);
+  const outResult = storageClient.resolvePath({ category: 'output', subcategory: 'adapters' });
+  const adaptersDir = outResult.success && outResult.path ? outResult.path : path.join(ROOT, 'out', 'adapters');
+  const datasetDir = path.join(adaptersDir, DATASET_DATE);
 
   if (!fs.existsSync(datasetDir)) {
     console.error(`[auto-approver] Dataset not found: ${datasetDir}`);

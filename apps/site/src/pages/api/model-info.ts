@@ -5,15 +5,17 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, getActiveAdapter } from '@metahuman/core';
+import { getActiveAdapter, getUserOrAnonymous } from '@metahuman/core';
+import { loadModelRegistry } from '@metahuman/core/model-resolver';
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ cookies }) => {
   try {
-    // Get base model from model registry
+    // Get base model from model registry (user-specific if authenticated)
     let baseModel = 'phi3:mini';
     try {
-      const { loadModelRegistry } = await import('@metahuman/core');
-      const registry = loadModelRegistry();
+      const user = getUserOrAnonymous(cookies);
+      const username = user.role !== 'anonymous' ? user.username : undefined;
+      const registry = loadModelRegistry(false, username);
       const fallbackId = registry.defaults?.fallback || 'default.fallback';
       const fallbackModel = registry.models?.[fallbackId];
       baseModel = fallbackModel?.model || 'phi3:mini';

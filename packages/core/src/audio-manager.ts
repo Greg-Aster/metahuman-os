@@ -7,7 +7,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
-import { paths } from './paths.js';
+import { systemPaths } from './path-builder.js';
 import {
   listVoiceSamples,
   getReferenceSamples,
@@ -64,7 +64,7 @@ export function copyToReference(
 
   if (provider === 'piper') {
     // Piper: copy to training directory
-    const piperTrainingDir = path.join(paths.out, 'piper-training');
+    const piperTrainingDir = path.join(systemPaths.out, 'piper-training');
     if (!fs.existsSync(piperTrainingDir)) {
       fs.mkdirSync(piperTrainingDir, { recursive: true });
     }
@@ -175,7 +175,7 @@ export function autoExportBestSamples(
 
   if (provider === 'piper') {
     // Piper: export all quality samples
-    const piperTrainingDir = path.join(paths.out, 'piper-training');
+    const piperTrainingDir = path.join(systemPaths.out, 'piper-training');
     if (!fs.existsSync(piperTrainingDir)) {
       fs.mkdirSync(piperTrainingDir, { recursive: true });
     }
@@ -252,7 +252,7 @@ export function listReferenceSamples(
 ): VoiceSample[] {
   if (provider === 'piper') {
     // Piper stores training data in a flat directory
-    const piperDir = path.join(paths.out, 'piper-training');
+    const piperDir = path.join(systemPaths.out, 'piper-training');
     if (!fs.existsSync(piperDir)) {
       return [];
     }
@@ -332,7 +332,7 @@ export function deleteReference(
 
   if (provider === 'piper') {
     // Piper: delete from training directory
-    const piperDir = path.join(paths.out, 'piper-training');
+    const piperDir = path.join(systemPaths.out, 'piper-training');
     const wavPath = path.join(piperDir, `${sampleId}.wav`);
     const txtPath = path.join(piperDir, `${sampleId}.txt`);
     const metaPath = path.join(piperDir, `${sampleId}.meta.json`);

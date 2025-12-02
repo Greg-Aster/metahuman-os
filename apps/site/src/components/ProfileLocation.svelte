@@ -25,7 +25,13 @@
     usingFallback: boolean;
     fallbackReason?: string;
     isEncrypted?: boolean;
-    encryptionType?: 'none' | 'aes256' | 'veracrypt';
+    encryptionType?: 'none' | 'aes256' | 'luks' | 'veracrypt';
+    encryptionInfo?: {
+      algorithm: string;
+      createdAt: string;
+      encryptedFiles: number;
+      useLoginPassword: boolean;
+    };
     storageInfo?: {
       id: string;
       type: string;
@@ -65,7 +71,7 @@
   }
 
   // Encryption types
-  type EncryptionType = 'none' | 'aes256' | 'veracrypt';
+  type EncryptionType = 'none' | 'aes256' | 'luks' | 'veracrypt';
 
   // Container size presets
   const CONTAINER_SIZES = [
@@ -102,6 +108,7 @@
   let veracryptStatus: VeraCryptStatus | null = null;
   let containerSize = CONTAINER_SIZES[1].value; // Default 2GB
   let checkingVeraCrypt = false;
+  let useMigrationLoginPassword = false; // Use login password for migration encryption
 
   // Confirmation dialog
   let showConfirmDialog = false;
@@ -121,18 +128,30 @@
   let encryptInPlaceType: 'aes256' = 'aes256'; // Only AES-256 supported for in-place
   let encryptInPlaceProgress: MigrationProgress[] = [];
   let editingDeviceId: string | null = null;
+  let useLoginPassword = false; // Use login password for encryption
+
+  // Migration success state - for showing switch prompt
+  let migrationSuccess = false;
+  let switchingLocation = false;
+
+  // Change location modal state
+  let showChangeLocationModal = false;
+  let changeLocationPath = '';
 
   // Password validation
   $: passwordsMatch = encryptionPassword === encryptionPasswordConfirm;
   $: passwordValid = encryptionPassword.length >= 8;
   $: encryptionReady = encryptionType === 'none' ||
+    ((encryptionType === 'aes256' || encryptionType === 'luks') && useMigrationLoginPassword && passwordValid) ||  // Login password: just valid password
     (passwordValid && passwordsMatch &&
-      (encryptionType === 'aes256' || (encryptionType === 'veracrypt' && veracryptStatus?.installed)));
+      (encryptionType === 'aes256' || encryptionType === 'luks' || (encryptionType === 'veracrypt' && veracryptStatus?.installed)));
 
   // In-place encryption validation
   $: encryptInPlacePasswordsMatch = encryptInPlacePassword === encryptInPlacePasswordConfirm;
   $: encryptInPlacePasswordValid = encryptInPlacePassword.length >= 8;
-  $: encryptInPlaceReady = encryptInPlacePasswordValid && encryptInPlacePasswordsMatch;
+  $: encryptInPlaceReady = useLoginPassword
+    ? encryptInPlacePasswordValid  // Login password mode: just need valid password (no confirm)
+    : (encryptInPlacePasswordValid && encryptInPlacePasswordsMatch);  // Custom password: need match
 
   onMount(async () => {
     await Promise.all([loadProfileConfig(), loadDevices(), checkVeraCryptStatus()]);
@@ -277,6 +296,7 @@
       type: encryptionType,
       password: encryptionPassword,
       containerSize: encryptionType === 'veracrypt' ? containerSize : undefined,
+      useLoginPassword: encryptionType === 'aes256' ? useMigrationLoginPassword : undefined,
     } : undefined;
 
     try {
@@ -328,16 +348,20 @@
                     // Auto-scroll to bottom
                     if (data.progress.status === 'completed' && data.progress.step === 'complete') {
                       success = 'Profile migration completed successfully!';
+                      migrationSuccess = true;
                       await loadProfileConfig();
                     } else if (data.progress.status === 'failed') {
                       error = data.progress.error || 'Migration failed';
+                      migrationSuccess = false;
                     }
                   }
                   if (data.result) {
                     if (data.result.success) {
                       success = `Profile migrated successfully! ${data.result.filesProcessed} files (${formatBytes(data.result.bytesProcessed)}) moved in ${(data.result.duration / 1000).toFixed(1)}s`;
+                      migrationSuccess = true;
                     } else {
                       error = data.result.error || 'Migration failed';
+                      migrationSuccess = false;
                     }
                   }
                   if (data.error) {
@@ -355,20 +379,28 @@
         const data = await response.json();
         if (data.error) {
           error = data.error;
+          migrationSuccess = false;
         } else if (data.result) {
           if (data.result.success) {
             success = 'Profile migrated successfully!';
+            migrationSuccess = true;
             await loadProfileConfig();
           } else {
             error = data.result.error || 'Migration failed';
+            migrationSuccess = false;
           }
         }
       }
     } catch (err) {
       error = err instanceof Error ? err.message : 'Migration failed';
+      migrationSuccess = false;
       console.error(err);
     } finally {
       migrating = false;
+      // Reset encryption fields
+      encryptionPassword = '';
+      encryptionPasswordConfirm = '';
+      useMigrationLoginPassword = false;
     }
   }
 
@@ -416,6 +448,7 @@
         body: JSON.stringify({
           password: encryptInPlacePassword,
           type: encryptInPlaceType,
+          useLoginPassword,
         }),
       });
 
@@ -480,6 +513,7 @@
       encryptingInPlace = false;
       encryptInPlacePassword = '';
       encryptInPlacePasswordConfirm = '';
+      useLoginPassword = false;
     }
   }
 
@@ -563,6 +597,43 @@
     } finally {
       decryptingInPlace = false;
       decryptPassword = '';
+    }
+  }
+
+  /**
+   * Switch to a different profile location (without migration)
+   * Used after migration completes or to switch to existing profile
+   */
+  async function switchToLocation(targetPath: string) {
+    switchingLocation = true;
+    error = '';
+    success = '';
+
+    try {
+      const response = await fetch('/api/profile-path', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: targetPath,
+          type: 'external',
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        success = `Switched to ${targetPath}`;
+        migrationSuccess = false;
+        showMigrationModal = false;
+        showChangeLocationModal = false;
+        await loadProfileConfig();
+      } else {
+        error = data.error || 'Failed to switch location';
+      }
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to switch location';
+      console.error(err);
+    } finally {
+      switchingLocation = false;
     }
   }
 
@@ -655,9 +726,22 @@
           </div>
 
           {#if profileConfig.usingFallback}
-            <div class="warning-box">
-              <strong>⚠️ Using Fallback Location</strong>
+            <div class="warning-box drive-unavailable">
+              <strong>⚠️ External Drive Unavailable</strong>
               <p>{profileConfig.fallbackReason || 'Custom location unavailable'}</p>
+              <div class="fallback-info">
+                <p class="fallback-tip">
+                  <strong>To reconnect:</strong>
+                </p>
+                <ol>
+                  <li>Ensure your external drive is connected and mounted</li>
+                  <li>Click the <strong>Refresh</strong> button in "Available Storage Devices" below</li>
+                  <li>Use <strong>Change Location</strong> to switch back to your external profile</li>
+                </ol>
+                <p class="fallback-note">
+                  Currently using fallback location. Changes will be saved locally until you reconnect.
+                </p>
+              </div>
             </div>
           {/if}
 
@@ -697,13 +781,15 @@
                 <div class="status-badge encrypted">
                   <span class="status-icon">🔒</span>
                   <span class="status-text">
-                    Encrypted ({profileConfig.encryptionType === 'veracrypt' ? 'VeraCrypt' : 'AES-256'})
+                    Encrypted ({profileConfig.encryptionType === 'veracrypt' ? 'VeraCrypt' : profileConfig.encryptionType === 'luks' ? 'LUKS' : 'AES-256'})
                   </span>
                 </div>
                 <p class="status-description">
                   Your profile data is protected with encryption.
                   {#if profileConfig.encryptionType === 'aes256'}
                     Individual files are encrypted with AES-256-GCM.
+                  {:else if profileConfig.encryptionType === 'luks'}
+                    Data is stored in an encrypted LUKS volume (Linux native).
                   {:else}
                     Data is stored in an encrypted VeraCrypt container.
                   {/if}
@@ -737,11 +823,19 @@
             </div>
           </div>
 
-          {#if profileConfig.isCustom}
-            <button class="btn btn-secondary" on:click={resetToDefault}>
-              Reset to Default Location
+          <div class="location-actions">
+            <button
+              class="btn btn-secondary"
+              on:click={() => { showChangeLocationModal = true; changeLocationPath = ''; }}
+            >
+              📂 Change Location
             </button>
-          {/if}
+            {#if profileConfig.isCustom}
+              <button class="btn btn-secondary" on:click={resetToDefault}>
+                Reset to Default Location
+              </button>
+            {/if}
+          </div>
         </div>
       </div>
     {/if}
@@ -955,6 +1049,10 @@
               <input type="radio" bind:group={encryptionType} value="aes256" />
               <span class="radio-label">🔒 AES-256</span>
             </label>
+            <label class="radio-option" class:selected={encryptionType === 'luks'}>
+              <input type="radio" bind:group={encryptionType} value="luks" />
+              <span class="radio-label">🐧 LUKS</span>
+            </label>
             <label class="radio-option" class:selected={encryptionType === 'veracrypt'}>
               <input type="radio" bind:group={encryptionType} value="veracrypt" />
               <span class="radio-label">🛡️ VeraCrypt</span>
@@ -963,25 +1061,77 @@
 
           {#if encryptionType !== 'none'}
             <div class="encryption-fields">
-              <div class="form-row">
-                <input
-                  type="password"
-                  bind:value={encryptionPassword}
-                  placeholder="Password (min 8 characters)"
-                  class="input-field"
-                />
-                <input
-                  type="password"
-                  bind:value={encryptionPasswordConfirm}
-                  placeholder="Confirm password"
-                  class="input-field"
-                />
-              </div>
-              {#if encryptionPassword && !passwordValid}
-                <span class="field-error">Password must be at least 8 characters</span>
+              {#if encryptionType === 'aes256' || encryptionType === 'luks'}
+                <div class="form-group checkbox-group">
+                  <label class="checkbox-label">
+                    <input
+                      type="checkbox"
+                      bind:checked={useMigrationLoginPassword}
+                      on:change={() => { encryptionPassword = ''; encryptionPasswordConfirm = ''; }}
+                    />
+                    <span>Use my login password for encryption</span>
+                  </label>
+                  <p class="checkbox-description">
+                    {#if encryptionType === 'luks'}
+                      Your login password will unlock the LUKS volume automatically when you log in.
+                    {:else}
+                      Your login password will be used as the encryption key.
+                    {/if}
+                  </p>
+                </div>
               {/if}
-              {#if encryptionPasswordConfirm && !passwordsMatch}
-                <span class="field-error">Passwords do not match</span>
+
+              {#if !useMigrationLoginPassword || encryptionType === 'veracrypt'}
+                <div class="form-row">
+                  <input
+                    type="password"
+                    bind:value={encryptionPassword}
+                    placeholder="Password (min 8 characters)"
+                    class="input-field"
+                  />
+                  <input
+                    type="password"
+                    bind:value={encryptionPasswordConfirm}
+                    placeholder="Confirm password"
+                    class="input-field"
+                  />
+                </div>
+                {#if encryptionPassword && !passwordValid}
+                  <span class="field-error">Password must be at least 8 characters</span>
+                {/if}
+                {#if encryptionPasswordConfirm && !passwordsMatch}
+                  <span class="field-error">Passwords do not match</span>
+                {/if}
+              {:else}
+                <div class="form-row">
+                  <input
+                    type="password"
+                    bind:value={encryptionPassword}
+                    placeholder="Enter your login password"
+                    class="input-field"
+                    style="flex: 1;"
+                  />
+                </div>
+                {#if encryptionPassword && !passwordValid}
+                  <span class="field-error">Password must be at least 8 characters</span>
+                {/if}
+              {/if}
+
+              {#if encryptionType === 'luks'}
+                <div class="luks-info">
+                  <p class="encryption-description">
+                    🐧 <strong>LUKS</strong> (Linux Unified Key Setup) provides native disk encryption.
+                    Fast and secure - recommended for Linux systems.
+                  </p>
+                  <div class="form-row">
+                    <label class="inline-label">Container Size:</label>
+                    <select bind:value={containerSize} class="select-field">
+                      {#each CONTAINER_SIZES as size}
+                        <option value={size.value}>{size.label}</option>
+                      {/each}
+                    </select>
+                  </div>
+                </div>
               {/if}
 
               {#if encryptionType === 'veracrypt'}
@@ -1001,9 +1151,15 @@
                 {/if}
               {/if}
 
-              <p class="password-note">
-                ⚠️ Password is never stored. If forgotten, data cannot be recovered.
-              </p>
+              {#if !useMigrationLoginPassword}
+                <p class="password-note">
+                  ⚠️ Password is never stored. If forgotten, data cannot be recovered.
+                </p>
+              {:else}
+                <p class="password-note" style="color: #4caf50;">
+                  ✓ Your login password will be verified and used for encryption.
+                </p>
+              {/if}
             </div>
           {/if}
         </div>
@@ -1029,6 +1185,8 @@
           <ul>
             {#if encryptionType === 'veracrypt'}
               <li>Create encrypted VeraCrypt container</li>
+            {:else if encryptionType === 'luks'}
+              <li>Create encrypted LUKS volume (Linux native)</li>
             {:else if encryptionType === 'aes256'}
               <li>Encrypt files with AES-256-GCM</li>
             {:else}
@@ -1091,9 +1249,30 @@
 
       {#if !migrating}
         <div class="modal-actions">
-          <button class="btn btn-primary" on:click={() => showMigrationModal = false}>
-            Close
-          </button>
+          {#if migrationSuccess}
+            <div class="migration-success-prompt">
+              <p class="success-message">✅ Migration completed! Would you like to switch to the new location?</p>
+              <div class="action-buttons">
+                <button
+                  class="btn btn-primary"
+                  on:click={() => switchToLocation(migrationTarget)}
+                  disabled={switchingLocation}
+                >
+                  {switchingLocation ? 'Switching...' : '🔄 Switch to New Location'}
+                </button>
+                <button
+                  class="btn btn-secondary"
+                  on:click={() => { showMigrationModal = false; migrationSuccess = false; }}
+                >
+                  Keep Current Location
+                </button>
+              </div>
+            </div>
+          {:else}
+            <button class="btn btn-primary" on:click={() => showMigrationModal = false}>
+              Close
+            </button>
+          {/if}
         </div>
       {:else}
         <div class="migrating-indicator">
@@ -1119,38 +1298,74 @@
           </p>
 
           <div class="encryption-fields">
-            <div class="form-group">
-              <label for="encryptInPlacePassword">Encryption Password</label>
-              <input
-                id="encryptInPlacePassword"
-                type="password"
-                bind:value={encryptInPlacePassword}
-                placeholder="Enter password (min 8 characters)"
-                class="input-field"
-              />
-            </div>
-            <div class="form-group">
-              <label for="encryptInPlacePasswordConfirm">Confirm Password</label>
-              <input
-                id="encryptInPlacePasswordConfirm"
-                type="password"
-                bind:value={encryptInPlacePasswordConfirm}
-                placeholder="Confirm password"
-                class="input-field"
-              />
+            <div class="form-group checkbox-group">
+              <label class="checkbox-label">
+                <input
+                  type="checkbox"
+                  bind:checked={useLoginPassword}
+                  on:change={() => { encryptInPlacePassword = ''; encryptInPlacePasswordConfirm = ''; }}
+                />
+                <span>Use my login password for encryption</span>
+              </label>
+              <p class="checkbox-description">
+                Your login password will be used as the encryption key. You won't need to remember a separate password.
+              </p>
             </div>
 
-            {#if encryptInPlacePassword && !encryptInPlacePasswordValid}
-              <span class="field-error">Password must be at least 8 characters</span>
-            {/if}
-            {#if encryptInPlacePasswordConfirm && !encryptInPlacePasswordsMatch}
-              <span class="field-error">Passwords do not match</span>
-            {/if}
+            {#if !useLoginPassword}
+              <div class="form-group">
+                <label for="encryptInPlacePassword">Encryption Password</label>
+                <input
+                  id="encryptInPlacePassword"
+                  type="password"
+                  bind:value={encryptInPlacePassword}
+                  placeholder="Enter password (min 8 characters)"
+                  class="input-field"
+                />
+              </div>
+              <div class="form-group">
+                <label for="encryptInPlacePasswordConfirm">Confirm Password</label>
+                <input
+                  id="encryptInPlacePasswordConfirm"
+                  type="password"
+                  bind:value={encryptInPlacePasswordConfirm}
+                  placeholder="Confirm password"
+                  class="input-field"
+                />
+              </div>
 
-            <div class="password-warning">
-              <strong>⚠️ Important:</strong> Your password is never stored. If you forget it,
-              your data cannot be recovered. Write it down somewhere safe!
-            </div>
+              {#if encryptInPlacePassword && !encryptInPlacePasswordValid}
+                <span class="field-error">Password must be at least 8 characters</span>
+              {/if}
+              {#if encryptInPlacePasswordConfirm && !encryptInPlacePasswordsMatch}
+                <span class="field-error">Passwords do not match</span>
+              {/if}
+
+              <div class="password-warning">
+                <strong>⚠️ Important:</strong> Your password is never stored. If you forget it,
+                your data cannot be recovered. Write it down somewhere safe!
+              </div>
+            {:else}
+              <div class="form-group">
+                <label for="encryptInPlacePassword">Enter Your Login Password</label>
+                <input
+                  id="encryptInPlacePassword"
+                  type="password"
+                  bind:value={encryptInPlacePassword}
+                  placeholder="Enter your login password"
+                  class="input-field"
+                />
+              </div>
+
+              {#if encryptInPlacePassword && !encryptInPlacePasswordValid}
+                <span class="field-error">Password must be at least 8 characters</span>
+              {/if}
+
+              <div class="password-warning" style="background: #e8f5e9; border-color: #4caf50;">
+                <strong>✓ Convenient:</strong> Your login password will be verified and used for encryption.
+                If you change your login password later, you'll need to decrypt and re-encrypt your data.
+              </div>
+            {/if}
           </div>
         </div>
 
@@ -1217,14 +1432,25 @@
             your encryption password to proceed.
           </p>
 
+          {#if profileConfig?.encryptionInfo?.useLoginPassword}
+            <div class="password-warning" style="background: #e8f5e9; border-color: #4caf50; margin-bottom: 1rem;">
+              <strong>💡 Hint:</strong> This profile was encrypted using your login password.
+              Enter your login password below.
+            </div>
+          {/if}
+
           <div class="encryption-fields">
             <div class="form-group">
-              <label for="decryptPassword">Encryption Password</label>
+              <label for="decryptPassword">
+                {profileConfig?.encryptionInfo?.useLoginPassword ? 'Login Password' : 'Encryption Password'}
+              </label>
               <input
                 id="decryptPassword"
                 type="password"
                 bind:value={decryptPassword}
-                placeholder="Enter your encryption password"
+                placeholder={profileConfig?.encryptionInfo?.useLoginPassword
+                  ? 'Enter your login password'
+                  : 'Enter your encryption password'}
                 class="input-field"
               />
             </div>
@@ -1282,6 +1508,78 @@
           </div>
         {/if}
       {/if}
+    </div>
+  </div>
+{/if}
+
+<!-- Change Location Modal -->
+{#if showChangeLocationModal}
+  <div class="modal-overlay" on:click={() => !switchingLocation && (showChangeLocationModal = false)}>
+    <div class="modal-content change-location-modal" on:click|stopPropagation>
+      <h3>📂 Change Profile Location</h3>
+
+      <div class="modal-body">
+        <p class="modal-description">
+          Switch to a different profile location. The new location must contain
+          existing profile data (persona/ or memory/ folders).
+        </p>
+
+        <div class="form-group">
+          <label for="changeLocationPath">Profile Path</label>
+          <input
+            id="changeLocationPath"
+            type="text"
+            bind:value={changeLocationPath}
+            placeholder="/path/to/existing/profile"
+            class="input-field"
+            disabled={switchingLocation}
+          />
+          <small>Enter the absolute path to an existing profile directory</small>
+        </div>
+
+        <!-- Quick select from available devices -->
+        {#if devices.length > 0}
+          <div class="quick-select">
+            <label class="quick-select-label">Quick Select:</label>
+            <div class="device-buttons">
+              {#each devices as device}
+                {#if device.writable}
+                  <button
+                    class="btn btn-sm btn-outline"
+                    on:click={() => changeLocationPath = getDevicePath(device)}
+                    disabled={switchingLocation}
+                  >
+                    {getStorageTypeIcon(device.type)} {device.label}
+                  </button>
+                {/if}
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        <div class="info-box">
+          <strong>ℹ️ Note:</strong> This will only switch to a location that already
+          contains your profile data. To migrate data to a new location, use the
+          "Move Here" option in the Available Storage Devices section.
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button
+          class="btn btn-secondary"
+          on:click={() => showChangeLocationModal = false}
+          disabled={switchingLocation}
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-primary"
+          on:click={() => switchToLocation(changeLocationPath)}
+          disabled={!changeLocationPath.trim() || switchingLocation}
+        >
+          {switchingLocation ? 'Switching...' : '🔄 Switch Location'}
+        </button>
+      </div>
     </div>
   </div>
 {/if}
@@ -1608,6 +1906,48 @@
 
   :global(.dark) .warning-box li {
     color: rgb(250 204 21);
+  }
+
+  /* Drive unavailable specific styles */
+  .drive-unavailable {
+    background: #fff3e0;
+    border-color: #ff9800;
+  }
+
+  :global(.dark) .drive-unavailable {
+    background: rgba(255, 152, 0, 0.15);
+    border-color: #ff9800;
+  }
+
+  .fallback-info {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 152, 0, 0.3);
+  }
+
+  .fallback-info ol {
+    margin: 0.5rem 0;
+    padding-left: 1.25rem;
+  }
+
+  .fallback-info li {
+    font-size: 0.875rem;
+    color: #e65100;
+    margin-bottom: 0.25rem;
+  }
+
+  :global(.dark) .fallback-info li {
+    color: #ffb74d;
+  }
+
+  .fallback-tip {
+    margin-bottom: 0.5rem !important;
+  }
+
+  .fallback-note {
+    margin-top: 0.75rem !important;
+    font-style: italic;
+    opacity: 0.9;
   }
 
   .storage-info {
@@ -2533,6 +2873,111 @@
     justify-content: flex-end;
   }
 
+  /* Migration success prompt */
+  .migration-success-prompt {
+    text-align: center;
+    width: 100%;
+  }
+
+  .migration-success-prompt .success-message {
+    color: #4caf50;
+    font-weight: 500;
+    margin-bottom: 1rem;
+  }
+
+  .migration-success-prompt .action-buttons {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  /* Location actions */
+  .location-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+  }
+
+  /* Change Location Modal */
+  .change-location-modal {
+    max-width: 550px;
+  }
+
+  .change-location-modal .modal-description {
+    color: #666;
+    margin-bottom: 1rem;
+  }
+
+  :global(.dark) .change-location-modal .modal-description {
+    color: #aaa;
+  }
+
+  .quick-select {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: #f5f5f5;
+    border-radius: 8px;
+  }
+
+  :global(.dark) .quick-select {
+    background: #2d2d2d;
+  }
+
+  .quick-select-label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+    color: #555;
+  }
+
+  :global(.dark) .quick-select-label {
+    color: #ccc;
+  }
+
+  .device-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .btn-outline {
+    background: transparent;
+    border: 1px solid #ccc;
+    color: #333;
+  }
+
+  :global(.dark) .btn-outline {
+    border-color: #555;
+    color: #ddd;
+  }
+
+  .btn-outline:hover {
+    background: #e0e0e0;
+  }
+
+  :global(.dark) .btn-outline:hover {
+    background: #3d3d3d;
+  }
+
+  .info-box {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background: #e3f2fd;
+    border: 1px solid #2196f3;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    color: #1565c0;
+  }
+
+  :global(.dark) .info-box {
+    background: #1a2634;
+    border-color: #1976d2;
+    color: #64b5f6;
+  }
+
   /* Migration Configuration Modal */
   .migration-config-modal {
     max-width: 500px;
@@ -2708,6 +3153,21 @@
     color: rgb(59 130 246);
     text-decoration: underline;
     margin-left: 0.25rem;
+  }
+
+  .luks-info {
+    margin-bottom: 0.5rem;
+  }
+
+  .encryption-description {
+    font-size: 0.75rem;
+    color: rgb(75 85 99);
+    margin: 0 0 0.75rem 0;
+    line-height: 1.5;
+  }
+
+  :global(.dark) .encryption-description {
+    color: rgb(156 163 175);
   }
 
   .password-note {
@@ -3094,5 +3554,43 @@
     outline: none;
     border-color: rgb(139, 92, 246);
     box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+  }
+
+  .checkbox-group {
+    margin-bottom: 1rem;
+    padding: 1rem;
+    background: rgb(249 250 251);
+    border-radius: 0.5rem;
+    border: 1px solid rgb(229 231 235);
+  }
+
+  :global(.dark) .checkbox-group {
+    background: rgb(31 41 55);
+    border-color: rgb(55 65 81);
+  }
+
+  .checkbox-label {
+    display: flex !important;
+    align-items: center;
+    gap: 0.75rem;
+    cursor: pointer;
+    font-weight: 500;
+  }
+
+  .checkbox-label input[type="checkbox"] {
+    width: 1.25rem;
+    height: 1.25rem;
+    cursor: pointer;
+    accent-color: rgb(139, 92, 246);
+  }
+
+  .checkbox-description {
+    margin: 0.5rem 0 0 2rem;
+    font-size: 0.875rem;
+    color: rgb(107 114 128);
+  }
+
+  :global(.dark) .checkbox-description {
+    color: rgb(156 163 175);
   }
 </style>

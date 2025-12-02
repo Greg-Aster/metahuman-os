@@ -6,9 +6,8 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getAuthenticatedUser } from '@metahuman/core';
+import { getAuthenticatedUser, storageClient } from '@metahuman/core';
 import { auditAction } from '@metahuman/core/audit';
-import { tryResolveProfilePath } from '@metahuman/core/paths';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -82,8 +81,12 @@ const handler: APIRoute = async ({ cookies }) => {
     const user = getAuthenticatedUser(cookies);
 
     // Verify access to persona core
-    const pathResult = tryResolveProfilePath('personaCore');
-    if (!pathResult.ok) {
+    const pathResult = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'persona',
+      relativePath: 'core.json',
+    });
+    if (!pathResult.success || !pathResult.path) {
       return new Response(
         JSON.stringify({ error: 'Access denied' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }

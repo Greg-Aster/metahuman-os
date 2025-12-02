@@ -9,7 +9,7 @@ import {
   getReferenceSamples,
   listKokoroSamples,
   startKokoroVoicepackTraining,
-  tryResolveProfilePath,
+  storageClient,
   systemPaths,
 } from '@metahuman/core';
 
@@ -23,8 +23,11 @@ const getHandler: APIRoute = async ({ request }) => {
   const action = url.searchParams.get('action');
   const speakerId = url.searchParams.get('speakerId') || 'default';
 
-  const pathResult = tryResolveProfilePath('voiceTraining');
-  if (!pathResult.ok) {
+  const pathResult = storageClient.resolvePath({
+    category: 'voice',
+    subcategory: 'training-data',
+  });
+  if (!pathResult.success || !pathResult.path) {
     return new Response(
       JSON.stringify({ error: 'Authentication required for voice training' }),
       { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -102,9 +105,12 @@ const getHandler: APIRoute = async ({ request }) => {
   }
 };
 
-const postHandler: APIRoute = async ({ cookies, request }) => {
-  const pathResult = tryResolveProfilePath('voiceTraining');
-  if (!pathResult.ok) {
+const postHandler: APIRoute = async ({ request }) => {
+  const pathResult = storageClient.resolvePath({
+    category: 'voice',
+    subcategory: 'training-data',
+  });
+  if (!pathResult.success || !pathResult.path) {
     return new Response(
       JSON.stringify({ error: 'Authentication required for voice training' }),
       { status: 401, headers: { 'Content-Type': 'application/json' } }

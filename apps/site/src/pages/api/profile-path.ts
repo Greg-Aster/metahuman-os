@@ -16,7 +16,7 @@ import { validateProfilePath } from '@metahuman/core/path-security';
 import { migrateProfile, estimateMigrationDuration } from '@metahuman/core/profile-migration';
 import { getStorageInfo } from '@metahuman/core/external-storage';
 import { isProfileEncrypted, getEncryptionMeta } from '@metahuman/core/encryption';
-import { getProfileStorageConfig } from '@metahuman/core/users';
+import { getProfileStorageConfig, verifyUserPassword } from '@metahuman/core/users';
 
 /**
  * GET /api/profile-path
@@ -83,6 +83,7 @@ export const GET: APIRoute = async ({ cookies }) => {
               algorithm: encryptionMeta.algorithm,
               createdAt: encryptionMeta.createdAt,
               encryptedFiles: encryptionMeta.encryptedFiles,
+              useLoginPassword: encryptionMeta.useLoginPassword ?? false,
             }
           : null,
       }),
@@ -162,6 +163,16 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       );
     }
 
+    // Verify login password if using login password mode for encryption
+    if (encryption?.useLoginPassword && encryption?.type === 'aes256') {
+      if (!verifyUserPassword(user.username, encryption.password)) {
+        return new Response(
+          JSON.stringify({ error: 'Incorrect login password' }),
+          { status: 401, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
     // Build migration options
     const migrationOptions: Parameters<typeof migrateProfile>[3] = {
       keepSource,
@@ -172,6 +183,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
             type: encryption.type,
             password: encryption.password,
             containerSize: encryption.containerSize,
+            useLoginPassword: encryption.useLoginPassword,
           }
         : undefined,
     };
@@ -223,6 +235,143 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       });
     }
     throw error;
+  }
+};
+
+/**
+ * PUT /api/profile-path
+ *
+ * Switch to a different profile location WITHOUT migration
+ * Used when:
+ * - Switching to an already-migrated location (e.g., after migration completed)
+ * - Switching to a pre-existing profile on external drive
+ *
+ * Body:
+ * - path: string - Profile path to switch to (absolute)
+ * - type: 'internal' | 'external' | 'encrypted' - Storage type
+ * - deviceId?: string - Device UUID for external drives
+ * - fallbackBehavior?: 'error' | 'readonly' - Behavior when unavailable
+ */
+export const PUT: APIRoute = async ({ cookies, request }) => {
+  try {
+    const user = getAuthenticatedUser(cookies);
+
+    const body = await request.json();
+    const { path: newPath, type = 'external', deviceId, fallbackBehavior = 'error' } = body;
+
+    if (!newPath) {
+      return new Response(
+        JSON.stringify({ error: 'Path is required' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Validate the path exists and is accessible
+    const validation = validateProfilePath(newPath, { checkExists: true });
+    if (!validation.valid) {
+      audit({
+        level: 'warn',
+        category: 'security',
+        event: 'profile_path_switch_validation_failed',
+        details: {
+          userId: user.id,
+          username: user.username,
+          attemptedPath: newPath,
+          errors: validation.errors,
+        },
+        actor: user.id,
+      });
+
+      return new Response(
+        JSON.stringify({
+          error: 'Invalid path',
+          details: validation.errors,
+          warnings: validation.warnings,
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Check if profile data exists at the location
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const personaPath = path.join(newPath, 'persona');
+    const memoryPath = path.join(newPath, 'memory');
+
+    if (!fs.existsSync(personaPath) && !fs.existsSync(memoryPath)) {
+      return new Response(
+        JSON.stringify({
+          error: 'No profile data found at this location',
+          details: ['The directory exists but does not contain profile data (persona/ or memory/ folders)'],
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Get storage info for the device
+    const storageInfo = getStorageInfo(newPath);
+
+    // Update user's profile storage configuration
+    const { updateProfileStorage } = await import('@metahuman/core/users');
+
+    // Check if profile is encrypted at new location
+    const profileEncrypted = isProfileEncrypted(newPath);
+    const encryptionMeta = profileEncrypted ? getEncryptionMeta(newPath) : null;
+
+    const newConfig = {
+      path: newPath,
+      type: profileEncrypted ? 'encrypted' as const : type as 'internal' | 'external' | 'encrypted',
+      deviceId: deviceId || storageInfo?.id,
+      fallbackBehavior: fallbackBehavior as 'error' | 'readonly',
+      encryption: profileEncrypted && encryptionMeta
+        ? {
+            type: 'aes256' as const,
+            useLoginPassword: encryptionMeta.useLoginPassword ?? false,
+          }
+        : undefined,
+    };
+
+    updateProfileStorage(user.id, newConfig);
+
+    audit({
+      level: 'info',
+      category: 'security',
+      event: 'profile_path_switched',
+      details: {
+        userId: user.id,
+        username: user.username,
+        newPath,
+        storageType: newConfig.type,
+        encrypted: profileEncrypted,
+      },
+      actor: user.id,
+    });
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        message: 'Profile location switched successfully',
+        newPath,
+        storageType: newConfig.type,
+        isEncrypted: profileEncrypted,
+      }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  } catch (error) {
+    if ((error as Error).message?.includes('Not authenticated')) {
+      return new Response(JSON.stringify({ error: 'Not authenticated' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    console.error('[profile-path] PUT error:', error);
+    return new Response(
+      JSON.stringify({ error: (error as Error).message || 'Failed to switch profile location' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 };
 

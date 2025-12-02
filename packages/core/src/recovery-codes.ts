@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './paths.js';
+import { systemPaths } from './path-builder.js';
 
 export interface RecoveryCodes {
   codes: string[];
@@ -33,7 +33,7 @@ export function generateRecoveryCodes(): string[] {
  * Save recovery codes to user's profile directory
  */
 export function saveRecoveryCodes(username: string, codes: string[]): string {
-  const profileDir = path.join(paths.root, 'profiles', username);
+  const profileDir = path.join(systemPaths.profiles, username);
   const recoveryFile = path.join(profileDir, 'recovery-codes.json');
 
   // Ensure profile directory exists
@@ -54,7 +54,7 @@ export function saveRecoveryCodes(username: string, codes: string[]): string {
  * Load recovery codes for a user
  */
 export function loadRecoveryCodes(username: string): RecoveryCodes | null {
-  const profileDir = path.join(paths.root, 'profiles', username);
+  const profileDir = path.join(systemPaths.profiles, username);
   const recoveryFile = path.join(profileDir, 'recovery-codes.json');
 
   if (!fs.existsSync(recoveryFile)) {
@@ -90,7 +90,7 @@ export function verifyRecoveryCode(username: string, code: string): boolean {
   // Mark code as used
   data.usedCodes.push(code.toUpperCase());
 
-  const profileDir = path.join(paths.root, 'profiles', username);
+  const profileDir = path.join(systemPaths.profiles, username);
   const recoveryFile = path.join(profileDir, 'recovery-codes.json');
   fs.writeFileSync(recoveryFile, JSON.stringify(data, null, 2));
 

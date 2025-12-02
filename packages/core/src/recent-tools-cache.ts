@@ -10,7 +10,7 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
-import { paths, getProfilePaths } from './paths.js';
+import { getProfilePaths } from './paths.js';
 import { audit } from './audit.js';
 
 const MAX_TOOL_OUTPUT_SIZE = 2048; // 2 KB threshold for payload splitting

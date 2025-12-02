@@ -7,7 +7,7 @@
 // import { initializeSkills } from '@brain/skills/index.js';
 import { executeSkill, loadTrustLevel, getAvailableSkills } from '@metahuman/core/skills';
 import path from 'node:path';
-import { paths } from '@metahuman/core/paths';
+import { ROOT } from '@metahuman/core';
 import fs from 'node:fs';
 
 // DISABLED: Skills system not in use
@@ -115,7 +115,7 @@ export async function executeFileOperation(operation: {
     // Ensure filename is safe and within allowed directories
     // For simplicity, we'll put all files in the out/ directory
     const safeFilename = path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, '_');
-    const fullPath = path.join(paths.root, 'out', safeFilename);
+    const fullPath = path.join(ROOT, 'out', safeFilename);
     
     // Generate content if not provided
     let content = operation.content;

@@ -6,9 +6,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { paths } from '@metahuman/core';
+import { ROOT, systemPaths } from '@metahuman/core';
 
-const RVC_DIR = path.join(paths.root, 'external', 'applio-rvc');
+const RVC_DIR = path.join(ROOT, 'external', 'applio-rvc');
 
 export async function rvcCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
@@ -57,7 +57,7 @@ Examples:
 async function installRVC(): Promise<void> {
   console.log('Starting RVC (Applio) installation...\n');
 
-  const scriptPath = path.join(paths.root, 'bin', 'install-rvc.sh');
+  const scriptPath = path.join(ROOT, 'bin', 'install-rvc.sh');
 
   if (!fs.existsSync(scriptPath)) {
     console.error('✗ Installation script not found:', scriptPath);
@@ -66,7 +66,7 @@ async function installRVC(): Promise<void> {
 
   return new Promise((resolve, reject) => {
     const install = spawn('bash', [scriptPath], {
-      cwd: paths.root,
+      cwd: ROOT,
       stdio: 'inherit',
     });
 
@@ -137,14 +137,14 @@ async function testInference(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const modelPath = path.join(paths.root, 'out', 'voices', 'rvc', modelName, 'models', `${modelName}.pth`);
+  const modelPath = path.join(ROOT, 'out', 'voices', 'rvc', modelName, 'models', `${modelName}.pth`);
   if (!fs.existsSync(modelPath)) {
     console.error(`✗ Model not found: ${modelPath}`);
     console.error('  Train a model first with: mh rvc train --name ' + modelName);
     process.exit(1);
   }
 
-  const outputFile = path.join(paths.root, 'out', 'voices', 'rvc', `test-output-${Date.now()}.wav`);
+  const outputFile = path.join(ROOT, 'out', 'voices', 'rvc', `test-output-${Date.now()}.wav`);
 
   console.log(`Input:  ${inputFile}`);
   console.log(`Model:  ${modelPath}`);
@@ -206,7 +206,7 @@ async function checkStatus(): Promise<void> {
   console.log(`Infer script: ${inferScriptExists ? '✓ Ready' : '✗ Missing'}`);
 
   // List trained models
-  const modelsDir = path.join(paths.root, 'out', 'voices', 'rvc');
+  const modelsDir = path.join(ROOT, 'out', 'voices', 'rvc');
   if (fs.existsSync(modelsDir)) {
     const models = fs.readdirSync(modelsDir)
       .filter(f => {

@@ -7,7 +7,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, ROOT } from './paths.js';
+import { ROOT } from './path-builder.js';
+import { storageClient } from './storage-client.js';
 
 export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'fallback';
 export type ModelProvider = 'ollama' | 'openai' | 'local';
@@ -86,11 +87,14 @@ export function invalidateModelCache(): void {
  * - etc/models.json at root when no context is set
  *
  * This allows each user to have their own base models and preferences!
+ *
+ * @param forceFresh - If true, bypass cache and reload from disk
+ * @param username - Optional username to explicitly resolve user's profile path
  */
-export function loadModelRegistry(forceFresh = false): ModelRegistry {
+export function loadModelRegistry(forceFresh = false, username?: string): ModelRegistry {
   const now = Date.now();
 
-  const registryPath = resolveRegistryPath();
+  const registryPath = resolveRegistryPath(username);
 
   if (!forceFresh) {
     const cached = registryCache.get(registryPath);
@@ -120,15 +124,25 @@ export function loadModelRegistry(forceFresh = false): ModelRegistry {
   }
 }
 
-function resolveRegistryPath(): string {
-  // paths.etc automatically resolves to user profile or root based on context
-  // For anonymous users without a profile, fall back to system root
+function resolveRegistryPath(username?: string): string {
+  // Use storage router to resolve user-specific or system config path
   try {
-    return path.join(paths.etc, 'models.json');
-  } catch (error) {
-    // Anonymous user without profile - use system root
-    return path.join(ROOT, 'etc', 'models.json');
+    const result = storageClient.resolvePath({
+      username,
+      category: 'config',
+      subcategory: 'etc',
+      relativePath: 'models.json',
+    });
+
+    if (result.success && result.path) {
+      return result.path;
+    }
+  } catch {
+    // Silently fall through to fallback
   }
+
+  // Fallback to system root for anonymous users without profile
+  return path.join(ROOT, 'etc', 'models.json');
 }
 
 /**
@@ -136,9 +150,10 @@ function resolveRegistryPath(): string {
  */
 export function resolveModel(
   role: ModelRole,
-  overrides?: Partial<ResolvedModel>
+  overrides?: Partial<ResolvedModel>,
+  username?: string
 ): ResolvedModel {
-  const registry = loadModelRegistry();
+  const registry = loadModelRegistry(false, username);
 
   // Get the default model ID for this role
   const defaultModelId = registry.defaults[role];
@@ -181,8 +196,8 @@ export function resolveModel(
 /**
  * Resolve a model by ID instead of role
  */
-export function resolveModelById(modelId: string): ResolvedModel {
-  const registry = loadModelRegistry();
+export function resolveModelById(modelId: string, username?: string): ResolvedModel {
+  const registry = loadModelRegistry(false, username);
 
   const modelDef = registry.models[modelId];
   if (!modelDef) {
@@ -206,9 +221,10 @@ export function resolveModelById(modelId: string): ResolvedModel {
  */
 export function resolveModelForCognitiveMode(
   cognitiveMode: string,
-  role: ModelRole
+  role: ModelRole,
+  username?: string
 ): ResolvedModel {
-  const registry = loadModelRegistry();
+  const registry = loadModelRegistry(false, username);
 
   // Check if there's a cognitive mode mapping
   if (registry.cognitiveModeMappings && registry.cognitiveModeMappings[cognitiveMode]) {
@@ -222,35 +238,35 @@ export function resolveModelForCognitiveMode(
 
     // If specific model ID provided, use it
     if (modelId && typeof modelId === 'string') {
-      return resolveModelById(modelId);
+      return resolveModelById(modelId, username);
     }
   }
 
   // Fall back to default role resolution
-  return resolveModel(role);
+  return resolveModel(role, undefined, username);
 }
 
 /**
  * List all available roles
  */
-export function listAvailableRoles(): ModelRole[] {
-  const registry = loadModelRegistry();
+export function listAvailableRoles(username?: string): ModelRole[] {
+  const registry = loadModelRegistry(false, username);
   return Object.keys(registry.defaults) as ModelRole[];
 }
 
 /**
  * List all available model IDs
  */
-export function listAvailableModels(): string[] {
-  const registry = loadModelRegistry();
+export function listAvailableModels(username?: string): string[] {
+  const registry = loadModelRegistry(false, username);
   return Object.keys(registry.models);
 }
 
 /**
  * Get all models that can fulfill a specific role
  */
-export function getModelsForRole(role: ModelRole): string[] {
-  const registry = loadModelRegistry();
+export function getModelsForRole(role: ModelRole, username?: string): string[] {
+  const registry = loadModelRegistry(false, username);
 
   // Check role hierarchy first
   if (registry.roleHierarchy && registry.roleHierarchy[role]) {
@@ -266,11 +282,11 @@ export function getModelsForRole(role: ModelRole): string[] {
 /**
  * Validate the model registry for correctness
  */
-export function validateRegistry(): { valid: boolean; errors: string[] } {
+export function validateRegistry(username?: string): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
   try {
-    const registry = loadModelRegistry(true); // Force fresh load
+    const registry = loadModelRegistry(true, username); // Force fresh load
 
     // Check that all default roles point to existing models
     for (const [role, modelId] of Object.entries(registry.defaults)) {
@@ -328,12 +344,12 @@ export function validateRegistry(): { valid: boolean; errors: string[] } {
 /**
  * Get provider configuration
  */
-export function getProviderConfig(provider: ModelProvider): {
+export function getProviderConfig(provider: ModelProvider, username?: string): {
   baseUrl: string;
   timeout: number;
   retries: number;
 } {
-  const registry = loadModelRegistry();
+  const registry = loadModelRegistry(false, username);
 
   if (registry.providers && registry.providers[provider]) {
     return registry.providers[provider];

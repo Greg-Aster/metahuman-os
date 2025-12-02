@@ -6,7 +6,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '../../paths.js';
+import { ROOT } from '../../path-builder.js';
 import { audit } from '../../audit.js';
 import { getCachedAudio, cacheAudio, getCacheStats, clearCache } from '../cache.js';
 import type { ITextToSpeechService, TTSSynthesizeOptions, TTSStatus, PiperConfig, CacheConfig } from '../interface.js';
@@ -69,7 +69,7 @@ export class PiperService implements ITextToSpeechService {
       }
 
       const child = spawn(this.config.binary, args, {
-        cwd: paths.root,
+        cwd: ROOT,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 

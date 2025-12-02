@@ -9,10 +9,19 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths, audit, auditAction, captureEvent, acquireLock, isLocked, callLLMJSON } from '@metahuman/core'
+import { storageClient, systemPaths, ROOT, audit, auditAction, captureEvent, acquireLock, isLocked, callLLMJSON } from '@metahuman/core'
 
-const INBOX = paths.inbox
-const ARCHIVE_ROOT = paths.inboxArchive
+/** Resolve inbox paths using storage router */
+function resolveInboxPaths(): { inbox: string; archive: string } {
+  const inboxResult = storageClient.resolvePath({ category: 'memory', subcategory: 'inbox' });
+  const inbox = inboxResult.success && inboxResult.path ? inboxResult.path : path.join(systemPaths.memory, 'inbox');
+  return {
+    inbox,
+    archive: path.join(inbox, '_archive'),
+  };
+}
+
+const { inbox: INBOX, archive: ARCHIVE_ROOT } = resolveInboxPaths();
 
 function ensureDirs() {
   fs.mkdirSync(INBOX, { recursive: true })
@@ -101,7 +110,7 @@ Rules: outline 5-12 items max; highlights 5-12 bullets; no markdown.`
 
 function loadIngestorConfig(): { mode: 'organize' | 'summarize' | 'hybrid'; longFileThresholdChars: number; curatedDir: string } {
   try {
-    const p = path.join(paths.etc, 'ingestor.json')
+    const p = path.join(systemPaths.etc, 'ingestor.json')
     if (fs.existsSync(p)) {
       const cfg = JSON.parse(fs.readFileSync(p, 'utf-8'))
       return {
@@ -131,7 +140,7 @@ async function ingestFileAI(filePath: string) {
   const long = raw.length >= cfg.longFileThresholdChars
   if (cfg.mode === 'organize' && long) {
     // Curate: store raw, add meta/outline/highlights sidecars, create index event
-    const curatedRoot = path.isAbsolute(cfg.curatedDir) ? cfg.curatedDir : path.join(paths.root, cfg.curatedDir)
+    const curatedRoot = path.isAbsolute(cfg.curatedDir) ? cfg.curatedDir : path.join(ROOT, cfg.curatedDir)
     fs.mkdirSync(curatedRoot, { recursive: true })
     const base = `${new Date().toISOString().slice(0,10)}-${slugify(res.title || fileName)}`
     const rawPath = path.join(curatedRoot, `${base}.txt`)
@@ -153,10 +162,10 @@ async function ingestFileAI(filePath: string) {
     // Index event
     const content = meta.abstract
     const tags = Array.from(new Set([...(res.tags || []), 'ingested', 'ai', 'curated']))
-    const links = [{ type: 'source', target: fileName }, { type: 'curated', target: path.relative(paths.root, rawPath) }]
+    const links = [{ type: 'source', target: fileName }, { type: 'curated', target: path.relative(ROOT, rawPath) }]
     const type = 'observation' as any
     const filepath = captureEvent(content, { type, tags, entities: res.entities || [], links })
-    auditAction({ skill: 'ai-ingestor:curated', inputs: { file: fileName }, success: true, output: { path: filepath, curated: path.relative(paths.root, rawPath) } })
+    auditAction({ skill: 'ai-ingestor:curated', inputs: { file: fileName }, success: true, output: { path: filepath, curated: path.relative(ROOT, rawPath) } })
   } else {
     // Short doc or summarize mode: compact event
     const content = res.summary || raw.slice(0, 400)

@@ -43,6 +43,21 @@
   let embeddingLoading = false;
   let embeddingSaving = false;
 
+  // Storage status
+  let storageStatus: {
+    authenticated: boolean;
+    username?: string;
+    status?: {
+      configured: boolean;
+      available: boolean;
+      path?: string;
+      type?: 'internal' | 'external' | 'network';
+      error?: string;
+    };
+    paths?: Record<string, { path?: string; available: boolean }>;
+  } | null = null;
+  let storageLoading = false;
+
   onMount(async () => {
     loadWelcomeModalSetting();
     loadModelInfo();
@@ -51,6 +66,7 @@
     loadAuditLoggingState();
     loadNodePipelineState();
     loadEmbeddingConfig();
+    loadStorageStatus();
   });
 
   async function loadNodePipelineState() {
@@ -373,6 +389,24 @@
     } finally {
       savingLogging = false;
     }
+  }
+
+  async function loadStorageStatus() {
+    storageLoading = true;
+    try {
+      const res = await fetch('/api/storage-status');
+      if (res.ok) {
+        storageStatus = await res.json();
+      }
+    } catch (err) {
+      console.error('[SystemSettings] Error loading storage status:', err);
+    } finally {
+      storageLoading = false;
+    }
+  }
+
+  function refreshStorageStatus() {
+    loadStorageStatus();
   }
 </script>
 
@@ -724,6 +758,152 @@
     <GPUMonitor />
   </div>
 
+  <!-- File Path Manager -->
+  <div class="setting-group" style="margin-top: 1.5rem;">
+    <div class="path-manager-header">
+      <label class="setting-label">File Path Manager</label>
+      <button
+        class="refresh-button"
+        on:click={refreshStorageStatus}
+        disabled={storageLoading}
+        title="Refresh storage status"
+      >
+        {storageLoading ? '...' : '↻'}
+      </button>
+    </div>
+
+    {#if storageLoading && !storageStatus}
+      <p class="lora-toggle-description">Loading storage status...</p>
+    {:else if storageStatus && !storageStatus.authenticated}
+      <div class="storage-warning">
+        <span class="warning-icon">⚠️</span>
+        <span>Login required to view storage paths</span>
+      </div>
+    {:else if storageStatus}
+      <!-- Storage Status Summary -->
+      <div class="storage-summary">
+        <div class="storage-status-badge" class:available={storageStatus.status?.available} class:unavailable={!storageStatus.status?.available}>
+          {storageStatus.status?.available ? '✓ Available' : '✗ Unavailable'}
+        </div>
+        <div class="storage-type-badge">
+          {#if storageStatus.status?.type === 'external'}
+            💾 External
+          {:else if storageStatus.status?.type === 'network'}
+            🌐 Network
+          {:else}
+            📁 Internal
+          {/if}
+        </div>
+        {#if storageStatus.status?.configured}
+          <span class="storage-configured-badge">Custom</span>
+        {:else}
+          <span class="storage-default-badge">Default</span>
+        {/if}
+      </div>
+
+      {#if storageStatus.status?.error}
+        <div class="storage-error">
+          <span class="error-icon">⚠️</span>
+          <span>{storageStatus.status.error}</span>
+        </div>
+      {/if}
+
+      <!-- Profile Root -->
+      <div class="path-item">
+        <span class="path-label">Profile Root</span>
+        <code class="path-value">{storageStatus.status?.path || 'Not configured'}</code>
+      </div>
+
+      <!-- Storage Paths by Category -->
+      {#if storageStatus.paths}
+        <div class="paths-grid">
+          <div class="path-category">
+            <span class="category-icon">🧠</span>
+            <span class="category-label">Memory</span>
+          </div>
+          <div class="path-details">
+            <div class="path-row">
+              <span class="path-sublabel">Episodic:</span>
+              <code class="path-code" class:unavailable={!storageStatus.paths.episodic?.available}>
+                {storageStatus.paths.episodic?.path || 'N/A'}
+              </code>
+            </div>
+            <div class="path-row">
+              <span class="path-sublabel">Procedural:</span>
+              <code class="path-code" class:unavailable={!storageStatus.paths.procedural?.available}>
+                {storageStatus.paths.procedural?.path || 'N/A'}
+              </code>
+            </div>
+          </div>
+
+          <div class="path-category">
+            <span class="category-icon">⚙️</span>
+            <span class="category-label">Config</span>
+          </div>
+          <div class="path-details">
+            <div class="path-row">
+              <span class="path-sublabel">Persona:</span>
+              <code class="path-code" class:unavailable={!storageStatus.paths.persona?.available}>
+                {storageStatus.paths.persona?.path || 'N/A'}
+              </code>
+            </div>
+            <div class="path-row">
+              <span class="path-sublabel">Settings:</span>
+              <code class="path-code" class:unavailable={!storageStatus.paths.etc?.available}>
+                {storageStatus.paths.etc?.path || 'N/A'}
+              </code>
+            </div>
+          </div>
+
+          <div class="path-category">
+            <span class="category-icon">🎤</span>
+            <span class="category-label">Voice</span>
+          </div>
+          <div class="path-details">
+            <div class="path-row">
+              <span class="path-sublabel">Training:</span>
+              <code class="path-code" class:unavailable={!storageStatus.paths.voice?.available}>
+                {storageStatus.paths.voice?.path || 'N/A'}
+              </code>
+            </div>
+          </div>
+
+          <div class="path-category">
+            <span class="category-icon">📊</span>
+            <span class="category-label">Training</span>
+          </div>
+          <div class="path-details">
+            <div class="path-row">
+              <span class="path-sublabel">Data:</span>
+              <code class="path-code" class:unavailable={!storageStatus.paths.training?.available}>
+                {storageStatus.paths.training?.path || 'N/A'}
+              </code>
+            </div>
+          </div>
+
+          <div class="path-category">
+            <span class="category-icon">📤</span>
+            <span class="category-label">Output</span>
+          </div>
+          <div class="path-details">
+            <div class="path-row">
+              <span class="path-sublabel">Artifacts:</span>
+              <code class="path-code" class:unavailable={!storageStatus.paths.output?.available}>
+                {storageStatus.paths.output?.path || 'N/A'}
+              </code>
+            </div>
+          </div>
+        </div>
+      {/if}
+
+      <p class="storage-hint">
+        Configure custom storage locations in the <strong>Storage</strong> tab.
+      </p>
+    {:else}
+      <p class="lora-toggle-description">Unable to load storage status</p>
+    {/if}
+  </div>
+
   <!-- System Info -->
   <div class="setting-group">
     <label class="setting-label" for="system-info-grid">System Info</label>
@@ -1034,5 +1214,293 @@
 
   :global(.dark) .resource-description {
     color: #9ca3af;
+  }
+
+  /* File Path Manager styles */
+  .path-manager-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+  }
+
+  .refresh-button {
+    padding: 0.25rem 0.5rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.25rem;
+    background: white;
+    color: #4b5563;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: all 0.2s;
+  }
+
+  :global(.dark) .refresh-button {
+    background: #374151;
+    border-color: #4b5563;
+    color: #d1d5db;
+  }
+
+  .refresh-button:hover:not(:disabled) {
+    background: #f3f4f6;
+    border-color: #9ca3af;
+  }
+
+  :global(.dark) .refresh-button:hover:not(:disabled) {
+    background: #4b5563;
+  }
+
+  .refresh-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .storage-summary {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+
+  .storage-status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .storage-status-badge.available {
+    background: rgba(16, 185, 129, 0.1);
+    color: #059669;
+  }
+
+  :global(.dark) .storage-status-badge.available {
+    background: rgba(52, 211, 153, 0.15);
+    color: #34d399;
+  }
+
+  .storage-status-badge.unavailable {
+    background: rgba(239, 68, 68, 0.1);
+    color: #dc2626;
+  }
+
+  :global(.dark) .storage-status-badge.unavailable {
+    background: rgba(248, 113, 113, 0.15);
+    color: #f87171;
+  }
+
+  .storage-type-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    background: rgba(124, 58, 237, 0.1);
+    color: #6d28d9;
+  }
+
+  :global(.dark) .storage-type-badge {
+    background: rgba(167, 139, 250, 0.15);
+    color: #a78bfa;
+  }
+
+  .storage-configured-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    background: rgba(59, 130, 246, 0.1);
+    color: #2563eb;
+  }
+
+  :global(.dark) .storage-configured-badge {
+    background: rgba(96, 165, 250, 0.15);
+    color: #60a5fa;
+  }
+
+  .storage-default-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    background: rgba(107, 114, 128, 0.1);
+    color: #4b5563;
+  }
+
+  :global(.dark) .storage-default-badge {
+    background: rgba(156, 163, 175, 0.15);
+    color: #9ca3af;
+  }
+
+  .storage-warning,
+  .storage-error {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border-radius: 0.375rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .storage-warning {
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    color: #d97706;
+  }
+
+  :global(.dark) .storage-warning {
+    background: rgba(251, 191, 36, 0.1);
+    border-color: rgba(251, 191, 36, 0.25);
+    color: #fbbf24;
+  }
+
+  .storage-error {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #dc2626;
+    font-size: 0.875rem;
+  }
+
+  :global(.dark) .storage-error {
+    background: rgba(248, 113, 113, 0.1);
+    border-color: rgba(248, 113, 113, 0.25);
+    color: #f87171;
+  }
+
+  .path-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background: rgba(124, 58, 237, 0.05);
+    border-radius: 0.375rem;
+    border: 1px solid rgba(124, 58, 237, 0.15);
+  }
+
+  :global(.dark) .path-item {
+    background: rgba(167, 139, 250, 0.08);
+    border-color: rgba(167, 139, 250, 0.2);
+  }
+
+  .path-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6d28d9;
+  }
+
+  :global(.dark) .path-label {
+    color: #a78bfa;
+  }
+
+  .path-value {
+    font-family: monospace;
+    font-size: 0.8125rem;
+    color: #374151;
+    word-break: break-all;
+    background: transparent;
+    padding: 0;
+  }
+
+  :global(.dark) .path-value {
+    color: #e5e7eb;
+  }
+
+  .paths-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.75rem 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .path-category {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.375rem;
+    padding-top: 0.25rem;
+  }
+
+  .category-icon {
+    font-size: 1rem;
+  }
+
+  .category-label {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: #374151;
+  }
+
+  :global(.dark) .category-label {
+    color: #d1d5db;
+  }
+
+  .path-details {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .path-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .path-sublabel {
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+
+  :global(.dark) .path-sublabel {
+    color: #9ca3af;
+  }
+
+  .path-code {
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: #4b5563;
+    word-break: break-all;
+    background: rgba(0, 0, 0, 0.03);
+    padding: 0.25rem 0.375rem;
+    border-radius: 0.25rem;
+  }
+
+  :global(.dark) .path-code {
+    color: #d1d5db;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .path-code.unavailable {
+    color: #9ca3af;
+    background: rgba(239, 68, 68, 0.05);
+  }
+
+  :global(.dark) .path-code.unavailable {
+    color: #6b7280;
+    background: rgba(248, 113, 113, 0.05);
+  }
+
+  .storage-hint {
+    font-size: 0.8125rem;
+    color: #6b7280;
+    margin: 0;
+  }
+
+  :global(.dark) .storage-hint {
+    color: #9ca3af;
+  }
+
+  .storage-hint strong {
+    color: #4b5563;
+  }
+
+  :global(.dark) .storage-hint strong {
+    color: #d1d5db;
   }
 </style>

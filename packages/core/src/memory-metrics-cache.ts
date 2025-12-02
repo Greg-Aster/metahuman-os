@@ -10,7 +10,7 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
-import { paths, getProfilePaths } from './paths.js';
+import { getProfilePaths } from './paths.js';
 import { audit } from './audit.js';
 import { readdirSync, existsSync, readFileSync, statSync } from 'fs';
 import { getIndexStatus } from './vector-index.js';

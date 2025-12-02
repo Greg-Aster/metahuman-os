@@ -6,12 +6,12 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getAuthenticatedUser, getUserOrAnonymous, paths, audit } from '@metahuman/core';
+import { getAuthenticatedUser, getUserOrAnonymous, ROOT, audit } from '@metahuman/core';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
 
 function resolvePath(relPath: string): string {
-  const absolute = path.resolve(paths.root, relPath);
-  if (!absolute.startsWith(paths.root)) {
+  const absolute = path.resolve(ROOT, relPath);
+  if (!absolute.startsWith(ROOT)) {
     throw new Error('Invalid path');
   }
   return absolute;

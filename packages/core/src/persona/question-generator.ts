@@ -9,7 +9,7 @@ import { callLLM } from '../model-router.js';
 import type { Session, Question, Answer, CategoryCoverage } from './session-manager.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '../paths.js';
+import { ROOT, systemPaths } from '../path-builder.js';
 
 /**
  * Configuration for question generation
@@ -25,7 +25,7 @@ interface GeneratorConfig {
  * Load configuration from etc/persona-generator.json
  */
 function loadConfig(): GeneratorConfig {
-  const configPath = path.join(paths.root, 'etc', 'persona-generator.json');
+  const configPath = path.join(systemPaths.etc, 'persona-generator.json');
   const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
   return {
     maxQuestionsPerSession: config.maxQuestionsPerSession || 15,
@@ -39,7 +39,7 @@ function loadConfig(): GeneratorConfig {
  * Load psychotherapist profile for context
  */
 function loadPsychotherapistProfile(): any {
-  const profilePath = path.join(paths.root, 'persona', 'profiles', 'psychotherapist.json');
+  const profilePath = path.join(ROOT, 'persona', 'profiles', 'psychotherapist.json');
   return JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
 }
 

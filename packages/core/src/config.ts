@@ -10,38 +10,66 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { paths } from './paths.js';
+import { storageClient } from './storage-client.js';
+
+// Get project root for fallback paths
+const ROOT = process.cwd().includes('/apps/site')
+  ? path.resolve(process.cwd(), '../..')
+  : process.cwd();
+
+/**
+ * Helper to resolve etc directory path via storage router
+ * Falls back to system etc/ if user context unavailable
+ */
+function resolveEtcPath(username?: string): string {
+  const result = storageClient.resolvePath({
+    username,
+    category: 'config',
+    subcategory: 'etc',
+  });
+
+  if (result.success && result.path) {
+    return result.path;
+  }
+
+  // Fall back to system etc/ for anonymous users or when storage router fails
+  const systemEtcPath = path.join(ROOT, 'etc');
+  console.log(`[config] Falling back to system etc path: ${systemEtcPath} (reason: ${result.error || 'no path returned'})`);
+  return systemEtcPath;
+}
 
 /**
  * Load user-specific config file
  *
  * Automatically resolves to the correct user's etc/ directory based on
- * current user context. Falls back to root etc/ if no context is set.
+ * username or falls back to system etc/.
  *
  * @param filename - Config filename (e.g., 'models.json', 'training.json')
  * @param defaultValue - Default value if file doesn't exist
+ * @param username - Optional username to load config for (falls back to system if not provided)
  * @returns Parsed JSON config or default value
  *
  * @example
  * ```typescript
- * // Without context - loads from etc/models.json
+ * // Without username - loads from system etc/models.json
  * const config = loadUserConfig('models.json', {});
  *
- * // With context - loads from profiles/alice/etc/models.json
- * await withUserContext({ userId: '123', username: 'alice', role: 'owner' }, () => {
- *   const config = loadUserConfig('models.json', {});
- * });
+ * // With username - loads from profiles/alice/etc/models.json
+ * const config = loadUserConfig('models.json', {}, 'alice');
  * ```
  */
-export function loadUserConfig<T = any>(filename: string, defaultValue: T): T {
-  const configPath = path.join(paths.etc, filename);
+export function loadUserConfig<T = any>(filename: string, defaultValue: T, username?: string): T {
+  const etcPath = resolveEtcPath(username);
+  const configPath = path.join(etcPath, filename);
 
   if (!fs.existsSync(configPath)) {
+    console.log(`[config] Config file not found: ${configPath} - using default value`);
     return defaultValue;
   }
 
   try {
     const raw = fs.readFileSync(configPath, 'utf8');
+    console.log(`[config] ✓ Loaded config from: ${configPath}`);
     return JSON.parse(raw) as T;
   } catch (error) {
     console.warn(`[config] Failed to load ${filename}:`, error);
@@ -52,27 +80,26 @@ export function loadUserConfig<T = any>(filename: string, defaultValue: T): T {
 /**
  * Save user-specific config file
  *
- * Automatically resolves to the correct user's etc/ directory based on
- * current user context. Falls back to root etc/ if no context is set.
+ * Saves to the user's etc/ directory if username provided,
+ * otherwise saves to system etc/.
  *
  * Creates the etc/ directory if it doesn't exist.
  *
  * @param filename - Config filename (e.g., 'models.json', 'training.json')
  * @param data - Data to save (will be JSON.stringify'd)
+ * @param username - Optional username to save config for (falls back to system if not provided)
  *
  * @example
  * ```typescript
- * // Without context - saves to etc/models.json
+ * // Without username - saves to system etc/models.json
  * saveUserConfig('models.json', { defaultModel: 'phi3:mini' });
  *
- * // With context - saves to profiles/alice/etc/models.json
- * await withUserContext({ userId: '123', username: 'alice', role: 'owner' }, () => {
- *   saveUserConfig('models.json', { defaultModel: 'phi3:mini' });
- * });
+ * // With username - saves to profiles/alice/etc/models.json
+ * saveUserConfig('models.json', { defaultModel: 'phi3:mini' }, 'alice');
  * ```
  */
-export function saveUserConfig<T = any>(filename: string, data: T): void {
-  const etcDir = paths.etc;
+export function saveUserConfig<T = any>(filename: string, data: T, username?: string): void {
+  const etcDir = resolveEtcPath(username);
   const configPath = path.join(etcDir, filename);
 
   // Ensure etc/ directory exists
@@ -83,6 +110,7 @@ export function saveUserConfig<T = any>(filename: string, data: T): void {
   try {
     const json = JSON.stringify(data, null, 2);
     fs.writeFileSync(configPath, json, 'utf8');
+    console.log(`[config] ✓ Saved config to: ${configPath}`);
   } catch (error) {
     console.error(`[config] Failed to save ${filename}:`, error);
     throw error;
@@ -93,10 +121,11 @@ export function saveUserConfig<T = any>(filename: string, data: T): void {
  * Check if user-specific config file exists
  *
  * @param filename - Config filename to check
+ * @param username - Optional username to check config for
  * @returns true if file exists
  */
-export function userConfigExists(filename: string): boolean {
-  const configPath = path.join(paths.etc, filename);
+export function userConfigExists(filename: string, username?: string): boolean {
+  const configPath = path.join(resolveEtcPath(username), filename);
   return fs.existsSync(configPath);
 }
 
@@ -244,10 +273,11 @@ export function useReasoningService(): boolean {
 /**
  * List all config files in user's etc/ directory
  *
+ * @param username - Optional username to list configs for
  * @returns Array of config filenames
  */
-export function listUserConfigs(): string[] {
-  const etcDir = paths.etc;
+export function listUserConfigs(username?: string): string[] {
+  const etcDir = resolveEtcPath(username);
 
   if (!fs.existsSync(etcDir)) {
     return [];
@@ -275,24 +305,24 @@ export interface CuriosityConfig {
 
 const curiosityConfigCache = new Map<string, CuriosityConfig>();
 
-function getCuriosityCacheKey(): string {
+function getCuriosityCacheKey(username?: string): string {
   // Cache per-user by etc path so multi-user contexts stay isolated
-  return path.join(paths.etc, 'curiosity.json');
+  return path.join(resolveEtcPath(username), 'curiosity.json');
 }
 
-export function loadCuriosityConfig(): CuriosityConfig {
-  const cacheKey = getCuriosityCacheKey();
+export function loadCuriosityConfig(username?: string): CuriosityConfig {
+  const cacheKey = getCuriosityCacheKey(username);
   const cached = curiosityConfigCache.get(cacheKey);
   if (cached) return cached;
 
-  const config = loadUserConfig<CuriosityConfig>('curiosity.json', getDefaultCuriosityConfig());
+  const config = loadUserConfig<CuriosityConfig>('curiosity.json', getDefaultCuriosityConfig(), username);
   curiosityConfigCache.set(cacheKey, config);
   return config;
 }
 
-export function saveCuriosityConfig(config: CuriosityConfig): void {
-  saveUserConfig('curiosity.json', config);
-  curiosityConfigCache.set(getCuriosityCacheKey(), config);
+export function saveCuriosityConfig(config: CuriosityConfig, username?: string): void {
+  saveUserConfig('curiosity.json', config, username);
+  curiosityConfigCache.set(getCuriosityCacheKey(username), config);
 }
 
 export function getDefaultCuriosityConfig(): CuriosityConfig {

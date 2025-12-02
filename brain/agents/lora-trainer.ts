@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { paths, audit, ProgressTracker, getProfilePaths } from '../../packages/core/src/index.js';
+import { ROOT, audit, ProgressTracker, getProfilePaths } from '../../packages/core/src/index.js';
 import dotenv from 'dotenv';
 import { ensureDirSync } from 'fs-extra';
 import fetch from 'node-fetch';
@@ -18,7 +18,7 @@ import {
 } from '../../packages/core/src/s3-upload.js';
 
 // Load environment variables from .env file
-dotenv.config({ path: path.join(paths.root, '.env') });
+dotenv.config({ path: path.join(ROOT, '.env') });
 
 const RUNPOD_API_BASE = 'https://api.runpod.io/graphql';
 
@@ -419,7 +419,7 @@ async function rsyncDownload(
 }
 
 export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise<RunRemoteTrainingResult> {
-  const logDir = path.join(paths.root, 'docs', 'run_logs', opts.DATE_STR, opts.RUN_LABEL);
+  const logDir = path.join(ROOT, 'docs', 'run_logs', opts.DATE_STR, opts.RUN_LABEL);
   ensureDirSync(logDir);
   const logFilePath = path.join(logDir, 'trainer.log');
 
@@ -877,11 +877,11 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
 
     if (trainingMode === 'full_finetune' || trainingMode === 'full') {
       trainingScriptName = 'train_full_finetune.py';
-      trainingScriptPath = path.join(paths.root, 'docker', 'runpod-trainer', 'train_full_finetune.py');
+      trainingScriptPath = path.join(ROOT, 'docker', 'runpod-trainer', 'train_full_finetune.py');
       log(logFilePath, 'FULL FINE-TUNING mode detected');
     } else {
       trainingScriptName = 'train_unsloth.py';
-      trainingScriptPath = path.join(paths.root, 'docker', 'runpod-trainer', 'train_unsloth.py');
+      trainingScriptPath = path.join(ROOT, 'docker', 'runpod-trainer', 'train_unsloth.py');
       log(logFilePath, 'LoRA training mode detected');
     }
 
@@ -1160,7 +1160,7 @@ echo "Upload complete!"
 
               try {
                 // Paths
-                const llamaCppPath = path.join(paths.root, 'vendor', 'llama.cpp');
+                const llamaCppPath = path.join(ROOT, 'vendor', 'llama.cpp');
                 const convertScript = path.join(llamaCppPath, 'convert_hf_to_gguf.py');
                 const quantizeBinary = path.join(llamaCppPath, 'llama-quantize');
                 const modelParentDir = path.dirname(opts.FINAL_ADAPTER_DIR);
@@ -1171,7 +1171,7 @@ echo "Upload complete!"
                 if (!fs.existsSync(llamaCppPath)) {
                   console.log('📦 llama.cpp not found, cloning...');
                   log(logFilePath, 'Cloning llama.cpp repository...');
-                  const vendorDir = path.join(paths.root, 'vendor');
+                  const vendorDir = path.join(ROOT, 'vendor');
                   ensureDirSync(vendorDir);
                   execSync(`git clone https://github.com/ggml-org/llama.cpp.git "${llamaCppPath}"`, {
                     stdio: 'inherit',
@@ -1191,7 +1191,7 @@ echo "Upload complete!"
                 console.log('📝 Step 1/2: Converting to FP16 GGUF...');
                 log(logFilePath, `Converting ${opts.FINAL_ADAPTER_DIR} to F16 GGUF...`);
 
-                const venvPython = path.join(paths.root, 'venv', 'bin', 'python3');
+                const venvPython = path.join(ROOT, 'venv', 'bin', 'python3');
                 const pythonCmd = fs.existsSync(venvPython) ? venvPython : 'python3';
 
                 execSync(`${pythonCmd} "${convertScript}" "${opts.FINAL_ADAPTER_DIR}" --outtype f16 --outfile "${f16Path}"`, {

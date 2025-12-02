@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { paths, audit, getActiveAdapter } from '@metahuman/core';
+import { ROOT, systemPaths, audit, getActiveAdapter } from '@metahuman/core';
 import {
   startSession,
   loadSession,
@@ -32,7 +32,7 @@ import readline from 'node:readline';
 export function personaActivate() {
   console.log('Activating persona profile (running morning-loader)...\n');
 
-  const agentPath = path.join(paths.brain, 'agents', 'morning-loader.ts');
+  const agentPath = path.join(systemPaths.brain, 'agents', 'morning-loader.ts');
 
   if (!fs.existsSync(agentPath)) {
     console.error('Error: morning-loader.ts not found');
@@ -49,7 +49,7 @@ export function personaActivate() {
 
   const child = spawn('tsx', [agentPath], {
     stdio: 'inherit',
-    cwd: paths.root,
+    cwd: ROOT,
   });
 
   child.on('error', (err) => {
@@ -71,7 +71,7 @@ export function personaStatus() {
   console.log('Persona Status\n');
 
   // Check for active profile
-  const activeProfilePath = path.join(paths.persona, 'active-profile.md');
+  const activeProfilePath = path.join(systemPaths.persona, 'active-profile.md');
   const activeProfileExists = fs.existsSync(activeProfilePath);
 
   if (activeProfileExists) {
@@ -119,7 +119,7 @@ export function personaStatus() {
   console.log('');
 
   // Check base persona
-  const personaCorePath = paths.personaCore;
+  const personaCorePath = systemPaths.personaCore;
   if (fs.existsSync(personaCorePath)) {
     const persona = JSON.parse(fs.readFileSync(personaCorePath, 'utf-8'));
     console.log(`Base Persona: ${persona.identity?.name || 'Unknown'}`);
@@ -130,7 +130,7 @@ export function personaStatus() {
 export function personaDiff() {
   console.log('Persona Diff (Base vs Active Profile)\n');
 
-  const activeProfilePath = path.join(paths.persona, 'active-profile.md');
+  const activeProfilePath = path.join(systemPaths.persona, 'active-profile.md');
 
   if (!fs.existsSync(activeProfilePath)) {
     console.log('No active profile found. Run `mh persona activate` first.');
@@ -285,7 +285,7 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
       const extracted = await extractPersonaFromSession(session);
 
       // Load existing persona
-      const currentPersona = loadExistingPersona(paths.personaCore);
+      const currentPersona = loadExistingPersona(systemPaths.personaCore);
 
       // Generate diff
       const { updated, diff } = mergePersonaDraft(currentPersona, extracted, 'merge');
@@ -312,11 +312,11 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
 
       if (applyAnswer.trim().toLowerCase() === 'yes' || applyAnswer.trim().toLowerCase() === 'y') {
         // Create backup
-        const backupPath = path.join(paths.persona, `core-backup-${Date.now()}.json`);
+        const backupPath = path.join(systemPaths.persona, `core-backup-${Date.now()}.json`);
         fs.writeFileSync(backupPath, JSON.stringify(currentPersona, null, 2), 'utf-8');
 
         // Apply changes
-        savePersona(paths.personaCore, updated);
+        savePersona(systemPaths.personaCore, updated);
 
         console.log(`\n✓ Persona updated successfully!`);
         console.log(`  Backup saved to: ${backupPath}`);
@@ -466,7 +466,7 @@ export async function personaApply(sessionId: string, strategy: MergeStrategy = 
     const extracted = await extractPersonaFromSession(session);
 
     // Load existing persona
-    const currentPersona = loadExistingPersona(paths.personaCore);
+    const currentPersona = loadExistingPersona(systemPaths.personaCore);
 
     // Generate diff
     const { updated, diff } = mergePersonaDraft(currentPersona, extracted, strategy);
@@ -476,11 +476,11 @@ export async function personaApply(sessionId: string, strategy: MergeStrategy = 
     console.log('\n' + '='.repeat(50));
 
     // Create backup
-    const backupPath = path.join(paths.persona, `core-backup-${Date.now()}.json`);
+    const backupPath = path.join(systemPaths.persona, `core-backup-${Date.now()}.json`);
     fs.writeFileSync(backupPath, JSON.stringify(currentPersona, null, 2), 'utf-8');
 
     // Apply changes
-    savePersona(paths.personaCore, updated);
+    savePersona(systemPaths.personaCore, updated);
 
     console.log(`\n✓ Persona updated successfully using "${strategy}" strategy`);
     console.log(`  Backup saved to: ${backupPath}`);

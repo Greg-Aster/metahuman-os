@@ -1,15 +1,29 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, audit } from '@metahuman/core';
+import { systemPaths, audit, getAuthenticatedUser, storageClient } from '@metahuman/core';
 import { loadModelRegistry } from '@metahuman/core/model-resolver';
 
-export const POST: APIRoute = async ({ request }) => {
+function resolveModelsPath(username: string): string {
+  const result = storageClient.resolvePath({
+    username,
+    category: 'config',
+    subcategory: 'etc',
+    relativePath: 'models.json',
+  });
+  if (result.success && result.path) {
+    return result.path;
+  }
+  return path.join(systemPaths.etc, 'models.json');
+}
+
+export const POST: APIRoute = async ({ request, cookies }) => {
   try {
+    const user = getAuthenticatedUser(cookies);
     const body = await request.json();
     const enabled = body.enabled ?? false;
 
-    const modelsPath = path.join(paths.etc, 'models.json');
+    const modelsPath = resolveModelsPath(user.username);
     const registry = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
 
     // Ensure globalSettings exists
@@ -20,6 +34,7 @@ export const POST: APIRoute = async ({ request }) => {
     // Update useAdapter flag
     registry.globalSettings.useAdapter = enabled;
 
+    fs.mkdirSync(path.dirname(modelsPath), { recursive: true });
     fs.writeFileSync(modelsPath, JSON.stringify(registry, null, 2));
 
     audit({
@@ -27,7 +42,7 @@ export const POST: APIRoute = async ({ request }) => {
       category: 'action',
       event: 'lora_toggled',
       details: { enabled, source: 'settings_ui' },
-      actor: 'user',
+      actor: user.username,
     });
 
     return new Response(
@@ -48,9 +63,10 @@ export const POST: APIRoute = async ({ request }) => {
   }
 };
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ cookies }) => {
   try {
-    const registry = loadModelRegistry();
+    const user = getAuthenticatedUser(cookies);
+    const registry = loadModelRegistry(false, user.username);
     const enabled = registry.globalSettings?.useAdapter ?? false;
 
     return new Response(

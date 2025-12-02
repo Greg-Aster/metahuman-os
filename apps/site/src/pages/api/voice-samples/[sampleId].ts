@@ -5,7 +5,7 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '@metahuman/core';
+import { storageClient } from '@metahuman/core';
 
 export const GET: APIRoute = async ({ params }) => {
   try {
@@ -19,7 +19,14 @@ export const GET: APIRoute = async ({ params }) => {
     }
 
     // Look for the audio file in the voice training directory
-    const trainingDir = paths.voiceTraining;
+    const trainingResult = storageClient.resolvePath({ category: 'voice', subcategory: 'training' });
+    if (!trainingResult.success || !trainingResult.path) {
+      return new Response(JSON.stringify({ error: 'Cannot resolve voice training path' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const trainingDir = trainingResult.path;
     const audioPath = path.join(trainingDir, `${sampleId}.wav`);
 
     if (!fs.existsSync(audioPath)) {

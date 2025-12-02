@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { paths, audit } from '../../packages/core/src/index.js';
+import { storageClient, ROOT, audit } from '../../packages/core/src/index.js';
 import { withUserContext } from '../../packages/core/src/context.js';
 import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
 
@@ -22,7 +22,8 @@ interface MergeConfig {
  * We work with .safetensors format for merging, then convert to GGUF
  */
 function findAdapters(): string[] {
-  const adaptersDir = path.join(paths.out, 'adapters');
+  const outResult = storageClient.resolvePath({ category: 'output', subcategory: 'adapters' });
+  const adaptersDir = outResult.success && outResult.path ? outResult.path : path.join(ROOT, 'out', 'adapters');
   if (!fs.existsSync(adaptersDir)) {
     return [];
   }
@@ -53,7 +54,9 @@ async function mergeAdapters(
   config: MergeConfig
 ): Promise<string> {
   const outputName = config.outputName || `merged-${Date.now()}`;
-  const outputDir = path.join(paths.out, 'adapters', outputName);
+  const outResult = storageClient.resolvePath({ category: 'output', subcategory: 'adapters' });
+  const adaptersDir = outResult.success && outResult.path ? outResult.path : path.join(ROOT, 'out', 'adapters');
+  const outputDir = path.join(adaptersDir, outputName);
   fs.mkdirSync(outputDir, { recursive: true });
 
   audit({
@@ -121,7 +124,7 @@ ${adapterPaths.map((p, i) => `  - sources:
 
   try {
     // Run mergekit to create merged Safetensors
-    const command = `cd "${paths.root}" && source venv/bin/activate && python3 -m mergekit.merge "${configPath}" "${mergedSafetensorsDir}" --allow-crimes`;
+    const command = `cd "${ROOT}" && source venv/bin/activate && python3 -m mergekit.merge "${configPath}" "${mergedSafetensorsDir}" --allow-crimes`;
     execSync(command, { stdio: 'inherit', shell: '/bin/bash' });
 
     // Convert merged Safetensors to GGUF using llama.cpp

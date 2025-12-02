@@ -32,7 +32,7 @@ import { initializeProfile } from '@metahuman/core/profile';
 import { audit } from '@metahuman/core';
 import path from 'node:path';
 import fs from 'fs-extra';
-import { paths } from '@metahuman/core/paths';
+import { ROOT } from '@metahuman/core/paths';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   try {
@@ -250,7 +250,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 
         // Remove any partially initialized profile directory
         try {
-          const profileRoot = path.join(paths.root, 'profiles', username);
+          const profileRoot = path.join(ROOT, 'profiles', username);
           await fs.remove(profileRoot);
         } catch (cleanupError) {
           console.error('[profiles/create] Failed to clean profile directory:', cleanupError);

@@ -18,7 +18,9 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import {
-  paths,
+  storageClient,
+  systemPaths,
+  ROOT,
   audit,
   loadPersonaCore,
   llm,
@@ -59,7 +61,7 @@ interface GeneratedSample {
 }
 
 function readConfig(): BuilderConfig {
-  const cfgPath = path.join(paths.etc, 'ai-dataset-builder.json');
+  const cfgPath = path.join(systemPaths.etc, 'ai-dataset-builder.json');
   const defaults: BuilderConfig = {
     maxMemories: 2000,
     chunkSize: 12,
@@ -104,7 +106,12 @@ function parseArgs() {
 }
 
 function collectEpisodicMemories(): MemoryRecord[] {
-  const root = paths.episodic;
+  const episodicResult = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
+  if (!episodicResult.success || !episodicResult.path) {
+    console.warn('[ai-dataset-builder] Cannot resolve episodic path');
+    return [];
+  }
+  const root = episodicResult.path;
   if (!fs.existsSync(root)) return [];
 
   const records: MemoryRecord[] = [];
@@ -129,7 +136,7 @@ function collectEpisodicMemories(): MemoryRecord[] {
             tags: obj.tags,
             entities: obj.entities,
             metadata: obj.metadata,
-            sourcePath: path.relative(paths.root, full),
+            sourcePath: path.relative(ROOT, full),
           });
         } catch (error) {
           console.warn(`[ai-dataset-builder] Failed to parse episodic memory ${full}: ${(error as Error).message}`);
@@ -151,7 +158,12 @@ function collectEpisodicMemories(): MemoryRecord[] {
 }
 
 function collectSemanticCurated(): MemoryRecord[] {
-  const root = path.join(paths.semantic, 'curated');
+  const semanticResult = storageClient.resolvePath({ category: 'memory', subcategory: 'semantic' });
+  if (!semanticResult.success || !semanticResult.path) {
+    console.warn('[ai-dataset-builder] Cannot resolve semantic path');
+    return [];
+  }
+  const root = path.join(semanticResult.path, 'curated');
   if (!fs.existsSync(root)) return [];
 
   const records: MemoryRecord[] = [];
@@ -169,7 +181,7 @@ function collectSemanticCurated(): MemoryRecord[] {
         id: `curated-${file}`,
         type: 'curated',
         content,
-        sourcePath: path.relative(paths.root, full),
+        sourcePath: path.relative(ROOT, full),
         tags: ['curated'],
       });
     } catch (error) {
@@ -180,7 +192,12 @@ function collectSemanticCurated(): MemoryRecord[] {
 }
 
 function collectAudioTranscripts(): MemoryRecord[] {
-  const dir = path.join(paths.memory, 'audio', 'transcripts');
+  const transcriptsResult = storageClient.resolvePath({ category: 'voice', subcategory: 'transcripts' });
+  if (!transcriptsResult.success || !transcriptsResult.path) {
+    console.warn('[ai-dataset-builder] Cannot resolve audio transcripts path');
+    return [];
+  }
+  const dir = transcriptsResult.path;
   if (!fs.existsSync(dir)) return [];
 
   const records: MemoryRecord[] = [];
@@ -197,7 +214,7 @@ function collectAudioTranscripts(): MemoryRecord[] {
         id: path.basename(file, ext),
         type: 'audio_transcript',
         content,
-        sourcePath: path.relative(paths.root, full),
+        sourcePath: path.relative(ROOT, full),
         tags: ['audio', 'transcript'],
       });
     } catch (error) {
@@ -208,7 +225,12 @@ function collectAudioTranscripts(): MemoryRecord[] {
 }
 
 function collectInboxMarkdown(): MemoryRecord[] {
-  const dir = paths.inbox;
+  const inboxResult = storageClient.resolvePath({ category: 'memory', subcategory: 'inbox' });
+  if (!inboxResult.success || !inboxResult.path) {
+    console.warn('[ai-dataset-builder] Cannot resolve inbox path');
+    return [];
+  }
+  const dir = inboxResult.path;
   if (!fs.existsSync(dir)) return [];
 
   const records: MemoryRecord[] = [];
@@ -226,7 +248,7 @@ function collectInboxMarkdown(): MemoryRecord[] {
           id: `inbox-${entry.name}`,
           type: 'inbox_note',
           content,
-          sourcePath: path.relative(paths.root, full),
+          sourcePath: path.relative(ROOT, full),
         });
       } catch (error) {
         console.warn(`[ai-dataset-builder] Failed to read inbox note ${full}: ${(error as Error).message}`);
@@ -601,7 +623,7 @@ async function main() {
   const modelArg = typeof args.model === 'string' ? args.model : undefined;
 
   const date = new Date().toISOString().slice(0, 10);
-  const defaultOutput = path.join(paths.root, config.outputDir, date, 'ai_dataset.jsonl');
+  const defaultOutput = path.join(ROOT, config.outputDir, date, 'ai_dataset.jsonl');
   const outputPath = outputArg ? path.resolve(outputArg) : defaultOutput;
 
   let lock: ReturnType<typeof acquireLock> | null = null;
@@ -609,7 +631,7 @@ async function main() {
     lock = acquireLock('ai-dataset-builder');
   } catch (error) {
     console.warn(`[ai-dataset-builder] Lock acquisition failed: ${(error as Error).message}`);
-    const lockPath = path.join(paths.run, 'locks', 'ai-dataset-builder.lock');
+    const lockPath = path.join(systemPaths.run, 'locks', 'ai-dataset-builder.lock');
     try {
       fs.unlinkSync(lockPath);
       console.warn('[ai-dataset-builder] Removed stale lock file, continuing without lock');

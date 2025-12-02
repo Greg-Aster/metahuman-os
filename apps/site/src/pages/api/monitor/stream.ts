@@ -6,7 +6,7 @@ import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  paths,
+  systemPaths,
   getAgentStatuses,
   getAgentMetrics,
   listAvailableAgents,
@@ -16,7 +16,7 @@ export const GET: APIRoute = ({ request }) => {
   const stream = new ReadableStream({
     async start(controller) {
       let currentDay = new Date().toISOString().split('T')[0];
-      let auditFile = path.join(paths.logs, 'audit', `${currentDay}.ndjson`);
+      let auditFile = path.join(systemPaths.logs, 'audit', `${currentDay}.ndjson`);
 
       let lastPosition = 0;
       let fileExists = fs.existsSync(auditFile);
@@ -78,7 +78,7 @@ export const GET: APIRoute = ({ request }) => {
         if (newDay !== currentDay) {
           // Day changed - switch to new audit file
           currentDay = newDay;
-          auditFile = path.join(paths.logs, 'audit', `${currentDay}.ndjson`);
+          auditFile = path.join(systemPaths.logs, 'audit', `${currentDay}.ndjson`);
           lastPosition = 0;
           fileExists = fs.existsSync(auditFile);
         }

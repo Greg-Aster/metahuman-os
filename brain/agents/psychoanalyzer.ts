@@ -11,7 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '@metahuman/core/paths';
+import { storageClient, systemPaths, ROOT } from '@metahuman/core';
 import { callLLM } from '@metahuman/core/model-router';
 import { audit } from '@metahuman/core/audit';
 
@@ -100,7 +100,7 @@ interface AnalysisResult {
 }
 
 async function loadConfig(): Promise<Config> {
-  const configPath = path.join(paths.root, 'etc', 'psychoanalyzer.json');
+  const configPath = path.join(systemPaths.etc, 'psychoanalyzer.json');
   if (!fs.existsSync(configPath)) {
     throw new Error('Psychoanalyzer configuration not found at etc/psychoanalyzer.json');
   }
@@ -110,7 +110,11 @@ async function loadConfig(): Promise<Config> {
 async function selectMemories(config: Config): Promise<Memory[]> {
   console.log('🔍 Selecting memories for analysis...');
 
-  const episodicPath = paths.episodic;
+  const episodicResult = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
+  const episodicPath = episodicResult.success && episodicResult.path ? episodicResult.path : null;
+  if (!episodicPath) {
+    throw new Error('Cannot resolve episodic memory path');
+  }
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - config.memorySelection.daysBack);
 
@@ -174,7 +178,11 @@ async function analyzeMemories(memories: Memory[], config: Config): Promise<Anal
   console.log('🧠 Analyzing memories with psychotherapist model...');
 
   // Load current persona for reconciliation
-  const personaPath = paths.personaCore;
+  const personaResult = storageClient.resolvePath({ category: 'config', subcategory: 'persona', relativePath: 'core.json' });
+  const personaPath = personaResult.success && personaResult.path ? personaResult.path : null;
+  if (!personaPath) {
+    throw new Error('Cannot resolve persona core path');
+  }
   const currentPersona = JSON.parse(fs.readFileSync(personaPath, 'utf-8'));
 
   // Prepare memory transcript for analysis
@@ -302,7 +310,11 @@ async function archiveCurrentPersona(config: Config): Promise<string> {
 
   console.log('📦 Archiving current persona...');
 
-  const personaPath = paths.personaCore;
+  const personaResult = storageClient.resolvePath({ category: 'config', subcategory: 'persona', relativePath: 'core.json' });
+  const personaPath = personaResult.success && personaResult.path ? personaResult.path : null;
+  if (!personaPath) {
+    throw new Error('Cannot resolve persona core path');
+  }
   const currentPersona = JSON.parse(fs.readFileSync(personaPath, 'utf-8'));
 
   // Create archives directory in user's profile
@@ -332,7 +344,7 @@ async function archiveCurrentPersona(config: Config): Promise<string> {
     console.log(`🗑️  Cleaned up ${toDelete.length} old archives`);
   }
 
-  console.log(`✅ Archived to ${path.relative(paths.root, archiveFile)}`);
+  console.log(`✅ Archived to ${path.relative(ROOT, archiveFile)}`);
 
   return archiveFile;
 }
@@ -348,7 +360,11 @@ async function updatePersona(
     return { updated: null, changes: [] };
   }
 
-  const personaPath = paths.personaCore;
+  const personaResult = storageClient.resolvePath({ category: 'config', subcategory: 'persona', relativePath: 'core.json' });
+  const personaPath = personaResult.success && personaResult.path ? personaResult.path : null;
+  if (!personaPath) {
+    throw new Error('Cannot resolve persona core path');
+  }
   const currentPersona = JSON.parse(fs.readFileSync(personaPath, 'utf-8'));
   const changes: string[] = [];
 
@@ -566,7 +582,11 @@ async function generateChangelog(
   console.log('📋 Generating changelog...');
 
   // Use profile-specific persona directory (not shared paths.persona)
-  const personaPath = paths.personaCore;
+  const personaResult = storageClient.resolvePath({ category: 'config', subcategory: 'persona', relativePath: 'core.json' });
+  const personaPath = personaResult.success && personaResult.path ? personaResult.path : null;
+  if (!personaPath) {
+    throw new Error('Cannot resolve persona core path');
+  }
   const personaDir = path.dirname(personaPath);
   const changelogPath = path.join(personaDir, config.archival.changelogPath);
   const timestamp = new Date().toISOString();
@@ -599,7 +619,7 @@ ${changes.map(c => `- ${c}`).join('\n')}
 
   fs.writeFileSync(changelogPath, changelog.replace(/---\n$/, entry), 'utf-8');
 
-  console.log(`✅ Updated changelog at ${path.relative(paths.root, changelogPath)}`);
+  console.log(`✅ Updated changelog at ${path.relative(ROOT, changelogPath)}`);
 }
 
 async function createNotificationMemory(
@@ -628,8 +648,13 @@ ${changes.map(c => `• ${c}`).join('\n')}
 Your persona continues to evolve naturally based on your lived experiences. You can review the full change history in \`persona/archives/CHANGELOG.md\` and view archived versions to see how your identity has shifted over time.`;
 
   const memoryId = `evt-${Date.now()}-psychoanalyzer-update`;
+  const episodicResult = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
+  const episodicPath = episodicResult.success && episodicResult.path ? episodicResult.path : null;
+  if (!episodicPath) {
+    throw new Error('Cannot resolve episodic memory path');
+  }
   const memoryFile = path.join(
-    paths.episodic,
+    episodicPath,
     new Date().getFullYear().toString(),
     `${memoryId}.json`
   );

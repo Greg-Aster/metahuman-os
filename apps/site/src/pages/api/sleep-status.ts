@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
-import { tryResolveProfilePath, isLocked } from '@metahuman/core'
+import { storageClient, isLocked } from '@metahuman/core'
 
 type SleepState = 'awake' | 'sleeping' | 'dreaming'
 
@@ -18,8 +18,12 @@ export const GET: APIRoute = async () => {
     let learningsContent: string | null = null
 
     // Try to resolve path - gracefully handle anonymous users
-    const pathResult = tryResolveProfilePath('proceduralOvernight')
-    if (pathResult.ok) {
+    const pathResult = storageClient.resolvePath({
+      category: 'memory',
+      subcategory: 'procedural',
+      relativePath: 'overnight',
+    })
+    if (pathResult.success && pathResult.path) {
       const overnightDir = pathResult.path
       if (fs.existsSync(overnightDir)) {
         const files = fs.readdirSync(overnightDir)

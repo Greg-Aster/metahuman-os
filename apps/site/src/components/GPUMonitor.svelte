@@ -52,16 +52,38 @@
   let configOutput = '';
   let showConfigModal = false;
 
-  onMount(() => {
+  function startPolling() {
+    if (refreshInterval) return;
     loadGPUStatus();
-    // Refresh every 5 seconds
     refreshInterval = setInterval(loadGPUStatus, 5000);
+  }
+
+  function stopPolling() {
+    if (refreshInterval) {
+      clearInterval(refreshInterval);
+      refreshInterval = null;
+    }
+  }
+
+  function handleVisibilityChange() {
+    if (document.hidden) {
+      stopPolling();
+    } else {
+      startPolling();
+    }
+  }
+
+  onMount(() => {
+    // Only poll when component mounted AND tab visible
+    if (!document.hidden) {
+      startPolling();
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
   });
 
   onDestroy(() => {
-    if (refreshInterval) {
-      clearInterval(refreshInterval);
-    }
+    stopPolling();
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
   });
 
   async function loadGPUStatus() {

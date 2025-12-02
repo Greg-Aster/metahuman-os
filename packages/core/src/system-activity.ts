@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './paths.js';
+import { systemPaths } from './path-builder.js';
 
-const activityDir = path.join(paths.logs, 'run');
+const activityDir = path.join(systemPaths.logs, 'run');
 const activityFile = path.join(activityDir, 'last-activity.json');
 
 export const ACTIVITY_STATE_FILE = activityFile;

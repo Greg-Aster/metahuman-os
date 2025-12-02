@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
-import { paths } from './paths.js'
+import { systemPaths } from './path-builder.js'
 
 export interface LockHandle {
   name: string
@@ -13,7 +13,7 @@ export interface LockHandle {
  * Acquire a simple file lock. Returns a handle or throws if already locked.
  */
 export function acquireLock(name: string): LockHandle {
-  const dir = path.join(paths.run, 'locks')
+  const dir = path.join(systemPaths.run, 'locks')
   fs.mkdirSync(dir, { recursive: true })
   const lockPath = path.join(dir, `${name}.lock`)
 
@@ -58,7 +58,7 @@ export function acquireLock(name: string): LockHandle {
 }
 
 export function isLocked(name: string): boolean {
-  const lockPath = path.join(paths.run, 'locks', `${name}.lock`)
+  const lockPath = path.join(systemPaths.run, 'locks', `${name}.lock`)
 
   if (!fs.existsSync(lockPath)) {
     return false
@@ -94,7 +94,7 @@ export function isLocked(name: string): boolean {
  * Returns the number of stale locks removed.
  */
 export function cleanupStaleLocks(): number {
-  const lockDir = path.join(paths.run, 'locks')
+  const lockDir = path.join(systemPaths.run, 'locks')
 
   if (!fs.existsSync(lockDir)) {
     return 0

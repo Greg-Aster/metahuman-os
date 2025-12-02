@@ -10,7 +10,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '../../paths.js';
+import { ROOT, systemPaths } from '../../path-builder.js';
 import { audit } from '../../audit.js';
 import { getCachedAudio, cacheAudio, getCacheStats, clearCache } from '../cache.js';
 import { stopServer } from '../server-manager.js';
@@ -368,7 +368,7 @@ export class RVCService implements ITextToSpeechService {
       console.log('[RVCService] Model path validated:', modelPath);
 
       // Python script path
-      const rvcDir = path.join(paths.root, 'external', 'applio-rvc');
+      const rvcDir = path.join(ROOT, 'external', 'applio-rvc');
       const venvPython = path.join(rvcDir, 'venv', 'bin', 'python3');
       const inferScript = path.join(rvcDir, 'infer.py');
 
@@ -598,7 +598,7 @@ export class RVCService implements ITextToSpeechService {
       return false;
     }
 
-    const rvcDir = path.join(paths.root, 'external', 'applio-rvc');
+    const rvcDir = path.join(ROOT, 'external', 'applio-rvc');
     const pythonBin = path.join(rvcDir, 'venv', 'bin', 'python3');
     const serverScript = path.join(rvcDir, 'server.py');
 
@@ -616,7 +616,7 @@ export class RVCService implements ITextToSpeechService {
     const port = Number(url.port) || 9881;
     const device = this.config.device || 'cuda';
     const speaker = this.config.speakerId || 'default';
-    const logFile = path.join(paths.run, 'rvc-server.log');
+    const logFile = path.join(systemPaths.run, 'rvc-server.log');
 
     try {
       fs.mkdirSync(path.dirname(logFile), { recursive: true });

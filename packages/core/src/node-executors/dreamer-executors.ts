@@ -8,7 +8,7 @@ import path from 'node:path';
 import { callLLM, type RouterMessage } from '../model-router.js';
 import { audit } from '../audit.js';
 import { captureEvent } from '../memory.js';
-import { getProfilePaths, paths } from '../paths.js';
+import { getProfilePaths } from '../paths.js';
 import { recordSystemActivity } from '../system-activity.js';
 import { scheduler } from '../agent-scheduler.js';
 import { appendDreamToBuffer } from '../conversation-buffer.js';
@@ -644,10 +644,14 @@ export const dreamerLearningsWriterExecutor: NodeExecutor = async (inputs, conte
   }
 
   try {
-    const profilePaths = username ? getProfilePaths(username) : null;
-    const proceduralDir = profilePaths
-      ? path.join(profilePaths.root, 'memory', 'procedural', 'overnight')
-      : paths.proceduralOvernight;
+    if (!username) {
+      return {
+        written: false,
+        error: 'No username provided - cannot write overnight learnings',
+      };
+    }
+    const profilePaths = getProfilePaths(username);
+    const proceduralDir = path.join(profilePaths.root, 'memory', 'procedural', 'overnight');
 
     // Ensure directory exists
     fs.mkdirSync(proceduralDir, { recursive: true });
