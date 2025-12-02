@@ -3,7 +3,7 @@
  * Manages chat messages, history, and server interactions
  */
 
-import { writable, derived, get } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 
 // Types
 export type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'dream' | 'reasoning';
@@ -84,45 +84,6 @@ export function useMessages(options: UseMessagesOptions) {
   }
 
   /**
-   * Load messages from server conversation buffer
-   */
-  async function loadMessagesFromServer(): Promise<ChatMessage[] | null> {
-    const mode = getMode();
-    try {
-      const response = await fetch(`/api/conversation-buffer?mode=${mode}`);
-      if (!response.ok) return null;
-
-      const data = await response.json();
-      if (Array.isArray(data.messages)) {
-        const baseTimestamp = Date.now();
-        let fallback = 0;
-        const normalized = data.messages.map((msg: Record<string, any>) => {
-          let ts: number | undefined;
-
-          if (typeof msg.timestamp === 'number') {
-            ts = msg.timestamp;
-          } else if (typeof msg.timestamp === 'string') {
-            const parsed = Date.parse(msg.timestamp);
-            ts = Number.isNaN(parsed) ? undefined : parsed;
-          }
-
-          if (typeof ts !== 'number') {
-            ts = baseTimestamp + fallback++;
-          }
-
-          return { ...msg, timestamp: ts };
-        });
-
-        console.log(`[useMessages] Loaded ${normalized.length} messages from server (mode: ${mode})`);
-        return normalized;
-      }
-    } catch (error) {
-      console.error('[useMessages] Failed to load messages from server:', error);
-    }
-    return null;
-  }
-
-  /**
    * Clear server conversation buffer
    */
   async function clearServerBuffer(): Promise<boolean> {
@@ -142,26 +103,6 @@ export function useMessages(options: UseMessagesOptions) {
     } catch (error) {
       console.error('[useMessages] Error clearing server buffer:', error);
       return false;
-    }
-  }
-
-  /**
-   * Load chat history from episodic memory
-   */
-  async function loadHistoryForMode(): Promise<void> {
-    const mode = getMode();
-    console.log(`[useMessages] loadHistoryForMode called with mode: ${mode}`);
-    try {
-      const res = await fetch(`/api/chat/history?mode=${mode}&limit=60`);
-      console.log(`[useMessages] Fetched history for mode=${mode}, status:`, res.status);
-      if (!res.ok) return;
-      const data = await res.json();
-      console.log(`[useMessages] Loaded ${data.messages?.length || 0} messages for mode=${mode}`);
-      if (Array.isArray(data.messages)) {
-        messages.set(data.messages);
-      }
-    } catch (e) {
-      console.error('[useMessages] Failed to load chat history:', e);
     }
   }
 
@@ -261,9 +202,7 @@ export function useMessages(options: UseMessagesOptions) {
 
     // Methods
     pushMessage,
-    loadMessagesFromServer,
     clearServerBuffer,
-    loadHistoryForMode,
     deleteMessage,
     clearMessages,
     selectMessage,

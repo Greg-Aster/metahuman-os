@@ -132,24 +132,50 @@ function resolveConfigPaths(rawConfig: VoiceConfig, username?: string): VoiceCon
   log.debug(' resolveConfigPaths:', { username, userContext });
 
   // Resolve template variables in paths
+  // IMPORTANT: Always use getProfilePaths which respects storage router configuration
   const resolvePath = (maybePath: string | undefined): string | undefined => {
     if (!maybePath) return maybePath;
 
+    let resolvedPath = maybePath;
+
+    // FIRST: Detect and fix hardcoded profile paths (legacy configs)
+    // Pattern: /path/to/metahuman/profiles/{username}/... should use storage router
+    const profilePathMatch = resolvedPath.match(/\/profiles\/([^/]+)\//);
+    if (profilePathMatch && username && username !== 'anonymous') {
+      // Extract the relative path after profiles/{username}/
+      const relativePathMatch = resolvedPath.match(/\/profiles\/[^/]+\/(.+)/);
+      if (relativePathMatch) {
+        const relativePath = relativePathMatch[1];
+        const profilePaths = getProfilePaths(username);
+        resolvedPath = path.join(profilePaths.root, relativePath);
+        log.debug('Redirected hardcoded profile path to storage router:', {
+          original: maybePath,
+          resolved: resolvedPath
+        });
+        return resolvedPath;
+      }
+    }
+
     // Replace {METAHUMAN_ROOT} with actual root path
-    let resolvedPath = maybePath.replace(/\{METAHUMAN_ROOT\}/g, ROOT);
+    resolvedPath = resolvedPath.replace(/\{METAHUMAN_ROOT\}/g, ROOT);
 
     // Replace {PROFILE_DIR} with user-specific profile directory
+    // Uses storage router to resolve correct path (internal, external, or encrypted)
     if (resolvedPath.includes('{PROFILE_DIR}')) {
-      // Prefer context's profilePaths (handles guest users viewing other profiles)
-      // Fallback to username parameter, then to global out directory
-      if (userContext?.profilePaths) {
-        resolvedPath = resolvedPath.replace(/\{PROFILE_DIR\}/g, userContext.profilePaths.root);
-      } else if (username) {
+      if (username && username !== 'anonymous') {
+        // Use getProfilePaths which respects storage router configuration
         const profilePaths = getProfilePaths(username);
         resolvedPath = resolvedPath.replace(/\{PROFILE_DIR\}/g, profilePaths.root);
+      } else if (userContext?.profilePaths) {
+        // Fallback to context's profilePaths if available
+        resolvedPath = resolvedPath.replace(/\{PROFILE_DIR\}/g, userContext.profilePaths.root);
       } else {
-        // Fallback: use global out directory if no user context
-        resolvedPath = resolvedPath.replace(/\{PROFILE_DIR\}/g, path.join(ROOT, 'out'));
+        // SECURITY: No silent fallback - throw error if no user context for profile paths
+        // This prevents accidentally writing sensitive data to unencrypted locations
+        throw new Error(
+          'SECURITY: Cannot resolve {PROFILE_DIR} - no authenticated user context. ' +
+          'Voice files require user authentication to ensure proper storage routing.'
+        );
       }
     }
 
@@ -184,7 +210,7 @@ function resolveConfigPaths(rawConfig: VoiceConfig, username?: string): VoiceCon
     resolved.tts.kokoro.customVoicepackPath = resolvePath(resolved.tts.kokoro.customVoicepackPath)!;
   }
 
-  // Resolve cache path
+  // Resolve cache path (resolvePath handles hardcoded profile paths automatically)
   if (resolved.cache) {
     resolved.cache.directory = resolvePath(resolved.cache.directory)!;
   }

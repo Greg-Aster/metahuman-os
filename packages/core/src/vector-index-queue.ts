@@ -3,7 +3,7 @@ import path from 'node:path';
 import { appendEventToIndex } from './vector-index.js';
 import { canWriteMemory, type EventType } from './memory-policy.js';
 import type { CognitiveModeId } from './cognitive-mode.js';
-import { systemPaths } from './paths.js';
+import { getProfilePaths, systemPaths } from './paths.js';
 
 interface QueueEvent {
   id: string;
@@ -209,8 +209,9 @@ export function scheduleIndexUpdate(
   if (options.statePath) {
     existing.stateFile = path.join(options.statePath, QUEUE_FILENAME);
   } else if (!existing.stateFile) {
-    const fallbackDir = path.join(systemPaths.profiles, userId, 'state');
-    existing.stateFile = path.join(fallbackDir, QUEUE_FILENAME);
+    // Use storage router to get correct profile location (respects external/encrypted storage)
+    const profilePaths = getProfilePaths(userId);
+    existing.stateFile = path.join(profilePaths.state, QUEUE_FILENAME);
   }
 
   existing.pending.push({ event });
