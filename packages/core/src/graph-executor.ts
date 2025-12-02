@@ -343,8 +343,8 @@ async function executeNodeByType(
 
   if (executor) {
     try {
-      // Execute with timeout protection (configurable per node, default 120 seconds)
-      const timeoutMs = node.properties?.timeout || 120000;
+      // Execute with timeout protection (configurable per node, default 5 minutes for LLM operations)
+      const timeoutMs = node.properties?.timeout || 300000;
       const startTime = Date.now();
       if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting at ${new Date().toISOString()}, timeout: ${timeoutMs}ms`);
 

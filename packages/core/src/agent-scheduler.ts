@@ -12,7 +12,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import { systemPaths, ROOT } from './path-builder.js';
 import { storageClient } from './storage-client.js';
 import { audit } from './audit.js';
-import { recordSystemActivity, readSystemActivityTimestamp } from './system-activity.js';
+import { recordSystemActivity, readSystemActivityTimestamp, readLastActiveUsername } from './system-activity.js';
 
 // ============================================================================
 // Type Definitions
@@ -110,6 +110,7 @@ export class AgentScheduler extends EventEmitter {
   private running: boolean = false;
   private activityTimer?: NodeJS.Timeout;
   private lastActivity: Date = new Date();
+  private lastActiveUsername: string | null = null;
 
   // GPU Queue Management
   private llmQueue: QueuedAgent[] = [];
@@ -724,12 +725,22 @@ export class AgentScheduler extends EventEmitter {
   private async runAgentFile(config: AgentConfig): Promise<void> {
     if (!config.agentPath) return;
 
+    // Get username from last activity or from persisted state
+    const username = this.lastActiveUsername || readLastActiveUsername();
+
     return new Promise((resolve, reject) => {
       const agentFullPath = path.join(systemPaths.agents, config.agentPath!);
+
+      // Build environment with username for user-specific agents
+      const env: Record<string, string> = { ...process.env } as Record<string, string>;
+      if (username) {
+        env.MH_TRIGGER_USERNAME = username;
+      }
 
       const child = spawn('tsx', [agentFullPath], {
         stdio: 'inherit',
         cwd: ROOT,
+        env,
       });
 
       child.on('error', reject);
@@ -826,11 +837,12 @@ export class AgentScheduler extends EventEmitter {
   }
 
   /**
-   * Record user activity
+   * Record user activity (with optional username for user-specific agent triggers)
    */
-  public recordActivity(): void {
+  public recordActivity(username?: string): void {
     this.lastActivity = new Date();
-    recordSystemActivity(this.lastActivity.getTime());
+    this.lastActiveUsername = username || null;
+    recordSystemActivity(this.lastActivity.getTime(), username);
 
     // Pause queue on user activity if configured
     if (this.config?.globalSettings.pauseQueueOnActivity && !this.queuePaused) {

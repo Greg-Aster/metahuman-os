@@ -35,7 +35,8 @@
       "size": [220, 100],
       "properties": {
         "temperature": 0.75,
-        "extractKeywords": true
+        "extractKeywords": true,
+        "timeout": 300000
       },
       "title": "Generate Thought"
     },
@@ -89,7 +90,8 @@
       "size": [220, 100],
       "properties": {
         "summaryStyle": "narrative",
-        "maxLength": 200
+        "maxLength": 200,
+        "timeout": 300000
       },
       "title": "Aggregate Thoughts"
     },
