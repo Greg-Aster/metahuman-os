@@ -85,6 +85,7 @@ KEYWORDS: [comma-separated keywords]`;
         temperature,
         repeatPenalty: 1.2,
       },
+      onProgress: context.emitProgress,
     });
 
     // Parse the response
@@ -310,6 +311,7 @@ SUMMARY: [1-sentence summary]`;
         maxTokens: 800,
         temperature: 0.6,
       },
+      onProgress: context.emitProgress,
     });
 
     const content = response.content || '';

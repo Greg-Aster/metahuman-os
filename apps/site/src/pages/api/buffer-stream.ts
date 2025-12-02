@@ -1,9 +1,15 @@
 /**
  * Conversation Buffer Stream API
  *
- * Uses Server-Sent Events (SSE) with fs.watch to push buffer updates
- * to the client without polling. When agents or chat write to the buffer,
- * connected clients receive instant updates.
+ * Uses Server-Sent Events (SSE) with fs.watch on LOCAL notification files.
+ * The actual buffer lives on encrypted storage (LUKS/NFS/FUSE), but we watch
+ * a small notification file on local disk where fs.watch() works reliably.
+ *
+ * Flow:
+ * 1. Buffer is written to encrypted storage
+ * 2. touchBufferNotification() writes to local disk
+ * 3. This API watches the local notification file
+ * 4. When notification changes, re-read buffer from encrypted storage
  *
  * Query params:
  *   - mode: 'conversation' | 'inner' (required)
@@ -11,7 +17,7 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getAuthenticatedUser, getProfilePaths } from '@metahuman/core';
+import { getAuthenticatedUser, getProfilePaths, getBufferNotificationPath } from '@metahuman/core';
 
 export const GET: APIRoute = ({ request, cookies }) => {
   // Get mode from query params
@@ -31,9 +37,21 @@ export const GET: APIRoute = ({ request, cookies }) => {
     const user = getAuthenticatedUser(cookies);
     username = user.username;
   } catch {
-    return new Response(JSON.stringify({ error: 'Not authenticated' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
+    // Return SSE error event instead of JSON so EventSource can handle it
+    // This prevents silent failures when auth cookie is missing/invalid
+    const errorStream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(`data: ${JSON.stringify({ type: 'error', error: 'Not authenticated. Please refresh the page and log in.' })}\n\n`);
+        controller.close();
+      },
+    });
+    return new Response(errorStream, {
+      status: 200, // Must be 200 for EventSource to receive the message
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
     });
   }
 
@@ -85,22 +103,26 @@ export const GET: APIRoute = ({ request, cookies }) => {
       sendEvent('connected', { mode, bufferPath });
       sendBufferUpdate();
 
-      // Watch for file changes - debounce to avoid multiple rapid updates
+      // Watch LOCAL notification file (works on all filesystems including LUKS/NFS)
+      // The notification file is touched whenever the buffer is written
+      const notifyPath = getBufferNotificationPath(username!, mode as 'conversation' | 'inner');
+      const notifyDir = path.dirname(notifyPath);
+      const notifyFilename = path.basename(notifyPath);
+
       try {
-        // Ensure state directory exists for watching
-        const stateDir = path.dirname(bufferPath);
-        if (!fs.existsSync(stateDir)) {
-          fs.mkdirSync(stateDir, { recursive: true });
+        // Ensure notification directory exists
+        if (!fs.existsSync(notifyDir)) {
+          fs.mkdirSync(notifyDir, { recursive: true });
         }
 
-        watcher = fs.watch(stateDir, (eventType, filename) => {
-          if (filename === bufferFilename) {
-            // Debounce: wait 500ms after last change before sending update
+        watcher = fs.watch(notifyDir, (eventType, filename) => {
+          if (filename === notifyFilename) {
+            // Debounce: wait 300ms after notification before reading buffer
             if (debounceTimer) clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
-              console.log(`[buffer-stream] ${mode} buffer changed, sending update`);
+              console.log(`[buffer-stream] ${mode} notification received, reading buffer`);
               sendBufferUpdate();
-            }, 500);
+            }, 300);
           }
         });
 

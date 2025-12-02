@@ -140,6 +140,132 @@ async def synthesize(request: SynthesizeRequest):
         raise HTTPException(status_code=500, detail=f"Synthesis failed: {str(e)}")
 
 
+class StreamSynthesizeRequest(BaseModel):
+    """Request schema for streaming synthesis"""
+    text: str
+    lang_code: str = "a"
+    voice: str = "af_heart"
+    speed: float = 1.0
+    custom_voicepack: Optional[str] = None
+    normalize: bool = False
+
+
+@app.post("/synthesize-stream")
+async def synthesize_stream(request: StreamSynthesizeRequest):
+    """
+    Stream speech synthesis chunk by chunk.
+    Returns Server-Sent Events (SSE) with base64-encoded WAV chunks.
+
+    Each event contains:
+    - data: JSON with {chunk_index, total_text_length, audio_base64, is_final}
+    """
+    from fastapi.responses import StreamingResponse
+    import base64
+    import numpy as np
+
+    if pipeline is None:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    async def generate_chunks():
+        try:
+            voice_to_use = request.custom_voicepack if (request.custom_voicepack and Path(request.custom_voicepack).exists()) else request.voice
+
+            print(f"[Kokoro Server] Streaming synthesis started:")
+            print(f"  text length: {len(request.text)}")
+            print(f"  voice: {voice_to_use}")
+
+            # Split text into sentences for better chunking
+            import re
+            # Split on sentence boundaries but keep the punctuation
+            sentences = re.split(r'(?<=[.!?])\s+', request.text)
+            sentences = [s.strip() for s in sentences if s.strip()]
+
+            print(f"[Kokoro Server] Split into {len(sentences)} sentences")
+
+            chunk_index = 0
+            sr = 24000  # Kokoro sample rate
+
+            for i, sentence in enumerate(sentences):
+                if not sentence:
+                    continue
+
+                print(f"[Kokoro Server] Processing sentence {i+1}/{len(sentences)}: {sentence[:30]}...")
+
+                # Generate audio for this sentence
+                gen = pipeline(
+                    sentence,
+                    voice=voice_to_use,
+                    speed=request.speed,
+                    split_pattern=r'\n+'
+                )
+
+                # Collect chunks for this sentence
+                audio_chunks = []
+                for result in gen:
+                    audio_tensor = result.output.audio
+                    audio_np = audio_tensor.cpu().numpy()
+                    audio_chunks.append(audio_np)
+
+                if not audio_chunks:
+                    continue
+
+                # Concatenate audio for this sentence
+                audio = np.concatenate(audio_chunks) if len(audio_chunks) > 1 else audio_chunks[0]
+
+                # Normalize if requested
+                if request.normalize:
+                    max_val = np.abs(audio).max()
+                    if max_val > 0:
+                        target_peak = 0.707
+                        gain = target_peak / max_val
+                        audio = audio * gain
+
+                # Convert to WAV bytes
+                buffer = io.BytesIO()
+                sf.write(buffer, audio, sr, format='WAV')
+                buffer.seek(0)
+                wav_bytes = buffer.read()
+
+                # Encode as base64
+                audio_base64 = base64.b64encode(wav_bytes).decode('utf-8')
+
+                # Create SSE event
+                is_final = (i == len(sentences) - 1)
+                event_data = json.dumps({
+                    "chunk_index": chunk_index,
+                    "sentence_index": i,
+                    "total_sentences": len(sentences),
+                    "audio_base64": audio_base64,
+                    "audio_size": len(wav_bytes),
+                    "is_final": is_final
+                })
+
+                yield f"data: {event_data}\n\n"
+                chunk_index += 1
+
+                print(f"[Kokoro Server] Sent chunk {chunk_index}: {len(wav_bytes)} bytes")
+
+            # Send completion event
+            yield f"data: {json.dumps({'event': 'complete', 'total_chunks': chunk_index})}\n\n"
+            print(f"[Kokoro Server] Streaming complete: {chunk_index} chunks sent")
+
+        except Exception as e:
+            import traceback
+            print(f"[Kokoro Server] Streaming ERROR: {e}")
+            traceback.print_exc()
+            yield f"data: {json.dumps({'event': 'error', 'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate_chunks(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
 @app.get("/voices")
 async def list_voices():
     """List available voices"""
