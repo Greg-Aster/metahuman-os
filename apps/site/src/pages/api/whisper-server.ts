@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { getAuthenticatedUser, getProfilePaths, getUserOrAnonymous, systemPaths } from '@metahuman/core';
+import { getAuthenticatedUser, getUserOrAnonymous, systemPaths, storageClient } from '@metahuman/core';
 
 /**
  * GET: Check Whisper server status
@@ -18,9 +18,12 @@ const getHandler: APIRoute = async ({ cookies }) => {
       );
     }
 
-    const profilePaths = getProfilePaths(user.username);
+    // Use storage router to get correct profile path
+    const storageResult = storageClient.getProfileRoot(user.username);
     const rootPaths = systemPaths;
-    const voiceConfigPath = profilePaths.voiceConfig;
+    const voiceConfigPath = storageResult.success && storageResult.profileRoot
+      ? path.join(storageResult.profileRoot, 'etc', 'voice.json')
+      : path.join(systemPaths.etc, 'voice.json');
     if (!fs.existsSync(voiceConfigPath)) {
       return new Response(
         JSON.stringify({ running: false, error: 'Voice config not found' }),
@@ -78,8 +81,15 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
     const { action } = body;
 
     const rootDir = systemPaths.root;
-    const profilePaths = getProfilePaths(user.username);
-    const voiceConfigPath = profilePaths.voiceConfig;
+    // Use storage router to get correct profile path
+    const storageResult = storageClient.getProfileRoot(user.username);
+    if (!storageResult.success || !storageResult.profileRoot) {
+      return new Response(
+        JSON.stringify({ error: 'Failed to resolve profile storage' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    const voiceConfigPath = path.join(storageResult.profileRoot, 'etc', 'voice.json');
 
     if (!fs.existsSync(voiceConfigPath)) {
       return new Response(

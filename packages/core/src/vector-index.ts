@@ -69,6 +69,26 @@ function readJSON<T>(p: string): T | null {
   }
 }
 
+// ============================================================================
+// In-Memory Index Cache (prevents 59MB JSON parse on every query)
+// ============================================================================
+interface IndexCacheEntry {
+  path: string
+  mtimeMs: number
+  index: VectorIndexFile
+  loadedAt: number
+}
+
+let indexCache: IndexCacheEntry | null = null
+
+/**
+ * Clear the index cache (call after rebuilding index)
+ */
+export function clearIndexCache(): void {
+  indexCache = null
+  console.log('[vector-index] Index cache cleared')
+}
+
 function walkFiles(dir: string, filter: (p: string) => boolean): string[] {
   const out: string[] = []
   const go = (d: string) => {
@@ -206,29 +226,85 @@ export async function buildMemoryIndex(options: {
 
   const dest = indexFilePath(model)
   fs.writeFileSync(dest, JSON.stringify(out, null, 2))
+
+  // Clear cache so next query loads fresh index
+  clearIndexCache()
+
   return dest
 }
 
 export function loadIndex(model = 'nomic-embed-text'): VectorIndexFile | null {
   const p = indexFilePath(model)
-  return readJSON<VectorIndexFile>(p)
+
+  // Check cache validity
+  if (indexCache && indexCache.path === p) {
+    try {
+      const stats = fs.statSync(p)
+      if (stats.mtimeMs === indexCache.mtimeMs) {
+        // Cache hit - file hasn't changed
+        return indexCache.index
+      }
+      console.log('[vector-index] Index file changed, reloading...')
+    } catch {
+      // File may have been deleted
+      indexCache = null
+    }
+  }
+
+  // Cache miss - load from disk
+  const loadStart = Date.now()
+  const index = readJSON<VectorIndexFile>(p)
+
+  if (index) {
+    try {
+      const stats = fs.statSync(p)
+      indexCache = {
+        path: p,
+        mtimeMs: stats.mtimeMs,
+        index,
+        loadedAt: Date.now(),
+      }
+      const loadTime = Date.now() - loadStart
+      console.log(`[vector-index] ✓ Index loaded and cached (${index.meta.items} items, ${loadTime}ms)`)
+    } catch {
+      // Couldn't get stats, still return the index
+    }
+  }
+
+  return index
 }
 
 export async function queryIndex(
   query: string,
   options: { model?: string; provider?: 'ollama' | 'mock'; topK?: number } = {}
 ): Promise<Array<{ item: VectorIndexItem; score: number }>> {
+  const totalStart = Date.now()
   const modelParam = options.model || 'nomic-embed-text'
   const topK = options.topK ?? 10
+
+  // Step 1: Load index (cached after first call)
+  const loadStart = Date.now()
   const idx = loadIndex(modelParam)
+  const loadTime = Date.now() - loadStart
   if (!idx) throw new Error('No index found. Run: mh index build')
 
   const model = options.model || idx.meta.model
   const provider = options.provider || idx.meta.provider
 
+  // Step 2: Generate embedding for query
+  const embedStart = Date.now()
   const qvec = await embedText(query, { provider, model })
+  const embedTime = Date.now() - embedStart
+
+  // Step 3: Compute similarity scores
+  const scoreStart = Date.now()
   const scored = idx.data.map(item => ({ item, score: cosineSimilarity(qvec, item.vector) }))
   scored.sort((a, b) => b.score - a.score)
+  const scoreTime = Date.now() - scoreStart
+
+  const totalTime = Date.now() - totalStart
+  console.log(`[vector-index] queryIndex: load=${loadTime}ms, embed=${embedTime}ms, score=${scoreTime}ms, total=${totalTime}ms (${idx.data.length} items)`)
+
   return scored.slice(0, topK)
 }
 
@@ -281,5 +357,13 @@ export async function appendEventToIndex(event: {
   idx.data.push({ id: event.id, path: event.path || '', type: 'episodic', timestamp: event.timestamp, text, vector })
   idx.meta.items = idx.data.length
   fs.writeFileSync(indexFilePath(model), JSON.stringify(idx, null, 2))
+
+  // Update cache in place (avoid full reload for single append)
+  if (indexCache && indexCache.path === indexFilePath(model)) {
+    const stats = fs.statSync(indexFilePath(model))
+    indexCache.mtimeMs = stats.mtimeMs
+    // idx is already the cached index, so it's updated in place
+  }
+
   return true
 }

@@ -1,14 +1,14 @@
 {
-  "version": "1.0",
-  "name": "Dual Consciousness Mode",
-  "description": "Full operator pipeline with ReAct reasoning loop, semantic memory grounding, and proactive agents",
+  "version": "2.4",
+  "name": "Dual Consciousness Mode (Intelligent Memory)",
+  "description": "AI-driven memory routing - orchestrator determines tier, memory_router handles retrieval",
   "cognitiveMode": "dual",
-  "last_modified": "2025-11-18",
+  "last_modified": "2025-12-02",
   "nodes": [
     {
       "id": 1,
       "type": "cognitive/user_input",
-      "pos": [50, 100],
+      "pos": [50, 200],
       "size": [180, 60],
       "properties": {
         "message": ""
@@ -18,46 +18,71 @@
     {
       "id": 2,
       "type": "cognitive/session_context",
-      "pos": [50, 200],
+      "pos": [50, 300],
       "size": [180, 60],
       "title": "Session Context"
     },
     {
       "id": 3,
       "type": "cognitive/system_settings",
-      "pos": [50, 300],
+      "pos": [50, 400],
       "size": [180, 80],
       "title": "System Settings"
     },
     {
+      "id": 24,
+      "type": "cognitive/orchestrator_llm",
+      "pos": [280, 180],
+      "size": [200, 100],
+      "properties": {
+        "model": "orchestrator",
+        "temperature": 0.1,
+        "intentClassification": true,
+        "permissionCheck": true,
+        "timeout": 300000
+      },
+      "title": "Intent Orchestrator"
+    },
+    {
+      "id": 25,
+      "type": "cognitive/smart_router",
+      "pos": [530, 180],
+      "size": [200, 120],
+      "properties": {
+        "routeOnComplexity": true,
+        "simpleThreshold": 0.3
+      },
+      "title": "Smart Router"
+    },
+    {
       "id": 4,
       "type": "cognitive/auth_check",
-      "pos": [280, 220],
+      "pos": [280, 320],
       "size": [180, 60],
       "title": "Auth Check"
     },
     {
       "id": 5,
       "type": "cognitive/operator_eligibility",
-      "pos": [280, 340],
+      "pos": [530, 380],
       "size": [200, 80],
       "title": "Operator Eligibility"
     },
     {
       "id": 6,
-      "type": "cognitive/semantic_search",
-      "pos": [520, 100],
-      "size": [180, 80],
+      "type": "cognitive/memory_router",
+      "pos": [770, 100],
+      "size": [200, 100],
       "properties": {
-        "similarityThreshold": 0.6,
-        "maxResults": 8
+        "topK": 8,
+        "threshold": 0.5
       },
-      "title": "Semantic Search"
+      "title": "Memory Router"
     },
     {
       "id": 7,
       "type": "cognitive/conversation_history",
-      "pos": [520, 220],
+      "pos": [770, 220],
       "size": [200, 80],
       "properties": {
         "mode": "conversation",
@@ -68,7 +93,7 @@
     {
       "id": 8,
       "type": "cognitive/context_builder",
-      "pos": [760, 160],
+      "pos": [1010, 160],
       "size": [180, 80],
       "properties": {
         "searchDepth": "normal",
@@ -78,45 +103,10 @@
       "title": "Context Builder"
     },
     {
-      "id": 9,
-      "type": "cognitive/react_planner",
-      "pos": [1000, 160],
-      "size": [180, 80],
-      "properties": {
-        "model": "default.coder",
-        "temperature": 0.2
-      },
-      "title": "ReAct Planner"
-    },
-    {
-      "id": 10,
-      "type": "cognitive/skill_executor",
-      "pos": [1240, 160],
-      "size": [180, 80],
-      "title": "Skill Executor"
-    },
-    {
-      "id": 11,
-      "type": "cognitive/observation_formatter",
-      "pos": [1240, 280],
-      "size": [200, 80],
-      "properties": {
-        "mode": "narrative"
-      },
-      "title": "Observation Formatter"
-    },
-    {
-      "id": 12,
-      "type": "cognitive/completion_checker",
-      "pos": [1000, 320],
-      "size": [180, 60],
-      "title": "Completion Checker"
-    },
-    {
-      "id": 13,
+      "id": 17,
       "type": "cognitive/response_synthesizer",
-      "pos": [1480, 160],
-      "size": [200, 80],
+      "pos": [1300, 180],
+      "size": [200, 100],
       "properties": {
         "model": "persona",
         "style": "default"
@@ -124,67 +114,140 @@
       "title": "Response Synthesizer"
     },
     {
-      "id": 14,
-      "type": "cognitive/memory_capture",
-      "pos": [1720, 100],
-      "size": [180, 100],
-      "title": "Memory Capture"
-    },
-    {
-      "id": 15,
-      "type": "cognitive/audit_logger",
-      "pos": [1720, 240],
-      "size": [180, 60],
-      "title": "Audit Logger"
-    },
-    {
-      "id": 16,
-      "type": "cognitive/stream_writer",
-      "pos": [1960, 160],
-      "size": [180, 60],
-      "title": "Stream Writer"
-    },
-    {
-      "id": 17,
+      "id": 18,
       "type": "cognitive/cot_stripper",
-      "pos": [1480, 40],
-      "size": [200, 80],
+      "pos": [1550, 180],
+      "size": [200, 60],
       "title": "CoT Stripper"
     },
     {
-      "id": 18,
+      "id": 19,
       "type": "cognitive/safety_validator",
-      "pos": [1720, 40],
-      "size": [200, 80],
+      "pos": [1800, 180],
+      "size": [200, 60],
       "properties": {
         "threshold": 0.75
       },
       "title": "Safety Validator"
     },
     {
-      "id": 19,
+      "id": 20,
       "type": "cognitive/response_refiner",
-      "pos": [1720, 160],
-      "size": [200, 80],
+      "pos": [2050, 180],
+      "size": [200, 60],
       "title": "Response Refiner"
+    },
+    {
+      "id": 21,
+      "type": "cognitive/memory_capture",
+      "pos": [2300, 100],
+      "size": [180, 80],
+      "title": "Memory Capture"
+    },
+    {
+      "id": 22,
+      "type": "cognitive/audit_logger",
+      "pos": [2300, 220],
+      "size": [180, 60],
+      "title": "Audit Logger"
+    },
+    {
+      "id": 23,
+      "type": "cognitive/stream_writer",
+      "pos": [2540, 160],
+      "size": [180, 60],
+      "title": "Stream Writer"
+    },
+    {
+      "id": 29,
+      "type": "cognitive/persona_loader",
+      "pos": [1050, 80],
+      "size": [180, 60],
+      "title": "Persona Loader"
+    },
+    {
+      "id": 30,
+      "type": "cognitive/persona_formatter",
+      "pos": [1200, 80],
+      "size": [200, 80],
+      "properties": {
+        "includePersonality": true,
+        "includeValues": true,
+        "includeGoals": true
+      },
+      "title": "Persona Formatter"
+    },
+    {
+      "id": 26,
+      "type": "cognitive/buffer_manager",
+      "pos": [770, 340],
+      "size": [180, 80],
+      "title": "Buffer Manager"
     }
   ],
   "links": [
+    {
+      "id": 101,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 24,
+      "target_slot": 0,
+      "type": "string",
+      "comment": "User message → Orchestrator"
+    },
+    {
+      "id": 102,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 24,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "System settings → Orchestrator (for permission context)"
+    },
+    {
+      "id": 103,
+      "origin_id": 24,
+      "origin_slot": 0,
+      "target_id": 25,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Orchestrator analysis → Smart Router"
+    },
+    {
+      "id": 108,
+      "origin_id": 24,
+      "origin_slot": 0,
+      "target_id": 17,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Orchestrator guidance → Response Synthesizer"
+    },
     {
       "id": 1,
       "origin_id": 1,
       "origin_slot": 0,
       "target_id": 5,
       "target_slot": 2,
-      "type": "string"
+      "type": "string",
+      "comment": "User message → Operator Eligibility"
     },
     {
       "id": 2,
-      "origin_id": 1,
+      "origin_id": 25,
       "origin_slot": 0,
       "target_id": 6,
       "target_slot": 0,
-      "type": "string"
+      "type": "object",
+      "comment": "Smart Router memoryHints → Memory Router (needsMemory, memoryTier, memoryQuery)"
+    },
+    {
+      "id": 200,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "User message → Memory Router (fallback query)"
     },
     {
       "id": 3,
@@ -192,7 +255,8 @@
       "origin_slot": 1,
       "target_id": 2,
       "target_slot": 0,
-      "type": "string"
+      "type": "string",
+      "comment": "Session ID → Session Context"
     },
     {
       "id": 4,
@@ -200,7 +264,8 @@
       "origin_slot": 1,
       "target_id": 7,
       "target_slot": 0,
-      "type": "string"
+      "type": "string",
+      "comment": "Session ID → Conversation History"
     },
     {
       "id": 5,
@@ -208,7 +273,8 @@
       "origin_slot": 1,
       "target_id": 4,
       "target_slot": 0,
-      "type": "user"
+      "type": "user",
+      "comment": "User context → Auth Check"
     },
     {
       "id": 6,
@@ -216,7 +282,8 @@
       "origin_slot": 0,
       "target_id": 8,
       "target_slot": 2,
-      "type": "array"
+      "type": "array",
+      "comment": "Conversation history → Context Builder"
     },
     {
       "id": 7,
@@ -224,7 +291,8 @@
       "origin_slot": 0,
       "target_id": 5,
       "target_slot": 0,
-      "type": "cognitiveMode"
+      "type": "cognitiveMode",
+      "comment": "Cognitive mode → Operator Eligibility"
     },
     {
       "id": 8,
@@ -232,15 +300,17 @@
       "origin_slot": 0,
       "target_id": 8,
       "target_slot": 1,
-      "type": "cognitiveMode"
+      "type": "cognitiveMode",
+      "comment": "Cognitive mode → Context Builder"
     },
     {
       "id": 9,
       "origin_id": 3,
       "origin_slot": 0,
-      "target_id": 14,
+      "target_id": 21,
       "target_slot": 2,
-      "type": "cognitiveMode"
+      "type": "cognitiveMode",
+      "comment": "Cognitive mode → Memory Capture"
     },
     {
       "id": 10,
@@ -248,7 +318,8 @@
       "origin_slot": 0,
       "target_id": 5,
       "target_slot": 1,
-      "type": "boolean"
+      "type": "boolean",
+      "comment": "Auth result → Operator Eligibility"
     },
     {
       "id": 11,
@@ -256,7 +327,8 @@
       "origin_slot": 0,
       "target_id": 8,
       "target_slot": 0,
-      "type": "array"
+      "type": "array",
+      "comment": "Search results → Context Builder"
     },
     {
       "id": 12,
@@ -264,151 +336,134 @@
       "origin_slot": 0,
       "target_id": 8,
       "target_slot": 2,
-      "type": "array"
+      "type": "array",
+      "comment": "Conversation history → Context Builder"
     },
     {
-      "id": 13,
-      "origin_id": 8,
-      "origin_slot": 0,
-      "target_id": 9,
-      "target_slot": 1,
-      "type": "context"
-    },
-    {
-      "id": 14,
+      "id": 29,
       "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 9,
-      "target_slot": 0,
-      "type": "string"
-    },
-    {
-      "id": 15,
-      "origin_id": 9,
-      "origin_slot": 1,
-      "target_id": 10,
-      "target_slot": 1,
-      "type": "object"
-    },
-    {
-      "id": 16,
-      "origin_id": 9,
-      "origin_slot": 1,
-      "target_id": 10,
-      "target_slot": 0,
-      "type": "object"
-    },
-    {
-      "id": 17,
-      "origin_id": 10,
-      "origin_slot": 0,
-      "target_id": 11,
-      "target_slot": 0,
-      "type": "skill_result"
-    },
-    {
-      "id": 18,
-      "origin_id": 11,
-      "origin_slot": 0,
-      "target_id": 12,
-      "target_slot": 1,
-      "type": "string"
-    },
-    {
-      "id": 19,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 12,
-      "target_slot": 0,
-      "type": "string"
-    },
-    {
-      "id": 20,
-      "origin_id": 12,
-      "origin_slot": 0,
-      "target_id": 13,
-      "target_slot": 1,
-      "type": "boolean"
-    },
-    {
-      "id": 21,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 13,
-      "target_slot": 0,
-      "type": "string"
-    },
-    {
-      "id": 22,
-      "origin_id": 8,
-      "origin_slot": 0,
-      "target_id": 13,
-      "target_slot": 2,
-      "type": "context"
-    },
-    {
-      "id": 23,
-      "origin_id": 13,
       "origin_slot": 0,
       "target_id": 17,
-      "target_slot": 0,
-      "type": "string"
+      "target_slot": 1,
+      "type": "string",
+      "comment": "User message → Response Synthesizer"
     },
     {
-      "id": 24,
-      "origin_id": 1,
+      "id": 30,
+      "origin_id": 8,
       "origin_slot": 0,
-      "target_id": 14,
-      "target_slot": 0,
-      "type": "string"
+      "target_id": 17,
+      "target_slot": 2,
+      "type": "context",
+      "comment": "Context → Response Synthesizer"
     },
     {
-      "id": 25,
+      "id": 31,
       "origin_id": 17,
       "origin_slot": 0,
       "target_id": 18,
       "target_slot": 0,
-      "type": "string"
+      "type": "string",
+      "comment": "Response → CoT Stripper"
     },
     {
-      "id": 26,
+      "id": 32,
       "origin_id": 18,
       "origin_slot": 0,
       "target_id": 19,
       "target_slot": 0,
-      "type": "string"
+      "type": "string",
+      "comment": "Cleaned response → Safety Validator"
     },
     {
-      "id": 27,
+      "id": 33,
       "origin_id": 19,
       "origin_slot": 0,
-      "target_id": 14,
-      "target_slot": 1,
-      "type": "string"
-    },
-    {
-      "id": 28,
-      "origin_id": 19,
-      "origin_slot": 0,
-      "target_id": 16,
+      "target_id": 20,
       "target_slot": 0,
-      "type": "string"
+      "type": "string",
+      "comment": "Validated response → Response Refiner"
     },
     {
-      "id": 29,
+      "id": 34,
       "origin_id": 19,
-      "origin_slot": 0,
-      "target_id": 15,
-      "target_slot": 1,
-      "type": "object"
-    },
-    {
-      "id": 30,
-      "origin_id": 18,
       "origin_slot": 3,
-      "target_id": 19,
+      "target_id": 20,
       "target_slot": 1,
-      "type": "object"
+      "type": "object",
+      "comment": "Safety metadata → Response Refiner"
+    },
+    {
+      "id": 35,
+      "origin_id": 20,
+      "origin_slot": 0,
+      "target_id": 21,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "Refined response → Memory Capture"
+    },
+    {
+      "id": 36,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 21,
+      "target_slot": 0,
+      "type": "string",
+      "comment": "User message → Memory Capture"
+    },
+    {
+      "id": 37,
+      "origin_id": 20,
+      "origin_slot": 0,
+      "target_id": 23,
+      "target_slot": 0,
+      "type": "string",
+      "comment": "Refined response → Stream Writer"
+    },
+    {
+      "id": 38,
+      "origin_id": 20,
+      "origin_slot": 0,
+      "target_id": 22,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Refined response → Audit Logger"
+    },
+    {
+      "id": 109,
+      "origin_id": 29,
+      "origin_slot": 0,
+      "target_id": 30,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Persona data → Persona Formatter"
+    },
+    {
+      "id": 110,
+      "origin_id": 30,
+      "origin_slot": 0,
+      "target_id": 17,
+      "target_slot": 4,
+      "type": "string",
+      "comment": "Formatted persona → Response Synthesizer (for persona voice synthesis)"
+    },
+    {
+      "id": 111,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 26,
+      "target_slot": 0,
+      "type": "array",
+      "comment": "Conversation history → Buffer Manager"
+    },
+    {
+      "id": 112,
+      "origin_id": 20,
+      "origin_slot": 0,
+      "target_id": 26,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "Refined response → Buffer Manager (assistant message)"
     }
   ],
   "config": {},

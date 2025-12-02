@@ -490,8 +490,10 @@
     display: inline;
   }
 
+  /* Mic button STAYS VISIBLE on mobile - uses native STT (no Whisper bandwidth) */
+  /* Long-press engages continuous conversation mode */
   .mic-btn {
-    display: none;
+    padding: 0.6rem;
   }
 
   .input-wrapper {
