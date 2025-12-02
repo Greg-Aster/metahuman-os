@@ -5,6 +5,10 @@
  * Used by CLI, web UI, agents, and skills
  */
 
+// IMPORTANT: users.ts must be imported BEFORE path-builder to ensure
+// profile storage config registration via dependency injection
+export * from './users';
+
 export * from './path-builder';  // Core path functions (no dependencies)
 export * from './paths';  // Context-aware paths proxy
 export * from './identity';
@@ -64,7 +68,7 @@ export * from './persona/cleanup';
 export * from './auth';  // Simple auth helpers (replaces middleware)
 export * from './context';  // DEPRECATED - will be removed
 export * from './config';
-export * from './users';
+// users.ts exported at top of file (must load before path-builder)
 export * from './sessions';
 export * from './profile';
 
