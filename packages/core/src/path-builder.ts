@@ -62,9 +62,20 @@ export function registerProfileStorageConfigGetter(
 
 /**
  * Get profile storage config for a user
- * Returns undefined if users module hasn't registered yet (during bootstrap)
+ * If the getter hasn't been registered yet, we dynamically import users.ts
+ * to ensure the registration happens (this handles tree-shaking issues)
  */
 function getProfileStorageConfigLazy(username: string): ProfileStorageConfigFull | undefined {
+  // If getter isn't registered, force-load users.ts (handles tree-shaking)
+  if (!_getProfileStorageConfig) {
+    try {
+      // Dynamic require to force users.ts to load and register the getter
+      require('./users.js');
+    } catch {
+      // During bootstrap or if users.ts fails to load, fall back gracefully
+      return undefined;
+    }
+  }
   return _getProfileStorageConfig?.(username);
 }
 

@@ -472,30 +472,60 @@
         vadSilenceTimer = null;
       }
 
-      // Stop recorder
-      if (vadMediaRecorder.state !== 'inactive') {
-        vadMediaRecorder.stop();
-      }
-
-      // Stop all tracks
-      vadMediaRecorder.stream.getTracks().forEach(track => track.stop());
-
-      // Check minimum duration
+      // Check minimum duration before stopping
       const duration = vadStartTime ? (Date.now() - vadStartTime) : 0;
       const minDuration = config.stt.vad.minDuration ?? 500;
 
       if (duration < minDuration) {
         console.log(`[VAD Test] Recording too short (${duration}ms), ignoring`);
         vadTestError = `Recording too short (${duration}ms). Minimum: ${minDuration}ms`;
+        // Still need to stop the recorder
+        if (vadMediaRecorder.state !== 'inactive') {
+          vadMediaRecorder.stop();
+        }
+        vadMediaRecorder.stream.getTracks().forEach(track => track.stop());
         return;
       }
 
-      // Create audio blob
-      const blob = new Blob(vadAudioChunks, { type: 'audio/webm' });
+      // Wait for recorder to stop and data to be available
+      // ondataavailable fires asynchronously after stop()
+      const audioBlob = await new Promise<Blob>((resolve, reject) => {
+        const recorder = vadMediaRecorder!;
+        const chunks = vadAudioChunks;
+
+        // Set up onstop handler to create blob after all data is collected
+        recorder.onstop = () => {
+          console.log(`[VAD Test] Recorder stopped, ${chunks.length} chunks collected`);
+          if (chunks.length === 0) {
+            reject(new Error('No audio data recorded'));
+            return;
+          }
+          const blob = new Blob(chunks, { type: 'audio/webm' });
+          console.log(`[VAD Test] Created blob: ${blob.size} bytes`);
+          resolve(blob);
+        };
+
+        // Stop recorder if not already stopped
+        if (recorder.state !== 'inactive') {
+          recorder.stop();
+        } else {
+          // Already stopped, create blob from existing chunks
+          if (chunks.length === 0) {
+            reject(new Error('No audio data recorded'));
+            return;
+          }
+          const blob = new Blob(chunks, { type: 'audio/webm' });
+          resolve(blob);
+        }
+      });
+
+      // Stop all tracks
+      vadMediaRecorder.stream.getTracks().forEach(track => track.stop());
 
       // Send to STT
       vadTestTranscription = 'Transcribing...';
-      const buf = await blob.arrayBuffer();
+      const buf = await audioBlob.arrayBuffer();
+      console.log(`[VAD Test] Sending ${buf.byteLength} bytes to STT`);
 
       const response = await fetch('/api/stt?format=webm', {
         method: 'POST',
@@ -503,14 +533,15 @@
       });
 
       if (!response.ok) {
-        throw new Error(`STT failed: ${response.status}`);
+        const errorBody = await response.text();
+        throw new Error(`STT failed: ${response.status} - ${errorBody}`);
       }
 
       const result = await response.json();
-      vadTestTranscription = result.text || '(no speech detected)';
+      vadTestTranscription = result.transcript || result.text || '(no speech detected)';
       console.log('[VAD Test] Transcription:', vadTestTranscription);
     } catch (err) {
-      vadTestError = `Transcription failed: ${(err as Error).message}`;
+      vadTestError = `${(err as Error).message}`;
       vadTestTranscription = '';
       console.error('[VAD Test] Error:', err);
     } finally {

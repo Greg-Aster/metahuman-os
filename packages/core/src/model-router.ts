@@ -217,41 +217,7 @@ async function callOllama(
   const isLoaded = await ollama.isModelLoaded(resolved.model);
 
   if (!isLoaded) {
-    // Check what's currently running
-    const running = await ollama.getRunningModels().catch(() => ({ models: [] }));
-
-    if (running.models.length > 0) {
-      const currentModel = running.models[0]?.name || 'unknown';
-
-      // Notify that we're waiting for model switch
-      onProgress?.({
-        type: 'model_switch',
-        message: `Switching from ${currentModel} to ${resolved.model}...`,
-        model: resolved.model,
-        currentModel,
-      });
-
-      // Wait for model availability (with timeout)
-      const waitResult = await ollama.waitForModelAvailability(resolved.model, {
-        timeoutMs: 60000, // 60 second timeout
-        pollIntervalMs: 2000,
-        onWaiting: (currentModel, elapsedMs) => {
-          onProgress?.({
-            type: 'model_waiting',
-            message: `Waiting for ${currentModel} to finish (${Math.round(elapsedMs / 1000)}s)...`,
-            model: resolved.model,
-            currentModel,
-            elapsedMs,
-          });
-        },
-      });
-
-      if (!waitResult.ready) {
-        console.warn(`[model-router] Timed out waiting for model ${resolved.model}, proceeding anyway`);
-      }
-    }
-
-    // Notify that we're loading the model
+    // Just load the model - Ollama handles concurrent models in VRAM
     onProgress?.({
       type: 'model_loading',
       message: `Loading ${resolved.model}...`,

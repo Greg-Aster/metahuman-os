@@ -90,6 +90,12 @@ import {
   dreamerLearningsExtractorExecutor,
   dreamerLearningsWriterExecutor,
 } from './dreamer-executors.js';
+import {
+  intelligentMemoryRetrievalExecutor,
+  memoryTierSearchExecutor,
+  memoryEvaluationExecutor,
+  memoryRouterExecutor,
+} from './memory-executors.js';
 
 /**
  * Master registry of all node executors
@@ -240,6 +246,12 @@ export const nodeExecutors: Record<string, NodeExecutor> = {
   'dreamer_continuation_generator': dreamerContinuationGeneratorExecutor,
   'dreamer_learnings_extractor': dreamerLearningsExtractorExecutor,
   'dreamer_learnings_writer': dreamerLearningsWriterExecutor,
+
+  // Intelligent Memory Retrieval nodes (tiered memory architecture)
+  'intelligent_memory_retrieval': intelligentMemoryRetrievalExecutor,
+  'memory_tier_search': memoryTierSearchExecutor,
+  'memory_evaluation': memoryEvaluationExecutor,
+  'memory_router': memoryRouterExecutor,
 };
 
 /**

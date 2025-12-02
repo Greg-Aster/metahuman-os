@@ -130,6 +130,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   const queuedMessage = writable('');
   const isNativeMode = writable(false); // Track if using native speech recognition
   const interimTranscript = writable(''); // Real-time transcript preview
+  const whisperStatus = writable<'unknown' | 'loading' | 'ready' | 'stopped' | 'error'>('unknown'); // Whisper server status
 
   // Native speech recognition state
   let speechRecognition: ISpeechRecognition | null = null;
@@ -179,10 +180,24 @@ export function useMicrophone(options: UseMicrophoneOptions) {
             MIC_MIN_DURATION
           });
         }
+
+        // Check Whisper server status (just once on load)
+        const serverStatus = config.stt?.serverStatus;
+        if (serverStatus === 'running') {
+          whisperStatus.set('ready');
+          console.log('[useMicrophone] Whisper server ready');
+        } else if (serverStatus === 'starting' || serverStatus === 'loading') {
+          whisperStatus.set('loading');
+          console.log('[useMicrophone] Whisper server starting...');
+        } else if (serverStatus === 'stopped' || serverStatus === 'disabled') {
+          whisperStatus.set('stopped');
+        } else {
+          whisperStatus.set('unknown');
+        }
       }
     } catch (error) {
       console.error('[useMicrophone] Failed to load VAD settings:', error);
-      // Keep defaults
+      whisperStatus.set('error');
     }
   }
 
@@ -685,6 +700,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     queuedMessage,
     isNativeMode,       // Whether currently using native speech recognition
     interimTranscript,  // Real-time transcript preview (native mode only)
+    whisperStatus,      // Whisper server status (checked once on load, no polling)
 
     // Methods
     loadVADSettings,

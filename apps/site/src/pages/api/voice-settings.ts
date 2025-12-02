@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { getUserOrAnonymous, getProfilePaths, systemPaths } from '@metahuman/core';
+import { getUserOrAnonymous, systemPaths, storageClient } from '@metahuman/core';
 import { startSovitsServer, stopSovitsServer } from '../../lib/server/sovits-server';
 import { stopServer } from '@metahuman/core/tts/server-manager';
 import fs from 'node:fs';
@@ -458,16 +458,27 @@ const getHandler: APIRoute = async ({ cookies }) => {
     // Get user (never throws, returns anonymous if not authenticated)
     const user = getUserOrAnonymous(cookies);
 
-    // Get profile paths (explicit)
-    const profilePaths = user.role !== 'anonymous'
-      ? getProfilePaths(user.username)
-      : null;
+    // Use storage router to get correct profile path based on user's storage config
+    let voiceConfigPath: string;
+    let profileRoot: string;
 
-    // Allow anonymous/guest users to view voice settings (read-only)
-    // They return default config. Authenticated users get their profile config.
+    if (user.role !== 'anonymous') {
+      // Get profile root from storage router (handles external storage)
+      const storageResult = storageClient.getProfileRoot(user.username);
+      if (storageResult.success && storageResult.profileRoot) {
+        profileRoot = storageResult.profileRoot;
+        voiceConfigPath = path.join(profileRoot, 'etc', 'voice.json');
+      } else {
+        // Fallback to system defaults if storage resolution fails
+        profileRoot = systemPaths.root;
+        voiceConfigPath = path.join(systemPaths.etc, 'voice.json');
+      }
+    } else {
+      // Anonymous users get system defaults
+      profileRoot = systemPaths.root;
+      voiceConfigPath = path.join(systemPaths.etc, 'voice.json');
+    }
 
-    // For anonymous users, use system defaults
-    const voiceConfigPath = profilePaths?.voiceConfig || path.join(systemPaths.etc, 'voice.json');
     const voicesDir = systemPaths.voiceModels;
     const rootDir = systemPaths.root;
     const voices = getAvailableVoices(voicesDir);
@@ -479,17 +490,55 @@ const getHandler: APIRoute = async ({ cookies }) => {
     const currentVoiceFile = path.basename(currentModelPath, '.onnx');
 
     const providerForUI = config.tts.provider === 'gpt-sovits' ? 'sovits' : config.tts.provider;
-    const profileRoot = path.resolve(path.dirname(voiceConfigPath), '..');
     const kokoroVoices = loadKokoroVoices(rootDir, profileRoot);
 
-    // Check Whisper server status
+    // Check Whisper server status and auto-start if configured
     let whisperServerStatus = 'unknown';
     if (config.stt?.whisper?.server?.useServer) {
+      const whisperUrl = config.stt.whisper.server.url || 'http://127.0.0.1:9883';
+
+      // First check if already running
+      let isRunning = false;
       try {
-        const whisperUrl = config.stt.whisper.server.url || 'http://127.0.0.1:9883';
         const response = await fetch(`${whisperUrl}/health`, { signal: AbortSignal.timeout(1000) });
-        whisperServerStatus = response.ok ? 'running' : 'stopped';
+        isRunning = response.ok;
       } catch {
+        // Server not responding
+      }
+
+      if (isRunning) {
+        whisperServerStatus = 'running';
+      } else if (config.stt.whisper.server.autoStart && user.role !== 'anonymous') {
+        // Auto-start the server if configured
+        whisperServerStatus = 'starting';
+        console.log('[voice-settings] Auto-starting Whisper server...');
+
+        // Start server in background (don't await - let it load while user continues)
+        const whisperConfig = config.stt.whisper;
+        const pythonBin = path.join(rootDir, 'venv', 'bin', 'python3');
+        const serverScript = path.join(rootDir, 'external', 'whisper', 'whisper_server.py');
+        const logFile = path.join(rootDir, 'logs', 'run', 'whisper-server.log');
+        const pidFile = path.join(rootDir, 'logs', 'run', 'whisper-server.pid');
+
+        if (fs.existsSync(pythonBin) && fs.existsSync(serverScript)) {
+          const { spawn } = await import('node:child_process');
+          fs.mkdirSync(path.dirname(logFile), { recursive: true });
+          const logFd = fs.openSync(logFile, 'a');
+
+          const model = whisperConfig.model || 'base.en';
+          const device = whisperConfig.device || 'cpu';
+          let computeType = whisperConfig.computeType || 'int8';
+          if (device === 'cuda' && computeType === 'int8') computeType = 'float16';
+          const port = whisperConfig.server?.port || 9883;
+
+          const args = [serverScript, '--model', model, '--device', device, '--compute-type', computeType, '--port', port.toString()];
+          const child = spawn(pythonBin, args, { detached: true, stdio: ['ignore', logFd, logFd], cwd: rootDir });
+          fs.writeFileSync(pidFile, child.pid!.toString());
+          child.unref();
+
+          console.log('[voice-settings] Whisper server started with PID:', child.pid);
+        }
+      } else {
         whisperServerStatus = 'stopped';
       }
     } else {
@@ -582,9 +631,15 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
 
     console.log('[voice-settings POST] Received body:', { provider, hasPiper: !!piper, hasSovits: !!sovits, hasRvc: !!rvc, hasKokoro: !!kokoro, hasStt: !!stt });
 
-    // Get profile paths explicitly
-    const profilePaths = getProfilePaths(user.username);
-    const voiceConfigPath = profilePaths.voiceConfig;
+    // Get profile paths via storage router (handles external storage)
+    const storageResult = storageClient.getProfileRoot(user.username);
+    if (!storageResult.success || !storageResult.profileRoot) {
+      return new Response(
+        JSON.stringify({ error: 'Failed to resolve profile storage' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    const voiceConfigPath = path.join(storageResult.profileRoot, 'etc', 'voice.json');
     const voicesDir = systemPaths.voiceModels;
     const rootDir = systemPaths.root;
     const voices = getAvailableVoices(voicesDir);

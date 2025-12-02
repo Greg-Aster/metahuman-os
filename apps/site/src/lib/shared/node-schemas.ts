@@ -1204,6 +1204,46 @@ export const MemoryFilterNode: NodeSchema = {
   description: 'Filters memories by type, tags, or date range',
 };
 
+export const MemoryRouterNode: NodeSchema = {
+  id: 'memory_router',
+  name: 'Memory Router',
+  category: 'memory',
+  ...categoryColors.memory,
+  inputs: [
+    { name: 'orchestratorHints', type: 'object', description: 'Memory routing hints from orchestrator (needsMemory, memoryTier, memoryQuery)' },
+    { name: 'userMessage', type: 'string', description: 'User message as fallback query' },
+  ],
+  outputs: [
+    { name: 'memories', type: 'object', description: 'Retrieved memories with searchPerformed flag' },
+  ],
+  properties: {
+    topK: 8,
+    threshold: 0.5,
+  },
+  propertySchemas: {
+    topK: {
+      type: 'slider',
+      default: 8,
+      label: 'Top K Results',
+      description: 'Maximum number of memories to retrieve',
+      min: 1,
+      max: 20,
+      step: 1
+    },
+    threshold: {
+      type: 'slider',
+      default: 0.5,
+      label: 'Similarity Threshold',
+      description: 'Minimum similarity score (0-1)',
+      min: 0,
+      max: 1,
+      step: 0.05
+    }
+  },
+  size: [220, 100],
+  description: 'AI-driven memory routing - uses orchestrator hints to determine tier and performs intelligent retrieval',
+};
+
 // ============================================================================
 // UTILITY NODES
 // ============================================================================
@@ -2304,6 +2344,7 @@ export const nodeSchemas: NodeSchema[] = [
   WeightedSamplerNode,
   AssociativeChainNode,
   MemoryFilterNode,
+  MemoryRouterNode,
 
   // Utility
   JSONParserNode,

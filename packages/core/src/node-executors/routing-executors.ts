@@ -58,6 +58,11 @@ export const operatorEligibilityExecutor: NodeExecutor = async (inputs, context)
  * Smart Router Node
  * Routes queries based on orchestrator complexity analysis
  * Simple queries skip operator overhead and go directly to response synthesis
+ *
+ * Enhanced to pass through memory hints from orchestrator for tier-aware memory routing:
+ * - needsMemory: Whether memory search is needed
+ * - memoryTier: Which tier to search (hot, warm, cold, facts, all)
+ * - memoryQuery: Refined search query from orchestrator
  */
 export const smartRouterExecutor: NodeExecutor = async (inputs, context) => {
   const orchestratorAnalysis = inputs[0] || {};
@@ -66,6 +71,13 @@ export const smartRouterExecutor: NodeExecutor = async (inputs, context) => {
   const complexity = orchestratorAnalysis.complexity || 0.5;
   const needsMemory = orchestratorAnalysis.needsMemory || false;
   const simpleThreshold = 0.3; // Can be overridden by node properties
+
+  // Extract memory routing hints from orchestrator
+  const memoryHints = {
+    needsMemory,
+    memoryTier: orchestratorAnalysis.memoryTier || 'hot',
+    memoryQuery: orchestratorAnalysis.memoryQuery || '',
+  };
 
   // Determine routing decision
   const isSimple = complexity < simpleThreshold && !needsMemory;
@@ -78,16 +90,21 @@ export const smartRouterExecutor: NodeExecutor = async (inputs, context) => {
       simplePath: orchestratorAnalysis,
       routingDecision: 'simple',
       complexity,
-      skippedOperator: true
+      skippedOperator: true,
+      memoryHints,
+      routeToMemory: false,
     };
   } else {
     // Complex path: Goes through operator pipeline
+    // If needsMemory, this signals downstream to route through memory_router
     return {
       complexPath: orchestratorAnalysis,
       simplePath: null,
       routingDecision: 'complex',
       complexity,
-      skippedOperator: false
+      skippedOperator: false,
+      memoryHints,
+      routeToMemory: needsMemory,
     };
   }
 };

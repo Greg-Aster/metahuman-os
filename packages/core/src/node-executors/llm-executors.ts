@@ -39,6 +39,15 @@ export const personaLLMExecutor: NodeExecutor = async (inputs, context) => {
   try {
     // Format memories if available
     let memoryContext = '';
+    let memorySearchPerformed = false;
+    let noMemoriesFound = false;
+
+    // Check if memory search was performed (from memory_router output)
+    if (inputs[2]?.searchPerformed !== undefined) {
+      memorySearchPerformed = inputs[2].searchPerformed;
+      noMemoriesFound = memorySearchPerformed && (!memories || memories.length === 0);
+    }
+
     if (Array.isArray(memories) && memories.length > 0) {
       memoryContext = '\n\nRelevant memories:\n' + memories
         .map((mem: any, idx: number) => {
@@ -47,6 +56,9 @@ export const personaLLMExecutor: NodeExecutor = async (inputs, context) => {
           return `${idx + 1}. ${timestamp ? `[${timestamp}] ` : ''}${content}`;
         })
         .join('\n');
+    } else if (noMemoriesFound) {
+      // Simple signal that search found nothing - let persona handle naturally
+      memoryContext = '\n\n[No relevant memories found for this query.]';
     }
 
     // Build system prompt from components
@@ -231,6 +243,10 @@ export const modelRouterExecutor: NodeExecutor = async (inputs, context, propert
  * Orchestrator LLM Node
  * Lightweight intent analysis for emulation mode
  * Determines what the persona needs: memory context, response style, instructions
+ *
+ * Extended to include memory retrieval hints:
+ * - memoryTier: which memory tier to search (hot/warm/cold/facts/all)
+ * - memoryQuery: refined search query if different from user message
  */
 export const orchestratorLLMExecutor: NodeExecutor = async (inputs, context, properties) => {
   // Extract message from user_input node output or context
@@ -242,6 +258,8 @@ export const orchestratorLLMExecutor: NodeExecutor = async (inputs, context, pro
   if (!userMessage || typeof userMessage !== 'string' || userMessage.trim().length === 0) {
     return {
       needsMemory: false,
+      memoryTier: 'hot',
+      memoryQuery: '',
       responseStyle: 'conversational',
       instructions: 'Respond naturally to the greeting.',
       error: 'No user message provided',
@@ -249,25 +267,53 @@ export const orchestratorLLMExecutor: NodeExecutor = async (inputs, context, pro
   }
 
   try {
-    const systemPrompt = `You are an intent analyzer for a conversational AI system. Your job is to analyze the user's query and determine:
+    const systemPrompt = `You are the Intent Orchestrator for a personal AI memory system. Your job is to analyze queries and route them appropriately through a tiered memory architecture.
 
-1. Does this query need memory/context from past conversations? (true/false)
-2. What response style is appropriate? (verbose/concise/conversational)
-3. What instructions should the persona receive?
+## YOUR ROLE
+You determine whether the AI needs to search its memory to answer a question. This is critical - incorrect routing leads to either:
+- Missing personal information the AI actually knows (needsMemory: false when it should be true)
+- Wasting resources searching for general knowledge (needsMemory: true when it should be false)
 
-Examples:
-- "hi" → needsMemory: false, responseStyle: conversational, instructions: "Greet the user warmly"
-- "what's 2+2?" → needsMemory: false, responseStyle: concise, instructions: "Provide a direct answer"
-- "write me a book about AI" → needsMemory: false, responseStyle: verbose, instructions: "Generate a detailed book outline with chapters and key topics"
-- "what did Sarah say about the project?" → needsMemory: true, responseStyle: conversational, instructions: "Search memories for Sarah's comments and summarize naturally"
-- "make it shorter" → needsMemory: false, responseStyle: concise, instructions: "Condense the previous response to 1-2 sentences"
-- "tell me more about that" → needsMemory: true, responseStyle: verbose, instructions: "Expand on the previous topic with additional details from memory"
+## REASONING PROCESS
+Before deciding, think through these questions:
 
-Respond in JSON format:
+1. **WHO does this question ask about?**
+   - General world knowledge → No memory needed
+   - The USER specifically (their life, possessions, preferences, history) → Memory needed
+
+2. **WHAT kind of information is requested?**
+   - Facts anyone could look up (capital cities, math, recipes) → No memory needed
+   - Personal data unique to this user's life → Memory needed
+
+3. **Could any AI answer this, or only one that KNOWS this user?**
+   - Any AI could answer → No memory needed
+   - Only an AI with personal knowledge → Memory needed
+
+## MEMORY TIER SELECTION (L1/L2 Cache Pattern)
+When needsMemory is true, select the most efficient tier:
+
+- **"hot"** (L1 - Fast): Last 14 days. Use for: recent events, current projects, ongoing conversations
+- **"warm"** (L2): 2 weeks to 3 months. Use for: medium-term context, recent patterns
+- **"cold"** (Archive): 3+ months. Use for: long-term history, old events, "remember when..."
+- **"facts"**: Timeless identity info. Use for: possessions, relationships, preferences, names, identity
+- **"all"**: When timeframe is unclear or query spans multiple periods
+
+## TIER SELECTION LOGIC
+Think: "WHEN would this information have been stored?"
+- Possessions, pets, relationships → "facts" (timeless)
+- "yesterday", "this week", "recently" → "hot"
+- "last month", "a few weeks ago" → "warm"
+- "last year", "years ago", "remember when" → "cold"
+- Vague personal question with no time cue → "facts" or "all"
+
+## OUTPUT FORMAT
+Respond with JSON only. Include your reasoning in the instructions field:
 {
-  "needsMemory": true/false,
+  "needsMemory": boolean,
+  "memoryTier": "hot" | "warm" | "cold" | "facts" | "all",
+  "memoryQuery": "optimized search query if different from input",
   "responseStyle": "verbose" | "concise" | "conversational",
-  "instructions": "Clear instructions for the persona"
+  "instructions": "guidance for persona including your reasoning"
 }`;
 
     const messages = [
@@ -280,9 +326,9 @@ Respond in JSON format:
       messages,
       cognitiveMode: context.cognitiveMode,
       options: {
-        maxTokens: 256,
+        maxTokens: 512,  // More room for reasoning
         repeatPenalty: 1.15,
-        temperature: 0.3, // Low temp for consistent classification
+        temperature: 0.2, // Lower temp for more consistent routing decisions
       },
       onProgress: context.emitProgress,
     });
@@ -292,6 +338,8 @@ Respond in JSON format:
       const parsed = JSON.parse(response.content);
       return {
         needsMemory: parsed.needsMemory || false,
+        memoryTier: parsed.memoryTier || 'hot',
+        memoryQuery: parsed.memoryQuery || '',
         responseStyle: parsed.responseStyle || 'conversational',
         instructions: parsed.instructions || 'Respond naturally',
         raw: response.content,
@@ -299,11 +347,15 @@ Respond in JSON format:
     } catch (parseError) {
       // If JSON parsing fails, extract from text
       const needsMemoryMatch = response.content.match(/needsMemory[":]\s*(true|false)/i);
+      const tierMatch = response.content.match(/memoryTier[":]\s*["']?(hot|warm|cold|facts|all)/i);
+      const queryMatch = response.content.match(/memoryQuery[":]\s*["']([^"']*)/i);
       const styleMatch = response.content.match(/responseStyle[":]\s*["']?(verbose|concise|conversational)/i);
       const instructionsMatch = response.content.match(/instructions[":]\s*["']([^"']+)/i);
 
       return {
         needsMemory: needsMemoryMatch?.[1]?.toLowerCase() === 'true' || false,
+        memoryTier: (tierMatch?.[1]?.toLowerCase() as 'hot' | 'warm' | 'cold' | 'facts' | 'all') || 'hot',
+        memoryQuery: queryMatch?.[1] || '',
         responseStyle: (styleMatch?.[1]?.toLowerCase() as 'verbose' | 'concise' | 'conversational') || 'conversational',
         instructions: instructionsMatch?.[1] || 'Respond naturally',
         raw: response.content,
@@ -313,6 +365,8 @@ Respond in JSON format:
     console.error('[OrchestratorLLM] Error:', error);
     return {
       needsMemory: false,
+      memoryTier: 'hot',
+      memoryQuery: '',
       responseStyle: 'conversational',
       instructions: 'Respond naturally to the user',
       error: (error as Error).message,

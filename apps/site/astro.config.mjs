@@ -3,10 +3,18 @@ import tailwind from '@astrojs/tailwind';
 import svelte from '@astrojs/svelte';
 import node from '@astrojs/node';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
+
+// HTTPS certificates for mobile microphone access (requires secure context)
+const certsDir = path.join(repoRoot, 'certs');
+const httpsConfig = fs.existsSync(path.join(certsDir, 'cert.pem')) ? {
+  key: fs.readFileSync(path.join(certsDir, 'key.pem')),
+  cert: fs.readFileSync(path.join(certsDir, 'cert.pem')),
+} : undefined;
 
 /**
  * Custom Vite plugin to externalize @metahuman/core only for CLIENT builds
@@ -80,6 +88,7 @@ export default defineConfig({
       rollupOptions: {},
     },
     server: {
+      https: httpsConfig,
       allowedHosts: [
         'localhost',
         '127.0.0.1',
