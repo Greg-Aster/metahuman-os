@@ -12,7 +12,8 @@
       "size": [220, 100],
       "properties": {
         "role": "persona",
-        "temperature": 0.8
+        "temperature": 0.8,
+        "timeout": 300000
       },
       "title": "Generate Reflection"
     },
@@ -33,7 +34,8 @@
       "size": [220, 100],
       "properties": {
         "role": "summarizer",
-        "temperature": 0.3
+        "temperature": 0.3,
+        "timeout": 300000
       },
       "title": "Generate Summary"
     },
@@ -54,7 +56,8 @@
       "size": [220, 100],
       "properties": {
         "role": "summarizer",
-        "temperature": 0.4
+        "temperature": 0.4,
+        "timeout": 300000
       },
       "title": "Generate Extended Summary"
     },
