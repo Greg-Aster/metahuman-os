@@ -200,9 +200,18 @@
       "origin_id": 3,
       "origin_slot": 0,
       "target_id": 24,
-      "target_slot": 1,
+      "target_slot": 2,
       "type": "object",
-      "comment": "System settings → Orchestrator (for permission context)"
+      "comment": "System settings → Orchestrator slot 2 (permission context)"
+    },
+    {
+      "id": 109,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 24,
+      "target_slot": 1,
+      "type": "array",
+      "comment": "Conversation History → Orchestrator slot 1 (context awareness for response length/style)"
     },
     {
       "id": 103,

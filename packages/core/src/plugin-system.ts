@@ -9,7 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import type { NodeExecutor } from './node-executors/index.js';
+import type { NodeExecutor } from './nodes/index.js';
 import { audit } from './audit.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -88,7 +88,7 @@ export async function loadPlugin(filePath: string): Promise<LoadedPlugin | null>
 
     // Register with node executor system
     try {
-      const { registerPluginExecutor } = await import('./node-executors/index.js');
+      const { registerPluginExecutor } = await import('./nodes/index.js');
       registerPluginExecutor(definition.metadata.id, definition.executor);
     } catch (error) {
       console.warn('[PluginSystem] Could not register with node executor system:', error);
@@ -302,7 +302,7 @@ export async function unloadPlugin(pluginId: string): Promise<boolean> {
 
   // Unregister from node executor system
   try {
-    const { unregisterPluginExecutor } = await import('./node-executors/index.js');
+    const { unregisterPluginExecutor } = await import('./nodes/index.js');
     unregisterPluginExecutor(pluginId);
   } catch (error) {
     console.warn('[PluginSystem] Could not unregister from node executor system:', error);

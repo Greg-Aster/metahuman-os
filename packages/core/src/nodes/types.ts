@@ -24,7 +24,14 @@ export type NodeCategory =
   | 'memory'
   | 'utility'
   | 'agent'
-  | 'config';
+  | 'config'
+  | 'persona'
+  | 'thought'
+  | 'dreamer'
+  | 'curiosity'
+  | 'curator'
+  | 'safety'
+  | 'emulation';
 
 // ============================================================================
 // SLOT TYPES (for node inputs/outputs)
@@ -194,6 +201,13 @@ export const categoryColors: Record<NodeCategory, { color: string; bgColor: stri
   utility: { color: '#94a3b8', bgColor: '#475569' },    // Slate
   agent: { color: '#22d3ee', bgColor: '#155e75' },      // Cyan
   config: { color: '#fde047', bgColor: '#854d0e' },     // Yellow
+  persona: { color: '#e879f9', bgColor: '#86198f' },    // Fuchsia
+  thought: { color: '#67e8f9', bgColor: '#0e7490' },    // Sky
+  dreamer: { color: '#d8b4fe', bgColor: '#6b21a8' },    // Light Purple
+  curiosity: { color: '#fcd34d', bgColor: '#a16207' },  // Gold
+  curator: { color: '#86efac', bgColor: '#14532d' },    // Light Green
+  safety: { color: '#fca5a5', bgColor: '#7f1d1d' },     // Light Red
+  emulation: { color: '#a5b4fc', bgColor: '#3730a3' },  // Light Indigo
 };
 
 // ============================================================================

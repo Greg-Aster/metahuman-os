@@ -596,6 +596,22 @@ const getHandler: APIRoute = async ({ cookies }) => {
             silenceDelay: config.stt?.whisper?.vad?.silenceDelay ?? 5000,
             minDuration: config.stt?.whisper?.vad?.minDuration ?? 500,
           },
+          mobileVad: {
+            voiceThreshold: config.stt?.whisper?.mobileVad?.voiceThreshold ?? 25, // Higher for mobile ambient noise
+            silenceDelay: config.stt?.whisper?.mobileVad?.silenceDelay ?? 1500,
+            minDuration: config.stt?.whisper?.mobileVad?.minDuration ?? 500,
+            sustainedFrames: config.stt?.whisper?.mobileVad?.sustainedFrames ?? 5, // Require sustained voice
+            restartCooldown: config.stt?.whisper?.mobileVad?.restartCooldown ?? 2000, // Wait after TTS before ready
+            startupDelay: config.stt?.whisper?.mobileVad?.startupDelay ?? 500, // Ignore audio after mic activates
+            semanticTurnDetection: config.stt?.whisper?.mobileVad?.semanticTurnDetection ?? false, // Use LLM to detect end of utterance
+            semanticMinConfidence: config.stt?.whisper?.mobileVad?.semanticMinConfidence ?? 0.7, // Min confidence to accept LLM's decision
+          },
+          wakeWord: {
+            enabled: config.stt?.wakeWord?.enabled ?? false,
+            phrases: config.stt?.wakeWord?.phrases ?? ['hey greg', 'hey metahuman'],
+            timeout: config.stt?.wakeWord?.timeout ?? 10000,
+            confirmationSound: config.stt?.wakeWord?.confirmationSound ?? true,
+          },
         },
       }),
       {
@@ -804,7 +820,7 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
         config.stt.whisper.server.autoStart = stt.autoStart;
       }
 
-      // Update VAD settings
+      // Update VAD settings (desktop)
       if (stt.vad) {
         if (typeof stt.vad.voiceThreshold === 'number') {
           config.stt.whisper.vad.voiceThreshold = clamp(stt.vad.voiceThreshold, 0, 100);
@@ -814,6 +830,40 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
         }
         if (typeof stt.vad.minDuration === 'number') {
           config.stt.whisper.vad.minDuration = clamp(stt.vad.minDuration, 100, 5000);
+        }
+      }
+
+      // Update Mobile VAD settings (for conversation mode on mobile)
+      if (stt.mobileVad) {
+        config.stt.whisper.mobileVad = config.stt.whisper.mobileVad || {
+          voiceThreshold: 25,
+          silenceDelay: 1500,
+          minDuration: 500,
+          sustainedFrames: 5,
+        };
+        if (typeof stt.mobileVad.voiceThreshold === 'number') {
+          config.stt.whisper.mobileVad.voiceThreshold = clamp(stt.mobileVad.voiceThreshold, 0, 100);
+        }
+        if (typeof stt.mobileVad.silenceDelay === 'number') {
+          config.stt.whisper.mobileVad.silenceDelay = clamp(stt.mobileVad.silenceDelay, 500, 30000);
+        }
+        if (typeof stt.mobileVad.minDuration === 'number') {
+          config.stt.whisper.mobileVad.minDuration = clamp(stt.mobileVad.minDuration, 100, 5000);
+        }
+        if (typeof stt.mobileVad.sustainedFrames === 'number') {
+          config.stt.whisper.mobileVad.sustainedFrames = clamp(stt.mobileVad.sustainedFrames, 1, 20);
+        }
+        if (typeof stt.mobileVad.restartCooldown === 'number') {
+          config.stt.whisper.mobileVad.restartCooldown = clamp(stt.mobileVad.restartCooldown, 500, 10000);
+        }
+        if (typeof stt.mobileVad.startupDelay === 'number') {
+          config.stt.whisper.mobileVad.startupDelay = clamp(stt.mobileVad.startupDelay, 0, 2000);
+        }
+        if (typeof stt.mobileVad.semanticTurnDetection === 'boolean') {
+          config.stt.whisper.mobileVad.semanticTurnDetection = stt.mobileVad.semanticTurnDetection;
+        }
+        if (typeof stt.mobileVad.semanticMinConfidence === 'number') {
+          config.stt.whisper.mobileVad.semanticMinConfidence = clamp(stt.mobileVad.semanticMinConfidence, 0.5, 1.0);
         }
       }
     }

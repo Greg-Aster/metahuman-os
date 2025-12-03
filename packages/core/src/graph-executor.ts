@@ -336,7 +336,7 @@ async function executeNodeByType(
 
   // In Node.js (or forced server mode): Import the real node executors
   log.debug(`     Server mode: Using real executor for ${nodeType}`);
-  const { getNodeExecutor } = await import('./node-executors/index.js');
+  const { getNodeExecutor } = await import('./nodes/index.js');
 
   // Get the executor for this node type
   const executor = getNodeExecutor(nodeType);

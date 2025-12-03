@@ -4,7 +4,7 @@
  */
 
 // Force import of node executors (heaviest module)
-import('@metahuman/core/node-executors').then(({ getNodeExecutor }) => {
+import('@metahuman/core/nodes').then(({ getNodeExecutor }) => {
   if (getNodeExecutor('user_input')) {
     console.log('[prewarm] ✅ Node executors loaded successfully');
   }

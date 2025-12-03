@@ -69,8 +69,13 @@ export const LoopControllerNode: NodeDefinition = defineNode({
       console.log(`[LoopController] === Iteration ${iteration}/${maxIterations} ===`);
 
       try {
-        // Import executors dynamically to avoid circular deps
-        const { reactPlannerExecutor, skillExecutorExecutor, observationFormatterExecutor, completionCheckerExecutor, stuckDetectorExecutor } = await import('../../node-executors/operator-executors.js');
+        // Import executors dynamically via the unified node registry
+        const { getNodeExecutor } = await import('../index.js');
+        const reactPlannerExecutor = getNodeExecutor('react_planner')!;
+        const skillExecutorExecutor = getNodeExecutor('skill_executor')!;
+        const observationFormatterExecutor = getNodeExecutor('observation_formatter')!;
+        const completionCheckerExecutor = getNodeExecutor('completion_checker')!;
+        const stuckDetectorExecutor = getNodeExecutor('stuck_detector')!;
 
         // STEP 1: Plan
         const planResult = await reactPlannerExecutor(

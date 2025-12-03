@@ -4,7 +4,7 @@
  */
 
 import type { CognitiveGraph } from './cognitive-graph-schema.js';
-import type { NodeExecutionContext } from './node-executors/index.js';
+import type { NodeExecutionContext } from './nodes/index.js';
 import { audit } from './audit.js';
 
 export interface ErrorBoundaryOptions {

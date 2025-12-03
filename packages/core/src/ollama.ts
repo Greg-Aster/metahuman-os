@@ -199,6 +199,7 @@ export class OllamaClient {
       mirostat_eta?: number
       mirostat_tau?: number
       format?: string // BUGFIX: Support JSON mode to constrain output format
+      keep_alive?: string | number // How long to keep model in VRAM (0 = unload immediately, "5m" = 5 minutes)
     }
   ): Promise<OllamaChatResponse> {
     // BUGFIX: Build request body with format at top level (not in options)
@@ -225,6 +226,11 @@ export class OllamaClient {
     // BUGFIX: Add format as top-level parameter (Ollama API requirement)
     if (options?.format) {
       requestBody.format = options.format;
+    }
+
+    // Add keep_alive if specified (controls how long model stays in VRAM)
+    if (options?.keep_alive !== undefined) {
+      requestBody.keep_alive = options.keep_alive;
     }
 
     const response = await fetch(`${this.endpoint}/api/chat`, {
