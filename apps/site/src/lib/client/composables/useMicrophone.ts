@@ -3,7 +3,7 @@
  * Handles voice input, speech-to-text, and auto-send functionality
  *
  * Supports two STT backends:
- * - Native: Uses browser's SpeechRecognition API (fast, on-device, mobile-friendly)
+ * - Native: Uses browser's SpeechRecognition API (fast, on-device)
  * - Whisper: Records audio and sends to server for transcription (more accurate, requires upload)
  */
 
@@ -65,13 +65,6 @@ const NativeSpeechRecognition: ISpeechRecognitionConstructor | null = typeof win
   ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) as ISpeechRecognitionConstructor
   : null;
 
-/**
- * Detect if running on a mobile device
- */
-function isMobileDevice(): boolean {
-  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-}
 
 /**
  * Check if native speech recognition is available
@@ -135,28 +128,16 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   let MIC_SILENCE_DELAY = 1400; // 1.4 seconds of silence before auto-stop (conversational pace)
   let MIC_MIN_DURATION = 500; // Don't send if recording is less than 500ms
 
-  // Mobile VAD settings (loaded from user profile) - used for conversation mode on mobile
-  // Higher threshold to filter ambient noise, requires sustained voice
-  let MOBILE_VOICE_THRESHOLD = 25; // Higher threshold for mobile ambient noise
-  let MOBILE_SILENCE_DELAY = 1500; // How long to wait in silence before stopping
-  let MOBILE_MIN_DURATION = 500; // Minimum recording duration
-  let MOBILE_SUSTAINED_FRAMES = 5; // Require ~5 frames (~80ms) of sustained voice
-  let MOBILE_RESTART_COOLDOWN = 2000; // How long to wait after TTS before ready state
-  let MOBILE_STARTUP_DELAY = 500; // How long to ignore audio after mic activates
-  let MOBILE_SEMANTIC_TURN_DETECTION = false; // Use LLM to detect end of utterance
-  let MOBILE_SEMANTIC_MIN_CONFIDENCE = 0.7; // Min confidence to accept LLM's decision
+  // Conversation mode settings
+  // These are used alongside the desktop VAD settings loaded from config
+  const CONVERSATION_SUSTAINED_FRAMES = 5; // Require ~5 frames (~80ms) of sustained voice
+  const CONVERSATION_RESTART_COOLDOWN = 1200; // How long to wait after TTS before ready state
+  const CONVERSATION_STARTUP_DELAY = 200; // How long to ignore audio after mic activates
+  const CONVERSATION_MIN_SPEECH_MS = 900; // Require this much speech before silence timer can fire
+  const CONVERSATION_TIMEOUT = 30000; // How long conversation mode stays active (30s inactivity timeout)
 
-  // Wake word settings (mobile-only, loaded from user profile)
-  // Like "hey google" - always listening for trigger phrase, then activates conversation mode
-  // NOTE: Disabled by default - browser SpeechRecognition is NOT suitable for wake word detection
-  // (unlike Google which uses dedicated hardware DSP chips with purpose-built neural networks)
-  let wakeWordEnabled = false; // Disabled by default - browser APIs can't do this reliably
-  let wakeWordPhrases = ['hey greg', 'hey metahuman', 'okay greg'];
-  let wakeWordTimeout = 30000; // How long conversation mode stays active (30s inactivity timeout)
-  let wakeWordConfirmation = true; // Play confirmation sound/vibrate
-
-  // Conversation mode state (mobile-only)
-  // When active, system listens for ANY speech (not just wake word)
+  // Conversation mode state
+  // When active, system listens for ANY speech
   // Auto-restarts after each exchange until timeout or explicit stop
   let conversationModeActive = false;
   let conversationModeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -231,53 +212,6 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     }
   }
 
-  /**
-   * Check if the current utterance is semantically complete using LLM
-   * Returns true if user appears to be done speaking, false if they might continue
-   */
-  async function checkSemanticTurnComplete(transcript: string): Promise<boolean> {
-    if (!MOBILE_SEMANTIC_TURN_DETECTION || !transcript.trim()) {
-      return true; // Disabled or no transcript - default to complete
-    }
-
-    // Don't re-check the same transcript
-    if (transcript === lastSemanticCheckTranscript) {
-      return true;
-    }
-
-    // Prevent concurrent checks
-    if (semanticCheckInProgress) {
-      return false; // Wait for current check to finish
-    }
-
-    try {
-      semanticCheckInProgress = true;
-      lastSemanticCheckTranscript = transcript;
-
-      const response = await fetch('/api/semantic-turn', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript })
-      });
-
-      if (!response.ok) {
-        console.warn('[useMicrophone] Semantic turn check failed:', response.status);
-        return true; // On error, default to complete
-      }
-
-      const result = await response.json();
-      const isComplete = result.complete && result.confidence >= MOBILE_SEMANTIC_MIN_CONFIDENCE;
-
-      console.log(`[useMicrophone] Semantic turn: "${transcript.substring(0, 30)}..." → ${isComplete ? 'COMPLETE' : 'INCOMPLETE'} (conf: ${result.confidence?.toFixed(2)}, reason: ${result.reason})`);
-
-      return isComplete;
-    } catch (error) {
-      console.error('[useMicrophone] Semantic turn check error:', error);
-      return true; // On error, default to complete
-    } finally {
-      semanticCheckInProgress = false;
-    }
-  }
 
   // Conversation VAD state (voice activity detection before starting speech recognition)
   // This prevents ambient noise from triggering speech recognition
@@ -289,7 +223,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   let conversationVadSustainedFrames = 0; // Count consecutive frames above threshold
 
   // Conversation silence monitor state (runs during speech recognition to detect end of speech)
-  // Uses user's MOBILE_SILENCE_DELAY setting to determine when to stop
+  // Uses user's MIC_SILENCE_DELAY setting to determine when to stop
   let conversationSilenceMonitorRunning = false;
   let conversationSilenceTimer: ReturnType<typeof setTimeout> | null = null;
   let conversationSilenceMonitorStream: MediaStream | null = null;
@@ -297,10 +231,9 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   let conversationSilenceMonitorAnalyser: AnalyserNode | null = null;
   let conversationSilenceMonitorAnimFrame: number | null = null;
   let conversationHasReceivedSpeech = false; // Track if we've received any speech in this session
+  let conversationSpeechStart = 0; // Timestamp when speech first detected in current turn
+  let conversationEmptyTurns = 0; // Count empty turns to prevent restart loops
 
-  // Semantic turn detection state
-  let semanticCheckInProgress = false; // Prevent multiple concurrent checks
-  let lastSemanticCheckTranscript = ''; // Track what we last checked
   let accumulatedTranscript = ''; // Build up transcript across interim results
 
   // Cooldown to prevent rapid looping (the "ding ding ding" problem)
@@ -318,14 +251,13 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   const isNativeMode = writable(false); // Track if using native speech recognition
   const interimTranscript = writable(''); // Real-time transcript preview
   const whisperStatus = writable<'unknown' | 'loading' | 'ready' | 'stopped' | 'error'>('unknown'); // Whisper server status
-  const isWakeWordListening = writable(false); // Wake word detection active (mobile only)
-  const wakeWordDetected = writable(false); // Wake word was just triggered
   const isConversationMode = writable(false); // Conversation mode active (any speech triggers)
+  const isWakeWordListening = writable(false); // Deprecated: always false (wake word removed)
+  const wakeWordDetected = writable(false); // Deprecated: always false (wake word removed)
 
   // Native speech recognition state
   let speechRecognition: ISpeechRecognition | null = null;
-  let wakeWordRecognition: ISpeechRecognition | null = null; // Separate instance for wake word detection
-  let useNativeSTT = isMobileDevice() && isNativeSpeechAvailable(); // Auto-detect mobile
+  let useNativeSTT = false; // Always use Whisper for consistent behavior across all devices
 
   /**
    * Get the current STT backend being used
@@ -339,7 +271,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
    */
   function setSTTBackend(backend: STTBackend): void {
     if (backend === 'auto') {
-      useNativeSTT = isMobileDevice() && isNativeSpeechAvailable();
+      useNativeSTT = isNativeSpeechAvailable();
     } else if (backend === 'native') {
       if (!isNativeSpeechAvailable()) {
         console.warn('[useMicrophone] Native speech recognition not available, falling back to Whisper');
@@ -372,43 +304,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
           });
         }
 
-        // Load mobile VAD settings (for conversation mode on mobile)
-        if (config.stt?.mobileVad) {
-          MOBILE_VOICE_THRESHOLD = config.stt.mobileVad.voiceThreshold ?? 25;
-          MOBILE_SILENCE_DELAY = config.stt.mobileVad.silenceDelay ?? 1500;
-          MOBILE_MIN_DURATION = config.stt.mobileVad.minDuration ?? 500;
-          MOBILE_SUSTAINED_FRAMES = config.stt.mobileVad.sustainedFrames ?? 5;
-          MOBILE_RESTART_COOLDOWN = config.stt.mobileVad.restartCooldown ?? 2000;
-          MOBILE_STARTUP_DELAY = config.stt.mobileVad.startupDelay ?? 500;
-          MOBILE_SEMANTIC_TURN_DETECTION = config.stt.mobileVad.semanticTurnDetection ?? false;
-          MOBILE_SEMANTIC_MIN_CONFIDENCE = config.stt.mobileVad.semanticMinConfidence ?? 0.7;
-          console.log('[useMicrophone] Loaded mobile VAD settings:', {
-            MOBILE_VOICE_THRESHOLD,
-            MOBILE_SILENCE_DELAY,
-            MOBILE_MIN_DURATION,
-            MOBILE_SUSTAINED_FRAMES,
-            MOBILE_RESTART_COOLDOWN,
-            MOBILE_STARTUP_DELAY,
-            MOBILE_SEMANTIC_TURN_DETECTION,
-            MOBILE_SEMANTIC_MIN_CONFIDENCE
-          });
-        }
-
-        // Load wake word settings (mobile-only feature)
-        if (config.stt?.wakeWord && isMobileDevice()) {
-          wakeWordEnabled = config.stt.wakeWord.enabled ?? false;
-          wakeWordPhrases = config.stt.wakeWord.phrases ?? ['hey greg', 'hey metahuman'];
-          wakeWordTimeout = config.stt.wakeWord.timeout ?? 30000;
-          wakeWordConfirmation = config.stt.wakeWord.confirmationSound ?? true;
-          console.log('[useMicrophone] Loaded wake word settings:', {
-            wakeWordEnabled,
-            wakeWordPhrases,
-            wakeWordTimeout
-          });
-
-          // NOTE: Auto-start disabled - user must long-press mic to activate wake word/conversation mode
-          // This prevents constant triggering on page load
-        }
+        // Conversation mode uses the same VAD settings as desktop
 
         // Check Whisper server status (just once on load)
         const serverStatus = config.stt?.serverStatus;
@@ -430,22 +326,17 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     }
   }
 
-  /**
-   * Check if transcript contains any wake word phrase
-   */
-  function containsWakeWord(transcript: string): boolean {
-    const lower = transcript.toLowerCase().trim();
-    return wakeWordPhrases.some(phrase => lower.includes(phrase.toLowerCase()));
-  }
 
   /**
-   * Enter conversation mode - system listens for ANY speech (not just wake word)
+   * Enter conversation mode - system listens for ANY speech
    * Auto-restarts listening after each exchange until timeout
    */
   function enterConversationMode(): void {
     console.log('[useMicrophone] Entering conversation mode');
     conversationModeActive = true;
     isConversationMode.set(true);
+    conversationEmptyTurns = 0;
+    conversationSpeechStart = 0;
     setConversationState('READY'); // Start in READY state, waiting for voice
     resetConversationTimeout();
   }
@@ -480,7 +371,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
       console.log('[useMicrophone] Conversation mode timed out');
       // Silent timeout - no message spam
       exitConversationMode();
-    }, wakeWordTimeout);
+    }, CONVERSATION_TIMEOUT);
   }
 
   /**
@@ -509,10 +400,11 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     // Transition to PROCESSING state (mic completely OFF - voice ducking)
     setConversationState('PROCESSING');
 
-    // Use user-configurable cooldown from Voice Settings
-    // If no transcript (noise triggered it), double the cooldown to prevent loops
-    const cooldownAfterTTS = conversationGotTranscript ? MOBILE_RESTART_COOLDOWN : (MOBILE_RESTART_COOLDOWN * 2);
-    const minWaitForLLM = conversationGotTranscript ? 2000 : cooldownAfterTTS;
+    // Use cooldown setting (prevents restart loops)
+    // If no transcript (noise triggered it), keep a modest backoff to prevent loops
+    const baseCooldown = Math.max(700, CONVERSATION_RESTART_COOLDOWN);
+    const cooldownAfterTTS = conversationGotTranscript ? baseCooldown : baseCooldown + 400;
+    const minWaitForLLM = conversationGotTranscript ? 800 : 1100;
 
     console.log('[useMicrophone] State=PROCESSING, waiting for TTS (minWait=' + minWaitForLLM + 'ms, cooldown=' + cooldownAfterTTS + 'ms, gotTranscript:', conversationGotTranscript, ')');
 
@@ -571,7 +463,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
             setConversationState('SPEAKING');
             conversationRestartTimer = setTimeout(pollStateMachine, 200);
           } else {
-            // Ready to listen again
+            // Ready to listen again - use VAD
             console.log('[useMicrophone] Cooldown complete, entering READY state');
             setConversationState('READY');
             resetConversationTimeout();
@@ -599,7 +491,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     if (!conversationModeActive || !isComponentMounted()) return;
     if (conversationVadRunning) return; // Already running
 
-    console.log('[useMicrophone] Starting conversation VAD (threshold:', MOBILE_VOICE_THRESHOLD, ', sustainedFrames:', MOBILE_SUSTAINED_FRAMES, ')');
+    console.log('[useMicrophone] Starting conversation VAD (threshold:', MIC_VOICE_THRESHOLD, ', sustainedFrames:', CONVERSATION_SUSTAINED_FRAMES, ')');
 
     // Reset sustained frames counter
     conversationVadSustainedFrames = 0;
@@ -656,12 +548,12 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   /**
    * Start silence monitor for conversation mode
    * Runs in parallel with speech recognition to detect when user stops talking
-   * Uses MOBILE_SILENCE_DELAY to determine when to stop (respects user settings)
+   * Uses MIC_SILENCE_DELAY to determine when to stop (respects user settings)
    */
   async function startConversationSilenceMonitor(): Promise<void> {
     if (conversationSilenceMonitorRunning) return;
 
-    console.log('[useMicrophone] Starting conversation silence monitor (silenceDelay:', MOBILE_SILENCE_DELAY, 'ms)');
+    console.log('[useMicrophone] Starting conversation silence monitor (silenceDelay:', MIC_SILENCE_DELAY, 'ms)');
 
     try {
       conversationSilenceMonitorStream = await navigator.mediaDevices.getUserMedia({
@@ -714,11 +606,12 @@ export function useMicrophone(options: UseMicrophoneOptions) {
 
     conversationSilenceMonitorAnalyser = null;
     conversationHasReceivedSpeech = false;
+    conversationSpeechStart = 0;
   }
 
   /**
    * Run conversation silence monitor loop
-   * Detects when user stops talking and triggers stop after MOBILE_SILENCE_DELAY
+   * Detects when user stops talking and triggers stop after MIC_SILENCE_DELAY
    *
    * STATE GUARD: Only runs in LISTENING state
    */
@@ -748,7 +641,10 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     const vol = calculateVoiceVolume(conversationSilenceMonitorAnalyser, 150);
 
     // Voice detected - user is still speaking
-    if (vol > MOBILE_VOICE_THRESHOLD) {
+    if (vol > MIC_VOICE_THRESHOLD) {
+      if (!conversationHasReceivedSpeech) {
+        conversationSpeechStart = Date.now();
+      }
       conversationHasReceivedSpeech = true;
       // Clear any pending silence timer
       if (conversationSilenceTimer) {
@@ -758,8 +654,14 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     }
     // Silence detected - start/continue silence timer
     else if (conversationHasReceivedSpeech && !conversationSilenceTimer) {
+      const speechDuration = conversationSpeechStart ? (Date.now() - conversationSpeechStart) : 0;
+      if (speechDuration < CONVERSATION_MIN_SPEECH_MS) {
+        conversationSilenceMonitorAnimFrame = requestAnimationFrame(runConversationSilenceMonitor);
+        return;
+      }
+
       // Only start silence timer if we've received speech (prevents immediate trigger)
-      console.log('[useMicrophone] Silence detected, starting timer (' + MOBILE_SILENCE_DELAY + 'ms)');
+      console.log('[useMicrophone] Silence detected, starting timer (' + MIC_SILENCE_DELAY + 'ms)');
       conversationSilenceTimer = setTimeout(async () => {
         console.log('[useMicrophone] Silence timer expired');
 
@@ -773,19 +675,6 @@ export function useMicrophone(options: UseMicrophoneOptions) {
 
         console.log('[useMicrophone] Full transcript to send:', fullTranscript);
 
-        // If semantic turn detection is enabled, check if utterance is complete
-        if (MOBILE_SEMANTIC_TURN_DETECTION && fullTranscript) {
-          const isComplete = await checkSemanticTurnComplete(fullTranscript);
-
-          if (!isComplete) {
-            // User might continue - extend the wait
-            console.log('[useMicrophone] Semantic: utterance incomplete, waiting for more speech');
-            conversationSilenceTimer = null; // Allow new silence timer to start
-            return; // Don't stop - keep listening
-          }
-          console.log('[useMicrophone] Semantic: utterance complete, sending');
-        }
-
         // Stop the speech recognition first
         if (speechRecognition) {
           try {
@@ -797,9 +686,19 @@ export function useMicrophone(options: UseMicrophoneOptions) {
         // NOW send the accumulated transcript (this is when we actually send in conversation mode)
         if (fullTranscript) {
           console.log('[useMicrophone] Conversation mode: sending accumulated transcript:', fullTranscript);
+          accumulatedTranscript = ''; // Reset BEFORE onTranscript to prevent double-send in onend
+          conversationGotTranscript = true;
           onTranscript(fullTranscript);
+          conversationEmptyTurns = 0;
+        } else {
+          console.log('[useMicrophone] Conversation mode: no transcript detected, backing off');
+          accumulatedTranscript = '';
+          conversationEmptyTurns += 1;
+          if (conversationEmptyTurns >= 2) {
+            stopConversationMode();
+          }
         }
-      }, MOBILE_SILENCE_DELAY);
+      }, MIC_SILENCE_DELAY);
     }
 
     conversationSilenceMonitorAnimFrame = requestAnimationFrame(runConversationSilenceMonitor);
@@ -808,7 +707,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   /**
    * Run conversation VAD loop
    * Detects voice and starts speech recognition when SUSTAINED voice is detected
-   * Uses mobile-specific thresholds to filter ambient noise
+   * Uses thresholds to filter ambient noise
    *
    * STATE GUARD: Only runs in READY state (voice ducking protection)
    */
@@ -838,10 +737,10 @@ export function useMicrophone(options: UseMicrophoneOptions) {
       return;
     }
 
-    // Startup delay - ignore audio after mic activates (user-configurable)
-    // This prevents the phone's "ding" sound from triggering VAD
+    // Startup delay - ignore audio after mic activates
+    // This prevents system sounds from triggering VAD
     const timeSinceStart = Date.now() - conversationVadStartTime;
-    if (timeSinceStart < MOBILE_STARTUP_DELAY) {
+    if (timeSinceStart < CONVERSATION_STARTUP_DELAY) {
       conversationVadSustainedFrames = 0; // Don't accumulate frames during startup
       conversationVadAnimFrame = requestAnimationFrame(runConversationVAD);
       return;
@@ -850,13 +749,13 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     // Calculate voice volume using voice-frequency-focused analysis
     const vol = calculateVoiceVolume(conversationVadAnalyser, 150);
 
-    // Check if volume is above mobile threshold
-    if (vol > MOBILE_VOICE_THRESHOLD) {
+    // Check if volume is above threshold
+    if (vol > MIC_VOICE_THRESHOLD) {
       conversationVadSustainedFrames++;
 
       // Require sustained voice (multiple consecutive frames above threshold)
       // This prevents short noise spikes from triggering speech recognition
-      if (conversationVadSustainedFrames >= MOBILE_SUSTAINED_FRAMES) {
+      if (conversationVadSustainedFrames >= CONVERSATION_SUSTAINED_FRAMES) {
         console.log('[useMicrophone] Sustained voice detected (vol:', vol, ', frames:', conversationVadSustainedFrames, '), starting speech recognition');
 
         // Reset counter and stop VAD (speech recognition will take over)
@@ -872,7 +771,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
         startNativeSpeech(true); // continuous=true for conversation mode
 
         // Start our silence monitor to detect when user stops talking
-        // This uses MOBILE_SILENCE_DELAY from user settings
+        // This uses MIC_SILENCE_DELAY from user settings
         startConversationSilenceMonitor();
         return;
       }
@@ -886,182 +785,9 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   }
 
   /**
-   * Schedule restart of wake word detection after TTS finishes
-   * Called when single voice input ends (tap or wake word trigger)
-   */
-  function scheduleWakeWordRestart(): void {
-    if (!wakeWordEnabled || !isMobileDevice() || !isComponentMounted()) return;
-
-    // Wait for TTS to finish, then restart wake word listening
-    const checkAndRestart = () => {
-      if (!isComponentMounted()) return;
-
-      // Don't restart if conversation mode became active or already recording
-      if (conversationModeActive || get(isRecording) || get(isWakeWordListening)) return;
-
-      if (getTTSPlaying()) {
-        // TTS still playing, check again in 300ms
-        setTimeout(checkAndRestart, 300);
-      } else {
-        // TTS done, restart wake word listening
-        console.log('[useMicrophone] TTS finished, restarting wake word detection');
-        setTimeout(() => {
-          if (isComponentMounted() && !getTTSPlaying() && !get(isRecording) && !conversationModeActive) {
-            startWakeWordDetection();
-          }
-        }, 500); // Small delay after TTS ends
-      }
-    };
-
-    // Start checking after a brief delay (give TTS time to start)
-    setTimeout(checkAndRestart, 1000);
-  }
-
-  /**
-   * Start wake word detection (mobile-only)
-   * Listens continuously for wake word, then activates full speech recognition
-   */
-  function startWakeWordDetection(): void {
-    // Only works on mobile with native speech
-    if (!isMobileDevice() || !NativeSpeechRecognition) {
-      console.warn('[useMicrophone] Wake word detection only available on mobile');
-      return;
-    }
-
-    if (!wakeWordEnabled) {
-      console.log('[useMicrophone] Wake word detection disabled in settings');
-      return;
-    }
-
-    // Check for secure context
-    if (typeof window !== 'undefined' && !window.isSecureContext) {
-      console.warn('[useMicrophone] Wake word requires HTTPS');
-      onSystemMessage('🔒 Wake word requires HTTPS');
-      return;
-    }
-
-    // Don't start if already listening or TTS is playing
-    if (get(isWakeWordListening) || getTTSPlaying()) {
-      return;
-    }
-
-    // Clean up any existing instance
-    if (wakeWordRecognition) {
-      try { wakeWordRecognition.abort(); } catch {}
-      wakeWordRecognition = null;
-    }
-
-    try {
-      wakeWordRecognition = new NativeSpeechRecognition();
-      wakeWordRecognition.continuous = true; // Keep listening
-      wakeWordRecognition.interimResults = true; // Check interim for faster response
-      wakeWordRecognition.lang = 'en-US';
-
-      wakeWordRecognition.onstart = () => {
-        console.log('[useMicrophone] Wake word detection started, listening for:', wakeWordPhrases);
-        isWakeWordListening.set(true);
-      };
-
-      wakeWordRecognition.onresult = (event: SpeechRecognitionEvent) => {
-        // Check all results for wake word
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-
-          if (containsWakeWord(transcript)) {
-            console.log('[useMicrophone] Wake word detected:', transcript);
-
-            // Stop wake word detection temporarily
-            stopWakeWordDetection();
-
-            // Show confirmation (visual only, no message spam)
-            if (wakeWordConfirmation) {
-              wakeWordDetected.set(true);
-              // Reset after brief moment
-              setTimeout(() => wakeWordDetected.set(false), 500);
-            }
-
-            // Vibrate on mobile for haptic feedback
-            if (navigator.vibrate) {
-              navigator.vibrate(100);
-            }
-
-            // Start single voice input (NOT conversation mode)
-            // After this completes, we'll restart wake word listening
-            setTimeout(() => {
-              startNativeSpeech(false); // Single utterance
-            }, 100);
-
-            return;
-          }
-        }
-      };
-
-      wakeWordRecognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-        // Silently handle common errors - wake word detection should be unobtrusive
-        if (event.error === 'no-speech' || event.error === 'aborted') {
-          // Expected - just restart
-        } else {
-          console.error('[useMicrophone] Wake word error:', event.error);
-        }
-      };
-
-      wakeWordRecognition.onend = () => {
-        // Auto-restart if still supposed to be listening
-        // Use longer delay (1s) to prevent rapid cycling
-        if (get(isWakeWordListening) && isComponentMounted() && !getTTSPlaying() && !get(isRecording) && !conversationModeActive) {
-          setTimeout(() => {
-            if (get(isWakeWordListening) && isComponentMounted() && !getTTSPlaying() && !get(isRecording) && !conversationModeActive) {
-              try {
-                wakeWordRecognition?.start();
-              } catch {
-                // May fail if already started
-              }
-            }
-          }, 1000); // 1 second delay to prevent rapid cycling
-        } else {
-          isWakeWordListening.set(false);
-        }
-      };
-
-      wakeWordRecognition.start();
-    } catch (e) {
-      console.error('[useMicrophone] Failed to start wake word detection:', e);
-      isWakeWordListening.set(false);
-    }
-  }
-
-  /**
-   * Stop wake word detection
-   */
-  function stopWakeWordDetection(): void {
-    if (wakeWordRecognition) {
-      try { wakeWordRecognition.abort(); } catch {}
-      wakeWordRecognition = null;
-    }
-    isWakeWordListening.set(false);
-  }
-
-  /**
-   * Toggle wake word detection on/off
-   */
-  function toggleWakeWord(): void {
-    if (get(isWakeWordListening)) {
-      stopWakeWordDetection();
-      // Silent - visual indicator is enough
-    } else {
-      if (!wakeWordEnabled) {
-        console.log('[useMicrophone] Wake word not enabled in settings');
-        return;
-      }
-      startWakeWordDetection();
-      // Silent - visual indicator is enough
-    }
-  }
-
-  /**
-   * Start conversation mode directly (triggered by long-press on mobile)
-   * Enters conversation mode and starts VAD listening for actual voice
-   * VAD will detect voice and start speech recognition only when voice is detected
+   * Start conversation mode (triggered by long-press or right-click)
+   * Uses VAD to detect voice, then starts speech recognition with silence monitoring
+   * Falls back to continuous mode (Whisper) if native speech recognition isn't available
    */
   function startConversationMode(): void {
     // Check for secure context first
@@ -1070,26 +796,25 @@ export function useMicrophone(options: UseMicrophoneOptions) {
       return;
     }
 
+    // Fall back to continuous mode (Whisper-based) if native speech isn't available
     if (!NativeSpeechRecognition) {
-      onSystemMessage('⚠️ Speech recognition not available');
+      console.log('[useMicrophone] Native speech not available, falling back to continuous mode');
+      if (!get(isContinuousMode)) {
+        toggleContinuousMode();
+      }
       return;
     }
-
-    // Stop wake word detection if active
-    stopWakeWordDetection();
 
     // Enter conversation mode
     enterConversationMode();
 
-    // Vibrate for feedback
+    // Vibrate for feedback on touch devices
     if (navigator.vibrate) {
       navigator.vibrate(100);
     }
 
-    // Silent start - green icon is enough visual feedback
-
     // Start VAD listening (will start speech recognition when voice is detected)
-    // This prevents ambient noise from triggering recording
+    console.log('[useMicrophone] Starting conversation mode with VAD');
     startConversationVAD();
   }
 
@@ -1105,14 +830,15 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   }
 
   /**
-   * Toggle conversation mode on/off (for long-press)
+   * Toggle conversation mode on/off (for long-press or right-click)
+   * Always uses continuous mode (Whisper) for consistent behavior across all devices
    */
   function toggleConversationMode(): void {
-    if (conversationModeActive) {
-      stopConversationMode();
-    } else {
-      startConversationMode();
-    }
+    // Always use continuous mode (Whisper) - same pipeline as single-tap
+    // This ensures consistent, working behavior on all devices
+    // Native speech recognition is unreliable on mobile
+    console.log('[useMicrophone] Long-press/right-click: using Whisper continuous mode');
+    toggleContinuousMode();
   }
 
   /**
@@ -1120,7 +846,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
    * Uses browser's built-in speech-to-text - fast, on-device, no upload
    */
   function startNativeSpeech(continuous: boolean = false): void {
-    // Check for secure context first (HTTPS required for microphone on mobile)
+    // Check for secure context first (HTTPS required for microphone)
     if (typeof window !== 'undefined' && !window.isSecureContext) {
       console.warn('[useMicrophone] Not in secure context (HTTPS required for microphone)');
       onSystemMessage('🔒 Microphone requires HTTPS. Access via https:// instead of http://');
@@ -1158,10 +884,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
         isRecording.set(true);
         isNativeMode.set(true);
         interimTranscript.set('');
-        // Reset semantic turn detection state for new session
         accumulatedTranscript = '';
-        lastSemanticCheckTranscript = '';
-        semanticCheckInProgress = false;
         signalMicActivity(); // Signal activity to prevent background agents
       };
 
@@ -1200,14 +923,23 @@ export function useMicrophone(options: UseMicrophoneOptions) {
 
           // In CONVERSATION MODE (continuous): Don't send immediately!
           // The browser finalizes segments on its own timeline, but we want to wait
-          // until OUR silence monitor triggers (respects user's MOBILE_SILENCE_DELAY).
+          // until OUR silence monitor triggers (respects user's MIC_SILENCE_DELAY).
           // The accumulated transcript will be sent when silence is detected.
           if (conversationModeActive && speechRecognition?.continuous) {
             console.log('[useMicrophone] Conversation mode: accumulating, not sending yet');
             // Don't send - let silence monitor handle it
           } else {
-            // Single utterance mode: send immediately
-            onTranscript(final.trim());
+            // Single utterance or continuous mode: send if transcript is substantial
+            const trimmed = final.trim();
+            // In continuous mode, filter out very short transcripts (likely noise/echo)
+            // Require at least 3 words or 15 characters
+            const wordCount = trimmed.split(/\s+/).length;
+            const isContinuous = get(isContinuousMode);
+            if (isContinuous && wordCount < 3 && trimmed.length < 15) {
+              console.log('[useMicrophone] Continuous mode: ignoring short transcript (likely noise):', trimmed);
+            } else {
+              onTranscript(trimmed);
+            }
           }
         }
       };
@@ -1222,10 +954,10 @@ export function useMicrophone(options: UseMicrophoneOptions) {
         } else if (event.error === 'aborted') {
           // Intentionally stopped - not an error
         } else if (event.error === 'not-allowed') {
-          // On mobile over HTTP, this triggers immediately without showing a prompt
+          // Over HTTP, this triggers immediately without showing a prompt
           const isSecure = typeof window !== 'undefined' && window.isSecureContext;
           if (!isSecure) {
-            onSystemMessage('🔒 Microphone requires HTTPS. Use https:// URL on mobile.');
+            onSystemMessage('🔒 Microphone requires HTTPS.');
           } else {
             onSystemMessage('🎤 Microphone access denied. Please allow microphone in browser settings.');
           }
@@ -1241,22 +973,68 @@ export function useMicrophone(options: UseMicrophoneOptions) {
       speechRecognition.onend = () => {
         console.log('[useMicrophone] Native speech recognition ended');
 
-        // In continuous mode (desktop), restart if we're still supposed to be recording
-        if (continuous && get(isContinuousMode) && isComponentMounted() && !getTTSPlaying()) {
-          console.log('[useMicrophone] Restarting continuous native speech recognition...');
-          // Small delay to prevent rapid restart loops
-          setTimeout(() => {
-            if (get(isContinuousMode) && isComponentMounted() && !getTTSPlaying()) {
-              startNativeSpeech(true);
-            }
-          }, 100);
+        // In continuous mode (desktop), restart after TTS finishes with proper cooldown
+        if (continuous && get(isContinuousMode) && isComponentMounted()) {
+          if (!getTTSPlaying()) {
+            // TTS not playing - restart with small delay
+            console.log('[useMicrophone] Restarting continuous native speech recognition...');
+            setTimeout(() => {
+              if (get(isContinuousMode) && isComponentMounted() && !getTTSPlaying()) {
+                startNativeSpeech(true);
+              }
+            }, 200);
+          } else {
+            // TTS is playing - poll until it finishes, then restart with longer cooldown
+            // to avoid picking up echo from speakers
+            console.log('[useMicrophone] TTS playing, waiting to restart continuous mode...');
+            const pollForTTSEnd = () => {
+              if (!get(isContinuousMode) || !isComponentMounted()) return;
+              if (getTTSPlaying()) {
+                // Still playing, check again
+                setTimeout(pollForTTSEnd, 200);
+              } else {
+                // TTS finished - wait for audio to settle (prevent echo pickup)
+                console.log('[useMicrophone] TTS finished, waiting for cooldown before restart');
+                setTimeout(() => {
+                  if (get(isContinuousMode) && isComponentMounted() && !getTTSPlaying()) {
+                    console.log('[useMicrophone] Cooldown complete, restarting continuous mode');
+                    startNativeSpeech(true);
+                  }
+                }, 800); // 800ms cooldown after TTS to prevent echo
+              }
+            };
+            setTimeout(pollForTTSEnd, 200);
+          }
         }
-        // In conversation mode (mobile long-press), schedule restart after TTS finishes
+        // In conversation mode (long-press), send any remaining transcript then schedule restart
+        // Browser can end recognition at any time, so we must capture transcript here as safety net
         else if (conversationModeActive && isComponentMounted()) {
-          console.log('[useMicrophone] Conversation mode active, scheduling restart after TTS');
+          console.log('[useMicrophone] Conversation mode: recognition ended');
+
+          // Stop silence monitor first (prevents double-send if it was about to fire)
+          stopConversationSilenceMonitor();
+
+          // Send any accumulated transcript that wasn't sent yet
+          const currentInterim = get(interimTranscript);
+          let fullTranscript = accumulatedTranscript;
+          if (currentInterim.trim()) {
+            fullTranscript += ' ' + currentInterim.trim();
+          }
+          fullTranscript = fullTranscript.trim();
+
+          if (fullTranscript) {
+            console.log('[useMicrophone] Sending transcript from onend:', fullTranscript);
+            conversationGotTranscript = true;
+            onTranscript(fullTranscript);
+          }
+
+          // Reset for next turn
+          accumulatedTranscript = '';
           isRecording.set(false);
           isNativeMode.set(false);
           interimTranscript.set('');
+
+          // Schedule restart after TTS
           scheduleConversationRestart();
         }
         // Single input done (tap) - just stop, no auto-restart
@@ -1314,7 +1092,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     const continuous = forceContinuous || get(isContinuousMode);
 
     if (useNativeSTT) {
-      console.log('[useMicrophone] Using native speech recognition (mobile-optimized)');
+      console.log('[useMicrophone] Using native speech recognition');
       startNativeSpeech(continuous);
     } else {
       console.log('[useMicrophone] Using Whisper backend');
@@ -1459,7 +1237,14 @@ export function useMicrophone(options: UseMicrophoneOptions) {
 
         if (data?.transcript && data.transcript.trim()) {
           const transcript = data.transcript.trim();
-          onTranscript(transcript);
+          // In continuous mode, filter out very short transcripts (likely noise/echo)
+          // Require at least 3 words or 15 characters
+          const wordCount = transcript.split(/\s+/).length;
+          if (get(isContinuousMode) && wordCount < 3 && transcript.length < 15) {
+            console.log('[useMicrophone] Continuous mode: ignoring short transcript (likely noise):', transcript);
+          } else {
+            onTranscript(transcript);
+          }
         } else {
           console.log('[useMicrophone] No transcript detected (empty or null response)');
         }
@@ -1482,9 +1267,31 @@ export function useMicrophone(options: UseMicrophoneOptions) {
       isRecording.set(false);
       micSpeaking = false; // Reset speaking state
 
-      // In continuous mode, ensure we're ready for next recording
-      if (get(isContinuousMode)) {
-        console.log('[useMicrophone] Ready for next speech in continuous mode');
+      // In continuous mode, restart VAD after TTS finishes (with cooldown)
+      if (get(isContinuousMode) && isComponentMounted()) {
+        if (!getTTSPlaying()) {
+          // TTS not playing - restart VAD immediately
+          console.log('[useMicrophone] Continuous mode: restarting VAD...');
+          runMicVAD();
+        } else {
+          // TTS is playing - poll until it finishes, then restart with cooldown
+          console.log('[useMicrophone] Continuous mode: waiting for TTS to finish...');
+          const pollForTTSEnd = () => {
+            if (!get(isContinuousMode) || !isComponentMounted()) return;
+            if (getTTSPlaying()) {
+              setTimeout(pollForTTSEnd, 200);
+            } else {
+              console.log('[useMicrophone] TTS finished, cooldown before VAD restart...');
+              setTimeout(() => {
+                if (get(isContinuousMode) && isComponentMounted() && !getTTSPlaying()) {
+                  console.log('[useMicrophone] Restarting VAD after cooldown');
+                  runMicVAD();
+                }
+              }, 800); // 800ms cooldown after TTS to prevent echo
+            }
+          };
+          setTimeout(pollForTTSEnd, 200);
+        }
       }
     }
   }
@@ -1604,7 +1411,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   }
 
   /**
-   * Toggle continuous mode (used by long-press on mobile, right-click on desktop)
+   * Toggle continuous mode (used by long-press or right-click)
    */
   function toggleContinuousMode(): void {
     const currentMode = get(isContinuousMode);
@@ -1655,9 +1462,6 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     // Clean up conversation silence monitor
     stopConversationSilenceMonitor();
 
-    // Clean up wake word detection
-    stopWakeWordDetection();
-
     // Clean up native speech recognition
     if (speechRecognition) {
       try {
@@ -1681,9 +1485,130 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     isRecording.set(false);
     isNativeMode.set(false);
     interimTranscript.set('');
-    isWakeWordListening.set(false);
-    wakeWordDetected.set(false);
     isConversationMode.set(false);
+  }
+
+  // Media Session state
+  let mediaSessionEnabled = false;
+
+  /**
+   * Setup Media Session API to capture hardware buttons (earbuds, Bluetooth headsets)
+   * This allows users to trigger mic recording via hardware buttons.
+   *
+   * Button mappings:
+   * - Play/Pause: Toggle mic recording (most common earbud button)
+   * - Stop: Stop recording if active
+   *
+   * Note: Power button long-press cannot be captured - user must disable
+   * Google Assistant in Android Settings → Gestures → Power button
+   */
+  function setupMediaSession(): void {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) {
+      console.warn('[MediaSession] API not available in this browser');
+      return;
+    }
+
+    if (mediaSessionEnabled) {
+      console.log('[MediaSession] Already enabled');
+      return;
+    }
+
+    // Create a silent audio element to enable media session
+    // Without active media, the session won't receive hardware button events
+    const silentAudio = new Audio();
+    silentAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+    silentAudio.loop = true;
+    silentAudio.volume = 0.001; // Nearly silent
+
+    // Set metadata so it shows in notification/lock screen
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: 'MetaHuman Voice Input',
+      artist: 'Ready to listen',
+      album: 'Voice Assistant',
+    });
+
+    // Handle play/pause - this is triggered by most earbud buttons
+    navigator.mediaSession.setActionHandler('play', () => {
+      console.log('[MediaSession] Play pressed - starting mic');
+      silentAudio.play().catch(() => {});
+      if (!get(isRecording)) {
+        // Use conversation mode for continuous interaction
+        if (!conversationModeActive) {
+          toggleConversationMode();
+        }
+      }
+      navigator.mediaSession.playbackState = 'playing';
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: 'MetaHuman Voice Input',
+        artist: 'Listening...',
+        album: 'Voice Assistant',
+      });
+    });
+
+    navigator.mediaSession.setActionHandler('pause', () => {
+      console.log('[MediaSession] Pause pressed - toggling mic');
+      // Toggle behavior: if recording, stop. If not, start.
+      if (get(isRecording)) {
+        stopMic();
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: 'MetaHuman Voice Input',
+          artist: 'Ready to listen',
+          album: 'Voice Assistant',
+        });
+      } else {
+        // Use conversation mode for continuous interaction
+        if (!conversationModeActive) {
+          toggleConversationMode();
+        }
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: 'MetaHuman Voice Input',
+          artist: 'Listening...',
+          album: 'Voice Assistant',
+        });
+      }
+      navigator.mediaSession.playbackState = get(isRecording) ? 'playing' : 'paused';
+    });
+
+    navigator.mediaSession.setActionHandler('stop', () => {
+      console.log('[MediaSession] Stop pressed - stopping mic');
+      if (get(isRecording)) {
+        stopMic();
+      }
+      if (conversationModeActive) {
+        toggleConversationMode(); // Turn off conversation mode
+      }
+      silentAudio.pause();
+      navigator.mediaSession.playbackState = 'none';
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: 'MetaHuman Voice Input',
+        artist: 'Stopped',
+        album: 'Voice Assistant',
+      });
+    });
+
+    // Start playing to enable the session
+    silentAudio.play().then(() => {
+      console.log('[MediaSession] Enabled - hardware buttons will trigger mic');
+      mediaSessionEnabled = true;
+      navigator.mediaSession.playbackState = 'paused';
+    }).catch((err) => {
+      console.warn('[MediaSession] Could not start - user interaction required first:', err.message);
+      // Will be enabled on first user interaction with the page
+    });
+  }
+
+  /**
+   * Disable Media Session hardware button capture
+   */
+  function disableMediaSession(): void {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+
+    navigator.mediaSession.setActionHandler('play', null);
+    navigator.mediaSession.setActionHandler('pause', null);
+    navigator.mediaSession.setActionHandler('stop', null);
+    navigator.mediaSession.metadata = null;
+    mediaSessionEnabled = false;
+    console.log('[MediaSession] Disabled');
   }
 
   return {
@@ -1694,20 +1619,21 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     isNativeMode,       // Whether currently using native speech recognition
     interimTranscript,  // Real-time transcript preview (native mode only)
     whisperStatus,      // Whisper server status (checked once on load, no polling)
-    isWakeWordListening, // Wake word detection active (mobile only)
-    wakeWordDetected,   // Wake word was just triggered
-    isConversationMode, // Conversation mode active (mobile, any speech triggers)
+    isConversationMode, // Conversation mode active (any speech triggers)
+    isWakeWordListening, // Deprecated: always false (for UI compatibility)
+    wakeWordDetected,   // Deprecated: always false (for UI compatibility)
 
     // Methods
     loadVADSettings,
     startMic,           // Single press: one voice input
     stopMic,
-    toggleContinuousMode, // Desktop: right-click for continuous VAD
-    toggleConversationMode, // Mobile: long-press for conversation mode
-    toggleWakeWord,     // Toggle wake word detection (mobile only)
-    startWakeWordDetection,
-    stopWakeWordDetection,
+    toggleContinuousMode, // Right-click for continuous VAD
+    toggleConversationMode, // Long-press for conversation mode
     cleanup,
+
+    // Media Session (hardware button capture)
+    setupMediaSession,     // Enable earbud/headset button capture
+    disableMediaSession,   // Disable hardware button capture
 
     // Configuration
     getSTTBackend,
@@ -1715,6 +1641,5 @@ export function useMicrophone(options: UseMicrophoneOptions) {
 
     // Utilities
     isNativeSpeechAvailable,
-    isMobileDevice,
   };
 }

@@ -411,9 +411,27 @@ function streamGraphExecutionWithProgress(params: GraphPipelineParams) {
 
         const output = getGraphOutput(graphState);
         const responseText = output?.output || output?.response;
+        const graphError = output?.error;
+
+        // Check for errors in graph output (e.g., GPU memory exhaustion)
+        if (graphError) {
+          console.error('[streamGraphExecutionWithProgress] Graph returned error:', graphError);
+          push('error', {
+            message: graphError,
+            isGPUError: graphError.includes('GPU') || graphError.includes('memory'),
+            suggestion: graphError.includes('GPU') || graphError.includes('memory')
+              ? 'Try refreshing the page or wait a moment for GPU memory to clear.'
+              : undefined
+          });
+          if (!closed) {
+            closed = true;
+            try { controller.close(); } catch {}
+          }
+          return;
+        }
 
         if (!responseText) {
-          push('error', { message: 'Graph executed but produced no response' });
+          push('error', { message: 'Graph executed but produced no response. Check server logs for details.' });
           if (!closed) {
             closed = true;
             try { controller.close(); } catch {}

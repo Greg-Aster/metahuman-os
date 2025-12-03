@@ -33,10 +33,42 @@ export * from './logging';
 export * from './runtime-mode';
 export * from './transcription';
 export * from './adapters';
-export * from './skills';
+// Skills exports (exclude policy duplicates)
+export {
+  SkillResult,
+  SkillDefinition,
+  SkillRegistry,
+  getSkills,
+  executeSkill,
+  buildSkillPrompt,
+  loadSkillsFromFile,
+  skills,
+  // Export skills versions (policy has different signatures)
+  queueForApproval as skillQueueForApproval,
+  getPendingApprovals as skillGetPendingApprovals,
+  approveAction,
+  rejectAction,
+} from './skills.js';
+export type { ApprovalQueueItem, ApprovalStatus } from './skills.js';
+
 export * from './tool-catalog';
 export * from './reasoning';
-export * from './policy';
+
+// Policy exports (primary source for approval queue)
+export {
+  PolicyEngine,
+  SafetyPolicy,
+  ActionContext,
+  ActionResult,
+  evaluateAction,
+  // Use policy versions as primary
+  queueForApproval,
+  getPendingApprovals,
+  approveFromPolicy,
+  rejectFromPolicy,
+  loadSafetyPolicies,
+} from './policy.js';
+export type { PendingAction, ApprovalResult, PolicyEvaluationResult } from './policy.js';
 export * from './tts';
 export * from './stt';
 export * from './voice-training';

@@ -26,12 +26,6 @@ interface AudioChunk {
 const VOICE_MODELS_CACHE_TTL = 60_000; // 1 minute
 const VOICE_PROVIDER_CACHE_TTL = 30_000; // 30 seconds
 
-// Utility: Check if running on mobile device
-function isMobileDevice(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-}
-
 /**
  * Normalize text for speech synthesis
  * Removes markdown formatting, code blocks, and other non-speakable content
@@ -590,7 +584,6 @@ export function useTTS() {
     cancelInFlightTts,
     ensureAudioUnlocked,
     prefetchVoiceResources,
-    isMobileDevice,
     cleanup,
   };
 }

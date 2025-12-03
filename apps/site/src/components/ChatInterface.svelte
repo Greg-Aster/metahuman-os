@@ -110,7 +110,6 @@
     isNativeMode: micIsNativeMode,
     isWakeWordListening: micIsWakeWordListening,
     isConversationMode: micIsConversationMode,
-    isMobileDevice
   } = mic;
 
   // Initialize Thinking Trace composable
@@ -148,7 +147,7 @@
   function loadChatPrefs() {
     try {
       const raw = localStorage.getItem('chatPrefs');
-      if (!raw) { ttsEnabled = ttsApi.isMobileDevice(); return; }
+      if (!raw) { ttsEnabled = false; return; }
       const p = JSON.parse(raw);
       if (typeof p.ttsEnabled === 'boolean') ttsEnabled = p.ttsEnabled;
       if (typeof p.reasoningDepth === 'number') {
@@ -200,6 +199,15 @@
   onMount(async () => {
     loadChatPrefs();
     mic.loadVADSettings(); // Load VAD settings from voice config
+
+    // Enable hardware button capture only if user opted in via Voice Settings
+    // This creates a background audio session for earbud/headphone button support
+    const hardwareButtonsEnabled = localStorage.getItem('mh-hardware-buttons') === 'true';
+    if (hardwareButtonsEnabled) {
+      console.log('[chat] Hardware button capture enabled by user preference');
+      mic.setupMediaSession();
+    }
+
     if (ttsEnabled) {
       ttsApi.prefetchVoiceResources();
     }
@@ -400,6 +408,7 @@
     }
 
     // Clean up mic resources
+    mic.disableMediaSession();
     mic.cleanup();
   });
 
@@ -603,11 +612,31 @@
               messagesApi.pushMessage('system', data.content);
             }
           } else if (type === 'error') {
-            throw new Error(data.message);
+            // Display the actual error message from the server
+            const errorMessage = data.message || 'Unknown error occurred';
+            const suggestion = data.suggestion || '';
+            const isGPUError = data.isGPUError || errorMessage.includes('GPU') || errorMessage.includes('memory');
+
+            console.error('[chat] Server error:', errorMessage);
+
+            // Format user-friendly error message
+            let displayMessage = `⚠️ ${errorMessage}`;
+            if (suggestion) {
+              displayMessage += `\n\n💡 ${suggestion}`;
+            } else if (isGPUError) {
+              displayMessage += '\n\n💡 Try refreshing the page or wait a moment for GPU memory to clear.';
+            }
+
+            messagesApi.pushMessage('system', displayMessage);
+            thinkingTraceApi.stop();
+            loading = false;
+            reasoningStages = [];
+            chatResponseStream?.close();
+            return; // Don't throw, we handled it
           }
         } catch (err) {
           console.error('Chat stream error:', err);
-          messagesApi.pushMessage('system', 'Error: Failed to process server response.');
+          messagesApi.pushMessage('system', `Error: ${(err as Error).message || 'Failed to process server response.'}`);
           thinkingTraceApi.stop();
           loading = false;
           reasoningStages = [];
@@ -1095,21 +1124,14 @@
         $micIsRecording ? mic.stopMic() : mic.startMic();
       }}
       on:micLongPress={() => {
-        // Long-press on mobile: toggle conversation mode (auto-restarts after each exchange)
-        // On desktop: toggle continuous VAD mode
-        if (isMobileDevice()) {
-          console.log('[chat-mic] Long press detected (mobile), toggling conversation mode');
-          mic.toggleConversationMode();
-        } else if (!$micIsContinuousMode && !$micIsRecording) {
-          console.log('[chat-mic] Long press detected (desktop), starting continuous mode');
-          mic.toggleContinuousMode();
-        }
+        // Long-press: toggle conversation mode on ALL devices
+        console.log('[chat-mic] Long press detected, toggling conversation mode');
+        mic.toggleConversationMode();
       }}
       on:micContextMenu={() => {
-        // Right-click also triggers continuous mode (desktop)
-        if (!$micIsContinuousMode && !$micIsRecording) {
-          mic.toggleContinuousMode();
-        }
+        // Right-click: toggle conversation mode on ALL devices
+        console.log('[chat-mic] Right-click detected, toggling conversation mode');
+        mic.toggleConversationMode();
       }}
       on:ttsStop={() => {
         ttsApi.stopActiveAudio();
@@ -1120,17 +1142,10 @@
         console.log('[chat-mic] Tap-to-interrupt: stopping TTS and starting to listen');
         ttsApi.stopActiveAudio();
         ttsApi.cancelInFlightTts();
-        // If in conversation mode, start listening immediately
+        // If in conversation mode, VAD will auto-restart
         // If not, enter conversation mode
-        if ($micIsConversationMode) {
-          // Already in conversation mode - conversation VAD will auto-restart
-          // Just need to ensure we're in READY state after TTS stops
-        } else if (isMobileDevice()) {
-          // Enter conversation mode on mobile
+        if (!$micIsConversationMode) {
           mic.toggleConversationMode();
-        } else {
-          // Start single recording on desktop
-          mic.startMic();
         }
       }}
       on:clearSelection={() => messagesApi.clearSelection()}

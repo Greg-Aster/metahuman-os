@@ -70,12 +70,16 @@ export function purgeOldAuditLogs(): void {
 
 export interface AuditEntry {
   timestamp: string;
-  level: 'info' | 'warn' | 'error' | 'critical';
-  category: 'system' | 'decision' | 'action' | 'security' | 'data';
+  level: 'info' | 'warn' | 'error' | 'critical' | 'debug';
+  category: 'system' | 'decision' | 'action' | 'security' | 'data' | 'agent' | 'data_change';
   event: string;
   details?: any;
   actor?: string; // 'human' | 'system' | 'agent' or specific agent/service name or username
-  userId?: string; // NEW: Track which user performed the action
+  userId?: string; // Track which user performed the action
+  // Extended properties for cognitive-layers and other subsystems
+  action?: string; // Action being performed (for detailed audit trails)
+  message?: string; // Human-readable message
+  metadata?: Record<string, any>; // Additional metadata
 }
 
 export interface AuditLog {
