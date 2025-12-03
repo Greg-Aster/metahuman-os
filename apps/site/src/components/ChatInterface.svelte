@@ -74,8 +74,10 @@
   const mic = useMicrophone({
     getTTSPlaying: () => get(ttsIsPlaying),
     onTranscript: (transcript: string) => {
-      // Auto-send in continuous mode
-      if (get(mic.isContinuousMode)) {
+      // Auto-send in continuous mode (desktop) or conversation mode (mobile)
+      const autoSend = get(mic.isContinuousMode) || get(mic.isConversationMode);
+
+      if (autoSend) {
         // If LLM is busy (thinking or responding), queue the message
         if (loading) {
           console.log('[chat-queue] LLM busy, queueing message:', transcript.substring(0, 50) + (transcript.length > 50 ? '...' : ''));
@@ -87,9 +89,11 @@
           void sendMessage();
         }
       } else {
-        // Normal mode: put transcript in input field for user to review/edit
+        // Single input mode: put transcript in input field for user to review/edit
         console.log('[chat-mic] Transcribed:', transcript.substring(0, 50) + (transcript.length > 50 ? '...' : ''));
         input = transcript;
+        // Auto-send after single input too (tap or "hey greg")
+        void sendMessage();
       }
     },
     onSystemMessage: (message: string) => {
@@ -103,7 +107,10 @@
     isContinuousMode: micIsContinuousMode,
     queuedMessage: micQueuedMessage,
     interimTranscript: micInterimTranscript,
-    isNativeMode: micIsNativeMode
+    isNativeMode: micIsNativeMode,
+    isWakeWordListening: micIsWakeWordListening,
+    isConversationMode: micIsConversationMode,
+    isMobileDevice
   } = mic;
 
   // Initialize Thinking Trace composable
@@ -1060,6 +1067,8 @@
       selectedMessage={$selectedMessage}
       isRecording={$micIsRecording}
       isContinuousMode={$micIsContinuousMode}
+      isWakeWordListening={$micIsWakeWordListening}
+      isConversationMode={$micIsConversationMode}
       ttsIsPlaying={$ttsIsPlaying}
       interimTranscript={$micInterimTranscript}
       {lengthMode}
@@ -1067,16 +1076,32 @@
       on:stop={stopRequest}
       on:keypress={(e) => handleKeyPress(e.detail.event)}
       on:micClick={() => {
+        // Tap on mic: stop any active listening mode first
+        if ($micIsWakeWordListening) {
+          console.log('[chat-mic] Stopping wake word detection');
+          mic.stopWakeWordDetection();
+          return;
+        }
+        if ($micIsConversationMode) {
+          console.log('[chat-mic] Stopping conversation mode');
+          mic.toggleConversationMode();
+          return;
+        }
         if ($micIsContinuousMode) {
           mic.toggleContinuousMode();
-        } else {
-          $micIsRecording ? mic.stopMic() : mic.startMic();
+          return;
         }
+        // Normal single recording
+        $micIsRecording ? mic.stopMic() : mic.startMic();
       }}
       on:micLongPress={() => {
-        // Long-press triggers continuous mode (mobile-friendly)
-        if (!$micIsContinuousMode && !$micIsRecording) {
-          console.log('[chat-mic] Long press detected, starting continuous mode');
+        // Long-press on mobile: toggle conversation mode (auto-restarts after each exchange)
+        // On desktop: toggle continuous VAD mode
+        if (isMobileDevice()) {
+          console.log('[chat-mic] Long press detected (mobile), toggling conversation mode');
+          mic.toggleConversationMode();
+        } else if (!$micIsContinuousMode && !$micIsRecording) {
+          console.log('[chat-mic] Long press detected (desktop), starting continuous mode');
           mic.toggleContinuousMode();
         }
       }}
@@ -1089,6 +1114,24 @@
       on:ttsStop={() => {
         ttsApi.stopActiveAudio();
         ttsApi.cancelInFlightTts();
+      }}
+      on:ttsStopAndListen={() => {
+        // Tap-to-interrupt: Stop TTS and start listening (ChatGPT/Google style)
+        console.log('[chat-mic] Tap-to-interrupt: stopping TTS and starting to listen');
+        ttsApi.stopActiveAudio();
+        ttsApi.cancelInFlightTts();
+        // If in conversation mode, start listening immediately
+        // If not, enter conversation mode
+        if ($micIsConversationMode) {
+          // Already in conversation mode - conversation VAD will auto-restart
+          // Just need to ensure we're in READY state after TTS stops
+        } else if (isMobileDevice()) {
+          // Enter conversation mode on mobile
+          mic.toggleConversationMode();
+        } else {
+          // Start single recording on desktop
+          mic.startMic();
+        }
       }}
       on:clearSelection={() => messagesApi.clearSelection()}
       on:lengthModeChange={(e) => { lengthMode = e.detail.mode; }}

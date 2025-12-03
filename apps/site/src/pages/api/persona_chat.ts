@@ -40,7 +40,7 @@ let executorsReady = false;
 const executorsReadyPromise = (async () => {
   const startTime = Date.now();
   try {
-    const { getNodeExecutor } = await import('@metahuman/core/node-executors');
+    const { getNodeExecutor } = await import('@metahuman/core/nodes');
     // Test that executors are loaded
     if (getNodeExecutor('user_input')) {
       const loadTime = Date.now() - startTime;

@@ -3,6 +3,8 @@
  *
  * This file registers all cognitive system nodes with LiteGraph
  * and implements their execution logic.
+ *
+ * Uses the unified node system from @metahuman/core/nodes/schemas
  */
 
 // LiteGraph will be passed as a parameter to avoid SSR issues
@@ -10,50 +12,14 @@
 let LiteGraph: any;
 // @ts-ignore
 let LGraphNode: any;
+
+// Import from the new unified node system (browser-safe schemas)
 import {
   nodeSchemas,
+  getNodeSchema,
   type NodeSchema,
-  TextInputNode,
-  ConversationHistoryNode,
-  BufferManagerNode,
-  ObservationFormatterNode,
-  CompletionCheckerNode,
-  ResponseSynthesizerNode,
-  ChainOfThoughtStripperNode,
-  SafetyValidatorNode,
-  ResponseRefinerNode,
-  ModelRouterNode,
-  AuditLoggerNode,
-  FsWriteNode,
-  FsListNode,
-  TaskCreateNode,
-  TaskUpdateNode,
-  SearchIndexNode,
-  WebSearchNode,
-  ChatViewNode,
-  TTSNode,
-  OrchestratorLLMNode,
-  PersonaFormatterNode,
-  IterationCounterNode,
-  ScratchpadCompletionCheckerNode,
-  ScratchpadFormatterNode,
-  CuriosityWeightedSamplerNode,
-  CuriosityQuestionGeneratorNode,
-  CuriosityQuestionSaverNode,
-  CuriosityActivityCheckNode,
-  SmartRouterNode,
-  UncuratedMemoryLoaderNode,
-  PersonaSummaryLoaderNode,
-  CuratorLLMNode,
-  CuratedMemorySaverNode,
-  TrainingPairGeneratorNode,
-  TrainingPairAppenderNode,
-  MemoryMarkerNode,
-  BigBrotherNode,
-  BigBrotherRouterNode,
-  BigBrotherExecutorNode,
-  type PropertySchema
-} from '../../shared/node-schemas';
+  type PropertySchema,
+} from '@metahuman/core/nodes/schemas';
 
 // ============================================================================
 // WIDGET AUTO-GENERATION HELPERS
@@ -1783,19 +1749,23 @@ class ConversationalResponseNodeImpl extends CognitiveNodeBase {
 // ============================================================================
 
 class ConversationHistoryNodeImpl extends CognitiveNodeBase {
-  constructor() { super(ConversationHistoryNode); }
+  static schema = getNodeSchema('conversation_history')!;
+  constructor() { super(ConversationHistoryNodeImpl.schema); }
 }
 
 class ObservationFormatterNodeImpl extends CognitiveNodeBase {
-  constructor() { super(ObservationFormatterNode); }
+  static schema = getNodeSchema('observation_formatter')!;
+  constructor() { super(ObservationFormatterNodeImpl.schema); }
 }
 
 class CompletionCheckerNodeImpl extends CognitiveNodeBase {
-  constructor() { super(CompletionCheckerNode); }
+  static schema = getNodeSchema('completion_checker')!;
+  constructor() { super(CompletionCheckerNodeImpl.schema); }
 }
 
 class ResponseSynthesizerNodeImpl extends CognitiveNodeBase {
-  constructor() { super(ResponseSynthesizerNode); }
+  static schema = getNodeSchema('response_synthesizer')!;
+  constructor() { super(ResponseSynthesizerNodeImpl.schema); }
 }
 
 class IterationCounterNodeImpl extends CognitiveNodeBase {
@@ -1883,47 +1853,58 @@ class ScratchpadFormatterNodeImpl extends CognitiveNodeBase {
 }
 
 class ChainOfThoughtStripperNodeImpl extends CognitiveNodeBase {
-  constructor() { super(ChainOfThoughtStripperNode); }
+  static schema = getNodeSchema('cot_stripper')!;
+  constructor() { super(ChainOfThoughtStripperNodeImpl.schema); }
 }
 
 class SafetyValidatorNodeImpl extends CognitiveNodeBase {
-  constructor() { super(SafetyValidatorNode); }
+  static schema = getNodeSchema('safety_validator')!;
+  constructor() { super(SafetyValidatorNodeImpl.schema); }
 }
 
 class ResponseRefinerNodeImpl extends CognitiveNodeBase {
-  constructor() { super(ResponseRefinerNode); }
+  static schema = getNodeSchema('response_refiner')!;
+  constructor() { super(ResponseRefinerNodeImpl.schema); }
 }
 
 class ModelRouterNodeImpl extends CognitiveNodeBase {
-  constructor() { super(ModelRouterNode); }
+  static schema = getNodeSchema('model_router')!;
+  constructor() { super(ModelRouterNodeImpl.schema); }
 }
 
 class AuditLoggerNodeImpl extends CognitiveNodeBase {
-  constructor() { super(AuditLoggerNode); }
+  static schema = getNodeSchema('audit_logger')!;
+  constructor() { super(AuditLoggerNodeImpl.schema); }
 }
 
 class FsWriteNodeImpl extends CognitiveNodeBase {
-  constructor() { super(FsWriteNode); }
+  static schema = getNodeSchema('skill_fs_write')!;
+  constructor() { super(FsWriteNodeImpl.schema); }
 }
 
 class FsListNodeImpl extends CognitiveNodeBase {
-  constructor() { super(FsListNode); }
+  static schema = getNodeSchema('skill_fs_list')!;
+  constructor() { super(FsListNodeImpl.schema); }
 }
 
 class TaskCreateNodeImpl extends CognitiveNodeBase {
-  constructor() { super(TaskCreateNode); }
+  static schema = getNodeSchema('skill_task_create')!;
+  constructor() { super(TaskCreateNodeImpl.schema); }
 }
 
 class TaskUpdateNodeImpl extends CognitiveNodeBase {
-  constructor() { super(TaskUpdateNode); }
+  static schema = getNodeSchema('skill_task_update')!;
+  constructor() { super(TaskUpdateNodeImpl.schema); }
 }
 
 class SearchIndexNodeImpl extends CognitiveNodeBase {
-  constructor() { super(SearchIndexNode); }
+  static schema = getNodeSchema('skill_search_index')!;
+  constructor() { super(SearchIndexNodeImpl.schema); }
 }
 
 class WebSearchNodeImpl extends CognitiveNodeBase {
-  constructor() { super(WebSearchNode); }
+  static schema = getNodeSchema('skill_web_search')!;
+  constructor() { super(WebSearchNodeImpl.schema); }
 }
 
 // ============================================================================

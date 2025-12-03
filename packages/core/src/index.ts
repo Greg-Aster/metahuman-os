@@ -180,7 +180,10 @@ export * from './claude-session';
 export * from './cognitive-graph-schema';
 export * from './graph-executor';
 export * from './graph-streaming';
-export * from './node-executors/index.js';
+
+// Unified Node System (schemas + executors colocated)
+export * from './nodes/index.js';
+
 export * from './agent-graph-executor';
 export * from './graph-error-handler';
 export * from './plugin-system';
