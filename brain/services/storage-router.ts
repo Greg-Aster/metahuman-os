@@ -80,7 +80,8 @@ export type FileCategory =
   | 'config'      // User configuration files (persona, settings)
   | 'output'      // Generated outputs (drafts, artifacts)
   | 'training'    // Training data (datasets, adapters)
-  | 'cache';      // Temporary cache files
+  | 'cache'       // Temporary cache files
+  | 'state';      // Stateful data (agency, curiosity, sessions)
 
 /**
  * Subcategories for more specific routing
@@ -88,6 +89,9 @@ export type FileCategory =
 export type MemorySubcategory = 'episodic' | 'semantic' | 'procedural' | 'tasks' | 'inbox';
 export type ConfigSubcategory = 'persona' | 'etc' | 'sessions';
 export type VoiceSubcategory = 'training-data' | 'models' | 'cache';
+export type TrainingSubcategory = 'datasets' | 'adapters' | 'runs' | 'models';
+export type OutputSubcategory = 'fine-tuned-models' | 'drafts' | 'artifacts' | 'cache';
+export type StateSubcategory = 'agency' | 'curiosity' | 'sessions';
 
 /**
  * Storage request for routing
@@ -276,6 +280,9 @@ export function resolvePath(request: StorageRequest): StorageResponse {
       break;
     case 'cache':
       categoryPath = path.join(profileRoot, 'out', 'cache', subcategory || '');
+      break;
+    case 'state':
+      categoryPath = path.join(profileRoot, 'state', subcategory || '');
       break;
     default:
       return {

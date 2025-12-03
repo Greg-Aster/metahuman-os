@@ -9,6 +9,9 @@ import path from 'node:path';
 import { SkillManifest, SkillResult } from '../../packages/core/src/skills.js';
 import { paths, listAvailableAgents, isAgentRunning } from '../../packages/core/src/index.js';
 
+// Resolve tsx path (installed in node_modules/.bin)
+const TSX_PATH = path.join(paths.root, 'node_modules', '.bin', 'tsx');
+
 export const manifest: SkillManifest = {
   id: 'run_agent',
   name: 'Run Agent',
@@ -69,7 +72,7 @@ export async function execute(inputs: {
     }
 
     // Spawn the agent
-    const child = spawn('tsx', [agentPath], {
+    const child = spawn(TSX_PATH, [agentPath], {
       stdio: wait ? 'pipe' : 'inherit',
       cwd: paths.root,
       detached: !wait,

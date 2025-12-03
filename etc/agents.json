@@ -130,6 +130,45 @@
       "autoRestart": false,
       "maxRetries": 1,
       "comment": "Manual-run agent that reviews recent memories with psychotherapist model and incrementally updates persona. Run via: ./bin/mh agent run psychoanalyzer"
+    },
+    "desire-generator": {
+      "id": "desire-generator",
+      "enabled": true,
+      "type": "activity",
+      "priority": "low",
+      "agentPath": "desire-generator.ts",
+      "usesLLM": true,
+      "inactivityThreshold": 1800,
+      "runOnBoot": false,
+      "autoRestart": false,
+      "maxRetries": 2,
+      "comment": "Agency: Synthesizes desires from persona goals, tasks, memories, and service outputs. Runs after 30 minutes of inactivity."
+    },
+    "desire-evaluator": {
+      "id": "desire-evaluator",
+      "enabled": true,
+      "type": "interval",
+      "priority": "low",
+      "agentPath": "desire-evaluator.ts",
+      "usesLLM": false,
+      "interval": 900,
+      "runOnBoot": false,
+      "autoRestart": true,
+      "maxRetries": 2,
+      "comment": "Agency: Applies decay, checks reinforcement, activates desires above threshold. Runs every 15 minutes."
+    },
+    "desire-executor": {
+      "id": "desire-executor",
+      "enabled": true,
+      "type": "interval",
+      "priority": "normal",
+      "agentPath": "desire-executor.ts",
+      "usesLLM": true,
+      "interval": 300,
+      "runOnBoot": false,
+      "autoRestart": true,
+      "maxRetries": 2,
+      "comment": "Agency: Executes approved desires through the operator system. Runs every 5 minutes."
     }
   }
 }

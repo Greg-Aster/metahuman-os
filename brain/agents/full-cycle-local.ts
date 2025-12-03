@@ -26,6 +26,9 @@ import type { FormattedSample, SchemaAppliedSample } from '../../packages/core/s
 // Load environment variables
 dotenv.config({ path: path.join(systemPaths.root, '.env') });
 
+// Resolve tsx path (installed in node_modules/.bin)
+const TSX_PATH = path.join(systemPaths.root, 'node_modules', '.bin', 'tsx');
+
 let currentRunId: string | null = null;
 let currentRunLabel: string | null = null;
 
@@ -130,7 +133,7 @@ async function runAgent(agentName: string, args: string[] = []): Promise<number>
     }
 
     console.log(`[full-cycle-local] Running agent: ${agentName} with args: ${args.join(' ')}`);
-    const child = spawn('tsx', [agentPath, ...args], { cwd: systemPaths.root, stdio: ['inherit', 'pipe', 'pipe'] });
+    const child = spawn(TSX_PATH, [agentPath, ...args], { cwd: systemPaths.root, stdio: ['inherit', 'pipe', 'pipe'] });
 
     let stdout = '';
     let stderr = '';

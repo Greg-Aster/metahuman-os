@@ -267,7 +267,15 @@ export function useMicrophone(options: UseMicrophoneOptions) {
 
   // Native speech recognition state
   let speechRecognition: ISpeechRecognition | null = null;
-  let useNativeSTT = false; // Always use Whisper for consistent behavior across all devices
+  let useNativeSTT = false; // Default to Whisper, but can be overridden by user preference
+
+  /**
+   * Check if native voice mode is enabled (from localStorage)
+   */
+  function isNativeVoiceModeEnabled(): boolean {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return false;
+    return localStorage.getItem('mh-native-voice-mode') === 'true';
+  }
 
   /**
    * Get the current STT backend being used
@@ -315,6 +323,16 @@ export function useMicrophone(options: UseMicrophoneOptions) {
         }
 
         // Conversation mode uses the same VAD settings as desktop
+
+        // Check if native voice mode is enabled (from localStorage)
+        if (isNativeVoiceModeEnabled()) {
+          if (isNativeSpeechAvailable()) {
+            setSTTBackend('native');
+            console.log('[useMicrophone] Native voice mode enabled - using device STT');
+          } else {
+            console.warn('[useMicrophone] Native voice mode requested but not available on this device');
+          }
+        }
 
         // Check Whisper server status (just once on load)
         const serverStatus = config.stt?.serverStatus;

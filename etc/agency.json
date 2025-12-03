@@ -1,0 +1,56 @@
+{
+  "enabled": true,
+  "mode": "supervised",
+
+  "thresholds": {
+    "activation": 0.7,
+    "autoApprove": 0.85,
+    "decay": {
+      "enabled": true,
+      "ratePerHour": 0.02,
+      "minStrength": 0.1,
+      "reinforcementBoost": 0.15
+    }
+  },
+
+  "sources": {
+    "persona_goal": { "enabled": true, "weight": 1.0 },
+    "urgent_task": { "enabled": true, "weight": 0.85 },
+    "task": { "enabled": true, "weight": 0.7 },
+    "memory_pattern": { "enabled": true, "weight": 0.5 },
+    "curiosity": { "enabled": true, "weight": 0.4 },
+    "reflection": { "enabled": true, "weight": 0.35 },
+    "dream": { "enabled": true, "weight": 0.3 },
+    "tool_suggestion": { "enabled": true, "weight": 0.25 }
+  },
+
+  "scheduling": {
+    "generatorIntervalMinutes": 30,
+    "evaluatorIntervalMinutes": 15,
+    "decayIntervalMinutes": 60,
+    "idleOnly": true
+  },
+
+  "limits": {
+    "maxActiveDesires": 10,
+    "maxPendingDesires": 50,
+    "maxDailyExecutions": 20,
+    "retentionDays": {
+      "completed": 90,
+      "rejected": 30,
+      "abandoned": 7
+    }
+  },
+
+  "riskPolicy": {
+    "autoApproveRisk": ["none", "low"],
+    "requireApprovalRisk": ["medium", "high", "critical"],
+    "blockRisk": ["critical"]
+  },
+
+  "logging": {
+    "verbose": true,
+    "logToTerminal": true,
+    "logToInnerDialogue": true
+  }
+}
