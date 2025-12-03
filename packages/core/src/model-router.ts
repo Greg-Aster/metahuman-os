@@ -23,6 +23,8 @@ export interface RouterCallOptions {
   role: ModelRole;
   messages: RouterMessage[];
   cognitiveMode?: string;
+  /** User ID for context tracking */
+  userId?: string;
   options?: {
     temperature?: number;
     maxTokens?: number;
@@ -210,6 +212,44 @@ export async function* callLLMStream(callOptions: RouterCallOptions): AsyncGener
   };
 }
 
+// Models that can coexist in VRAM with chat models (small utility models)
+const COEXIST_MODELS = [
+  'nomic-embed-text',
+  'all-minilm',
+  'mxbai-embed',
+  'snowflake-arctic-embed',
+];
+
+// Models that require exclusive GPU access (too large to share VRAM)
+const EXCLUSIVE_MODELS = [
+  'qwen3-coder:30b',
+  'qwen3:30b',
+  'llama3:70b',
+  'mixtral',
+  'deepseek-coder:33b',
+];
+
+/**
+ * Check if a model can coexist with chat models in VRAM
+ */
+function canCoexistWithChatModel(modelName: string): boolean {
+  const lowerName = modelName.toLowerCase();
+  return COEXIST_MODELS.some(m => lowerName.includes(m));
+}
+
+/**
+ * Check if a model requires exclusive GPU access
+ */
+function requiresExclusiveGPU(modelName: string): boolean {
+  const lowerName = modelName.toLowerCase();
+  // Check explicit exclusive list OR any 30B+ model
+  return EXCLUSIVE_MODELS.some(m => lowerName.includes(m)) ||
+    lowerName.includes(':30b') ||
+    lowerName.includes(':33b') ||
+    lowerName.includes(':70b') ||
+    lowerName.includes(':72b');
+}
+
 /**
  * Call Ollama provider with model availability checking
  */
@@ -224,42 +264,49 @@ async function callOllama(
   const isLoaded = await ollama.isModelLoaded(resolved.model);
 
   if (!isLoaded) {
-    // Check if another model is using the GPU - if so, wait for it to finish
+    // Check what other models are currently loaded
     const runningModels = await ollama.getRunningModels().catch(() => ({ models: [] }));
 
     if (runningModels.models.length > 0) {
       const currentModel = runningModels.models[0]?.name || 'unknown';
 
-      // Notify user we're waiting for GPU
-      onProgress?.({
-        type: 'model_waiting',
-        message: `Waiting for GPU... (${currentModel} is loaded)`,
-        model: resolved.model,
-        currentModel,
-      });
+      // Only wait if the currently loaded model requires exclusive GPU access
+      // Small models like nomic-embed-text can coexist with chat models
+      const needsToWait = !canCoexistWithChatModel(currentModel) &&
+        (requiresExclusiveGPU(currentModel) || requiresExclusiveGPU(resolved.model));
 
-      // Wait for model availability (up to 60 seconds for chat, allows background agents to finish)
-      const waitResult = await ollama.waitForModelAvailability(resolved.model, {
-        timeoutMs: 60000,
-        pollIntervalMs: 2000,
-        onWaiting: (model, elapsed) => {
-          onProgress?.({
-            type: 'model_waiting',
-            message: `Waiting for GPU (${Math.round(elapsed / 1000)}s)... ${model} still loaded`,
-            model: resolved.model,
-            currentModel: model,
-            elapsedMs: elapsed,
-          });
-        },
-      });
+      if (needsToWait) {
+        // Notify user we're waiting for GPU
+        onProgress?.({
+          type: 'model_waiting',
+          message: `Waiting for GPU... (${currentModel} is loaded)`,
+          model: resolved.model,
+          currentModel,
+        });
 
-      if (!waitResult.ready) {
-        // Still blocked after timeout - throw helpful error
-        throw new Error(
-          `GPU busy: ${waitResult.currentModel || 'another model'} is using the GPU. ` +
-          `Waited ${Math.round((waitResult.waitedMs || 0) / 1000)}s. ` +
-          `Try again in a moment or restart Ollama.`
-        );
+        // Wait for model availability (up to 60 seconds for chat, allows background agents to finish)
+        const waitResult = await ollama.waitForModelAvailability(resolved.model, {
+          timeoutMs: 60000,
+          pollIntervalMs: 2000,
+          onWaiting: (model, elapsed) => {
+            onProgress?.({
+              type: 'model_waiting',
+              message: `Waiting for GPU (${Math.round(elapsed / 1000)}s)... ${model} still loaded`,
+              model: resolved.model,
+              currentModel: model,
+              elapsedMs: elapsed,
+            });
+          },
+        });
+
+        if (!waitResult.ready) {
+          // Still blocked after timeout - throw helpful error
+          throw new Error(
+            `GPU busy: ${waitResult.currentModel || 'another model'} is using the GPU. ` +
+            `Waited ${Math.round((waitResult.waitedMs || 0) / 1000)}s. ` +
+            `Try again in a moment or restart Ollama.`
+          );
+        }
       }
     }
 

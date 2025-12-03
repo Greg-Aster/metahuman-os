@@ -129,7 +129,7 @@ Return a JSON object with these exact field names: bigFive, values, communicatio
 Conversation to analyze:
 ${conversationText}`;
 
-  const extractionMessages = [
+  const extractionMessages: import('../model-router.js').RouterMessage[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: 'Please extract the personality data from the conversation above.' },
   ];

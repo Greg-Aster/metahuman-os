@@ -271,6 +271,7 @@ export function getProfilePaths(username: string) {
     preferences: path.join(profileRoot, 'memory', 'preferences'),
     tasks: path.join(profileRoot, 'memory', 'tasks'),
     indexDir: path.join(profileRoot, 'memory', 'index'),
+    vectorIndex: path.join(profileRoot, 'memory', 'index'), // Alias for indexDir
     audioInbox: path.join(profileRoot, 'memory', 'audio', 'inbox'),
     audioTranscripts: path.join(profileRoot, 'memory', 'audio', 'transcripts'),
     audioArchive: path.join(profileRoot, 'memory', 'audio', 'archive'),

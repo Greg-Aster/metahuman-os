@@ -33,49 +33,104 @@ export * from './logging';
 export * from './runtime-mode';
 export * from './transcription';
 export * from './adapters';
-// Skills exports (exclude policy duplicates)
-export {
+// Skills - exclude queueForApproval and getPendingApprovals (conflicts with policy)
+export type {
+  SkillCategory,
+  SkillRisk,
+  SkillCost,
+  TrustLevel,
+  InputType,
+  SkillInput,
+  SkillOutput,
+  SkillManifest,
   SkillResult,
-  SkillDefinition,
-  SkillRegistry,
-  getSkills,
+  SkillExecution,
+  ApprovalQueueItem,
+} from './skills.js';
+export {
+  registerSkill,
+  getSkill,
+  listSkills,
+  getAvailableSkills,
+  getApprovalItem,
+  approveSkillExecution,
+  rejectSkillExecution,
+  isPathAllowed,
+  isCoderWriteAllowed,
+  isWriteAllowed,
+  isCommandWhitelisted,
+  validateInputs,
   executeSkill,
-  buildSkillPrompt,
-  loadSkillsFromFile,
-  skills,
-  // Export skills versions (policy has different signatures)
+  loadTrustLevel,
+  // Rename conflicting exports
   queueForApproval as skillQueueForApproval,
   getPendingApprovals as skillGetPendingApprovals,
-  approveAction,
-  rejectAction,
 } from './skills.js';
-export type { ApprovalQueueItem, ApprovalStatus } from './skills.js';
 
 export * from './tool-catalog';
 export * from './reasoning';
 
-// Policy exports (primary source for approval queue)
-export {
-  PolicyEngine,
-  SafetyPolicy,
+// Policy - primary source for queueForApproval and getPendingApprovals
+export type {
+  PolicyDecision,
   ActionContext,
-  ActionResult,
-  evaluateAction,
-  // Use policy versions as primary
+  PendingAction,
+} from './policy.js';
+export {
+  meetsMinimumTrust,
+  evaluatePolicy,
+  isReadAllowed,
+  isWriteAllowedPolicy,
+  isCommandAllowed,
   queueForApproval,
   getPendingApprovals,
-  approveFromPolicy,
-  rejectFromPolicy,
-  loadSafetyPolicies,
+  approveAction,
+  rejectAction,
+  getAction,
+  canAutoExecute,
+  getAllowedSkills,
 } from './policy.js';
-export type { PendingAction, ApprovalResult, PolicyEvaluationResult } from './policy.js';
 export * from './tts';
 export * from './stt';
 export * from './voice-training';
 export * from './audio-manager';
 export * from './autonomy';
-export * from './cognitive-mode';
-export * from './memory-policy';
+// Cognitive mode - primary source for canWriteMemory
+export type {
+  CognitiveModeId,
+  CognitiveModeDefinition,
+  CognitiveModeConfig,
+} from './cognitive-mode.js';
+export {
+  listCognitiveModes,
+  getModeDefinition,
+  loadCognitiveMode,
+  saveCognitiveMode,
+  applyModeDefaults,
+  canWriteMemory,
+  canUseOperator,
+} from './cognitive-mode.js';
+
+// Memory policy - exclude canWriteMemory (use cognitive-mode version)
+export type {
+  UserRole,
+  EventType,
+  MemoryPolicy,
+} from './memory-policy.js';
+export {
+  canWriteMemory as memoryPolicyCanWriteMemory,
+  shouldCaptureTool,
+  contextDepth,
+  getSearchDepth,
+  getContextCharLimit,
+  conversationVisibility,
+  hasCapability,
+  getToolHistoryLimit,
+  redactSensitiveData,
+  filterToolOutputs,
+  canViewMemoryType,
+  getMaxMemoriesForRole,
+} from './memory-policy.js';
 export * from './trust-coupling';
 export * from './path-resolver';
 export * from './context-window';
@@ -84,21 +139,115 @@ export * from './fs-glob';
 export * from './progress-tracker';
 export * from './state';
 export * from './context-builder';
+// Cognitive layers - primary source for ValidationResult
 export * from './cognitive-layers';
-export * from './agent-scheduler';
-export * from './schema-manager';
-export * from './mode-validator';
-export * from './model-registry';
+
+// Agent scheduler - rename AgentStatus to avoid conflict with agent-monitor
+export type {
+  TriggerType,
+  AgentPriority,
+  AgentStatus as SchedulerAgentStatus,
+  AgentConfig,
+  GlobalSchedulerSettings,
+  SchedulerConfig,
+} from './agent-scheduler.js';
+export {
+  AgentScheduler,
+  scheduler,
+} from './agent-scheduler.js';
+
+// Schema manager - rename FormattedSample to avoid conflict with mode-validator
+export type {
+  ModelSchema,
+  FormattedSample as SchemaFormattedSample,
+  SchemaAppliedSample,
+} from './schema-manager.js';
+export {
+  detectModelFamily,
+  loadSchema,
+  applySchema,
+  applySchemaBatch,
+  listAvailableSchemas,
+  validateSchema,
+} from './schema-manager.js';
+
+// Mode validator - rename conflicting exports
+export type {
+  CognitiveMode,
+  ValidationError,
+  ValidationResult as ModeValidationResult,
+  QualityMetrics,
+  FormattedSample as ValidatorFormattedSample,
+  CuratedSample,
+} from './mode-validator.js';
+export {
+  validateModeContamination,
+  calculateQualityMetrics,
+  validateJSONLine,
+  validateJSONLDataset,
+} from './mode-validator.js';
+
+// Model registry - rename ModelRegistry to avoid conflict with model-resolver
+export type {
+  ModelRegistryEntry,
+  ModelRegistry as TrainingModelRegistry,
+} from './model-registry.js';
+export {
+  loadTrainingRegistry,
+  saveModelRegistry,
+  getCurrentBaseModel,
+  getNextVersion,
+  registerTrainingRun,
+  resetToOriginalBase,
+  getTrainingHistory,
+  getLatestModel,
+  isUsingLocalModel,
+} from './model-registry.js';
+
 export * from './system-activity';
 export * from './training-cleanup';
-export * from './persona/session-manager';
+
+// Persona session manager - rename Session and getSessionStats to avoid conflicts
+export type {
+  Question,
+  Answer,
+  SessionStatus,
+  CategoryCoverage,
+  Session as PersonaSession,
+  SessionMetadata as PersonaSessionMetadata,
+  SessionIndex,
+} from './persona/session-manager.js';
+export {
+  startSession as startPersonaSession,
+  loadSession as loadPersonaSession,
+  saveSession as savePersonaSession,
+  listSessions as listPersonaSessions,
+  discardSession as discardPersonaSession,
+  addQuestion,
+  recordAnswer,
+  getSessionStats as getPersonaSessionStats,
+} from './persona/session-manager.js';
 export * from './persona/question-generator';
 export * from './persona/extractor';
 export * from './persona/merger';
 export * from './persona/cleanup';
 
 // Multi-user system (Phase 2)
-export * from './auth';  // Simple auth helpers (replaces middleware)
+// Auth - rename User to AuthUser to avoid conflict with users.ts
+export type {
+  Cookies,
+  AuthenticatedUser,
+  AnonymousUser,
+  User as AuthUser,
+} from './auth.js';
+export {
+  getAuthenticatedUser,
+  getUserOrAnonymous,
+  getUserPaths,
+  hasPermission,
+  requirePermission,
+} from './auth.js';
+
 export * from './context';  // DEPRECATED - will be removed
 export * from './config';
 // users.ts exported at top of file (must load before path-builder)

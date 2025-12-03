@@ -219,7 +219,7 @@ export class ProgressTracker {
  * Read progress state from file
  */
 export function readProgress(operation: string, statusDir?: string): ProgressState | null {
-  const dir = statusDir || path.join(paths.logs, 'status');
+  const dir = statusDir || path.join(systemPaths.logs, 'status');
   const filePath = path.join(dir, `${operation}.json`);
 
   try {
@@ -235,7 +235,7 @@ export function readProgress(operation: string, statusDir?: string): ProgressSta
  * List all active progress operations
  */
 export function listActiveProgress(statusDir?: string): ProgressState[] {
-  const dir = statusDir || path.join(paths.logs, 'status');
+  const dir = statusDir || path.join(systemPaths.logs, 'status');
   if (!fs.existsSync(dir)) return [];
 
   const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));

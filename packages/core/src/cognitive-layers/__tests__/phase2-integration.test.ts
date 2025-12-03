@@ -184,7 +184,7 @@ async function main() {
     // Test invalid input (missing context package)
     const invalidResult = layer2.validate({ contextPackage: null as any });
     console.log(`  Invalid input: ${invalidResult.valid ? '✗ should be invalid' : '✓ correctly rejected'}`);
-    if (!invalidResult.valid) {
+    if (!invalidResult.valid && invalidResult.errors) {
       console.log(`    Errors: ${invalidResult.errors.join(', ')}`);
     }
 

@@ -147,7 +147,7 @@ export async function refineResponse(
   await audit({
     category: 'action',
     level: 'info',
-    action: 'response_refined',
+    event: 'response_refined',
     details: {
       changed: result.changed,
       changesCount: changes.length,

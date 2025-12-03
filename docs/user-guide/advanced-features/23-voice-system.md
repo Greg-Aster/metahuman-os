@@ -937,6 +937,142 @@ Run Whisper on a separate machine and point to it.
 
 ---
 
+## Hardware Button Control (Earbuds & Bluetooth)
+
+MetaHuman OS supports hands-free voice control through Bluetooth earbuds and headphones using the Web Media Session API. Once activated, you can start and stop voice recording using your earbud buttons instead of tapping the screen.
+
+### Overview
+
+The hardware button system enables:
+- **Hands-Free Recording**: Start/stop voice input via earbud play/pause buttons
+- **Visual Feedback**: Mic icon changes to headphones icon when active
+- **Session Persistence**: Buttons keep working after TTS responses play
+- **No App Required**: Works entirely in the browser
+
+### How to Activate
+
+Hardware button capture requires a user gesture (browser security requirement):
+
+1. **Open MetaHuman OS** in your mobile browser (Chrome recommended)
+2. **Tap the microphone button once** - this activates hardware button capture
+3. **Look for the headphones icon** - the mic icon changes to a headphones icon (teal color)
+4. **Use your earbuds** - play/pause buttons now toggle voice recording
+
+### Visual Indicators
+
+| Icon | State | Meaning |
+|------|-------|---------|
+| 🎤 Microphone (default) | Normal | Tap to record, hardware buttons not active |
+| 🎧 Headphones (teal) | Hardware Active | Earbud buttons will toggle recording |
+| 📊 Waveform (animated) | Recording | Currently capturing your voice |
+
+### Button Mappings
+
+| Earbud Action | MetaHuman Response |
+|---------------|-------------------|
+| Single tap (play/pause) | Toggle recording on/off |
+| Previous/Next track | Toggle conversation mode (if supported) |
+| Long press | Varies by earbud - may trigger phone assistant |
+
+### Lock Screen Controls
+
+When hardware buttons are active, your phone's lock screen/notification area shows:
+- **Title**: "MetaHuman Voice"
+- **Artist**: "Tap to speak" (ready) or "🎤 Listening..." (recording)
+- **Media controls**: Play/pause button mirrors earbud functionality
+
+### Automatic Session Recovery
+
+After MetaHuman speaks (TTS playback), the system automatically reclaims the media session so your earbud buttons continue working. This happens seamlessly without any user action.
+
+### Phone Assistant Integration
+
+**Important**: By default, earbud long-press or power button hold triggers your phone's assistant (Google Assistant, Siri, etc.) instead of MetaHuman. The browser cannot override these system-level triggers.
+
+**To disable Google Assistant on power button (Android):**
+1. Go to **Settings** → **System** → **Gestures** → **Press and hold power button**
+2. Turn OFF "Digital assistant"
+
+**To remap earbud buttons:**
+- Check your earbud's companion app (Galaxy Wearable, Jabra Sound+, Sony Headphones Connect, etc.)
+- Look for "touch controls" or "button customization"
+- Set long-press to "None" or a different action
+
+### Supported Devices
+
+**Tested and Working:**
+- Most Bluetooth earbuds with play/pause support
+- Bluetooth headphones with media controls
+- Wired headphones with inline controls (most browsers)
+
+**Known Limitations:**
+- Power button cannot be captured by web apps
+- Some earbuds send assistant trigger directly to OS (bypasses browser)
+- AirPods "Hey Siri" cannot be redirected
+
+### Troubleshooting
+
+**Earbuds don't trigger recording:**
+1. Tap the mic button on screen first (required to activate)
+2. Check that the headphones icon appears (teal color)
+3. Look in browser console for `[MediaSession]` logs
+4. Try different tap patterns (some earbuds use double-tap for play/pause)
+
+**Only works once, then stops:**
+- This was a known issue, now fixed. Hard refresh (Ctrl+Shift+R) to get latest code
+- TTS playback should no longer break the session
+
+**Buttons trigger Google/Siri instead:**
+- Long-press is often hardcoded to trigger assistant
+- Single tap should work - try quick taps instead
+- Check earbud app to remap buttons
+
+**No headphones icon appears:**
+- Ensure you tapped the mic button (user gesture required)
+- Check browser console for `[MediaSession] ✓ Enabled!` message
+- Some older browsers don't support Media Session API
+
+**Recording doesn't stop:**
+- Tap the screen mic button to force stop
+- Or tap earbud button again (toggles state)
+
+### Browser Support
+
+| Browser | Support |
+|---------|---------|
+| Chrome (Android) | ✅ Full support |
+| Chrome (Desktop) | ✅ Full support |
+| Firefox (Android) | ⚠️ Partial (some earbuds) |
+| Safari (iOS) | ⚠️ Limited Media Session support |
+| Edge | ✅ Full support |
+
+### Configuration
+
+Hardware button capture is automatic and doesn't require configuration. It activates on the first mic button tap and persists for the session.
+
+**To disable** (if causing issues):
+- Simply don't tap the mic button, or refresh the page
+- There's no persistent setting - it resets on page reload
+
+### Technical Details
+
+The system uses the Web Media Session API:
+- Creates a silent audio element to maintain an active media session
+- Registers handlers for `play`, `pause`, `stop`, `previoustrack`, `nexttrack`
+- Keeps playback state as "playing" to ensure buttons are captured
+- Re-activates session after TTS finishes using `reactivateMediaSession()`
+
+**Console Logs** (for debugging):
+```
+[MediaSession] Setting up hardware button capture...
+[MediaSession] ✓ Enabled! Hardware buttons will now trigger mic.
+[MediaSession] Button pressed, currently recording: false
+[MediaSession] PLAY pressed
+[MediaSession] Re-activated after audio
+```
+
+---
+
 ## Choosing a Provider
 
 | Feature | Piper | GPT-SoVITS | RVC | Kokoro |

@@ -11,7 +11,25 @@
 import { spawn } from 'child_process';
 import { audit } from './audit.js';
 import type { OperatorConfig } from './config.js';
-import type { ScratchpadEntry } from '../../brain/agents/operator-react.js';
+// Internal ScratchpadEntry type for big-brother module (not exported to avoid conflict with reasoning module)
+interface BigBrotherScratchpadEntry {
+  type: 'thought' | 'action' | 'observation';
+  content: string;
+  timestamp: string;
+  success?: boolean;
+  stepNumber?: number;
+  // Additional properties used by operator-react
+  step?: number;
+  thought?: string;
+  action?: {
+    tool: string;
+    args: any;
+  };
+  observation?: {
+    success: boolean;
+    content: string;
+  };
+}
 
 // ============================================================================
 // Types
@@ -21,7 +39,7 @@ export interface EscalationRequest {
   goal: string;
   stuckReason: string;
   errorType: 'repeated_failures' | 'no_progress' | 'timeout_approaching' | null;
-  scratchpad: ScratchpadEntry[];
+  scratchpad: BigBrotherScratchpadEntry[];
   context: any;
   suggestions: string[];
 }

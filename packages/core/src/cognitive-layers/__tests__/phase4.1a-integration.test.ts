@@ -55,8 +55,9 @@ async function main() {
 
     console.log(`✓ Layer 2 processed successfully in ${duration}ms`);
     console.log(`  - Response length: ${output.response.length} chars`);
-    console.log(`  - Model: ${output.voiceMetrics.model}`);
-    console.log(`  - LoRA adapter: ${output.loraAdapter?.name || 'none'}`);
+    console.log(`  - Model: ${output.voiceMetrics?.model ?? 'unknown'}`);
+    const adapterName = typeof output.loraAdapter === 'object' ? output.loraAdapter?.name : output.loraAdapter;
+    console.log(`  - LoRA adapter: ${adapterName || 'none'}`);
     console.log(`  - Response preview: "${output.response.slice(0, 80)}..."`);
 
     // Verify output structure
@@ -66,7 +67,7 @@ async function main() {
     if (!output.voiceMetrics) {
       throw new Error('Output missing voiceMetrics field');
     }
-    if (!output.voiceMetrics.model) {
+    if (!output.voiceMetrics?.model) {
       throw new Error('Output missing voiceMetrics.model field');
     }
 
@@ -116,7 +117,7 @@ async function main() {
 
     console.log(`✓ Layer 2 processed successfully in ${duration}ms`);
     console.log(`  - Response length: ${output.response.length} chars`);
-    console.log(`  - Model: ${output.voiceMetrics.model}`);
+    console.log(`  - Model: ${output.voiceMetrics?.model ?? 'unknown'}`);
     console.log(`  - Response preview: "${output.response.slice(0, 80)}..."`);
 
     console.log('✓ Standard prompt building verified');
@@ -224,7 +225,7 @@ async function main() {
 
     const validationResult = layer2.validate(invalidInput);
     console.log(`  Missing contextPackage: ${validationResult.valid ? '✗ should be invalid' : '✓ correctly rejected'}`);
-    if (!validationResult.valid) {
+    if (!validationResult.valid && validationResult.errors) {
       console.log(`    Errors: ${validationResult.errors.join(', ')}`);
     }
 

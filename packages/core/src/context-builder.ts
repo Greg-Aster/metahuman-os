@@ -306,6 +306,7 @@ async function queryConversationSummary(conversationId?: string): Promise<string
   }
 
   try {
+    if (!ctx.profilePaths) return null;
     const episodicDir = ctx.profilePaths.episodic;
     if (!existsSync(episodicDir)) return null;
 
@@ -433,6 +434,7 @@ async function queryRecentToolInvocations(
 
     const tools: ToolInvocation[] = [];
 
+    if (!ctx.profilePaths) return [];
     const episodicDir = ctx.profilePaths.episodic;
     if (!existsSync(episodicDir)) return [];
 
@@ -535,6 +537,9 @@ export interface DetectedPattern {
   pattern: string;
   frequency: number;
   lastSeen: string;
+  // Extended properties used by cognitive-layers
+  count?: number;  // Alias for frequency
+  context?: string;  // Additional context about the pattern
 }
 
 /**
@@ -553,6 +558,9 @@ export interface ToolInvocation {
 }
 
 export interface ContextPackage {
+  // Original user message that triggered this context build
+  userMessage?: string;
+
   // Memory grounding
   memories: RelevantMemory[];
   memoryCount: number;

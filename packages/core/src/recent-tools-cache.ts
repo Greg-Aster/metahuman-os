@@ -219,12 +219,13 @@ export async function invalidateToolCache(
   } catch (error) {
     // File may not exist - that's fine
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      const profileName = getProfileName(profilePaths);
       audit({
         level: 'warn',
         category: 'system',
         event: 'tool_cache_invalidation_failed',
         details: {
-          username,
+          profile: profileName,
           conversationId,
           error: (error as Error).message
         },
