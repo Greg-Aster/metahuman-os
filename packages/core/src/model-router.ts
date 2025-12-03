@@ -224,7 +224,46 @@ async function callOllama(
   const isLoaded = await ollama.isModelLoaded(resolved.model);
 
   if (!isLoaded) {
-    // Just load the model - Ollama handles concurrent models in VRAM
+    // Check if another model is using the GPU - if so, wait for it to finish
+    const runningModels = await ollama.getRunningModels().catch(() => ({ models: [] }));
+
+    if (runningModels.models.length > 0) {
+      const currentModel = runningModels.models[0]?.name || 'unknown';
+
+      // Notify user we're waiting for GPU
+      onProgress?.({
+        type: 'model_waiting',
+        message: `Waiting for GPU... (${currentModel} is loaded)`,
+        model: resolved.model,
+        currentModel,
+      });
+
+      // Wait for model availability (up to 60 seconds for chat, allows background agents to finish)
+      const waitResult = await ollama.waitForModelAvailability(resolved.model, {
+        timeoutMs: 60000,
+        pollIntervalMs: 2000,
+        onWaiting: (model, elapsed) => {
+          onProgress?.({
+            type: 'model_waiting',
+            message: `Waiting for GPU (${Math.round(elapsed / 1000)}s)... ${model} still loaded`,
+            model: resolved.model,
+            currentModel: model,
+            elapsedMs: elapsed,
+          });
+        },
+      });
+
+      if (!waitResult.ready) {
+        // Still blocked after timeout - throw helpful error
+        throw new Error(
+          `GPU busy: ${waitResult.currentModel || 'another model'} is using the GPU. ` +
+          `Waited ${Math.round((waitResult.waitedMs || 0) / 1000)}s. ` +
+          `Try again in a moment or restart Ollama.`
+        );
+      }
+    }
+
+    // Now load our model
     onProgress?.({
       type: 'model_loading',
       message: `Loading ${resolved.model}...`,
