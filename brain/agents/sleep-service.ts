@@ -24,6 +24,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
 import { storageClient, systemPaths, ROOT, audit, setActiveAdapter, recordSystemActivity } from '../../packages/core/src/index.js';
+
+// Resolve tsx path (installed in node_modules/.bin)
+const TSX_PATH = path.join(ROOT, 'node_modules', '.bin', 'tsx');
 import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
 
 export interface SleepConfig {
@@ -123,7 +126,7 @@ function runAgent(agentName: string, description: string, args: string[] = []): 
       actor: 'sleep-service',
     });
 
-    const child = spawn('tsx', [agentPath, ...args], {
+    const child = spawn(TSX_PATH, [agentPath, ...args], {
       stdio: 'inherit',
       cwd: ROOT,
     });

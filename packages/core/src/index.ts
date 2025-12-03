@@ -369,6 +369,9 @@ export * from './agent-graph-executor';
 export * from './graph-error-handler';
 export * from './plugin-system';
 
+// Agency System
+export * from './agency/index.js';
+
 // Version
 export const VERSION = '0.1.0';
 export const PHASE = 'Phase 1-2: Intelligence & Autonomy (Multi-User)';

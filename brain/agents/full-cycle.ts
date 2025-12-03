@@ -28,6 +28,9 @@ import type { FormattedSample, SchemaAppliedSample } from '../../packages/core/s
 // Load environment variables from .env file FIRST
 dotenv.config({ path: path.join(systemPaths.root, '.env') });
 
+// Resolve tsx path (installed in node_modules/.bin)
+const TSX_PATH = path.join(systemPaths.root, 'node_modules', '.bin', 'tsx');
+
 // This will hold the ID for the current run, so the catch handler can access it.
 let currentRunId: string | null = null;
 let currentRunLabel: string | null = null;
@@ -139,7 +142,7 @@ async function runAgent(agentName: string, args: string[] = [], username?: strin
     // Pass username to subprocess so it can establish user context
     const allArgs = username ? ['--username', username, ...args] : args;
     console.log(`[full-cycle] Running agent: ${agentName} with args: ${allArgs.join(' ')}`);
-    const child = spawn('tsx', [agentPath, ...allArgs], { cwd: systemPaths.root, stdio: ['inherit', 'pipe', 'pipe'] });
+    const child = spawn(TSX_PATH, [agentPath, ...allArgs], { cwd: systemPaths.root, stdio: ['inherit', 'pipe', 'pipe'] });
 
     let stdout = '';
     let stderr = '';

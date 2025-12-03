@@ -9,5 +9,10 @@
   "learning_rate": 0.0002,
   "per_device_train_batch_size": 1,
   "gradient_accumulation_steps": 16,
-  "max_seq_length": 2048
+  "max_seq_length": 2048,
+  "quantization": "Q4_K_M",
+  "gguf_conversion": {
+    "enabled": true,
+    "quantization_type": "Q4_K_M"
+  }
 }

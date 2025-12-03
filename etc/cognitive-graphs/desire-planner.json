@@ -1,0 +1,170 @@
+{
+  "version": "2.0",
+  "name": "Desire Plan Generator",
+  "description": "Generates execution plans for activated desires using LLM-based planning",
+  "cognitiveMode": "agent",
+  "last_modified": "2025-12-03",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "agency/desire_loader",
+      "pos": [100, 150],
+      "size": [200, 80],
+      "properties": {},
+      "title": "Load Desire"
+    },
+    {
+      "id": 2,
+      "type": "cognitive/tool_catalog_builder",
+      "pos": [350, 50],
+      "size": [200, 80],
+      "properties": {
+        "filterByTrust": true
+      },
+      "title": "Build Tool Catalog"
+    },
+    {
+      "id": 3,
+      "type": "cognitive/policy_loader",
+      "pos": [350, 150],
+      "size": [200, 80],
+      "properties": {
+        "include": ["decision-rules", "hard-rules"]
+      },
+      "title": "Load Policies"
+    },
+    {
+      "id": 4,
+      "type": "cognitive/semantic_search",
+      "pos": [350, 250],
+      "size": [200, 100],
+      "properties": {
+        "limit": 5
+      },
+      "title": "Search Relevant Memories"
+    },
+    {
+      "id": 5,
+      "type": "agency/desire_plan_generator",
+      "pos": [600, 150],
+      "size": [220, 120],
+      "properties": {
+        "temperature": 0.3
+      },
+      "title": "Generate Plan"
+    },
+    {
+      "id": 6,
+      "type": "cognitive/plan_validator",
+      "pos": [870, 150],
+      "size": [200, 100],
+      "properties": {
+        "checkSkillAvailability": true,
+        "checkTrustLevel": true
+      },
+      "title": "Validate Plan"
+    },
+    {
+      "id": 7,
+      "type": "agency/desire_updater",
+      "pos": [1120, 150],
+      "size": [200, 100],
+      "properties": {},
+      "title": "Update Desire with Plan"
+    },
+    {
+      "id": 8,
+      "type": "cognitive/audit_logger",
+      "pos": [1370, 150],
+      "size": [180, 60],
+      "properties": {
+        "category": "agency",
+        "event": "plan_generated"
+      },
+      "title": "Audit Log"
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Semantic Search (for query)"
+    },
+    {
+      "id": 2,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Plan Generator"
+    },
+    {
+      "id": 3,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "Tool Catalog → Plan Generator"
+    },
+    {
+      "id": 4,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 2,
+      "type": "string",
+      "comment": "Decision Rules → Plan Generator"
+    },
+    {
+      "id": 5,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 3,
+      "type": "string",
+      "comment": "Relevant Memories → Plan Generator"
+    },
+    {
+      "id": 6,
+      "origin_id": 5,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Plan → Validator"
+    },
+    {
+      "id": 7,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Updater"
+    },
+    {
+      "id": 8,
+      "origin_id": 6,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Validated Plan → Updater"
+    },
+    {
+      "id": 9,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 8,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Updated Desire → Audit"
+    }
+  ]
+}

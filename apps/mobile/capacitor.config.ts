@@ -1,22 +1,31 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
-// Get local network IP for device to connect to dev server
-// Run: pnpm dev:ip to see your current IP
+// Server configuration
+// Development: Use local IP (run `pnpm dev:ip` to find yours)
+// Production: Set METAHUMAN_SERVER to your hosted URL
 const DEV_SERVER_IP = process.env.DEV_SERVER_IP || '192.168.0.44';
+const DEV_SERVER_PORT = process.env.DEV_SERVER_PORT || '4321';
+const PRODUCTION_SERVER = process.env.METAHUMAN_SERVER || 'https://mh.dndiy.org';
 const DEV_MODE = process.env.DEV_MODE === 'true';
+
+// Determine which server to connect to
+const serverUrl = DEV_MODE
+  ? `http://${DEV_SERVER_IP}:${DEV_SERVER_PORT}`
+  : PRODUCTION_SERVER;
 
 const config: CapacitorConfig = {
   appId: 'com.metahuman.os',
   appName: 'MetaHuman',
 
-  // Production: use site's built output
-  webDir: '../site/dist',
+  // Note: webDir is required by Capacitor but we use server.url instead
+  // Create a minimal placeholder for the initial setup
+  webDir: 'www',
 
-  // Development: connect to Astro dev server for live reload
-  server: DEV_MODE ? {
-    url: `http://${DEV_SERVER_IP}:4321`,
-    cleartext: true, // Allow HTTP during development
-  } : undefined,
+  // Always connect to a server (MetaHuman requires backend)
+  server: {
+    url: serverUrl,
+    cleartext: DEV_MODE, // Allow HTTP only in dev mode
+  },
 
   android: {
     // Allow HTTP for local dev server

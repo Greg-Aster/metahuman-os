@@ -1120,15 +1120,58 @@ echo "Upload complete!"
                 summary.s3_url = s3Url;
                 summary.s3_key = s3Key;
               } else {
-                log(logFilePath, `S3 upload failed with exit code ${uploadResult.exitCode}`);
-                console.error('❌ S3 upload failed');
+                log(logFilePath, `S3 upload failed with exit code ${uploadResult.exitCode}, falling back to rsync...`);
+                console.error('❌ S3 upload failed, falling back to rsync download...');
                 console.error(`stderr: ${uploadResult.stderr}`);
                 tracker.failStage('s3_upload', `Upload failed: ${uploadResult.exitCode}`);
+
+                // FALLBACK: Download via rsync since S3 failed
+                console.log('📥 Fallback: Downloading model via rsync...');
+                ensureDirSync(opts.FINAL_ADAPTER_DIR);
+                const fallbackResult = await rsyncDownload(
+                  ssh_user!, ssh_host!, ssh_key_path!,
+                  '/workspace/output/model',
+                  opts.FINAL_ADAPTER_DIR,
+                  logFilePath,
+                  ssh_port,
+                  ['checkpoint-*', '*.pt', '*.pth', 'optimizer.pt', 'scheduler.pt', 'rng_state.pth']
+                );
+                if (fallbackResult.exitCode === 0) {
+                  console.log('✅ Fallback rsync download successful!');
+                  log(logFilePath, 'Fallback rsync download completed successfully');
+                } else {
+                  console.error('❌ Fallback rsync also failed!');
+                  log(logFilePath, `Fallback rsync failed: ${fallbackResult.exitCode}`);
+                }
               }
             } catch (error) {
-              log(logFilePath, `S3 upload error: ${(error as Error).message}`);
+              log(logFilePath, `S3 upload error: ${(error as Error).message}, falling back to rsync...`);
               console.error('❌ S3 upload error:', (error as Error).message);
               tracker.failStage('s3_upload', (error as Error).message);
+
+              // FALLBACK: Download via rsync since S3 errored
+              console.log('📥 Fallback: Downloading model via rsync...');
+              ensureDirSync(opts.FINAL_ADAPTER_DIR);
+              try {
+                const fallbackResult = await rsyncDownload(
+                  ssh_user!, ssh_host!, ssh_key_path!,
+                  '/workspace/output/model',
+                  opts.FINAL_ADAPTER_DIR,
+                  logFilePath,
+                  ssh_port,
+                  ['checkpoint-*', '*.pt', '*.pth', 'optimizer.pt', 'scheduler.pt', 'rng_state.pth']
+                );
+                if (fallbackResult.exitCode === 0) {
+                  console.log('✅ Fallback rsync download successful!');
+                  log(logFilePath, 'Fallback rsync download completed successfully');
+                } else {
+                  console.error('❌ Fallback rsync also failed!');
+                  log(logFilePath, `Fallback rsync failed: ${fallbackResult.exitCode}`);
+                }
+              } catch (rsyncError) {
+                console.error('❌ Fallback rsync error:', (rsyncError as Error).message);
+                log(logFilePath, `Fallback rsync error: ${(rsyncError as Error).message}`);
+              }
             }
           } else {
             // Fallback: Direct download if S3 not configured

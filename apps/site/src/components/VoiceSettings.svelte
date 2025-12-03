@@ -87,6 +87,12 @@
   // Hardware button capture preference (stored in localStorage)
   let hardwareButtonsEnabled = false;
 
+  // Native device voice mode (uses phone's built-in STT/TTS instead of server)
+  let nativeVoiceModeEnabled = false;
+
+  // Detect if running in Capacitor Android app (vs browser)
+  let isCapacitorApp = false;
+
   // VAD Test Recorder State
   let vadTestRecording = false;
   let vadTestVolume = 0;
@@ -135,8 +141,19 @@
     try {
       loading = true;
 
+      // Detect if running in Capacitor Android app
+      // Capacitor injects itself on the window object when running in native shell
+      isCapacitorApp = typeof window !== 'undefined' &&
+        !!(window as any).Capacitor &&
+        (window as any).Capacitor.isNativePlatform?.() === true;
+
+      console.log('[VoiceSettings] Capacitor app detected:', isCapacitorApp);
+
       // Load hardware button preference from localStorage
       hardwareButtonsEnabled = localStorage.getItem('mh-hardware-buttons') === 'true';
+
+      // Load native voice mode preference
+      nativeVoiceModeEnabled = localStorage.getItem('mh-native-voice-mode') === 'true';
 
       const response = await fetch('/api/voice-settings');
       if (!response.ok) throw new Error('Failed to load voice settings');
@@ -1203,6 +1220,57 @@
           </div>
         {/if}
 
+        <!-- Native Device Voice Mode - Only shown in Capacitor Android app -->
+        {#if isCapacitorApp}
+          <div class="native-voice-section">
+            <h5 style="margin: 1.5rem 0 1rem 0; color: #6b7280; font-size: 1rem; font-weight: 600;">📱 Native Device Voice Mode</h5>
+
+            <div class="setting-group">
+              <label class="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={nativeVoiceModeEnabled}
+                  on:change={(e) => {
+                    nativeVoiceModeEnabled = e.currentTarget.checked;
+                    localStorage.setItem('mh-native-voice-mode', nativeVoiceModeEnabled ? 'true' : 'false');
+                    // Dispatch event to notify other components
+                    window.dispatchEvent(new CustomEvent('voice-settings-updated'));
+                  }}
+                  disabled={saving}
+                />
+                Use device's built-in voice (faster, works offline)
+              </label>
+              <p class="hint">
+                {#if nativeVoiceModeEnabled}
+                  <strong style="color: #10b981;">✓ Native Mode Active</strong> - Using your device's speech recognition and text-to-speech. Faster response, no network needed, but uses generic device voice.
+                {:else}
+                  <strong>Remote Mode Active</strong> - Using server-based Whisper (STT) and your custom trained voice (TTS). More accurate transcription and personalized voice, but requires network.
+                {/if}
+              </p>
+              <div class="native-voice-comparison">
+                <div class="comparison-item">
+                  <strong>Native Device:</strong>
+                  <ul>
+                    <li>⚡ Instant response</li>
+                    <li>📴 Works offline</li>
+                    <li>🔋 Lower battery usage</li>
+                    <li>🗣️ Generic device voice</li>
+                  </ul>
+                </div>
+                <div class="comparison-item">
+                  <strong>Remote Server:</strong>
+                  <ul>
+                    <li>🎯 More accurate STT (Whisper)</li>
+                    <li>🎭 Custom trained voice</li>
+                    <li>🌐 Requires network</li>
+                    <li>⏱️ ~1-2s latency</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        {/if}
+
         <!-- Hardware Controls -->
         <div class="hardware-controls-section">
           <h5 style="margin: 1.5rem 0 1rem 0; color: #6b7280; font-size: 1rem; font-weight: 600;">🎧 Hardware Button Capture</h5>
@@ -2056,5 +2124,58 @@
 
   :global(.dark) .custom-voicepack-info p {
     color: #d1d5db;
+  }
+
+  /* Native Voice Mode Section */
+  .native-voice-section {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 2px solid #e5e7eb;
+  }
+
+  :global(.dark) .native-voice-section {
+    border-top-color: #374151;
+  }
+
+  .native-voice-comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-top: 1rem;
+    padding: 1rem;
+    background: #f9fafb;
+    border-radius: 0.5rem;
+  }
+
+  :global(.dark) .native-voice-comparison {
+    background: #1f2937;
+  }
+
+  .comparison-item {
+    font-size: 0.875rem;
+  }
+
+  .comparison-item strong {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: #374151;
+  }
+
+  :global(.dark) .comparison-item strong {
+    color: #f3f4f6;
+  }
+
+  .comparison-item ul {
+    margin: 0;
+    padding-left: 1.25rem;
+    color: #6b7280;
+  }
+
+  :global(.dark) .comparison-item ul {
+    color: #9ca3af;
+  }
+
+  .comparison-item li {
+    margin: 0.25rem 0;
   }
 </style>

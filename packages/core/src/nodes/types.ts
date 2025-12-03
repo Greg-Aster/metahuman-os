@@ -31,7 +31,8 @@ export type NodeCategory =
   | 'curiosity'
   | 'curator'
   | 'safety'
-  | 'emulation';
+  | 'emulation'
+  | 'agency';
 
 // ============================================================================
 // SLOT TYPES (for node inputs/outputs)
@@ -208,6 +209,7 @@ export const categoryColors: Record<NodeCategory, { color: string; bgColor: stri
   curator: { color: '#86efac', bgColor: '#14532d' },    // Light Green
   safety: { color: '#fca5a5', bgColor: '#7f1d1d' },     // Light Red
   emulation: { color: '#a5b4fc', bgColor: '#3730a3' },  // Light Indigo
+  agency: { color: '#f59e0b', bgColor: '#78350f' },     // Warm Amber (desires, autonomy)
 };
 
 // ============================================================================

@@ -2,9 +2,12 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { ROOT, systemPaths, audit } from '../../packages/core/src/index'
 
+// Resolve tsx path (installed in node_modules/.bin)
+const TSX_PATH = path.join(ROOT, 'node_modules', '.bin', 'tsx')
+
 async function runOneShot(agentFile: string, name: string): Promise<number> {
   return new Promise((resolve) => {
-    const child = spawn('tsx', [agentFile], {
+    const child = spawn(TSX_PATH, [agentFile], {
       stdio: 'inherit',
       cwd: ROOT,
       env: { ...process.env, ONESHOT: '1' },
