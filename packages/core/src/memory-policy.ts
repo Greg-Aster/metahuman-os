@@ -14,7 +14,7 @@ import { getModeDefinition, type CognitiveModeId } from './cognitive-mode.js';
 // User Roles
 // ============================================================================
 
-export type UserRole = 'owner' | 'member' | 'guest' | 'anonymous';
+export type UserRole = 'owner' | 'standard' | 'guest' | 'anonymous';
 
 // ============================================================================
 // Event Types
@@ -226,7 +226,7 @@ export function conversationVisibility(role: UserRole): string[] {
         'private_profiles',
       ];
 
-    case 'member':
+    case 'standard':
       return [
         'summaries',
         'full_history',
@@ -321,7 +321,7 @@ const SENSITIVE_PATTERNS = {
  */
 export function redactSensitiveData(text: string, role: UserRole): string {
   // Owners and members see everything
-  if (role === 'owner' || role === 'member') {
+  if (role === 'owner' || role === 'standard') {
     return text;
   }
 
@@ -360,7 +360,7 @@ export function filterToolOutputs(
   toolName: string
 ): Record<string, any> {
   // Owners and members see full outputs
-  if (role === 'owner' || role === 'member') {
+  if (role === 'owner' || role === 'standard') {
     return outputs;
   }
 
@@ -426,7 +426,7 @@ export function canViewMemoryType(eventType: string, role: UserRole): boolean {
   }
 
   // Members see most things except private reflections
-  if (role === 'member') {
+  if (role === 'standard') {
     const privateTypes = ['dream', 'inner_dialogue'];
     return !privateTypes.includes(eventType);
   }
@@ -447,7 +447,7 @@ export function getMaxMemoriesForRole(role: UserRole): number {
   switch (role) {
     case 'owner':
       return 50; // Full access
-    case 'member':
+    case 'standard':
       return 20; // Moderate access
     case 'guest':
       return 5; // Limited access

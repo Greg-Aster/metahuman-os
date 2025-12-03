@@ -496,8 +496,9 @@ const getHandler: APIRoute = async ({ cookies }) => {
     let whisperServerStatus = 'unknown';
     if (config.stt?.whisper?.server?.useServer) {
       const whisperUrl = config.stt.whisper.server.url || 'http://127.0.0.1:9883';
+      const pidFile = path.join(rootDir, 'logs', 'run', 'whisper-server.pid');
 
-      // First check if already running
+      // First check if already running via health endpoint
       let isRunning = false;
       try {
         const response = await fetch(`${whisperUrl}/health`, { signal: AbortSignal.timeout(1000) });
@@ -506,10 +507,34 @@ const getHandler: APIRoute = async ({ cookies }) => {
         // Server not responding
       }
 
+      // Also check PID file to detect starting/crashed server
+      let pidAlive = false;
+      if (fs.existsSync(pidFile)) {
+        try {
+          const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
+          // Check if process is actually running
+          process.kill(pid, 0); // Signal 0 just checks if process exists
+          pidAlive = true;
+        } catch (err: any) {
+          // ESRCH = process doesn't exist, safe to delete PID file
+          // EPERM = process exists but we can't signal it, DON'T delete
+          if (err.code === 'ESRCH') {
+            try { fs.unlinkSync(pidFile); } catch {}
+          } else {
+            // EPERM or other error - assume process is running
+            pidAlive = true;
+          }
+        }
+      }
+
       if (isRunning) {
         whisperServerStatus = 'running';
+      } else if (pidAlive) {
+        // PID file exists and process is running, but health check failed
+        // Server is likely still starting up (loading model)
+        whisperServerStatus = 'loading';
       } else if (config.stt.whisper.server.autoStart && user.role !== 'anonymous') {
-        // Auto-start the server if configured
+        // No server running and no PID file - safe to start
         whisperServerStatus = 'starting';
         console.log('[voice-settings] Auto-starting Whisper server...');
 
@@ -518,7 +543,6 @@ const getHandler: APIRoute = async ({ cookies }) => {
         const pythonBin = path.join(rootDir, 'venv', 'bin', 'python3');
         const serverScript = path.join(rootDir, 'external', 'whisper', 'whisper_server.py');
         const logFile = path.join(rootDir, 'logs', 'run', 'whisper-server.log');
-        const pidFile = path.join(rootDir, 'logs', 'run', 'whisper-server.pid');
 
         if (fs.existsSync(pythonBin) && fs.existsSync(serverScript)) {
           const { spawn } = await import('node:child_process');
@@ -595,16 +619,6 @@ const getHandler: APIRoute = async ({ cookies }) => {
             voiceThreshold: config.stt?.whisper?.vad?.voiceThreshold ?? 12,
             silenceDelay: config.stt?.whisper?.vad?.silenceDelay ?? 5000,
             minDuration: config.stt?.whisper?.vad?.minDuration ?? 500,
-          },
-          mobileVad: {
-            voiceThreshold: config.stt?.whisper?.mobileVad?.voiceThreshold ?? 25, // Higher for mobile ambient noise
-            silenceDelay: config.stt?.whisper?.mobileVad?.silenceDelay ?? 1500,
-            minDuration: config.stt?.whisper?.mobileVad?.minDuration ?? 500,
-            sustainedFrames: config.stt?.whisper?.mobileVad?.sustainedFrames ?? 5, // Require sustained voice
-            restartCooldown: config.stt?.whisper?.mobileVad?.restartCooldown ?? 2000, // Wait after TTS before ready
-            startupDelay: config.stt?.whisper?.mobileVad?.startupDelay ?? 500, // Ignore audio after mic activates
-            semanticTurnDetection: config.stt?.whisper?.mobileVad?.semanticTurnDetection ?? false, // Use LLM to detect end of utterance
-            semanticMinConfidence: config.stt?.whisper?.mobileVad?.semanticMinConfidence ?? 0.7, // Min confidence to accept LLM's decision
           },
           wakeWord: {
             enabled: config.stt?.wakeWord?.enabled ?? false,
@@ -830,40 +844,6 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
         }
         if (typeof stt.vad.minDuration === 'number') {
           config.stt.whisper.vad.minDuration = clamp(stt.vad.minDuration, 100, 5000);
-        }
-      }
-
-      // Update Mobile VAD settings (for conversation mode on mobile)
-      if (stt.mobileVad) {
-        config.stt.whisper.mobileVad = config.stt.whisper.mobileVad || {
-          voiceThreshold: 25,
-          silenceDelay: 1500,
-          minDuration: 500,
-          sustainedFrames: 5,
-        };
-        if (typeof stt.mobileVad.voiceThreshold === 'number') {
-          config.stt.whisper.mobileVad.voiceThreshold = clamp(stt.mobileVad.voiceThreshold, 0, 100);
-        }
-        if (typeof stt.mobileVad.silenceDelay === 'number') {
-          config.stt.whisper.mobileVad.silenceDelay = clamp(stt.mobileVad.silenceDelay, 500, 30000);
-        }
-        if (typeof stt.mobileVad.minDuration === 'number') {
-          config.stt.whisper.mobileVad.minDuration = clamp(stt.mobileVad.minDuration, 100, 5000);
-        }
-        if (typeof stt.mobileVad.sustainedFrames === 'number') {
-          config.stt.whisper.mobileVad.sustainedFrames = clamp(stt.mobileVad.sustainedFrames, 1, 20);
-        }
-        if (typeof stt.mobileVad.restartCooldown === 'number') {
-          config.stt.whisper.mobileVad.restartCooldown = clamp(stt.mobileVad.restartCooldown, 500, 10000);
-        }
-        if (typeof stt.mobileVad.startupDelay === 'number') {
-          config.stt.whisper.mobileVad.startupDelay = clamp(stt.mobileVad.startupDelay, 0, 2000);
-        }
-        if (typeof stt.mobileVad.semanticTurnDetection === 'boolean') {
-          config.stt.whisper.mobileVad.semanticTurnDetection = stt.mobileVad.semanticTurnDetection;
-        }
-        if (typeof stt.mobileVad.semanticMinConfidence === 'number') {
-          config.stt.whisper.mobileVad.semanticMinConfidence = clamp(stt.mobileVad.semanticMinConfidence, 0.5, 1.0);
         }
       }
     }

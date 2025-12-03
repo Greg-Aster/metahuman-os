@@ -70,16 +70,6 @@
         silenceDelay: number;
         minDuration: number;
       };
-      mobileVad?: {
-        voiceThreshold: number;
-        silenceDelay: number;
-        minDuration: number;
-        sustainedFrames: number;
-        restartCooldown: number;
-        startupDelay: number;
-        semanticTurnDetection: boolean;
-        semanticMinConfidence: number;
-      };
     };
   }
 
@@ -93,6 +83,9 @@
   let testAudio: HTMLAudioElement | null = null;
   let generatingReference = false;
   let isGuest = false; // Track if user is viewing as guest
+
+  // Hardware button capture preference (stored in localStorage)
+  let hardwareButtonsEnabled = false;
 
   // VAD Test Recorder State
   let vadTestRecording = false;
@@ -141,6 +134,10 @@
   async function loadSettings() {
     try {
       loading = true;
+
+      // Load hardware button preference from localStorage
+      hardwareButtonsEnabled = localStorage.getItem('mh-hardware-buttons') === 'true';
+
       const response = await fetch('/api/voice-settings');
       if (!response.ok) throw new Error('Failed to load voice settings');
       config = await response.json();
@@ -177,19 +174,6 @@
           silenceDelay: 5000,
           minDuration: 500,
         };
-        config.stt.mobileVad = config.stt.mobileVad ?? {
-          voiceThreshold: 25,
-          silenceDelay: 1500,
-          minDuration: 500,
-          sustainedFrames: 5,
-          restartCooldown: 2000,
-          startupDelay: 500,
-        };
-        // Ensure new fields have defaults even if mobileVad object exists
-        config.stt.mobileVad.restartCooldown = config.stt.mobileVad.restartCooldown ?? 2000;
-        config.stt.mobileVad.startupDelay = config.stt.mobileVad.startupDelay ?? 500;
-        config.stt.mobileVad.semanticTurnDetection = config.stt.mobileVad.semanticTurnDetection ?? false;
-        config.stt.mobileVad.semanticMinConfidence = config.stt.mobileVad.semanticMinConfidence ?? 0.7;
       }
 
       error = null;
@@ -1219,6 +1203,27 @@
           </div>
         {/if}
 
+        <!-- Hardware Controls -->
+        <div class="hardware-controls-section">
+          <h5 style="margin: 1.5rem 0 1rem 0; color: #6b7280; font-size: 1rem; font-weight: 600;">🎧 Hardware Button Capture</h5>
+
+          <div class="setting-group">
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                checked={hardwareButtonsEnabled}
+                on:change={(e) => {
+                  hardwareButtonsEnabled = e.currentTarget.checked;
+                  localStorage.setItem('mh-hardware-buttons', hardwareButtonsEnabled ? 'true' : 'false');
+                }}
+                disabled={saving}
+              />
+              Enable earbud/headphone button capture
+            </label>
+            <p class="hint">Allows play/pause buttons on Bluetooth earbuds and headphones to trigger voice input. Creates a background audio session.</p>
+          </div>
+        </div>
+
         <!-- VAD Settings -->
         <div class="vad-settings-section">
           <h5 style="margin: 1.5rem 0 1rem 0; color: #6b7280; font-size: 1rem; font-weight: 600;">⚙️ Voice Activity Detection Settings</h5>
@@ -1285,154 +1290,6 @@
             </div>
             <p class="hint">Minimum recording length to prevent accidental clicks from triggering transcription.</p>
           </div>
-
-          <!-- Mobile VAD Settings (for conversation mode) -->
-          <h5 style="margin: 2rem 0 1rem 0; color: #6b7280; font-size: 1rem; font-weight: 600;">📱 Mobile Conversation Mode Settings</h5>
-          <p class="hint" style="margin-bottom: 1rem;">These settings apply when using long-press conversation mode on mobile devices. Higher thresholds help filter ambient noise.</p>
-
-          <div class="setting-group">
-            <label for="mobile-vad-threshold">
-              Mobile Voice Threshold: {config.stt.mobileVad?.voiceThreshold ?? 25}
-            </label>
-            <input
-              id="mobile-vad-threshold"
-              type="range"
-              min="0"
-              max="100"
-              step="1"
-              bind:value={config.stt.mobileVad.voiceThreshold}
-              disabled={saving}
-            />
-            <div class="range-labels">
-              <span>0 (Very Sensitive)</span>
-              <span>50</span>
-              <span>100 (Less Sensitive)</span>
-            </div>
-            <p class="hint">Higher values help filter out ambient noise like wind, traffic, etc. Default 25 is good for most environments.</p>
-          </div>
-
-          <div class="setting-group">
-            <label for="mobile-sustained-frames">
-              Sustained Voice Frames: {config.stt.mobileVad?.sustainedFrames ?? 5}
-            </label>
-            <input
-              id="mobile-sustained-frames"
-              type="range"
-              min="1"
-              max="20"
-              step="1"
-              bind:value={config.stt.mobileVad.sustainedFrames}
-              disabled={saving}
-            />
-            <div class="range-labels">
-              <span>1 (Quick)</span>
-              <span>10</span>
-              <span>20 (Deliberate)</span>
-            </div>
-            <p class="hint">How many consecutive frames (~{((config.stt.mobileVad?.sustainedFrames ?? 5) * 16).toFixed(0)}ms) of voice must be detected before triggering. Prevents noise spikes from triggering.</p>
-          </div>
-
-          <div class="setting-group">
-            <label for="mobile-vad-silence-delay">
-              Mobile Silence Delay: {(config.stt.mobileVad?.silenceDelay ?? 1500) / 1000} seconds
-            </label>
-            <input
-              id="mobile-vad-silence-delay"
-              type="range"
-              min="500"
-              max="10000"
-              step="250"
-              bind:value={config.stt.mobileVad.silenceDelay}
-              disabled={saving}
-            />
-            <div class="range-labels">
-              <span>0.5s (Quick)</span>
-              <span>5s</span>
-              <span>10s (Patient)</span>
-            </div>
-            <p class="hint">How long to wait after speech ends before processing in conversation mode.</p>
-          </div>
-
-          <div class="setting-group">
-            <label for="mobile-restart-cooldown">
-              Restart Cooldown: {(config.stt.mobileVad?.restartCooldown ?? 2000) / 1000} seconds
-            </label>
-            <input
-              id="mobile-restart-cooldown"
-              type="range"
-              min="500"
-              max="10000"
-              step="250"
-              bind:value={config.stt.mobileVad.restartCooldown}
-              disabled={saving}
-            />
-            <div class="range-labels">
-              <span>0.5s (Quick)</span>
-              <span>5s</span>
-              <span>10s (Patient)</span>
-            </div>
-            <p class="hint">How long to wait after TTS finishes before returning to "ready" state. Higher values prevent mic from triggering on notification sounds.</p>
-          </div>
-
-          <div class="setting-group">
-            <label for="mobile-startup-delay">
-              Mic Startup Delay: {config.stt.mobileVad?.startupDelay ?? 500}ms
-            </label>
-            <input
-              id="mobile-startup-delay"
-              type="range"
-              min="0"
-              max="2000"
-              step="100"
-              bind:value={config.stt.mobileVad.startupDelay}
-              disabled={saving}
-            />
-            <div class="range-labels">
-              <span>0ms (Instant)</span>
-              <span>1s</span>
-              <span>2s (Long)</span>
-            </div>
-            <p class="hint">Ignore audio for this duration after mic activates. Filters out phone "ding" sounds and mic activation artifacts.</p>
-          </div>
-
-          <div class="setting-group semantic-turn-section">
-            <label class="checkbox-label">
-              <input
-                type="checkbox"
-                bind:checked={config.stt.mobileVad.semanticTurnDetection}
-                disabled={saving}
-              />
-              <span>Semantic Turn Detection (Experimental)</span>
-            </label>
-            <p class="hint">
-              Uses AI to understand when you've finished your thought, not just when you stop talking.
-              Like ChatGPT/Google - won't cut you off mid-sentence even if you pause.
-              <strong>Note:</strong> Adds ~200-500ms latency per utterance.
-            </p>
-          </div>
-
-          {#if config.stt.mobileVad?.semanticTurnDetection}
-            <div class="setting-group">
-              <label for="semantic-min-confidence">
-                Detection Confidence: {((config.stt.mobileVad?.semanticMinConfidence ?? 0.7) * 100).toFixed(0)}%
-              </label>
-              <input
-                id="semantic-min-confidence"
-                type="range"
-                min="0.5"
-                max="1.0"
-                step="0.05"
-                bind:value={config.stt.mobileVad.semanticMinConfidence}
-                disabled={saving}
-              />
-              <div class="range-labels">
-                <span>50% (Lenient)</span>
-                <span>75%</span>
-                <span>100% (Strict)</span>
-              </div>
-              <p class="hint">How confident the AI must be that you're done speaking. Lower = waits longer, Higher = responds faster.</p>
-            </div>
-          {/if}
 
           <!-- VAD Test Recorder -->
           <div class="vad-test-section">

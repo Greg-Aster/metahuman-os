@@ -26,11 +26,7 @@
     lengthModeChange: { mode: 'auto' | 'concise' | 'detailed' };
   }>();
 
-  // Detect mobile device
-  const isMobile = typeof navigator !== 'undefined' &&
-    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-
-  // Long-press detection for desktop continuous mode
+  // Long-press detection for conversation mode
   const LONG_PRESS_DURATION = 500; // 500ms for long press
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
   let isLongPress = false;
@@ -69,9 +65,22 @@
   }
 
   // Touch event handlers for long-press detection (enter conversation mode)
+  let touchStartX = 0;
+  let touchStartY = 0;
+  const TOUCH_MOVE_THRESHOLD = 10; // pixels - allow some finger movement
+
   function handleMicTouchStart(e: TouchEvent) {
+    // Prevent browser's default long-press behavior (context menu, text selection, etc.)
+    e.preventDefault();
+    console.log('[InputArea] touchstart - starting long-press timer');
     isLongPress = false;
+    // Store initial touch position for movement threshold
+    if (e.touches.length > 0) {
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+    }
     longPressTimer = setTimeout(() => {
+      console.log('[InputArea] Long press detected! Dispatching micLongPress');
       isLongPress = true;
       // Vibrate on mobile if supported (haptic feedback)
       if (navigator.vibrate) {
@@ -82,21 +91,28 @@
   }
 
   function handleMicTouchEnd(e: TouchEvent) {
+    console.log('[InputArea] touchend - isLongPress:', isLongPress);
     if (longPressTimer) {
       clearTimeout(longPressTimer);
       longPressTimer = null;
+      // Timer was still running = short tap, dispatch click
+      console.log('[InputArea] Short tap detected, dispatching micClick');
+      dispatch('micClick');
     }
-    // If it was a long press, prevent the click event
-    if (isLongPress) {
-      e.preventDefault();
-    }
+    // Always prevent since we're handling everything in touch events
+    e.preventDefault();
   }
 
   function handleMicTouchMove(e: TouchEvent) {
-    // Cancel long press if user moves finger
-    if (longPressTimer) {
-      clearTimeout(longPressTimer);
-      longPressTimer = null;
+    // Cancel long press only if user moves finger significantly
+    if (longPressTimer && e.touches.length > 0) {
+      const dx = Math.abs(e.touches[0].clientX - touchStartX);
+      const dy = Math.abs(e.touches[0].clientY - touchStartY);
+      if (dx > TOUCH_MOVE_THRESHOLD || dy > TOUCH_MOVE_THRESHOLD) {
+        console.log('[InputArea] touchmove - finger moved too much, cancelling long-press');
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
     }
   }
 
@@ -282,12 +298,12 @@
     50% { transform: translateY(-2px); }
   }
 
-  /* Prevent text selection on mic button during long press */
+  /* Prevent text selection and browser context menu on mic button during long press */
   .mic-btn {
     -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
-    touch-action: manipulation;
+    touch-action: none; /* Prevents browser long-press menu, gives us full control */
   }
 
   /* Wake word listening mode - distinctive purple color */
