@@ -50,11 +50,26 @@ import * as agentNodes from './agent/index.js';
 // Utility nodes
 import * as utilityNodes from './utility/index.js';
 
-// Memory nodes (will be added)
-// import * as memoryNodes from './memory/index.js';
+// Persona nodes
+import * as personaNodes from './persona/index.js';
 
-// Config nodes (will be added)
-// import * as configNodes from './config/index.js';
+// Thought nodes
+import * as thoughtNodes from './thought/index.js';
+
+// Dreamer nodes
+import * as dreamerNodes from './dreamer/index.js';
+
+// Curiosity nodes
+import * as curiosityNodes from './curiosity/index.js';
+
+// Curator nodes
+import * as curatorNodes from './curator/index.js';
+
+// Safety nodes
+import * as safetyNodes from './safety/index.js';
+
+// Emulation nodes
+import * as emulationNodes from './emulation/index.js';
 
 // ============================================================================
 // COLLECT ALL NODES
@@ -86,8 +101,13 @@ export const allNodes: NodeDefinition[] = collectNodes(
   skillNodes,
   agentNodes,
   utilityNodes,
-  // memoryNodes,
-  // configNodes,
+  personaNodes,
+  thoughtNodes,
+  dreamerNodes,
+  curiosityNodes,
+  curatorNodes,
+  safetyNodes,
+  emulationNodes,
 );
 
 // ============================================================================
@@ -213,6 +233,15 @@ export function registerNode(node: NodeDefinition): void {
  */
 export function registerPluginExecutor(pluginId: string, executor: NodeExecutor): void {
   nodeExecutors.set(pluginId, executor);
+}
+
+/**
+ * Unregister a plugin executor (called when plugin is unloaded)
+ */
+export function unregisterPluginExecutor(pluginId: string): void {
+  nodeExecutors.delete(pluginId);
+  nodeSchemas.delete(pluginId);
+  nodeRegistry.delete(pluginId);
 }
 
 // ============================================================================

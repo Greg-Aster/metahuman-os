@@ -47,6 +47,7 @@ Format: {"tags": [...], "entities": [...]}`;
         repeatPenalty: 1.15,
         temperature: 0.3,
       },
+      keepAlive: 0, // Unload model immediately - background agent shouldn't hog VRAM
     });
 
     let enrichment = { tags: [], entities: [] };

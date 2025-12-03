@@ -37,6 +37,12 @@ export interface RouterCallOptions {
    * Used to show status messages in the chat stream
    */
   onProgress?: (event: ModelProgressEvent) => void;
+  /**
+   * How long to keep the model loaded in VRAM after the request.
+   * Use "0" to unload immediately (good for background agents).
+   * Use "5m" for 5 minutes, etc. Default is Ollama's default (5 minutes).
+   */
+  keepAlive?: string | number;
 }
 
 export interface ModelProgressEvent {
@@ -126,7 +132,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
   try {
     switch (resolved.provider) {
       case 'ollama':
-        response = await callOllama(resolved, messages, mergedOptions, callOptions.onProgress);
+        response = await callOllama(resolved, messages, mergedOptions, callOptions.onProgress, callOptions.keepAlive);
         break;
 
       case 'openai':
@@ -211,7 +217,8 @@ async function callOllama(
   resolved: ResolvedModel,
   messages: RouterMessage[],
   options: Record<string, any>,
-  onProgress?: (event: ModelProgressEvent) => void
+  onProgress?: (event: ModelProgressEvent) => void,
+  keepAlive?: string | number
 ): Promise<RouterResponse> {
   // Check if model is already loaded or if we need to wait
   const isLoaded = await ollama.isModelLoaded(resolved.model);
@@ -238,6 +245,7 @@ async function callOllama(
   if (options.repeatPenalty !== undefined) ollamaOptions.repeat_penalty = options.repeatPenalty;
   if (options.maxTokens !== undefined) ollamaOptions.num_predict = options.maxTokens;
   if (options.format !== undefined) ollamaOptions.format = options.format; // Support JSON mode
+  if (keepAlive !== undefined) ollamaOptions.keep_alive = keepAlive; // Control VRAM retention
 
   // Call Ollama with OOM error detection
   let response;
