@@ -17,7 +17,7 @@ export interface UserContext {
   activeProfile?: string; // Selected profile for guest users
 }
 
-const contextStorage = new AsyncLocalStorage<UserContext>();
+const contextStorage = new AsyncLocalStorage<UserContext | undefined>();
 
 /**
  * Run function with isolated user context (RECOMMENDED)

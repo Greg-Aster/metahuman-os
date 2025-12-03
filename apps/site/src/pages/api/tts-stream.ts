@@ -226,7 +226,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
         const { generateSpeech } = await import('@metahuman/core');
 
         // Prefetch queue: generate next sentence while current plays
-        const LOOKAHEAD = 1; // Number of sentences to prefetch
+        // Higher lookahead for slow providers (RVC takes 500ms-2s per sentence)
+        const LOOKAHEAD = 3; // Number of sentences to prefetch ahead
         const pendingGenerations: Map<number, Promise<Buffer>> = new Map();
 
         // Start prefetching first sentences

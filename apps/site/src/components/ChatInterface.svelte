@@ -110,6 +110,7 @@
     isNativeMode: micIsNativeMode,
     isWakeWordListening: micIsWakeWordListening,
     isConversationMode: micIsConversationMode,
+    isHardwareButtonsActive: micIsHardwareButtonsActive,
   } = mic;
 
   // Initialize Thinking Trace composable
@@ -129,6 +130,20 @@
 
   // Debug logging for thinking indicator
   $: console.log('[ThinkingIndicator] showIndicator:', $showThinkingIndicator, 'active:', $thinkingActive, 'trace.length:', $thinkingTrace.length, 'reasoningStages.length:', reasoningStages.length, 'steps:', $thinkingSteps.substring(0, 100));
+
+  // Re-activate media session when TTS finishes (so earbud buttons keep working)
+  let prevTtsPlaying = false;
+  $: {
+    if (prevTtsPlaying && !$ttsIsPlaying) {
+      // TTS just stopped - reclaim media session for hardware buttons
+      // Small delay to ensure browser has released the TTS audio session
+      console.log('[chat] TTS finished, reactivating media session in 200ms...');
+      setTimeout(() => {
+        mic.reactivateMediaSession();
+      }, 200);
+    }
+    prevTtsPlaying = $ttsIsPlaying;
+  }
 
   // Subscribe to shared YOLO mode store
   const unsubscribeYolo = yoloModeStore.subscribe(value => {
@@ -200,12 +215,12 @@
     loadChatPrefs();
     mic.loadVADSettings(); // Load VAD settings from voice config
 
-    // Enable hardware button capture only if user opted in via Voice Settings
-    // This creates a background audio session for earbud/headphone button support
+    // Hardware button capture (earbuds/Bluetooth) is enabled on first mic tap
+    // It requires a user gesture to start the silent audio element
+    // Check if user has previously enabled it - if so, remind them to tap mic first
     const hardwareButtonsEnabled = localStorage.getItem('mh-hardware-buttons') === 'true';
-    if (hardwareButtonsEnabled) {
-      console.log('[chat] Hardware button capture enabled by user preference');
-      mic.setupMediaSession();
+    if (hardwareButtonsEnabled && mic.isMobileDevice()) {
+      console.log('[chat] Hardware buttons enabled - tap mic once to activate earbud control');
     }
 
     if (ttsEnabled) {
@@ -1098,6 +1113,7 @@
       isContinuousMode={$micIsContinuousMode}
       isWakeWordListening={$micIsWakeWordListening}
       isConversationMode={$micIsConversationMode}
+      isHardwareButtonsActive={$micIsHardwareButtonsActive}
       ttsIsPlaying={$ttsIsPlaying}
       interimTranscript={$micInterimTranscript}
       {lengthMode}
@@ -1105,6 +1121,10 @@
       on:stop={stopRequest}
       on:keypress={(e) => handleKeyPress(e.detail.event)}
       on:micClick={() => {
+        // Enable hardware button capture on first mic tap (requires user gesture)
+        // This allows earbuds/Bluetooth buttons to trigger mic after first tap
+        mic.setupMediaSession();
+
         // Tap on mic: stop any active listening mode first
         if ($micIsWakeWordListening) {
           console.log('[chat-mic] Stopping wake word detection');

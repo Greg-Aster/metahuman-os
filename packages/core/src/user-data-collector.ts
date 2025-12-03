@@ -29,6 +29,7 @@ export interface TherapySession {
   userId: string;
   username: string;
   status: string;
+  createdAt?: string;
   questions: Array<{
     id: string;
     prompt: string;

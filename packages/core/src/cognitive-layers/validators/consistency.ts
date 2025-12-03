@@ -127,19 +127,22 @@ export async function checkConsistency(
     });
 
     // Parse analysis result
-    const result = parseConsistencyAnalysis(
+    const parsedResult = parseConsistencyAnalysis(
       analysisResponse.content,
       aspects,
       threshold
     );
 
-    result.processingTime = Date.now() - startTime;
+    const result: ConsistencyResult = {
+      ...parsedResult,
+      processingTime: Date.now() - startTime
+    };
 
     // Audit consistency check
     await audit({
       category: 'action',
       level: result.consistent ? 'info' : 'warn',
-      action: 'consistency_check',
+      event: 'consistency_check',
       details: {
         consistent: result.consistent,
         score: result.score,
@@ -219,7 +222,8 @@ function buildConsistencyPrompt(
   if (aspects.includes('identity') && persona.background) {
     parts.push('## Background');
     parts.push('');
-    parts.push(persona.background);
+    const bg = typeof persona.background === 'string' ? persona.background : JSON.stringify(persona.background);
+    parts.push(bg);
     parts.push('');
   }
 

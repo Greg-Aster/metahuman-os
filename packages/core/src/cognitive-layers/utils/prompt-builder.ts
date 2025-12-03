@@ -203,13 +203,14 @@ function buildPersonaSection(cognitiveMode: CognitiveModeId): string | null {
     }
 
     // Current goals
-    if (persona.currentGoals && persona.currentGoals.length > 0) {
-      parts.push(`Current goals:\n${persona.currentGoals.map(g => `- ${g}`).join('\n')}`);
+    if (persona.currentGoals && Array.isArray(persona.currentGoals) && persona.currentGoals.length > 0) {
+      parts.push(`Current goals:\n${persona.currentGoals.map((g: string) => `- ${g}`).join('\n')}`);
     }
 
     // Background (brief)
     if (persona.background) {
-      parts.push(`Background: ${persona.background}`);
+      const bg = typeof persona.background === 'string' ? persona.background : JSON.stringify(persona.background);
+      parts.push(`Background: ${bg}`);
     }
 
     if (parts.length === 0) return null;

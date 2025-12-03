@@ -454,7 +454,7 @@ export function getSecurityPolicy(context?: any): SecurityPolicy {
 
   // PRIORITY 1: Try to get user context from AsyncLocalStorage (set by graph pipeline)
   // This allows skills executed from graph nodes to access authenticated user info
-  let session: SessionInfo | undefined;
+  let session: SessionInfo | null = null;
   const userContext = getUserContext();
   if (userContext && userContext.role !== 'anonymous') {
     session = {

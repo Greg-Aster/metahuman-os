@@ -333,7 +333,7 @@ export async function refineResponseSafely(
       await audit({
         category: 'action',
         level: changed ? 'info' : 'debug',
-        action: 'response_refined',
+        event: 'response_refined',
         details: {
           changed,
           changesCount: allChanges.length,
@@ -364,7 +364,7 @@ export async function refineResponseSafely(
     await audit({
       category: 'action',
       level: 'error',
-      action: 'refinement_failed',
+      event: 'refinement_failed',
       details: {
         error: error instanceof Error ? error.message : String(error),
         issuesAttempted: safetyResult.issues.length,

@@ -61,6 +61,9 @@ export interface ProfileEncryptionConfig {
 
   /** Whether using login password for encryption (vs separate password) */
   useLoginPassword?: boolean;
+
+  /** Allow additional properties for extensibility */
+  [key: string]: unknown;
 }
 
 /**

@@ -136,20 +136,23 @@ export async function checkValueAlignment(
     });
 
     // Parse analysis result
-    const result = parseValueAlignmentAnalysis(
+    const parsedResult = parseValueAlignmentAnalysis(
       analysisResponse.content,
       values,
       threshold,
       includeSuggestions
     );
 
-    result.processingTime = Date.now() - startTime;
+    const result: ValueAlignmentResult = {
+      ...parsedResult,
+      processingTime: Date.now() - startTime
+    };
 
     // Audit alignment check
     await audit({
       category: 'action',
       level: result.aligned ? 'info' : 'warn',
-      action: 'value_alignment_check',
+      event: 'value_alignment_check',
       details: {
         aligned: result.aligned,
         score: result.score,

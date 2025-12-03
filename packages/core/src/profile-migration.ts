@@ -961,7 +961,7 @@ export async function* migrateProfile(
     // Store encryption metadata for profile loading
     encryption: encryption?.type !== 'none' ? {
       type: encryption?.type || 'none',
-      containerPath: veracryptContainerPath,
+      volumePath: veracryptContainerPath,
     } : undefined,
   };
 

@@ -22,6 +22,13 @@ export interface PersonaCore {
   values: any;
   goals: any;
   context: any;
+  // Extended properties used by cognitive-layers (experimental)
+  name?: string;  // Shorthand for identity.name
+  traits?: string[] | { [key: string]: any };  // Personality traits
+  currentGoals?: string[] | { [key: string]: any };  // Current goals
+  background?: string | { [key: string]: any };  // Background context
+  // Allow additional properties for flexibility
+  [key: string]: any;
 }
 
 export interface DecisionRules {

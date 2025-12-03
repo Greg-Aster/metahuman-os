@@ -67,6 +67,14 @@ const NativeSpeechRecognition: ISpeechRecognitionConstructor | null = typeof win
 
 
 /**
+ * Detect if running on a mobile device
+ */
+function isMobileDevice(): boolean {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+
+/**
  * Check if native speech recognition is available
  */
 function isNativeSpeechAvailable(): boolean {
@@ -254,6 +262,8 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   const isConversationMode = writable(false); // Conversation mode active (any speech triggers)
   const isWakeWordListening = writable(false); // Deprecated: always false (wake word removed)
   const wakeWordDetected = writable(false); // Deprecated: always false (wake word removed)
+  const isHardwareButtonsActive = writable(false); // Media Session active (earbuds can trigger mic)
+  const mediaSessionDebugState = writable(''); // Debug state for mobile testing (e.g., "PAUSED", "PLAYING", "TTS_STEAL")
 
   // Native speech recognition state
   let speechRecognition: ISpeechRecognition | null = null;
@@ -1147,6 +1157,10 @@ export function useMicrophone(options: UseMicrophoneOptions) {
       micAudioCtx = null;
       micAnalyser = null;
     }
+
+    // Notify media session that recording stopped (VAD silence detected)
+    // This sets state to "paused" so next earbud press sends "play"
+    onRecordingAutoStopped();
   }
 
   /**
@@ -1481,6 +1495,9 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     micAudioCtx = null;
     micAnalyser = null;
 
+    // Clean up media session
+    disableMediaSession();
+
     // Reset stores
     isRecording.set(false);
     isNativeMode.set(false);
@@ -1490,10 +1507,14 @@ export function useMicrophone(options: UseMicrophoneOptions) {
 
   // Media Session state
   let mediaSessionEnabled = false;
+  let mediaSessionAudio: HTMLAudioElement | null = null;
 
   /**
    * Setup Media Session API to capture hardware buttons (earbuds, Bluetooth headsets)
    * This allows users to trigger mic recording via hardware buttons.
+   *
+   * IMPORTANT: Must be called from a user gesture (click/tap) to work!
+   * The silent audio needs user interaction to start playing.
    *
    * Button mappings:
    * - Play/Pause: Toggle mic recording (most common earbud button)
@@ -1508,92 +1529,218 @@ export function useMicrophone(options: UseMicrophoneOptions) {
       return;
     }
 
-    if (mediaSessionEnabled) {
-      console.log('[MediaSession] Already enabled');
+    if (mediaSessionEnabled && mediaSessionAudio) {
+      console.log('[MediaSession] Already enabled, ensuring audio is playing');
+      mediaSessionAudio.play().catch(() => {});
       return;
     }
 
-    // Create a silent audio element to enable media session
-    // Without active media, the session won't receive hardware button events
-    const silentAudio = new Audio();
-    silentAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-    silentAudio.loop = true;
-    silentAudio.volume = 0.001; // Nearly silent
+    console.log('[MediaSession] Setting up hardware button capture...');
+
+    // Create a longer silent audio loop (1 second of silence)
+    // Short audio clips sometimes don't keep the session alive
+    if (!mediaSessionAudio) {
+      mediaSessionAudio = new Audio();
+      // 1 second of silence at 8kHz mono
+      mediaSessionAudio.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YUoGAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
+      mediaSessionAudio.loop = true;
+      mediaSessionAudio.volume = 0.01; // Very quiet but not silent (some browsers ignore 0 volume)
+    }
 
     // Set metadata so it shows in notification/lock screen
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: 'MetaHuman Voice Input',
-      artist: 'Ready to listen',
+      title: 'MetaHuman Voice',
+      artist: 'Tap play to speak',
       album: 'Voice Assistant',
     });
 
-    // Handle play/pause - this is triggered by most earbud buttons
-    navigator.mediaSession.setActionHandler('play', () => {
-      console.log('[MediaSession] Play pressed - starting mic');
-      silentAudio.play().catch(() => {});
-      if (!get(isRecording)) {
-        // Use conversation mode for continuous interaction
-        if (!conversationModeActive) {
-          toggleConversationMode();
-        }
-      }
-      navigator.mediaSession.playbackState = 'playing';
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: 'MetaHuman Voice Input',
-        artist: 'Listening...',
-        album: 'Voice Assistant',
-      });
-    });
+    // Register play/pause handlers using the shared function
+    registerMediaSessionHandlers();
 
-    navigator.mediaSession.setActionHandler('pause', () => {
-      console.log('[MediaSession] Pause pressed - toggling mic');
-      // Toggle behavior: if recording, stop. If not, start.
-      if (get(isRecording)) {
-        stopMic();
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: 'MetaHuman Voice Input',
-          artist: 'Ready to listen',
-          album: 'Voice Assistant',
-        });
-      } else {
-        // Use conversation mode for continuous interaction
-        if (!conversationModeActive) {
-          toggleConversationMode();
-        }
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: 'MetaHuman Voice Input',
-          artist: 'Listening...',
-          album: 'Voice Assistant',
-        });
-      }
-      navigator.mediaSession.playbackState = get(isRecording) ? 'playing' : 'paused';
-    });
-
+    // Handle stop
     navigator.mediaSession.setActionHandler('stop', () => {
-      console.log('[MediaSession] Stop pressed - stopping mic');
+      console.log('[MediaSession] STOP pressed');
       if (get(isRecording)) {
         stopMic();
       }
       if (conversationModeActive) {
-        toggleConversationMode(); // Turn off conversation mode
+        toggleConversationMode();
       }
-      silentAudio.pause();
-      navigator.mediaSession.playbackState = 'none';
+      navigator.mediaSession.playbackState = 'paused';
+    });
+
+    // Handle previous track (some earbuds use this for long-press)
+    try {
+      navigator.mediaSession.setActionHandler('previoustrack', () => {
+        console.log('[MediaSession] PREVIOUS pressed - toggling conversation mode');
+        toggleConversationMode();
+      });
+    } catch (e) {
+      // Not supported on all browsers
+    }
+
+    // Handle next track (some earbuds use this for long-press)
+    try {
+      navigator.mediaSession.setActionHandler('nexttrack', () => {
+        console.log('[MediaSession] NEXT pressed - toggling conversation mode');
+        toggleConversationMode();
+      });
+    } catch (e) {
+      // Not supported on all browsers
+    }
+
+    // Start playing immediately (this MUST be called from a user gesture)
+    mediaSessionAudio.play().then(() => {
+      console.log('[MediaSession] ✓ Enabled! Hardware buttons will now trigger mic.');
+      console.log('[MediaSession] Earbud play/pause will toggle recording.');
+      mediaSessionEnabled = true;
+      isHardwareButtonsActive.set(true);
+
+      // Start in "paused" state - earbuds will send "play" on first press
+      // This is the key trick: we match earbud expectations
+      navigator.mediaSession.playbackState = 'paused';
+      mediaSessionDebugState.set('⏸️ PAUSED (ready)');
+
+    }).catch((err) => {
+      console.error('[MediaSession] ✗ Failed to start:', err.message);
+      console.log('[MediaSession] Try tapping the mic button first, then use earbuds.');
+      isHardwareButtonsActive.set(false);
+      mediaSessionDebugState.set('❌ FAILED');
+    });
+  }
+
+  /**
+   * Re-activate media session after TTS finishes
+   * Reclaims session ownership and sets state to "paused" (ready for next play)
+   */
+  function reactivateMediaSession(): void {
+    if (!mediaSessionEnabled) return;
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    if (!mediaSessionAudio) {
+      console.warn('[MediaSession] No audio element to reactivate');
+      mediaSessionDebugState.set('❌ NO AUDIO');
+      return;
+    }
+
+    console.log('[MediaSession] Reactivating ORIGINAL audio (keeping user gesture context)...');
+    mediaSessionDebugState.set('🔄 REACTIVATING...');
+
+    // IMPORTANT: Keep the ORIGINAL audio element created from user gesture!
+    // Creating a new Audio() outside a user gesture loses media session priority on mobile.
+
+    // Just restart the existing audio
+    mediaSessionAudio.currentTime = 0;
+    mediaSessionAudio.play().then(() => {
+      console.log('[MediaSession] ✓ Original audio restarted');
+
+      // Re-register handlers (in case they were overwritten)
+      registerMediaSessionHandlers();
+
+      // Set to PAUSED - ready for user to press "play"
+      navigator.mediaSession.playbackState = 'paused';
       navigator.mediaSession.metadata = new MediaMetadata({
-        title: 'MetaHuman Voice Input',
-        artist: 'Stopped',
+        title: 'MetaHuman Voice',
+        artist: '⏸️ Ready - tap play',
+        album: 'Voice Assistant',
+      });
+
+      mediaSessionDebugState.set('⏸️ PAUSED (reactivated)');
+      console.log('[MediaSession] State = PAUSED (ready for play)');
+    }).catch((e) => {
+      console.warn('[MediaSession] Failed to reactivate:', e.message);
+      mediaSessionDebugState.set('❌ REACTIVATE FAILED');
+    });
+  }
+
+  /**
+   * Register media session handlers
+   *
+   * LITERAL PLAY/PAUSE MODEL:
+   * - PLAY = Start recording (we're actively "playing" = listening)
+   * - PAUSE = Stop recording (either manual or silence-detected)
+   *
+   * Flow:
+   * 1. User presses PLAY → recording starts, state = "playing"
+   * 2. Silence detected (VAD) → recording stops, audio sent, state = "paused"
+   * 3. User presses PLAY again → recording starts, state = "playing"
+   * 4. Repeat
+   */
+  function registerMediaSessionHandlers(): void {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+
+    // PLAY = Start recording
+    navigator.mediaSession.setActionHandler('play', () => {
+      console.log('[MediaSession] ▶️ PLAY pressed - starting recording');
+      mediaSessionDebugState.set('▶️ PLAY (recording)');
+
+      // Keep audio playing to maintain session ownership
+      if (mediaSessionAudio) {
+        mediaSessionAudio.currentTime = 0;
+        mediaSessionAudio.play().catch(() => {});
+      }
+
+      // Only start if not already recording
+      if (!get(isRecording)) {
+        startMic();
+
+        // We're now "playing" (actively listening)
+        navigator.mediaSession.playbackState = 'playing';
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: 'MetaHuman Voice',
+          artist: '🎤 Listening...',
+          album: 'Voice Assistant',
+        });
+      }
+    });
+
+    // PAUSE = Stop recording (manual interrupt)
+    navigator.mediaSession.setActionHandler('pause', () => {
+      console.log('[MediaSession] ⏸️ PAUSE pressed - stopping recording');
+      mediaSessionDebugState.set('⏸️ PAUSE (manual)');
+
+      // Keep audio playing to maintain session ownership
+      if (mediaSessionAudio) {
+        mediaSessionAudio.currentTime = 0;
+        mediaSessionAudio.play().catch(() => {});
+      }
+
+      // Stop if currently recording
+      if (get(isRecording)) {
+        stopMic();
+      }
+
+      // We're now "paused" (waiting for next play)
+      navigator.mediaSession.playbackState = 'paused';
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: 'MetaHuman Voice',
+        artist: '⏸️ Ready - tap play',
         album: 'Voice Assistant',
       });
     });
+  }
 
-    // Start playing to enable the session
-    silentAudio.play().then(() => {
-      console.log('[MediaSession] Enabled - hardware buttons will trigger mic');
-      mediaSessionEnabled = true;
-      navigator.mediaSession.playbackState = 'paused';
-    }).catch((err) => {
-      console.warn('[MediaSession] Could not start - user interaction required first:', err.message);
-      // Will be enabled on first user interaction with the page
+  /**
+   * Called when VAD detects silence and stops recording
+   * Sets media session to "paused" so next earbud press sends "play"
+   */
+  function onRecordingAutoStopped(): void {
+    if (!mediaSessionEnabled) return;
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+
+    console.log('[MediaSession] Recording auto-stopped (silence detected), setting PAUSED');
+    mediaSessionDebugState.set('⏸️ PAUSED (silence)');
+
+    // Keep audio playing to maintain ownership
+    if (mediaSessionAudio) {
+      mediaSessionAudio.play().catch(() => {});
+    }
+
+    // Set to paused - next button press will send "play"
+    navigator.mediaSession.playbackState = 'paused';
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: 'MetaHuman Voice',
+      artist: '⏸️ Ready - tap play',
+      album: 'Voice Assistant',
     });
   }
 
@@ -1606,9 +1753,30 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     navigator.mediaSession.setActionHandler('play', null);
     navigator.mediaSession.setActionHandler('pause', null);
     navigator.mediaSession.setActionHandler('stop', null);
+    try { navigator.mediaSession.setActionHandler('previoustrack', null); } catch {}
+    try { navigator.mediaSession.setActionHandler('nexttrack', null); } catch {}
     navigator.mediaSession.metadata = null;
+
+    if (mediaSessionAudio) {
+      mediaSessionAudio.pause();
+      mediaSessionAudio.src = '';
+      mediaSessionAudio = null;
+    }
+
     mediaSessionEnabled = false;
+    isHardwareButtonsActive.set(false);
     console.log('[MediaSession] Disabled');
+  }
+
+  /**
+   * Toggle hardware button capture on/off
+   */
+  function toggleMediaSession(): void {
+    if (mediaSessionEnabled) {
+      disableMediaSession();
+    } else {
+      setupMediaSession();
+    }
   }
 
   return {
@@ -1622,6 +1790,8 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     isConversationMode, // Conversation mode active (any speech triggers)
     isWakeWordListening, // Deprecated: always false (for UI compatibility)
     wakeWordDetected,   // Deprecated: always false (for UI compatibility)
+    isHardwareButtonsActive, // Media Session active (earbuds can trigger mic)
+    mediaSessionDebugState,  // Debug state for mobile testing
 
     // Methods
     loadVADSettings,
@@ -1632,8 +1802,10 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     cleanup,
 
     // Media Session (hardware button capture)
-    setupMediaSession,     // Enable earbud/headset button capture
-    disableMediaSession,   // Disable hardware button capture
+    setupMediaSession,        // Enable earbud/headset button capture
+    disableMediaSession,      // Disable hardware button capture
+    toggleMediaSession,       // Toggle on/off
+    reactivateMediaSession,   // Re-activate after TTS plays (reclaim media session)
 
     // Configuration
     getSTTBackend,
@@ -1641,5 +1813,6 @@ export function useMicrophone(options: UseMicrophoneOptions) {
 
     // Utilities
     isNativeSpeechAvailable,
+    isMobileDevice,
   };
 }

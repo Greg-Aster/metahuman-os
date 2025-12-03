@@ -64,21 +64,21 @@ function identifyCategoryGaps(
 /**
  * Build conversation history for LLM context
  */
-function buildConversationHistory(session: Session): { role: string; content: string }[] {
-  const messages: { role: string; content: string }[] = [];
+function buildConversationHistory(session: Session): import('../model-router.js').RouterMessage[] {
+  const messages: import('../model-router.js').RouterMessage[] = [];
 
   // Add each Q&A pair
   for (const question of session.questions) {
     const answer = session.answers.find((a) => a.questionId === question.id);
 
     messages.push({
-      role: 'assistant',
+      role: 'assistant' as const,
       content: question.prompt,
     });
 
     if (answer) {
       messages.push({
-        role: 'user',
+        role: 'user' as const,
         content: answer.content,
       });
     }
@@ -116,10 +116,10 @@ export async function generateNextQuestion(
   const response = await callLLM({
     role: 'psychotherapist',
     messages: [
-      { role: 'system', content: systemPrompt },
+      { role: 'system' as const, content: systemPrompt },
       ...conversationHistory,
       {
-        role: 'system',
+        role: 'system' as const,
         content: 'Based on the conversation so far and the category gaps identified, generate the next question. Respond with JSON in this exact format: {"question": "your question here", "category": "values|goals|style|biography|current_focus", "reasoning": "brief explanation of why this question"}',
       },
     ],

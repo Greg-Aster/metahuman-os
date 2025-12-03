@@ -20,7 +20,7 @@ import { filterToolOutputs } from './memory-policy.js';
 export type SkillCategory = 'fs' | 'memory' | 'agent' | 'shell' | 'network';
 export type SkillRisk = 'low' | 'medium' | 'high';
 export type SkillCost = 'free' | 'cheap' | 'expensive';
-export type TrustLevel = 'observe' | 'suggest' | 'supervised_auto' | 'bounded_auto';
+export type TrustLevel = 'observe' | 'suggest' | 'supervised_auto' | 'bounded_auto' | 'adaptive_auto';
 export type InputType = 'string' | 'number' | 'boolean' | 'object' | 'array';
 
 export interface SkillInput {

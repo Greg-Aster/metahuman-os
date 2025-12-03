@@ -75,10 +75,12 @@ Do not summarize; let one dream bleed into another. No length limits.`.trim();
 
       await captureEvent(continuation, {
         type: 'dream',
-        continuation: true,
-        confidence: 0.6,
-        sources: [],
-        parentDream: dreams[dreams.length - 2] || lastDream,
+        metadata: {
+          continuation: true,
+          confidence: 0.6,
+          sources: [],
+          parentDream: dreams[dreams.length - 2] || lastDream,
+        },
       });
 
       audit({

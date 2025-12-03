@@ -38,8 +38,10 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
     const eventId = await captureEvent(dream, {
       type,
-      sources: sourceIds,
-      confidence: 0.7,
+      metadata: {
+        sources: sourceIds,
+        confidence: 0.7,
+      },
     });
 
     audit({

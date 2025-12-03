@@ -5,8 +5,7 @@
  * Cached per process with 1-minute TTL for performance.
  */
 
-import { listSkills } from './skills';
-import type { SkillManifest } from './types/skills';
+import { listSkills, type SkillManifest } from './skills.js';
 
 export interface ToolCatalogEntry {
   skill: string;

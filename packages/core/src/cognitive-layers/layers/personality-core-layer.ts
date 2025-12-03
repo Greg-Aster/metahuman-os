@@ -130,7 +130,7 @@ export class PersonalityCoreLayer implements CognitiveLayer<PersonalityInput, Pe
     }
 
     // 2. Build messages (either from chatHistory or from prompt)
-    const modelRole = config.modelRole || 'persona';
+    const modelRole = (config.modelRole || 'persona') as import('../../model-resolver.js').ModelRole;
     let messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
     let promptMetadata: any = {};
 
@@ -161,7 +161,7 @@ export class PersonalityCoreLayer implements CognitiveLayer<PersonalityInput, Pe
     await audit({
       category: 'action',
       level: 'info',
-      action: 'personality_prompt_built',
+      event: 'personality_prompt_built',
       details: {
         cognitiveMode: context.cognitiveMode,
         ...promptMetadata,
@@ -201,7 +201,7 @@ export class PersonalityCoreLayer implements CognitiveLayer<PersonalityInput, Pe
     await audit({
       category: 'action',
       level: 'info',
-      action: 'personality_response_generated',
+      event: 'personality_response_generated',
       details: {
         cognitiveMode: context.cognitiveMode,
         processingTime,

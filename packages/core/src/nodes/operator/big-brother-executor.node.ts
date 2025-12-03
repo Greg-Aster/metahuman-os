@@ -13,11 +13,11 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
     if (planInput && typeof planInput === 'object' && 'localPath' in planInput && 'claudePath' in planInput) {
       if (planInput.claudePath === null || planInput.claudePath === undefined) {
         console.log('[BigBrotherExecutor] Skipping - routed to local path');
-        return JSON.stringify({
+        return {
           success: false,
           error: 'Not routed to Big Brother',
           outputs: {},
-        });
+        };
       }
       planInput = planInput.claudePath;
     }
@@ -26,11 +26,11 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
 
     if (typeof plan !== 'string') {
       console.error('[BigBrotherExecutor] Expected string plan, got:', typeof plan);
-      return JSON.stringify({
+      return {
         success: false,
         error: `Invalid plan type: ${typeof plan}`,
         outputs: {},
-      });
+      };
     }
 
     // Parse the plan
@@ -161,7 +161,7 @@ Do NOT try to execute any tools yourself. Just provide the content.`;
 
     console.log(`[BigBrotherExecutor] ✓ Skill completed via Claude CLI + local execution`);
 
-    return JSON.stringify({
+    return {
       success: skillResult.success,
       outputs: skillResult.outputs || {
         response: claudeResult.content,
@@ -170,7 +170,7 @@ Do NOT try to execute any tools yourself. Just provide the content.`;
       skillId: skillName,
       delegatedTo: 'claude-cli',
       claudeExplanation: claudeResult.explanation,
-    });
+    };
   } catch (error) {
     console.error('[BigBrotherExecutor] Error:', error);
 
@@ -185,11 +185,11 @@ Do NOT try to execute any tools yourself. Just provide the content.`;
       actor: 'big-brother',
     });
 
-    return JSON.stringify({
+    return {
       success: false,
       error: (error as Error).message,
       outputs: {},
-    });
+    };
   }
 };
 

@@ -48,8 +48,8 @@ export function getDefaultConfig(
     enableScratchpadDump: overrides.enableScratchpadDump || false,
     verboseErrors: overrides.verboseErrors || false,
     sessionId: overrides.sessionId || `session-${Date.now()}`,
-    conversationId: overrides.conversationId || undefined,
-    userId: overrides.userId || undefined,
+    conversationId: overrides.conversationId ?? '',
+    userId: overrides.userId ?? '',
   };
 }
 

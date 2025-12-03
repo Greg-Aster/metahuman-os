@@ -25,6 +25,9 @@ export interface SafetyCheckResult extends SafetyResult {
 
   /** Original response (always returned, non-blocking) */
   response: string;
+
+  /** Categories checked (optional, for backwards compatibility) */
+  categories?: string[];
 }
 
 /**
@@ -110,7 +113,7 @@ export async function checkResponseSafety(
       await audit({
         category: 'action',
         level: result.safe ? 'info' : 'warn',
-        action: 'safety_check_completed',
+        event: 'safety_check_completed',
         details: {
           safe: result.safe,
           score: result.score,
@@ -137,7 +140,7 @@ export async function checkResponseSafety(
     await audit({
       category: 'action',
       level: 'error',
-      action: 'safety_check_failed',
+      event: 'safety_check_failed',
       details: {
         error: error instanceof Error ? error.message : String(error),
         checkTime: Date.now() - startTime,
@@ -152,6 +155,7 @@ export async function checkResponseSafety(
       issues: [],
       categories: [],
       checkTime: Date.now() - startTime,
+      processingTime: Date.now() - startTime,
       response // Always return response
     };
   }
@@ -208,7 +212,7 @@ export async function batchCheckSafety(
     await audit({
       category: 'action',
       level: unsafeCount > 0 ? 'warn' : 'info',
-      action: 'batch_safety_check_completed',
+      event: 'batch_safety_check_completed',
       details: {
         totalResponses: responses.length,
         unsafeResponses: unsafeCount,
