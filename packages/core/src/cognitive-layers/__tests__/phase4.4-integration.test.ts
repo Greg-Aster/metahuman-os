@@ -201,7 +201,8 @@ async function main() {
       score: 1.0,
       categories: [],
       response: testResponse,
-      checkTime: 0
+      checkTime: 0,
+      processingTime: 0
     }, {
       logToConsole: false,
       auditChanges: false

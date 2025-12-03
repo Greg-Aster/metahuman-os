@@ -37,6 +37,7 @@ const TRUST_HIERARCHY: Record<TrustLevel, number> = {
   suggest: 1,
   supervised_auto: 2,
   bounded_auto: 3,
+  adaptive_auto: 4,
 };
 
 /**

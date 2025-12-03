@@ -9,6 +9,7 @@
   export let isContinuousMode: boolean = false;
   export let isWakeWordListening: boolean = false; // Wake word detection active (mobile)
   export let isConversationMode: boolean = false; // Conversation mode active (mobile long-press)
+  export let isHardwareButtonsActive: boolean = false; // Earbuds/Bluetooth buttons active
   export let ttsIsPlaying: boolean = false;
   export let lengthMode: 'auto' | 'concise' | 'detailed' = 'auto';
   export let interimTranscript: string = ''; // Real-time transcript preview
@@ -194,8 +195,8 @@
       {/if}
       <button
         bind:this={micButton}
-        class="mic-btn {isRecording ? 'recording' : ''} {isContinuousMode ? 'continuous' : ''} {isConversationMode ? 'conversation' : ''} {isWakeWordListening ? 'wake-word' : ''} {ttsIsPlaying ? 'interrupt-ready' : ''}"
-        title={ttsIsPlaying ? 'Tap to interrupt and speak' : isWakeWordListening ? 'Listening for "hey greg"…' : isConversationMode ? (isRecording ? 'Listening…' : 'Conversation mode - just talk!') : isContinuousMode ? (isRecording ? 'Listening continuously…' : 'Continuous mode active') : (isRecording ? 'Listening… tap to stop' : 'Tap to speak, hold for conversation')}
+        class="mic-btn {isRecording ? 'recording' : ''} {isContinuousMode ? 'continuous' : ''} {isConversationMode ? 'conversation' : ''} {isWakeWordListening ? 'wake-word' : ''} {ttsIsPlaying ? 'interrupt-ready' : ''} {isHardwareButtonsActive ? 'hardware-active' : ''}"
+        title={ttsIsPlaying ? 'Tap to interrupt and speak' : isWakeWordListening ? 'Listening for "hey greg"…' : isConversationMode ? (isRecording ? 'Listening…' : 'Conversation mode - just talk!') : isContinuousMode ? (isRecording ? 'Listening continuously…' : 'Continuous mode active') : isHardwareButtonsActive ? (isRecording ? '🎤 Recording via earbuds' : '🎧 Earbuds connected - tap or use button') : (isRecording ? 'Listening… tap to stop' : 'Tap to speak, hold for conversation')}
         on:click={handleMicClick}
         on:contextmenu={handleMicContextMenu}
         on:touchstart={handleMicTouchStart}
@@ -235,6 +236,11 @@
           <!-- Waiting: Sound waves icon -->
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="waiting-icon">
             <path d="M9 9c-.5-.5-1.5-1-3-1M9 15c-.5.5-1.5 1-3 1M15 9c.5-.5 1.5-1 3-1M15 15c.5.5 1.5 1 3 1M12 12v.01"/>
+          </svg>
+        {:else if isHardwareButtonsActive && !isRecording}
+          <!-- Hardware buttons active: Headphones icon -->
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" class="headphones-icon">
+            <path d="M12 1C7.03 1 3 5.03 3 10v7c0 1.66 1.34 3 3 3h2v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-3v8h2c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"/>
           </svg>
         {:else}
           <!-- Normal: Microphone icon -->
@@ -363,6 +369,23 @@
       transform: scale(1.05);
       box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
     }
+  }
+
+  /* Hardware buttons active - earbuds connected (teal/cyan color) */
+  .mic-btn.hardware-active:not(.recording) {
+    background: rgba(6, 182, 212, 0.15);
+    border-color: rgb(6, 182, 212);
+    color: rgb(6, 182, 212);
+  }
+
+  :global(.dark) .mic-btn.hardware-active:not(.recording) {
+    background: rgba(34, 211, 238, 0.2);
+    border-color: rgb(34, 211, 238);
+    color: rgb(34, 211, 238);
+  }
+
+  .headphones-icon {
+    animation: none;
   }
 
   /* Recording state - animated waveform bars */

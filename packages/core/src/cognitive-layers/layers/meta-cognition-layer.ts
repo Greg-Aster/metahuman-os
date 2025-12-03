@@ -196,10 +196,10 @@ export class MetaCognitionLayer implements CognitiveLayer<MetaCognitionInput, Me
     const processingTime = Date.now() - startTime;
 
     // Audit meta-cognition
-    await audit({
+    audit({
       category: 'action',
       level: passedValidation ? 'info' : 'warn',
-      action: 'meta_cognition_complete',
+      event: 'meta_cognition_complete',
       details: {
         cognitiveMode: context.cognitiveMode,
         validationLevel: level,
@@ -257,19 +257,19 @@ export class MetaCognitionLayer implements CognitiveLayer<MetaCognitionInput, Me
     summary.push(`  Overall: ${output.passedValidation ? '✓ PASSED' : '✗ FAILED'}`);
 
     if (output.safety) {
-      summary.push(`  Safety: ${output.safety.safe ? '✓' : '✗'} (${(output.safety.score * 100).toFixed(1)}%)`);
+      summary.push(`  Safety: ${output.safety.safe ? '✓' : '✗'} (${((output.safety.score ?? 0) * 100).toFixed(1)}%)`);
     }
 
     if (output.valueAlignment) {
-      summary.push(`  Alignment: ${output.valueAlignment.aligned ? '✓' : '✗'} (${(output.valueAlignment.score * 100).toFixed(1)}%)`);
+      summary.push(`  Alignment: ${output.valueAlignment.aligned ? '✓' : '✗'} (${((output.valueAlignment.score ?? 0) * 100).toFixed(1)}%)`);
     }
 
     if (output.consistency) {
-      summary.push(`  Consistency: ${output.consistency.consistent ? '✓' : '✗'} (${(output.consistency.score * 100).toFixed(1)}%)`);
+      summary.push(`  Consistency: ${output.consistency.consistent ? '✓' : '✗'} (${((output.consistency.score ?? 0) * 100).toFixed(1)}%)`);
     }
 
     if (output.refinement?.changed) {
-      summary.push(`  Refined: ✓ (${output.refinement.changes.length} changes)`);
+      summary.push(`  Refined: ✓ (${output.refinement.changes?.length ?? 0} changes)`);
     }
 
     console.log(summary.join('\n'));
@@ -339,39 +339,55 @@ export function getValidationSummary(output: MetaCognitionOutput): string {
   parts.push('');
 
   if (output.safety) {
-    parts.push(`Safety: ${output.safety.safe ? '✓ SAFE' : '✗ UNSAFE'} (${(output.safety.score * 100).toFixed(1)}%)`);
-    if (output.safety.issues.length > 0) {
-      parts.push(`  Issues: ${output.safety.issues.length}`);
-      for (const issue of output.safety.issues.slice(0, 3)) {
-        parts.push(`    - [${issue.severity}] ${issue.type}: ${issue.description}`);
+    parts.push(`Safety: ${output.safety.safe ? '✓ SAFE' : '✗ UNSAFE'} (${((output.safety.score ?? 0) * 100).toFixed(1)}%)`);
+    const safetyIssues = output.safety.issues ?? [];
+    if (safetyIssues.length > 0) {
+      parts.push(`  Issues: ${safetyIssues.length}`);
+      for (const issue of safetyIssues.slice(0, 3)) {
+        if (typeof issue === 'string') {
+          parts.push(`    - ${issue}`);
+        } else {
+          parts.push(`    - [${issue.severity}] ${issue.type ?? 'unknown'}: ${issue.description}`);
+        }
       }
     }
   }
 
   if (output.valueAlignment) {
-    parts.push(`Value Alignment: ${output.valueAlignment.aligned ? '✓ ALIGNED' : '✗ MISALIGNED'} (${(output.valueAlignment.score * 100).toFixed(1)}%)`);
-    if (output.valueAlignment.issues.length > 0) {
-      parts.push(`  Issues: ${output.valueAlignment.issues.length}`);
-      for (const issue of output.valueAlignment.issues.slice(0, 3)) {
-        parts.push(`    - [${issue.severity}] ${issue.value}: ${issue.description}`);
+    parts.push(`Value Alignment: ${output.valueAlignment.aligned ? '✓ ALIGNED' : '✗ MISALIGNED'} (${((output.valueAlignment.score ?? 0) * 100).toFixed(1)}%)`);
+    const alignmentIssues = output.valueAlignment.issues ?? [];
+    if (alignmentIssues.length > 0) {
+      parts.push(`  Issues: ${alignmentIssues.length}`);
+      for (const issue of alignmentIssues.slice(0, 3)) {
+        if (typeof issue === 'string') {
+          parts.push(`    - ${issue}`);
+        } else {
+          parts.push(`    - [${issue.severity}] ${issue.value ?? 'unknown'}: ${issue.description}`);
+        }
       }
     }
   }
 
   if (output.consistency) {
-    parts.push(`Consistency: ${output.consistency.consistent ? '✓ CONSISTENT' : '✗ INCONSISTENT'} (${(output.consistency.score * 100).toFixed(1)}%)`);
-    if (output.consistency.issues.length > 0) {
-      parts.push(`  Issues: ${output.consistency.issues.length}`);
-      for (const issue of output.consistency.issues.slice(0, 3)) {
-        parts.push(`    - [${issue.severity}] ${issue.aspect}: ${issue.description}`);
+    parts.push(`Consistency: ${output.consistency.consistent ? '✓ CONSISTENT' : '✗ INCONSISTENT'} (${((output.consistency.score ?? 0) * 100).toFixed(1)}%)`);
+    const consistencyIssues = output.consistency.issues ?? [];
+    if (consistencyIssues.length > 0) {
+      parts.push(`  Issues: ${consistencyIssues.length}`);
+      for (const issue of consistencyIssues.slice(0, 3)) {
+        if (typeof issue === 'string') {
+          parts.push(`    - ${issue}`);
+        } else {
+          parts.push(`    - [${issue.severity}] ${issue.aspect ?? 'unknown'}: ${issue.description}`);
+        }
       }
     }
   }
 
   if (output.refinement) {
     parts.push(`Refinement: ${output.refinement.changed ? '✓ REFINED' : '○ NO CHANGES'}`);
-    if (output.refinement.changed) {
-      for (const change of output.refinement.changes) {
+    const changes = output.refinement.changes ?? [];
+    if (output.refinement.changed && changes.length > 0) {
+      for (const change of changes) {
         parts.push(`  - ${change}`);
       }
     }

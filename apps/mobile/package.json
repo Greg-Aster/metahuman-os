@@ -1,0 +1,27 @@
+{
+  "name": "metahuman-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "DEV_MODE=true npx cap run android --livereload --external",
+    "dev:ip": "echo \"Dev server IP: $(hostname -I | awk '{print $1}')\"",
+    "sync": "npx cap sync",
+    "build": "cd ../site && pnpm build && cd ../mobile && npx cap sync",
+    "open": "npx cap open android",
+    "run": "npx cap run android",
+    "build:apk": "cd android && ./gradlew assembleDebug",
+    "build:release": "cd android && ./gradlew assembleRelease"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/app": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/haptics": "^6.0.0",
+    "@capacitor/keyboard": "^6.0.0",
+    "@capacitor/status-bar": "^6.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.0.0"
+  }
+}

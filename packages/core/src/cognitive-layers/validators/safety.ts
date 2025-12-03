@@ -220,7 +220,7 @@ export async function checkSafety(
   await audit({
     category: 'security',
     level: safe ? 'info' : 'warn',
-    action: 'safety_check',
+    event: 'safety_check',
     details: {
       safe,
       score,

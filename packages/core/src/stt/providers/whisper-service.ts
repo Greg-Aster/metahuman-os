@@ -121,7 +121,9 @@ export class WhisperService {
     const formData = new FormData();
 
     // Create a File object for the audio (required for FastAPI UploadFile)
-    const file = new File([audioBuffer], `audio.${audioFormat}`, {
+    // Use Blob first to avoid Node.js/browser type incompatibility
+    const blob = new Blob([audioBuffer as unknown as BlobPart], { type: `audio/${audioFormat}` });
+    const file = new File([blob], `audio.${audioFormat}`, {
       type: `audio/${audioFormat}`
     });
     formData.append('file', file);

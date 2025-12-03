@@ -87,7 +87,7 @@ function getDefaultProfilePaths() {
         rvcModels: path.join(legacyRoot, 'out', 'voices', 'rvc-models'),
         kokoroVoicepacks: path.join(legacyRoot, 'out', 'voices', 'kokoro-voicepacks'),
         kokoroDatasets: path.join(legacyRoot, 'out', 'voices', 'kokoro-datasets'),
-      } as ReturnType<typeof getProfilePaths>;
+      } as unknown as ReturnType<typeof getProfilePaths>;
     }
   }
   return _defaultProfilePaths;

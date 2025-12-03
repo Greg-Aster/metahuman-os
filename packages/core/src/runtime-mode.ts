@@ -82,6 +82,7 @@ export function setRuntimeMode(
     audit({
       category: 'system',
       level: 'info',
+      event: 'runtime_mode_changed',
       message: `Runtime mode changed: ${current.headless ? 'headless' : 'active'} → ${updated.headless ? 'headless' : 'active'}`,
       metadata: {
         actor: actor || 'system',
@@ -130,6 +131,7 @@ export function enterHeadlessMode(actor?: string): void {
   audit({
     category: 'system',
     level: 'info',
+    event: 'headless_mode_activated',
     message: 'Headless mode activated - agents stopped',
     actor: actor || 'system',
     metadata: {
@@ -231,6 +233,7 @@ function startDefaultAgents(actor?: string): void {
   audit({
     category: 'system',
     level: 'info',
+    event: 'headless_mode_deactivated',
     message: 'Headless mode deactivated - agents resumed',
     actor: actor || 'system',
   });

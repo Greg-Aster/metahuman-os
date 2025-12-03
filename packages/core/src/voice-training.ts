@@ -632,7 +632,7 @@ export function purgeVoiceTrainingData(): { deletedCount: number } {
   let deletedCount = 0;
 
   try {
-    if (fs.existsSync(trainingDir)) {
+    if (trainingDir && fs.existsSync(trainingDir)) {
       const files = fs.readdirSync(trainingDir);
 
       for (const file of files) {
@@ -1547,6 +1547,10 @@ export function copyToKokoroDataset(sampleIds: string[], speakerId: string = 'de
 
 export function deleteKokoroSample(speakerId: string, sampleId: string): void {
   const dir = getKokoroDatasetDir(speakerId);
+  if (!dir) {
+    console.warn('[voice-training] Cannot delete sample - Kokoro dataset directory not available');
+    return;
+  }
   const wav = path.join(dir, `${sampleId}.wav`);
   const txt = path.join(dir, `${sampleId}.txt`);
   const meta = path.join(dir, `${sampleId}.meta.json`);

@@ -69,6 +69,7 @@ export function useTTS() {
   let currentTtsAbort: AbortController | null = null;
   let ttsPlaybackToken = 0;
   let audioUnlocked = false;
+  let webAudioSource: AudioBufferSourceNode | null = null; // Web Audio API (doesn't steal media session)
 
   // Cache
   let voiceModelsCache: VoiceModelsCache | null = null;
@@ -88,6 +89,11 @@ export function useTTS() {
   let isPlayingChunk = false;
   let streamAbortController: AbortController | null = null;
 
+  // Buffer threshold: wait for this many chunks before starting playback
+  // This builds a buffer to prevent gaps during slow generation
+  const BUFFER_THRESHOLD = 2;
+  let streamComplete = false; // Track if all chunks have been received
+
   /**
    * Revoke current audio object URL to free memory
    */
@@ -102,6 +108,7 @@ export function useTTS() {
    * Stop active audio playback
    */
   function stopActiveAudio() {
+    // Stop Audio element (legacy/fallback)
     if (currentAudio) {
       try {
         currentAudio.pause();
@@ -109,6 +116,15 @@ export function useTTS() {
       currentAudio = null;
     }
     revokeCurrentUrl();
+
+    // Stop Web Audio API source (new approach - doesn't steal media session)
+    if (webAudioSource) {
+      try {
+        webAudioSource.stop();
+      } catch {}
+      webAudioSource = null;
+    }
+
     isPlaying.set(false);
 
     // Also stop streaming if active
@@ -137,6 +153,7 @@ export function useTTS() {
     audioQueue = [];
     currentChunkIndex = 0;
     isPlayingChunk = false;
+    streamComplete = false;
     isStreaming.set(false);
     streamProgress.set({ current: 0, total: 0 });
   }
@@ -235,8 +252,10 @@ export function useTTS() {
 
   /**
    * Speak text using server-side TTS (Piper)
+   * Uses Web Audio API instead of Audio elements to avoid stealing media session
    */
   async function speakText(text: string): Promise<void> {
+    console.log('[useTTS] 🔊 speakText called (WEB AUDIO API VERSION - no session steal)');
     console.log('[useTTS] speakText called with text length:', text.length);
     const speechText = normalizeTextForSpeech(text);
     console.log('[useTTS] normalized text length:', speechText?.length || 0);
@@ -294,34 +313,45 @@ export function useTTS() {
         return;
       }
 
-      const blob = await ttsRes.blob();
+      // Use Web Audio API instead of Audio element
+      // This plays audio WITHOUT claiming the media session!
+      const arrayBuffer = await ttsRes.arrayBuffer();
       if (token !== ttsPlaybackToken) return;
 
-      const url = URL.createObjectURL(blob);
-      currentObjectUrl = url;
+      // Create/resume AudioContext
+      audioCtx = audioCtx || new (window.AudioContext || (window as any).webkitAudioContext)();
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
 
-      const audio = new Audio(url);
-      currentAudio = audio;
+      // Decode the audio
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+      if (token !== ttsPlaybackToken) return;
+
+      // Create source node and play
+      webAudioSource = audioCtx.createBufferSource();
+      webAudioSource.buffer = audioBuffer;
+      webAudioSource.connect(audioCtx.destination);
+
       isPlaying.set(true);
+      console.log('[useTTS] Playing via Web Audio API (no media session steal)');
 
-      const cleanup = () => {
+      webAudioSource.onended = () => {
         if (token !== ttsPlaybackToken) return;
-        stopActiveAudio();
+        console.log('[useTTS] Web Audio playback ended');
+        isPlaying.set(false);
+        webAudioSource = null;
       };
 
-      audio.onended = cleanup;
-      audio.onerror = cleanup;
+      webAudioSource.start(0);
 
-      await audio.play().catch((err) => {
-        console.warn('[useTTS] Audio playback failed:', err);
-        cleanup();
-      });
     } catch (e) {
       if (controller.signal.aborted) {
         // Expected when superseded by a new utterance
         return;
       }
       console.warn('[useTTS] speakText failed:', e);
+      isPlaying.set(false);
     } finally {
       if (currentTtsAbort === controller) {
         currentTtsAbort = null;
@@ -357,6 +387,7 @@ export function useTTS() {
     audioQueue = [];
     currentChunkIndex = 0;
     isPlayingChunk = false;
+    streamComplete = false;
     streamAbortController = new AbortController();
 
     isStreaming.set(true);
@@ -426,7 +457,10 @@ export function useTTS() {
             // Handle completion event
             if (data.event === 'complete') {
               console.log('[useTTS] Stream complete:', data.total_chunks, 'chunks');
+              streamComplete = true;
               isLoading.set(false);
+              // Try to play any remaining buffered chunks
+              playNextChunk();
               continue;
             }
 
@@ -458,14 +492,23 @@ export function useTTS() {
                 played: false,
               });
 
-              // First chunk received - stop showing loading, start playing
-              if (data.chunk_index === 0) {
+              // Count buffered (unplayed) chunks
+              const bufferedCount = audioQueue.filter(c => !c.played).length;
+              console.log(`[useTTS] Buffered chunks: ${bufferedCount}/${BUFFER_THRESHOLD}`);
+
+              // Start playback once we have enough buffered OR this is the last chunk
+              const shouldStartPlayback = bufferedCount >= BUFFER_THRESHOLD || data.is_final;
+
+              if (shouldStartPlayback && !get(isPlaying)) {
+                console.log('[useTTS] Buffer threshold reached, starting playback');
                 isLoading.set(false);
                 isPlaying.set(true);
               }
 
-              // Try to play next chunk if not already playing
-              playNextChunk();
+              // Try to play next chunk if buffer is ready
+              if (shouldStartPlayback) {
+                playNextChunk();
+              }
             }
           } catch (parseError) {
             console.warn('[useTTS] Failed to parse SSE event:', parseError);
@@ -495,6 +538,7 @@ export function useTTS() {
 
   /**
    * Play the next chunk in the queue
+   * Only starts playback if buffer threshold is met or stream is complete
    */
   function playNextChunk() {
     if (isPlayingChunk) return;
@@ -503,10 +547,19 @@ export function useTTS() {
     const chunk = audioQueue.find(c => c.index === currentChunkIndex && !c.played);
     if (!chunk) return;
 
+    // Count buffered (unplayed) chunks
+    const bufferedCount = audioQueue.filter(c => !c.played).length;
+
+    // Don't start playing until we have enough buffered OR stream is complete
+    if (bufferedCount < BUFFER_THRESHOLD && !streamComplete) {
+      console.log(`[useTTS] Waiting for buffer: ${bufferedCount}/${BUFFER_THRESHOLD} chunks`);
+      return;
+    }
+
     isPlayingChunk = true;
     chunk.played = true;
 
-    console.log(`[useTTS] Playing chunk ${chunk.index}`);
+    console.log(`[useTTS] Playing chunk ${chunk.index} (buffer: ${bufferedCount - 1} remaining)`);
 
     chunk.audio.onended = () => {
       console.log(`[useTTS] Chunk ${chunk.index} finished`);
@@ -517,7 +570,7 @@ export function useTTS() {
 
       // Check if all chunks are played
       const allPlayed = audioQueue.every(c => c.played);
-      if (allPlayed && get(isStreaming) === false) {
+      if (allPlayed && streamComplete) {
         isPlaying.set(false);
       }
     };
@@ -544,8 +597,8 @@ export function useTTS() {
   function waitForPlaybackComplete(): Promise<void> {
     return new Promise((resolve) => {
       const checkComplete = () => {
-        const allPlayed = audioQueue.every(c => c.played);
-        if (allPlayed && !isPlayingChunk) {
+        const allPlayed = audioQueue.length > 0 && audioQueue.every(c => c.played);
+        if (allPlayed && !isPlayingChunk && streamComplete) {
           isPlaying.set(false);
           resolve();
         } else {

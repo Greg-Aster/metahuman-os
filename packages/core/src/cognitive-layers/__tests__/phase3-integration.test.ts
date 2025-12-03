@@ -247,7 +247,7 @@ async function main() {
     // Test invalid input (missing response)
     const invalidResult = layer3.validate({ response: null as any, contextPackage: {} });
     console.log(`  Invalid input: ${invalidResult.valid ? '✗ should be invalid' : '✓ correctly rejected'}`);
-    if (!invalidResult.valid) {
+    if (!invalidResult.valid && invalidResult.errors) {
       console.log(`    Errors: ${invalidResult.errors.join(', ')}`);
     }
 

@@ -131,6 +131,9 @@ export interface LayerResult {
 
   /** Additional metadata from layer execution */
   metadata: Record<string, any>;
+
+  /** Error message if layer failed */
+  error?: string;
 }
 
 /**
@@ -258,31 +261,94 @@ export interface PersonalityInput {
 /** Output from Personality Core Layer */
 export interface PersonalityOutput {
   response: string;
-  metadata: {
+  metadata?: {
     modelUsed: string;
     loraAdapter?: string;
     tokensGenerated: number;
     voiceConsistency: number;  // 0-1 score
   };
+  /** Voice analysis metrics (actual implementation format) */
+  voiceMetrics?: {
+    adapterName?: string;
+    adapterDate?: string;
+    responseLength?: number;
+    model?: string;
+    timestamp?: string;
+    // Legacy Phase 4.1a integration fields (optional)
+    consistency?: number;
+    authenticity?: number;
+    traits?: string[];
+  };
+  /** LoRA adapter info */
+  loraAdapter?: {
+    name: string;
+    path: string;
+    date?: string;
+  } | string;
 }
 
 /** Input to Meta-Cognition Layer (Layer 3) */
 export interface MetaCognitionInput {
   response: string;
   contextPackage: any;  // From Layer 1
-  metadata: PersonalityOutput['metadata'];
+  metadata?: PersonalityOutput['metadata'];  // Optional - may not be present in all contexts
+}
+
+/** Issue detail for validation results */
+export interface ValidationIssue {
+  severity: string;
+  type?: string;
+  aspect?: string;
+  value?: string;
+  description: string;
+}
+
+/** Validation sub-result for meta-cognition */
+export interface MetaCognitionValidationResult {
+  /** Whether validation passed - computed from specific validators (safe/aligned/consistent) */
+  passed?: boolean;
+  score?: number;
+  issues?: (string | ValidationIssue)[];
+  processingTime?: number;
+  // Additional properties used by specific validators
+  safe?: boolean;
+  aligned?: boolean;
+  consistent?: boolean;
+  changed?: boolean;
+  changes?: string[];
+  /** Sanitized version of response (from safety validator) */
+  sanitized?: string;
+  /** Refined version of response (from refiner) */
+  refined?: string;
 }
 
 /** Output from Meta-Cognition Layer */
 export interface MetaCognitionOutput {
-  finalResponse: string;
-  validation: {
+  /** Final response after all validation and refinement */
+  finalResponse?: string;
+  /** Validated response (used when returning directly) */
+  response?: string;
+  /** Original response before any refinement */
+  originalResponse?: string;
+  validation?: {
     valueAlignment: boolean;
     consistencyCheck: boolean;
     safetyFilters: boolean;
     refined: boolean;
   };
-  edits: string[];  // List of changes made
+  edits?: string[];  // List of changes made
+  /** Whether output was validated */
+  validated?: boolean;
+  /** Overall validation pass/fail */
+  passedValidation?: boolean;
+  /** Safety check results */
+  safety?: MetaCognitionValidationResult;
+  /** Value alignment check results */
+  valueAlignment?: MetaCognitionValidationResult;
+  /** Consistency check results */
+  consistency?: MetaCognitionValidationResult;
+  /** Refinement results */
+  refinement?: MetaCognitionValidationResult;
 }
 
 // ============================================================================

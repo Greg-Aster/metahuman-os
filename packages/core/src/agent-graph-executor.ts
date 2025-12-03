@@ -96,11 +96,14 @@ export function listAgentTemplates(): Array<{ name: string; description: string;
  */
 function templateToGraph(template: AgentTemplate): CognitiveGraph {
   return {
+    name: template.name,
+    description: template.description || '',
+    version: template.version || '1.0.0',
     nodes: template.nodes.map(node => ({
       id: node.id,
       type: node.type,
       properties: node.properties || {},
-      position: node.position || [0, 0],
+      pos: (node.position || [0, 0]) as [number, number],
     })),
     links: template.links.map(link => ({
       id: link.id,
@@ -109,7 +112,6 @@ function templateToGraph(template: AgentTemplate): CognitiveGraph {
       target_id: link.target_id,
       target_slot: link.target_slot,
     })),
-    version: template.version || '1.0.0',
   };
 }
 
