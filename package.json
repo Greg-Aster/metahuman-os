@@ -28,7 +28,10 @@
 	"scripts": {
 		"dev": "NODE_OPTIONS='--max-old-space-size=4096' cd apps/site && pnpm dev",
 		"build": "cd apps/site && pnpm build",
-		"start": "cd apps/site && pnpm preview"
+		"start": "cd apps/site && pnpm preview",
+		"mobile:dev": "cd apps/mobile && ./scripts/dev.sh",
+		"mobile:sync": "cd apps/mobile && npx cap sync",
+		"mobile:open": "cd apps/mobile && npx cap open android"
 	},
 	"dependencies": {
 		"dotenv": "^17.2.3",

@@ -7,9 +7,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { storageClient, ROOT, audit } from '../../packages/core/src/index.js';
+import { ROOT, audit } from '../../packages/core/src/index.js';
 import { withUserContext } from '../../packages/core/src/context.js';
 import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
+import { storage } from '../services/storage-router.js';
 
 interface MergeConfig {
   method: 'linear' | 'ties' | 'dare_ties' | 'slerp';
@@ -21,27 +22,52 @@ interface MergeConfig {
  * Find all Safetensors adapters in the adapters directory
  * We work with .safetensors format for merging, then convert to GGUF
  */
-function findAdapters(): string[] {
-  const outResult = storageClient.resolvePath({ category: 'output', subcategory: 'adapters' });
+function findAdapters(username: string): string[] {
+  const outResult = storage.resolvePath({
+    username,
+    category: 'output',
+    subcategory: 'adapters',
+  });
   const adaptersDir = outResult.success && outResult.path ? outResult.path : path.join(ROOT, 'out', 'adapters');
   if (!fs.existsSync(adaptersDir)) {
+    console.log(`[adapter-merger] Adapters directory not found: ${adaptersDir}`);
     return [];
   }
 
+  console.log(`[adapter-merger] Searching for adapters in: ${adaptersDir}`);
   const adapters: string[] = [];
 
-  // Look for date-named directories (e.g., 2025-10-21)
+  // Look for date-named directories (e.g., 2025-10-21 or 2025-10-21/2025-10-21-123456-abc123)
   const dateDirs = fs.readdirSync(adaptersDir)
     .filter(name => /^\d{4}-\d{2}-\d{2}$/.test(name))
     .sort();
 
   for (const dateDir of dateDirs) {
-    const safetensorsPath = path.join(adaptersDir, dateDir, 'adapter_model.safetensors');
-    if (fs.existsSync(safetensorsPath)) {
-      adapters.push(safetensorsPath);
+    const datePath = path.join(adaptersDir, dateDir);
+
+    // Check for direct adapter_model.safetensors
+    const directPath = path.join(datePath, 'adapter_model.safetensors');
+    if (fs.existsSync(directPath)) {
+      adapters.push(directPath);
+      continue;
+    }
+
+    // Check for nested run directories (e.g., 2025-10-21-123456-abc123/adapter/)
+    const subDirs = fs.readdirSync(datePath).filter(name => {
+      const subPath = path.join(datePath, name);
+      return fs.statSync(subPath).isDirectory();
+    });
+
+    for (const subDir of subDirs) {
+      // Check for adapter/adapter_model.safetensors structure
+      const nestedPath = path.join(datePath, subDir, 'adapter', 'adapter_model.safetensors');
+      if (fs.existsSync(nestedPath)) {
+        adapters.push(nestedPath);
+      }
     }
   }
 
+  console.log(`[adapter-merger] Found ${adapters.length} adapters`);
   return adapters; // Already sorted chronologically
 }
 
@@ -51,10 +77,15 @@ function findAdapters(): string[] {
  */
 async function mergeAdapters(
   adapterPaths: string[],
-  config: MergeConfig
+  config: MergeConfig,
+  username: string
 ): Promise<string> {
   const outputName = config.outputName || `merged-${Date.now()}`;
-  const outResult = storageClient.resolvePath({ category: 'output', subcategory: 'adapters' });
+  const outResult = storage.resolvePath({
+    username,
+    category: 'output',
+    subcategory: 'adapters',
+  });
   const adaptersDir = outResult.success && outResult.path ? outResult.path : path.join(ROOT, 'out', 'adapters');
   const outputDir = path.join(adaptersDir, outputName);
   fs.mkdirSync(outputDir, { recursive: true });
@@ -105,15 +136,28 @@ async function mergekitMerge(
   const mergedSafetensorsDir = path.join(outputDir, 'merged-safetensors');
 
   // mergekit config format for LoRA adapters
-  // Note: For LoRA adapters, we need to specify the base model they were trained on
+  // Read base model from training config or use default
+  const trainingConfigPath = path.join(ROOT, 'etc', 'training.json');
+  let baseModel = 'unsloth/Qwen3-14B';  // Default to current training base
+  try {
+    if (fs.existsSync(trainingConfigPath)) {
+      const trainingConfig = JSON.parse(fs.readFileSync(trainingConfigPath, 'utf-8'));
+      baseModel = trainingConfig.base_model || baseModel;
+    }
+  } catch (e) {
+    console.warn('[adapter-merger] Could not read training.json, using default base model');
+  }
+
+  console.log(`[adapter-merger] Using base model: ${baseModel}`);
+
+  // LoRA adapter merge config - uses 'models' not 'slices'
   const yaml = `merge_method: ${config.method}
-base_model: dolphin-mistral:latest
-dtype: float16
-slices:
-${adapterPaths.map((p, i) => `  - sources:
-      - model: ${path.dirname(p)}
-        layer_range: [0, -1]
-    weight: ${weights[i]}`).join('\n')}
+base_model: ${baseModel}
+dtype: bfloat16
+models:
+${adapterPaths.map((p, i) => `  - model: ${path.dirname(p)}
+    parameters:
+      weight: ${weights[i]}`).join('\n')}
 `;
 
   fs.writeFileSync(configPath, yaml);
@@ -124,7 +168,8 @@ ${adapterPaths.map((p, i) => `  - sources:
 
   try {
     // Run mergekit to create merged Safetensors
-    const command = `cd "${ROOT}" && source venv/bin/activate && python3 -m mergekit.merge "${configPath}" "${mergedSafetensorsDir}" --allow-crimes`;
+    // Note: --lora-merge-cache speeds up repeated merges, --lazy-unpickle reduces memory
+    const command = `cd "${ROOT}" && source venv/bin/activate && python3 -m mergekit.merge "${configPath}" "${mergedSafetensorsDir}" --lora-merge-cache --lazy-unpickle`;
     execSync(command, { stdio: 'inherit', shell: '/bin/bash' });
 
     // Convert merged Safetensors to GGUF using llama.cpp
@@ -173,24 +218,50 @@ function calculateTimeWeights(adapterPaths: string[]): number[] {
 }
 
 /**
- * Convert Safetensors adapter to GGUF using llama.cpp
+ * Convert Safetensors adapter to GGUF using llama.cpp's convert script
+ * Tries multiple methods in order of preference
  */
 function convertToGGUF(safetensorsDir: string, ggufOutputPath: string): void {
-  // Use the existing llama.cpp convert script
-  const convertScript = '/usr/local/bin/python3 /usr/local/lib/python3.12/dist-packages/llama_cpp/convert.py';
+  const llamaCppPath = path.join(ROOT, 'vendor', 'llama.cpp');
+  const convertScript = path.join(llamaCppPath, 'convert_lora_to_gguf.py');
 
-  try {
-    const command = `${convertScript} "${safetensorsDir}" --outfile "${ggufOutputPath}" --outtype f16`;
-    execSync(command, { stdio: 'inherit' });
-  } catch (error) {
-    console.error('[adapter-merger] GGUF conversion failed, trying alternative method...');
-
-    // Fallback: Just copy the safetensors file with .gguf extension
-    // Ollama can sometimes load safetensors directly
-    const safetensorsPath = path.join(safetensorsDir, 'adapter_model.safetensors');
-    fs.copyFileSync(safetensorsPath, ggufOutputPath);
-    console.warn('[adapter-merger] Using safetensors file as-is (Ollama may support it)');
+  // Method 1: Use llama.cpp's LoRA-specific converter (preferred)
+  if (fs.existsSync(convertScript)) {
+    try {
+      console.log(`[adapter-merger] Using llama.cpp LoRA converter: ${convertScript}`);
+      const command = `cd "${ROOT}" && source venv/bin/activate && python3 "${convertScript}" "${safetensorsDir}" --outfile "${ggufOutputPath}"`;
+      execSync(command, { stdio: 'inherit', shell: '/bin/bash' });
+      return;
+    } catch (error) {
+      console.warn('[adapter-merger] llama.cpp LoRA converter failed, trying alternative...');
+    }
   }
+
+  // Method 2: Try the general convert script
+  const generalConvertScript = path.join(llamaCppPath, 'convert_hf_to_gguf.py');
+  if (fs.existsSync(generalConvertScript)) {
+    try {
+      console.log(`[adapter-merger] Using llama.cpp HF converter: ${generalConvertScript}`);
+      const command = `cd "${ROOT}" && source venv/bin/activate && python3 "${generalConvertScript}" "${safetensorsDir}" --outfile "${ggufOutputPath}" --outtype f16`;
+      execSync(command, { stdio: 'inherit', shell: '/bin/bash' });
+      return;
+    } catch (error) {
+      console.warn('[adapter-merger] llama.cpp HF converter failed');
+    }
+  }
+
+  // Method 3: Keep safetensors as-is if no converter available
+  // Note: This will NOT work with Ollama - just preserves the merged adapter
+  const safetensorsPath = path.join(safetensorsDir, 'adapter_model.safetensors');
+  if (fs.existsSync(safetensorsPath)) {
+    const safetensorsOutput = ggufOutputPath.replace('.gguf', '.safetensors');
+    fs.copyFileSync(safetensorsPath, safetensorsOutput);
+    console.warn(`[adapter-merger] GGUF conversion not available. Saved safetensors to: ${safetensorsOutput}`);
+    console.warn('[adapter-merger] To use with Ollama, install llama.cpp and run: convert_lora_to_gguf.py');
+    throw new Error('GGUF conversion failed - llama.cpp not found. Safetensors preserved for manual conversion.');
+  }
+
+  throw new Error('No adapter files found to convert');
 }
 
 /**
@@ -234,9 +305,9 @@ function fallbackMerge(adapterPaths: string[], outputDir: string): string {
  * - Merge them into a single "history" adapter
  * - Keep the most recent adapter separate
  */
-async function mainWithContext() {
+async function mainWithContext(username: string) {
   const args = process.argv.slice(2);
-  const allAdapters = findAdapters();
+  const allAdapters = findAdapters(username);
 
   if (allAdapters.length === 0) {
     console.error('[adapter-merger] No adapters found to merge');
@@ -267,7 +338,7 @@ async function mainWithContext() {
     outputName: 'history-merged',
   };
 
-  const mergedPath = await mergeAdapters(historicalAdapters, mergeConfig);
+  const mergedPath = await mergeAdapters(historicalAdapters, mergeConfig, username);
   const recentGGUF = path.join(path.dirname(recentAdapter), 'adapter.gguf');
 
   console.log(`\n✅ Merge complete!`);
@@ -275,8 +346,8 @@ async function mainWithContext() {
   console.log(`Recent adapter (GGUF): ${recentGGUF}`);
   console.log(`\nTo create a dual-adapter model, use:`);
   console.log(`./bin/mh adapter activate ${path.basename(path.dirname(recentAdapter))}`);
-console.log(`\nOr manually create a modelfile:`);
-console.log(`FROM dolphin-mistral:latest
+  console.log(`\nOr manually create a modelfile:`);
+  console.log(`FROM <your-base-model>:latest
 ADAPTER ${mergedPath}
 ADAPTER ${recentGGUF}`);
 }
@@ -304,7 +375,7 @@ async function main() {
   const userInfo = requireUserInfo(username);
   console.log(`[adapter-merger] Starting for user: ${username}`);
 
-  await withUserContext(userInfo, mainWithContext);
+  await withUserContext(userInfo, () => mainWithContext(username));
 }
 
 main().catch((err: Error) => {

@@ -71,6 +71,9 @@ import * as safetyNodes from './safety/index.js';
 // Emulation nodes
 import * as emulationNodes from './emulation/index.js';
 
+// Agency nodes
+import * as agencyNodes from './agency/index.js';
+
 // ============================================================================
 // COLLECT ALL NODES
 // ============================================================================
@@ -108,6 +111,7 @@ export const allNodes: NodeDefinition[] = collectNodes(
   curatorNodes,
   safetyNodes,
   emulationNodes,
+  agencyNodes,
 );
 
 // ============================================================================
@@ -150,11 +154,17 @@ for (const node of allNodes) {
 // ============================================================================
 
 /**
+ * Strip any category prefix from node ID (e.g., "agency/desire_loader" → "desire_loader")
+ */
+function stripPrefix(id: string): string {
+  return id.replace(/^[a-z_]+\//, '');
+}
+
+/**
  * Get a node definition by ID
  */
 export function getNode(id: string): NodeDefinition | undefined {
-  // Strip cognitive/ prefix if present
-  const cleanId = id.replace(/^cognitive\//, '');
+  const cleanId = stripPrefix(id);
   return nodeRegistry.get(cleanId);
 }
 
@@ -163,7 +173,7 @@ export function getNode(id: string): NodeDefinition | undefined {
  * Compatible with the old getNodeExecutor() function signature
  */
 export function getNodeExecutor(nodeType: string): NodeExecutor | null {
-  const cleanType = nodeType.replace(/^(cognitive|plugin)\//, '');
+  const cleanType = stripPrefix(nodeType);
   return nodeExecutors.get(cleanType) ?? null;
 }
 
@@ -171,7 +181,7 @@ export function getNodeExecutor(nodeType: string): NodeExecutor | null {
  * Get a node schema by ID (for frontend)
  */
 export function getNodeSchema(id: string): NodeSchema | undefined {
-  const cleanId = id.replace(/^cognitive\//, '');
+  const cleanId = stripPrefix(id);
   return nodeSchemas.get(cleanId);
 }
 
@@ -200,7 +210,7 @@ export function getNodesByCategory(category: string): NodeDefinition[] {
  * Check if a node type exists
  */
 export function hasNode(id: string): boolean {
-  const cleanId = id.replace(/^cognitive\//, '');
+  const cleanId = stripPrefix(id);
   return nodeRegistry.has(cleanId);
 }
 

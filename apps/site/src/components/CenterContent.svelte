@@ -107,6 +107,9 @@
       case 'TerminalManager':
         module = await import('./TerminalManager.svelte');
         break;
+      case 'AgencyDashboard':
+        module = await import('./AgencyDashboard.svelte');
+        break;
       default:
         throw new Error(`Unknown component: ${name}`);
     }
@@ -1498,6 +1501,20 @@ async function loadMemoryContent(relPath: string) {
       <div class="view-content terminal-iframe-container">
         {#await loadComponent('TerminalManager')}
           <div class="loading-placeholder">Loading terminal manager...</div>
+        {:then Component}
+          <svelte:component this={Component} />
+        {/await}
+      </div>
+    </div>
+  {:else if $activeView === 'agency'}
+    <div class="view-container">
+      <div class="view-header">
+        <h2 class="view-title">🎯 Agency</h2>
+        <p class="view-subtitle">Autonomous desires and intentions</p>
+      </div>
+      <div class="view-content">
+        {#await loadComponent('AgencyDashboard')}
+          <div class="loading-placeholder">Loading agency dashboard...</div>
         {:then Component}
           <svelte:component this={Component} />
         {/await}

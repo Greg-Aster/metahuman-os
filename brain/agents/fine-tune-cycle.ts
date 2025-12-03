@@ -24,6 +24,7 @@ import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
 import { applySchemaBatch } from '../../packages/core/src/schema-manager.js';
 import type { FormattedSample } from '../../packages/core/src/schema-manager.js';
 import { getCurrentBaseModel, registerTrainingRun } from '../../packages/core/src/model-registry.js';
+import { storage } from '../services/storage-router.js';
 
 const mkdirpSync = (dir: string) => fs.mkdirSync(dir, { recursive: true });
 
@@ -36,6 +37,9 @@ interface FineTuneOptions {
   oldSamples?: number;
   monthlyTraining?: boolean; // Enable monthly training defaults
 }
+
+// Resolve tsx path (installed in node_modules/.bin)
+const TSX_PATH = path.join(systemPaths.root, 'node_modules', '.bin', 'tsx');
 
 /**
  * Run an agent subprocess
@@ -50,7 +54,7 @@ async function runAgent(agentName: string, args: string[]): Promise<number> {
     }
 
     console.log(`[fine-tune-cycle] Running: tsx ${agentName}.ts ${args.join(' ')}`);
-    const child = spawn('tsx', [agentPath, ...args], {
+    const child = spawn(TSX_PATH, [agentPath, ...args], {
       cwd: systemPaths.root,
       stdio: 'inherit',
     });
@@ -90,17 +94,24 @@ async function mainWithContext(options: FineTuneOptions) {
   console.log(`[fine-tune-cycle] Run ID: ${runId}`);
   console.log(`[fine-tune-cycle] Base model: ${options.baseModel}`);
 
-  // Create run directory
-  const runDir = path.join(
-    ctx.profilePaths.root,
-    'out',
-    'fine-tuned-models',
-    DATE_STR,
-    RUN_LABEL
-  );
+  // Resolve output directory via storage router
+  const outputPathResponse = storage.resolvePath({
+    username: ctx.username,
+    category: 'output',
+    subcategory: 'fine-tuned-models',
+    relativePath: path.join(DATE_STR, RUN_LABEL),
+  });
+
+  if (!outputPathResponse.success || !outputPathResponse.path) {
+    console.error(`[fine-tune-cycle] ERROR: Failed to resolve output path: ${outputPathResponse.error}`);
+    process.exit(1);
+  }
+
+  const runDir = outputPathResponse.path;
   mkdirpSync(runDir);
 
   console.log(`[fine-tune-cycle] Run directory: ${runDir}`);
+  console.log(`[fine-tune-cycle] Storage type: ${outputPathResponse.storageType}`);
 
   // Define output paths
   const CURATED_PATH = path.join(runDir, 'curated_memories.json');
@@ -231,9 +242,21 @@ async function mainWithContext(options: FineTuneOptions) {
     console.log(`[fine-tune-cycle] Starting RunPod training...`);
     console.log(`[fine-tune-cycle] This may take 2-6 hours depending on dataset size`);
 
-    // Create work directory structure (matching lora-trainer expectations)
-    const WORK_LOCAL = path.join(systemPaths.root, 'metahuman-runs', ctx.username, DATE_STR, RUN_LABEL);
+    // Create work directory structure via storage router (matching lora-trainer expectations)
+    const workPathResponse = storage.resolvePath({
+      username: ctx.username,
+      category: 'training',
+      subcategory: 'runs',
+      relativePath: path.join(DATE_STR, RUN_LABEL),
+    });
+
+    if (!workPathResponse.success || !workPathResponse.path) {
+      throw new Error(`Failed to resolve work directory: ${workPathResponse.error}`);
+    }
+
+    const WORK_LOCAL = workPathResponse.path;
     mkdirpSync(WORK_LOCAL);
+    console.log(`[fine-tune-cycle] Work directory: ${WORK_LOCAL}`);
 
     // Copy dataset to expected location (lora-trainer expects unsloth_dataset.jsonl)
     const CLEAN_DATA_FILE = path.join(WORK_LOCAL, 'unsloth_dataset.jsonl');

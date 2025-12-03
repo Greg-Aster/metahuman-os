@@ -27,6 +27,22 @@ const VOICE_MODELS_CACHE_TTL = 60_000; // 1 minute
 const VOICE_PROVIDER_CACHE_TTL = 30_000; // 30 seconds
 
 /**
+ * Check if native voice mode is enabled via localStorage
+ */
+function isNativeVoiceModeEnabled(): boolean {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return false;
+  return localStorage.getItem('mh-native-voice-mode') === 'true';
+}
+
+/**
+ * Check if native TTS (SpeechSynthesis) is available
+ */
+function isNativeTTSAvailable(): boolean {
+  if (typeof window === 'undefined') return false;
+  return 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
+}
+
+/**
  * Normalize text for speech synthesis
  * Removes markdown formatting, code blocks, and other non-speakable content
  */
@@ -253,8 +269,15 @@ export function useTTS() {
   /**
    * Speak text using server-side TTS (Piper)
    * Uses Web Audio API instead of Audio elements to avoid stealing media session
+   * Automatically routes to native TTS if native voice mode is enabled
    */
   async function speakText(text: string): Promise<void> {
+    // Check if native voice mode is enabled - route to native TTS
+    if (isNativeVoiceModeEnabled() && isNativeTTSAvailable()) {
+      console.log('[useTTS] Native voice mode enabled - routing to native TTS');
+      return speakTextNative(text);
+    }
+
     console.log('[useTTS] 🔊 speakText called (WEB AUDIO API VERSION - no session steal)');
     console.log('[useTTS] speakText called with text length:', text.length);
     const speechText = normalizeTextForSpeech(text);
@@ -616,10 +639,112 @@ export function useTTS() {
     cancelInFlightTts();
     stopActiveAudio();
     stopStreaming();
+    stopNativeTTS();
     if (audioCtx) {
       try { audioCtx.close(); } catch {}
       audioCtx = null;
     }
+  }
+
+  // Native TTS state
+  let nativeUtterance: SpeechSynthesisUtterance | null = null;
+
+  /**
+   * Stop native TTS playback
+   */
+  function stopNativeTTS() {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    nativeUtterance = null;
+  }
+
+  /**
+   * Speak text using native device TTS (Web Speech API)
+   * Used when native voice mode is enabled
+   */
+  async function speakTextNative(text: string): Promise<void> {
+    console.log('[useTTS] 🔊 speakTextNative called (NATIVE WEB SPEECH API)');
+    const speechText = normalizeTextForSpeech(text);
+    if (!speechText) {
+      console.log('[useTTS] No speech text after normalization, aborting');
+      return;
+    }
+
+    // Stop any existing playback (both native and server)
+    stopActiveAudio();
+    stopNativeTTS();
+
+    return new Promise((resolve, reject) => {
+      try {
+        nativeUtterance = new SpeechSynthesisUtterance(speechText);
+
+        // Configure voice settings
+        nativeUtterance.rate = 1.0;  // Normal speed
+        nativeUtterance.pitch = 1.0; // Normal pitch
+        nativeUtterance.volume = 1.0; // Full volume
+
+        // Try to get a good voice (prefer English voices)
+        const voices = window.speechSynthesis.getVoices();
+        if (voices.length > 0) {
+          // Prefer Google voices on Android, or any English voice
+          const preferredVoice = voices.find(v =>
+            v.name.includes('Google') && v.lang.startsWith('en')
+          ) || voices.find(v =>
+            v.lang.startsWith('en')
+          ) || voices[0];
+
+          if (preferredVoice) {
+            nativeUtterance.voice = preferredVoice;
+            console.log('[useTTS] Using native voice:', preferredVoice.name);
+          }
+        }
+
+        nativeUtterance.onstart = () => {
+          console.log('[useTTS] Native TTS started');
+          isPlaying.set(true);
+        };
+
+        nativeUtterance.onend = () => {
+          console.log('[useTTS] Native TTS ended');
+          isPlaying.set(false);
+          nativeUtterance = null;
+          resolve();
+        };
+
+        nativeUtterance.onerror = (event) => {
+          console.warn('[useTTS] Native TTS error:', event.error);
+          isPlaying.set(false);
+          nativeUtterance = null;
+          reject(new Error(event.error));
+        };
+
+        // Speak!
+        window.speechSynthesis.speak(nativeUtterance);
+
+      } catch (e) {
+        console.error('[useTTS] Native TTS failed:', e);
+        isPlaying.set(false);
+        reject(e);
+      }
+    });
+  }
+
+  /**
+   * Smart speak - uses native TTS if enabled, otherwise server TTS
+   */
+  async function speak(text: string, options?: { streaming?: boolean; pitchShift?: number; speed?: number }): Promise<void> {
+    // Check if native voice mode is enabled
+    if (isNativeVoiceModeEnabled() && isNativeTTSAvailable()) {
+      console.log('[useTTS] Native voice mode enabled - using device TTS');
+      return speakTextNative(text);
+    }
+
+    // Use server TTS
+    if (options?.streaming) {
+      return speakTextStreaming(text, { pitchShift: options.pitchShift, speed: options.speed });
+    }
+    return speakText(text);
   }
 
   return {
@@ -630,9 +755,12 @@ export function useTTS() {
     streamProgress,
 
     // Methods
-    speakText,
-    speakTextStreaming,
+    speak,              // Smart speak - auto-selects native vs server
+    speakText,          // Force server TTS (batch)
+    speakTextStreaming, // Force server TTS (streaming)
+    speakTextNative,    // Force native device TTS
     stopActiveAudio,
+    stopNativeTTS,
     stopStreaming,
     cancelInFlightTts,
     ensureAudioUnlocked,
