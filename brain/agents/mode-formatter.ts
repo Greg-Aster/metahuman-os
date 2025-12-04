@@ -1,12 +1,15 @@
 /**
  * Mode Formatter - Apply cognitive mode formatting rules
  *
- * Transforms curated samples into mode-specific format:
- * - Dual: <thought> → <world>
- * - Emulation: <user> → <assistant>
- * - Agent: <instruction> → <action>
+ * Transforms curated samples into mode-specific format.
+ * Mode labels are preserved in metadata for tracking purposes.
  *
- * CRITICAL: Only applies formatting tags, does not modify content.
+ * IMPORTANT: No role prefixes (e.g., <user>:, <assistant>:, <world>:) are added.
+ * Role identification is handled by:
+ * - ChatML tokens (<|im_start|>user, <|im_start|>assistant) during training
+ * - Modelfile TEMPLATE during inference
+ *
+ * Adding role prefixes here causes double-tagging (e.g., <|im_start|>user<user>: text)
  */
 
 import fs from 'node:fs';
@@ -39,12 +42,16 @@ export interface FormattedSample {
  * Apply dual mode formatting
  * User text = AI's internal thought
  * Assistant text = external world response
+ *
+ * NOTE: No role prefixes are added here. Role identification is handled by:
+ * - ChatML tokens (<|im_start|>user, <|im_start|>assistant) during training via Unsloth
+ * - Modelfile TEMPLATE during inference via Ollama
  */
 function formatDualMode(sample: CuratedSample): FormattedSample {
   return {
     mode: 'dual',
-    input: `<thought>: ${sample.user_text}`,
-    output: `<world>: ${sample.assistant_text}`,
+    input: sample.user_text,
+    output: sample.assistant_text,
     metadata: sample.metadata,
   };
 }
@@ -52,12 +59,14 @@ function formatDualMode(sample: CuratedSample): FormattedSample {
 /**
  * Apply emulation mode formatting
  * Standard user → assistant conversation
+ *
+ * NOTE: No role prefixes added - ChatML handles role identification
  */
 function formatEmulationMode(sample: CuratedSample): FormattedSample {
   return {
     mode: 'emulation',
-    input: `<user>: ${sample.user_text}`,
-    output: `<assistant>: ${sample.assistant_text}`,
+    input: sample.user_text,
+    output: sample.assistant_text,
     metadata: sample.metadata,
   };
 }
@@ -65,12 +74,14 @@ function formatEmulationMode(sample: CuratedSample): FormattedSample {
 /**
  * Apply agent mode formatting
  * Instruction → action/result
+ *
+ * NOTE: No role prefixes added - ChatML handles role identification
  */
 function formatAgentMode(sample: CuratedSample): FormattedSample {
   return {
     mode: 'agent',
-    input: `<instruction>: ${sample.user_text}`,
-    output: `<action>: ${sample.assistant_text}`,
+    input: sample.user_text,
+    output: sample.assistant_text,
     metadata: sample.metadata,
   };
 }

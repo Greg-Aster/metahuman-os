@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import OnboardingWizard from './OnboardingWizard.svelte';
   import ProfileSelector from './ProfileSelector.svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   let view: 'splash' | 'login' | 'register' | 'post-register' | 'onboarding' | 'forgot-password' | 'recovery-codes' = 'splash';
   let isAuthenticated = false;
@@ -33,7 +34,7 @@
   // Check if user is already authenticated
   async function checkAuth() {
     try {
-      const res = await fetch('/api/auth/me');
+      const res = await apiFetch('/api/auth/me');
       if (res.ok) {
         const data = await res.json();
         if (data.user) {
@@ -51,7 +52,7 @@
   // Load boot data (persona info for splash)
   async function loadBootData() {
     try {
-      const res = await fetch('/api/boot');
+      const res = await apiFetch('/api/boot');
       if (res.ok) {
         bootData = await res.json();
       }
@@ -67,7 +68,7 @@
     loading = true;
 
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await apiFetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
@@ -114,7 +115,7 @@
     loading = true;
 
     try {
-      const res = await fetch('/api/auth/register', {
+      const res = await apiFetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -174,7 +175,7 @@
     loading = true;
 
     try {
-      const res = await fetch('/api/auth/reset-password', {
+      const res = await apiFetch('/api/auth/reset-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -230,7 +231,7 @@
     try {
       console.log('[AuthGate] Continue as guest clicked');
       guestSessionError = '';
-      const res = await fetch('/api/auth/guest', { method: 'POST' });
+      const res = await apiFetch('/api/auth/guest', { method: 'POST' });
       const data = await res.json();
       console.log('[AuthGate] Guest session response:', data);
 

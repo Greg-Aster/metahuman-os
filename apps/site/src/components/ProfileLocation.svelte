@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface StorageDevice {
     id: string;
@@ -163,7 +164,7 @@
   async function checkVeraCryptStatus() {
     checkingVeraCrypt = true;
     try {
-      const response = await fetch('/api/veracrypt/status');
+      const response = await apiFetch('/api/veracrypt/status');
       if (response.ok) {
         veracryptStatus = await response.json();
       } else {
@@ -181,7 +182,7 @@
     error = '';
 
     try {
-      const response = await fetch('/api/profile-path');
+      const response = await apiFetch('/api/profile-path');
       if (response.ok) {
         profileConfig = await response.json();
       } else {
@@ -200,7 +201,7 @@
     devicesLoading = true;
 
     try {
-      const response = await fetch('/api/profile-path/devices');
+      const response = await apiFetch('/api/profile-path/devices');
       if (response.ok) {
         const data = await response.json();
         devices = data.devices || [];
@@ -239,7 +240,7 @@
 
   async function validatePath(path: string): Promise<ValidationResult | null> {
     try {
-      const response = await fetch('/api/profile-path/validate', {
+      const response = await apiFetch('/api/profile-path/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path }),
@@ -303,7 +304,7 @@
     } : undefined;
 
     try {
-      const response = await fetch('/api/profile-path', {
+      const response = await apiFetch('/api/profile-path', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -413,7 +414,7 @@
     }
 
     try {
-      const response = await fetch('/api/profile-path', {
+      const response = await apiFetch('/api/profile-path', {
         method: 'DELETE',
       });
 
@@ -445,7 +446,7 @@
     success = '';
 
     try {
-      const response = await fetch('/api/profile-path/encrypt', {
+      const response = await apiFetch('/api/profile-path/encrypt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -532,7 +533,7 @@
     success = '';
 
     try {
-      const response = await fetch('/api/profile-path/decrypt', {
+      const response = await apiFetch('/api/profile-path/decrypt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -613,7 +614,7 @@
     success = '';
 
     try {
-      const response = await fetch('/api/profile-path', {
+      const response = await apiFetch('/api/profile-path', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

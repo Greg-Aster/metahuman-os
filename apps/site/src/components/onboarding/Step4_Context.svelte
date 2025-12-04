@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../../lib/client/api-config';
 
   export let onNext: () => void;
   export let onBack: () => void;
@@ -94,7 +95,7 @@
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch('/api/ingest', {
+        const response = await apiFetch('/api/ingest', {
           method: 'POST',
           body: formData,
         });
@@ -108,7 +109,7 @@
       }
 
       // Increment files ingested counter
-      await fetch('/api/onboarding/state', {
+      await apiFetch('/api/onboarding/state', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

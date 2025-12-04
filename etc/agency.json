@@ -7,9 +7,10 @@
     "autoApprove": 0.85,
     "decay": {
       "enabled": true,
-      "ratePerHour": 0.02,
-      "minStrength": 0.1,
-      "reinforcementBoost": 0.15
+      "ratePerRun": 0.03,
+      "minStrength": 0.05,
+      "reinforcementBoost": 0.08,
+      "initialStrength": 0.15
     }
   },
 

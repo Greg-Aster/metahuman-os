@@ -1,0 +1,276 @@
+[2025-12-03T21:59:08.030Z] === Starting new training run ===
+[2025-12-03T21:59:08.030Z] Date: 2025-12-03
+[2025-12-03T21:59:08.030Z] Run label: 2025-12-03-215306-a03670
+[2025-12-03T21:59:08.030Z] Work directory: /home/greggles/metahuman/metahuman-runs/greggles/2025-12-03/2025-12-03-215306-a03670
+[2025-12-03T21:59:08.031Z] RUNPOD_NO_GATEWAY=1 set; skipping gateway schema probes.
+[2025-12-03T21:59:08.031Z] RUNPOD_DIRECT_SSH_USER=root; will prefer this user for direct SSH.
+[2025-12-03T21:59:08.031Z] Using RUNPOD_TEMPLATE_ID=6r5jlk3b89
+[2025-12-03T21:59:08.031Z] LoRA mode: Using NVIDIA GeForce RTX 5090
+[2025-12-03T21:59:08.031Z] Selected GPU type: NVIDIA GeForce RTX 5090
+[2025-12-03T21:59:08.031Z] Attempting to deploy pod on COMMUNITY cloud...
+[2025-12-03T21:59:09.118Z] Pod created successfully on COMMUNITY cloud. Pod ID: amvpftt249r3wg
+[2025-12-03T21:59:09.118Z] Waiting for pod to become RUNNING...
+[2025-12-03T21:59:09.119Z] Waiting for pod ssh gateway... (Attempt 1/120)
+[2025-12-03T21:59:14.467Z] Waiting for pod ssh gateway... (Attempt 2/120)
+[2025-12-03T21:59:20.156Z] Waiting for pod ssh gateway... (Attempt 3/120)
+[2025-12-03T21:59:25.623Z] Waiting for pod ssh gateway... (Attempt 4/120)
+[2025-12-03T21:59:31.111Z] Waiting for pod ssh gateway... (Attempt 5/120)
+[2025-12-03T21:59:36.628Z] Waiting for pod ssh gateway... (Attempt 6/120)
+[2025-12-03T21:59:42.131Z] Waiting for pod ssh gateway... (Attempt 7/120)
+[2025-12-03T21:59:42.590Z] runtime.ports: [{"ip":"100.65.11.55","isIpPublic":false,"privatePort":19123,"publicPort":60912,"type":"http"},{"ip":"87.197.111.68","isIpPublic":true,"privatePort":22,"publicPort":42290,"type":"tcp"},{"ip":"87.197.111.68","isIpPublic":true,"privatePort":22,"publicPort":42291,"type":"udp"}]
+[2025-12-03T21:59:42.591Z] Public port mapping detected and NO_GATEWAY=1; proceeding without gateway discovery.
+[2025-12-03T21:59:42.591Z] Using default SSH key path: /home/greggles/.ssh/id_ed25519
+[2025-12-03T21:59:42.591Z] Key path candidate: /home/greggles/.ssh/id_ed25519
+[2025-12-03T21:59:42.591Z] SSH probe candidates: root
+[2025-12-03T21:59:46.088Z] Direct SSH handshake succeeded as root@87.197.111.68:42290 (attempt 1)
+[2025-12-03T21:59:46.088Z] Wrote fresh connection.json for this pod: /home/greggles/metahuman/metahuman-runs/greggles/2025-12-03/2025-12-03-215306-a03670/connection.json
+[2025-12-03T21:59:46.088Z] Using direct SSH mode: root@87.197.111.68:42290
+[2025-12-03T21:59:46.088Z] Checking for Python, pip, and workspace setup
+[2025-12-03T21:59:49.050Z] Environment check passed: Python 3.12.3
+pip 25.2 from /usr/local/lib/python3.12/dist-packages/pip (python 3.12)
+input
+train_unsloth.py
+unsloth-venv
+ENV_READY
+
+[2025-12-03T21:59:49.050Z] Uploading curated training files via base64-over-ssh (samples: 387)...
+[2025-12-03T21:59:51.608Z] Directory creation result: total 4
+drwxr-xr-x 5 root root   97 Dec  3 21:59 .
+drwxr-xr-x 1 root root   86 Dec  3 21:59 ..
+drwxr-xr-x 3 root root   25 Dec  3 21:59 .cache
+drwxr-xr-x 2 root root    6 Oct 27 16:03 input
+-rw-rw-r-- 1 root root 3177 Oct 27 02:08 train_unsloth.py
+drwxr-xr-x 6 root root  115 Dec  3 21:59 unsloth-venv
+
+[2025-12-03T21:59:51.608Z] Uploading unsloth_dataset.jsonl to /workspace/input/unsloth_dataset.jsonl (attempt 1/3)...
+[2025-12-03T21:59:55.246Z] Upload of unsloth_dataset.jsonl successful.
+[2025-12-03T21:59:55.247Z] Uploading config.json to /workspace/input/config.json (attempt 1/3)...
+[2025-12-03T21:59:58.314Z] Upload of config.json successful.
+[2025-12-03T21:59:58.315Z] Uploading core.json to /workspace/input/persona.json (attempt 1/3)...
+[2025-12-03T22:00:01.310Z] Upload of core.json successful.
+[2025-12-03T22:00:01.311Z] Uploaded persona data for training context
+[2025-12-03T22:00:01.311Z] LoRA training mode detected
+[2025-12-03T22:00:01.311Z] Uploading training script from: /home/greggles/metahuman/docker/runpod-trainer/train_unsloth.py
+[2025-12-03T22:00:01.311Z] Uploading train_unsloth.py to /workspace/train_unsloth.py (attempt 1/3)...
+[2025-12-03T22:00:04.312Z] Upload of train_unsloth.py successful.
+[2025-12-03T22:00:07.357Z] Training script verification: 492 /workspace/train_unsloth.py
+-rw-rw-r-- 1 root root 21K Dec  3 22:00 /workspace/train_unsloth.py
+[2025-12-03T22:00:12.891Z] Upload verification: 7ceea09989c342137e20919a3605dfe556b0ea36e4586e016fa361d59853a5f4  /workspace/input/config.json
+[2025-12-03T22:00:12.891Z] Executing remote training script: train_unsloth.py
+[2025-12-03T22:19:36.971Z] Training exit code: 0
+[2025-12-03T22:19:36.974Z] Full training output saved to: /home/greggles/metahuman/metahuman-runs/greggles/2025-12-03/2025-12-03-215306-a03670/training_output.txt
+[2025-12-03T22:19:36.974Z] Training stderr (last 2000 chars): annel 0: written 91 to efd 6
+debug2: channel 0: rcvd ext data 93
+Unsloth: Merging weights into 16bit:  50%|█████     | 3/6 [00:18<00:18,  6.17s/it]debug2: channel 0: written 93 to efd 6
+debug2: channel 0: rcvd ext data 97
+Unsloth: Merging weights into 16bit:  67%|██████▋   | 4/6 [00:25<00:12,  6.34s/it]debug2: channel 0: written 97 to efd 6
+debug2: channel 0: rcvd ext data 101
+Unsloth: Merging weights into 16bit:  83%|████████▎ | 5/6 [00:31<00:06,  6.29s/it]debug2: channel 0: written 101 to efd 6
+debug2: channel 0: rcvd ext data 103
+Unsloth: Merging weights into 16bit: 100%|██████████| 6/6 [00:37<00:00,  6.15s/it]debug2: channel 0: written 103 to efd 6
+debug2: channel 0: rcvd ext data 104
+Unsloth: Merging weights into 16bit: 100%|██████████| 6/6 [00:37<00:00,  6.18s/it]
+debug2: channel 0: written 104 to efd 6
+debug2: channel 0: rcvd ext data 151
+[W1203 22:19:35.578278607 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+debug2: channel 0: written 151 to efd 6
+debug2: channel 0: rcvd eof
+debug2: channel 0: output open -> drain
+debug2: channel 0: obuf empty
+debug2: chan_shutdown_write: channel 0: (i0 o1 sock -1 wfd 5 efd 6 [write])
+debug2: channel 0: output drain -> closed
+debug1: client_input_channel_req: channel 0 rtype exit-status reply 0
+debug1: client_input_channel_req: channel 0 rtype eow@openssh.com reply 0
+debug2: channel 0: rcvd eow
+debug2: chan_shutdown_read: channel 0: (i0 o3 sock -1 wfd 4 efd 6 [write])
+debug2: channel 0: input open -> closed
+debug2: channel 0: rcvd close
+debug2: channel 0: almost dead
+debug2: channel 0: gc: notify user
+debug2: channel 0: gc: user detached
+debug2: channel 0: send close
+debug2: channel 0: is dead
+debug2: channel 0: garbage collecting
+debug1: channel 0: free: client-session, nchannels 1
+Transferred: sent 4324, received 32720 bytes, in 1162.2 seconds
+Bytes per second: sent 3.7, received 28.2
+debug1: Exit status 0
+
+[2025-12-03T22:19:36.974Z] Training stdout (last 2000 chars): pt-2.gguf (0.00 GB)
+[22:19:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-gpt-neox.gguf (0.00 GB)
+[22:19:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-llama-bpe.gguf (0.01 GB)
+[22:19:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-llama-spm.gguf (0.00 GB)
+[22:19:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-mpt.gguf (0.00 GB)
+[22:19:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-nomic-bert-moe.gguf (0.01 GB)
+[22:19:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-phi-3.gguf (0.00 GB)
+[22:19:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-qwen2.gguf (0.01 GB)
+[22:19:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-refact.gguf (0.00 GB)
+[22:19:32] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-starcoder.gguf (0.00 GB)
+[22:19:32] ▶️  GGUF_MERGE - Found 18 GGUF file(s): ['qwen3-14b.Q4_K_M.gguf', 'ggml-vocab-aquila.gguf', 'ggml-vocab-baichuan.gguf', 'ggml-vocab-bert-bge.gguf', 'ggml-vocab-command-r.gguf', 'ggml-vocab-deepseek-coder.gguf', 'ggml-vocab-deepseek-llm.gguf', 'ggml-vocab-falcon.gguf', 'ggml-vocab-gpt-2.gguf', 'ggml-vocab-gpt-neox.gguf', 'ggml-vocab-llama-bpe.gguf', 'ggml-vocab-llama-spm.gguf', 'ggml-vocab-mpt.gguf', 'ggml-vocab-nomic-bert-moe.gguf', 'ggml-vocab-phi-3.gguf', 'ggml-vocab-qwen2.gguf', 'ggml-vocab-refact.gguf', 'ggml-vocab-starcoder.gguf']
+[22:19:34] 📊 GGUF_MERGE (100%) - ✅ GGUF created in 10.3 minutes (8.38 GB)
+[22:19:34] ▶️  GGUF_MERGE - 📁 Source: qwen3-14b.Q4_K_M.gguf → final_merged_model.gguf
+[22:19:34] ▶️  COMPLETE - ============================================================
+[22:19:34] ▶️  COMPLETE - 🎉 Training pipeline complete in 19.2 minutes
+[22:19:34] ▶️  COMPLETE - 📁 Adapter: /workspace/output/adapter
+[22:19:34] ▶️  COMPLETE - 📁 Merged GGUF: /workspace/final_merged_model.gguf
+[22:19:34] ▶️  COMPLETE - ============================================================
+
+[2025-12-03T22:19:36.975Z] Downloading merged GGUF and adapter artifacts...
+[2025-12-03T22:19:36.977Z] Starting SCP download: scp -P 42290 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /home/greggles/.ssh/id_ed25519 root@87.197.111.68:/workspace/final_merged_model.gguf /media/greggles/STACK/metahuman-profiles/greggles/out/adapters/2025-12-03/2025-12-03-215306-a03670/adapter.gguf
+[2025-12-03T22:19:40.980Z] Download progress: 0.00/9.00 GB (0.0 MB/s, ~0.0 min remaining)
+[2025-12-03T22:19:43.985Z] Download progress: 0.00/9.00 GB (0.2 MB/s, ~617.8 min remaining)
+[2025-12-03T22:19:46.989Z] Download progress: 0.00/9.00 GB (0.4 MB/s, ~370.6 min remaining)
+[2025-12-03T22:19:49.991Z] Download progress: 0.00/9.00 GB (0.5 MB/s, ~308.4 min remaining)
+[2025-12-03T22:19:52.994Z] Download progress: 0.01/9.00 GB (0.6 MB/s, ~264.5 min remaining)
+[2025-12-03T22:19:55.997Z] Download progress: 0.01/9.00 GB (0.6 MB/s, ~264.4 min remaining)
+[2025-12-03T22:19:58.998Z] Download progress: 0.01/9.00 GB (0.6 MB/s, ~264.2 min remaining)
+[2025-12-03T22:20:02.002Z] Download progress: 0.01/9.00 GB (0.8 MB/s, ~185.1 min remaining)
+[2025-12-03T22:20:05.006Z] Download progress: 0.02/9.00 GB (1.6 MB/s, ~97.4 min remaining)
+[2025-12-03T22:20:08.009Z] Download progress: 0.03/9.00 GB (3.4 MB/s, ~45.0 min remaining)
+[2025-12-03T22:20:11.012Z] Download progress: 0.04/9.00 GB (6.5 MB/s, ~23.6 min remaining)
+[2025-12-03T22:20:14.016Z] Download progress: 0.07/9.00 GB (8.0 MB/s, ~19.2 min remaining)
+[2025-12-03T22:20:17.019Z] Download progress: 0.09/9.00 GB (8.0 MB/s, ~18.9 min remaining)
+[2025-12-03T22:20:20.021Z] Download progress: 0.11/9.00 GB (8.0 MB/s, ~19.0 min remaining)
+[2025-12-03T22:20:23.026Z] Download progress: 0.14/9.00 GB (8.1 MB/s, ~18.6 min remaining)
+[2025-12-03T22:20:26.028Z] Download progress: 0.16/9.00 GB (8.1 MB/s, ~18.6 min remaining)
+[2025-12-03T22:20:29.030Z] Download progress: 0.18/9.00 GB (6.2 MB/s, ~24.2 min remaining)
+[2025-12-03T22:20:32.032Z] Download progress: 0.20/9.00 GB (7.8 MB/s, ~19.3 min remaining)
+[2025-12-03T22:20:35.035Z] Download progress: 0.23/9.00 GB (8.0 MB/s, ~18.8 min remaining)
+[2025-12-03T22:20:38.041Z] Download progress: 0.25/9.00 GB (8.0 MB/s, ~18.6 min remaining)
+[2025-12-03T22:20:41.044Z] Download progress: 0.27/9.00 GB (6.6 MB/s, ~22.5 min remaining)
+[2025-12-03T22:20:44.048Z] Download progress: 0.29/9.00 GB (6.7 MB/s, ~22.1 min remaining)
+[2025-12-03T22:20:47.050Z] Download progress: 0.31/9.00 GB (7.0 MB/s, ~21.0 min remaining)
+[2025-12-03T22:20:50.051Z] Download progress: 0.33/9.00 GB (5.4 MB/s, ~27.4 min remaining)
+[2025-12-03T22:20:53.053Z] Download progress: 0.34/9.00 GB (6.3 MB/s, ~23.4 min remaining)
+[2025-12-03T22:20:56.056Z] Download progress: 0.36/9.00 GB (6.5 MB/s, ~22.8 min remaining)
+[2025-12-03T22:20:59.057Z] Download progress: 0.38/9.00 GB (5.1 MB/s, ~28.6 min remaining)
+[2025-12-03T22:21:02.060Z] Download progress: 0.40/9.00 GB (6.0 MB/s, ~24.6 min remaining)
+[2025-12-03T22:21:05.064Z] Download progress: 0.41/9.00 GB (6.3 MB/s, ~23.2 min remaining)
+[2025-12-03T22:21:08.067Z] Download progress: 0.43/9.00 GB (6.5 MB/s, ~22.3 min remaining)
+[2025-12-03T22:21:11.068Z] Download progress: 0.45/9.00 GB (7.1 MB/s, ~20.4 min remaining)
+[2025-12-03T22:21:14.073Z] Download progress: 0.47/9.00 GB (6.0 MB/s, ~24.4 min remaining)
+[2025-12-03T22:21:17.077Z] Download progress: 0.49/9.00 GB (7.3 MB/s, ~19.9 min remaining)
+[2025-12-03T22:21:20.078Z] Download progress: 0.52/9.00 GB (7.9 MB/s, ~18.4 min remaining)
+[2025-12-03T22:21:23.081Z] Download progress: 0.54/9.00 GB (8.2 MB/s, ~17.6 min remaining)
+[2025-12-03T22:21:26.083Z] Download progress: 0.56/9.00 GB (8.0 MB/s, ~17.9 min remaining)
+[2025-12-03T22:21:29.085Z] Download progress: 0.59/9.00 GB (8.1 MB/s, ~17.7 min remaining)
+[2025-12-03T22:21:32.089Z] Download progress: 0.61/9.00 GB (8.1 MB/s, ~17.6 min remaining)
+[2025-12-03T22:21:35.092Z] Download progress: 0.63/9.00 GB (6.0 MB/s, ~23.9 min remaining)
+[2025-12-03T22:21:38.094Z] Download progress: 0.65/9.00 GB (7.9 MB/s, ~18.1 min remaining)
+[2025-12-03T22:21:41.096Z] Download progress: 0.68/9.00 GB (8.3 MB/s, ~17.1 min remaining)
+[2025-12-03T22:21:44.099Z] Download progress: 0.70/9.00 GB (8.1 MB/s, ~17.4 min remaining)
+[2025-12-03T22:21:47.103Z] Download progress: 0.72/9.00 GB (8.2 MB/s, ~17.2 min remaining)
+[2025-12-03T22:21:50.104Z] Download progress: 0.74/9.00 GB (6.5 MB/s, ~21.8 min remaining)
+[2025-12-03T22:21:53.107Z] Download progress: 0.76/9.00 GB (7.1 MB/s, ~19.7 min remaining)
+[2025-12-03T22:21:56.110Z] Download progress: 0.79/9.00 GB (7.3 MB/s, ~19.2 min remaining)
+[2025-12-03T22:21:59.111Z] Download progress: 0.81/9.00 GB (7.6 MB/s, ~18.5 min remaining)
+[2025-12-03T22:22:02.115Z] Download progress: 0.83/9.00 GB (7.5 MB/s, ~18.7 min remaining)
+[2025-12-03T22:22:05.119Z] Download progress: 0.85/9.00 GB (7.0 MB/s, ~20.0 min remaining)
+[2025-12-03T22:22:08.122Z] Download progress: 0.87/9.00 GB (6.7 MB/s, ~20.7 min remaining)
+[2025-12-03T22:22:11.125Z] Download progress: 0.89/9.00 GB (8.0 MB/s, ~17.4 min remaining)
+[2025-12-03T22:22:14.127Z] Download progress: 0.92/9.00 GB (8.1 MB/s, ~17.0 min remaining)
+[2025-12-03T22:22:17.131Z] Download progress: 0.94/9.00 GB (6.0 MB/s, ~23.1 min remaining)
+[2025-12-03T22:22:20.133Z] Download progress: 0.95/9.00 GB (6.6 MB/s, ~20.7 min remaining)
+[2025-12-03T22:22:23.136Z] Download progress: 0.98/9.00 GB (7.0 MB/s, ~19.4 min remaining)
+[2025-12-03T22:22:26.138Z] Download progress: 0.99/9.00 GB (6.7 MB/s, ~20.3 min remaining)
+[2025-12-03T22:22:29.139Z] Download progress: 1.01/9.00 GB (4.5 MB/s, ~30.4 min remaining)
+[2025-12-03T22:22:32.142Z] Download progress: 1.03/9.00 GB (6.5 MB/s, ~21.0 min remaining)
+[2025-12-03T22:22:35.146Z] Download progress: 1.05/9.00 GB (7.0 MB/s, ~19.3 min remaining)
+[2025-12-03T22:22:38.153Z] Download progress: 1.07/9.00 GB (6.7 MB/s, ~20.2 min remaining)
+[2025-12-03T22:22:41.156Z] Download progress: 1.09/9.00 GB (7.0 MB/s, ~19.2 min remaining)
+[2025-12-03T22:22:44.161Z] Download progress: 1.11/9.00 GB (7.6 MB/s, ~17.7 min remaining)
+[2025-12-03T22:22:47.165Z] Download progress: 1.13/9.00 GB (6.5 MB/s, ~20.8 min remaining)
+[2025-12-03T22:22:50.167Z] Download progress: 1.15/9.00 GB (7.1 MB/s, ~18.8 min remaining)
+[2025-12-03T22:22:53.171Z] Download progress: 1.17/9.00 GB (8.0 MB/s, ~16.6 min remaining)
+[2025-12-03T22:22:56.173Z] Download progress: 1.20/9.00 GB (7.8 MB/s, ~17.1 min remaining)
+[2025-12-03T22:22:59.174Z] Download progress: 1.22/9.00 GB (8.0 MB/s, ~16.5 min remaining)
+[2025-12-03T22:23:02.178Z] Download progress: 1.24/9.00 GB (8.1 MB/s, ~16.3 min remaining)
+[2025-12-03T22:23:05.182Z] Download progress: 1.27/9.00 GB (8.0 MB/s, ~16.4 min remaining)
+[2025-12-03T22:23:08.186Z] Download progress: 1.29/9.00 GB (7.9 MB/s, ~16.7 min remaining)
+[2025-12-03T22:23:11.189Z] Download progress: 1.31/9.00 GB (8.0 MB/s, ~16.5 min remaining)
+[2025-12-03T22:23:14.193Z] Download progress: 1.34/9.00 GB (8.2 MB/s, ~15.9 min remaining)
+[2025-12-03T22:23:17.196Z] Download progress: 1.35/9.00 GB (3.9 MB/s, ~33.5 min remaining)
+[2025-12-03T22:23:20.199Z] Download progress: 1.36/9.00 GB (4.6 MB/s, ~28.6 min remaining)
+[2025-12-03T22:23:23.203Z] Download progress: 1.38/9.00 GB (5.1 MB/s, ~25.7 min remaining)
+[2025-12-03T22:23:26.206Z] Download progress: 1.39/9.00 GB (5.0 MB/s, ~26.1 min remaining)
+[2025-12-03T22:23:29.208Z] Download progress: 1.41/9.00 GB (5.8 MB/s, ~22.3 min remaining)
+[2025-12-03T22:23:32.212Z] Download progress: 1.43/9.00 GB (7.1 MB/s, ~18.1 min remaining)
+[2025-12-03T22:23:35.216Z] Download progress: 1.45/9.00 GB (8.1 MB/s, ~15.8 min remaining)
+[2025-12-03T22:23:38.220Z] Download progress: 1.48/9.00 GB (8.0 MB/s, ~16.1 min remaining)
+[2025-12-03T22:23:41.225Z] Download progress: 1.49/9.00 GB (5.9 MB/s, ~21.8 min remaining)
+[2025-12-03T22:23:44.229Z] Download progress: 1.52/9.00 GB (7.6 MB/s, ~16.7 min remaining)
+[2025-12-03T22:23:47.233Z] Download progress: 1.54/9.00 GB (8.0 MB/s, ~16.0 min remaining)
+[2025-12-03T22:23:50.235Z] Download progress: 1.56/9.00 GB (8.0 MB/s, ~15.8 min remaining)
+[2025-12-03T22:23:53.239Z] Download progress: 1.59/9.00 GB (8.0 MB/s, ~15.9 min remaining)
+[2025-12-03T22:23:56.242Z] Download progress: 1.61/9.00 GB (8.1 MB/s, ~15.5 min remaining)
+[2025-12-03T22:23:59.244Z] Download progress: 1.64/9.00 GB (8.1 MB/s, ~15.5 min remaining)
+[2025-12-03T22:24:02.247Z] Download progress: 1.65/9.00 GB (5.6 MB/s, ~22.6 min remaining)
+[2025-12-03T22:24:05.250Z] Download progress: 1.67/9.00 GB (6.0 MB/s, ~21.0 min remaining)
+[2025-12-03T22:24:08.254Z] Download progress: 1.69/9.00 GB (7.1 MB/s, ~17.5 min remaining)
+[2025-12-03T22:24:11.257Z] Download progress: 1.71/9.00 GB (6.1 MB/s, ~20.6 min remaining)
+[2025-12-03T22:24:14.261Z] Download progress: 1.72/9.00 GB (5.4 MB/s, ~23.0 min remaining)
+[2025-12-03T22:24:17.264Z] Download progress: 1.74/9.00 GB (6.5 MB/s, ~19.1 min remaining)
+[2025-12-03T22:24:20.264Z] Download progress: 1.76/9.00 GB (7.0 MB/s, ~17.7 min remaining)
+[2025-12-03T22:24:23.267Z] Download progress: 1.78/9.00 GB (7.4 MB/s, ~16.7 min remaining)
+[2025-12-03T22:24:26.270Z] Download progress: 1.80/9.00 GB (5.6 MB/s, ~21.8 min remaining)
+[2025-12-03T22:24:29.272Z] Download progress: 1.82/9.00 GB (7.0 MB/s, ~17.6 min remaining)
+[2025-12-03T22:24:32.274Z] Download progress: 1.84/9.00 GB (7.3 MB/s, ~16.7 min remaining)
+[2025-12-03T22:24:35.278Z] Download progress: 1.86/9.00 GB (7.1 MB/s, ~17.1 min remaining)
+[2025-12-03T22:24:38.282Z] Download progress: 1.89/9.00 GB (7.5 MB/s, ~16.3 min remaining)
+[2025-12-03T22:24:41.286Z] Download progress: 1.91/9.00 GB (7.5 MB/s, ~16.2 min remaining)
+[2025-12-03T22:24:44.289Z] Download progress: 1.92/9.00 GB (5.6 MB/s, ~21.7 min remaining)
+[2025-12-03T22:24:47.293Z] Download progress: 1.95/9.00 GB (7.5 MB/s, ~16.0 min remaining)
+[2025-12-03T22:24:50.295Z] Download progress: 1.97/9.00 GB (8.2 MB/s, ~14.6 min remaining)
+[2025-12-03T22:24:53.299Z] Download progress: 1.99/9.00 GB (8.0 MB/s, ~15.0 min remaining)
+[2025-12-03T22:24:56.302Z] Download progress: 2.01/9.00 GB (6.7 MB/s, ~17.8 min remaining)
+[2025-12-03T22:24:59.304Z] Download progress: 2.04/9.00 GB (8.2 MB/s, ~14.5 min remaining)
+[2025-12-03T22:25:02.307Z] Download progress: 2.05/9.00 GB (5.4 MB/s, ~22.0 min remaining)
+[2025-12-03T22:25:05.311Z] Download progress: 2.07/9.00 GB (6.8 MB/s, ~17.4 min remaining)
+[2025-12-03T22:25:08.315Z] Download progress: 2.09/9.00 GB (7.1 MB/s, ~16.5 min remaining)
+[2025-12-03T22:25:11.316Z] Download progress: 2.11/9.00 GB (7.2 MB/s, ~16.3 min remaining)
+[2025-12-03T22:25:14.319Z] Download progress: 2.14/9.00 GB (7.2 MB/s, ~16.2 min remaining)
+[2025-12-03T22:25:17.321Z] Download progress: 2.16/9.00 GB (8.0 MB/s, ~14.5 min remaining)
+[2025-12-03T22:25:20.322Z] Download progress: 2.18/9.00 GB (6.6 MB/s, ~17.8 min remaining)
+[2025-12-03T22:25:23.326Z] Download progress: 2.20/9.00 GB (7.4 MB/s, ~15.7 min remaining)
+[2025-12-03T22:25:26.328Z] Download progress: 2.22/9.00 GB (7.9 MB/s, ~14.7 min remaining)
+[2025-12-03T22:25:29.330Z] Download progress: 2.25/9.00 GB (8.0 MB/s, ~14.5 min remaining)
+[2025-12-03T22:25:32.332Z] Download progress: 2.27/9.00 GB (7.4 MB/s, ~15.6 min remaining)
+[2025-12-03T22:25:35.336Z] Download progress: 2.29/9.00 GB (7.9 MB/s, ~14.5 min remaining)
+[2025-12-03T22:25:38.338Z] Download progress: 2.31/9.00 GB (7.8 MB/s, ~14.6 min remaining)
+[2025-12-03T22:25:41.341Z] Download progress: 2.34/9.00 GB (7.9 MB/s, ~14.4 min remaining)
+[2025-12-03T22:25:44.343Z] Download progress: 2.35/9.00 GB (5.4 MB/s, ~21.0 min remaining)
+[2025-12-03T22:25:47.347Z] Download progress: 2.37/9.00 GB (4.6 MB/s, ~24.8 min remaining)
+[2025-12-03T22:25:50.349Z] Download progress: 2.38/9.00 GB (5.1 MB/s, ~22.3 min remaining)
+[2025-12-03T22:25:53.353Z] Download progress: 2.40/9.00 GB (5.1 MB/s, ~22.3 min remaining)
+[2025-12-03T22:25:56.355Z] Download progress: 2.41/9.00 GB (4.4 MB/s, ~25.6 min remaining)
+[2025-12-03T22:25:59.356Z] Download progress: 2.42/9.00 GB (5.1 MB/s, ~21.8 min remaining)
+[2025-12-03T22:26:02.360Z] Download progress: 2.44/9.00 GB (4.7 MB/s, ~23.7 min remaining)
+[2025-12-03T22:26:05.364Z] Download progress: 2.45/9.00 GB (5.2 MB/s, ~21.4 min remaining)
+[2025-12-03T22:26:08.368Z] Download progress: 2.47/9.00 GB (5.6 MB/s, ~20.1 min remaining)
+[2025-12-03T22:26:11.369Z] Download progress: 2.49/9.00 GB (6.8 MB/s, ~16.3 min remaining)
+[2025-12-03T22:26:14.372Z] Download progress: 2.51/9.00 GB (8.0 MB/s, ~13.9 min remaining)
+[2025-12-03T22:26:17.376Z] Download progress: 2.54/9.00 GB (8.0 MB/s, ~13.9 min remaining)
+[2025-12-03T22:26:20.376Z] Download progress: 2.56/9.00 GB (8.0 MB/s, ~13.7 min remaining)
+[2025-12-03T22:26:23.379Z] Download progress: 2.58/9.00 GB (8.0 MB/s, ~13.6 min remaining)
+[2025-12-03T22:26:26.382Z] Download progress: 2.61/9.00 GB (8.1 MB/s, ~13.4 min remaining)
+[2025-12-03T22:26:29.384Z] Download progress: 2.63/9.00 GB (8.0 MB/s, ~13.6 min remaining)
+[2025-12-03T22:26:32.387Z] Download progress: 2.66/9.00 GB (8.2 MB/s, ~13.2 min remaining)
+[2025-12-03T22:26:35.391Z] Download progress: 2.68/9.00 GB (6.8 MB/s, ~15.9 min remaining)
+[2025-12-03T22:26:38.394Z] Download progress: 2.70/9.00 GB (7.4 MB/s, ~14.6 min remaining)
+[2025-12-03T22:26:41.397Z] Download progress: 2.72/9.00 GB (8.0 MB/s, ~13.5 min remaining)
+[2025-12-03T22:26:44.400Z] Download progress: 2.74/9.00 GB (8.0 MB/s, ~13.3 min remaining)
+[2025-12-03T22:26:47.403Z] Download progress: 2.77/9.00 GB (8.0 MB/s, ~13.4 min remaining)
+[2025-12-03T22:26:50.405Z] Download progress: 2.79/9.00 GB (6.4 MB/s, ~16.6 min remaining)
+[2025-12-03T22:26:53.409Z] Download progress: 2.80/9.00 GB (6.0 MB/s, ~17.7 min remaining)
+[2025-12-03T22:26:56.413Z] Download progress: 2.82/9.00 GB (6.1 MB/s, ~17.4 min remaining)
+[2025-12-03T22:26:59.415Z] Download progress: 2.84/9.00 GB (5.8 MB/s, ~18.1 min remaining)
+[2025-12-03T22:27:02.417Z] Download progress: 2.85/9.00 GB (5.5 MB/s, ~19.2 min remaining)
+[2025-12-03T22:27:05.421Z] Download progress: 2.87/9.00 GB (6.1 MB/s, ~17.0 min remaining)
+[2025-12-03T22:27:08.423Z] Download progress: 2.89/9.00 GB (5.6 MB/s, ~18.8 min remaining)
+[2025-12-03T22:27:11.426Z] Download progress: 2.91/9.00 GB (6.2 MB/s, ~16.7 min remaining)
+[2025-12-03T22:27:14.429Z] Download progress: 2.93/9.00 GB (6.6 MB/s, ~15.8 min remaining)
+[2025-12-03T22:27:17.434Z] Download progress: 2.95/9.00 GB (7.7 MB/s, ~13.4 min remaining)
+[2025-12-03T22:27:20.436Z] Download progress: 2.96/9.00 GB (5.2 MB/s, ~19.7 min remaining)
+[2025-12-03T22:27:23.438Z] Download progress: 2.98/9.00 GB (6.6 MB/s, ~15.7 min remaining)
+[2025-12-03T22:27:26.443Z] Download progress: 3.00/9.00 GB (6.2 MB/s, ~16.5 min remaining)
+[2025-12-03T22:27:29.444Z] Download progress: 3.02/9.00 GB (8.0 MB/s, ~12.7 min remaining)

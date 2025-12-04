@@ -9,6 +9,8 @@
 
 import { writable, get } from 'svelte/store';
 import { calculateVoiceVolume } from '../utils/audio-utils.js';
+import { NativeVoice, isCapacitorNative } from '../plugins/native-voice';
+import { apiFetch } from '../api-config';
 
 // TypeScript declarations for Web Speech API
 interface SpeechRecognitionEvent extends Event {
@@ -109,7 +111,7 @@ interface UseMicrophoneOptions {
  * stealing VRAM while user is actively using voice input.
  */
 function signalMicActivity(): void {
-  fetch('/api/activity-ping', { method: 'POST' }).catch(() => {
+  apiFetch('/api/activity-ping', { method: 'POST' }).catch(() => {
     // Silently ignore errors - activity tracking is best-effort
   });
 }
@@ -308,7 +310,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
    */
   async function loadVADSettings(): Promise<void> {
     try {
-      const response = await fetch('/api/voice-settings');
+      const response = await apiFetch('/api/voice-settings');
       if (response.ok) {
         const config = await response.json();
         if (config.stt?.vad) {
@@ -870,10 +872,87 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   }
 
   /**
+   * Start speech recognition using Capacitor NativeVoice plugin (Android)
+   * Uses Android's native SpeechRecognizer for true on-device recognition
+   */
+  async function startCapacitorNativeSpeech(continuous: boolean = false): Promise<void> {
+    // Don't start if TTS is playing
+    if (getTTSPlaying()) {
+      console.log('[useMicrophone] TTS playing, not starting Capacitor STT');
+      return;
+    }
+
+    try {
+      isRecording.set(true);
+      isNativeMode.set(true);
+      interimTranscript.set('');
+      signalMicActivity();
+
+      // Set up event listeners for real-time feedback
+      const partialListener = await NativeVoice.addListener('sttPartialResult', (result) => {
+        console.log('[useMicrophone] Capacitor partial:', result.transcript);
+        interimTranscript.set(result.transcript);
+      });
+
+      const volumeListener = await NativeVoice.addListener('sttVolume', (data) => {
+        // Could use for visualization
+      });
+
+      const errorListener = await NativeVoice.addListener('sttError', (error) => {
+        console.error('[useMicrophone] Capacitor STT error:', error);
+        if (error.error !== 'No speech detected') {
+          onSystemMessage(`⚠️ Speech error: ${error.error}`);
+        }
+        isRecording.set(false);
+        isNativeMode.set(false);
+      });
+
+      // Start listening and wait for result
+      const result = await NativeVoice.startListening({ language: 'en-US' });
+
+      // Clean up listeners
+      await partialListener.remove();
+      await volumeListener.remove();
+      await errorListener.remove();
+
+      console.log('[useMicrophone] Capacitor STT result:', result.transcript);
+      interimTranscript.set('');
+      isRecording.set(false);
+      isNativeMode.set(false);
+
+      if (result.transcript.trim()) {
+        onTranscript(result.transcript.trim());
+      }
+
+      // In continuous mode, restart after a short delay
+      if (continuous && isComponentMounted() && !getTTSPlaying()) {
+        setTimeout(() => {
+          if (isComponentMounted() && !getTTSPlaying()) {
+            startCapacitorNativeSpeech(true);
+          }
+        }, 500);
+      }
+
+    } catch (e) {
+      console.error('[useMicrophone] Capacitor STT failed:', e);
+      isRecording.set(false);
+      isNativeMode.set(false);
+      onSystemMessage('⚠️ Speech recognition failed');
+    }
+  }
+
+  /**
    * Start native speech recognition (single utterance mode)
-   * Uses browser's built-in speech-to-text - fast, on-device, no upload
+   * Uses Capacitor NativeVoice plugin when in Android app, otherwise Web Speech API
    */
   function startNativeSpeech(continuous: boolean = false): void {
+    // Try Capacitor NativeVoice plugin first (true Android SpeechRecognizer)
+    if (isCapacitorNative()) {
+      console.log('[useMicrophone] Using Capacitor NativeVoice plugin (Android SpeechRecognizer)');
+      startCapacitorNativeSpeech(continuous);
+      return;
+    }
+
     // Check for secure context first (HTTPS required for microphone)
     if (typeof window !== 'undefined' && !window.isSecureContext) {
       console.warn('[useMicrophone] Not in secure context (HTTPS required for microphone)');
@@ -1258,7 +1337,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
       }
 
       const buf = await blob.arrayBuffer();
-      const res = await fetch(`/api/stt?format=webm&collect=1&dur=${dur}`, {
+      const res = await apiFetch(`/api/stt?format=webm&collect=1&dur=${dur}`, {
         method: 'POST',
         body: buf
       });

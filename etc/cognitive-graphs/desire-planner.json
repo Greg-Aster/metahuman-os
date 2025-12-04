@@ -35,11 +35,11 @@
     },
     {
       "id": 4,
-      "type": "cognitive/semantic_search",
+      "type": "context/semantic_search",
       "pos": [350, 250],
       "size": [200, 100],
       "properties": {
-        "limit": 5
+        "topK": 5
       },
       "title": "Search Relevant Memories"
     },

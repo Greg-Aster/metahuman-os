@@ -13,7 +13,7 @@
  *
  * Uses LLM to identify genuine desires that the system wants to act on.
  *
- * MULTI-USER: Processes all users sequentially with isolated contexts.
+ * MULTI-USER: Processes only logged-in users (active sessions) with isolated contexts.
  */
 
 import {
@@ -22,7 +22,7 @@ import {
   acquireLock,
   isLocked,
   initGlobalLogger,
-  listUsers,
+  getLoggedInUsers,
   withUserContext,
   captureEvent,
   loadPersonaCore,
@@ -48,6 +48,10 @@ import {
   type DesireSummary,
   generateDesireId,
   getSourceWeight,
+  applyDecay,
+  applyReinforcement,
+  isAboveThreshold,
+  calculateEffectiveStrength,
   DESIRE_SOURCE_WEIGHTS,
 } from '@metahuman/core';
 
@@ -59,6 +63,7 @@ import {
 
 import {
   saveDesire,
+  moveDesire,
   listPendingDesires,
   listActiveDesires,
   listNascentDesires,
@@ -594,10 +599,10 @@ Example response:
 
   try {
     const response = await callLLM({
-      role: 'orchestrator',
+      role: 'persona',  // Use persona model - desires come from identity
       messages,
       options: {
-        temperature: 0.4,
+        temperature: 0.6,  // Slightly higher for more creative desire generation
         responseFormat: 'json',
       },
     });
@@ -630,11 +635,15 @@ Example response:
 // ============================================================================
 
 /**
- * Convert candidate to full desire object
+ * Convert candidate to full desire object.
+ * New desires start with LOW initial strength and grow through reinforcement.
  */
 function createDesire(candidate: DesireCandidate, config: Awaited<ReturnType<typeof loadConfig>>): Desire {
   const now = new Date().toISOString();
   const sourceWeight = getSourceWeight(candidate.source);
+
+  // Use config's initial strength, not candidate's - desires must grow organically
+  const initialStrength = config.thresholds.decay.initialStrength;
 
   return {
     id: generateDesireId(),
@@ -643,12 +652,13 @@ function createDesire(candidate: DesireCandidate, config: Awaited<ReturnType<typ
     reason: candidate.reason,
     source: candidate.source,
     sourceId: candidate.sourceId,
-    strength: candidate.initialStrength,
+    strength: initialStrength,  // Start small!
     baseWeight: sourceWeight,
     threshold: config.thresholds.activation,
-    decayRate: config.thresholds.decay.ratePerHour,
-    lastDecayAt: now,
+    decayRate: config.thresholds.decay.ratePerRun,
+    lastReviewedAt: now,
     reinforcements: 0,
+    runCount: 1,  // First run
     risk: candidate.risk,
     requiredTrustLevel: candidate.risk === 'none' || candidate.risk === 'low'
       ? 'suggest'
@@ -682,6 +692,273 @@ function isDuplicate(candidate: DesireCandidate, existing: DesireSummary[]): boo
   }
 
   return false;
+}
+
+// ============================================================================
+// Desire Nurturing System (Run-Based)
+// ============================================================================
+
+/**
+ * Use LLM to identify which existing desires are reinforced by current inputs.
+ * Returns a map of desire ID -> reinforcement reasons.
+ */
+async function identifyReinforcedDesires(
+  existingDesires: Desire[],
+  inputs: DesireGeneratorInputs
+): Promise<Map<string, string>> {
+  if (existingDesires.length === 0) {
+    return new Map();
+  }
+
+  const formattedDesires = existingDesires
+    .map(d => `- [${d.id}] "${d.title}" (strength: ${d.strength.toFixed(2)}, source: ${d.source})`)
+    .join('\n');
+
+  const formattedInputs: string[] = [];
+
+  if (inputs.personaGoals.length > 0) {
+    formattedInputs.push(`Goals: ${inputs.personaGoals.map(g => g.goal).join('; ')}`);
+  }
+  if (inputs.urgentTasks.length > 0) {
+    formattedInputs.push(`Urgent tasks: ${inputs.urgentTasks.map(t => t.title).join('; ')}`);
+  }
+  if (inputs.activeTasks.length > 0) {
+    formattedInputs.push(`Tasks: ${inputs.activeTasks.slice(0, 5).map(t => t.title).join('; ')}`);
+  }
+  if (inputs.recentMemories.length > 0) {
+    formattedInputs.push(`Recent memories: ${inputs.recentMemories.slice(0, 5).map(m => m.content.substring(0, 80)).join('; ')}`);
+  }
+  if (inputs.recentReflections.length > 0) {
+    formattedInputs.push(`Reflections: ${inputs.recentReflections.slice(0, 3).map(r => r.content.substring(0, 80)).join('; ')}`);
+  }
+  if (inputs.recentDreams.length > 0) {
+    formattedInputs.push(`Dreams: ${inputs.recentDreams.slice(0, 2).map(d => d.content.substring(0, 80)).join('; ')}`);
+  }
+
+  if (formattedInputs.length === 0) {
+    return new Map();
+  }
+
+  const systemPrompt = `You are reviewing existing desires to see if current experiences reinforce them.
+A desire is reinforced when current inputs (memories, tasks, goals, reflections) relate to or support that desire.
+Reinforcement means the desire becomes more relevant based on recent experience.`;
+
+  const userPrompt = `## Existing Desires
+${formattedDesires}
+
+## Current Inputs
+${formattedInputs.join('\n')}
+
+## Task
+Identify which desires are reinforced by the current inputs. A desire is reinforced if:
+- A memory, task, or reflection relates to the desire's theme
+- Recent activity supports the desire's goal
+- The desire becomes more relevant based on new information
+
+Return JSON array of reinforced desires:
+[{"id": "desire-xxx", "reason": "Brief reason why this is reinforced"}]
+
+Return empty array [] if no desires are reinforced. Be selective - only reinforce desires with genuine connections.`;
+
+  const messages: RouterMessage[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt },
+  ];
+
+  try {
+    const response = await callLLM({
+      role: 'persona',
+      messages,
+      options: { temperature: 0.3, responseFormat: 'json' },
+    });
+
+    if (!response.content) return new Map();
+
+    const jsonMatch = response.content.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return new Map();
+
+    const reinforcements = JSON.parse(jsonMatch[0]) as Array<{ id: string; reason: string }>;
+    const result = new Map<string, string>();
+
+    for (const r of reinforcements) {
+      result.set(r.id, r.reason);
+    }
+
+    console.log(`${LOG_PREFIX} LLM identified ${result.size} reinforced desires`);
+    return result;
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Error identifying reinforcements:`, error);
+    return new Map();
+  }
+}
+
+/**
+ * Nurture existing desires: apply decay to unreinforced, boost reinforced.
+ * This is the heart of the run-based desire system.
+ */
+async function nurtureExistingDesires(
+  username: string,
+  inputs: DesireGeneratorInputs,
+  config: Awaited<ReturnType<typeof loadConfig>>
+): Promise<{ reinforced: number; decayed: number; abandoned: number }> {
+  // Load ALL nascent and pending desires
+  const nascentDesires = await listNascentDesires(username);
+  const pendingDesires = await listPendingDesires(username);
+  const allDesires = [...nascentDesires, ...pendingDesires];
+
+  if (allDesires.length === 0) {
+    console.log(`${LOG_PREFIX} No existing desires to nurture`);
+    return { reinforced: 0, decayed: 0, abandoned: 0 };
+  }
+
+  console.log(`${LOG_PREFIX} Nurturing ${allDesires.length} existing desires...`);
+
+  // Use LLM to identify which desires are reinforced
+  const reinforcements = await identifyReinforcedDesires(allDesires, inputs);
+
+  const now = new Date().toISOString();
+  let reinforced = 0;
+  let decayed = 0;
+  let abandoned = 0;
+
+  for (const desire of allDesires) {
+    const isReinforced = reinforcements.has(desire.id);
+
+    if (isReinforced) {
+      // Reinforce: boost strength
+      const newStrength = applyReinforcement(desire.strength, config.thresholds.decay.reinforcementBoost);
+      desire.strength = newStrength;
+      desire.reinforcements += 1;
+      desire.updatedAt = now;
+      desire.lastReviewedAt = now;
+      desire.runCount = (desire.runCount || 0) + 1;
+
+      console.log(`${LOG_PREFIX} ✓ Reinforced "${desire.title}" → ${newStrength.toFixed(2)} (${desire.reinforcements} times)`);
+      reinforced++;
+
+      audit({
+        category: 'agent',
+        level: 'info',
+        event: 'desire_reinforced',
+        actor: 'desire-generator',
+        details: {
+          desireId: desire.id,
+          title: desire.title,
+          newStrength,
+          reinforcements: desire.reinforcements,
+          reason: reinforcements.get(desire.id),
+          username,
+        },
+      });
+    } else {
+      // Decay: reduce strength
+      const newStrength = applyDecay(
+        desire.strength,
+        config.thresholds.decay.ratePerRun,
+        config.thresholds.decay.minStrength
+      );
+
+      desire.strength = newStrength;
+      desire.updatedAt = now;
+      desire.lastReviewedAt = now;
+      desire.runCount = (desire.runCount || 0) + 1;
+
+      // Check for abandonment
+      if (newStrength <= config.thresholds.decay.minStrength) {
+        desire.status = 'abandoned';
+        desire.completedAt = now;
+        abandoned++;
+        console.log(`${LOG_PREFIX} ✗ Abandoned "${desire.title}" (decayed below minimum)`);
+
+        audit({
+          category: 'agent',
+          level: 'info',
+          event: 'desire_abandoned',
+          actor: 'desire-generator',
+          details: { desireId: desire.id, title: desire.title, finalStrength: newStrength, username },
+        });
+      } else {
+        decayed++;
+        console.log(`${LOG_PREFIX} ↓ Decayed "${desire.title}" → ${newStrength.toFixed(2)}`);
+      }
+    }
+
+    // Save updated desire
+    await saveDesire(desire, username);
+  }
+
+  console.log(`${LOG_PREFIX} Nurture complete: ${reinforced} reinforced, ${decayed} decayed, ${abandoned} abandoned`);
+  return { reinforced, decayed, abandoned };
+}
+
+// ============================================================================
+// Activation Checking (replaces desire-evaluator)
+// ============================================================================
+
+/**
+ * Check if any desires have crossed the activation threshold.
+ * Moves nascent desires to pending when they reach sufficient strength.
+ */
+async function checkActivations(
+  username: string,
+  config: Awaited<ReturnType<typeof loadConfig>>
+): Promise<number> {
+  const nascentDesires = await listNascentDesires(username);
+  const pendingDesires = await listPendingDesires(username);
+  const activeDesires = await listActiveDesires(username);
+
+  const now = new Date().toISOString();
+  let activated = 0;
+
+  // Check limit
+  const currentActive = activeDesires.length + pendingDesires.length;
+  const maxActive = config.limits.maxActiveDesires;
+
+  for (const desire of nascentDesires) {
+    if (currentActive + activated >= maxActive) {
+      console.log(`${LOG_PREFIX} Active desire limit reached (${maxActive})`);
+      break;
+    }
+
+    // Check if above threshold
+    if (isAboveThreshold(desire)) {
+      const oldStatus = desire.status;
+      desire.status = 'pending';
+      desire.activatedAt = now;
+      desire.updatedAt = now;
+      activated++;
+
+      // Move from nascent to pending
+      await moveDesire(desire, oldStatus, 'pending', username);
+
+      const effectiveStrength = calculateEffectiveStrength(desire.strength, desire.baseWeight);
+      console.log(`${LOG_PREFIX} ⬆ Activated "${desire.title}" (effective: ${effectiveStrength.toFixed(2)}, threshold: ${desire.threshold})`);
+
+      audit({
+        category: 'agent',
+        level: 'info',
+        event: 'desire_activated',
+        actor: 'desire-generator',
+        details: {
+          desireId: desire.id,
+          title: desire.title,
+          strength: desire.strength,
+          effectiveStrength,
+          threshold: desire.threshold,
+          source: desire.source,
+          reinforcements: desire.reinforcements,
+          runCount: desire.runCount,
+          username,
+        },
+      });
+    }
+  }
+
+  if (activated > 0) {
+    console.log(`${LOG_PREFIX} ${activated} desire(s) activated (crossed threshold)`);
+  }
+
+  return activated;
 }
 
 // ============================================================================
@@ -738,20 +1015,50 @@ async function generateDesiresForUser(username: string): Promise<number> {
     inputs.recentReflections.length > 0 ||
     inputs.recentDreams.length > 0;
 
+  // =========================================================================
+  // PHASE 1: Nurture existing desires (run-based decay/reinforcement)
+  // =========================================================================
+  // Even if no new inputs, we still apply decay to existing desires
+  const nurtureResult = await nurtureExistingDesires(username, inputs, config);
+
+  // =========================================================================
+  // PHASE 1.5: Check activations (desires that crossed threshold)
+  // =========================================================================
+  const activatedCount = await checkActivations(username, config);
+
   if (!hasInputs) {
-    console.log(`${LOG_PREFIX} No inputs available for desire generation`);
-    return 0;
+    console.log(`${LOG_PREFIX} No inputs available for new desire generation`);
+    // Still return nurture stats even if no new desires
+    return nurtureResult.reinforced + activatedCount;
   }
 
-  // Identify desires using LLM
+  // =========================================================================
+  // PHASE 2: Generate new desires (only if capacity available)
+  // =========================================================================
+  // Re-check limits after nurturing (some may have been abandoned)
+  const updatedNascent = await listNascentDesires(username);
+  const updatedPending = await listPendingDesires(username);
+  const updatedTotal = activeDesires.length + updatedPending.length + updatedNascent.length;
+
+  if (updatedTotal >= config.limits.maxActiveDesires + config.limits.maxPendingDesires) {
+    console.log(`${LOG_PREFIX} Desire limit still reached (${updatedTotal}), skipping new generation`);
+    return nurtureResult.reinforced;
+  }
+
+  // Identify NEW desires using LLM
   const candidates = await identifyDesires(inputs);
   if (candidates.length === 0) {
-    console.log(`${LOG_PREFIX} No desires identified`);
-    return 0;
+    console.log(`${LOG_PREFIX} No new desires identified`);
+    return nurtureResult.reinforced;
   }
 
-  // Filter duplicates
-  const existingSummaries = [...inputs.activeDesires, ...inputs.recentlyRejected];
+  // Filter duplicates - include currently active desires (post-nurture)
+  const existingSummaries = [
+    ...inputs.activeDesires,
+    ...inputs.recentlyRejected,
+    ...updatedNascent.map(d => ({ id: d.id, title: d.title, source: d.source, status: d.status, strength: d.strength })),
+    ...updatedPending.map(d => ({ id: d.id, title: d.title, source: d.source, status: d.status, strength: d.strength })),
+  ];
   const uniqueCandidates = candidates.filter(c => !isDuplicate(c, existingSummaries));
   console.log(`${LOG_PREFIX} ${uniqueCandidates.length} unique candidates after deduplication`);
 
@@ -768,7 +1075,7 @@ async function generateDesiresForUser(username: string): Promise<number> {
 
       // Audit
       audit({
-        category: 'agency',
+        category: 'agent',
         level: 'info',
         event: 'desire_generated',
         actor: 'desire-generator',
@@ -792,13 +1099,33 @@ async function generateDesiresForUser(username: string): Promise<number> {
   }
 
   // Log to inner dialogue if enabled
-  if (config.logging.logToInnerDialogue && created > 0) {
-    const desireList = uniqueCandidates
-      .slice(0, created)
-      .map(c => `• ${c.title} (${c.source})`)
-      .join('\n');
+  if (config.logging.logToInnerDialogue && (created > 0 || nurtureResult.reinforced > 0 || activatedCount > 0)) {
+    const parts: string[] = [];
 
-    const innerDialogue = `💭 Agency noticed new intentions forming:\n\n${desireList}\n\nThese desires will be evaluated and may lead to action if they grow stronger.`;
+    // Report on nurtured desires
+    if (nurtureResult.reinforced > 0) {
+      parts.push(`✓ ${nurtureResult.reinforced} desire(s) grew stronger from recent experiences`);
+    }
+    if (nurtureResult.decayed > 0) {
+      parts.push(`↓ ${nurtureResult.decayed} desire(s) faded slightly`);
+    }
+    if (nurtureResult.abandoned > 0) {
+      parts.push(`✗ ${nurtureResult.abandoned} desire(s) faded away completely`);
+    }
+    if (activatedCount > 0) {
+      parts.push(`⬆ ${activatedCount} desire(s) reached activation threshold!`);
+    }
+
+    // Report on new desires
+    if (created > 0) {
+      const desireList = uniqueCandidates
+        .slice(0, created)
+        .map(c => `  • ${c.title} (${c.source})`)
+        .join('\n');
+      parts.push(`🌱 ${created} new seed desire(s) planted:\n${desireList}`);
+    }
+
+    const innerDialogue = `💭 Agency Review:\n\n${parts.join('\n')}\n\nDesires grow through repeated reinforcement from experiences and fade without it.`;
 
     captureEvent(innerDialogue, {
       type: 'inner_dialogue',
@@ -806,12 +1133,16 @@ async function generateDesiresForUser(username: string): Promise<number> {
       metadata: {
         agency: true,
         desiresGenerated: created,
+        desiresReinforced: nurtureResult.reinforced,
+        desiresDecayed: nurtureResult.decayed,
+        desiresAbandoned: nurtureResult.abandoned,
+        desiresActivated: activatedCount,
         sources: [...new Set(uniqueCandidates.map(c => c.source))],
       },
     });
   }
 
-  return created;
+  return created + nurtureResult.reinforced + activatedCount;
 }
 
 // ============================================================================
@@ -819,7 +1150,7 @@ async function generateDesiresForUser(username: string): Promise<number> {
 // ============================================================================
 
 async function main() {
-  initGlobalLogger();
+  initGlobalLogger('desire-generator');
   console.log(`${LOG_PREFIX} Starting desire generator agent...`);
 
   // Check lock
@@ -841,31 +1172,34 @@ async function main() {
     if (!running) {
       console.warn(`${LOG_PREFIX} Ollama is not running; skipping. Start with: ollama serve`);
       audit({
-        category: 'system',
+        category: 'agent',
         level: 'warn',
+        event: 'desire_generator_skipped',
         message: 'Desire generator skipped: Ollama not running',
         actor: 'desire-generator',
       });
       return;
     }
 
-    // Process all users
-    const users = listUsers();
-    console.log(`${LOG_PREFIX} Processing ${users.length} user(s)`);
+    // Process only logged-in users (not all profiles)
+    const users = getLoggedInUsers();
+    console.log(`${LOG_PREFIX} Processing ${users.length} logged-in user(s)`);
 
     let totalCreated = 0;
 
-    for (const username of users) {
+    for (const user of users) {
+      const { userId, username, role } = user;
       try {
-        const created = await withUserContext({ username, role: 'owner' }, async () => {
+        const created = await withUserContext({ userId, username, role }, async () => {
           return await generateDesiresForUser(username);
         });
         totalCreated += created;
       } catch (error) {
         console.error(`${LOG_PREFIX} Error processing user ${username}:`, error);
         audit({
-          category: 'system',
+          category: 'agent',
           level: 'error',
+          event: 'desire_generator_error',
           message: `Desire generator error for user ${username}`,
           actor: 'desire-generator',
           details: { error: String(error) },
@@ -876,8 +1210,9 @@ async function main() {
     console.log(`${LOG_PREFIX} Complete. Generated ${totalCreated} desire(s) across all users.`);
 
     audit({
-      category: 'system',
+      category: 'agent',
       level: 'info',
+      event: 'desire_generator_completed',
       message: 'Desire generator completed',
       actor: 'desire-generator',
       details: { totalCreated, usersProcessed: users.length },

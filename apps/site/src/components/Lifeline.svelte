@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '../lib/client/api-config';
   let showOverlay = false;
   let error = '';
   let triggering = false;
@@ -70,7 +71,7 @@
     terminalActive = true;
 
     try {
-      const res = await fetch('/api/lifeline/trigger', {
+      const res = await apiFetch('/api/lifeline/trigger', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source: 'ui' }),
@@ -85,7 +86,7 @@
       // Fetch active model for theatrical terminal output
       let activeModel = 'unknown';
       try {
-        const mres = await fetch('/api/models');
+        const mres = await apiFetch('/api/models');
         if (mres.ok) {
           const m = await mres.json();
           activeModel = m.activeModel || activeModel;

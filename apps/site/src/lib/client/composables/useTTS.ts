@@ -5,6 +5,8 @@
  */
 
 import { writable, get } from 'svelte/store';
+import { NativeVoice, isCapacitorNative } from '../plugins/native-voice';
+import { apiFetch } from '../api-config';
 
 // Types
 interface VoiceModelsCache {
@@ -215,7 +217,7 @@ export function useTTS() {
     }
 
     try {
-      const voiceModelsRes = await fetch('/api/voice-models');
+      const voiceModelsRes = await apiFetch('/api/voice-models');
       if (voiceModelsRes.ok) {
         const voiceData = await voiceModelsRes.json();
         const result: VoiceModelsCache = {
@@ -243,7 +245,7 @@ export function useTTS() {
     }
 
     try {
-      const settingsRes = await fetch('/api/voice-settings');
+      const settingsRes = await apiFetch('/api/voice-settings');
       if (settingsRes.ok) {
         const settings = await settingsRes.json();
         voiceProviderCache = { provider: settings.provider };
@@ -320,7 +322,7 @@ export function useTTS() {
         ttsBody.models = voiceModels;
       }
 
-      const ttsRes = await fetch('/api/tts', {
+      const ttsRes = await apiFetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(ttsBody),
@@ -436,7 +438,7 @@ export function useTTS() {
       }
 
       // Start SSE connection to streaming endpoint
-      const response = await fetch('/api/tts-stream', {
+      const response = await apiFetch('/api/tts-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
@@ -660,34 +662,49 @@ export function useTTS() {
   }
 
   /**
-   * Speak text using native device TTS (Web Speech API)
-   * Used when native voice mode is enabled
+   * Speak text using native device TTS
+   * Uses Capacitor NativeVoice plugin when in Android app, falls back to Web Speech API
    */
   async function speakTextNative(text: string): Promise<void> {
-    console.log('[useTTS] 🔊 speakTextNative called (NATIVE WEB SPEECH API)');
     const speechText = normalizeTextForSpeech(text);
     if (!speechText) {
       console.log('[useTTS] No speech text after normalization, aborting');
       return;
     }
 
-    // Stop any existing playback (both native and server)
+    // Stop any existing playback
     stopActiveAudio();
     stopNativeTTS();
 
+    // Try Capacitor native plugin first (true native Android TTS)
+    if (isCapacitorNative()) {
+      console.log('[useTTS] 🔊 Using Capacitor NativeVoice plugin (true Android TTS)');
+      try {
+        isPlaying.set(true);
+        await NativeVoice.speak({ text: speechText, rate: 1.0, pitch: 1.0 });
+        isPlaying.set(false);
+        return;
+      } catch (e) {
+        console.warn('[useTTS] Capacitor TTS failed, falling back to Web Speech API:', e);
+        isPlaying.set(false);
+        // Fall through to Web Speech API
+      }
+    }
+
+    // Fallback to Web Speech API
+    console.log('[useTTS] 🔊 Using Web Speech API');
     return new Promise((resolve, reject) => {
       try {
         nativeUtterance = new SpeechSynthesisUtterance(speechText);
 
         // Configure voice settings
-        nativeUtterance.rate = 1.0;  // Normal speed
-        nativeUtterance.pitch = 1.0; // Normal pitch
-        nativeUtterance.volume = 1.0; // Full volume
+        nativeUtterance.rate = 1.0;
+        nativeUtterance.pitch = 1.0;
+        nativeUtterance.volume = 1.0;
 
         // Try to get a good voice (prefer English voices)
         const voices = window.speechSynthesis.getVoices();
         if (voices.length > 0) {
-          // Prefer Google voices on Android, or any English voice
           const preferredVoice = voices.find(v =>
             v.name.includes('Google') && v.lang.startsWith('en')
           ) || voices.find(v =>
@@ -696,7 +713,7 @@ export function useTTS() {
 
           if (preferredVoice) {
             nativeUtterance.voice = preferredVoice;
-            console.log('[useTTS] Using native voice:', preferredVoice.name);
+            console.log('[useTTS] Using voice:', preferredVoice.name);
           }
         }
 
@@ -719,7 +736,6 @@ export function useTTS() {
           reject(new Error(event.error));
         };
 
-        // Speak!
         window.speechSynthesis.speak(nativeUtterance);
 
       } catch (e) {

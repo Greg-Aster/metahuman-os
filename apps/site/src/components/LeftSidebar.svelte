@@ -4,6 +4,7 @@
   import { activeView, statusStore, statusRefreshTrigger, yoloModeStore } from '../stores/navigation';
   import { currentMode, isOwner } from '../stores/security-policy';
   import { pendingCount, loadApprovals } from '../stores/approvals';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface MenuItem {
     id: string;
@@ -142,7 +143,7 @@
   
   async function loadTrustOptions() {
     try {
-      const res = await fetch('/api/trust');
+      const res = await apiFetch('/api/trust');
       const data = await res.json();
       if (res.ok) {
         trustOptions = Array.isArray(data.available) ? data.available : [];
@@ -162,7 +163,7 @@
 
   async function setTrust(level: string) {
     try {
-      const res = await fetch('/api/trust', {
+      const res = await apiFetch('/api/trust', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ level }),
@@ -266,7 +267,7 @@
 
     // Toggle the setting via API
     try {
-      const response = await fetch('/api/persona-toggle', {
+      const response = await apiFetch('/api/persona-toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: newState }),
@@ -299,7 +300,7 @@
    */
   async function loadFacets() {
     try {
-      const response = await fetch('/api/persona-facet');
+      const response = await apiFetch('/api/persona-facet');
       const data = await response.json();
       activeFacet = data.activeFacet || 'default';
       facets = data.facets || {};
@@ -333,7 +334,7 @@
 
     // Switch to the next facet
     try {
-      const response = await fetch('/api/persona-facet', {
+      const response = await apiFetch('/api/persona-facet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ facet: nextFacet }),
@@ -381,7 +382,7 @@
     loadingModelRegistry = true;
 
     try {
-      const response = await fetch('/api/model-registry');
+      const response = await apiFetch('/api/model-registry');
       const data = await response.json();
 
       if (data.success) {
@@ -458,7 +459,7 @@
         payload.cognitiveMode = mode;
       }
 
-      const response = await fetch('/api/model-registry', {
+      const response = await apiFetch('/api/model-registry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -495,7 +496,7 @@
 
   async function warmupModel(role: string): Promise<void> {
     try {
-      const response = await fetch('/api/warmup-model', {
+      const response = await apiFetch('/api/warmup-model', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ role }),
@@ -536,7 +537,7 @@
 
   async function fetchCurrentUser() {
     try {
-      const response = await fetch('/api/auth/me');
+      const response = await apiFetch('/api/auth/me');
       const data = await response.json();
       if (data.success && data.user) {
         currentUser = data.user;

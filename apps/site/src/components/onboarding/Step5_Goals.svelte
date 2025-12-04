@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { apiFetch } from '../../lib/client/api-config';
+
   export let onNext: () => void;
   export let onBack: () => void;
   export let onSkip: () => void;
@@ -73,7 +75,7 @@
       };
 
       // Save goals to persona/core.json
-      const personaResponse = await fetch('/api/persona', {
+      const personaResponse = await apiFetch('/api/persona', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -90,7 +92,7 @@
       // Create tasks for short-term goals
       let tasksCreated = 0;
       for (const goal of goals.filter(g => g.category === 'short')) {
-        const taskResponse = await fetch('/api/tasks', {
+        const taskResponse = await apiFetch('/api/tasks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -107,7 +109,7 @@
       }
 
       // Update onboarding state
-      await fetch('/api/onboarding/state', {
+      await apiFetch('/api/onboarding/state', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

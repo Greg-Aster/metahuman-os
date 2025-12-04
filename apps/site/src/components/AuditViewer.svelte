@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { auditDataStore, auditLoadingStore, auditErrorStore, type AuditEntry, type AuditResponse } from '../stores/audit';
+  import { apiFetch } from '../lib/client/api-config';
 
   let selectedCategory: string = 'all';
   let selectedLevel: string = 'all';
 
   async function loadAudit() {
     try {
-      const res = await fetch('/api/audit');
+      const res = await apiFetch('/api/audit');
       if (!res.ok) throw new Error('Failed to load audit log');
       const data = await res.json();
       auditDataStore.set(data);

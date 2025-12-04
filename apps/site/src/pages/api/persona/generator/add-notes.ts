@@ -81,9 +81,8 @@ const handler: APIRoute = async ({ cookies, request }) => {
     savePersona(personaPath, updated);
 
     // Save notes as episodic memory
-    await captureEvent({
+    await captureEvent(`Persona Notes - Self-Reflection\n\n${notes}`, {
       type: 'observation',
-      content: `Persona Notes - Self-Reflection\n\n${notes}`,
       tags: ['persona-notes', 'self-reflection', 'quick-add'],
       metadata: {
         source: 'persona-generator-notes',

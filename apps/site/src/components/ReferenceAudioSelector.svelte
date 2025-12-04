@@ -6,6 +6,7 @@
    */
 
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   export let provider: 'piper' | 'sovits' | 'gpt-sovits' | 'rvc' = 'gpt-sovits';
   export let speakerId: string = 'default';
@@ -51,7 +52,7 @@
     loading = true;
     error = '';
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/sovits-training?action=available-samples&provider=${provider}&minQuality=${minQuality}&limit=1000`
       );
       if (!response.ok) throw new Error('Failed to load samples');
@@ -74,7 +75,7 @@
 
   async function loadCurrentReference() {
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/sovits-training?action=current-reference&provider=gpt-sovits&speakerId=${speakerId}`
       );
       if (response.ok) {
@@ -91,7 +92,7 @@
     error = '';
 
     try {
-      const response = await fetch('/api/sovits-training', {
+      const response = await apiFetch('/api/sovits-training', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -129,7 +130,7 @@
 
       // Then trigger a voice test via TTS API
       const testText = 'Testing voice with this reference sample.';
-      const response = await fetch('/api/tts', {
+      const response = await apiFetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import ReviewApplyDialog from './ReviewApplyDialog.svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface Question {
     id: string;
@@ -117,7 +118,7 @@
 
   async function loadSessionHistory() {
     try {
-      const response = await fetch('/api/persona/generator/load');
+      const response = await apiFetch('/api/persona/generator/load');
       if (response.ok) {
         const data = await response.json();
         sessions = data.sessions || [];
@@ -132,7 +133,7 @@
     error = '';
 
     try {
-      const response = await fetch('/api/persona/generator/start', {
+      const response = await apiFetch('/api/persona/generator/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -168,7 +169,7 @@
     const shouldPersist = options?.persist ?? true;
 
     try {
-      const response = await fetch(`/api/persona/generator/load?sessionId=${sessionId}`);
+      const response = await apiFetch(`/api/persona/generator/load?sessionId=${sessionId}`);
 
       if (!response.ok) {
         const data = await response.json();
@@ -217,7 +218,7 @@
     error = '';
 
     try {
-      const response = await fetch('/api/persona/generator/update-answer', {
+      const response = await apiFetch('/api/persona/generator/update-answer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -257,7 +258,7 @@
     const lastQuestion = currentSession.questions[currentSession.questions.length - 1];
 
     try {
-      const response = await fetch('/api/persona/generator/answer', {
+      const response = await apiFetch('/api/persona/generator/answer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -317,7 +318,7 @@
     error = '';
 
     try {
-      const response = await fetch('/api/persona/generator/finalize', {
+      const response = await apiFetch('/api/persona/generator/finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -347,7 +348,7 @@
     if (!currentSession) return;
 
     try {
-      const response = await fetch('/api/persona/generator/apply', {
+      const response = await apiFetch('/api/persona/generator/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -390,7 +391,7 @@
     if (!confirm('Are you sure you want to discard this interview session?')) return;
 
     try {
-      await fetch('/api/persona/generator/discard', {
+      await apiFetch('/api/persona/generator/discard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: currentSession.sessionId }),
@@ -426,7 +427,7 @@
     quickNotesSuccess = '';
 
     try {
-      const response = await fetch('/api/persona/generator/add-notes', {
+      const response = await apiFetch('/api/persona/generator/add-notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes: quickNotesText }),
@@ -458,7 +459,7 @@
     adminError = '';
 
     try {
-      const response = await fetch('/api/persona/generator/purge-sessions', {
+      const response = await apiFetch('/api/persona/generator/purge-sessions', {
         method: 'POST',
       });
 
@@ -489,7 +490,7 @@
     adminError = '';
 
     try {
-      const response = await fetch('/api/persona/generator/reset-persona', {
+      const response = await apiFetch('/api/persona/generator/reset-persona', {
         method: 'POST',
       });
 

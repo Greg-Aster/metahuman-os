@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface Addon {
     id: string;
@@ -46,7 +47,7 @@
   async function loadAddons() {
     try {
       loading = true;
-      const response = await fetch('/api/addons');
+      const response = await apiFetch('/api/addons');
       if (!response.ok) throw new Error('Failed to load addons');
 
       const data = await response.json();
@@ -87,7 +88,7 @@
       }
 
       // Use universal process streaming endpoint
-      const response = await fetch('/api/process-stream', {
+      const response = await apiFetch('/api/process-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -148,7 +149,7 @@
               // Mark as installed and reload addon status after success
               if (data.success) {
                 // Update etc/addons.json
-                await fetch('/api/addons/mark-installed', {
+                await apiFetch('/api/addons/mark-installed', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ addonId, installed: true }),
@@ -192,7 +193,7 @@
       // Trigger Svelte reactivity with object reassignment
       installing = { ...installing, [addonId]: true };
 
-      const response = await fetch('/api/addons/uninstall', {
+      const response = await apiFetch('/api/addons/uninstall', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ addonId }),
@@ -219,7 +220,7 @@
       toggling = { ...toggling, [addonId]: true };
       const newState = !addons[addonId].enabled;
 
-      const response = await fetch('/api/addons/toggle', {
+      const response = await apiFetch('/api/addons/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ addonId, enabled: newState }),

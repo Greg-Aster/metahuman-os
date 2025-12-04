@@ -74,6 +74,9 @@ import * as emulationNodes from './emulation/index.js';
 // Agency nodes
 import * as agencyNodes from './agency/index.js';
 
+// Cognitive nodes
+import * as cognitiveNodes from './cognitive/index.js';
+
 // ============================================================================
 // COLLECT ALL NODES
 // ============================================================================
@@ -112,6 +115,7 @@ export const allNodes: NodeDefinition[] = collectNodes(
   safetyNodes,
   emulationNodes,
   agencyNodes,
+  cognitiveNodes,
 );
 
 // ============================================================================

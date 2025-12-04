@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   let level: string = 'off';
   let isLoading: boolean = true;
@@ -16,7 +17,7 @@
   onMount(async () => {
     isLoading = true;
     try {
-      const response = await fetch('/api/boredom');
+      const response = await apiFetch('/api/boredom');
       if (!response.ok) throw new Error('Failed to fetch boredom settings');
       const data = await response.json();
       level = data.level;
@@ -31,7 +32,7 @@
     level = newLevel;
     feedback = null;
     try {
-      const response = await fetch('/api/boredom', {
+      const response = await apiFetch('/api/boredom', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ level: newLevel }),

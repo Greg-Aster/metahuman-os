@@ -86,8 +86,8 @@ export type FileCategory =
 /**
  * Subcategories for more specific routing
  */
-export type MemorySubcategory = 'episodic' | 'semantic' | 'procedural' | 'tasks' | 'inbox';
-export type ConfigSubcategory = 'persona' | 'etc' | 'sessions';
+export type MemorySubcategory = 'episodic' | 'semantic' | 'procedural' | 'tasks' | 'inbox' | 'agency';
+export type ConfigSubcategory = 'persona' | 'etc' | 'sessions' | 'desires';
 export type VoiceSubcategory = 'training-data' | 'models' | 'cache';
 export type TrainingSubcategory = 'datasets' | 'adapters' | 'runs' | 'models';
 export type OutputSubcategory = 'fine-tuned-models' | 'drafts' | 'artifacts' | 'cache';
@@ -256,7 +256,12 @@ export function resolvePath(request: StorageRequest): StorageResponse {
   // Map category to directory structure
   switch (category) {
     case 'memory':
-      categoryPath = path.join(profileRoot, 'memory', subcategory || 'episodic');
+      if (subcategory === 'agency') {
+        // Agency data accessible from memory section (links to persona/desires)
+        categoryPath = path.join(profileRoot, 'persona', 'desires');
+      } else {
+        categoryPath = path.join(profileRoot, 'memory', subcategory || 'episodic');
+      }
       break;
     case 'voice':
       categoryPath = path.join(profileRoot, subcategory || 'training-data');
@@ -264,6 +269,9 @@ export function resolvePath(request: StorageRequest): StorageResponse {
     case 'config':
       if (subcategory === 'persona') {
         categoryPath = path.join(profileRoot, 'persona');
+      } else if (subcategory === 'desires') {
+        // Desires are part of identity - stored under persona/desires/
+        categoryPath = path.join(profileRoot, 'persona', 'desires');
       } else if (subcategory === 'etc') {
         categoryPath = path.join(profileRoot, 'etc');
       } else if (subcategory === 'sessions') {

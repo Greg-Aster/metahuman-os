@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface Profile {
     username: string;
@@ -37,7 +38,7 @@
 
   async function loadCurrentUser() {
     try {
-      const response = await fetch('/api/auth/me');
+      const response = await apiFetch('/api/auth/me');
       const data = await response.json();
 
       if (data.success && data.user) {
@@ -56,7 +57,7 @@
     error = '';
 
     try {
-      const response = await fetch('/api/profiles/list');
+      const response = await apiFetch('/api/profiles/list');
       const data = await response.json();
 
       if (data.success) {
@@ -111,7 +112,7 @@
     success = '';
 
     try {
-      const response = await fetch('/api/profiles/delete', {
+      const response = await apiFetch('/api/profiles/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

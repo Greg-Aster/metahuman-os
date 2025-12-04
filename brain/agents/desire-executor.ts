@@ -10,7 +10,7 @@
  *
  * Runs periodically (every 5 minutes) and USES LLM for execution.
  *
- * MULTI-USER: Processes all users sequentially with isolated contexts.
+ * MULTI-USER: Processes only logged-in users (active sessions) with isolated contexts.
  */
 
 import {
@@ -19,7 +19,7 @@ import {
   acquireLock,
   isLocked,
   initGlobalLogger,
-  listUsers,
+  getLoggedInUsers,
   withUserContext,
   captureEvent,
 } from '@metahuman/core';
@@ -231,9 +231,8 @@ async function processApprovedDesires(username?: string): Promise<{
       ? `I completed my desire "${desire.title}". ${desire.plan?.operatorGoal || ''}`
       : `I tried to execute "${desire.title}" but it failed: ${execution.error}`;
 
-    await captureEvent({
+    await captureEvent(dialogueText, {
       type: 'inner_dialogue',
-      content: dialogueText,
       source: 'desire-executor',
       metadata: {
         desireId: desire.id,
@@ -261,28 +260,29 @@ async function main(): Promise<void> {
   }
 
   // Acquire lock
-  let releaseLock: (() => void) | null = null;
+  let lock: { release: () => void } | null = null;
   try {
-    releaseLock = await acquireLock(LOCK_NAME);
+    lock = acquireLock(LOCK_NAME);
   } catch (error) {
     console.error(`${LOG_PREFIX} Failed to acquire lock:`, error);
     process.exit(1);
   }
 
   try {
-    // Get all users
-    const users = await listUsers();
-    console.log(`${LOG_PREFIX} Processing ${users.length} user(s)`);
+    // Process only logged-in users (not all profiles)
+    const users = getLoggedInUsers();
+    console.log(`${LOG_PREFIX} Processing ${users.length} logged-in user(s)`);
 
     let totalExecuted = 0;
     let totalSucceeded = 0;
     let totalFailed = 0;
 
     for (const user of users) {
-      console.log(`${LOG_PREFIX} --- Processing user: ${user.username} ---`);
+      const { userId, username, role } = user;
+      console.log(`${LOG_PREFIX} --- Processing user: ${username} ---`);
 
-      await withUserContext(user.username, async () => {
-        const result = await processApprovedDesires(user.username);
+      await withUserContext({ userId, username, role }, async () => {
+        const result = await processApprovedDesires(username);
         totalExecuted += result.executed;
         totalSucceeded += result.succeeded;
         totalFailed += result.failed;
@@ -295,8 +295,8 @@ async function main(): Promise<void> {
     console.log(`${LOG_PREFIX}   Failed: ${totalFailed}`);
 
   } finally {
-    if (releaseLock) {
-      releaseLock();
+    if (lock) {
+      lock.release();
     }
   }
 }

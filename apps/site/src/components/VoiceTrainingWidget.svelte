@@ -3,6 +3,7 @@
   import ReferenceAudioSelector from './ReferenceAudioSelector.svelte';
   import DirectVoiceRecorder from './DirectVoiceRecorder.svelte';
   import { createDefaultKokoroConfig, startKokoroTrainingRequest } from '../lib/client/utils/kokoro-training';
+  import { apiFetch } from '../lib/client/api-config';
 
   export let provider: 'piper' | 'sovits' | 'rvc' | 'kokoro' = 'rvc';
 
@@ -245,7 +246,7 @@
     }
 
     try {
-      const response = await fetch('/api/voice-training?action=progress');
+      const response = await apiFetch('/api/voice-training?action=progress');
       if (!response.ok) throw new Error('Failed to fetch progress');
       progress = await response.json();
       error = null;
@@ -283,7 +284,7 @@
     }
 
     try {
-      const response = await fetch('/api/voice-training?action=samples&limit=10');
+      const response = await apiFetch('/api/voice-training?action=samples&limit=10');
       if (!response.ok) throw new Error('Failed to fetch samples');
       const data = await response.json();
       samples = data.samples || [];
@@ -296,7 +297,7 @@
 
   async function deleteSample(sampleId: string) {
     try {
-      const response = await fetch('/api/voice-training', {
+      const response = await apiFetch('/api/voice-training', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete', sampleId })
@@ -461,7 +462,7 @@
     startRobotMessages();
 
     try {
-      const response = await fetch('/api/rvc-training', {
+      const response = await apiFetch('/api/rvc-training', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -554,7 +555,7 @@
     togglingTraining = true;
     const newState = trainingEnabled;
     try {
-      const response = await fetch('/api/voice-training', {
+      const response = await apiFetch('/api/voice-training', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'toggle', enabled: newState })
@@ -588,7 +589,7 @@
 
     purging = true;
     try {
-      const response = await fetch('/api/voice-training', {
+      const response = await apiFetch('/api/voice-training', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'purge' })
@@ -609,7 +610,7 @@
 
   async function fetchTrainingStatus() {
     try {
-      const response = await fetch('/api/voice-training?action=status');
+      const response = await apiFetch('/api/voice-training?action=status');
       if (!response.ok) throw new Error('Failed to fetch training status');
       const data = await response.json();
       trainingEnabled = data.enabled || false;
@@ -671,7 +672,7 @@
 
   async function changeProvider(newProvider: 'piper' | 'sovits' | 'rvc' | 'kokoro') {
     try {
-      const response = await fetch('/api/voice-settings', {
+      const response = await apiFetch('/api/voice-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider: newProvider }),

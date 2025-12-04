@@ -4,6 +4,8 @@
  * This utility helps load pre-built template graphs for each cognitive mode.
  */
 
+import { apiFetch } from '../api-config';
+
 export interface CognitiveGraphTemplate {
   version: string;
   name: string;
@@ -32,7 +34,7 @@ export async function fetchTemplate(name: string): Promise<CognitiveGraphTemplat
 
   try {
     // Use the API endpoint to fetch graphs (reads from etc/cognitive-graphs/)
-    const response = await fetch(`/api/cognitive-graph?name=${encodeURIComponent(name)}`);
+    const response = await apiFetch(`/api/cognitive-graph?name=${encodeURIComponent(name)}`);
     if (!response.ok) {
       console.error(`Failed to fetch template ${name}: ${response.status}`);
       return null;
@@ -69,7 +71,7 @@ export async function getTemplateForMode(mode: 'dual' | 'agent' | 'emulation'): 
  */
 export async function listTemplates(): Promise<Array<{ id: string; name: string; description: string }>> {
   try {
-    const response = await fetch('/api/cognitive-graphs');
+    const response = await apiFetch('/api/cognitive-graphs');
     if (!response.ok) {
       console.error('Failed to fetch graphs list:', response.status);
       // Return hardcoded fallback

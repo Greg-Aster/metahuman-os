@@ -103,12 +103,6 @@ export const GET: APIRoute = async () => {
   // 5. Check for S3 configuration
   if (process.env.RUNPOD_S3_ACCESS_KEY && process.env.RUNPOD_S3_SECRET_KEY) {
     info.hasS3Configured = true
-    console.log('[gpu-info] S3 storage configured:', {
-      endpoint: process.env.RUNPOD_S3_ENDPOINT || 'https://storage.runpod.io',
-      bucket: process.env.RUNPOD_S3_BUCKET || 'metahuman-training'
-    })
-  } else {
-    console.log('[gpu-info] S3 storage not configured - set RUNPOD_S3_ACCESS_KEY and RUNPOD_S3_SECRET_KEY in .env')
   }
 
   return new Response(JSON.stringify(info), {

@@ -1,11 +1,11 @@
 {
   "family": "qwen",
   "description": "Qwen3 model family (Coder, Instruct, etc.)",
-  "user_prefix": "<|user|>",
+  "user_prefix": "",
   "user_suffix": "",
-  "assistant_prefix": "<|assistant|>",
+  "assistant_prefix": "",
   "assistant_suffix": "",
   "separator": "",
   "eos_token": "<|endoftext|>",
-  "notes": "Qwen3 uses special tokens for user and assistant. No explicit separator needed."
+  "notes": "Qwen3 ChatML tokens (<|im_start|>/<|im_end|>) are applied by the tokenizer during training and by the Modelfile TEMPLATE during inference. Schema prefixes are empty to prevent double-tagging. Mode prefixes (<user>:, <assistant>:) are added by mode-formatter."
 }

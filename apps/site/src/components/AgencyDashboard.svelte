@@ -1,8 +1,35 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { isOwner } from '../stores/security-policy';
+  import { apiFetch } from '../lib/client/api-config';
+
+  // Track last load time to avoid redundant reloads
+  let lastLoadTime = 0;
+  const RELOAD_THRESHOLD_MS = 5000; // Min 5 seconds between reloads
 
   // Types
+  interface PlanStep {
+    order: number;
+    action: string;
+    skill?: string;
+    inputs?: Record<string, unknown>;
+    expectedOutcome: string;
+    risk: string;
+    requiresApproval: boolean;
+  }
+
+  interface DesirePlan {
+    id: string;
+    version: number;
+    steps: PlanStep[];
+    estimatedRisk: string;
+    requiredSkills: string[];
+    requiredTrustLevel: string;
+    operatorGoal: string;
+    createdAt: string;
+    basedOnCritique?: string;
+  }
+
   interface Desire {
     id: string;
     title: string;
@@ -15,13 +42,15 @@
     risk: string;
     createdAt: string;
     updatedAt: string;
-    plan?: {
-      steps: Array<{ action: string; risk: string }>;
-      estimatedRisk: string;
-    };
+    plan?: DesirePlan;
+    planHistory?: DesirePlan[];
+    userCritique?: string;
+    critiqueAt?: string;
     review?: {
       verdict: string;
       alignmentScore: number;
+      reasoning?: string;
+      concerns?: string[];
     };
   }
 
@@ -68,6 +97,12 @@
     reason: '',
     risk: 'low',
   };
+
+  // Plan detail view and critique
+  let expandedDesireId: string | null = null;
+  let critiqueText: Record<string, string> = {};
+  let showHistoryFor: string | null = null;
+  let revisingId: string | null = null;
 
   function formatTimestamp(ts: string | null): string {
     if (!ts) return 'Never';
@@ -144,7 +179,7 @@
 
   async function loadMetrics() {
     try {
-      const res = await fetch('/api/agency/metrics');
+      const res = await apiFetch('/api/agency/metrics');
       if (!res.ok) throw new Error('Failed to load metrics');
       const data = await res.json();
       metrics = data.metrics;
@@ -155,11 +190,28 @@
     }
   }
 
-  async function loadAll() {
-    loading = true;
+  async function loadAll(showLoading = true, force = false) {
+    // Skip if recently loaded (unless forced)
+    const now = Date.now();
+    if (!force && now - lastLoadTime < RELOAD_THRESHOLD_MS) {
+      return;
+    }
+
+    if (showLoading) loading = true;
     error = '';
-    await Promise.all([loadDesires(), loadMetrics()]);
-    loading = false;
+    try {
+      await Promise.all([loadDesires(), loadMetrics()]);
+      lastLoadTime = Date.now();
+    } finally {
+      loading = false;
+    }
+  }
+
+  // Reload when tab becomes visible (user switches back)
+  function handleVisibilityChange() {
+    if (document.visibilityState === 'visible' && $isOwner) {
+      loadAll(false); // Silent reload, respects threshold
+    }
   }
 
   async function handleApprove(id: string) {
@@ -171,7 +223,7 @@
         const data = await res.json();
         throw new Error(data.error || 'Failed to approve desire');
       }
-      await loadAll();
+      await loadAll(true, true); // Force reload after action
     } catch (e) {
       error = (e as Error).message;
     } finally {
@@ -194,7 +246,7 @@
         const data = await res.json();
         throw new Error(data.error || 'Failed to reject desire');
       }
-      await loadAll();
+      await loadAll(true, true); // Force reload after action
     } catch (e) {
       error = (e as Error).message;
     } finally {
@@ -211,12 +263,86 @@
         const data = await res.json();
         throw new Error(data.error || 'Failed to delete desire');
       }
-      await loadAll();
+      await loadAll(true, true); // Force reload after action
     } catch (e) {
       error = (e as Error).message;
     } finally {
       processingId = null;
     }
+  }
+
+  async function handleAdvanceStage(id: string, newStatus: string) {
+    processingId = id;
+    try {
+      const res = await fetch(`/api/agency/desires/${id}/advance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newStatus }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to advance desire');
+      }
+      await loadAll(true, true);
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      processingId = null;
+    }
+  }
+
+  async function handleExecute(id: string) {
+    if (!confirm('Execute this desire now? This will run the plan through the operator.')) return;
+    processingId = id;
+    try {
+      const res = await fetch(`/api/agency/desires/${id}/execute`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to execute desire');
+      }
+      await loadAll(true, true);
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      processingId = null;
+    }
+  }
+
+  async function handleRevise(id: string) {
+    const critique = critiqueText[id];
+    if (!critique || critique.trim().length === 0) {
+      error = 'Please enter your critique/feedback before requesting revision';
+      return;
+    }
+
+    revisingId = id;
+    try {
+      const res = await fetch(`/api/agency/desires/${id}/revise`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ critique: critique.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to request revision');
+      }
+      // Clear the critique text after successful submission
+      critiqueText[id] = '';
+      expandedDesireId = null;
+      await loadAll(true, true);
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      revisingId = null;
+    }
+  }
+
+  function togglePlanDetail(id: string) {
+    expandedDesireId = expandedDesireId === id ? null : id;
+  }
+
+  function togglePlanHistory(id: string) {
+    showHistoryFor = showHistoryFor === id ? null : id;
   }
 
   async function handleCreateDesire() {
@@ -226,7 +352,7 @@
     }
 
     try {
-      const res = await fetch('/api/agency/desires', {
+      const res = await apiFetch('/api/agency/desires', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newDesire),
@@ -237,16 +363,21 @@
       }
       newDesire = { title: '', description: '', reason: '', risk: 'low' };
       showNewDesire = false;
-      await loadAll();
+      await loadAll(true, true); // Force reload after action
     } catch (e) {
       error = (e as Error).message;
     }
   }
 
   onMount(() => {
-    loadAll();
-    const interval = setInterval(loadAll, 30000);
-    return () => clearInterval(interval);
+    loadAll(); // Load once when tab is opened
+
+    // Listen for visibility changes to reload when user returns
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+  });
+
+  onDestroy(() => {
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
   });
 </script>
 
@@ -326,8 +457,9 @@
       <div class="flex items-center gap-2">
         <select bind:value={statusFilter} on:change={loadDesires} class="select-input">
           <option value="all">All Status</option>
-          <option value="active">Active</option>
+          <option value="nascent">Nascent (Growing)</option>
           <option value="pending">Pending</option>
+          <option value="active">Active</option>
           <option value="reviewing">Reviewing</option>
           <option value="approved">Approved</option>
           <option value="executing">Executing</option>
@@ -335,7 +467,7 @@
           <option value="rejected">Rejected</option>
           <option value="abandoned">Abandoned</option>
         </select>
-        <button class="btn-secondary" on:click={loadAll}>Refresh</button>
+        <button class="btn-secondary" on:click={() => loadAll(true, true)}>Refresh</button>
       </div>
       <button class="btn-primary" on:click={() => showNewDesire = !showNewDesire}>
         {showNewDesire ? 'Cancel' : '+ New Desire'}
@@ -413,30 +545,205 @@
             </div>
 
             {#if desire.plan}
-              <div class="plan-summary">
-                <span class="text-xs font-semibold">Plan:</span>
-                <span class="text-xs muted">{desire.plan.steps.length} steps, {desire.plan.estimatedRisk} risk</span>
-              </div>
+              <!-- Plan Summary Header (clickable to expand) -->
+              <button type="button" class="plan-summary clickable" on:click={() => togglePlanDetail(desire.id)} aria-expanded={expandedDesireId === desire.id}>
+                <div class="plan-summary-header">
+                  <span class="text-xs font-semibold">
+                    📋 Plan v{desire.plan.version || 1}:
+                  </span>
+                  <span class="text-xs muted">
+                    {desire.plan.steps.length} steps, {desire.plan.estimatedRisk} risk
+                    {#if desire.planHistory && desire.planHistory.length > 0}
+                      <span class="history-badge">({desire.planHistory.length} previous)</span>
+                    {/if}
+                  </span>
+                  <span class="expand-icon">{expandedDesireId === desire.id ? '▼' : '▶'}</span>
+                </div>
+                {#if desire.plan.operatorGoal}
+                  <p class="plan-goal text-xs muted">Goal: {desire.plan.operatorGoal}</p>
+                {/if}
+              </button>
+
+              <!-- Expanded Plan Details -->
+              {#if expandedDesireId === desire.id}
+                <div class="plan-details">
+                  <h5 class="plan-section-title">Execution Steps</h5>
+                  <div class="plan-steps">
+                    {#each desire.plan.steps as step, i}
+                      <div class="plan-step">
+                        <div class="step-header">
+                          <span class="step-number">{step.order || i + 1}</span>
+                          <span class="step-action">{step.action}</span>
+                          <span class={`badge small ${getRiskColor(step.risk)}`}>{step.risk}</span>
+                          {#if step.requiresApproval}
+                            <span class="badge small bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">needs approval</span>
+                          {/if}
+                        </div>
+                        {#if step.skill}
+                          <div class="step-skill">
+                            <span class="text-xs muted">Skill:</span>
+                            <code class="text-xs">{step.skill}</code>
+                          </div>
+                        {/if}
+                        {#if step.expectedOutcome}
+                          <div class="step-outcome">
+                            <span class="text-xs muted">Expected:</span>
+                            <span class="text-xs">{step.expectedOutcome}</span>
+                          </div>
+                        {/if}
+                        {#if step.inputs && Object.keys(step.inputs).length > 0}
+                          <div class="step-inputs">
+                            <span class="text-xs muted">Inputs:</span>
+                            <code class="text-xs">{JSON.stringify(step.inputs)}</code>
+                          </div>
+                        {/if}
+                      </div>
+                    {/each}
+                  </div>
+
+                  <!-- Plan History Toggle -->
+                  {#if desire.planHistory && desire.planHistory.length > 0}
+                    <button class="btn-history" on:click|stopPropagation={() => togglePlanHistory(desire.id)}>
+                      {showHistoryFor === desire.id ? '▼ Hide' : '▶ Show'} Previous Versions ({desire.planHistory.length})
+                    </button>
+
+                    {#if showHistoryFor === desire.id}
+                      <div class="plan-history">
+                        {#each desire.planHistory as oldPlan, idx}
+                          <div class="old-plan">
+                            <h6 class="old-plan-title">Version {oldPlan.version || idx + 1} ({formatTimestamp(oldPlan.createdAt)})</h6>
+                            {#if oldPlan.basedOnCritique}
+                              <p class="critique-note text-xs">Critique: "{oldPlan.basedOnCritique}"</p>
+                            {/if}
+                            <ul class="old-plan-steps">
+                              {#each oldPlan.steps as step, i}
+                                <li>{step.order || i + 1}. {step.action}</li>
+                              {/each}
+                            </ul>
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                  {/if}
+
+                  <!-- Critique & Revision Section -->
+                  {#if ['reviewing', 'approved', 'awaiting_approval', 'planning'].includes(desire.status)}
+                    <div class="critique-section">
+                      <h5 class="plan-section-title">✏️ Request Revision</h5>
+                      <p class="critique-hint text-xs muted">
+                        Not happy with the plan? Provide feedback and request a revision.
+                      </p>
+                      <textarea
+                        class="critique-input"
+                        placeholder="Enter your critique or suggestions for improving this plan..."
+                        bind:value={critiqueText[desire.id]}
+                        rows="3"
+                      ></textarea>
+                      <div class="critique-actions">
+                        <button
+                          class="btn-revise"
+                          disabled={revisingId === desire.id || !critiqueText[desire.id]?.trim()}
+                          on:click|stopPropagation={() => handleRevise(desire.id)}
+                        >
+                          {revisingId === desire.id ? 'Requesting...' : '🔄 Request Revision'}
+                        </button>
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
             {/if}
 
             {#if desire.review}
               <div class="review-summary">
                 <span class="text-xs font-semibold">Review:</span>
                 <span class="text-xs muted">{desire.review.verdict} (alignment: {(desire.review.alignmentScore * 100).toFixed(0)}%)</span>
+                {#if desire.review.reasoning}
+                  <p class="review-reasoning text-xs muted">{desire.review.reasoning}</p>
+                {/if}
+                {#if desire.review.concerns && desire.review.concerns.length > 0}
+                  <div class="review-concerns">
+                    <span class="text-xs font-semibold">Concerns:</span>
+                    <ul class="concerns-list">
+                      {#each desire.review.concerns as concern}
+                        <li class="text-xs muted">• {concern}</li>
+                      {/each}
+                    </ul>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+
+            {#if desire.userCritique}
+              <div class="pending-critique">
+                <span class="text-xs font-semibold">⏳ Pending Revision:</span>
+                <p class="text-xs muted">"{desire.userCritique}"</p>
+                <span class="text-xs muted">Submitted: {formatTimestamp(desire.critiqueAt || null)}</span>
               </div>
             {/if}
 
             <div class="desire-actions">
+              <!-- Stage progression buttons -->
+              {#if desire.status === 'nascent'}
+                <button
+                  class="btn-stage"
+                  disabled={processingId === desire.id}
+                  on:click={() => handleAdvanceStage(desire.id, 'pending')}
+                >
+                  → Pending
+                </button>
+              {/if}
+              {#if desire.status === 'pending'}
+                <button
+                  class="btn-stage"
+                  disabled={processingId === desire.id}
+                  on:click={() => handleAdvanceStage(desire.id, 'planning')}
+                >
+                  → Plan
+                </button>
+              {/if}
+              {#if desire.status === 'planning'}
+                <button
+                  class="btn-stage"
+                  disabled={processingId === desire.id}
+                  on:click={() => handleAdvanceStage(desire.id, 'reviewing')}
+                >
+                  → Review
+                </button>
+              {/if}
               {#if desire.status === 'reviewing'}
+                <button
+                  class="btn-stage"
+                  disabled={processingId === desire.id}
+                  on:click={() => handleAdvanceStage(desire.id, 'approved')}
+                >
+                  → Approve
+                </button>
+              {/if}
+              {#if desire.status === 'approved'}
+                <button
+                  class="btn-execute"
+                  disabled={processingId === desire.id}
+                  on:click={() => handleExecute(desire.id)}
+                >
+                  Execute
+                </button>
+              {/if}
+
+              <!-- Quick approve (skip to approved) -->
+              {#if ['nascent', 'pending', 'planning', 'reviewing'].includes(desire.status)}
                 <button
                   class="btn-approve"
                   disabled={processingId === desire.id}
                   on:click={() => handleApprove(desire.id)}
+                  title="Skip to approved status"
                 >
-                  {processingId === desire.id ? 'Processing...' : 'Approve'}
+                  Fast Approve
                 </button>
               {/if}
-              {#if ['reviewing', 'approved', 'pending', 'evaluating', 'planning'].includes(desire.status)}
+
+              <!-- Reject -->
+              {#if ['nascent', 'pending', 'planning', 'reviewing', 'approved'].includes(desire.status)}
                 <button
                   class="btn-reject"
                   disabled={processingId === desire.id}
@@ -687,8 +994,316 @@
     background: #111827;
   }
 
+  button.plan-summary.clickable {
+    cursor: pointer;
+    transition: background 0.2s;
+    width: 100%;
+    text-align: left;
+    border: none;
+    font-family: inherit;
+    font-size: inherit;
+  }
+
+  .plan-summary.clickable:hover {
+    background: #f3f4f6;
+  }
+
+  :global(.dark) .plan-summary.clickable:hover {
+    background: #1f2937;
+  }
+
+  .plan-summary-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .expand-icon {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+
+  .history-badge {
+    font-style: italic;
+    color: #8b5cf6;
+  }
+
+  .plan-goal {
+    margin-top: 0.25rem;
+    font-style: italic;
+  }
+
+  .plan-details {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  :global(.dark) .plan-details {
+    background: #1f2937;
+    border-color: #374151;
+  }
+
+  .plan-section-title {
+    font-weight: 600;
+    font-size: 0.875rem;
+    margin-bottom: 0.5rem;
+    color: #374151;
+  }
+
+  :global(.dark) .plan-section-title {
+    color: #e5e7eb;
+  }
+
+  .plan-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .plan-step {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    padding: 0.75rem;
+  }
+
+  :global(.dark) .plan-step {
+    background: #111827;
+    border-color: #374151;
+  }
+
+  .step-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.25rem;
+  }
+
+  .step-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    background: #3b82f6;
+    color: white;
+    border-radius: 50%;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .step-action {
+    font-weight: 500;
+    flex: 1;
+  }
+
+  .step-skill,
+  .step-outcome,
+  .step-inputs {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+    padding-left: 2rem;
+  }
+
+  .step-inputs code,
+  .step-skill code {
+    background: #e5e7eb;
+    padding: 0.125rem 0.375rem;
+    border-radius: 3px;
+    font-family: monospace;
+  }
+
+  :global(.dark) .step-inputs code,
+  :global(.dark) .step-skill code {
+    background: #374151;
+  }
+
+  .badge.small {
+    padding: 0.0625rem 0.375rem;
+    font-size: 0.625rem;
+  }
+
+  .btn-history {
+    background: transparent;
+    border: 1px solid #e5e7eb;
+    color: #6b7280;
+    padding: 0.375rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    margin-top: 0.75rem;
+    width: 100%;
+  }
+
+  .btn-history:hover {
+    background: #f3f4f6;
+  }
+
+  :global(.dark) .btn-history {
+    border-color: #374151;
+    color: #9ca3af;
+  }
+
+  :global(.dark) .btn-history:hover {
+    background: #374151;
+  }
+
+  .plan-history {
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    background: #fef3c7;
+    border-radius: 4px;
+  }
+
+  :global(.dark) .plan-history {
+    background: #78350f;
+  }
+
+  .old-plan {
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  :global(.dark) .old-plan {
+    border-bottom-color: #92400e;
+  }
+
+  .old-plan:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+
+  .old-plan-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #92400e;
+  }
+
+  :global(.dark) .old-plan-title {
+    color: #fef3c7;
+  }
+
+  .critique-note {
+    font-style: italic;
+    color: #78350f;
+    margin: 0.25rem 0;
+  }
+
+  :global(.dark) .critique-note {
+    color: #fde68a;
+  }
+
+  .old-plan-steps {
+    list-style: none;
+    padding: 0;
+    margin: 0.25rem 0 0 0;
+    font-size: 0.75rem;
+  }
+
+  .old-plan-steps li {
+    color: #92400e;
+  }
+
+  :global(.dark) .old-plan-steps li {
+    color: #fde68a;
+  }
+
+  .critique-section {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px dashed #e5e7eb;
+  }
+
+  :global(.dark) .critique-section {
+    border-top-color: #374151;
+  }
+
+  .critique-hint {
+    margin-bottom: 0.5rem;
+  }
+
+  .critique-input {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    background: white;
+    font-size: 0.875rem;
+    resize: vertical;
+  }
+
+  :global(.dark) .critique-input {
+    background: #111827;
+    border-color: #374151;
+    color: white;
+  }
+
+  .critique-actions {
+    margin-top: 0.5rem;
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .btn-revise {
+    background: #8b5cf6;
+    color: white;
+    padding: 0.375rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+  }
+
+  .btn-revise:hover:not(:disabled) {
+    background: #7c3aed;
+  }
+
+  .btn-revise:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .review-reasoning {
+    margin-top: 0.25rem;
+    font-style: italic;
+  }
+
+  .review-concerns {
+    margin-top: 0.5rem;
+  }
+
+  .concerns-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.25rem 0 0 0;
+  }
+
+  .pending-critique {
+    padding: 0.5rem;
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+  }
+
+  :global(.dark) .pending-critique {
+    background: #78350f;
+    border-color: #92400e;
+  }
+
   .desire-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
     margin-top: 0.75rem;
     padding-top: 0.75rem;
@@ -744,9 +1359,41 @@
     background: #4b5563;
   }
 
+  .btn-stage {
+    background: #3b82f6;
+    color: white;
+    padding: 0.375rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+  }
+
+  .btn-stage:hover:not(:disabled) {
+    background: #2563eb;
+  }
+
+  .btn-execute {
+    background: #8b5cf6;
+    color: white;
+    padding: 0.375rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+  }
+
+  .btn-execute:hover:not(:disabled) {
+    background: #7c3aed;
+  }
+
   .btn-approve:disabled,
   .btn-reject:disabled,
-  .btn-delete:disabled {
+  .btn-delete:disabled,
+  .btn-stage:disabled,
+  .btn-execute:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }

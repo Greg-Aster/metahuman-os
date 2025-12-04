@@ -32,7 +32,8 @@ export type NodeCategory =
   | 'curator'
   | 'safety'
   | 'emulation'
-  | 'agency';
+  | 'agency'
+  | 'cognitive';
 
 // ============================================================================
 // SLOT TYPES (for node inputs/outputs)
@@ -73,7 +74,11 @@ export type PropertyType =
   | 'slider'
   | 'color'
   | 'json'
-  | 'text_multiline';
+  | 'text_multiline'
+  | 'toggle'      // Boolean toggle switch
+  | 'text'        // Single-line text input
+  | 'tags'        // Tag array input
+  | 'multiselect'; // Multiple selection dropdown
 
 export interface PropertySchema {
   type: PropertyType;
@@ -210,6 +215,7 @@ export const categoryColors: Record<NodeCategory, { color: string; bgColor: stri
   safety: { color: '#fca5a5', bgColor: '#7f1d1d' },     // Light Red
   emulation: { color: '#a5b4fc', bgColor: '#3730a3' },  // Light Indigo
   agency: { color: '#f59e0b', bgColor: '#78350f' },     // Warm Amber (desires, autonomy)
+  cognitive: { color: '#38bdf8', bgColor: '#0c4a6e' },  // Sky Blue (reasoning, planning)
 };
 
 // ============================================================================

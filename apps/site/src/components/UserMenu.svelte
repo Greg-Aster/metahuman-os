@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface User {
     id: string;
@@ -17,7 +18,7 @@
 
   async function fetchUser() {
     try {
-      const response = await fetch('/api/auth/me');
+      const response = await apiFetch('/api/auth/me');
       const data = await response.json();
 
       if (data.success && data.user) {
@@ -35,7 +36,7 @@
 
   async function handleLogout() {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await apiFetch('/api/auth/logout', { method: 'POST' });
       window.location.href = '/';
     } catch (err) {
       console.error('[UserMenu] Logout failed:', err);

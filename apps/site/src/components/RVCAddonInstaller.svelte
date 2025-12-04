@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface RVCStatus {
     installed: boolean;
@@ -19,7 +20,7 @@
 
   async function fetchStatus() {
     try {
-      const response = await fetch('/api/rvc-addon');
+      const response = await apiFetch('/api/rvc-addon');
       if (!response.ok) throw new Error('Failed to fetch RVC status');
       status = await response.json();
       loading = false;
@@ -37,7 +38,7 @@
     success = null;
 
     try {
-      const response = await fetch('/api/rvc-addon', {
+      const response = await apiFetch('/api/rvc-addon', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'install' })
@@ -75,7 +76,7 @@
     success = null;
 
     try {
-      const response = await fetch('/api/rvc-addon', {
+      const response = await apiFetch('/api/rvc-addon', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'uninstall' })

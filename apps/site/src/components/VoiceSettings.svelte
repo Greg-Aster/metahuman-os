@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { calculateVoiceVolume } from '../lib/client/utils/audio-utils.js';
+  import { apiFetch } from '../lib/client/api-config';
   import ServerStatusIndicator from './ServerStatusIndicator.svelte';
 
   interface PiperVoice {
@@ -155,7 +156,7 @@
       // Load native voice mode preference
       nativeVoiceModeEnabled = localStorage.getItem('mh-native-voice-mode') === 'true';
 
-      const response = await fetch('/api/voice-settings');
+      const response = await apiFetch('/api/voice-settings');
       if (!response.ok) throw new Error('Failed to load voice settings');
       config = await response.json();
 
@@ -210,7 +211,7 @@
 
       console.log('[VoiceSettings] Saving config:', { provider: config?.provider });
 
-      const response = await fetch('/api/voice-settings', {
+      const response = await apiFetch('/api/voice-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
@@ -257,7 +258,7 @@
       successMessage = null;
       error = null;
 
-      const response = await fetch('/api/sovits-training', {
+      const response = await apiFetch('/api/sovits-training', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -360,7 +361,7 @@
         }
       }
 
-      const response = await fetch('/api/tts', {
+      const response = await apiFetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
@@ -551,7 +552,7 @@
       const buf = await audioBlob.arrayBuffer();
       console.log(`[VAD Test] Sending ${buf.byteLength} bytes to STT`);
 
-      const response = await fetch('/api/stt?format=webm', {
+      const response = await apiFetch('/api/stt?format=webm', {
         method: 'POST',
         body: buf,
       });

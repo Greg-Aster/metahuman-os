@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface TrainingRun {
     id: string;
@@ -38,12 +39,12 @@
 
     try {
       // Check if training is currently running
-      const runningRes = await fetch('/api/training/running');
+      const runningRes = await apiFetch('/api/training/running');
       if (runningRes.ok) {
         const runningData = await runningRes.json();
         if (runningData.success && runningData.running) {
           // Load current run info
-          const logsRes = await fetch('/api/training/logs?maxLines=1');
+          const logsRes = await apiFetch('/api/training/logs?maxLines=1');
           let startTime = new Date().toISOString();
           if (logsRes.ok) {
             const logsData = await logsRes.json();
@@ -70,7 +71,7 @@
       }
 
       // Load past runs from audit logs
-      const historyRes = await fetch('/api/training/history');
+      const historyRes = await apiFetch('/api/training/history');
       if (historyRes.ok) {
         const historyData = await historyRes.json();
         if (historyData.success) {
@@ -90,7 +91,7 @@
 
     try {
       // Load audit events
-      const logsRes = await fetch('/api/training/logs?maxLines=50');
+      const logsRes = await apiFetch('/api/training/logs?maxLines=50');
       if (logsRes.ok) {
         const logsData = await logsRes.json();
         if (logsData.success && logsData.logs) {
@@ -107,7 +108,7 @@
       }
 
       // Load console logs
-      const consoleRes = await fetch('/api/training/console-logs?maxLines=200');
+      const consoleRes = await apiFetch('/api/training/console-logs?maxLines=200');
       if (consoleRes.ok) {
         const consoleData = await consoleRes.json();
         if (consoleData.success && consoleData.logs) {
@@ -124,7 +125,7 @@
       }
 
       // Check if process is still running
-      const statusRes = await fetch('/api/training/running');
+      const statusRes = await apiFetch('/api/training/running');
       if (statusRes.ok) {
         const statusData = await statusRes.json();
         if (statusData.success && !statusData.running) {
@@ -158,7 +159,7 @@
     if (!currentRun) return;
 
     try {
-      const res = await fetch('/api/adapters', {
+      const res = await apiFetch('/api/adapters', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'cancelFullCycle' })

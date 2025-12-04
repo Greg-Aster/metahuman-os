@@ -4,6 +4,7 @@
  */
 
 import { writable, get } from 'svelte/store';
+import { apiFetch } from '../api-config';
 
 // Types
 export type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'dream' | 'reasoning';
@@ -89,7 +90,7 @@ export function useMessages(options: UseMessagesOptions) {
   async function clearServerBuffer(): Promise<boolean> {
     const mode = getMode();
     try {
-      const response = await fetch(`/api/conversation-buffer?mode=${mode}`, {
+      const response = await apiFetch(`/api/conversation-buffer?mode=${mode}`, {
         method: 'DELETE',
       });
 
@@ -111,7 +112,7 @@ export function useMessages(options: UseMessagesOptions) {
    */
   async function deleteMessage(relPath: string): Promise<boolean> {
     try {
-      const res = await fetch('/api/memories/delete', {
+      const res = await apiFetch('/api/memories/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ relPath }),
@@ -232,7 +233,7 @@ export function useActivityTracking() {
 
     // Set a new timeout - signal activity after 3 seconds of no further input
     activityTimeout = window.setTimeout(() => {
-      fetch('/api/activity-ping', { method: 'POST' })
+      apiFetch('/api/activity-ping', { method: 'POST' })
         .then(response => {
           if (!response.ok) {
             console.error('[activity] Failed to signal activity');
@@ -273,7 +274,7 @@ export function useOllamaStatus() {
    */
   async function checkStatus(): Promise<void> {
     try {
-      const response = await fetch('/api/boot');
+      const response = await apiFetch('/api/boot');
       if (!response.ok) return;
 
       const data = await response.json();

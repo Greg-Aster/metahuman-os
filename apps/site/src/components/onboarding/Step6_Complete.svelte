@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../../lib/client/api-config';
 
   export let onComplete: () => void;
   export let onBack: () => void;
@@ -29,7 +30,7 @@
   async function loadState() {
     loading = true;
     try {
-      const response = await fetch('/api/onboarding/state');
+      const response = await apiFetch('/api/onboarding/state');
       if (!response.ok) {
         throw new Error('Failed to load onboarding state');
       }
@@ -47,7 +48,7 @@
     error = '';
 
     try {
-      const response = await fetch('/api/onboarding/complete', {
+      const response = await apiFetch('/api/onboarding/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });

@@ -15,7 +15,7 @@
     },
     {
       "id": 2,
-      "type": "cognitive/persona_loader",
+      "type": "persona/persona_loader",
       "pos": [100, 50],
       "size": [180, 60],
       "properties": {},

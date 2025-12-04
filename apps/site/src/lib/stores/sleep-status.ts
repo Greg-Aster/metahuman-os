@@ -1,4 +1,5 @@
 import { readable } from 'svelte/store'
+import { apiFetch } from '../client/api-config'
 
 export type SleepState = 'awake' | 'sleeping' | 'dreaming'
 
@@ -19,7 +20,7 @@ export const sleepStatus = readable<SleepStatus | null>(null, (set) => {
 
   const fetchStatus = async () => {
     try {
-      const res = await fetch('/api/sleep-status', { cache: 'no-store' })
+      const res = await apiFetch('/api/sleep-status', { cache: 'no-store' })
       if (!res.ok) return
       const data = (await res.json()) as SleepStatus
       if (!disposed) set(data)

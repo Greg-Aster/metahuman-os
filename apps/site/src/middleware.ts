@@ -118,15 +118,57 @@ Waiting for escalations...
 // Initialize Big Brother on module load (server start)
 initializeBigBrother();
 
+// CORS headers for mobile app cross-origin requests
+// When the mobile app loads from file:// and calls https://mh.dndiy.org/api/*
+// IMPORTANT: Access-Control-Allow-Origin cannot be '*' when using credentials
+// We must echo back the request's Origin header for credentials to work
+function getCorsHeaders(origin: string | null): Record<string, string> {
+  return {
+    // Echo back origin (or use 'null' for file:// requests)
+    // This is required when Access-Control-Allow-Credentials is true
+    'Access-Control-Allow-Origin': origin || 'null',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Cookie, Authorization',
+    'Access-Control-Allow-Credentials': 'true',
+  };
+}
+
+function addCorsHeaders(response: Response, origin: string | null): Response {
+  const corsHeaders = getCorsHeaders(origin);
+  const newHeaders = new Headers(response.headers);
+  for (const [key, value] of Object.entries(corsHeaders)) {
+    newHeaders.set(key, value);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: newHeaders,
+  });
+}
+
 export const onRequest = defineMiddleware(async (context, next) => {
   // Only apply to API routes
   if (!context.url.pathname.startsWith('/api/')) {
     return next();
   }
 
+  // Get Origin header for CORS (mobile app sends 'null' from file://)
+  const origin = context.request.headers.get('Origin');
+  const corsHeaders = getCorsHeaders(origin);
+
+  // Handle CORS preflight (OPTIONS) requests
+  if (context.request.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders,
+    });
+  }
+
   // Error handling wrapper for auth errors
   try {
-    return await processRequest(context, next);
+    const response = await processRequest(context, next);
+    // Add CORS headers to all API responses
+    return addCorsHeaders(response, origin);
   } catch (error) {
     // Convert auth errors to proper HTTP responses
     const errorMessage = (error as Error).message;
@@ -139,7 +181,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
         }),
         {
           status: 401,
-          headers: { 'Content-Type': 'application/json' }
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
         }
       );
     }
@@ -152,7 +194,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
         }),
         {
           status: 403,
-          headers: { 'Content-Type': 'application/json' }
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
         }
       );
     }

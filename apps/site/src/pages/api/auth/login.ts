@@ -50,10 +50,12 @@ export const POST: APIRoute = async (context) => {
     });
 
     // Set session cookie
+    // Use sameSite: 'none' for cross-origin requests (mobile app)
+    // This requires secure: true (HTTPS)
     context.cookies.set('mh_session', session.id, {
       httpOnly: true,
-      sameSite: 'strict',
-      secure: context.url.protocol === 'https:',
+      sameSite: 'none', // Required for cross-origin (mobile app)
+      secure: true, // Required when sameSite is 'none'
       path: '/',
       maxAge: 60 * 60 * 24, // 24 hours
     });

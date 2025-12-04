@@ -1,8 +1,14 @@
 import { writable } from 'svelte/store';
 
 // Load saved active view from localStorage, default to 'chat'
+// Always start on 'chat' - don't restore heavy views like 'training' that make API calls on mount
 const savedView = typeof localStorage !== 'undefined'
-  ? localStorage.getItem('mh_active_view') || 'chat'
+  ? (() => {
+      const saved = localStorage.getItem('mh_active_view');
+      // Skip restoring views that trigger expensive operations on mount
+      const heavyViews = ['training'];
+      return saved && !heavyViews.includes(saved) ? saved : 'chat';
+    })()
   : 'chat';
 
 export const activeView = writable<string>(savedView);

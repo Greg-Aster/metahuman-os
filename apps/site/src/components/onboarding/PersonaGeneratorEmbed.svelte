@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { apiFetch } from '../../lib/client/api-config';
+
   export let onComplete: () => void;
   export let onBack: () => void;
 
@@ -40,7 +42,7 @@
     error = '';
 
     try {
-      const response = await fetch('/api/persona/generator/start', {
+      const response = await apiFetch('/api/persona/generator/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -77,7 +79,7 @@
     const lastQuestion = currentSession.questions[currentSession.questions.length - 1];
 
     try {
-      const response = await fetch('/api/persona/generator/answer', {
+      const response = await apiFetch('/api/persona/generator/answer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -136,7 +138,7 @@
     error = '';
 
     try {
-      const response = await fetch('/api/persona/generator/finalize', {
+      const response = await apiFetch('/api/persona/generator/finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: currentSession.sessionId }),
@@ -163,7 +165,7 @@
     if (!currentSession) return;
 
     try {
-      const response = await fetch('/api/persona/generator/apply', {
+      const response = await apiFetch('/api/persona/generator/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

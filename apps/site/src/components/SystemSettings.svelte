@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import GPUMonitor from './GPUMonitor.svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   // Welcome modal toggle
   let showWelcomeModal = false;
@@ -72,7 +73,7 @@
   async function loadNodePipelineState() {
     nodePipelineLoading = true;
     try {
-      const res = await fetch('/api/node-pipeline');
+      const res = await apiFetch('/api/node-pipeline');
       if (res.ok) {
         const data = await res.json();
         nodePipelineEnabled = !!data.enabled;
@@ -94,7 +95,7 @@
     const desired = target?.checked ?? !nodePipelineEnabled;
     nodePipelineSaving = true;
     try {
-      const res = await fetch('/api/node-pipeline', {
+      const res = await apiFetch('/api/node-pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: desired })
@@ -118,7 +119,7 @@
   async function loadAuditLoggingState() {
     auditLoggingLoading = true;
     try {
-      const res = await fetch('/api/audit-control');
+      const res = await apiFetch('/api/audit-control');
       if (res.ok) {
         const data = await res.json();
         auditLoggingEnabled = !!data.enabled;
@@ -139,7 +140,7 @@
     const desired = target?.checked ?? !auditLoggingEnabled;
     auditLoggingSaving = true;
     try {
-      const res = await fetch('/api/audit-control', {
+      const res = await apiFetch('/api/audit-control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: desired })
@@ -163,7 +164,7 @@
       return;
     }
     try {
-      const res = await fetch('/api/audit-control', {
+      const res = await apiFetch('/api/audit-control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ purgeOld: true })
@@ -181,7 +182,7 @@
   async function loadEmbeddingConfig() {
     embeddingLoading = true;
     try {
-      const res = await fetch('/api/embeddings-control');
+      const res = await apiFetch('/api/embeddings-control');
       if (res.ok) {
         const data = await res.json();
         embeddingEnabled = !!data.enabled;
@@ -204,7 +205,7 @@
     const desired = target?.checked ?? !embeddingEnabled;
     embeddingSaving = true;
     try {
-      const res = await fetch('/api/embeddings-control', {
+      const res = await apiFetch('/api/embeddings-control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: desired })
@@ -232,7 +233,7 @@
     const desired = target?.checked ?? !embeddingPreload;
     embeddingSaving = true;
     try {
-      const res = await fetch('/api/embeddings-control', {
+      const res = await apiFetch('/api/embeddings-control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ preloadAtStartup: desired })
@@ -258,7 +259,7 @@
     }
     embeddingSaving = true;
     try {
-      const res = await fetch('/api/embeddings-control', {
+      const res = await apiFetch('/api/embeddings-control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ preloadNow: true })
@@ -286,7 +287,7 @@
 
   async function loadModelInfo() {
     try {
-      const res = await fetch('/api/model-info');
+      const res = await apiFetch('/api/model-info');
       if (res.ok) {
         modelInfo = await res.json();
       }
@@ -297,7 +298,7 @@
 
   async function loadLoraState() {
     try {
-      const res = await fetch('/api/lora-state');
+      const res = await apiFetch('/api/lora-state');
       if (res.ok) {
         const data = await res.json();
         loraEnabled = data.enabled;
@@ -314,7 +315,7 @@
     if (loraToggling) return;
     loraToggling = true;
     try {
-      const res = await fetch('/api/lora-toggle', {
+      const res = await apiFetch('/api/lora-toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: loraEnabled }),
@@ -336,7 +337,7 @@
 
     selecting = true;
     try {
-      const res = await fetch('/api/lora-select', {
+      const res = await apiFetch('/api/lora-select', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ date, dualEnabled }),
@@ -371,7 +372,7 @@
       localStorage.setItem('logTimestamp', String(logTimestamp));
       localStorage.setItem('logSlowRequests', String(logSlowRequests));
 
-      const res = await fetch('/api/logging-config', {
+      const res = await apiFetch('/api/logging-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -394,7 +395,7 @@
   async function loadStorageStatus() {
     storageLoading = true;
     try {
-      const res = await fetch('/api/storage-status');
+      const res = await apiFetch('/api/storage-status');
       if (res.ok) {
         storageStatus = await res.json();
       }

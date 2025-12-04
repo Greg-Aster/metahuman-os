@@ -1,35 +1,36 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
-// Server configuration
-// Development: Use local IP (run `pnpm dev:ip` to find yours)
-// Production: Set METAHUMAN_SERVER to your hosted URL
+// Build mode configuration
+// DEV_MODE=true: Connect to local dev server for live reload
+// DEV_MODE=false (default): Connect to production server
 const DEV_SERVER_IP = process.env.DEV_SERVER_IP || '192.168.0.44';
 const DEV_SERVER_PORT = process.env.DEV_SERVER_PORT || '4321';
-const PRODUCTION_SERVER = process.env.METAHUMAN_SERVER || 'https://mh.dndiy.org';
 const DEV_MODE = process.env.DEV_MODE === 'true';
 
-// Determine which server to connect to
-const serverUrl = DEV_MODE
-  ? `http://${DEV_SERVER_IP}:${DEV_SERVER_PORT}`
-  : PRODUCTION_SERVER;
+// Production server URL
+const PROD_SERVER_URL = 'https://mh.dndiy.org';
 
 const config: CapacitorConfig = {
   appId: 'com.metahuman.os',
   appName: 'MetaHuman',
 
-  // Note: webDir is required by Capacitor but we use server.url instead
-  // Create a minimal placeholder for the initial setup
+  // Web assets directory - loads from bundled www/ folder in production
   webDir: 'www',
 
-  // Always connect to a server (MetaHuman requires backend)
-  server: {
-    url: serverUrl,
-    cleartext: DEV_MODE, // Allow HTTP only in dev mode
-  },
+  // Server configuration
+  // Dev mode: local server for live reload
+  // Production mode: loads from bundled www/ folder (offline capable)
+  //   API calls go to PROD_SERVER_URL via apiFetch()
+  ...(DEV_MODE && {
+    server: {
+      url: `http://${DEV_SERVER_IP}:${DEV_SERVER_PORT}`,
+      cleartext: true, // Allow HTTP for local dev server
+    }
+  }),
 
   android: {
-    // Allow HTTP for local dev server
-    allowMixedContent: true,
+    // Allow mixed content only in dev mode
+    allowMixedContent: DEV_MODE,
     // Dark splash screen
     backgroundColor: '#0f0f0f',
     // Build with modern webview

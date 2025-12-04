@@ -25,12 +25,20 @@ interface RejectionInput {
   rejectedBy: 'system' | 'user' | 'review';
 }
 
-const execute: NodeExecutor = async (inputs, context, _properties) => {
-  const desire = inputs.desire as Desire | undefined;
-  const newStatus = inputs.newStatus as DesireStatus | undefined;
-  const plan = inputs.plan as DesirePlan | undefined;
-  const review = inputs.review as DesireReview | undefined;
-  const rejection = inputs.rejection as RejectionInput | undefined;
+const execute: NodeExecutor = async (inputs, context, properties) => {
+  // Inputs come via slot positions from graph links:
+  // slot 0: {desire, found} from desire_loader
+  // slot 1: {valid, plan, errors, warnings, stepCount} from plan_validator
+  const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | undefined;
+  const slot1 = inputs[1] as { valid?: boolean; plan?: DesirePlan } | undefined;
+
+  const desire = slot0?.desire;
+  const plan = slot1?.plan;
+  const review = (inputs.review || inputs[2]) as DesireReview | undefined;
+  const rejection = (inputs.rejection || inputs[3]) as RejectionInput | undefined;
+
+  // Status can come from properties (in graph definition) or inputs
+  const newStatus = (properties?.newStatus || inputs.newStatus) as DesireStatus | undefined;
   const username = context.userId;
 
   if (!desire) {
@@ -59,8 +67,27 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
 
     // Attach plan if provided
     if (plan) {
+      // If there's an existing plan, move it to history
+      if (updatedDesire.plan) {
+        if (!updatedDesire.planHistory) {
+          updatedDesire.planHistory = [];
+        }
+        // Only add to history if not already there (avoid duplicates)
+        const existingIds = updatedDesire.planHistory.map(p => p.id);
+        if (!existingIds.includes(updatedDesire.plan.id)) {
+          updatedDesire.planHistory.push(updatedDesire.plan);
+        }
+      }
+
+      // Set the new plan
       updatedDesire.plan = plan;
       updatedDesire.updatedAt = now;
+
+      // Clear the critique since it's been addressed by this new plan
+      if (updatedDesire.userCritique) {
+        updatedDesire.userCritique = undefined;
+        updatedDesire.critiqueAt = undefined;
+      }
 
       // Save plan separately
       await savePlan(plan, username);
