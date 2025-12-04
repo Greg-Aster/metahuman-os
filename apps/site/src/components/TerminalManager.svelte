@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { bigBrotherTerminal, bigBrotherTerminalOpened } from '../stores/bigBrotherTerminal';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface TerminalTab {
     id: string;
@@ -54,7 +55,7 @@
 
     // Check if Big Brother session is active and create tab if needed
     try {
-      const res = await fetch('/api/claude-session');
+      const res = await apiFetch('/api/claude-session');
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.status?.ready && !bigBrotherTabId) {
@@ -83,7 +84,7 @@
     isCreating = true;
 
     try {
-      const response = await fetch('/api/terminal/spawn', {
+      const response = await apiFetch('/api/terminal/spawn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -152,7 +153,7 @@
 
   async function killTerminal(port: number) {
     try {
-      await fetch(`/api/terminal/kill/${port}`, {
+      await apiFetch(`/api/terminal/kill/${port}`, {
         method: 'POST'
       });
     } catch (error) {

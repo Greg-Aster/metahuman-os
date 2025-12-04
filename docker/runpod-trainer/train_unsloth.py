@@ -147,7 +147,7 @@ def main():
         input_dir = "/workspace/input"
         data_path = os.path.join(input_dir, "unsloth_dataset.jsonl")
         config_path = os.path.join(input_dir, "config.json")
-        output_dir = "/output/adapter"
+        output_dir = "/workspace/output/adapter"  # Use /workspace (network volume) instead of /output (container)
 
     # Defaults matching etc/training.json; can be overridden by config.json
     cfg = {

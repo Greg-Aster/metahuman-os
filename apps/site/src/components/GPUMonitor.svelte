@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface GPUMemory {
     total: number;
@@ -88,7 +89,7 @@
 
   async function loadGPUStatus() {
     try {
-      const res = await fetch('/api/gpu-status');
+      const res = await apiFetch('/api/gpu-status');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       status = await res.json();
       error = null;

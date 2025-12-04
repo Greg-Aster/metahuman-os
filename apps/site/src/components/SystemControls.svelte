@@ -55,7 +55,7 @@
   async function updateTrainingConfig(updates: any) {
     updatingTrainingConfig = true;
     try {
-      const res = await fetch('/api/training-data', {
+      const res = await apiFetch('/api/training-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
@@ -86,7 +86,7 @@
   async function sendAction(action: string, payload: Record<string, any>) {
     working = true;
     try {
-      const res = await fetch('/api/adapters', {
+      const res = await apiFetch('/api/adapters', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, ...payload })
@@ -137,7 +137,7 @@
 
   async function exportConversationsNow() {
     try {
-      const res = await fetch('/api/export-conversations', { method: 'POST' });
+      const res = await apiFetch('/api/export-conversations', { method: 'POST' });
       const data = await res.json();
       if (!data.success) throw new Error(data.error);
       alert('✅ Conversations exported successfully.');

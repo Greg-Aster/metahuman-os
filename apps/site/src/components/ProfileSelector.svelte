@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   export let onSelect: (username: string) => void;
   export let onCancel: () => void;
@@ -22,7 +23,7 @@
 
   async function fetchProfiles() {
     try {
-      const res = await fetch('/api/profiles/list');
+      const res = await apiFetch('/api/profiles/list');
       const data = await res.json();
 
       if (data.success) {
@@ -44,7 +45,7 @@
     error = '';
 
     try {
-      const res = await fetch('/api/profiles/select', {
+      const res = await apiFetch('/api/profiles/select', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username }),

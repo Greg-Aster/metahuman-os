@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../../lib/client/api-config';
 
   export let onNext: () => void;
   export let onBack: () => void;
@@ -31,7 +32,7 @@
 
     try {
       // Save identity information to persona/core.json
-      const response = await fetch('/api/persona', {
+      const response = await apiFetch('/api/persona', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -52,7 +53,7 @@
       }
 
       // Increment identity questions counter
-      await fetch('/api/onboarding/state', {
+      await apiFetch('/api/onboarding/state', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

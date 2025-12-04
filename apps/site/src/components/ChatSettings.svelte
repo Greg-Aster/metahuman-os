@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   let config: any = null;
   let settings: any = null;
@@ -28,7 +29,7 @@
   async function loadSettings() {
     try {
       loading = true;
-      const res = await fetch('/api/chat-settings');
+      const res = await apiFetch('/api/chat-settings');
       if (res.ok) {
         const data = await res.json();
         config = data.config;
@@ -72,7 +73,7 @@
         unifiedConsciousness,
       };
 
-      const res = await fetch('/api/chat-settings', {
+      const res = await apiFetch('/api/chat-settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ updates }),
@@ -91,7 +92,7 @@
   async function applyPreset(presetName: string) {
     try {
       applyingPreset = true;
-      const res = await fetch('/api/chat-settings', {
+      const res = await apiFetch('/api/chat-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ preset: presetName }),

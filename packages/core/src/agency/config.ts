@@ -71,9 +71,10 @@ export const DEFAULT_AGENCY_CONFIG: AgencyConfig = {
     autoApprove: 0.85,
     decay: {
       enabled: true,
-      ratePerHour: 0.02,
-      minStrength: 0.1,
-      reinforcementBoost: 0.15,
+      ratePerRun: 0.03,        // Small decay per run - desires fade slowly without reinforcement
+      minStrength: 0.05,       // Minimum before abandonment
+      reinforcementBoost: 0.08, // Boost when related inputs found
+      initialStrength: 0.15,   // New desires start small and grow
     },
   },
 
@@ -247,7 +248,7 @@ export function validateConfig(config: AgencyConfig): { valid: boolean; errors: 
   }
 
   // Validate decay
-  if (config.thresholds.decay.ratePerHour < 0 || config.thresholds.decay.ratePerHour > 1) {
+  if (config.thresholds.decay.ratePerRun < 0 || config.thresholds.decay.ratePerRun > 1) {
     errors.push('decay rate must be between 0 and 1');
   }
   if (config.thresholds.decay.minStrength < 0 || config.thresholds.decay.minStrength > 1) {

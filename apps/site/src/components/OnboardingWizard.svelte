@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
   import Step1Welcome from './onboarding/Step1_Welcome.svelte';
   import Step2Identity from './onboarding/Step2_Identity.svelte';
   import Step3PersonalityChoice from './onboarding/Step3_PersonalityChoice.svelte';
@@ -40,7 +41,7 @@
   async function loadState() {
     try {
       loading = true;
-      const res = await fetch('/api/onboarding/state');
+      const res = await apiFetch('/api/onboarding/state');
       if (res.ok) {
         const data = await res.json();
         state = data.state;
@@ -59,7 +60,7 @@
   // Update state on backend
   async function updateState(updates: Partial<OnboardingState>) {
     try {
-      const res = await fetch('/api/onboarding/state', {
+      const res = await apiFetch('/api/onboarding/state', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ updates }),
@@ -107,7 +108,7 @@
   async function completeOnboarding() {
     try {
       loading = true;
-      const res = await fetch('/api/onboarding/complete', {
+      const res = await apiFetch('/api/onboarding/complete', {
         method: 'POST',
       });
       if (res.ok) {
@@ -127,7 +128,7 @@
   async function skipOnboarding(reason?: string) {
     try {
       loading = true;
-      const res = await fetch('/api/onboarding/skip', {
+      const res = await apiFetch('/api/onboarding/skip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason }),

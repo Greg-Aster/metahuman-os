@@ -76,8 +76,8 @@ export function loadSchema(family: string): ModelSchema {
     const content = fs.readFileSync(schemaPath, 'utf-8');
     const schema = JSON.parse(content) as ModelSchema;
 
-    // Validate required fields
-    if (!schema.family || !schema.user_prefix || !schema.assistant_prefix) {
+    // Validate required fields (note: prefixes can be empty strings)
+    if (!schema.family || schema.user_prefix === undefined || schema.assistant_prefix === undefined) {
       throw new Error(`Invalid schema file: ${schemaPath} (missing required fields)`);
     }
 

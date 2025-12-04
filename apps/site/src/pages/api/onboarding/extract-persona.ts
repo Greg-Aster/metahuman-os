@@ -79,9 +79,8 @@ const handler: APIRoute = async ({ cookies, request }) => {
       .map((m) => `${m.role === 'assistant' ? 'Interviewer' : 'You'}: ${m.content}`)
       .join('\n\n');
 
-    await captureEvent({
+    await captureEvent(`Quick Personality Survey - Onboarding\n\n${transcript}`, {
       type: 'observation',
-      content: `Quick Personality Survey - Onboarding\n\n${transcript}`,
       tags: ['onboarding', 'personality-survey', 'quick-survey'],
       metadata: {
         source: 'onboarding',

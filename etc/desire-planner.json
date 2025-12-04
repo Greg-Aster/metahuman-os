@@ -1,0 +1,36 @@
+{
+  "enabled": true,
+  "description": "Configuration for the desire planner agent",
+
+  "graph": {
+    "planner": "desire-planner.json",
+    "reviewer": "desire-reviewer.json"
+  },
+
+  "planning": {
+    "temperature": 0.3,
+    "maxSteps": 10,
+    "includeToolCatalog": true,
+    "includeDecisionRules": true,
+    "includeMemoryContext": true,
+    "memorySearchLimit": 5
+  },
+
+  "review": {
+    "alignmentThreshold": 0.7,
+    "safetyThreshold": 0.8,
+    "autoApproveThreshold": 0.9,
+    "temperature": 0.2
+  },
+
+  "processing": {
+    "batchSize": 5,
+    "retryOnFailure": true,
+    "maxRetries": 2
+  },
+
+  "logging": {
+    "verbose": true,
+    "logToInnerDialogue": true
+  }
+}

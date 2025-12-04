@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { canWriteMemory } from '../stores/security-policy';
+  import { apiFetch } from '../lib/client/api-config';
 
   type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
 
@@ -131,7 +132,7 @@
       }
 
       const url = params.size ? `/api/tasks?${params.toString()}` : '/api/tasks';
-      const res = await fetch(url);
+      const res = await apiFetch(url);
       if (!res.ok) throw new Error('Failed to load tasks');
 
       const data = await res.json();
@@ -151,7 +152,7 @@
 
   async function loadTaskLists() {
     try {
-      const res = await fetch('/api/task-lists');
+      const res = await apiFetch('/api/task-lists');
       if (!res.ok) throw new Error('Failed to load task lists');
       const data = await res.json();
       taskLists = Array.isArray(data?.lists) ? data.lists : [];
@@ -169,7 +170,7 @@
         payload.listId = selectedList;
       }
 
-      const res = await fetch('/api/tasks', {
+      const res = await apiFetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -187,7 +188,7 @@
 
   async function updateTaskStatus(taskId: string, status: TaskStatus) {
     try {
-      const res = await fetch('/api/tasks', {
+      const res = await apiFetch('/api/tasks', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ taskId, status }),
@@ -235,7 +236,7 @@
         payload.listId = editForm.listId;
       }
 
-      const res = await fetch('/api/tasks', {
+      const res = await apiFetch('/api/tasks', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -279,7 +280,7 @@
   async function runOrganizerAgent() {
     agentStatus = 'Starting agent...';
     try {
-      const res = await fetch('/api/agent', {
+      const res = await apiFetch('/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agentName: 'organizer' }),
@@ -366,7 +367,7 @@
     const name = window.prompt('Task list name?');
     if (!name || !name.trim()) return;
     try {
-      const res = await fetch('/api/task-lists', {
+      const res = await apiFetch('/api/task-lists', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name.trim() }),

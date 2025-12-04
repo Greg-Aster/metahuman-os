@@ -6,6 +6,7 @@
    */
 
 import { onDestroy } from 'svelte';
+import { apiFetch } from '../lib/client/api-config';
 
 export let provider: 'piper' | 'sovits' | 'gpt-sovits' = 'gpt-sovits';
 export let speakerId: string = 'default';
@@ -186,7 +187,7 @@ export let onRecordingComplete: (success: boolean) => void = () => {};
       formData.append('copyToReference', 'true'); // Immediately set as reference audio
 
       // Upload to voice profile endpoint
-      const uploadResponse = await fetch('/api/voice-profile/upload', {
+      const uploadResponse = await apiFetch('/api/voice-profile/upload', {
         method: 'POST',
         body: formData,
       });

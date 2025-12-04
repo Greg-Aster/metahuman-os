@@ -13,10 +13,11 @@ export const POST: APIRoute = async (context) => {
     const session = createSession('anonymous', 'anonymous');
 
     // Set session cookie
+    // Use sameSite: 'none' for cross-origin requests (mobile app)
     context.cookies.set('mh_session', session.id, {
       httpOnly: true,
-      secure: import.meta.env.PROD,
-      sameSite: 'strict',
+      sameSite: 'none', // Required for cross-origin (mobile app)
+      secure: true, // Required when sameSite is 'none'
       path: '/',
       maxAge: 30 * 60, // 30 minutes
     });

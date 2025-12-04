@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { apiFetch } from '../lib/client/api-config';
+
   export let onProfileCreated: (() => void) | undefined = undefined;
 
   let username = '';
@@ -50,7 +52,7 @@
     creating = true;
 
     try {
-      const response = await fetch('/api/profiles/create', {
+      const response = await apiFetch('/api/profiles/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

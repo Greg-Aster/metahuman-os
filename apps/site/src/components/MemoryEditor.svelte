@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   export let isOpen = false;
   export let relPath: string = '';
@@ -25,7 +26,7 @@
     loading = true;
     error = '';
     try {
-      const res = await fetch(`/api/memory-content?relPath=${encodeURIComponent(relPath)}`);
+      const res = await apiFetch(`/api/memory-content?relPath=${encodeURIComponent(relPath)}`);
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data?.error || 'Failed to load memory');
@@ -44,7 +45,7 @@
     saving = true;
     error = '';
     try {
-      const res = await fetch('/api/memory-content', {
+      const res = await apiFetch('/api/memory-content', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ relPath, content }),

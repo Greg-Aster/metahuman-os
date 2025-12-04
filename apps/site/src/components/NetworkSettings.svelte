@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface TunnelStatus {
     installed: boolean;
@@ -24,7 +25,7 @@
 
   async function loadTunnelStatus() {
     try {
-      const res = await fetch('/api/cloudflare/status');
+      const res = await apiFetch('/api/cloudflare/status');
       if (res.ok) {
         tunnelStatus = await res.json();
       }
@@ -41,7 +42,7 @@
     loading = true;
 
     try {
-      const res = await fetch('/api/cloudflare/toggle', {
+      const res = await apiFetch('/api/cloudflare/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: enable }),
@@ -67,7 +68,7 @@
     loading = true;
 
     try {
-      const res = await fetch('/api/cloudflare/start', { method: 'POST' });
+      const res = await apiFetch('/api/cloudflare/start', { method: 'POST' });
       if (res.ok) {
         successMessage = 'Tunnel started!';
         await loadTunnelStatus();
@@ -88,7 +89,7 @@
     loading = true;
 
     try {
-      const res = await fetch('/api/cloudflare/stop', { method: 'POST' });
+      const res = await apiFetch('/api/cloudflare/stop', { method: 'POST' });
       if (res.ok) {
         successMessage = 'Tunnel stopped!';
         await loadTunnelStatus();
@@ -105,7 +106,7 @@
 
   async function loadRuntimeMode() {
     try {
-      const res = await fetch('/api/runtime/mode');
+      const res = await apiFetch('/api/runtime/mode');
       if (res.ok) {
         runtimeMode = await res.json();
       }
@@ -120,7 +121,7 @@
     loading = true;
 
     try {
-      const res = await fetch('/api/runtime/mode', {
+      const res = await apiFetch('/api/runtime/mode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ headless: enable }),

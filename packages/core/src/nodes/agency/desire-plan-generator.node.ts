@@ -56,10 +56,20 @@ function determineRequiredTrust(risk: string): TrustLevel {
 }
 
 const execute: NodeExecutor = async (inputs, _context, properties) => {
-  const desire = inputs.desire as Desire | undefined;
-  const toolCatalog = (inputs.toolCatalog as string) || '';
-  const decisionRules = (inputs.decisionRules as string) || '';
-  const relevantMemories = (inputs.relevantMemories as string) || '';
+  // Inputs come via slot positions from graph links:
+  // slot 0: {desire, found} from desire_loader
+  // slot 1: {catalog, toolCount, entries} from tool_catalog_builder
+  // slot 2: {formatted, rules, ...} from policy_loader
+  // slot 3: {memories, query} from semantic_search
+  const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | undefined;
+  const slot1 = inputs[1] as { catalog?: string } | undefined;
+  const slot2 = inputs[2] as { formatted?: string } | undefined;
+  const slot3 = inputs[3] as { memories?: unknown[] } | undefined;
+
+  const desire = slot0?.desire;
+  const toolCatalog = slot1?.catalog || '';
+  const decisionRules = slot2?.formatted || '';
+  const relevantMemories = JSON.stringify(slot3?.memories || [], null, 2);
   const temperature = (properties?.temperature as number) || 0.3;
 
   if (!desire) {
@@ -70,6 +80,35 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
     };
   }
 
+  // Check if this is a revision (has critique and/or previous plan)
+  const isRevision = !!(desire.userCritique || desire.plan);
+  const previousPlan = desire.plan;
+  const userCritique = desire.userCritique;
+  const planVersion = (desire.planHistory?.length || 0) + 1;
+
+  // Build the revision context if applicable
+  let revisionContext = '';
+  if (isRevision && previousPlan) {
+    revisionContext = `
+## REVISION REQUEST
+
+This is a revision of a previous plan. The user has reviewed the plan and provided feedback.
+
+### Previous Plan (Version ${previousPlan.version || planVersion - 1})
+${previousPlan.steps.map((s, i) => `${i + 1}. ${s.action} (skill: ${s.skill || 'none'}, risk: ${s.risk})`).join('\n')}
+
+Operator Goal: ${previousPlan.operatorGoal}
+Estimated Risk: ${previousPlan.estimatedRisk}
+
+### User Critique
+${userCritique || 'No specific critique provided - please improve the plan.'}
+
+### Instructions
+Please create a NEW plan that addresses the user's feedback. Do not simply repeat the previous plan.
+Consider the critique carefully and make meaningful changes to address the concerns.
+`;
+  }
+
   const userPrompt = `## Desire to Plan
 
 **Title**: ${desire.title}
@@ -77,7 +116,7 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
 **Reason**: ${desire.reason}
 **Source**: ${desire.source}
 **Risk Level**: ${desire.risk}
-
+${revisionContext}
 ## Available Skills
 ${toolCatalog || 'No skill catalog available - use general steps'}
 
@@ -96,6 +135,7 @@ Create an execution plan with:
 4. Expected outcome per step
 5. Risk assessment per step
 6. A single "operatorGoal" string summarizing what to accomplish
+${isRevision ? '\nIMPORTANT: This is a revision. Address the user critique and improve upon the previous plan.' : ''}
 
 Output as JSON:
 {
@@ -153,7 +193,8 @@ Output as JSON:
 
     // Convert to DesirePlan
     const plan: DesirePlan = {
-      id: generatePlanId(desire.id),
+      id: generatePlanId(desire.id) + (planVersion > 1 ? `-v${planVersion}` : ''),
+      version: planVersion,
       steps: parsed.steps.map((step, idx) => ({
         order: step.order || idx + 1,
         action: step.action,
@@ -168,11 +209,14 @@ Output as JSON:
       requiredTrustLevel: determineRequiredTrust(parsed.estimatedRisk),
       operatorGoal: parsed.operatorGoal,
       createdAt: new Date().toISOString(),
+      basedOnCritique: isRevision ? userCritique : undefined,
     };
 
     return {
       plan,
       success: true,
+      isRevision,
+      previousVersion: isRevision ? planVersion - 1 : undefined,
     };
   } catch (error) {
     return {

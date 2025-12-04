@@ -1,6 +1,7 @@
 <script lang="ts">
   import { activeView } from '../stores/navigation';
   import type { SvelteComponent } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   // PERFORMANCE OPTIMIZATION: Lazy load components
   // Only load ChatInterface eagerly (it's the default view and most common)
@@ -204,7 +205,7 @@ let editorMemoryType = 'Memory'
 
 async function loadVoiceProvider() {
   try {
-    const res = await fetch('/api/voice-settings');
+    const res = await apiFetch('/api/voice-settings');
     if (res.ok) {
       const data = await res.json();
       currentVoiceProvider = data.provider || 'rvc';
@@ -216,7 +217,7 @@ async function loadVoiceProvider() {
 
 async function loadCuriositySettings() {
   try {
-    const res = await fetch('/api/curiosity-config');
+    const res = await apiFetch('/api/curiosity-config');
     if (res.ok) {
       const data = await res.json();
       curiosityLevel = data.maxOpenQuestions;
@@ -229,7 +230,7 @@ async function loadCuriositySettings() {
 
 async function saveCuriositySettings() {
   try {
-    const res = await fetch('/api/curiosity-config', {
+    const res = await apiFetch('/api/curiosity-config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -251,7 +252,7 @@ async function loadEvents() {
   eventsError = null;
     try {
       // Load most recent 100 memories (paginated for performance)
-      const res = await fetch('/api/memories_all?limit=100');
+      const res = await apiFetch('/api/memories_all?limit=100');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const episodicEvents = Array.isArray(data.episodic) ? data.episodic : [];
@@ -311,7 +312,7 @@ async function loadEvents() {
 
 async function loadFunctions() {
   try {
-    const res = await fetch('/api/functions?sortBy=qualityScore&sortOrder=desc');
+    const res = await apiFetch('/api/functions?sortBy=qualityScore&sortOrder=desc');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     functionMemories = Array.isArray(data.functions) ? data.functions : [];
@@ -505,7 +506,7 @@ async function loadMemoryContent(relPath: string) {
     if (saving[item.relPath]) return
     saving = { ...saving, [item.relPath]: true }
     try {
-      const res = await fetch('/api/memories/validate', {
+      const res = await apiFetch('/api/memories/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ relPath: item.relPath, status })
@@ -526,7 +527,7 @@ async function loadMemoryContent(relPath: string) {
     if (deleting[item.relPath]) return
     deleting = { ...deleting, [item.relPath]: true }
     try {
-      const res = await fetch('/api/memories/delete', {
+      const res = await apiFetch('/api/memories/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ relPath: item.relPath })

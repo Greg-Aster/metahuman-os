@@ -3,6 +3,7 @@
   import { writable } from 'svelte/store';
   import { statusStore, statusRefreshTrigger, nodeEditorMode } from '../stores/navigation';
   import { startPolicyPolling, fetchSecurityPolicy, policyStore, isReadOnly } from '../stores/security-policy';
+  import { apiFetch } from '../lib/client/api-config';
   import UserMenu from './UserMenu.svelte';
   import HeadlessClaimBanner from './HeadlessClaimBanner.svelte';
   // NodeEditorLayout is loaded dynamically to avoid bundling @metahuman/core in client
@@ -108,7 +109,7 @@
     try {
       // Add timestamp to bust server-side cache when explicitly requested
       const cacheBust = bustCache ? `?_t=${Date.now()}` : '';
-      const res = await fetch(`/api/status${cacheBust}`, { cache: 'no-store' });
+      const res = await apiFetch(`/api/status${cacheBust}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Failed to load persona (status ${res.status})`);
       const data = await res.json();
       statusStore.set(data);  // Store the response for other components to use
@@ -129,7 +130,7 @@
   async function loadCognitiveModeState() {
     modeLoading = true;
     try {
-      const res = await fetch('/api/cognitive-mode', { cache: 'no-store' });
+      const res = await apiFetch('/api/cognitive-mode', { cache: 'no-store' });
       if (!res.ok) throw new Error(`Failed to load cognitive mode (status ${res.status})`);
       const data = await res.json();
       cognitiveModes = Array.isArray(data?.modes) ? data.modes : [];
@@ -147,7 +148,7 @@
     if (modeLoading) return;
     modeLoading = true;
     try {
-      const res = await fetch('/api/cognitive-mode', {
+      const res = await apiFetch('/api/cognitive-mode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: nextMode, actor: 'web_ui' }),
@@ -180,7 +181,7 @@
 
   async function fetchSystemStatus() {
     try {
-      const res = await fetch('/api/system-status');
+      const res = await apiFetch('/api/system-status');
       const data = await res.json();
 
       if (data.success) {
@@ -195,7 +196,7 @@
 
   async function fetchCurrentUser() {
     try {
-      const response = await fetch('/api/auth/me');
+      const response = await apiFetch('/api/auth/me');
       const data = await response.json();
 
       if (data.success && data.user) {
@@ -211,7 +212,7 @@
 
   async function handleLogout() {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await apiFetch('/api/auth/logout', { method: 'POST' });
       window.location.href = '/';
     } catch (err) {
       console.error('[ChatLayout] Logout failed:', err);

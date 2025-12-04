@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { apiFetch } from '../lib/client/api-config';
+
   let mediaStream: MediaStream | null = null
   let mediaRecorder: MediaRecorder | null = null
   let recording = false
@@ -49,7 +51,7 @@
         const form = new FormData()
         form.append('audio', blob, filename)
         try {
-          const res = await fetch('/api/audio/upload', { method: 'POST', body: form })
+          const res = await apiFetch('/api/audio/upload', { method: 'POST', body: form })
           const data = await res.json()
           if (!res.ok || !data.success) throw new Error(data.error || 'Upload failed')
           uploaded++

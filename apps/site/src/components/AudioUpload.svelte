@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   let uploading = false;
   let uploadProgress = 0;
@@ -37,7 +38,7 @@
       const formData = new FormData();
       formData.append('audio', uploadedFile);
 
-      const response = await fetch('/api/audio/upload', {
+      const response = await apiFetch('/api/audio/upload', {
         method: 'POST',
         body: formData,
       });
