@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { apiFetch } from '../../lib/client/api-config';
+
   export let onNext: () => void;
   export let onBack: () => void;
   export let onSkip: () => void;
@@ -88,7 +90,7 @@
     error = '';
 
     try {
-      const response = await fetch('/api/onboarding/extract-persona', {
+      const response = await apiFetch('/api/onboarding/extract-persona', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -113,7 +115,7 @@
       ];
 
       // Increment personality questions counter
-      await fetch('/api/onboarding/state', {
+      await apiFetch('/api/onboarding/state', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

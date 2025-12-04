@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface ServerInfo {
     name: string;
@@ -37,7 +38,7 @@
 
     for (const config of serverConfigs) {
       try {
-        const response = await fetch(config.endpoint);
+        const response = await apiFetch(config.endpoint);
         if (response.ok) {
           const data = await response.json();
           newServers.push({
@@ -76,7 +77,7 @@
 
     // Fetch Astro dev servers
     try {
-      const astroResponse = await fetch('/api/astro-servers');
+      const astroResponse = await apiFetch('/api/astro-servers');
       if (astroResponse.ok) {
         const astroData = await astroResponse.json();
         astroServers = astroData.servers || [];
@@ -94,7 +95,7 @@
     actionInProgress = `${server.name}-${action}`;
 
     try {
-      const response = await fetch(server.endpoint, {
+      const response = await apiFetch(server.endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action }),
@@ -144,7 +145,7 @@
     actionInProgress = `astro-${port}`;
 
     try {
-      const response = await fetch('/api/astro-servers', {
+      const response = await apiFetch('/api/astro-servers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'stop', port }),

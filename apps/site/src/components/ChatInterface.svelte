@@ -12,6 +12,7 @@
   import { useMicrophone } from '../lib/client/composables/useMicrophone';
   import { useThinkingTrace } from '../lib/client/composables/useThinkingTrace';
   import { useMessages, useActivityTracking, useOllamaStatus, type ChatMessage, type MessageRole, type ReasoningStage } from '../lib/client/composables/useMessages';
+  import { apiFetch, apiUrl, apiEventSource } from '../lib/client/api-config';
 
   // Component state
   let input = '';
@@ -229,7 +230,7 @@
 
     // Load Big Brother configuration from server
     try {
-      const res = await fetch('/api/big-brother-config');
+      const res = await apiFetch('/api/big-brother-config');
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.config) {
@@ -325,7 +326,7 @@
   async function fetchBuffer(streamMode: 'conversation' | 'inner') {
     try {
       console.log(`[chat] Fetching ${streamMode} buffer...`);
-      const response = await fetch(`/api/buffer?mode=${streamMode}`);
+      const response = await apiFetch(`/api/buffer?mode=${streamMode}`);
       if (response.ok) {
         const data = await response.json();
         if (Array.isArray(data.messages)) {
@@ -353,7 +354,7 @@
     }
 
     console.log(`[chat] Connecting to ${streamMode} buffer stream...`);
-    innerDialogueStream = new EventSource(`/api/buffer-stream?mode=${streamMode}`);
+    innerDialogueStream = apiEventSource(`/api/buffer-stream?mode=${streamMode}`);
 
     innerDialogueStream.onmessage = (event) => {
       try {
@@ -518,7 +519,7 @@
       // Use EventSource for streaming with a GET request
       // Force graph pipeline; some runtime toggles can disable it after settings load
       params.set('graph', 'true');
-      chatResponseStream = new EventSource(`/api/persona_chat?${params.toString()}`);
+      chatResponseStream = apiEventSource(`/api/persona_chat?${params.toString()}`);
       console.log('[sendMessage] Step 6: EventSource created!');
 
       chatResponseStream.onmessage = (event) => {
@@ -687,7 +688,7 @@
     try {
       console.log('[stop-request] Cancelling session:', $conversationSessionId);
 
-      const response = await fetch('/api/cancel-chat', {
+      const response = await apiFetch('/api/cancel-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -727,7 +728,7 @@
 
   async function checkClaudeSessionStatus() {
     try {
-      const res = await fetch('/api/claude-session');
+      const res = await apiFetch('/api/claude-session');
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.status) {
@@ -747,7 +748,7 @@
     claudeSessionChecking = true;
     try {
       console.log('[claude-session] Starting Claude CLI session...');
-      const res = await fetch('/api/claude-session', {
+      const res = await apiFetch('/api/claude-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'start' })
@@ -775,7 +776,7 @@
 
   async function stopClaudeSession() {
     try {
-      await fetch('/api/claude-session', {
+      await apiFetch('/api/claude-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'stop' })
@@ -793,7 +794,7 @@
 
     // Update server configuration
     try {
-      const res = await fetch('/api/big-brother-config', {
+      const res = await apiFetch('/api/big-brother-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -832,7 +833,7 @@
 
   async function handleValidate(relPath: string, status: 'correct' | 'incorrect') {
     try {
-      const res = await fetch('/api/memories/validate', {
+      const res = await apiFetch('/api/memories/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ relPath, status }),
@@ -862,7 +863,7 @@
 
     // Clear audit log files from disk for privacy
     try {
-      const response = await fetch('/api/audit/clear', {
+      const response = await apiFetch('/api/audit/clear', {
         method: 'DELETE',
       });
 

@@ -418,6 +418,68 @@ async function rsyncDownload(
   });
 }
 
+/**
+ * Monitor download progress by watching file size growth
+ * Returns a cancel function to stop monitoring
+ */
+function monitorDownloadProgress(
+  localPath: string,
+  expectedSizeGB: number,
+  tracker: ProgressTracker,
+  logFilePath: string,
+  intervalMs: number = 3000
+): () => void {
+  let cancelled = false;
+  let lastSize = 0;
+  let lastTime = Date.now();
+
+  const checkProgress = () => {
+    if (cancelled) return;
+
+    try {
+      if (fs.existsSync(localPath)) {
+        const stats = fs.statSync(localPath);
+        const currentSizeGB = stats.size / (1024 ** 3);
+        const currentTime = Date.now();
+
+        // Calculate speed
+        const elapsedSec = (currentTime - lastTime) / 1000;
+        const downloadedSinceLastCheck = stats.size - lastSize;
+        const speedMBps = elapsedSec > 0 ? (downloadedSinceLastCheck / (1024 * 1024)) / elapsedSec : 0;
+
+        // Calculate ETA
+        const remainingGB = expectedSizeGB - currentSizeGB;
+        const etaMinutes = speedMBps > 0 ? (remainingGB * 1024) / speedMBps / 60 : 0;
+
+        // Calculate percentage
+        const percent = Math.min(99, Math.round((currentSizeGB / expectedSizeGB) * 100));
+
+        // Update tracker and log
+        const progressMsg = `${currentSizeGB.toFixed(2)}/${expectedSizeGB.toFixed(2)} GB (${speedMBps.toFixed(1)} MB/s, ~${etaMinutes.toFixed(1)} min remaining)`;
+        tracker.updateStage('adapter_download', percent * 0.5, `Downloading GGUF: ${progressMsg}`);
+        log(logFilePath, `Download progress: ${progressMsg}`);
+        console.log(`📥 Download: ${progressMsg}`);
+
+        lastSize = stats.size;
+        lastTime = currentTime;
+      }
+    } catch (e) {
+      // File might not exist yet, ignore
+    }
+
+    if (!cancelled) {
+      setTimeout(checkProgress, intervalMs);
+    }
+  };
+
+  // Start monitoring after a short delay
+  setTimeout(checkProgress, 1000);
+
+  return () => {
+    cancelled = true;
+  };
+}
+
 export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise<RunRemoteTrainingResult> {
   const logDir = path.join(ROOT, 'docs', 'run_logs', opts.DATE_STR, opts.RUN_LABEL);
   ensureDirSync(logDir);
@@ -525,7 +587,7 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
 
   tracker.startStage('pod_creation', `Requesting ${gpuType}`);
 
-  for (const cloudType of ['COMMUNITY', 'SECURE']) {
+  for (const cloudType of ['SECURE', 'COMMUNITY']) {
     log(logFilePath, `Attempting to deploy pod on ${cloudType} cloud...`);
     console.log(`📦 Trying ${cloudType} cloud...`);
     const mutation = `
@@ -1016,9 +1078,71 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
 
     if (trainResult.exitCode !== 0) {
       log(logFilePath, 'Remote training script failed.');
-      console.error(`❌ Training failed with exit code ${trainResult.exitCode}\n`);
+      console.error(`\n${'='.repeat(60)}`);
+      console.error(`❌ TRAINING FAILED - Exit code ${trainResult.exitCode}`);
+      console.error(`${'='.repeat(60)}\n`);
+
+      // Extract and display the actual error
+      const combinedOutput = trainResult.stderr + '\n' + trainResult.stdout;
+      const errorPatterns = [
+        /Error:\s*(.+)/gi,
+        /Exception:\s*(.+)/gi,
+        /CUDA out of memory/gi,
+        /RuntimeError:\s*(.+)/gi,
+        /ValueError:\s*(.+)/gi,
+        /torch\.cuda\.OutOfMemoryError/gi,
+        /Traceback.*\n([\s\S]*?)(?=\n\n|\Z)/g,
+      ];
+
+      let foundErrors: string[] = [];
+      for (const pattern of errorPatterns) {
+        const matches = combinedOutput.matchAll(pattern);
+        for (const match of matches) {
+          foundErrors.push(match[0].trim());
+        }
+      }
+
+      if (foundErrors.length > 0) {
+        console.error('📋 Detected errors:');
+        console.error('-'.repeat(40));
+        // Show unique errors only
+        const uniqueErrors = [...new Set(foundErrors)];
+        for (const err of uniqueErrors.slice(0, 10)) {
+          console.error(`  • ${err.substring(0, 500)}`);
+        }
+        console.error('-'.repeat(40));
+      }
+
+      // Show last 50 lines of stderr if available
+      if (trainResult.stderr) {
+        const stderrLines = trainResult.stderr.split('\n').slice(-50);
+        console.error('\n📜 Last 50 lines of stderr:');
+        console.error('-'.repeat(40));
+        console.error(stderrLines.join('\n'));
+        console.error('-'.repeat(40));
+      }
+
+      // Save failure summary to easy-to-find file
+      const failureFile = path.join(opts.WORK_LOCAL, 'TRAINING_FAILED.txt');
+      fs.writeFileSync(failureFile, [
+        `TRAINING FAILED AT: ${new Date().toISOString()}`,
+        `EXIT CODE: ${trainResult.exitCode}`,
+        ``,
+        `=== DETECTED ERRORS ===`,
+        foundErrors.join('\n\n'),
+        ``,
+        `=== FULL STDERR ===`,
+        trainResult.stderr,
+        ``,
+        `=== FULL STDOUT ===`,
+        trainResult.stdout,
+      ].join('\n'));
+      console.error(`\n📁 Full failure log saved to: ${failureFile}`);
+      console.error(`📁 Training output saved to: ${trainingOutputFile}\n`);
+
       tracker.failStage('training', `Exit code ${trainResult.exitCode}`);
       summary.training_success = false;
+      summary.error = foundErrors.length > 0 ? foundErrors[0] : `Exit code ${trainResult.exitCode}`;
     } else {
       console.log('✅ Stage 4/6: Training complete\n');
       tracker.completeStage('training');
@@ -1307,6 +1431,16 @@ echo "Upload complete!"
             const finalGGUFPath = path.join(path.dirname(opts.FINAL_ADAPTER_DIR), 'adapter.gguf');
             ensureDirSync(path.dirname(finalGGUFPath));
 
+            // Start progress monitor (expected ~9GB for Qwen3-14B Q4_K_M)
+            const expectedSizeGB = 9.0; // Approximate expected GGUF size
+            const cancelProgressMonitor = monitorDownloadProgress(
+                finalGGUFPath,
+                expectedSizeGB,
+                tracker,
+                logFilePath,
+                3000 // Update every 3 seconds
+            );
+
             const ggufDownloadResult = await sshScpDownload(
                 ssh_user!, ssh_host!, ssh_key_path!,
                 '/workspace/final_merged_model.gguf',
@@ -1314,6 +1448,9 @@ echo "Upload complete!"
                 logFilePath,
                 ssh_port
             );
+
+            // Stop progress monitor
+            cancelProgressMonitor();
 
             if (ggufDownloadResult.exitCode !== 0) {
                 log(logFilePath, `Merged GGUF download failed with exit code ${ggufDownloadResult.exitCode}`);
@@ -1340,7 +1477,7 @@ echo "Upload complete!"
 
         const adapterDownloadResult = await sshScpDownload(
             ssh_user!, ssh_host!, ssh_key_path!,
-            '/output/adapter', // Download the whole directory
+            '/workspace/output/adapter', // Download from volume disk (not container disk)
             tempAdapterDir,
             logFilePath,
             ssh_port,

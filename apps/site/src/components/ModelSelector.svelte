@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   let models: string[] = [];
   let activeModel: string = '';
@@ -14,7 +15,7 @@
     isLoading = true;
     error = null;
     try {
-      const response = await fetch('/api/models');
+      const response = await apiFetch('/api/models');
       if (!response.ok) {
         throw new Error('Failed to fetch models');
       }
@@ -36,7 +37,7 @@
     if (selectedModel === activeModel) return;
 
     try {
-      const response = await fetch('/api/models', {
+      const response = await apiFetch('/api/models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ baseModel: selectedModel }),

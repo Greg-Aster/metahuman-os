@@ -33,7 +33,8 @@
         currentMode = cognitiveMode;
         console.log(`[NodeEditor] Using passed cognitive mode: ${currentMode}`);
       } else {
-        const modeResponse = await fetch('/api/cognitive-mode');
+        const { apiFetch } = await import('../lib/client/api-config');
+        const modeResponse = await apiFetch('/api/cognitive-mode');
         if (!modeResponse.ok) {
           console.warn('[NodeEditor] Could not fetch cognitive mode, using dual-mode');
           await loadTemplateByName('dual-mode');
@@ -613,8 +614,10 @@
     }
 
     try {
+      const { apiFetch } = await import('../lib/client/api-config');
+
       // Determine which template is currently loaded
-      const modeResponse = await fetch('/api/cognitive-mode');
+      const modeResponse = await apiFetch('/api/cognitive-mode');
       const modeData = await modeResponse.json();
       const currentMode = modeData.currentMode || 'dual';
       const templateName = `${currentMode}-mode`;
@@ -622,7 +625,7 @@
       console.log(`[NodeEditor] Reloading template: ${templateName}`);
 
       // Fetch the latest version of the template
-      const response = await fetch(`/api/template/${templateName}`);
+      const response = await apiFetch(`/api/template/${templateName}`);
       if (!response.ok) {
         throw new Error(`Failed to fetch template: ${response.statusText}`);
       }

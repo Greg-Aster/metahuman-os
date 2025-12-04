@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { calculateVoiceVolume } from '../lib/client/utils/audio-utils.js';
+  import { apiFetch } from '../lib/client/api-config';
 
   // Props inherited from ChatInterface
   export let cognitiveMode: 'dual' | 'agent' | 'emulation' = 'dual';
@@ -40,7 +41,7 @@
   // Load VAD settings from server
   async function loadVADSettings() {
     try {
-      const response = await fetch('/api/voice-settings');
+      const response = await apiFetch('/api/voice-settings');
       if (response.ok) {
         const config = await response.json();
         if (config.stt?.vad) {

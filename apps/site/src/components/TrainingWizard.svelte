@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   // Wizard state machine
   type WizardStep = 1 | 2 | 3 | 4 | 5;
@@ -110,6 +111,9 @@
   let runpodValid = false;
   let runpodConfigLoaded = false; // Track if config was auto-loaded
 
+  // Current user
+  let username = '';
+
   // Advanced settings
   let enableS3Upload = true; // Enable S3 upload by default if configured
   let enablePreprocessing = true; // Enable curation/preprocessing by default
@@ -179,7 +183,7 @@
     error = '';
 
     try {
-      const res = await fetch('/api/system/gpu-info');
+      const res = await apiFetch('/api/system/gpu-info');
       if (res.ok) {
         const data = await res.json();
         systemCapabilities = {
@@ -205,7 +209,7 @@
   // Load existing RunPod configuration (for owner users)
   async function loadRunpodConfig() {
     try {
-      const res = await fetch('/api/runpod/config');
+      const res = await apiFetch('/api/runpod/config');
       if (res.ok) {
         const data = await res.json();
 
@@ -278,7 +282,7 @@
     error = '';
 
     try {
-      const res = await fetch('/api/training/dataset-stats');
+      const res = await apiFetch('/api/training/dataset-stats');
       if (!res.ok) throw new Error('Failed to load dataset stats');
       datasetStats = await res.json();
     } catch (err) {
@@ -300,7 +304,7 @@
     error = '';
 
     try {
-      const res = await fetch('/api/runpod/validate', {
+      const res = await apiFetch('/api/runpod/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ apiKey: runpodConfig.apiKey })
@@ -383,7 +387,7 @@
   async function pollTrainingLogs() {
     try {
       // Load audit events (reduced from 50 to 30 lines)
-      const logsRes = await fetch('/api/training/logs?maxLines=30');
+      const logsRes = await apiFetch('/api/training/logs?maxLines=30');
       if (logsRes.ok) {
         const logsData = await logsRes.json();
         if (logsData.success && logsData.logs) {
@@ -394,7 +398,7 @@
       }
 
       // Load console logs (increased from 50 to 200 for better progress detection)
-      const consoleRes = await fetch('/api/training/console-logs?maxLines=200');
+      const consoleRes = await apiFetch('/api/training/console-logs?maxLines=200');
       if (consoleRes.ok) {
         const consoleData = await consoleRes.json();
         if (consoleData.success && consoleData.logs) {
@@ -409,7 +413,7 @@
       }
 
       // Check if process is still running
-      const statusRes = await fetch('/api/training/running');
+      const statusRes = await apiFetch('/api/training/running');
       if (statusRes.ok) {
         const statusData = await statusRes.json();
         if (statusData.success) {
@@ -466,7 +470,7 @@
 
     cancelling = true;
     try {
-      const res = await fetch('/api/adapters', {
+      const res = await apiFetch('/api/adapters', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'cancelFullCycle' })
@@ -494,7 +498,7 @@
     error = '';
 
     try {
-      const res = await fetch('/api/training/load-model', {
+      const res = await apiFetch('/api/training/load-model', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ modelType })
@@ -539,7 +543,7 @@
       }
 
       // Call the new training launch endpoint
-      const res = await fetch('/api/training/launch', {
+      const res = await apiFetch('/api/training/launch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -569,6 +573,16 @@
     detectCapabilities();
     loadRunpodConfig(); // Auto-load RunPod config for owner users
 
+    // Fetch current user's username
+    apiFetch('/api/session')
+      .then(res => res.json())
+      .then(data => {
+        if (data.authenticated && data.username) {
+          username = data.username;
+        }
+      })
+      .catch(err => console.error('[TrainingWizard] Failed to fetch session:', err));
+
     // Load saved RunPod config from localStorage if exists
     const saved = localStorage.getItem('mh_runpod_config');
     if (saved) {
@@ -584,7 +598,7 @@
     }
 
     // Check if training is already running on mount
-    fetch('/api/training/running')
+    apiFetch('/api/training/running')
       .then(res => res.json())
       .then(data => {
         if (data.success && data.running) {
@@ -1159,6 +1173,50 @@
                 {/if}
               </button>
             </div>
+
+            <!-- Terminal Command Option -->
+            <details class="terminal-command-section">
+              <summary>💻 Run from Terminal Instead</summary>
+              <div class="terminal-command-content">
+                <p class="terminal-description">
+                  Choose a training mode and copy the command to run in a separate terminal.
+                </p>
+
+                <h4 class="command-section-title">🚀 Full Cycle (RunPod - Remote GPU)</h4>
+                <p class="command-description">Complete LoRA training on RunPod cloud GPU. Best for full training runs.</p>
+                <div class="command-box">
+                  <code class="command-text">pnpm tsx brain/agents/full-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
+                  <button class="copy-button" on:click={() => {
+                    navigator.clipboard.writeText(`pnpm tsx brain/agents/full-cycle.ts --username ${username || 'YOUR_USERNAME'}`);
+                    alert('Command copied to clipboard!');
+                  }}>📋 Copy</button>
+                </div>
+
+                <h4 class="command-section-title">🖥️ Full Cycle Local (Local GPU)</h4>
+                <p class="command-description">Complete LoRA training on your local GPU. Requires CUDA-capable GPU.</p>
+                <div class="command-box">
+                  <code class="command-text">pnpm tsx brain/agents/full-cycle-local.ts --username {username || 'YOUR_USERNAME'}</code>
+                  <button class="copy-button" on:click={() => {
+                    navigator.clipboard.writeText(`pnpm tsx brain/agents/full-cycle-local.ts --username ${username || 'YOUR_USERNAME'}`);
+                    alert('Command copied to clipboard!');
+                  }}>📋 Copy</button>
+                </div>
+
+                <h4 class="command-section-title">🔧 Fine-Tune Cycle (Incremental)</h4>
+                <p class="command-description">Fine-tune an existing adapter with new data. Faster than full training.</p>
+                <div class="command-box">
+                  <code class="command-text">pnpm tsx brain/agents/fine-tune-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
+                  <button class="copy-button" on:click={() => {
+                    navigator.clipboard.writeText(`pnpm tsx brain/agents/fine-tune-cycle.ts --username ${username || 'YOUR_USERNAME'}`);
+                    alert('Command copied to clipboard!');
+                  }}>📋 Copy</button>
+                </div>
+
+                <p class="terminal-note">
+                  <strong>Tip:</strong> Running from terminal lets you see full output in real-time and run multiple sessions.
+                </p>
+              </div>
+            </details>
           </div>
         {:else}
           <!-- Training in progress or completed -->
@@ -2341,5 +2399,100 @@
     border-radius: 4px;
     transition: width 0.3s ease;
     box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+  }
+
+  /* Terminal Command Section */
+  .terminal-command-section {
+    margin-top: 1.5rem;
+    border: 1px solid var(--border-color, #333);
+    border-radius: 0.5rem;
+    overflow: hidden;
+  }
+
+  .terminal-command-section summary {
+    padding: 1rem;
+    background: var(--bg-tertiary, #111);
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text-secondary, #888);
+  }
+
+  .terminal-command-section summary:hover {
+    background: var(--bg-secondary, #1a1a1a);
+    color: var(--text-primary, #fff);
+  }
+
+  .terminal-command-content {
+    padding: 1rem;
+    background: var(--bg-secondary, #1a1a1a);
+  }
+
+  .terminal-description {
+    font-size: 0.875rem;
+    color: var(--text-secondary, #888);
+    margin: 0 0 1rem 0;
+  }
+
+  .command-box {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: #0a0a0a;
+    border: 1px solid var(--border-color, #333);
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .command-text {
+    flex: 1;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8125rem;
+    color: #0f0;
+    word-break: break-all;
+  }
+
+  .copy-button {
+    padding: 0.375rem 0.75rem;
+    background: var(--primary-color, #00a67e);
+    color: white;
+    border: none;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.2s ease;
+  }
+
+  .copy-button:hover {
+    background: var(--primary-hover, #008f6e);
+  }
+
+  .terminal-note {
+    font-size: 0.8125rem;
+    color: var(--text-secondary, #888);
+    margin: 1rem 0 0 0;
+    padding: 0.75rem;
+    background: rgba(0, 166, 126, 0.1);
+    border-radius: 0.375rem;
+  }
+
+  .command-section-title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--text-primary, #fff);
+    margin: 1.25rem 0 0.25rem 0;
+    padding: 0;
+  }
+
+  .command-section-title:first-of-type {
+    margin-top: 0;
+  }
+
+  .command-description {
+    font-size: 0.8125rem;
+    color: var(--text-secondary, #888);
+    margin: 0 0 0.5rem 0;
   }
 </style>

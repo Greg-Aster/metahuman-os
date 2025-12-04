@@ -49,6 +49,7 @@ export const categoryColors: Record<NodeCategory, { color: string; bgColor: stri
   safety: { color: '#fca5a5', bgColor: '#7f1d1d' },
   emulation: { color: '#a5b4fc', bgColor: '#3730a3' },
   agency: { color: '#f59e0b', bgColor: '#78350f' },
+  cognitive: { color: '#38bdf8', bgColor: '#0c4a6e' },
 };
 
 // Helper to define a schema with category colors

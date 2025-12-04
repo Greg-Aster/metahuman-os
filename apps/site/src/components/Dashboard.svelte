@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface SystemStatus {
     identity: { name: string; role: string; trustLevel: string; icon?: string };
@@ -89,8 +90,8 @@
   async function loadStatus() {
     try {
       const [statusRes, voiceRes] = await Promise.all([
-        fetch('/api/status'),
-        fetch('/api/voice-status'),
+        apiFetch('/api/status'),
+        apiFetch('/api/voice-status'),
       ]);
 
       if (!statusRes.ok) throw new Error('Failed to load status');

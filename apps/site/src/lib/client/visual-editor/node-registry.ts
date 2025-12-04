@@ -21,6 +21,9 @@ import {
   type PropertySchema,
 } from '@metahuman/core/nodes/schemas';
 
+// Import API fetch utility
+import { apiFetch } from '../api-config';
+
 // ============================================================================
 // WIDGET AUTO-GENERATION HELPERS
 // ============================================================================
@@ -1616,7 +1619,7 @@ class TTSNodeImpl extends CognitiveNodeBase {
 
       console.log('[TTS Node] Fetching TTS from /api/tts...');
 
-      const ttsRes = await fetch('/api/tts', {
+      const ttsRes = await apiFetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(ttsBody),
@@ -2066,7 +2069,7 @@ class BigBrotherNodeImpl extends CognitiveNodeBase {
       this.boxcolor = '#25d'; // Blue while processing
 
       // Call the Big Brother executor
-      const response = await fetch('/api/big-brother-escalate', {
+      const response = await apiFetch('/api/big-brother-escalate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

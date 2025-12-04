@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface RuntimeMode {
     headless: boolean;
@@ -16,7 +17,7 @@
 
   async function loadRuntimeMode() {
     try {
-      const res = await fetch('/api/runtime/mode');
+      const res = await apiFetch('/api/runtime/mode');
       if (res.ok) {
         runtimeMode = await res.json();
         // Show banner if in headless mode
@@ -32,7 +33,7 @@
     claiming = true;
 
     try {
-      const res = await fetch('/api/runtime/mode', {
+      const res = await apiFetch('/api/runtime/mode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ headless: false }),

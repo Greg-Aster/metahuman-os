@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte'
+  import { apiFetch } from '../lib/client/api-config';
   const dispatch = createEventDispatcher()
   type IndexStatus = { exists: boolean; model?: string; provider?: string; items?: number; createdAt?: string }
   let loadingIndex = false, buildingIndex = false, indexError: string | null = null
@@ -9,13 +10,13 @@
 
   async function loadIndexStatus() {
     loadingIndex = true; indexError = null
-    try { const res = await fetch('/api/index'); if (!res.ok) throw new Error(`HTTP ${res.status}`); indexStatus = await res.json() }
+    try { const res = await apiFetch('/api/index'); if (!res.ok) throw new Error(`HTTP ${res.status}`); indexStatus = await res.json() }
     catch (e) { indexError = (e as Error).message; indexStatus = null }
     finally { loadingIndex = false }
   }
   async function buildIndex() {
     buildingIndex = true; indexError = null
-    try { const res = await fetch('/api/index', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'build' }) })
+    try { const res = await apiFetch('/api/index', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'build' }) })
       const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.error || 'Build failed'); indexStatus = data.status }
     catch (e) { indexError = (e as Error).message }
     finally { buildingIndex = false }
@@ -23,13 +24,13 @@
   async function quickCapture() {
     if (!captureText.trim()) return
     captureBusy = true; captureError = null; captureOk = null
-    try { const res = await fetch('/api/capture', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: captureText }) })
+    try { const res = await apiFetch('/api/capture', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: captureText }) })
       const data = await res.json(); if (!res.ok || !data.success) throw new Error(data.error || 'Capture failed'); captureOk = 'Saved'; captureText = ''; dispatch('captured') }
     catch (e) { captureError = (e as Error).message }
     finally { captureBusy = false }
   }
   async function runAgent(name: string) {
-    try { await fetch('/api/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentName: name }) }) } catch {}
+    try { await apiFetch('/api/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentName: name }) }) } catch {}
   }
 
   // Ingestor preference (AI organize vs legacy)

@@ -106,13 +106,14 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
       strength: 0.8, // High initial strength for manual desires
       baseWeight: 1.0, // Manual desires get full weight
       threshold: 0.7, // Standard activation threshold
-      decayRate: 0.02, // Standard decay rate per hour
+      decayRate: 0.03, // Standard decay rate per run
+      lastReviewedAt: now,
       reinforcements: 0,
+      runCount: 1,
       risk: risk as Desire['risk'],
       requiredTrustLevel: risk === 'high' || risk === 'critical' ? 'bounded_auto' : 'supervised_auto',
       createdAt: now,
       updatedAt: now,
-      lastDecayAt: now,
     };
 
     await saveDesire(desire, user.username);

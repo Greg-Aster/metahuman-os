@@ -3,6 +3,7 @@
   import { statusRefreshTrigger } from '../stores/navigation';
   import ProfileDangerZone from './ProfileDangerZone.svelte';
   import ProfileCreation from './ProfileCreation.svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface User {
     id: string;
@@ -81,7 +82,7 @@
 
   async function fetchCurrentUser() {
     try {
-      const response = await fetch('/api/auth/me');
+      const response = await apiFetch('/api/auth/me');
       const data = await response.json();
 
       if (data.success && data.user) {
@@ -110,7 +111,7 @@
     success = '';
 
     try {
-      const response = await fetch('/api/auth/change-username', {
+      const response = await apiFetch('/api/auth/change-username', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ newUsername }),
@@ -155,7 +156,7 @@
     success = '';
 
     try {
-      const response = await fetch('/api/auth/change-password', {
+      const response = await apiFetch('/api/auth/change-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ currentPassword, newPassword }),
@@ -186,7 +187,7 @@
     success = '';
 
     try {
-      const response = await fetch('/api/auth/update-profile', {
+      const response = await apiFetch('/api/auth/update-profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -238,7 +239,7 @@
   // Profile visibility functions
   async function fetchVisibility() {
     try {
-      const res = await fetch('/api/profiles/visibility');
+      const res = await apiFetch('/api/profiles/visibility');
       if (res.ok) {
         const data = await res.json();
         profileVisibility = data.visibility || 'private';
@@ -255,7 +256,7 @@
     success = '';
 
     try {
-      const res = await fetch('/api/profiles/visibility', {
+      const res = await apiFetch('/api/profiles/visibility', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ visibility: profileVisibility }),
@@ -279,7 +280,7 @@
   async function loadTunnelStatus() {
     tunnelStatusLoading = true;
     try {
-      const res = await fetch('/api/cloudflare/status');
+      const res = await apiFetch('/api/cloudflare/status');
       if (res.ok) {
         tunnelStatus = await res.json();
       } else {
@@ -300,7 +301,7 @@
     success = '';
 
     try {
-      const res = await fetch('/api/cloudflare/toggle', {
+      const res = await apiFetch('/api/cloudflare/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: enable }),
@@ -340,7 +341,7 @@
   async function loadTrustLevel() {
     trustLoading = true;
     try {
-      const response = await fetch('/api/trust');
+      const response = await apiFetch('/api/trust');
       const data = await response.json();
       if (response.ok) {
         trustLevel = data.level || 'observe';
@@ -362,7 +363,7 @@
     success = '';
 
     try {
-      const response = await fetch('/api/trust', {
+      const response = await apiFetch('/api/trust', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ level: newLevel }),
@@ -393,7 +394,7 @@
   async function loadAgentConfig() {
     personaSummaryLoading = true;
     try {
-      const response = await fetch('/api/agent-config');
+      const response = await apiFetch('/api/agent-config');
       const data = await response.json();
       if (response.ok && data.config) {
         includePersonaSummary = data.config.includePersonaSummary ?? true;
@@ -411,7 +412,7 @@
     success = '';
 
     try {
-      const response = await fetch('/api/agent-config', {
+      const response = await apiFetch('/api/agent-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ includePersonaSummary: !includePersonaSummary }),
@@ -436,7 +437,7 @@
   async function loadTrustCoupling() {
     couplingLoading = true;
     try {
-      const response = await fetch('/api/trust-coupling');
+      const response = await apiFetch('/api/trust-coupling');
       const data = await response.json();
       if (response.ok && data.success) {
         trustCoupled = data.coupled ?? true;
@@ -454,7 +455,7 @@
     success = '';
 
     try {
-      const response = await fetch('/api/trust-coupling', {
+      const response = await apiFetch('/api/trust-coupling', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ coupled: !trustCoupled }),
@@ -491,7 +492,7 @@
   async function loadCognitiveLayersConfig() {
     cognitiveLayersLoading = true;
     try {
-      const response = await fetch('/api/cognitive-layers-config');
+      const response = await apiFetch('/api/cognitive-layers-config');
       const data = await response.json();
       if (response.ok && data.success && data.config) {
         cognitiveLayersConfig = data.config;
@@ -514,7 +515,7 @@
         [setting]: !cognitiveLayersConfig[setting]
       };
 
-      const response = await fetch('/api/cognitive-layers-config', {
+      const response = await apiFetch('/api/cognitive-layers-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newConfig)
@@ -540,7 +541,7 @@
   async function loadRecoveryCodes() {
     recoveryCodesLoading = true;
     try {
-      const response = await fetch('/api/recovery-codes');
+      const response = await apiFetch('/api/recovery-codes');
       const data = await response.json();
       if (response.ok && data.success) {
         recoveryCodes = data.codes || [];
@@ -558,7 +559,7 @@
     success = '';
 
     try {
-      const response = await fetch('/api/recovery-codes', {
+      const response = await apiFetch('/api/recovery-codes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -599,7 +600,7 @@
 
     resettingFactory = true;
     try {
-      const res = await fetch('/api/factory-reset', { method: 'POST' });
+      const res = await apiFetch('/api/factory-reset', { method: 'POST' });
       if (!res.ok) throw new Error('Factory reset failed');
       alert('Factory reset complete. The page will now reload.');
       window.location.reload();

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, afterUpdate } from 'svelte';
   import { fetchJSONSafe, FetchTimeoutError } from '../lib/client/utils/fetch-timeout';
+  import { apiFetch } from '../lib/client/api-config';
 
   type DatasetStatus = {
     date: string;
@@ -113,7 +114,7 @@
   async function updateTrainingConfig(updates: any) {
     updatingTrainingConfig = true;
     try {
-      const res = await fetch('/api/training-data', {
+      const res = await apiFetch('/api/training-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
@@ -149,7 +150,7 @@
 
     // Check if training is already running on page load
     try {
-      const statusRes = await fetch('/api/training/running');
+      const statusRes = await apiFetch('/api/training/running');
       const statusData = await statusRes.json();
       if (statusData.success && statusData.running) {
         fullCycleRunningPid = statusData.pid;
@@ -206,7 +207,7 @@
   }
 
   async function sendAction(action: string, payload: Record<string, any>) {
-    const res = await fetch('/api/adapters', {
+    const res = await apiFetch('/api/adapters', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, ...payload }),
@@ -480,7 +481,7 @@
   async function runFullCycleNow() {
     // Load current base model from etc/training.json to use as default
     try {
-      const res = await fetch('/api/training-config');
+      const res = await apiFetch('/api/training-config');
       if (res.ok) {
         const data = await res.json();
         selectedModel = data.base_model || '';
@@ -498,7 +499,7 @@
 
     // Set dual mode to true by default if we have historical adapters
     try {
-      const adaptersRes = await fetch('/api/adapters');
+      const adaptersRes = await apiFetch('/api/adapters');
       if (adaptersRes.ok) {
         const adaptersData = await adaptersRes.json();
         const hasHistorical = adaptersData.datasets && adaptersData.datasets.length > 1; // More than 1 dataset means we have historical
@@ -514,7 +515,7 @@
 
   async function exportConversationsNow() {
     try {
-      const res = await fetch('/api/export/conversations', { method: 'POST' });
+      const res = await apiFetch('/api/export/conversations', { method: 'POST' });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Export failed');
       alert(`Exported ${data.count} items to ${data.dir || 'N/A'}`);
@@ -580,7 +581,7 @@
   async function onToggleLoraEnabled(e: any) {
     try {
       const target = e.currentTarget;
-      const res = await fetch('/api/adapters', {
+      const res = await apiFetch('/api/adapters', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'sleep', loraEnabled: !!target.checked }),
@@ -597,7 +598,7 @@
     try {
       const payload: any = { action: 'autoApproval' };
       payload[flag] = value;
-      const res = await fetch('/api/adapters', {
+      const res = await apiFetch('/api/adapters', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

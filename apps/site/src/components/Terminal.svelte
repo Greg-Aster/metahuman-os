@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
   interface CommandHistory {
     command: string;
     output: string;
@@ -73,7 +74,7 @@
     ];
 
     try {
-      const response = await fetch('/api/execute', {
+      const response = await apiFetch('/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command, args }),

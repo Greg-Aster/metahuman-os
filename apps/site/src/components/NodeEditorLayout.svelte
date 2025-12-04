@@ -4,6 +4,7 @@
   import NodeEditor from './NodeEditor.svelte';
   import NodePalette from './NodePalette.svelte';
   import { listTemplates, loadTemplateAsGraph } from '../lib/client/visual-editor/template-loader';
+  import { apiFetch } from '../lib/client/api-config';
 
   // Import LiteGraph.js CSS (CSS imports are safe during SSR)
   import 'litegraph.js/css/litegraph.css';
@@ -226,7 +227,7 @@
       });
 
       // Send to backend for REAL execution with actual node implementations
-      const response = await fetch('/api/execute-graph', {
+      const response = await apiFetch('/api/execute-graph', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -294,7 +295,7 @@
     graphsLoading = true;
     graphsError = '';
     try {
-      const res = await fetch('/api/cognitive-graphs');
+      const res = await apiFetch('/api/cognitive-graphs');
       if (!res.ok) {
         throw new Error(`Server responded with ${res.status}`);
       }
@@ -313,7 +314,7 @@
     tracesLoading = true;
     tracesError = '';
     try {
-      const res = await fetch('/api/graph-traces?limit=25');
+      const res = await apiFetch('/api/graph-traces?limit=25');
       if (!res.ok) {
         throw new Error(`Server responded with ${res.status}`);
       }
@@ -334,7 +335,7 @@
 
   async function loadGraph(name: string) {
     try {
-      const res = await fetch(`/api/cognitive-graph?name=${encodeURIComponent(name)}`);
+      const res = await apiFetch(`/api/cognitive-graph?name=${encodeURIComponent(name)}`);
       if (res.ok) {
         const data = await res.json();
         if (nodeEditorRef) {
@@ -382,7 +383,7 @@
         last_modified: new Date().toISOString(),
       };
 
-      const res = await fetch('/api/cognitive-graph', {
+      const res = await apiFetch('/api/cognitive-graph', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -438,7 +439,7 @@
     if (!confirmation) return;
 
     try {
-      const res = await fetch(`/api/cognitive-graph?name=${encodeURIComponent(name)}`, {
+      const res = await apiFetch(`/api/cognitive-graph?name=${encodeURIComponent(name)}`, {
         method: 'DELETE',
       });
 

@@ -1,0 +1,57 @@
+[2025-12-03T23:39:17.661Z] === Starting new training run ===
+[2025-12-03T23:39:17.661Z] Date: 2025-12-03
+[2025-12-03T23:39:17.661Z] Run label: 2025-12-03-233416-f6fb98
+[2025-12-03T23:39:17.662Z] Work directory: /home/greggles/metahuman/metahuman-runs/greggles/2025-12-03/2025-12-03-233416-f6fb98
+[2025-12-03T23:39:17.662Z] RUNPOD_NO_GATEWAY=1 set; skipping gateway schema probes.
+[2025-12-03T23:39:17.662Z] RUNPOD_DIRECT_SSH_USER=root; will prefer this user for direct SSH.
+[2025-12-03T23:39:17.662Z] Using RUNPOD_TEMPLATE_ID=6r5jlk3b89
+[2025-12-03T23:39:17.662Z] LoRA mode: Using NVIDIA GeForce RTX 5090
+[2025-12-03T23:39:17.662Z] Selected GPU type: NVIDIA GeForce RTX 5090
+[2025-12-03T23:39:17.662Z] Attempting to deploy pod on COMMUNITY cloud...
+[2025-12-03T23:39:18.316Z] Pod created successfully on COMMUNITY cloud. Pod ID: c8em3v7qmt9sou
+[2025-12-03T23:39:18.316Z] Waiting for pod to become RUNNING...
+[2025-12-03T23:39:18.316Z] Waiting for pod ssh gateway... (Attempt 1/120)
+[2025-12-03T23:39:23.629Z] Waiting for pod ssh gateway... (Attempt 2/120)
+[2025-12-03T23:39:28.911Z] Waiting for pod ssh gateway... (Attempt 3/120)
+[2025-12-03T23:39:34.277Z] Waiting for pod ssh gateway... (Attempt 4/120)
+[2025-12-03T23:39:39.704Z] Waiting for pod ssh gateway... (Attempt 5/120)
+[2025-12-03T23:39:39.981Z] runtime.ports: [{"ip":"99.69.17.69","isIpPublic":true,"privatePort":22,"publicPort":12057,"type":"udp"},{"ip":"100.65.26.6","isIpPublic":false,"privatePort":19123,"publicPort":60875,"type":"http"},{"ip":"99.69.17.69","isIpPublic":true,"privatePort":22,"publicPort":12056,"type":"tcp"}]
+[2025-12-03T23:39:39.981Z] Public port mapping detected and NO_GATEWAY=1; proceeding without gateway discovery.
+[2025-12-03T23:39:39.982Z] Using default SSH key path: /home/greggles/.ssh/id_ed25519
+[2025-12-03T23:39:39.982Z] Key path candidate: /home/greggles/.ssh/id_ed25519
+[2025-12-03T23:39:39.982Z] SSH probe candidates: root
+[2025-12-03T23:39:41.234Z] Direct SSH handshake succeeded as root@99.69.17.69:12056 (attempt 1)
+[2025-12-03T23:39:41.234Z] Wrote fresh connection.json for this pod: /home/greggles/metahuman/metahuman-runs/greggles/2025-12-03/2025-12-03-233416-f6fb98/connection.json
+[2025-12-03T23:39:41.234Z] Using direct SSH mode: root@99.69.17.69:12056
+[2025-12-03T23:39:41.234Z] Checking for Python, pip, and workspace setup
+[2025-12-03T23:39:42.697Z] Environment check passed: Python 3.12.3
+pip 25.2 from /usr/local/lib/python3.12/dist-packages/pip (python 3.12)
+input
+train_unsloth.py
+unsloth-venv
+ENV_READY
+
+[2025-12-03T23:39:42.697Z] Uploading curated training files via base64-over-ssh (samples: 417)...
+[2025-12-03T23:39:43.817Z] Directory creation result: total 4
+drwxr-xr-x 5 root root   97 Dec  3 23:39 .
+drwxr-xr-x 1 root root   86 Dec  3 23:39 ..
+drwxr-xr-x 3 root root   17 Dec  3 23:39 .cache
+drwxr-xr-x 2 root root    6 Oct 27 16:03 input
+-rw-rw-r-- 1 root root 3177 Oct 27 02:08 train_unsloth.py
+drwxr-xr-x 6 root root  115 Dec  3 23:39 unsloth-venv
+
+[2025-12-03T23:39:43.817Z] Uploading unsloth_dataset.jsonl to /workspace/input/unsloth_dataset.jsonl (attempt 1/3)...
+[2025-12-03T23:39:45.363Z] Upload of unsloth_dataset.jsonl successful.
+[2025-12-03T23:39:45.364Z] Uploading config.json to /workspace/input/config.json (attempt 1/3)...
+[2025-12-03T23:39:46.557Z] Upload of config.json successful.
+[2025-12-03T23:39:46.557Z] Uploading core.json to /workspace/input/persona.json (attempt 1/3)...
+[2025-12-03T23:39:47.751Z] Upload of core.json successful.
+[2025-12-03T23:39:47.751Z] Uploaded persona data for training context
+[2025-12-03T23:39:47.751Z] LoRA training mode detected
+[2025-12-03T23:39:47.751Z] Uploading training script from: /home/greggles/metahuman/docker/runpod-trainer/train_unsloth.py
+[2025-12-03T23:39:47.751Z] Uploading train_unsloth.py to /workspace/train_unsloth.py (attempt 1/3)...
+[2025-12-03T23:39:49.073Z] Upload of train_unsloth.py successful.
+[2025-12-03T23:39:50.248Z] Training script verification: 492 /workspace/train_unsloth.py
+-rw-rw-r-- 1 root root 21K Dec  3 23:39 /workspace/train_unsloth.py
+[2025-12-03T23:39:52.503Z] Upload verification: 7ceea09989c342137e20919a3605dfe556b0ea36e4586e016fa361d59853a5f4  /workspace/input/config.json
+[2025-12-03T23:39:52.503Z] Executing remote training script: train_unsloth.py

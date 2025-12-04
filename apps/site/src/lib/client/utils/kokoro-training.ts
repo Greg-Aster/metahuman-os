@@ -1,3 +1,5 @@
+import { apiFetch } from '../api-config';
+
 export interface KokoroTrainingConfig {
   speakerId: string;
   langCode: string;
@@ -29,7 +31,7 @@ export function createDefaultKokoroConfig(): KokoroTrainingConfig {
 export async function startKokoroTrainingRequest(
   config: KokoroTrainingConfig
 ): Promise<{ ok: boolean; message: string }> {
-  const response = await fetch('/api/kokoro-training', {
+  const response = await apiFetch('/api/kokoro-training', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

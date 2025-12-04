@@ -7,6 +7,7 @@
  */
 
 import { writable, derived } from 'svelte/store';
+import { apiFetch } from '../lib/client/api-config';
 
 export interface SecurityPolicy {
   canWriteMemory: boolean;
@@ -72,7 +73,7 @@ export async function fetchSecurityPolicy(): Promise<void> {
   policyError.set(null);
 
   try {
-    const res = await fetch('/api/security/policy', {
+    const res = await apiFetch('/api/security/policy', {
       cache: 'no-store',
     });
 

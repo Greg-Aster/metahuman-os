@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { sleepStatus } from '../lib/stores/sleep-status';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface AgentMetrics {
     name: string;
@@ -59,7 +60,7 @@
 
   async function runAgent(agentName: string) {
     try {
-      const res = await fetch('/api/agent', {
+      const res = await apiFetch('/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agentName }),
@@ -192,7 +193,7 @@
     bulkFeedback = null;
 
     try {
-      const res = await fetch('/api/agents/control', {
+      const res = await apiFetch('/api/agents/control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action }),

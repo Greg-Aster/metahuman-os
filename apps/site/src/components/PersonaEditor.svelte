@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   type PersonaCore = {
     $schema?: string;
@@ -119,13 +120,13 @@
     error = null;
     try {
       // Load persona core
-      const coreRes = await fetch('/api/persona-core-manage');
+      const coreRes = await apiFetch('/api/persona-core-manage');
       const coreData = await coreRes.json();
       if (!coreData.success) throw new Error(coreData.error || 'Failed to load persona core');
       personaCore = coreData.persona;
 
       // Load facets
-      const facetsRes = await fetch('/api/persona-facets-manage');
+      const facetsRes = await apiFetch('/api/persona-facets-manage');
       const facetsData = await facetsRes.json();
       if (!facetsData.success) throw new Error(facetsData.error || 'Failed to load facets');
       facetsConfig = facetsData.facets;
@@ -143,7 +144,7 @@
     error = null;
     success = null;
     try {
-      const res = await fetch('/api/persona-core-manage', {
+      const res = await apiFetch('/api/persona-core-manage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ persona: personaCore }),
@@ -166,7 +167,7 @@
     error = null;
     success = null;
     try {
-      const res = await fetch('/api/persona-facets-manage', {
+      const res = await apiFetch('/api/persona-facets-manage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ facets: facetsConfig }),
@@ -270,7 +271,7 @@
     loadingArchives = true;
     error = null;
     try {
-      const res = await fetch('/api/persona-archives');
+      const res = await apiFetch('/api/persona-archives');
       console.log('[PersonaEditor] Archive response status:', res.status);
 
       if (!res.ok) {
@@ -299,7 +300,7 @@
     loading = true;
     error = null;
     try {
-      const res = await fetch('/api/persona-archives', {
+      const res = await apiFetch('/api/persona-archives', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'view', filename }),
@@ -325,7 +326,7 @@
     error = null;
     success = null;
     try {
-      const res = await fetch('/api/persona-archives', {
+      const res = await apiFetch('/api/persona-archives', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'restore', filename }),
@@ -358,7 +359,7 @@
     error = null;
     success = null;
     try {
-      const res = await fetch('/api/persona-archives', {
+      const res = await apiFetch('/api/persona-archives', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete', filename }),

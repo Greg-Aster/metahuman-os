@@ -1,5 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
 import { isOwner } from './security-policy';
+import { apiFetch } from '../lib/client/api-config';
 
 /**
  * Approval store - shared state for pending approvals
@@ -60,7 +61,7 @@ export async function loadApprovals(): Promise<void> {
   approvalsStore.update((s) => ({ ...s, loading: true, error: null }));
 
   try {
-    const res = await fetch('/api/approvals');
+    const res = await apiFetch('/api/approvals');
     if (!res.ok) throw new Error('Failed to load approval queue');
     const data = await res.json();
     approvalsStore.set({
@@ -83,7 +84,7 @@ export async function loadApprovals(): Promise<void> {
  */
 export async function approveSkill(id: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const res = await fetch('/api/approvals', {
+    const res = await apiFetch('/api/approvals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, action: 'approve' }),
@@ -109,7 +110,7 @@ export async function approveSkill(id: string): Promise<{ success: boolean; erro
  */
 export async function rejectSkill(id: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const res = await fetch('/api/approvals', {
+    const res = await apiFetch('/api/approvals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, action: 'reject' }),

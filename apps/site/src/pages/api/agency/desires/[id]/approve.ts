@@ -44,22 +44,25 @@ export const POST: APIRoute = async ({ params, cookies }) => {
       );
     }
 
-    // Only allow approving desires in 'reviewing' status
-    if (desire.status !== 'reviewing') {
+    // Allow approving desires in any pre-execution status (for manual approval/testing)
+    const approvableStatuses = ['nascent', 'pending', 'evaluating', 'planning', 'reviewing', 'awaiting_approval'];
+    if (!approvableStatuses.includes(desire.status)) {
       return new Response(
-        JSON.stringify({ error: `Cannot approve desire in '${desire.status}' status. Must be 'reviewing'.` }),
+        JSON.stringify({ error: `Cannot approve desire in '${desire.status}' status. Must be one of: ${approvableStatuses.join(', ')}.` }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
     const now = new Date().toISOString();
+    const oldStatus = desire.status;
     const updatedDesire = {
       ...desire,
       status: 'approved' as const,
       updatedAt: now,
+      activatedAt: desire.activatedAt || now, // Set activation time if not already set
     };
 
-    await moveDesire(updatedDesire, 'reviewing', 'approved', user.username);
+    await moveDesire(updatedDesire, oldStatus, 'approved', user.username);
 
     audit({
       category: 'agent',

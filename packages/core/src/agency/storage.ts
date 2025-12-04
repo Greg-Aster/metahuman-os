@@ -19,22 +19,25 @@ import type {
 // Constants
 // ============================================================================
 
-const CATEGORY = 'state' as const;
-const SUBCATEGORY = 'agency' as const;
+// Desires are stored under persona/desires/ (identity-related)
+// Accessible via both config/desires and memory/agency routes
+const CATEGORY = 'config' as const;
+const SUBCATEGORY = 'desires' as const;
 
+// Status-based subdirectories within persona/desires/
 const DESIRE_DIRS: Record<string, string> = {
-  nascent: 'desires/nascent',
-  pending: 'desires/pending',
-  evaluating: 'desires/active',
-  planning: 'desires/active',
-  reviewing: 'desires/active',
-  awaiting_approval: 'desires/active',
-  approved: 'desires/active',
-  executing: 'desires/active',
-  completed: 'desires/completed',
-  rejected: 'desires/rejected',
-  abandoned: 'desires/abandoned',
-  failed: 'desires/completed',
+  nascent: 'nascent',
+  pending: 'pending',
+  evaluating: 'active',
+  planning: 'active',
+  reviewing: 'active',
+  awaiting_approval: 'active',
+  approved: 'active',
+  executing: 'active',
+  completed: 'completed',
+  rejected: 'rejected',
+  abandoned: 'abandoned',
+  failed: 'completed',
 };
 
 // ============================================================================
@@ -186,7 +189,7 @@ export async function listActiveDesires(username?: string): Promise<Desire[]> {
     username,
     category: CATEGORY,
     subcategory: SUBCATEGORY,
-    relativePath: 'desires/active',
+    relativePath: 'active',
   });
 
   if (!result.success || !result.files) {
@@ -201,7 +204,7 @@ export async function listActiveDesires(username?: string): Promise<Desire[]> {
       username,
       category: CATEGORY,
       subcategory: SUBCATEGORY,
-      relativePath: `desires/active/${file}`,
+      relativePath: `active/${file}`,
       encoding: 'utf8',
     });
 
@@ -475,15 +478,16 @@ export function agencyStorageExists(username?: string): boolean {
 
 /**
  * Initialize agency storage directories.
+ * Creates subdirectories under persona/desires/
  */
 export async function initializeAgencyStorage(username?: string): Promise<void> {
   const dirs = [
-    'desires/nascent',
-    'desires/pending',
-    'desires/active',
-    'desires/completed',
-    'desires/rejected',
-    'desires/abandoned',
+    'nascent',
+    'pending',
+    'active',
+    'completed',
+    'rejected',
+    'abandoned',
     'plans',
     'reviews',
     'metrics',

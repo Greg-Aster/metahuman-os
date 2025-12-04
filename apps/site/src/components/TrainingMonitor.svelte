@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface TrainingStage {
     name: string;
@@ -32,7 +33,7 @@
 
   async function loadOperations() {
     try {
-      const res = await fetch('/api/training/status');
+      const res = await apiFetch('/api/training/status');
       if (!res.ok) throw new Error('Failed to load training operations');
       const data = await res.json();
       operations = data.operations;
@@ -51,7 +52,7 @@
 
   async function loadOperationDetails(operationId: string) {
     try {
-      const res = await fetch(`/api/training/${operationId}`);
+      const res = await apiFetch(`/api/training/${operationId}`);
       if (!res.ok) throw new Error('Failed to load operation details');
       const data = await res.json();
       selectedOperation = data;

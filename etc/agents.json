@@ -142,20 +142,7 @@
       "runOnBoot": false,
       "autoRestart": false,
       "maxRetries": 2,
-      "comment": "Agency: Synthesizes desires from persona goals, tasks, memories, and service outputs. Runs after 30 minutes of inactivity."
-    },
-    "desire-evaluator": {
-      "id": "desire-evaluator",
-      "enabled": true,
-      "type": "interval",
-      "priority": "low",
-      "agentPath": "desire-evaluator.ts",
-      "usesLLM": false,
-      "interval": 900,
-      "runOnBoot": false,
-      "autoRestart": true,
-      "maxRetries": 2,
-      "comment": "Agency: Applies decay, checks reinforcement, activates desires above threshold. Runs every 15 minutes."
+      "comment": "Agency: Synthesizes desires from persona goals, tasks, memories, and service outputs. Now includes decay, reinforcement, and activation checking (merged from evaluator). Runs after 30 minutes of inactivity."
     },
     "desire-executor": {
       "id": "desire-executor",
@@ -169,6 +156,19 @@
       "autoRestart": true,
       "maxRetries": 2,
       "comment": "Agency: Executes approved desires through the operator system. Runs every 5 minutes."
+    },
+    "desire-planner": {
+      "id": "desire-planner",
+      "enabled": true,
+      "type": "interval",
+      "priority": "normal",
+      "agentPath": "desire-planner.ts",
+      "usesLLM": true,
+      "interval": 300,
+      "runOnBoot": false,
+      "autoRestart": true,
+      "maxRetries": 2,
+      "comment": "Agency: Generates plans for desires in 'planning' status using cognitive graphs. Runs every 5 minutes."
     }
   }
 }

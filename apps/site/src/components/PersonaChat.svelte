@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface Message {
     role: 'user' | 'assistant' | 'system';
@@ -46,7 +47,7 @@
       observer.observe(bottomSentinel);
     }
     messages = [{ role: 'system', content: 'Starting inner dialogue...' }];
-    fetch('/api/persona_chat', {
+    apiFetch('/api/persona_chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ newSession: true, mode })
@@ -83,7 +84,7 @@
     try {
       let llm: any = undefined;
       try { const raw = localStorage.getItem('llmOptions'); if (raw) llm = JSON.parse(raw); } catch {}
-      const response = await fetch('/api/persona_chat', {
+      const response = await apiFetch('/api/persona_chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: newUserMessage.content, mode, audience: mode === 'conversation' ? audience : undefined, reason: reasoningEnabled, llm }),
@@ -112,8 +113,8 @@
     <div class="flex items-center justify-between gap-3 flex-wrap">
       <h3 class="font-semibold">{mode === 'inner' ? 'Inner Dialogue' : 'Conversation'}</h3>
       <div class="flex items-center gap-2">
-        <button class="px-3 py-1 text-xs rounded border {mode === 'inner' ? 'bg-blue-600 text-white border-blue-600' : 'bg-transparent'}" on:click={() => { mode = 'inner'; audience = ''; fetch('/api/persona_chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newSession: true, mode }) }).then(() => { messages = [{ role: 'system', content: 'Starting inner dialogue...' }]; }); }}>Inner</button>
-        <button class="px-3 py-1 text-xs rounded border {mode === 'conversation' ? 'bg-blue-600 text-white border-blue-600' : 'bg-transparent'}" on:click={() => { mode = 'conversation'; fetch('/api/persona_chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newSession: true, mode }) }).then(() => { messages = [{ role: 'system', content: 'Starting conversation drafting...' }]; }); }}>Conversation</button>
+        <button class="px-3 py-1 text-xs rounded border {mode === 'inner' ? 'bg-blue-600 text-white border-blue-600' : 'bg-transparent'}" on:click={() => { mode = 'inner'; audience = ''; apiFetch('/api/persona_chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newSession: true, mode }) }).then(() => { messages = [{ role: 'system', content: 'Starting inner dialogue...' }]; }); }}>Inner</button>
+        <button class="px-3 py-1 text-xs rounded border {mode === 'conversation' ? 'bg-blue-600 text-white border-blue-600' : 'bg-transparent'}" on:click={() => { mode = 'conversation'; apiFetch('/api/persona_chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newSession: true, mode }) }).then(() => { messages = [{ role: 'system', content: 'Starting conversation drafting...' }]; }); }}>Conversation</button>
         {#if mode === 'conversation'}
           <input type="text" bind:value={audience} placeholder="Audience / person (optional)" class="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800" />
         {/if}

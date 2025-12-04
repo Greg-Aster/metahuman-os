@@ -101,13 +101,15 @@ export interface Desire {
   /** Activation threshold (default: 0.7) */
   threshold: number;
 
-  // Decay tracking
-  /** How fast strength decays per hour */
+  // Decay tracking (run-based, not time-based)
+  /** How much strength decays per generator run */
   decayRate: number;
-  /** ISO timestamp of last decay application */
-  lastDecayAt: string;
-  /** Number of times this desire was reinforced */
+  /** ISO timestamp of last generator run that reviewed this desire */
+  lastReviewedAt: string;
+  /** Number of times this desire was reinforced by related inputs */
   reinforcements: number;
+  /** Number of generator runs this desire has survived */
+  runCount: number;
 
   // Risk assessment
   /** Assessed risk level */
@@ -128,8 +130,18 @@ export interface Desire {
   completedAt?: string;
 
   // Plan (populated after planning phase)
-  /** Execution plan for this desire */
+  /** Current execution plan for this desire */
   plan?: DesirePlan;
+
+  // Plan history (for revision tracking)
+  /** Previous plan versions (for comparison during review) */
+  planHistory?: DesirePlan[];
+
+  // User critique (for revision requests)
+  /** User's critique/feedback for re-planning */
+  userCritique?: string;
+  /** ISO timestamp when critique was submitted */
+  critiqueAt?: string;
 
   // Review (populated after review phase)
   /** Review decision for the plan */
@@ -160,6 +172,8 @@ export interface Desire {
 export interface DesirePlan {
   /** Unique identifier */
   id: string;
+  /** Version number (1 = original, 2+ = revisions) */
+  version: number;
   /** Ordered list of steps to execute */
   steps: PlanStep[];
   /** Overall risk assessment */
@@ -172,6 +186,8 @@ export interface DesirePlan {
   operatorGoal: string;
   /** ISO timestamp when plan was created */
   createdAt: string;
+  /** User critique that led to this revision (if any) */
+  basedOnCritique?: string;
 }
 
 /**
@@ -276,16 +292,19 @@ export interface DesireSourceConfig {
 
 /**
  * Decay configuration for desires.
+ * Decay is run-based: applied once per generator run, not time-based.
  */
 export interface DesireDecayConfig {
   /** Whether decay is enabled */
   enabled: boolean;
-  /** Strength lost per hour */
-  ratePerHour: number;
+  /** Strength lost per generator run (small value, e.g., 0.03) */
+  ratePerRun: number;
   /** Minimum strength before abandonment */
   minStrength: number;
-  /** Strength boost on reinforcement */
+  /** Strength boost when inputs reinforce an existing desire */
   reinforcementBoost: number;
+  /** Initial strength for newly created desires (start small, grow through reinforcement) */
+  initialStrength: number;
 }
 
 /**
@@ -631,16 +650,15 @@ export function isAboveThreshold(desire: Desire): boolean {
 }
 
 /**
- * Apply decay to a desire's strength.
+ * Apply run-based decay to a desire's strength.
+ * Called once per generator run for desires not reinforced.
  */
 export function applyDecay(
   currentStrength: number,
   decayRate: number,
-  hoursSinceLastDecay: number,
   minStrength: number
 ): number {
-  const decay = hoursSinceLastDecay * decayRate;
-  return Math.max(minStrength, currentStrength - decay);
+  return Math.max(minStrength, currentStrength - decayRate);
 }
 
 /**

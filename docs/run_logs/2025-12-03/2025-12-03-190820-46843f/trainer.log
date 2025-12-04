@@ -102,3 +102,73 @@ drwxr-xr-x 6 root root  115 Dec  3 19:18 unsloth-venv
 -rw-rw-r-- 1 root root 21K Dec  3 19:19 /workspace/train_unsloth.py
 [2025-12-03T19:19:47.090Z] Upload verification: 7ceea09989c342137e20919a3605dfe556b0ea36e4586e016fa361d59853a5f4  /workspace/input/config.json
 [2025-12-03T19:19:47.090Z] Executing remote training script: train_unsloth.py
+[2025-12-03T19:38:27.911Z] Training exit code: 0
+[2025-12-03T19:38:27.915Z] Full training output saved to: /home/greggles/metahuman/metahuman-runs/greggles/2025-12-03/2025-12-03-190820-46843f/training_output.txt
+[2025-12-03T19:38:27.915Z] Training stderr (last 2000 chars):  | 2/6 [00:11<00:23,  5.98s/it]debug2: channel 0: written 91 to efd 6
+debug2: channel 0: rcvd ext data 93
+Unsloth: Merging weights into 16bit:  50%|█████     | 3/6 [00:18<00:18,  6.05s/it]debug2: channel 0: written 93 to efd 6
+debug2: channel 0: rcvd ext data 97
+Unsloth: Merging weights into 16bit:  67%|██████▋   | 4/6 [00:24<00:12,  6.25s/it]debug2: channel 0: written 97 to efd 6
+debug2: channel 0: rcvd ext data 101
+Unsloth: Merging weights into 16bit:  83%|████████▎ | 5/6 [00:30<00:06,  6.20s/it]debug2: channel 0: written 101 to efd 6
+debug2: channel 0: rcvd ext data 103
+debug2: channel 0: rcvd ext data 104
+Unsloth: Merging weights into 16bit: 100%|██████████| 6/6 [00:36<00:00,  6.05s/it]Unsloth: Merging weights into 16bit: 100%|██████████| 6/6 [00:36<00:00,  6.08s/it]
+debug2: channel 0: written 207 to efd 6
+debug2: channel 0: rcvd ext data 151
+[W1203 19:38:26.423096067 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+debug2: channel 0: written 151 to efd 6
+debug2: channel 0: rcvd eof
+debug2: channel 0: output open -> drain
+debug2: channel 0: obuf empty
+debug2: chan_shutdown_write: channel 0: (i0 o1 sock -1 wfd 5 efd 6 [write])
+debug2: channel 0: output drain -> closed
+debug1: client_input_channel_req: channel 0 rtype exit-status reply 0
+debug1: client_input_channel_req: channel 0 rtype eow@openssh.com reply 0
+debug2: channel 0: rcvd eow
+debug2: chan_shutdown_read: channel 0: (i0 o3 sock -1 wfd 4 efd 6 [write])
+debug2: channel 0: input open -> closed
+debug2: channel 0: rcvd close
+debug2: channel 0: almost dead
+debug2: channel 0: gc: notify user
+debug2: channel 0: gc: user detached
+debug2: channel 0: send close
+debug2: channel 0: is dead
+debug2: channel 0: garbage collecting
+debug1: channel 0: free: client-session, nchannels 1
+Transferred: sent 4324, received 31288 bytes, in 1118.6 seconds
+Bytes per second: sent 3.9, received 28.0
+debug1: Exit status 0
+
+[2025-12-03T19:38:27.916Z] Training stdout (last 2000 chars): ml-vocab-gpt-2.gguf (0.00 GB)
+[19:38:23] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-gpt-neox.gguf (0.00 GB)
+[19:38:23] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-llama-bpe.gguf (0.01 GB)
+[19:38:23] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-llama-spm.gguf (0.00 GB)
+[19:38:23] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-mpt.gguf (0.00 GB)
+[19:38:23] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-nomic-bert-moe.gguf (0.01 GB)
+[19:38:23] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-phi-3.gguf (0.00 GB)
+[19:38:23] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-qwen2.gguf (0.01 GB)
+[19:38:23] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-refact.gguf (0.00 GB)
+[19:38:23] ▶️  GGUF_MERGE - Found GGUF: /root/llama.cpp/models/ggml-vocab-starcoder.gguf (0.00 GB)
+[19:38:23] ▶️  GGUF_MERGE - Found 18 GGUF file(s): ['qwen3-14b.Q4_K_M.gguf', 'ggml-vocab-aquila.gguf', 'ggml-vocab-baichuan.gguf', 'ggml-vocab-bert-bge.gguf', 'ggml-vocab-command-r.gguf', 'ggml-vocab-deepseek-coder.gguf', 'ggml-vocab-deepseek-llm.gguf', 'ggml-vocab-falcon.gguf', 'ggml-vocab-gpt-2.gguf', 'ggml-vocab-gpt-neox.gguf', 'ggml-vocab-llama-bpe.gguf', 'ggml-vocab-llama-spm.gguf', 'ggml-vocab-mpt.gguf', 'ggml-vocab-nomic-bert-moe.gguf', 'ggml-vocab-phi-3.gguf', 'ggml-vocab-qwen2.gguf', 'ggml-vocab-refact.gguf', 'ggml-vocab-starcoder.gguf']
+[19:38:25] 📊 GGUF_MERGE (100%) - ✅ GGUF created in 10.3 minutes (8.38 GB)
+[19:38:25] ▶️  GGUF_MERGE - 📁 Source: qwen3-14b.Q4_K_M.gguf → final_merged_model.gguf
+[19:38:25] ▶️  COMPLETE - ============================================================
+[19:38:25] ▶️  COMPLETE - 🎉 Training pipeline complete in 18.5 minutes
+[19:38:25] ▶️  COMPLETE - 📁 Adapter: /output/adapter
+[19:38:25] ▶️  COMPLETE - 📁 Merged GGUF: /workspace/final_merged_model.gguf
+[19:38:25] ▶️  COMPLETE - ============================================================
+
+[2025-12-03T19:38:27.917Z] Downloading merged GGUF and adapter artifacts...
+[2025-12-03T19:38:27.919Z] Starting SCP download: scp -P 42093 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /home/greggles/.ssh/id_ed25519 root@87.197.111.68:/workspace/final_merged_model.gguf /media/greggles/STACK/metahuman-profiles/greggles/out/adapters/2025-12-03/2025-12-03-190820-46843f/adapter.gguf
+[2025-12-03T20:03:53.138Z] SCP download successful for /workspace/final_merged_model.gguf
+[2025-12-03T20:03:53.139Z] Merged GGUF downloaded successfully to /media/greggles/STACK/metahuman-profiles/greggles/out/adapters/2025-12-03/2025-12-03-190820-46843f/adapter.gguf (8.38GB)
+[2025-12-03T20:03:53.139Z] Starting SCP download: scp -r -P 42093 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /home/greggles/.ssh/id_ed25519 root@87.197.111.68:/output/adapter /home/greggles/metahuman/metahuman-runs/greggles/2025-12-03/2025-12-03-190820-46843f/temp_adapter_download
+[2025-12-03T20:05:53.767Z] SCP download successful for /output/adapter
+[2025-12-03T20:05:53.769Z] An error occurred: EXDEV: cross-device link not permitted, rename '/home/greggles/metahuman/metahuman-runs/greggles/2025-12-03/2025-12-03-190820-46843f/temp_adapter_download/adapter/README.md' -> '/media/greggles/STACK/metahuman-profiles/greggles/out/adapters/2025-12-03/2025-12-03-190820-46843f/adapter/README.md'
+[2025-12-03T20:05:53.772Z] Terminating pod xepzp41a93afzm...
+[2025-12-03T20:05:54.380Z] Pod termination request sent successfully.
+[2025-12-03T20:05:54.381Z] Found GGUF at /media/greggles/STACK/metahuman-profiles/greggles/out/adapters/2025-12-03/2025-12-03-190820-46843f/adapter.gguf despite training_success=false, creating Modelfile
+[2025-12-03T20:05:54.381Z] Created fallback Modelfile at /media/greggles/STACK/metahuman-profiles/greggles/out/adapters/2025-12-03/2025-12-03-190820-46843f/Modelfile
+[2025-12-03T20:05:54.382Z] Running: ollama create greggles-2025-12-03-190820-46843f -f /media/greggles/STACK/metahuman-profiles/greggles/out/adapters/2025-12-03/2025-12-03-190820-46843f/Modelfile
+[2025-12-03T20:09:51.370Z] Successfully loaded greggles-2025-12-03-190820-46843f into Ollama

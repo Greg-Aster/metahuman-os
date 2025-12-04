@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { fetchJSONSafe } from '../lib/client/utils/fetch-timeout';
+  import { apiFetch } from '../lib/client/api-config';
 
   type DatasetStatus = {
     date: string;
@@ -99,7 +100,7 @@
 
   async function loadFineTuneModels() {
     try {
-      const res = await fetch('/api/fine-tune/models');
+      const res = await apiFetch('/api/fine-tune/models');
       if (!res.ok) {
         console.warn('[DatasetManagement] Failed to load fine-tune models');
         return;
@@ -123,7 +124,7 @@
   }
 
   async function sendAction(action: string, payload: Record<string, any>) {
-    const res = await fetch('/api/adapters', {
+    const res = await apiFetch('/api/adapters', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, ...payload })

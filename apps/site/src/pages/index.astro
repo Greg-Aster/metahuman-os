@@ -43,7 +43,10 @@ import '../styles/chat-animations.css';
     <script is:inline>
       // Fetch critical status data immediately and store in a global
       // Components will check for this on mount
-      fetch('/api/status', { cache: 'no-store' })
+      // Check for Capacitor to use correct API URL
+      const isCapacitor = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
+      const apiBaseUrl = isCapacitor ? 'https://mh.dndiy.org' : '';
+      fetch(apiBaseUrl + '/api/status', { cache: 'no-store', credentials: isCapacitor ? 'include' : 'same-origin' })
         .then(res => res.json())
         .then(data => {
           window.__MH_BOOTSTRAP_STATUS__ = data;

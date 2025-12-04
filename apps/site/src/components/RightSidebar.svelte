@@ -6,6 +6,7 @@
   import BoredomControl from './BoredomControl.svelte';
   import AgentMonitor from './AgentMonitor.svelte';
   import ServerStatus from './ServerStatus.svelte';
+  import { apiFetch } from '../lib/client/api-config';
 
   let activeTab = 'monitor';
   let useEnhancedAudit = true; // Toggle between old and new audit stream (default: grouped mode)
@@ -77,12 +78,12 @@
 
   async function fetchModelInfo() {
     try {
-      const res = await fetch('/api/model-info');
+      const res = await apiFetch('/api/model-info');
       if (res.ok) {
         modelInfo = await res.json();
       }
       // fetch models and loras
-      const mr = await fetch('/api/models')
+      const mr = await apiFetch('/api/models')
       const md = await mr.json()
       if (mr.ok && md.success) {
         loraDatasets = Array.isArray(md.loras) ? md.loras : []
@@ -95,7 +96,7 @@
 
   async function fetchLoraConfig() {
     try {
-      const res = await fetch('/api/lora-toggle');
+      const res = await apiFetch('/api/lora-toggle');
       if (res.ok) {
         const config = await res.json();
         loraEnabled = config.enabled ?? false;
@@ -107,7 +108,7 @@
 
   async function fetchLoggingConfig() {
     try {
-      const res = await fetch('/api/logging-config');
+      const res = await apiFetch('/api/logging-config');
       if (res.ok) {
         const config = await res.json();
         logLevel = config.level || 'info';
@@ -126,7 +127,7 @@
     savingLogging = true;
     try {
       const patterns = suppressPatterns.split(',').map(s => s.trim()).filter(Boolean);
-      const res = await fetch('/api/logging-config', {
+      const res = await apiFetch('/api/logging-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -157,7 +158,7 @@
   async function toggleLora() {
     loraToggling = true;
     try {
-      const res = await fetch('/api/lora-toggle', {
+      const res = await apiFetch('/api/lora-toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: !loraEnabled })
@@ -183,7 +184,7 @@
     sel.value = ''
     selecting = true
     try {
-      const res = await fetch('/api/adapter/load', {
+      const res = await apiFetch('/api/adapter/load', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dataset, dual: dualEnabled })
@@ -210,7 +211,7 @@
 
     resettingFactory = true;
     try {
-      const res = await fetch('/api/reset-factory', { method: 'POST' });
+      const res = await apiFetch('/api/reset-factory', { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
         throw new Error(data?.error || 'Reset failed');

@@ -36,6 +36,7 @@ export {
   isAgencyEnabled,
   getSourceWeight,
   isSourceEnabled,
+  getEnabledSources,
   canAutoApprove,
   isRiskBlocked,
   DEFAULT_AGENCY_CONFIG,
