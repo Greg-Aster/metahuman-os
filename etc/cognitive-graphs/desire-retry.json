@@ -1,0 +1,209 @@
+{
+  "version": "2.0",
+  "name": "Desire Retry Loop",
+  "description": "Re-plans a desire after outcome review returned 'retry' verdict. Incorporates lessons learned from failed attempt into the new plan.",
+  "cognitiveMode": "agent",
+  "last_modified": "2025-12-04",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "agency/desire_loader",
+      "pos": [100, 150],
+      "size": [200, 80],
+      "properties": {
+        "loadById": true
+      },
+      "title": "Load Desire"
+    },
+    {
+      "id": 2,
+      "type": "control/conditional",
+      "pos": [350, 150],
+      "size": [160, 80],
+      "properties": {
+        "condition": "desire?.outcomeReview?.verdict === 'retry'"
+      },
+      "title": "Is Retry Verdict?"
+    },
+    {
+      "id": 3,
+      "type": "agency/desire_enricher",
+      "pos": [560, 100],
+      "size": [220, 100],
+      "properties": {
+        "enrichFromOutcome": true
+      },
+      "title": "Add Lessons Learned"
+    },
+    {
+      "id": 4,
+      "type": "cognitive/tool_catalog_builder",
+      "pos": [560, 220],
+      "size": [200, 80],
+      "properties": {
+        "filterByTrust": true
+      },
+      "title": "Build Tool Catalog"
+    },
+    {
+      "id": 5,
+      "type": "cognitive/policy_loader",
+      "pos": [560, 320],
+      "size": [200, 80],
+      "properties": {
+        "include": ["decision-rules", "hard-rules"]
+      },
+      "title": "Load Policies"
+    },
+    {
+      "id": 6,
+      "type": "agency/desire_plan_generator",
+      "pos": [820, 150],
+      "size": [220, 120],
+      "properties": {
+        "temperature": 0.3,
+        "incorporateLessons": true
+      },
+      "title": "Generate New Plan"
+    },
+    {
+      "id": 7,
+      "type": "cognitive/plan_validator",
+      "pos": [1080, 150],
+      "size": [200, 100],
+      "properties": {
+        "checkSkillAvailability": true,
+        "checkTrustLevel": true
+      },
+      "title": "Validate Plan"
+    },
+    {
+      "id": 8,
+      "type": "agency/desire_updater",
+      "pos": [1320, 150],
+      "size": [200, 100],
+      "properties": {
+        "newStatus": "reviewing",
+        "incrementPlanVersion": true,
+        "archivePreviousPlan": true
+      },
+      "title": "Update with New Plan"
+    },
+    {
+      "id": 9,
+      "type": "cognitive/audit_logger",
+      "pos": [1560, 150],
+      "size": [180, 60],
+      "properties": {
+        "category": "agency",
+        "event": "desire_retry_replan"
+      },
+      "title": "Audit Log"
+    },
+    {
+      "id": 10,
+      "type": "output/result_aggregator",
+      "pos": [350, 280],
+      "size": [180, 60],
+      "properties": {},
+      "title": "Skip (Not Retry)"
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 2,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Check Verdict"
+    },
+    {
+      "id": 2,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "If Retry → Enrich with Lessons"
+    },
+    {
+      "id": 3,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Enriched Desire → Plan Generator"
+    },
+    {
+      "id": 4,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "Tool Catalog → Plan Generator"
+    },
+    {
+      "id": 5,
+      "origin_id": 5,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 2,
+      "type": "string",
+      "comment": "Policies → Plan Generator"
+    },
+    {
+      "id": 6,
+      "origin_id": 6,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "New Plan → Validator"
+    },
+    {
+      "id": 7,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 8,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Original Desire → Updater"
+    },
+    {
+      "id": 8,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 8,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Validated New Plan → Updater"
+    },
+    {
+      "id": 9,
+      "origin_id": 8,
+      "origin_slot": 0,
+      "target_id": 9,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Updated Desire → Audit"
+    },
+    {
+      "id": 10,
+      "origin_id": 2,
+      "origin_slot": 1,
+      "target_id": 10,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "If Not Retry → Skip"
+    }
+  ],
+  "metadata": {
+    "trigger": "outcome_verdict",
+    "triggerCondition": "verdict === 'retry'",
+    "description": "Triggered when outcome reviewer returns retry verdict. Re-plans with lessons learned."
+  }
+}

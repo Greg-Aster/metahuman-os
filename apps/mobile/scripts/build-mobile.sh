@@ -20,6 +20,10 @@ echo ""
 
 # Step 1: Build Astro with mobile config
 echo "[1/4] Building web UI with mobile config..."
+
+# Clear www folder before build (Astro outputs directly here)
+rm -rf "$WWW_DIR"/*
+
 cd "$SITE_DIR"
 
 # Temporarily move files that can't be statically built
@@ -101,18 +105,12 @@ if [ $BUILD_STATUS -ne 0 ]; then
     exit 1
 fi
 
-# Step 2: Copy built assets to Capacitor www folder
+# Step 2: Verify build (Astro outputs directly to mobile/www)
+# The mobile config has outDir: '../mobile/www', so no copy needed
 echo ""
-echo "[2/4] Copying assets to Capacitor..."
+echo "[2/4] Verifying build output..."
 cd "$MOBILE_DIR"
-
-# Clear existing www folder (except .gitkeep)
-rm -rf "$WWW_DIR"/*
-
-# Copy built assets
-cp -r "$SITE_DIR/dist"/* "$WWW_DIR/"
-
-echo "  Copied $(find "$WWW_DIR" -type f | wc -l) files to www/"
+echo "  $(find "$WWW_DIR" -type f | wc -l) files in www/"
 
 # Step 3: Sync with Capacitor
 echo ""

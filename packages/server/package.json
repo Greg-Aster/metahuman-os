@@ -1,0 +1,52 @@
+{
+  "name": "@metahuman/server",
+  "version": "0.1.0",
+  "description": "Server deployment components for MetaHuman OS - cloud GPU providers, request queuing, and scaling utilities",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    },
+    "./providers": {
+      "import": "./src/providers/index.ts",
+      "types": "./src/providers/index.ts"
+    },
+    "./queue": {
+      "import": "./src/queue/index.ts",
+      "types": "./src/queue/index.ts"
+    },
+    "./scaling": {
+      "import": "./src/scaling/index.ts",
+      "types": "./src/scaling/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@metahuman/core": "workspace:*"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "metahuman",
+    "server",
+    "runpod",
+    "cloud-gpu",
+    "serverless"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Greg-Aster/metahuman-os.git",
+    "directory": "packages/server"
+  }
+}

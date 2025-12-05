@@ -3,7 +3,6 @@
   import LogStream from './LogStream.svelte';
   import AuditStreamEnhanced from './AuditStreamEnhanced.svelte';
   import ModelSelector from './ModelSelector.svelte';
-  import BoredomControl from './BoredomControl.svelte';
   import AgentMonitor from './AgentMonitor.svelte';
   import ServerStatus from './ServerStatus.svelte';
   import { apiFetch } from '../lib/client/api-config';

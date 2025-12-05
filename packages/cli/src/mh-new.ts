@@ -6,7 +6,8 @@ import readline from 'node:readline';
 import { spawn } from 'node:child_process';
 import fg from 'fast-glob';
 import {
-  paths,
+  systemPaths,
+  getProfilePaths,
   today,
   loadPersonaCore,
   loadDecisionRules,
@@ -55,16 +56,33 @@ import { rvcCommand } from './commands/rvc.js';
 import { kokoroCommand } from './commands/kokoro.js';
 import { profileCommand } from './commands/profile.js';
 
+// Get default owner username for CLI operations
+function getDefaultUsername(): string {
+  try {
+    const users = listUsers();
+    const owner = users.find(u => u.role === 'owner');
+    return owner?.username || 'default';
+  } catch {
+    return 'default';
+  }
+}
+
+// Get profile paths for current CLI context
+function getCliPaths() {
+  return getProfilePaths(getDefaultUsername());
+}
+
 const agentScriptOverrides: Record<string, string> = {
   curiosity: 'curiosity-service.ts',
 };
 
 function ensureInitialized(): void {
+  const profilePaths = getCliPaths();
   const required = [
-    paths.personaCore,
-    paths.personaDecisionRules,
-    paths.personaRoutines,
-    paths.personaRelationships,
+    profilePaths.personaCore,
+    profilePaths.personaDecisionRules,
+    profilePaths.personaRoutines,
+    profilePaths.personaRelationships,
   ];
 
   for (const file of required) {
@@ -76,10 +94,11 @@ function ensureInitialized(): void {
 }
 
 function countEventsForYear(year: string): number {
-  if (!fs.existsSync(paths.episodic)) return 0;
+  const profilePaths = getCliPaths();
+  if (!fs.existsSync(profilePaths.episodic)) return 0;
 
   let count = 0;
-  const stack: string[] = [paths.episodic];
+  const stack: string[] = [profilePaths.episodic];
 
   while (stack.length > 0) {
     const dir = stack.pop()!;
@@ -112,32 +131,39 @@ function countEventsForYear(year: string): number {
 }
 
 function init(): void {
+  const profilePaths = getCliPaths();
+
   // Create all required directories
-  const dirs = [
-    paths.persona,
-    paths.episodic,
-    paths.semantic,
-    paths.procedural,
-    paths.preferences,
-    paths.inbox,
-    paths.inboxArchive,
-    paths.audioInbox,
-    paths.audioTranscripts,
-    paths.audioArchive,
-    paths.tasks + '/active',
-    paths.tasks + '/completed',
-    paths.tasks + '/projects',
-    paths.agents,
-    paths.skills,
-    paths.policies,
-    paths.decisions,
-    paths.actions,
-    paths.sync,
-    paths.logs + '/audit',
-    paths.out,
+  // Profile-specific directories
+  const profileDirs = [
+    profilePaths.persona,
+    profilePaths.episodic,
+    profilePaths.semantic,
+    profilePaths.procedural,
+    profilePaths.preferences,
+    profilePaths.inbox,
+    profilePaths.inboxArchive,
+    profilePaths.audioInbox,
+    profilePaths.audioTranscripts,
+    profilePaths.audioArchive,
+    profilePaths.tasks + '/active',
+    profilePaths.tasks + '/completed',
+    profilePaths.tasks + '/projects',
+    profilePaths.decisions,
+    profilePaths.actions,
+    profilePaths.sync,
+    profilePaths.logs + '/audit',
+    profilePaths.out,
   ];
 
-  for (const dir of dirs) {
+  // System-level directories
+  const systemDirs = [
+    systemPaths.agents,
+    systemPaths.skills,
+    systemPaths.policies,
+  ];
+
+  for (const dir of [...profileDirs, ...systemDirs]) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
@@ -145,19 +171,19 @@ function init(): void {
 
   // Copy template files to create working configs
   const templateMappings = [
-    // Persona templates
-    { template: paths.persona + '/core.json.template', target: paths.personaCore },
-    { template: paths.persona + '/relationships.json.template', target: paths.persona + '/relationships.json' },
-    { template: paths.persona + '/routines.json.template', target: paths.persona + '/routines.json' },
-    { template: paths.persona + '/decision-rules.json.template', target: paths.persona + '/decision-rules.json' },
-    // etc/ config templates (agent.json is now deprecated - use models.json instead)
-    { template: paths.root + '/etc/boredom.json.template', target: paths.root + '/etc/boredom.json' },
-    { template: paths.root + '/etc/audio.json.template', target: paths.root + '/etc/audio.json' },
-    { template: paths.root + '/etc/sleep.json.template', target: paths.root + '/etc/sleep.json' },
-    { template: paths.root + '/etc/voice.json.template', target: paths.root + '/etc/voice.json' },
-    { template: paths.root + '/etc/autonomy.json.template', target: paths.root + '/etc/autonomy.json' },
-    { template: paths.root + '/etc/ingestor.json.template', target: paths.root + '/etc/ingestor.json' },
-    { template: paths.root + '/etc/logging.json.template', target: paths.root + '/etc/logging.json' },
+    // Persona templates (profile-specific)
+    { template: profilePaths.persona + '/core.json.template', target: profilePaths.personaCore },
+    { template: profilePaths.persona + '/relationships.json.template', target: profilePaths.persona + '/relationships.json' },
+    { template: profilePaths.persona + '/routines.json.template', target: profilePaths.persona + '/routines.json' },
+    { template: profilePaths.persona + '/decision-rules.json.template', target: profilePaths.persona + '/decision-rules.json' },
+    // etc/ config templates (system-level)
+    { template: systemPaths.etc + '/boredom.json.template', target: systemPaths.etc + '/boredom.json' },
+    { template: systemPaths.etc + '/audio.json.template', target: systemPaths.etc + '/audio.json' },
+    { template: systemPaths.etc + '/sleep.json.template', target: systemPaths.etc + '/sleep.json' },
+    { template: systemPaths.etc + '/voice.json.template', target: systemPaths.etc + '/voice.json' },
+    { template: systemPaths.etc + '/autonomy.json.template', target: systemPaths.etc + '/autonomy.json' },
+    { template: systemPaths.etc + '/ingestor.json.template', target: systemPaths.etc + '/ingestor.json' },
+    { template: systemPaths.etc + '/logging.json.template', target: systemPaths.etc + '/logging.json' },
   ];
 
   let copiedFiles = 0;
@@ -185,7 +211,7 @@ function init(): void {
   }
 
   // Check if persona files exist
-  if (fs.existsSync(paths.personaCore)) {
+  if (fs.existsSync(profilePaths.personaCore)) {
     console.log('\n📝 Next steps:');
     console.log('  1. Edit persona/core.json with your details');
     console.log('  2. Update persona/routines.json with your schedule');
@@ -280,7 +306,7 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
 
   const spawnAgent = (agentName: string) => {
     const scriptName = agentScriptOverrides[agentName] ?? `${agentName}.ts`;
-    const agentPath = `${paths.brain}/agents/${scriptName}`;
+    const agentPath = `${systemPaths.brain}/agents/${scriptName}`;
 
     if (!fs.existsSync(agentPath)) {
       console.warn(`Skipping ${agentName}: not found at ${agentPath}`);
@@ -295,17 +321,17 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
 
     console.log(`• Starting ${agentName}...`);
     // Use bootstrap wrapper to establish user context for agents
-    const bootstrapPath = `${paths.brain}/agents/_bootstrap.ts`;
+    const bootstrapPath = `${systemPaths.brain}/agents/_bootstrap.ts`;
     const child = spawn('tsx', [bootstrapPath, agentName], {
       detached: true,
       stdio: 'ignore',
-      cwd: paths.root,
+      cwd: systemPaths.root,
       env: {
         ...process.env,
         NODE_PATH: [
-          `${paths.root}/node_modules`,
-          `${paths.root}/packages/cli/node_modules`,
-          `${paths.root}/apps/site/node_modules`,
+          `${systemPaths.root}/node_modules`,
+          `${systemPaths.root}/packages/cli/node_modules`,
+          `${systemPaths.root}/apps/site/node_modules`,
         ].join(':'),
       },
     });
@@ -393,7 +419,7 @@ async function remember(args: string[]): Promise<void> {
       }
       console.log(`Top matches (semantic, model=${status.model}):\n`);
       list.forEach(({ item, score }) => {
-        const rel = item.path.startsWith(paths.root) ? item.path.slice(paths.root.length + 1) : item.path;
+        const rel = item.path.startsWith(systemPaths.root) ? item.path.slice(systemPaths.root.length + 1) : item.path;
         console.log(`  ${(score * 100).toFixed(1).padStart(5)}%  ${rel}`);
         console.log(`      ${item.text.slice(0, 100)}${item.text.length > 100 ? '…' : ''}`);
       });
@@ -723,7 +749,7 @@ async function ollamaCmd(args: string[]): Promise<void> {
           // Load preferred chat model from etc/models.json if present
           const fsMod = require('node:fs');
           const pathMod = require('node:path');
-          const modelsCfg = path.join(paths.root, 'etc', 'models.json');
+          const modelsCfg = path.join(systemPaths.root, 'etc', 'models.json');
           let preferred = 'phi3:mini';
           if (fs.existsSync(modelsCfg)) {
             try {
@@ -789,7 +815,7 @@ async function find(args: string[]): Promise<void> {
   try {
     // 1. Get a list of all files in the project
     const files: string[] = await fg('**/*', { 
-        cwd: paths.root,
+        cwd: systemPaths.root,
         ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**'],
         absolute: false, // Use relative paths for a cleaner prompt
     });
@@ -1038,7 +1064,7 @@ For more information, see DESIGN.md and ARCHITECTURE.md
         process.exit(1);
       }
 
-      const agentPath = `${paths.brain}/agents/${agentName}.ts`;
+      const agentPath = `${systemPaths.brain}/agents/${agentName}.ts`;
 
       if (!fs.existsSync(agentPath)) {
         console.error(`Agent not found: ${agentName} at ${agentPath}`);
@@ -1048,17 +1074,17 @@ For more information, see DESIGN.md and ARCHITECTURE.md
       console.log(`Spawning agent: ${agentName}...`);
 
       // Use bootstrap wrapper to establish user context for agents
-      const bootstrapPath = `${paths.brain}/agents/_bootstrap.ts`;
+      const bootstrapPath = `${systemPaths.brain}/agents/_bootstrap.ts`;
       const child = spawn('tsx', [bootstrapPath, agentName], {
         stdio: 'inherit',
-        cwd: paths.root,
+        cwd: systemPaths.root,
         env: {
           ...process.env,
           // Ensure workspace module resolution for agents outside a package context
           NODE_PATH: [
-            `${paths.root}/node_modules`,
-            `${paths.root}/packages/cli/node_modules`,
-            `${paths.root}/apps/site/node_modules`,
+            `${systemPaths.root}/node_modules`,
+            `${systemPaths.root}/packages/cli/node_modules`,
+            `${systemPaths.root}/apps/site/node_modules`,
           ].join(':'),
         },
       });
@@ -1228,8 +1254,8 @@ function ingestCmd(args: string[]): void {
     const name = path.basename(p);
     const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
     const destName = `${stamp}-${name}`;
-    const dest = path.join(paths.inbox, destName);
-    fs.mkdirSync(paths.inbox, { recursive: true });
+    const dest = path.join(getCliPaths().inbox, destName);
+    fs.mkdirSync(getCliPaths().inbox, { recursive: true });
     fs.copyFileSync(p, dest);
     copied.push(dest);
   };
@@ -1249,7 +1275,7 @@ function ingestCmd(args: string[]): void {
     process.exit(1);
   }
 
-  console.log(`Copied ${copied.length} file(s) to inbox: ${paths.inbox}`);
+  console.log(`Copied ${copied.length} file(s) to inbox: ${getCliPaths().inbox}`);
   console.log('Run: mh agent run ingestor');
 }
 
@@ -1290,7 +1316,7 @@ async function indexCmd(args: string[]): Promise<void> {
         }
         console.log(`Top matches:\n`);
         results.forEach(({ item, score }) => {
-          const rel = item.path.startsWith(paths.root) ? item.path.slice(paths.root.length + 1) : item.path;
+          const rel = item.path.startsWith(systemPaths.root) ? item.path.slice(systemPaths.root.length + 1) : item.path;
           console.log(`  ${(score * 100).toFixed(1).padStart(5)}%  ${rel}`);
           console.log(`      ${item.text.slice(0, 120)}${item.text.length > 120 ? '…' : ''}`);
         });
@@ -1347,8 +1373,8 @@ function audioCmd(args: string[]): void {
 
         const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
         const destName = `${stamp}-${name}`;
-        const dest = path.join(paths.audioInbox, destName);
-        fs.mkdirSync(paths.audioInbox, { recursive: true });
+        const dest = path.join(getCliPaths().audioInbox, destName);
+        fs.mkdirSync(getCliPaths().audioInbox, { recursive: true });
         fs.copyFileSync(p, dest);
         copied.push(dest);
       };
@@ -1374,7 +1400,7 @@ function audioCmd(args: string[]): void {
         process.exit(0);
       }
 
-      console.log(`✓ Copied ${copied.length} audio file(s) to inbox: ${paths.audioInbox}`);
+      console.log(`✓ Copied ${copied.length} audio file(s) to inbox: ${getCliPaths().audioInbox}`);
       console.log('\n💡 Next steps:');
       console.log('   1. Start the transcriber: mh agent run transcriber');
       console.log('   2. Or wait for nightly processing (if sleep-service is running)');
@@ -1383,7 +1409,7 @@ function audioCmd(args: string[]): void {
       auditDataChange({
         type: 'create',
         resource: 'audio_inbox',
-        path: paths.audioInbox,
+        path: getCliPaths().audioInbox,
         actor: 'human',
         details: { fileCount: copied.length, source: abs },
       });
@@ -1392,25 +1418,25 @@ function audioCmd(args: string[]): void {
 
     case 'status': {
       // Count files in each stage
-      const inboxFiles = fs.existsSync(paths.audioInbox)
-        ? fs.readdirSync(paths.audioInbox).filter(f => !f.startsWith('.')).length
+      const inboxFiles = fs.existsSync(getCliPaths().audioInbox)
+        ? fs.readdirSync(getCliPaths().audioInbox).filter(f => !f.startsWith('.')).length
         : 0;
 
-      const transcriptFiles = fs.existsSync(paths.audioTranscripts)
-        ? fs.readdirSync(paths.audioTranscripts).filter(f => f.endsWith('.txt')).length
+      const transcriptFiles = fs.existsSync(getCliPaths().audioTranscripts)
+        ? fs.readdirSync(getCliPaths().audioTranscripts).filter(f => f.endsWith('.txt')).length
         : 0;
 
-      const archiveFiles = fs.existsSync(paths.audioArchive)
-        ? fs.readdirSync(paths.audioArchive).filter(f => !f.startsWith('.')).length
+      const archiveFiles = fs.existsSync(getCliPaths().audioArchive)
+        ? fs.readdirSync(getCliPaths().audioArchive).filter(f => !f.startsWith('.')).length
         : 0;
 
       // Count unorganized transcripts
       let unorganizedCount = 0;
-      if (fs.existsSync(paths.audioTranscripts)) {
-        const metaFiles = fs.readdirSync(paths.audioTranscripts).filter(f => f.endsWith('.meta.json'));
+      if (fs.existsSync(getCliPaths().audioTranscripts)) {
+        const metaFiles = fs.readdirSync(getCliPaths().audioTranscripts).filter(f => f.endsWith('.meta.json'));
         for (const metaFile of metaFiles) {
           try {
-            const metaPath = path.join(paths.audioTranscripts, metaFile);
+            const metaPath = path.join(getCliPaths().audioTranscripts, metaFile);
             const metadata = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
             if (!metadata.organized) {
               unorganizedCount++;
@@ -1442,8 +1468,8 @@ function audioCmd(args: string[]): void {
       console.log('Audio Files\n');
 
       // List inbox
-      if (fs.existsSync(paths.audioInbox)) {
-        const inboxFiles = fs.readdirSync(paths.audioInbox).filter(f => !f.startsWith('.'));
+      if (fs.existsSync(getCliPaths().audioInbox)) {
+        const inboxFiles = fs.readdirSync(getCliPaths().audioInbox).filter(f => !f.startsWith('.'));
         if (inboxFiles.length > 0) {
           console.log('📥 Inbox (pending transcription):');
           inboxFiles.forEach(f => console.log(`  - ${f}`));
@@ -1452,13 +1478,13 @@ function audioCmd(args: string[]): void {
       }
 
       // List transcripts
-      if (fs.existsSync(paths.audioTranscripts)) {
-        const transcriptFiles = fs.readdirSync(paths.audioTranscripts).filter(f => f.endsWith('.txt'));
+      if (fs.existsSync(getCliPaths().audioTranscripts)) {
+        const transcriptFiles = fs.readdirSync(getCliPaths().audioTranscripts).filter(f => f.endsWith('.txt'));
         if (transcriptFiles.length > 0) {
           console.log('📝 Transcripts:');
           transcriptFiles.forEach(f => {
             const audioId = f.replace('.txt', '');
-            const metaPath = path.join(paths.audioTranscripts, `${audioId}.meta.json`);
+            const metaPath = path.join(getCliPaths().audioTranscripts, `${audioId}.meta.json`);
             let status = '';
             if (fs.existsSync(metaPath)) {
               try {
@@ -1480,8 +1506,8 @@ function audioCmd(args: string[]): void {
         process.exit(1);
       }
 
-      const metaPath = path.join(paths.audioTranscripts, `${audioId}.meta.json`);
-      const transcriptPath = path.join(paths.audioTranscripts, `${audioId}.txt`);
+      const metaPath = path.join(getCliPaths().audioTranscripts, `${audioId}.meta.json`);
+      const transcriptPath = path.join(getCliPaths().audioTranscripts, `${audioId}.txt`);
 
       if (!fs.existsSync(metaPath)) {
         console.error(`Audio file not found: ${audioId}`);
@@ -1739,7 +1765,7 @@ function userCmd(args: string[]): void {
       }
 
       // Show profile path
-      const profilePath = path.join(paths.root, 'profiles', username);
+      const profilePath = path.join(systemPaths.root, 'profiles', username);
       if (fs.existsSync(profilePath)) {
         console.log(`\nProfile Path: ${profilePath}`);
       }
@@ -1910,7 +1936,7 @@ async function main() {
         await ollamaCmd(args);
         break;
       case 'guide':
-        console.log(`User Guide: ${paths.root}/docs/USER_GUIDE.md`);
+        console.log(`User Guide: ${systemPaths.root}/docs/USER_GUIDE.md`);
         break;
       case 'sync':
         sync();

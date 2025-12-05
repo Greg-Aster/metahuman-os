@@ -659,12 +659,18 @@
                       >
                         <span class="model-name">
                           {model.model}
+                          {#if model.provider === 'runpod_serverless' || model.provider === 'huggingface'}
+                            <span class="cloud-indicator">☁️</span>
+                          {/if}
                           {#if isSuggested}
                             <span class="suggested-indicator">✓</span>
                           {/if}
                         </span>
                         {#if model.adapters && model.adapters.length > 0}
                           <span class="adapter-indicator-small">+LoRA</span>
+                        {/if}
+                        {#if model.provider === 'runpod_serverless'}
+                          <span class="provider-badge cloud">RunPod Cloud</span>
                         {/if}
                         {#if model.description}
                           <span class="model-desc">{model.description}</span>
@@ -1202,6 +1208,32 @@
 
   :global(.dark) .suggested-indicator {
     color: rgb(74 222 128);
+  }
+
+  .cloud-indicator {
+    margin-left: 0.25rem;
+    font-size: 0.75rem;
+  }
+
+  .provider-badge {
+    display: inline-block;
+    padding: 0.1rem 0.35rem;
+    border-radius: 0.25rem;
+    font-size: 0.6rem;
+    font-weight: 500;
+    margin-top: 0.15rem;
+  }
+
+  .provider-badge.cloud {
+    background: rgba(59, 130, 246, 0.15);
+    color: rgb(59 130 246);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+  }
+
+  :global(.dark) .provider-badge.cloud {
+    background: rgba(96, 165, 250, 0.15);
+    color: rgb(147 197 253);
+    border-color: rgba(96, 165, 250, 0.3);
   }
 
   /* Unified trust level badge (cycles through levels + YOLO) */

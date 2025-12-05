@@ -1,7 +1,12 @@
 {
   "$schema": "https://metahuman.dev/schemas/models.json",
   "version": "1.0.0",
-  "description": "Model registry for multi-model orchestration. Defines roles and their associated models.",
+  "_WARNING": "████████████████████████████████████████████████████████████████████████████████",
+  "_WARNING2": "██  DO NOT USE OR MODIFY - THIS IS A FUCKING GLOBAL CONFIG                    ██",
+  "_WARNING3": "██  USER-SPECIFIC MODEL CONFIG: profiles/{username}/etc/models.json          ██",
+  "_WARNING4": "██  This file is ONLY a fallback for anonymous/system operations             ██",
+  "_WARNING5": "████████████████████████████████████████████████████████████████████████████████",
+  "description": "FALLBACK model registry - USE profiles/{username}/etc/models.json FOR USER CONFIG!",
   "globalSettings": {
     "includePersonaSummary": false,
     "useAdapter": false,
@@ -324,6 +329,62 @@
       "metadata": {
         "source": "ollama-discovery"
       }
+    },
+    "cloud.qwen3-coder-30b": {
+      "provider": "runpod_serverless",
+      "model": "Qwen3-Coder-30B-A3B-Instruct-AWQ",
+      "adapters": [],
+      "roles": [
+        "coder",
+        "orchestrator",
+        "persona",
+        "planner",
+        "curator",
+        "psychotherapist"
+      ],
+      "description": "Cloud-hosted Qwen3 Coder 30B via RunPod Serverless - high-performance coding and reasoning",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.7,
+        "topP": 0.95,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "high",
+        "alwaysLoaded": false,
+        "estimatedLatency": "medium",
+        "source": "runpod-serverless",
+        "endpointTier": "default",
+        "coldStartWarning": "First request may take 30-60s if GPU is cold",
+        "purpose": "Cloud GPU inference for high-capability tasks"
+      }
+    },
+    "cloud.qwen3-14b": {
+      "provider": "runpod_serverless",
+      "model": "Qwen3-14B-Instruct",
+      "adapters": [],
+      "roles": [
+        "orchestrator",
+        "persona",
+        "summarizer",
+        "fallback"
+      ],
+      "description": "Cloud-hosted Qwen3 14B via RunPod Serverless - balanced performance model",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.7,
+        "topP": 0.95,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "medium",
+        "alwaysLoaded": false,
+        "estimatedLatency": "fast",
+        "source": "runpod-serverless",
+        "endpointTier": "14b",
+        "coldStartWarning": "First request may take 20-30s if GPU is cold",
+        "purpose": "Cloud GPU inference for general tasks"
+      }
     }
   },
   "roleHierarchy": {
@@ -396,6 +457,11 @@
       "baseUrl": "https://api.openai.com/v1",
       "timeout": 60000,
       "retries": 3
+    },
+    "runpod_serverless": {
+      "baseUrl": "https://api.runpod.ai/v2",
+      "timeout": 120000,
+      "retries": 2
     }
   }
 }

@@ -16,11 +16,25 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import type { Desire, DesireReview } from '../../agency/types.js';
 import { queueForApproval, type SkillManifest } from '../../skills.js';
 import { audit } from '../../audit.js';
+import { saveDesireManifest, addScratchpadEntryToFolder } from '../../agency/storage.js';
 
 const execute: NodeExecutor = async (inputs, context, _properties) => {
-  const desire = inputs.desire as Desire | undefined;
-  const review = inputs.review as DesireReview | undefined;
+  // Inputs come via slot positions from graph links:
+  // slot 0: {desire, found} from desire_loader
+  // slot 1: {verdict, review, autoApprove, reasoning} from verdict node
+  const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | undefined;
+  const slot1 = inputs[1] as { review?: DesireReview; verdict?: string } | undefined;
+
+  // Extract desire from slot 0 (desire_loader output) or context
+  const desire = slot0?.desire || (context as { desire?: Desire }).desire || (inputs.desire as Desire | undefined);
+  // Extract review from slot 1 (verdict output) or named input
+  const review = slot1?.review || (inputs.review as DesireReview | undefined);
   const username = context.userId;
+
+  console.log('[approval-queue] Input slot 0:', JSON.stringify(slot0)?.substring(0, 200));
+  console.log('[approval-queue] Input slot 1:', JSON.stringify(slot1)?.substring(0, 200));
+  console.log('[approval-queue] Desire found:', !!desire);
+  console.log('[approval-queue] Desire has plan:', !!desire?.plan);
 
   if (!desire || !desire.plan) {
     return {
@@ -56,6 +70,33 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
       },
       manifest
     );
+
+    // Update desire status to 'awaiting_approval'
+    const now = new Date().toISOString();
+    const oldStatus = desire.status;
+    const updatedDesire: Desire = {
+      ...desire,
+      status: 'awaiting_approval',
+      updatedAt: now,
+    };
+
+    // Save updated desire to folder
+    await saveDesireManifest(updatedDesire, username);
+
+    // Add scratchpad entry
+    await addScratchpadEntryToFolder(desire.id, {
+      type: 'approval_requested',
+      timestamp: now,
+      description: `Queued for approval (approvalId: ${approvalId})`,
+      actor: 'system',
+      data: {
+        approvalId,
+        oldStatus,
+        risk: desire.plan.estimatedRisk,
+      },
+    }, username);
+
+    console.log('[approval-queue] Desire status updated to awaiting_approval');
 
     audit({
       category: 'agent',

@@ -5,7 +5,7 @@
 // This will be run from within the packages/core directory
 import { initializeSkills } from '../../brain/skills/index.ts';
 import { executeSkill, loadTrustLevel, getAvailableSkills, listSkills } from './src/skills.js';
-import { paths } from './src/paths.js';
+import { systemPaths } from './src/paths.js';
 import path from 'node:path';
 
 async function testSkills() {
@@ -27,7 +27,7 @@ async function testSkills() {
   
   // Test fs_write skill
   console.log('\n--- Testing fs_write skill ---');
-  const testPath = path.join(paths.root, 'out', 'skills_test.txt');
+  const testPath = path.join(systemPaths.root, 'out', 'skills_test.txt');
   console.log('Writing to:', testPath);
   
   const writeResult = await executeSkill('fs_write', {

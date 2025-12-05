@@ -23,6 +23,7 @@ interface Plan {
 const execute: NodeExecutor = async (inputs, _context, properties) => {
   // Input slot 0 contains {plan, success, error} from plan generator
   const slot0 = inputs[0] as { plan?: Plan; success?: boolean } | Plan | undefined;
+
   const plan = (slot0 && 'plan' in slot0 ? slot0.plan : slot0) as Plan | undefined;
   const checkSkillAvailability = properties?.checkSkillAvailability ?? true;
   const checkTrustLevel = properties?.checkTrustLevel ?? true;
@@ -42,14 +43,18 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
   if (!plan.steps || !Array.isArray(plan.steps)) {
     errors.push('Plan must have a steps array');
   } else if (plan.steps.length === 0) {
-    warnings.push('Plan has no steps');
+    errors.push('Plan must have at least one step');
   } else {
-    // Validate each step
+    // Validate each step - plans are flexible for Big Brother execution
+    // The 'skill' field is OPTIONAL - Big Brother will determine specific tools
     for (let i = 0; i < plan.steps.length; i++) {
-      const step = plan.steps[i];
-      if (!step.description) {
-        errors.push(`Step ${i + 1} is missing a description`);
+      const step = plan.steps[i] as PlanStep & { action?: string };
+      // Check for either description OR action (plan generator uses 'action')
+      if (!step.description && !step.action) {
+        errors.push(`Step ${i + 1} is missing a description or action`);
       }
+      // Note: skill field is NOT required - plans can be high-level and Big Brother
+      // will figure out the specific execution approach
 
       // Check for circular dependencies
       if (step.dependsOn) {
@@ -63,8 +68,8 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
     }
   }
 
-  // TODO: If checkSkillAvailability, verify skills exist
-  // TODO: If checkTrustLevel, verify trust requirements
+  // Skill availability checking is DISABLED - Big Brother handles this dynamically
+  // Trust level checking is DISABLED - handled at execution time
 
   const valid = errors.length === 0;
 

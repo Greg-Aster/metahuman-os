@@ -58,7 +58,9 @@
     "./path-security": "./src/path-security.ts",
     "./external-storage": "./src/external-storage.ts",
     "./profile-migration": "./src/profile-migration.ts",
-    "./encryption": "./src/encryption.ts"
+    "./encryption": "./src/encryption.ts",
+    "./deployment": "./src/deployment.ts",
+    "./providers": "./src/providers/index.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.939.0",
@@ -69,6 +71,9 @@
     "gray-matter": "^4.0.3",
     "tsx": "^4.20.6",
     "uuid": "^13.0.0"
+  },
+  "optionalDependencies": {
+    "@metahuman/server": "workspace:*"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",

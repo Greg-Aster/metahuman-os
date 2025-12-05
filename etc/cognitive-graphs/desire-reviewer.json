@@ -219,30 +219,57 @@
     },
     {
       "id": 10,
-      "origin_id": 8,
+      "origin_id": 1,
       "origin_slot": 0,
       "target_id": 9,
       "target_slot": 0,
       "type": "object",
-      "comment": "Reject path → Reject Updater"
+      "comment": "Desire → Reject Updater (for desire object)"
     },
     {
       "id": 11,
-      "origin_id": 8,
-      "origin_slot": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
       "target_id": 10,
       "target_slot": 0,
       "type": "object",
-      "comment": "Auto-approve path → Approve Updater"
+      "comment": "Desire → Auto-Approve Updater (for desire object)"
     },
     {
       "id": 12,
-      "origin_id": 8,
-      "origin_slot": 2,
+      "origin_id": 1,
+      "origin_slot": 0,
       "target_id": 11,
       "target_slot": 0,
       "type": "object",
-      "comment": "Manual approval path → Queue"
+      "comment": "Desire → Approval Queue (for desire object)"
+    },
+    {
+      "id": 15,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 9,
+      "target_slot": 2,
+      "type": "object",
+      "comment": "Review → Reject Updater (for review info)"
+    },
+    {
+      "id": 16,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 10,
+      "target_slot": 2,
+      "type": "object",
+      "comment": "Review → Auto-Approve Updater (for review info)"
+    },
+    {
+      "id": 17,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 11,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Review → Approval Queue (for review info)"
     },
     {
       "id": 13,

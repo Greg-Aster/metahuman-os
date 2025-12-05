@@ -9,7 +9,7 @@
       "start": "22:00",
       "end": "08:00"
     },
-    "maxConcurrentAgents": 3,
+    "maxConcurrentAgents": 5,
     "maxConcurrentLLMAgents": 1,
     "maxConcurrentNonLLMAgents": 10,
     "pauseQueueOnActivity": true,
@@ -169,6 +169,19 @@
       "autoRestart": true,
       "maxRetries": 2,
       "comment": "Agency: Generates plans for desires in 'planning' status using cognitive graphs. Runs every 5 minutes."
+    },
+    "desire-outcome-reviewer": {
+      "id": "desire-outcome-reviewer",
+      "enabled": true,
+      "type": "interval",
+      "priority": "normal",
+      "agentPath": "desire-outcome-reviewer.ts",
+      "usesLLM": true,
+      "interval": 600,
+      "runOnBoot": false,
+      "autoRestart": true,
+      "maxRetries": 2,
+      "comment": "Agency: Reviews completed/failed desires to determine next action (complete, retry, continue, escalate, abandon). Handles recurring/achievable/aspirational desire types differently. Runs every 10 minutes."
     }
   }
 }

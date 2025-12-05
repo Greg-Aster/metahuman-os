@@ -61,69 +61,81 @@ export const POST: APIRoute = async ({ params, cookies, request }) => {
       );
     }
 
-    // Can only revise desires that have a plan and are in reviewing/approved status
-    const revisableStatuses = ['reviewing', 'approved', 'awaiting_approval', 'planning'];
+    // Allow critique/revision for desires that can be planned or re-planned
+    const revisableStatuses = ['nascent', 'pending', 'planning', 'reviewing', 'approved', 'awaiting_approval'];
     if (!revisableStatuses.includes(desire.status)) {
       return new Response(
         JSON.stringify({
-          error: `Cannot revise a desire in '${desire.status}' status. Must be in: ${revisableStatuses.join(', ')}`
+          error: `Cannot add instructions to a desire in '${desire.status}' status. Must be in: ${revisableStatuses.join(', ')}`
         }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    if (!desire.plan) {
-      return new Response(
-        JSON.stringify({ error: 'No plan to revise. The desire must have a plan first.' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
     const now = new Date().toISOString();
     const oldStatus = desire.status;
+    const hasPlan = !!desire.plan;
 
-    // Move current plan to history
+    // Move current plan to history if it exists
     const planHistory = desire.planHistory || [];
-    planHistory.push(desire.plan);
+    if (hasPlan && desire.plan) {
+      planHistory.push(desire.plan);
+    }
+
+    // Determine target status:
+    // - If has plan: move to planning for revision
+    // - If no plan yet: stay in pending/nascent (user can then click Generate Plan)
+    const targetStatus = hasPlan ? 'planning' : (desire.status === 'nascent' ? 'pending' : desire.status);
 
     // Update the desire
     const updatedDesire = {
       ...desire,
-      status: 'planning' as DesireStatus,
+      status: targetStatus as DesireStatus,
       updatedAt: now,
-      // Keep the current plan (planner will use it for context)
+      // Keep plan history
       planHistory,
-      // Store the critique
+      // Store the critique/instructions
       userCritique: critique.trim(),
       critiqueAt: now,
-      // Clear any previous review since we're re-planning
-      review: undefined,
+      // Clear any previous review since we're (re-)planning
+      review: hasPlan ? undefined : desire.review,
     };
 
-    // Move to planning status
-    await moveDesire(updatedDesire, oldStatus, 'planning', user.username);
+    // Move to target status if changed
+    if (oldStatus !== targetStatus) {
+      await moveDesire(updatedDesire, oldStatus, targetStatus, user.username);
+    } else {
+      await saveDesire(updatedDesire, user.username);
+    }
 
     audit({
       category: 'agent',
       level: 'info',
-      event: 'desire_revision_requested',
+      event: hasPlan ? 'desire_revision_requested' : 'desire_instructions_added',
       actor: user.username,
       details: {
         desireId: id,
         title: desire.title,
         fromStatus: oldStatus,
+        toStatus: targetStatus,
         critique: critique.substring(0, 200), // Truncate for audit log
-        planVersion: desire.plan.version || 1,
+        hadPlan: hasPlan,
+        planVersion: hasPlan ? (desire.plan?.version || 1) : 0,
         historyCount: planHistory.length,
       },
     });
+
+    // Build appropriate message
+    const message = hasPlan
+      ? `Plan revision requested. The planner will generate a new plan based on your critique.`
+      : `Instructions saved. Click "Generate Plan" to create a plan using your feedback.`;
 
     return new Response(
       JSON.stringify({
         success: true,
         desire: updatedDesire,
-        message: `Plan revision requested. The planner will generate a new plan based on your critique.`,
-        planVersion: (desire.plan.version || 1) + 1,
+        message,
+        planVersion: hasPlan ? ((desire.plan?.version || 1) + 1) : 1,
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );

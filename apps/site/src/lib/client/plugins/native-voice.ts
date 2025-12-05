@@ -7,6 +7,15 @@
 import { registerPlugin } from '@capacitor/core';
 import type { PluginListenerHandle } from '@capacitor/core';
 
+// Hardware button event types
+export type HardwareButtonEventType = 'singleClick' | 'doubleClick' | 'longPress' | 'multiClick' | 'play' | 'pause';
+
+export interface HardwareButtonEvent {
+  type: HardwareButtonEventType;
+  clickCount: number;
+  timestamp: number;
+}
+
 // Plugin interface
 export interface NativeVoicePlugin {
   // Check if native voice features are available
@@ -22,6 +31,11 @@ export interface NativeVoicePlugin {
   stopSpeaking(): Promise<void>;
   getVoices(): Promise<{ voices: NativeVoice[] }>;
 
+  // Hardware button control (Bluetooth headphones, etc.)
+  enableHardwareButtons(): Promise<{ enabled: boolean }>;
+  disableHardwareButtons(): Promise<{ enabled: boolean }>;
+  isHardwareButtonsEnabled(): Promise<{ enabled: boolean }>;
+
   // Event listeners
   addListener(eventName: 'sttReady', listener: () => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'sttStart', listener: () => void): Promise<PluginListenerHandle>;
@@ -33,6 +47,7 @@ export interface NativeVoicePlugin {
   addListener(eventName: 'ttsStart', listener: (data: { utteranceId: string }) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'ttsEnd', listener: (data: { utteranceId: string }) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'ttsError', listener: (data: { utteranceId: string }) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'hardwareButton', listener: (event: HardwareButtonEvent) => void): Promise<PluginListenerHandle>;
   removeAllListeners(): Promise<void>;
 }
 

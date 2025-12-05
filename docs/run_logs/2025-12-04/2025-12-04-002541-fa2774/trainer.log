@@ -1,0 +1,198 @@
+[2025-12-04T00:30:34.430Z] === Starting new training run ===
+[2025-12-04T00:30:34.430Z] Date: 2025-12-04
+[2025-12-04T00:30:34.430Z] Run label: 2025-12-04-002541-fa2774
+[2025-12-04T00:30:34.430Z] Work directory: /home/greggles/metahuman/metahuman-runs/greggles/2025-12-04/2025-12-04-002541-fa2774
+[2025-12-04T00:30:34.431Z] RUNPOD_NO_GATEWAY=1 set; skipping gateway schema probes.
+[2025-12-04T00:30:34.431Z] RUNPOD_DIRECT_SSH_USER=root; will prefer this user for direct SSH.
+[2025-12-04T00:30:34.432Z] Using RUNPOD_TEMPLATE_ID=6r5jlk3b89
+[2025-12-04T00:30:34.432Z] LoRA mode: Using NVIDIA GeForce RTX 5090
+[2025-12-04T00:30:34.432Z] Selected GPU type: NVIDIA GeForce RTX 5090
+[2025-12-04T00:30:34.432Z] Attempting to deploy pod on SECURE cloud...
+[2025-12-04T00:30:35.410Z] Pod created successfully on SECURE cloud. Pod ID: 4zyr0wz3njypkq
+[2025-12-04T00:30:35.410Z] Waiting for pod to become RUNNING...
+[2025-12-04T00:30:35.411Z] Waiting for pod ssh gateway... (Attempt 1/120)
+[2025-12-04T00:30:40.784Z] Waiting for pod ssh gateway... (Attempt 2/120)
+[2025-12-04T00:30:46.349Z] Waiting for pod ssh gateway... (Attempt 3/120)
+[2025-12-04T00:30:51.817Z] Waiting for pod ssh gateway... (Attempt 4/120)
+[2025-12-04T00:30:57.377Z] Waiting for pod ssh gateway... (Attempt 5/120)
+[2025-12-04T00:31:02.873Z] Waiting for pod ssh gateway... (Attempt 6/120)
+[2025-12-04T00:31:08.359Z] Waiting for pod ssh gateway... (Attempt 7/120)
+[2025-12-04T00:31:13.868Z] Waiting for pod ssh gateway... (Attempt 8/120)
+[2025-12-04T00:31:19.335Z] Waiting for pod ssh gateway... (Attempt 9/120)
+[2025-12-04T00:31:24.824Z] Waiting for pod ssh gateway... (Attempt 10/120)
+[2025-12-04T00:31:30.448Z] Waiting for pod ssh gateway... (Attempt 11/120)
+[2025-12-04T00:31:35.982Z] Waiting for pod ssh gateway... (Attempt 12/120)
+[2025-12-04T00:31:41.477Z] Waiting for pod ssh gateway... (Attempt 13/120)
+[2025-12-04T00:31:46.935Z] Waiting for pod ssh gateway... (Attempt 14/120)
+[2025-12-04T00:31:52.467Z] Waiting for pod ssh gateway... (Attempt 15/120)
+[2025-12-04T00:31:57.962Z] Waiting for pod ssh gateway... (Attempt 16/120)
+[2025-12-04T00:32:03.529Z] Waiting for pod ssh gateway... (Attempt 17/120)
+[2025-12-04T00:32:09.055Z] Waiting for pod ssh gateway... (Attempt 18/120)
+[2025-12-04T00:32:14.583Z] Waiting for pod ssh gateway... (Attempt 19/120)
+[2025-12-04T00:32:20.113Z] Waiting for pod ssh gateway... (Attempt 20/120)
+[2025-12-04T00:32:25.603Z] Waiting for pod ssh gateway... (Attempt 21/120)
+[2025-12-04T00:32:31.586Z] Waiting for pod ssh gateway... (Attempt 22/120)
+[2025-12-04T00:32:37.510Z] Waiting for pod ssh gateway... (Attempt 23/120)
+[2025-12-04T00:32:42.986Z] Waiting for pod ssh gateway... (Attempt 24/120)
+[2025-12-04T00:32:48.463Z] Waiting for pod ssh gateway... (Attempt 25/120)
+[2025-12-04T00:32:53.967Z] Waiting for pod ssh gateway... (Attempt 26/120)
+[2025-12-04T00:32:59.435Z] Waiting for pod ssh gateway... (Attempt 27/120)
+[2025-12-04T00:33:04.944Z] Waiting for pod ssh gateway... (Attempt 28/120)
+[2025-12-04T00:33:10.554Z] Waiting for pod ssh gateway... (Attempt 29/120)
+[2025-12-04T00:33:15.995Z] Waiting for pod ssh gateway... (Attempt 30/120)
+[2025-12-04T00:33:21.542Z] Waiting for pod ssh gateway... (Attempt 31/120)
+[2025-12-04T00:33:27.017Z] Waiting for pod ssh gateway... (Attempt 32/120)
+[2025-12-04T00:33:32.480Z] Waiting for pod ssh gateway... (Attempt 33/120)
+[2025-12-04T00:33:38.197Z] Waiting for pod ssh gateway... (Attempt 34/120)
+[2025-12-04T00:33:43.694Z] Waiting for pod ssh gateway... (Attempt 35/120)
+[2025-12-04T00:33:49.182Z] Waiting for pod ssh gateway... (Attempt 36/120)
+[2025-12-04T00:33:54.790Z] Waiting for pod ssh gateway... (Attempt 37/120)
+[2025-12-04T00:34:00.541Z] Waiting for pod ssh gateway... (Attempt 38/120)
+[2025-12-04T00:34:06.192Z] Waiting for pod ssh gateway... (Attempt 39/120)
+[2025-12-04T00:34:11.733Z] Waiting for pod ssh gateway... (Attempt 40/120)
+[2025-12-04T00:34:17.464Z] Waiting for pod ssh gateway... (Attempt 41/120)
+[2025-12-04T00:34:23.098Z] Waiting for pod ssh gateway... (Attempt 42/120)
+[2025-12-04T00:34:28.583Z] Waiting for pod ssh gateway... (Attempt 43/120)
+[2025-12-04T00:34:35.102Z] Waiting for pod ssh gateway... (Attempt 44/120)
+[2025-12-04T00:34:40.564Z] Waiting for pod ssh gateway... (Attempt 45/120)
+[2025-12-04T00:34:46.138Z] Waiting for pod ssh gateway... (Attempt 46/120)
+[2025-12-04T00:34:51.775Z] Waiting for pod ssh gateway... (Attempt 47/120)
+[2025-12-04T00:34:57.400Z] Waiting for pod ssh gateway... (Attempt 48/120)
+[2025-12-04T00:35:02.882Z] Waiting for pod ssh gateway... (Attempt 49/120)
+[2025-12-04T00:35:08.358Z] Waiting for pod ssh gateway... (Attempt 50/120)
+[2025-12-04T00:35:13.892Z] Waiting for pod ssh gateway... (Attempt 51/120)
+[2025-12-04T00:35:19.363Z] Waiting for pod ssh gateway... (Attempt 52/120)
+[2025-12-04T00:35:24.948Z] Waiting for pod ssh gateway... (Attempt 53/120)
+[2025-12-04T00:35:30.442Z] Waiting for pod ssh gateway... (Attempt 54/120)
+[2025-12-04T00:35:36.007Z] Waiting for pod ssh gateway... (Attempt 55/120)
+[2025-12-04T00:35:41.470Z] Waiting for pod ssh gateway... (Attempt 56/120)
+[2025-12-04T00:35:47.171Z] Waiting for pod ssh gateway... (Attempt 57/120)
+[2025-12-04T00:35:52.669Z] Waiting for pod ssh gateway... (Attempt 58/120)
+[2025-12-04T00:35:58.227Z] Waiting for pod ssh gateway... (Attempt 59/120)
+[2025-12-04T00:36:04.370Z] Waiting for pod ssh gateway... (Attempt 60/120)
+[2025-12-04T00:36:09.848Z] Waiting for pod ssh gateway... (Attempt 61/120)
+[2025-12-04T00:36:15.329Z] Waiting for pod ssh gateway... (Attempt 62/120)
+[2025-12-04T00:36:20.941Z] Waiting for pod ssh gateway... (Attempt 63/120)
+[2025-12-04T00:36:26.425Z] Waiting for pod ssh gateway... (Attempt 64/120)
+[2025-12-04T00:36:31.890Z] Waiting for pod ssh gateway... (Attempt 65/120)
+[2025-12-04T00:36:37.548Z] Waiting for pod ssh gateway... (Attempt 66/120)
+[2025-12-04T00:36:43.045Z] Waiting for pod ssh gateway... (Attempt 67/120)
+[2025-12-04T00:36:48.712Z] Waiting for pod ssh gateway... (Attempt 68/120)
+[2025-12-04T00:36:54.201Z] Waiting for pod ssh gateway... (Attempt 69/120)
+[2025-12-04T00:36:59.873Z] Waiting for pod ssh gateway... (Attempt 70/120)
+[2025-12-04T00:37:05.508Z] Waiting for pod ssh gateway... (Attempt 71/120)
+[2025-12-04T00:37:11.549Z] Waiting for pod ssh gateway... (Attempt 72/120)
+[2025-12-04T00:37:17.078Z] Waiting for pod ssh gateway... (Attempt 73/120)
+[2025-12-04T00:37:22.708Z] Waiting for pod ssh gateway... (Attempt 74/120)
+[2025-12-04T00:37:28.246Z] Waiting for pod ssh gateway... (Attempt 75/120)
+[2025-12-04T00:37:33.767Z] Waiting for pod ssh gateway... (Attempt 76/120)
+[2025-12-04T00:37:39.296Z] Waiting for pod ssh gateway... (Attempt 77/120)
+[2025-12-04T00:37:44.874Z] Waiting for pod ssh gateway... (Attempt 78/120)
+[2025-12-04T00:37:50.347Z] Waiting for pod ssh gateway... (Attempt 79/120)
+[2025-12-04T00:37:55.801Z] Waiting for pod ssh gateway... (Attempt 80/120)
+[2025-12-04T00:38:01.316Z] Waiting for pod ssh gateway... (Attempt 81/120)
+[2025-12-04T00:38:07.051Z] Waiting for pod ssh gateway... (Attempt 82/120)
+[2025-12-04T00:38:12.524Z] Waiting for pod ssh gateway... (Attempt 83/120)
+[2025-12-04T00:38:17.972Z] Waiting for pod ssh gateway... (Attempt 84/120)
+[2025-12-04T00:38:23.480Z] Waiting for pod ssh gateway... (Attempt 85/120)
+[2025-12-04T00:38:28.986Z] Waiting for pod ssh gateway... (Attempt 86/120)
+[2025-12-04T00:38:34.491Z] Waiting for pod ssh gateway... (Attempt 87/120)
+[2025-12-04T00:38:39.918Z] Waiting for pod ssh gateway... (Attempt 88/120)
+[2025-12-04T00:38:45.551Z] Waiting for pod ssh gateway... (Attempt 89/120)
+[2025-12-04T00:38:51.009Z] Waiting for pod ssh gateway... (Attempt 90/120)
+[2025-12-04T00:38:56.481Z] Waiting for pod ssh gateway... (Attempt 91/120)
+[2025-12-04T00:39:02.142Z] Waiting for pod ssh gateway... (Attempt 92/120)
+[2025-12-04T00:39:07.691Z] Waiting for pod ssh gateway... (Attempt 93/120)
+[2025-12-04T00:39:13.200Z] Waiting for pod ssh gateway... (Attempt 94/120)
+[2025-12-04T00:39:13.731Z] runtime.ports: [{"ip":"149.36.1.63","isIpPublic":true,"privatePort":22,"publicPort":30813,"type":"udp"},{"ip":"100.65.11.14","isIpPublic":false,"privatePort":19123,"publicPort":60409,"type":"http"},{"ip":"149.36.1.63","isIpPublic":true,"privatePort":22,"publicPort":30812,"type":"tcp"}]
+[2025-12-04T00:39:13.731Z] Public port mapping detected and NO_GATEWAY=1; proceeding without gateway discovery.
+[2025-12-04T00:39:13.732Z] Using default SSH key path: /home/greggles/.ssh/id_ed25519
+[2025-12-04T00:39:13.732Z] Key path candidate: /home/greggles/.ssh/id_ed25519
+[2025-12-04T00:39:13.732Z] SSH probe candidates: root
+[2025-12-04T00:39:16.391Z] Direct SSH handshake succeeded as root@149.36.1.63:30812 (attempt 1)
+[2025-12-04T00:39:16.391Z] Wrote fresh connection.json for this pod: /home/greggles/metahuman/metahuman-runs/greggles/2025-12-04/2025-12-04-002541-fa2774/connection.json
+[2025-12-04T00:39:16.391Z] Using direct SSH mode: root@149.36.1.63:30812
+[2025-12-04T00:39:16.391Z] Checking for Python, pip, and workspace setup
+[2025-12-04T00:39:19.358Z] Environment check passed: Python 3.12.3
+pip 25.2 from /usr/local/lib/python3.12/dist-packages/pip (python 3.12)
+input
+ENV_READY
+
+[2025-12-04T00:39:19.359Z] Uploading curated training files via base64-over-ssh (samples: 436)...
+[2025-12-04T00:39:22.126Z] Directory creation result: total 1
+drwxrwxrwx 3 root root  1 Dec  4 00:38 .
+drwxr-xr-x 1 root root 86 Dec  4 00:38 ..
+drwxrwxrwx 2 root root  1 Dec  4 00:38 input
+
+[2025-12-04T00:39:22.127Z] Uploading unsloth_dataset.jsonl to /workspace/input/unsloth_dataset.jsonl (attempt 1/3)...
+[2025-12-04T00:39:27.091Z] Upload of unsloth_dataset.jsonl successful.
+[2025-12-04T00:39:27.092Z] Uploading config.json to /workspace/input/config.json (attempt 1/3)...
+[2025-12-04T00:39:30.320Z] Upload of config.json successful.
+[2025-12-04T00:39:30.321Z] Uploading core.json to /workspace/input/persona.json (attempt 1/3)...
+[2025-12-04T00:39:33.594Z] Upload of core.json successful.
+[2025-12-04T00:39:33.594Z] Uploaded persona data for training context
+[2025-12-04T00:39:33.594Z] LoRA training mode detected
+[2025-12-04T00:39:33.594Z] Uploading training script from: /home/greggles/metahuman/docker/runpod-trainer/train_unsloth.py
+[2025-12-04T00:39:33.594Z] Uploading train_unsloth.py to /workspace/train_unsloth.py (attempt 1/3)...
+[2025-12-04T00:39:36.874Z] Upload of train_unsloth.py successful.
+[2025-12-04T00:39:39.703Z] Training script verification: 492 /workspace/train_unsloth.py
+-rw-rw-rw- 1 root root 21K Dec  4 00:39 /workspace/train_unsloth.py
+[2025-12-04T00:39:45.379Z] Upload verification: 7ceea09989c342137e20919a3605dfe556b0ea36e4586e016fa361d59853a5f4  /workspace/input/config.json
+[2025-12-04T00:39:45.380Z] Executing remote training script: train_unsloth.py
+[2025-12-04T00:39:48.138Z] Training exit code: 1
+[2025-12-04T00:39:48.139Z] Full training output saved to: /home/greggles/metahuman/metahuman-runs/greggles/2025-12-04/2025-12-04-002541-fa2774/training_output.txt
+[2025-12-04T00:39:48.139Z] Training stderr (last 2000 chars): ng port-forwarding pty user-rc x11-forwarding
+debug1: Remote: /root/.ssh/authorized_keys:1: key options: agent-forwarding port-forwarding pty user-rc x11-forwarding
+debug2: channel_input_open_confirmation: channel 0: callback start
+debug2: fd 3 setting TCP_NODELAY
+debug2: client_session2_setup: id 0
+debug1: Sending environment.
+debug1: channel 0: setting env LANG = "en_US.UTF-8"
+debug2: channel 0: request env confirm 0
+debug1: Sending command: source /workspace/unsloth-venv/bin/activate && python /workspace/train_unsloth.py
+debug2: channel 0: request exec confirm 1
+debug1: pledge: fork
+debug2: channel_input_open_confirmation: channel 0: callback done
+debug2: channel 0: open confirm rwindow 0 rmax 32768
+debug2: channel 0: rcvd adjust 2097152
+debug2: channel_input_status_confirm: type 99 id 0
+debug2: exec request accepted on channel 0
+debug2: channel 0: rcvd ext data 78
+debug2: channel 0: rcvd eof
+debug2: channel 0: output open -> drain
+debug1: client_input_channel_req: channel 0 rtype exit-status reply 0
+debug1: client_input_channel_req: channel 0 rtype eow@openssh.com reply 0
+debug2: channel 0: rcvd eow
+debug2: chan_shutdown_read: channel 0: (i0 o1 sock -1 wfd 4 efd 6 [write])
+debug2: channel 0: input open -> closed
+debug2: channel 0: rcvd close
+debug2: channel 0: obuf_empty delayed efd 6/(78)
+bash: line 1: /workspace/unsloth-venv/bin/activate: No such file or directory
+debug2: channel 0: written 78 to efd 6
+debug2: channel 0: obuf empty
+debug2: chan_shutdown_write: channel 0: (i3 o1 sock -1 wfd 5 efd 6 [write])
+debug2: channel 0: output drain -> closed
+debug2: channel 0: almost dead
+debug2: channel 0: gc: notify user
+debug2: channel 0: gc: user detached
+debug2: channel 0: send close
+debug2: channel 0: is dead
+debug2: channel 0: garbage collecting
+debug1: channel 0: free: client-session, nchannels 1
+Transferred: sent 3604, received 4124 bytes, in 0.6 seconds
+Bytes per second: sent 5715.3, received 6539.9
+debug1: Exit status 1
+
+[2025-12-04T00:39:48.139Z] Remote training script failed.
+[2025-12-04T00:39:48.143Z] Downloading merged GGUF and adapter artifacts...
+[2025-12-04T00:39:48.144Z] Skipping GGUF download due to training failure.
+[2025-12-04T00:39:48.146Z] Starting SCP download: scp -r -P 30812 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /home/greggles/.ssh/id_ed25519 root@149.36.1.63:/workspace/output/adapter /home/greggles/metahuman/metahuman-runs/greggles/2025-12-04/2025-12-04-002541-fa2774/temp_adapter_download
+[2025-12-04T00:39:52.232Z] SCP download failed for /workspace/output/adapter with exit code 1. Stderr: Warning: Permanently added '[149.36.1.63]:30812' (ED25519) to the list of known hosts.
+scp: /workspace/output/adapter: No such file or directory
+
+[2025-12-04T00:39:52.232Z] Adapter artifacts download failed with exit code 1
+[2025-12-04T00:39:52.232Z] Starting SCP download: scp -P 30812 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /home/greggles/.ssh/id_ed25519 root@149.36.1.63:/workspace/input/upload.ok /media/greggles/STACK/metahuman-profiles/greggles/out/adapters/2025-12-04/2025-12-04-002541-fa2774/adapter/upload.ok
+[2025-12-04T00:39:57.455Z] SCP download successful for /workspace/input/upload.ok
+[2025-12-04T00:39:57.455Z] upload.ok file downloaded successfully.
+[2025-12-04T00:39:57.456Z] Terminating pod 4zyr0wz3njypkq...
+[2025-12-04T00:39:57.847Z] Pod termination request sent successfully.

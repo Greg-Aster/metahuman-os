@@ -27,9 +27,26 @@ Be thoughtful and honest. If there are concerns, raise them. If the plan aligns 
 Respond with valid JSON matching the schema.`;
 
 const execute: NodeExecutor = async (inputs, _context, properties) => {
-  const desire = inputs.desire as Desire | undefined;
-  const plan = inputs.plan as DesirePlan | undefined;
-  const personaValues = (inputs.personaValues as string) || '';
+  // Inputs come via slot positions from graph links:
+  // slot 0: {desire, found} from desire_loader
+  // slot 2: formatted persona values string from persona_formatter
+  const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | undefined;
+  const slot2 = inputs[2] as string | { formatted?: string } | undefined;
+
+  // Extract desire and plan (plan is embedded in desire)
+  const desire = slot0?.desire || (inputs.desire as Desire | undefined);
+  const plan = desire?.plan || (inputs.plan as DesirePlan | undefined);
+
+  // Get persona values from slot or named input
+  let personaValues = '';
+  if (typeof slot2 === 'string') {
+    personaValues = slot2;
+  } else if (slot2 && typeof slot2 === 'object' && 'formatted' in slot2) {
+    personaValues = slot2.formatted || '';
+  } else if (inputs.personaValues) {
+    personaValues = inputs.personaValues as string;
+  }
+
   const personaGoals = (inputs.personaGoals as string) || '';
   const temperature = (properties?.temperature as number) || 0.2;
 
@@ -38,7 +55,7 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
       alignmentScore: 0,
       concerns: ['Missing desire or plan'],
       approved: false,
-      reasoning: 'Cannot review without desire and plan',
+      reasoning: `Cannot review without desire and plan. Got desire: ${!!desire}, plan: ${!!plan}`,
     };
   }
 

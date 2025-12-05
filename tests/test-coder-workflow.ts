@@ -11,7 +11,7 @@
 import { runOperatorWithFeatureFlag } from '../brain/agents/operator-react';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from '../packages/core/src/index';
+import { systemPaths } from '../packages/core/src/index';
 
 console.log('='.repeat(70));
 console.log('TEST: Self-Healing Coder Agent - End-to-End Workflow');
@@ -22,7 +22,7 @@ console.log('');
 console.log('Test 1: Add a comment to a test file');
 console.log('-'.repeat(70));
 
-const testFilePath = path.join(paths.out, 'test-file-for-coder.ts');
+const testFilePath = path.join(systemPaths.out, 'test-file-for-coder.ts');
 const testFileContent = `/**
  * Test file for coder agent
  */
@@ -97,7 +97,7 @@ try {
     console.log('');
 
     // Check if changes were staged
-    const stagingDir = path.join(paths.out, 'code-drafts');
+    const stagingDir = path.join(systemPaths.out, 'code-drafts');
     if (fs.existsSync(stagingDir)) {
       const stagedFiles = fs.readdirSync(stagingDir).filter(f => f.endsWith('.json'));
       if (stagedFiles.length > 0) {

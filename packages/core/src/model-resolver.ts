@@ -11,7 +11,7 @@ import { ROOT } from './path-builder.js';
 import { storageClient } from './storage-client.js';
 
 export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'fallback';
-export type ModelProvider = 'ollama' | 'openai' | 'local';
+export type ModelProvider = 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface';
 
 export interface ModelDefinition {
   provider: ModelProvider;
@@ -125,23 +125,40 @@ export function loadModelRegistry(forceFresh = false, username?: string): ModelR
 }
 
 function resolveRegistryPath(username?: string): string {
-  // Use storage router to resolve user-specific or system config path
-  try {
-    const result = storageClient.resolvePath({
-      username,
-      category: 'config',
-      subcategory: 'etc',
-      relativePath: 'models.json',
-    });
+  // Use storage router to resolve user-specific config path
+  if (username) {
+    try {
+      const result = storageClient.resolvePath({
+        username,
+        category: 'config',
+        subcategory: 'etc',
+        relativePath: 'models.json',
+      });
 
-    if (result.success && result.path) {
-      return result.path;
+      if (result.success && result.path) {
+        // Check if user's config actually exists
+        if (fs.existsSync(result.path)) {
+          return result.path;
+        } else {
+          // User is authenticated but their models.json doesn't exist - FAIL with helpful message
+          const errorMsg = `[model-resolver] ERROR: User models.json not found!\n` +
+            `  Expected location: ${result.path}\n` +
+            `  The user '${username}' needs a models.json config file.\n` +
+            `  Create it by copying from etc/models.json or via the Settings UI.`;
+          console.error(errorMsg);
+          throw new Error(`User models.json not found at ${result.path}. Please create your user-specific model configuration.`);
+        }
+      }
+    } catch (err) {
+      // Re-throw if it's our custom error
+      if (err instanceof Error && err.message.includes('User models.json not found')) {
+        throw err;
+      }
+      console.warn(`[model-resolver] Failed to resolve user path for ${username}:`, err);
     }
-  } catch {
-    // Silently fall through to fallback
   }
 
-  // Fallback to system root for anonymous users without profile
+  // Only use global config for anonymous/system operations
   return path.join(ROOT, 'etc', 'models.json');
 }
 

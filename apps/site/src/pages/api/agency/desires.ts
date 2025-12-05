@@ -9,10 +9,17 @@ import {
   listActiveDesires,
   listPendingDesires,
   saveDesire,
+  createDesireFolder,
+  saveDesireManifest,
+  addScratchpadEntryToFolder,
   type Desire,
   type DesireStatus,
   generateDesireId,
+  initializeDesireMetrics,
+  initializeScratchpadSummary,
 } from '@metahuman/core';
+
+const LOG_PREFIX = '[API:agency/desires]';
 
 /**
  * GET /api/agency/desires
@@ -78,6 +85,7 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
     const user = getAuthenticatedUser(cookies);
     if (!user) {
+      console.log(`${LOG_PREFIX} ❌ Authentication required for POST`);
       return new Response(
         JSON.stringify({ error: 'Authentication required to create desires.' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -87,7 +95,10 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
     const body = await request.json();
     const { title, description, reason, risk = 'low', source = 'manual' } = body;
 
+    console.log(`${LOG_PREFIX} ➕ Creating new desire: "${title}"`);
+
     if (!title || !description) {
+      console.log(`${LOG_PREFIX} ❌ Missing required fields`);
       return new Response(
         JSON.stringify({ error: 'Missing required fields: title, description' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
@@ -112,11 +123,37 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
       runCount: 1,
       risk: risk as Desire['risk'],
       requiredTrustLevel: risk === 'high' || risk === 'critical' ? 'bounded_auto' : 'supervised_auto',
+      metrics: initializeDesireMetrics(), // Initialize behavioral metrics
+      scratchpad: initializeScratchpadSummary(), // Initialize scratchpad summary
       createdAt: now,
       updatedAt: now,
     };
 
+    console.log(`${LOG_PREFIX}    ID: ${desire.id}`);
+    console.log(`${LOG_PREFIX}    Risk: ${risk}, Source: ${source}`);
+    console.log(`${LOG_PREFIX}    Saving to storage...`);
+
+    // Save to flat-file storage (for backward compatibility)
     await saveDesire(desire, user.username);
+
+    // Also create folder-based storage structure
+    console.log(`${LOG_PREFIX}    Creating folder structure...`);
+    await createDesireFolder(desire.id, user.username);
+    await saveDesireManifest(desire, user.username);
+
+    // Add initial scratchpad entry
+    await addScratchpadEntryToFolder(desire.id, {
+      timestamp: now,
+      type: 'origin',
+      description: `Desire "${title}" created manually by ${user.username}`,
+      actor: 'user',
+      data: {
+        source,
+        risk,
+        initialStrength: desire.strength,
+        username: user.username,
+      },
+    }, user.username);
 
     audit({
       category: 'agent',
@@ -129,11 +166,13 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
       },
     });
 
+    console.log(`${LOG_PREFIX} ✅ Desire created: "${desire.title}" (${desire.id})`);
     return new Response(JSON.stringify({ desire, success: true }), {
       status: 201,
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {
+    console.error(`${LOG_PREFIX} ❌ Error creating desire:`, error);
     return new Response(
       JSON.stringify({ error: (error as Error).message }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }

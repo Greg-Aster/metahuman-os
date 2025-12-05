@@ -7,9 +7,10 @@
 
 import { resolveModel, resolveModelForCognitiveMode, type ModelRole, type ResolvedModel, loadModelRegistry } from './model-resolver.js';
 import { audit } from './audit.js';
-import { ollama } from './ollama.js';
 import { loadCognitiveMode } from './cognitive-mode.js';
 import { getUserContext } from './context.js';
+import { callProvider, type ProviderType, type ProviderProgressEvent } from './providers/bridge.js';
+import { ollama } from './ollama.js';
 
 // Re-export ModelRole for convenience
 export type { ModelRole } from './model-resolver.js';
@@ -111,10 +112,14 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
 
   const effectiveCognitiveMode = getContextualCognitiveMode(callOptions.cognitiveMode);
 
-  // Resolve the model for this role
+  // Get username from context for user-specific model config (profiles/{username}/etc/models.json)
+  const ctx = getUserContext();
+  const username = ctx?.username;
+
+  // Resolve the model for this role (using user-specific models.json if available)
   const resolved = effectiveCognitiveMode
-    ? resolveModelForCognitiveMode(effectiveCognitiveMode, callOptions.role)
-    : resolveModel(callOptions.role, callOptions.overrides);
+    ? resolveModelForCognitiveMode(effectiveCognitiveMode, callOptions.role, username)
+    : resolveModel(callOptions.role, callOptions.overrides, username);
 
   // NOTE: Legacy persona injection removed (2025-11-26)
   // Persona is now explicitly injected via persona_loader and persona_formatter nodes
@@ -128,24 +133,59 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
     ...callOptions.options,
   };
 
-  // Dispatch to provider
+  // Dispatch to provider via unified bridge
   let response: RouterResponse;
 
   try {
-    switch (resolved.provider) {
-      case 'ollama':
-        response = await callOllama(resolved, messages, mergedOptions, callOptions.onProgress, callOptions.keepAlive);
-        break;
+    // Convert progress callback
+    const bridgeProgress = callOptions.onProgress
+      ? (event: ProviderProgressEvent) => {
+          const typeMap: Record<string, ModelProgressEvent['type']> = {
+            'queued': 'model_waiting',
+            'loading': 'model_loading',
+            'running': 'model_loading',
+            'completed': 'model_ready',
+            'failed': 'model_loading',
+          };
+          callOptions.onProgress!({
+            type: typeMap[event.phase] || 'model_loading',
+            message: event.message,
+            model: resolved.model,
+            elapsedMs: event.elapsedMs,
+          });
+        }
+      : undefined;
 
-      case 'openai':
-        throw new Error('OpenAI provider not yet implemented');
+    // Call unified provider bridge
+    const providerResponse = await callProvider(
+      resolved.provider as ProviderType,
+      messages,
+      {
+        model: resolved.model,
+        temperature: mergedOptions.temperature,
+        maxTokens: mergedOptions.maxTokens || mergedOptions.num_predict,
+        topP: mergedOptions.topP || mergedOptions.top_p,
+        repeatPenalty: mergedOptions.repeatPenalty || mergedOptions.repeat_penalty,
+        format: mergedOptions.format,
+        keepAlive: callOptions.keepAlive as string | undefined,
+        endpointTier: resolved.metadata?.endpointTier,
+      },
+      bridgeProgress
+    );
 
-      case 'local':
-        throw new Error('Local provider not yet implemented');
-
-      default:
-        throw new Error(`Unknown provider: ${resolved.provider}`);
-    }
+    // Convert to RouterResponse
+    response = {
+      content: providerResponse.content,
+      model: providerResponse.model,
+      modelId: resolved.id,
+      role: callOptions.role,
+      provider: providerResponse.provider,
+      tokens: providerResponse.usage ? {
+        prompt: providerResponse.usage.promptTokens,
+        completion: providerResponse.usage.completionTokens,
+        total: providerResponse.usage.totalTokens,
+      } : undefined,
+    };
 
     // Add metadata to response
     response.modelId = resolved.id;
@@ -212,186 +252,6 @@ export async function* callLLMStream(callOptions: RouterCallOptions): AsyncGener
   };
 }
 
-// Models that can coexist in VRAM with chat models (small utility models)
-const COEXIST_MODELS = [
-  'nomic-embed-text',
-  'all-minilm',
-  'mxbai-embed',
-  'snowflake-arctic-embed',
-];
-
-// Models that require exclusive GPU access (too large to share VRAM)
-const EXCLUSIVE_MODELS = [
-  'qwen3-coder:30b',
-  'qwen3:30b',
-  'llama3:70b',
-  'mixtral',
-  'deepseek-coder:33b',
-];
-
-/**
- * Check if a model can coexist with chat models in VRAM
- */
-function canCoexistWithChatModel(modelName: string): boolean {
-  const lowerName = modelName.toLowerCase();
-  return COEXIST_MODELS.some(m => lowerName.includes(m));
-}
-
-/**
- * Check if a model requires exclusive GPU access
- */
-function requiresExclusiveGPU(modelName: string): boolean {
-  const lowerName = modelName.toLowerCase();
-  // Check explicit exclusive list OR any 30B+ model
-  return EXCLUSIVE_MODELS.some(m => lowerName.includes(m)) ||
-    lowerName.includes(':30b') ||
-    lowerName.includes(':33b') ||
-    lowerName.includes(':70b') ||
-    lowerName.includes(':72b');
-}
-
-/**
- * Call Ollama provider with model availability checking
- */
-async function callOllama(
-  resolved: ResolvedModel,
-  messages: RouterMessage[],
-  options: Record<string, any>,
-  onProgress?: (event: ModelProgressEvent) => void,
-  keepAlive?: string | number
-): Promise<RouterResponse> {
-  // Check if model is already loaded or if we need to wait
-  const isLoaded = await ollama.isModelLoaded(resolved.model);
-
-  if (!isLoaded) {
-    // Check what other models are currently loaded
-    const runningModels = await ollama.getRunningModels().catch(() => ({ models: [] }));
-
-    if (runningModels.models.length > 0) {
-      const currentModel = runningModels.models[0]?.name || 'unknown';
-
-      // Only wait if the currently loaded model requires exclusive GPU access
-      // Small models like nomic-embed-text can coexist with chat models
-      const needsToWait = !canCoexistWithChatModel(currentModel) &&
-        (requiresExclusiveGPU(currentModel) || requiresExclusiveGPU(resolved.model));
-
-      if (needsToWait) {
-        // Notify user we're waiting for GPU
-        onProgress?.({
-          type: 'model_waiting',
-          message: `Waiting for GPU... (${currentModel} is loaded)`,
-          model: resolved.model,
-          currentModel,
-        });
-
-        // Wait for model availability (up to 60 seconds for chat, allows background agents to finish)
-        const waitResult = await ollama.waitForModelAvailability(resolved.model, {
-          timeoutMs: 60000,
-          pollIntervalMs: 2000,
-          onWaiting: (model, elapsed) => {
-            onProgress?.({
-              type: 'model_waiting',
-              message: `Waiting for GPU (${Math.round(elapsed / 1000)}s)... ${model} still loaded`,
-              model: resolved.model,
-              currentModel: model,
-              elapsedMs: elapsed,
-            });
-          },
-        });
-
-        if (!waitResult.ready) {
-          // Still blocked after timeout - throw helpful error
-          throw new Error(
-            `GPU busy: ${waitResult.currentModel || 'another model'} is using the GPU. ` +
-            `Waited ${Math.round((waitResult.waitedMs || 0) / 1000)}s. ` +
-            `Try again in a moment or restart Ollama.`
-          );
-        }
-      }
-    }
-
-    // Now load our model
-    onProgress?.({
-      type: 'model_loading',
-      message: `Loading ${resolved.model}...`,
-      model: resolved.model,
-    });
-  }
-
-  // Convert our message format to Ollama's format
-  const ollamaMessages = messages.map(msg => ({
-    role: msg.role,
-    content: msg.content,
-  }));
-
-  // Build Ollama options
-  const ollamaOptions: Record<string, any> = {};
-  if (options.temperature !== undefined) ollamaOptions.temperature = options.temperature;
-  if (options.topP !== undefined) ollamaOptions.top_p = options.topP;
-  if (options.repeatPenalty !== undefined) ollamaOptions.repeat_penalty = options.repeatPenalty;
-  if (options.maxTokens !== undefined) ollamaOptions.num_predict = options.maxTokens;
-  if (options.format !== undefined) ollamaOptions.format = options.format; // Support JSON mode
-  if (keepAlive !== undefined) ollamaOptions.keep_alive = keepAlive; // Control VRAM retention
-
-  // Call Ollama with OOM error detection
-  let response;
-  try {
-    response = await ollama.chat(resolved.model, ollamaMessages, ollamaOptions);
-  } catch (error) {
-    const errorMsg = (error as Error).message || '';
-
-    // Detect OOM-related errors (EOF, connection refused, CUDA out of memory)
-    const isOOMError = errorMsg.includes('EOF') ||
-      errorMsg.includes('ECONNREFUSED') ||
-      errorMsg.includes('CUDA out of memory') ||
-      errorMsg.includes('out of memory') ||
-      errorMsg.includes('failed to load model') ||
-      errorMsg.includes('GGML_ASSERT') ||
-      (errorMsg.includes('500') && errorMsg.includes('load'));
-
-    if (isOOMError) {
-      // Notify user about potential OOM
-      onProgress?.({
-        type: 'model_loading',
-        message: `⚠️ Model ${resolved.model} failed to load - GPU memory may be full. Try refreshing or wait for other models to unload.`,
-        model: resolved.model,
-      });
-
-      // Re-throw with clearer error message
-      throw new Error(`GPU memory exhausted: Unable to load ${resolved.model}. Another model may be using the GPU. Please wait and try again, or restart the Ollama service.`);
-    }
-
-    // Re-throw other errors
-    throw error;
-  }
-
-  // Notify model is ready
-  onProgress?.({
-    type: 'model_ready',
-    message: `${resolved.model} ready`,
-    model: resolved.model,
-  });
-
-  // Extract tokens if available
-  let tokens: RouterResponse['tokens'] | undefined;
-  if (response.prompt_eval_count !== undefined && response.eval_count !== undefined) {
-    tokens = {
-      prompt: response.prompt_eval_count,
-      completion: response.eval_count,
-      total: response.prompt_eval_count + response.eval_count,
-    };
-  }
-
-  return {
-    content: response.message?.content || '',
-    model: resolved.model,
-    modelId: resolved.id,
-    role: 'persona', // Will be overwritten by caller
-    provider: 'ollama',
-    tokens,
-  };
-}
-
 /**
  * Helper: Call LLM and return just the text content
  */
@@ -447,7 +307,11 @@ export async function callLLMJSON<T = any>(
  */
 export async function isModelAvailable(role: ModelRole): Promise<boolean> {
   try {
-    const resolved = resolveModel(role);
+    // Get username from context for user-specific model config
+    const ctx = getUserContext();
+    const username = ctx?.username;
+
+    const resolved = resolveModel(role, undefined, username);
 
     // For Ollama, check if the model is loaded
     if (resolved.provider === 'ollama') {

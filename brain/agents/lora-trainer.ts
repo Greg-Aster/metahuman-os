@@ -587,7 +587,7 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
 
   tracker.startStage('pod_creation', `Requesting ${gpuType}`);
 
-  for (const cloudType of ['SECURE', 'COMMUNITY']) {
+  for (const cloudType of ['COMMUNITY', 'SECURE']) {
     log(logFilePath, `Attempting to deploy pod on ${cloudType} cloud...`);
     console.log(`📦 Trying ${cloudType} cloud...`);
     const mutation = `

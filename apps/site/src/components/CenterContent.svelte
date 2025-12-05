@@ -99,8 +99,8 @@
       case 'AddonsManager':
         module = await import('./AddonsManager.svelte');
         break;
-      case 'BoredomControl':
-        module = await import('./BoredomControl.svelte');
+      case 'SchedulerSettings':
+        module = await import('./SchedulerSettings.svelte');
         break;
       case 'ProfileLocation':
         module = await import('./ProfileLocation.svelte');
@@ -159,37 +159,14 @@ let searchQuery = ''
 let currentPage = 1
 const itemsPerPage = 50
 
-let personaTab: 'editor' | 'memory' | 'behavior' | 'generator' = 'editor'
+let personaTab: 'editor' | 'memory' | 'generator' = 'editor'
 let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'wizard' | 'datasets' | 'manage' | 'system' | 'monitor' | 'adapters' = 'wizard'
-let systemTab: 'chat' | 'lifeline' | 'settings' | 'security' | 'network' | 'storage' | 'addons' = 'settings'
+let systemTab: 'chat' | 'lifeline' | 'settings' | 'security' | 'network' | 'storage' | 'addons' | 'scheduler' = 'settings'
 let dashboardTab: 'overview' | 'tasks' | 'approvals' = 'overview'
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
 
-// Curiosity config (for Behavior tab)
-let curiosityLevel = 1
-let curiosityResearchMode: 'off' | 'local' | 'web' = 'local'
-
-const curiosityLevelDescriptions = [
-  'Curiosity disabled - no questions will be asked',
-  'Gentle - Questions after 60 minutes of conversation inactivity',
-  'Moderate - Questions after 30 minutes of conversation inactivity',
-  'Active - Questions after 15 minutes of conversation inactivity',
-  'Chatty - Questions after 5 minutes of conversation inactivity',
-  'Very Active - Questions after 2 minutes of conversation inactivity',
-  'Intense - Questions after 1 minute of conversation inactivity'
-]
-
-const curiosityIntervals = [
-  0,     // Level 0: Off
-  3600,  // Level 1: 60 minutes
-  1800,  // Level 2: 30 minutes
-  900,   // Level 3: 15 minutes
-  300,   // Level 4: 5 minutes
-  120,   // Level 5: 2 minutes
-  60     // Level 6: 1 minute
-]
 
 // Legacy expansion state (no longer used but kept to prevent errors)
 let expanded: Record<string, boolean> = {}
@@ -215,35 +192,6 @@ async function loadVoiceProvider() {
   }
 }
 
-async function loadCuriositySettings() {
-  try {
-    const res = await apiFetch('/api/curiosity-config');
-    if (res.ok) {
-      const data = await res.json();
-      curiosityLevel = data.maxOpenQuestions;
-      curiosityResearchMode = data.researchMode || 'local';
-    }
-  } catch (err) {
-    console.error('[CenterContent] Error loading curiosity config:', err);
-  }
-}
-
-async function saveCuriositySettings() {
-  try {
-    const res = await apiFetch('/api/curiosity-config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        maxOpenQuestions: curiosityLevel,
-        researchMode: curiosityResearchMode,
-        questionIntervalSeconds: curiosityIntervals[curiosityLevel]
-      })
-    });
-    if (!res.ok) throw new Error('Failed to save curiosity settings');
-  } catch (err) {
-    console.error('[CenterContent] Error saving curiosity config:', err);
-  }
-}
 
 async function loadEvents() {
   if ($activeView !== 'persona' || personaTab !== 'memory') return;
@@ -327,9 +275,6 @@ $: if ($activeView === 'persona' && personaTab === 'memory') {
   loadFunctions();
 }
 
-$: if ($activeView === 'persona' && personaTab === 'behavior') {
-  loadCuriositySettings();
-}
 
 $: if ($activeView === 'voice' && voiceTab === 'training') {
   loadVoiceProvider();
@@ -577,7 +522,6 @@ async function loadMemoryContent(relPath: string) {
       case 'persona':
         void loadComponent('PersonaEditor');
         void loadComponent('MemoryControls');
-        void loadComponent('BoredomControl');
         void loadComponent('PersonaGenerator');
         break;
       case 'system':
@@ -588,6 +532,7 @@ async function loadMemoryContent(relPath: string) {
         void loadComponent('NetworkSettings');
         void loadComponent('AddonsManager');
         void loadComponent('Lifeline');
+        void loadComponent('SchedulerSettings');
         break;
       case 'terminal':
         void loadComponent('TerminalManager');
@@ -742,7 +687,6 @@ async function loadMemoryContent(relPath: string) {
         <div class="tab-group">
           <button class="tab-button" class:active={personaTab==='editor'} on:click={() => personaTab='editor'}>Editor</button>
           <button class="tab-button" class:active={personaTab==='memory'} on:click={() => personaTab='memory'}>Memory</button>
-          <button class="tab-button" class:active={personaTab==='behavior'} on:click={() => personaTab='behavior'}>Behavior</button>
           <button class="tab-button" class:active={personaTab==='generator'} on:click={() => personaTab='generator'}>Generator</button>
         </div>
         {#if personaTab === 'editor'}
@@ -1368,61 +1312,6 @@ async function loadMemoryContent(relPath: string) {
             {/if}
           </div>
         {/if}
-        {:else if personaTab === 'behavior'}
-          <div class="behavior-section">
-            <!-- Mind Wandering Control -->
-            <div class="setting-group">
-              <label class="setting-label" for="mind-wandering-control">Mind Wandering</label>
-              <div id="mind-wandering-control">
-                {#await loadComponent('BoredomControl')}
-                  <div class="loading-placeholder">Loading...</div>
-                {:then Component}
-                  <svelte:component this={Component} />
-                {/await}
-              </div>
-            </div>
-
-            <!-- Curiosity Level Control -->
-            <div class="setting-group">
-              <label class="setting-label">Curiosity Level</label>
-              <div class="curiosity-control-container">
-                <div class="curiosity-slider-wrapper">
-                  <input
-                    type="range"
-                    min="0"
-                    max="6"
-                    bind:value={curiosityLevel}
-                    on:change={saveCuriositySettings}
-                    class="curiosity-slider"
-                  />
-                  <div class="curiosity-labels">
-                    <span>Off</span>
-                    <span>Gentle</span>
-                    <span>Moderate</span>
-                    <span>Active</span>
-                    <span>Chatty</span>
-                    <span>Very</span>
-                    <span>Intense</span>
-                  </div>
-                </div>
-                <p class="curiosity-description">
-                  {curiosityLevelDescriptions[curiosityLevel]}
-                </p>
-
-                <!-- Research Mode Toggle -->
-                {#if curiosityLevel > 0}
-                  <div class="research-mode-controls">
-                    <label class="field-label" for="research-mode-select">Research Mode</label>
-                    <select id="research-mode-select" bind:value={curiosityResearchMode} on:change={saveCuriositySettings} class="logging-select">
-                      <option value="off">Off - Questions only</option>
-                      <option value="local">Local - Use existing memories</option>
-                      <option value="web">Web - Allow web searches</option>
-                    </select>
-                  </div>
-                {/if}
-              </div>
-            </div>
-          </div>
         {:else if personaTab === 'generator'}
           {#await loadComponent('PersonaGenerator')}
             <div class="loading-placeholder">Loading persona generator...</div>
@@ -1446,6 +1335,7 @@ async function loadMemoryContent(relPath: string) {
           <button class="tab-button" class:active={systemTab==='storage'} on:click={() => systemTab='storage'}>Storage</button>
           <button class="tab-button" class:active={systemTab==='network'} on:click={() => systemTab='network'}>Network</button>
           <button class="tab-button" class:active={systemTab==='addons'} on:click={() => systemTab='addons'}>Addons</button>
+          <button class="tab-button" class:active={systemTab==='scheduler'} on:click={() => systemTab='scheduler'}>Scheduler</button>
           <button class="tab-button" class:active={systemTab==='lifeline'} on:click={() => systemTab='lifeline'}>Lifeline</button>
         </div>
         {#if systemTab === 'chat'}
@@ -1487,6 +1377,12 @@ async function loadMemoryContent(relPath: string) {
         {:else if systemTab === 'lifeline'}
           {#await loadComponent('Lifeline')}
             <div class="loading-placeholder">Loading lifeline...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
+        {:else if systemTab === 'scheduler'}
+          {#await loadComponent('SchedulerSettings')}
+            <div class="loading-placeholder">Loading scheduler settings...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
@@ -1985,99 +1881,6 @@ async function loadMemoryContent(relPath: string) {
   :global(.dark) .skill-tag {
     background: #374151;
     color: #d1d5db;
-  }
-
-  /* Behavior Section Styles */
-  .behavior-section {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    padding: 1.5rem 0;
-  }
-
-  .curiosity-control-container {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .curiosity-slider-wrapper {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .curiosity-slider {
-    width: 100%;
-    accent-color: #7c3aed;
-    cursor: pointer;
-  }
-
-  .curiosity-labels {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    font-size: 0.7rem;
-    color: #6b7280;
-    padding: 0 0.25rem;
-    text-align: center;
-  }
-
-  :global(.dark) .curiosity-labels {
-    color: #9ca3af;
-  }
-
-  .curiosity-description {
-    font-size: 0.875rem;
-    color: #4b5563;
-    margin: 0;
-    padding: 0.75rem;
-    background: rgba(124, 58, 237, 0.05);
-    border-radius: 0.375rem;
-    border-left: 3px solid #7c3aed;
-  }
-
-  :global(.dark) .curiosity-description {
-    color: #9ca3af;
-    background: rgba(167, 139, 250, 0.08);
-    border-left-color: #a78bfa;
-  }
-
-  .research-mode-controls {
-    margin-top: 0.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .field-label {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #4b5563;
-  }
-
-  :global(.dark) .field-label {
-    color: #9ca3af;
-  }
-
-  .logging-select {
-    padding: 0.5rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    background: white;
-    color: #1f2937;
-  }
-
-  :global(.dark) .logging-select {
-    background: #1f2937;
-    border-color: #374151;
-    color: #f3f4f6;
-  }
-
-  .logging-select:focus {
-    outline: none;
-    border-color: #7c3aed;
-    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
   }
 
   /* Search and Pagination Controls */

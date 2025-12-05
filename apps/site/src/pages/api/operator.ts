@@ -222,11 +222,12 @@ const postHandler: APIRoute = async (context) => {
       actor: 'web_ui',
     });
 
-    // Return HTTP 200 with structured error (not 500) for graceful handling in UI
+    // Return HTTP 500 with structured error for operator failures
+    // Note: goal and resolvedMode may be undefined if error occurred during parsing
     return new Response(
       JSON.stringify({
         success: false,
-        goal,
+        goal: 'unknown',
         result: null,
         error: {
           type: 'exception',
@@ -240,9 +241,9 @@ const postHandler: APIRoute = async (context) => {
             'Report this error if it persists'
           ]
         },
-        mode: resolvedMode,
+        mode: 'strict',
       }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
 };

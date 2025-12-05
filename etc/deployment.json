@@ -1,0 +1,65 @@
+{
+  "$schema": "https://metahuman.dev/schemas/deployment.json",
+  "version": "1.2.0",
+  "description": "Deployment configuration for MetaHuman OS. Set mode to 'server' for cloud deployment.",
+
+  "mode": "local",
+
+  "local": {
+    "llmProvider": "ollama",
+    "storagePath": "${METAHUMAN_ROOT}",
+    "ollamaEndpoint": "http://localhost:11434"
+  },
+
+  "server": {
+    "llmProvider": "runpod_serverless",
+    "storagePath": "/runpod-volume/metahuman",
+
+    "runpod": {
+      "apiKey": "${RUNPOD_API_KEY}",
+
+      "endpoints": {
+        "default": "${RUNPOD_ENDPOINT_ID}",
+        "14b": "${RUNPOD_ENDPOINT_14B}",
+        "30b": "${RUNPOD_ENDPOINT_30B}",
+        "embed": "${RUNPOD_ENDPOINT_EMBED}"
+      },
+
+      "endpointTiers": {
+        "14b": {
+          "description": "Medium models (8-14B params)",
+          "maxParams": "14B",
+          "enableLora": true,
+          "loraStoragePath": "/runpod-volume/metahuman/adapters"
+        },
+        "30b": {
+          "description": "Large models (30B+ params)",
+          "maxParams": "30B",
+          "enableLora": false
+        },
+        "embed": {
+          "description": "Embedding models",
+          "maxParams": "1B",
+          "enableLora": false
+        }
+      }
+    },
+
+    "huggingface": {
+      "apiKey": "${HF_API_KEY}",
+      "endpointUrl": "${HF_ENDPOINT_URL}"
+    },
+
+    "redis": {
+      "url": "${REDIS_URL}",
+      "keyPrefix": "mh:"
+    },
+
+    "scaling": {
+      "maxConcurrentInference": 3,
+      "queueTimeout": 60000,
+      "coldStartWarningMs": 15000,
+      "keepWarmIntervalMs": 0
+    }
+  }
+}
