@@ -6,6 +6,8 @@ import android.view.KeyEvent;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 import com.metahuman.os.plugins.voice.NativeVoicePlugin;
+import com.metahuman.os.plugins.llm.NativeLLMPlugin;
+import com.metahuman.os.plugins.updater.NativeUpdaterPlugin;
 
 /**
  * MainActivity with direct key event interception for Bluetooth headphone buttons.
@@ -31,6 +33,8 @@ public class MainActivity extends BridgeActivity {
 
         // Register custom plugins before super.onCreate()
         registerPlugin(NativeVoicePlugin.class);
+        registerPlugin(NativeLLMPlugin.class);
+        registerPlugin(NativeUpdaterPlugin.class);
         super.onCreate(savedInstanceState);
     }
 

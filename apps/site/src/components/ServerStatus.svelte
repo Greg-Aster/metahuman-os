@@ -20,8 +20,25 @@
     isCurrentServer: boolean;
   }
 
+  interface LLMBackendInfo {
+    activeBackend: 'ollama' | 'vllm';
+    ollama: {
+      installed: boolean;
+      running: boolean;
+      model?: string;
+      endpoint: string;
+    };
+    vllm: {
+      installed: boolean;
+      running: boolean;
+      model?: string;
+      endpoint: string;
+    };
+  }
+
   let servers: ServerInfo[] = [];
   let astroServers: AstroServer[] = [];
+  let llmBackend: LLMBackendInfo | null = null;
   let loading = true;
   let actionInProgress: string | null = null;
   let refreshInterval: ReturnType<typeof setInterval>;
@@ -35,6 +52,31 @@
 
   async function fetchServerStatus() {
     const newServers: ServerInfo[] = [];
+
+    // Fetch LLM backend status
+    try {
+      const llmResponse = await apiFetch('/api/llm-backend/status');
+      if (llmResponse.ok) {
+        const data = await llmResponse.json();
+        llmBackend = {
+          activeBackend: data.config.activeBackend,
+          ollama: {
+            installed: data.available.ollama.installed,
+            running: data.available.ollama.running,
+            model: data.available.ollama.model,
+            endpoint: data.config.ollama.endpoint,
+          },
+          vllm: {
+            installed: data.available.vllm.installed,
+            running: data.available.vllm.running,
+            model: data.available.vllm.model || data.config.vllm.model,
+            endpoint: data.config.vllm.endpoint,
+          },
+        };
+      }
+    } catch (error) {
+      console.error('Failed to fetch LLM backend status:', error);
+    }
 
     for (const config of serverConfigs) {
       try {
@@ -89,6 +131,32 @@
 
     servers = newServers;
     loading = false;
+  }
+
+  async function controlLLMBackend(backend: 'ollama' | 'vllm', action: 'start' | 'stop' | 'restart') {
+    actionInProgress = `${backend}-${action}`;
+
+    try {
+      const endpoint = backend === 'ollama' ? '/api/llm-backend/ollama' : '/api/llm-backend/vllm';
+      const response = await apiFetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        alert(`Failed to ${action} ${backend}: ${data.error || 'Unknown error'}`);
+      } else {
+        // Wait a moment then refresh
+        setTimeout(fetchServerStatus, 2000);
+      }
+    } catch (error) {
+      alert(`Error ${action}ing ${backend}: ${(error as Error).message}`);
+    } finally {
+      actionInProgress = null;
+    }
   }
 
   async function controlServer(server: ServerInfo, action: 'start' | 'stop' | 'restart') {
@@ -191,6 +259,121 @@
     <div class="loading">Loading server status...</div>
   {:else}
     <div class="server-list">
+      <!-- LLM Backend Section -->
+      {#if llmBackend}
+        <div class="section-header">
+          <span class="section-icon">🧠</span>
+          <span class="section-title">LLM Backend</span>
+        </div>
+
+        <!-- Ollama -->
+        <div class="server-card llm-card" class:active-backend={llmBackend.activeBackend === 'ollama'}>
+          <div class="server-header">
+            <div class="server-info">
+              <span class="status-icon">
+                {#if !llmBackend.ollama.installed}⚠️
+                {:else if llmBackend.ollama.running}🟢
+                {:else}🔴{/if}
+              </span>
+              <div class="server-details">
+                <div class="server-name">
+                  Ollama
+                  {#if llmBackend.activeBackend === 'ollama'}
+                    <span class="active-badge">ACTIVE</span>
+                  {/if}
+                </div>
+                <div class="server-meta">
+                  {llmBackend.ollama.endpoint}
+                  {#if llmBackend.ollama.running && llmBackend.ollama.model}
+                    • {llmBackend.ollama.model}
+                  {/if}
+                </div>
+              </div>
+            </div>
+          </div>
+          {#if llmBackend.ollama.installed}
+            <div class="server-actions">
+              {#if llmBackend.ollama.running}
+                <button
+                  class="action-btn stop"
+                  on:click={() => controlLLMBackend('ollama', 'stop')}
+                  disabled={actionInProgress !== null}
+                >
+                  {actionInProgress === 'ollama-stop' ? '...' : 'Stop'}
+                </button>
+              {:else}
+                <button
+                  class="action-btn start"
+                  on:click={() => controlLLMBackend('ollama', 'start')}
+                  disabled={actionInProgress !== null}
+                >
+                  {actionInProgress === 'ollama-start' ? '...' : 'Start'}
+                </button>
+              {/if}
+            </div>
+          {:else}
+            <div class="not-installed-msg">Not installed</div>
+          {/if}
+        </div>
+
+        <!-- vLLM -->
+        <div class="server-card llm-card" class:active-backend={llmBackend.activeBackend === 'vllm'}>
+          <div class="server-header">
+            <div class="server-info">
+              <span class="status-icon">
+                {#if !llmBackend.vllm.installed}⚠️
+                {:else if llmBackend.vllm.running}🟢
+                {:else}🔴{/if}
+              </span>
+              <div class="server-details">
+                <div class="server-name">
+                  vLLM
+                  {#if llmBackend.activeBackend === 'vllm'}
+                    <span class="active-badge">ACTIVE</span>
+                  {/if}
+                </div>
+                <div class="server-meta">
+                  {llmBackend.vllm.endpoint}
+                  {#if llmBackend.vllm.model}
+                    • {llmBackend.vllm.model}
+                  {/if}
+                </div>
+              </div>
+            </div>
+          </div>
+          {#if llmBackend.vllm.installed}
+            <div class="server-actions">
+              {#if llmBackend.vllm.running}
+                <button
+                  class="action-btn stop"
+                  on:click={() => controlLLMBackend('vllm', 'stop')}
+                  disabled={actionInProgress !== null}
+                >
+                  {actionInProgress === 'vllm-stop' ? '...' : 'Stop'}
+                </button>
+                <button
+                  class="action-btn restart"
+                  on:click={() => controlLLMBackend('vllm', 'restart')}
+                  disabled={actionInProgress !== null}
+                >
+                  {actionInProgress === 'vllm-restart' ? '...' : 'Restart'}
+                </button>
+              {:else}
+                <button
+                  class="action-btn start"
+                  on:click={() => controlLLMBackend('vllm', 'start')}
+                  disabled={actionInProgress !== null}
+                >
+                  {actionInProgress === 'vllm-start' ? '...' : 'Start'}
+                </button>
+              {/if}
+            </div>
+          {:else}
+            <div class="not-installed-msg">Not installed - requires Python vLLM package</div>
+          {/if}
+        </div>
+      {/if}
+
       <!-- Astro Dev Servers Section -->
       {#if astroServers.length > 0}
         <div class="section-header">
@@ -605,5 +788,42 @@
 
   .action-btn.danger:hover:not(:disabled) {
     background: rgb(153 27 27);
+  }
+
+  /* LLM Backend cards */
+  .llm-card {
+    border-color: rgba(59, 130, 246, 0.2);
+  }
+
+  :global(.dark) .llm-card {
+    border-color: rgba(96, 165, 250, 0.2);
+  }
+
+  .llm-card.active-backend {
+    border-width: 2px;
+    border-color: rgba(34, 197, 94, 0.4);
+    background: rgba(34, 197, 94, 0.02);
+  }
+
+  :global(.dark) .llm-card.active-backend {
+    border-color: rgba(74, 222, 128, 0.4);
+    background: rgba(74, 222, 128, 0.03);
+  }
+
+  .active-badge {
+    display: inline-block;
+    padding: 0.125rem 0.375rem;
+    margin-left: 0.5rem;
+    background: rgba(34, 197, 94, 0.15);
+    color: rgb(34 197 94);
+    border-radius: 0.25rem;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+  }
+
+  :global(.dark) .active-badge {
+    background: rgba(74, 222, 128, 0.2);
+    color: rgb(74 222 128);
   }
 </style>

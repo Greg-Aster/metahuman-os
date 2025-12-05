@@ -1,9 +1,10 @@
 import type { APIRoute } from 'astro'
 import fs from 'node:fs'
 import path from 'node:path'
-import { systemPaths, audit, getAuthenticatedUser, storageClient } from '@metahuman/core'
+import { systemPaths, audit, getAuthenticatedUser, storageClient, loadBackendConfig, getProfilePaths } from '@metahuman/core'
 import { OllamaClient } from '@metahuman/core/ollama'
 import { invalidateModelCache } from '@metahuman/core/model-resolver'
+import { discoverLoRAAdapters, type LoRAMetadata } from '@metahuman/core/cognitive-layers'
 
 /**
  * API endpoint for managing user's model registry
@@ -73,6 +74,28 @@ function isTrainingArtifact(modelName: string): boolean {
 
 const ALL_ROLES = ['persona', 'orchestrator', 'coder', 'planner', 'curator', 'summarizer', 'fallback'];
 
+/**
+ * Interface for LoRA adapter in API response
+ */
+interface LoRAAdapterInfo {
+  id: string;
+  name: string;
+  path: string;
+  date?: string;
+  isDualAdapter: boolean;
+  size: number;
+}
+
+/**
+ * Model categories for adaptive status widget
+ */
+interface ModelCategories {
+  local: any[];      // Ollama or vLLM models
+  lora: LoRAAdapterInfo[];   // User's trained adapters
+  remote: any[];     // RunPod, HuggingFace, OpenAI
+  bigBrother: any[]; // Claude Code escalation
+}
+
 // GET: Retrieve model registry information
 const getHandler: APIRoute = async ({ cookies }) => {
   try {
@@ -100,18 +123,23 @@ const getHandler: APIRoute = async ({ cookies }) => {
       console.error('[model-registry] Failed to load system models.json:', err)
     }
 
-    // Fetch all available models from Ollama
+    // Fetch all available models from Ollama (only if Ollama is the active backend)
+    const backendConfig = loadBackendConfig()
     const ollama = new OllamaClient()
     let ollamaModels: Array<{ name: string; size?: number; modified_at?: string }> = []
-    try {
-      const tags = await ollama.listModels()
-      // Filter out training artifacts and keep only production models
-      ollamaModels = tags
-        .filter(m => !isTrainingArtifact(m.name))
-        .map(m => ({ name: m.name, size: m.size, modified_at: m.modified_at }))
-    } catch (err) {
-      console.error('[model-registry] Failed to fetch Ollama models:', err)
-      // Continue with registry-only models if Ollama is unavailable
+
+    // Only fetch from Ollama if it's the active backend
+    if (backendConfig.activeBackend === 'ollama') {
+      try {
+        const tags = await ollama.listModels()
+        // Filter out training artifacts and keep only production models
+        ollamaModels = tags
+          .filter(m => !isTrainingArtifact(m.name))
+          .map(m => ({ name: m.name, size: m.size, modified_at: m.modified_at }))
+      } catch (err) {
+        console.error('[model-registry] Failed to fetch Ollama models:', err)
+        // Continue with registry-only models if Ollama is unavailable
+      }
     }
 
     // Build available models list from registry + Ollama + System cloud models
@@ -192,6 +220,88 @@ const getHandler: APIRoute = async ({ cookies }) => {
     // Extract global settings
     const globalSettings = registry.globalSettings || {}
 
+    // === NEW: Backend info and model categories for adaptive widget ===
+
+    // Get active backend info
+    const activeBackend = backendConfig.activeBackend
+    const isVLLMActive = activeBackend === 'vllm'
+
+    // Determine local model info
+    let localModel: {
+      id: string;
+      name: string;
+      provider: 'ollama' | 'vllm';
+      locked: boolean;  // true for vLLM (can't hot-swap)
+    }
+
+    if (isVLLMActive) {
+      localModel = {
+        id: 'vllm.active',
+        name: backendConfig.vllm.model,
+        provider: 'vllm',
+        locked: true  // vLLM can't switch models without restart
+      }
+    } else {
+      // Find first loaded Ollama model or use default
+      const defaultOllamaModel = backendConfig.ollama.defaultModel
+      localModel = {
+        id: `ollama.${defaultOllamaModel}`,
+        name: defaultOllamaModel,
+        provider: 'ollama',
+        locked: false  // Ollama can hot-swap models
+      }
+    }
+
+    // Discover LoRA adapters from user's profile
+    const loraDiscovery = discoverLoRAAdapters()
+    const loraAdapters: LoRAAdapterInfo[] = loraDiscovery.adapters.map((adapter: LoRAMetadata) => ({
+      id: `lora.${adapter.name}`,
+      name: adapter.name,
+      path: adapter.path,
+      date: adapter.date,
+      isDualAdapter: adapter.isDual,
+      size: adapter.size
+    }))
+
+    // Categorize models
+    const cloudProviderSet = new Set(['runpod_serverless', 'huggingface', 'openai'])
+    const bigBrotherProviders = new Set(['claude-code', 'anthropic'])
+
+    const modelCategories: ModelCategories = {
+      // Local models (Ollama or vLLM's single model)
+      local: isVLLMActive
+        ? [{ id: 'vllm.active', model: backendConfig.vllm.model, provider: 'vllm', locked: true }]
+        : availableModels.filter(m => m.provider === 'ollama'),
+
+      // User's LoRA adapters
+      lora: loraAdapters,
+
+      // Remote cloud models
+      remote: availableModels.filter(m => cloudProviderSet.has(m.provider)),
+
+      // Big Brother (Claude Code escalation) - add from system registry if exists
+      bigBrother: availableModels.filter(m => bigBrotherProviders.has(m.provider))
+    }
+
+    // If no Big Brother model exists, add a placeholder entry
+    if (modelCategories.bigBrother.length === 0) {
+      // Check if there's a big-brother entry in system models
+      if (systemRegistry.models?.['big-brother.claude']) {
+        modelCategories.bigBrother.push({
+          id: 'big-brother.claude',
+          provider: 'claude-code',
+          model: 'claude-sonnet-4',
+          roles: ['orchestrator', 'planner', 'coder'],
+          description: 'Claude Code escalation for complex tasks',
+          adapters: [],
+          baseModel: null,
+          metadata: { source: 'big-brother', priority: 'low' },
+          options: {},
+          source: 'system'
+        })
+      }
+    }
+
     await audit({
       category: 'action',
       level: 'info',
@@ -199,7 +309,8 @@ const getHandler: APIRoute = async ({ cookies }) => {
       actor: user.username,
       context: {
         userId: user.id,
-        profilePath: systemPaths.etc
+        profilePath: systemPaths.etc,
+        activeBackend
       }
     })
 
@@ -210,7 +321,11 @@ const getHandler: APIRoute = async ({ cookies }) => {
         roleAssignments,
         cognitiveModeMappings,
         globalSettings,
-        version: registry.version || '1.0.0'
+        version: registry.version || '1.0.0',
+        // NEW: Backend info for adaptive widget
+        activeBackend,
+        localModel,
+        modelCategories
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     )
@@ -275,6 +390,64 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
           description: systemModelConfig.description || `Imported from system registry`,
           options: systemModelConfig.options || {},
           metadata: { ...systemModelConfig.metadata, source: 'system-registry' }
+        }
+      } else if (modelId.startsWith('vllm.')) {
+        // vLLM model (e.g., 'vllm.active')
+        const backendConfig = loadBackendConfig()
+        registry.models[modelId] = {
+          provider: 'vllm',
+          model: backendConfig.vllm.model,
+          roles: [role],
+          adapters: [],
+          description: `vLLM backend model: ${backendConfig.vllm.model}`,
+          options: {
+            contextWindow: backendConfig.vllm.maxModelLen || 4096,
+            gpuMemoryUtilization: backendConfig.vllm.gpuMemoryUtilization
+          },
+          metadata: { source: 'vllm-backend', locked: true }
+        }
+      } else if (modelId.startsWith('lora.')) {
+        // LoRA adapter - find the adapter info
+        const adapterName = modelId.replace(/^lora\./, '')
+        const loraDiscovery = discoverLoRAAdapters()
+        const adapter = loraDiscovery.adapters.find(a => a.name === adapterName)
+
+        if (adapter) {
+          // Get the base model from backend config
+          const backendConfig = loadBackendConfig()
+          const baseModel = backendConfig.activeBackend === 'vllm'
+            ? backendConfig.vllm.model
+            : backendConfig.ollama.defaultModel
+
+          registry.models[modelId] = {
+            provider: backendConfig.activeBackend,
+            model: adapter.name,
+            baseModel: baseModel,
+            roles: [role],
+            adapters: [adapter.path],
+            description: `LoRA adapter: ${adapter.name}${adapter.isDual ? ' (dual)' : ''}`,
+            options: {
+              contextWindow: 8192,
+              temperature: 0.7
+            },
+            metadata: {
+              source: 'lora-discovery',
+              adapterPath: adapter.path,
+              trainedOn: adapter.date,
+              isDualAdapter: adapter.isDual
+            }
+          }
+        } else {
+          // Adapter not found - create placeholder
+          registry.models[modelId] = {
+            provider: 'ollama',
+            model: adapterName,
+            roles: [role],
+            adapters: [],
+            description: `LoRA adapter: ${adapterName} (not found)`,
+            options: {},
+            metadata: { source: 'lora-discovery', notFound: true }
+          }
         }
       } else {
         // Fallback: assume Ollama model

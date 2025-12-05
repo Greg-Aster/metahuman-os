@@ -217,16 +217,34 @@ export async function stopRvcServer(): Promise<RvcActionResult> {
   }
 
   try {
-    // Send SIGTERM first (graceful shutdown)
-    process.kill(status.pid!, 'SIGTERM');
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // If we have a PID, use it to kill the process
+    if (status.pid !== undefined) {
+      // Send SIGTERM first (graceful shutdown)
+      process.kill(status.pid, 'SIGTERM');
+      await new Promise((resolve) => setTimeout(resolve, 2000));
 
-    // Check if still running, force kill if needed
-    try {
-      process.kill(status.pid!, 0);
-      process.kill(status.pid!, 'SIGKILL');
-    } catch {
-      // already stopped
+      // Check if still running, force kill if needed
+      try {
+        process.kill(status.pid, 0);
+        process.kill(status.pid, 'SIGKILL');
+      } catch {
+        // already stopped
+      }
+    } else {
+      // No PID but server is healthy - try to find process by port
+      try {
+        const findCmd = `lsof -t -i:${RVC_PORT}`;
+        const pids = execSync(findCmd, { encoding: 'utf-8' }).trim().split('\n');
+        for (const pidStr of pids) {
+          const pid = parseInt(pidStr, 10);
+          if (!isNaN(pid)) {
+            process.kill(pid, 'SIGTERM');
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      } catch {
+        // lsof failed or no process found - server may have stopped
+      }
     }
 
     if (fs.existsSync(RVC_PID_FILE)) {

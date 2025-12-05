@@ -370,12 +370,45 @@
     source?: string;
   }
 
+  interface LoRAAdapterInfo {
+    id: string;
+    name: string;
+    path: string;
+    date?: string;
+    isDualAdapter: boolean;
+    size: number;
+  }
+
+  interface ModelCategories {
+    local: AvailableModel[];
+    lora: LoRAAdapterInfo[];
+    remote: AvailableModel[];
+    bigBrother: AvailableModel[];
+  }
+
+  interface LocalModelInfo {
+    id: string;
+    name: string;
+    provider: 'ollama' | 'vllm';
+    locked: boolean;
+  }
+
   let availableModels: AvailableModel[] = [];
   let uniqueModels: AvailableModel[] = [];
   let roleAssignments: Record<string, string> = {};
   let modelDropdownOpen: Record<string, boolean> = {};
   let loadingModelRegistry = false;
   let statusRefreshInFlight = false;
+
+  // NEW: Adaptive widget state
+  let activeBackend: 'ollama' | 'vllm' = 'ollama';
+  let localModel: LocalModelInfo | null = null;
+  let modelCategories: ModelCategories = {
+    local: [],
+    lora: [],
+    remote: [],
+    bigBrother: []
+  };
 
   async function loadModelRegistry() {
     if (loadingModelRegistry) return;
@@ -388,6 +421,16 @@
       if (data.success) {
         availableModels = data.availableModels || [];
         roleAssignments = data.roleAssignments || {};
+
+        // NEW: Extract backend info and model categories
+        activeBackend = data.activeBackend || 'ollama';
+        localModel = data.localModel || null;
+        modelCategories = data.modelCategories || {
+          local: [],
+          lora: [],
+          remote: [],
+          bigBrother: []
+        };
 
         // Deduplicate models by model name
         const seen = new Map<string, AvailableModel>();
@@ -621,6 +664,23 @@
     {:else if identity}
       <div class="status-info">
 
+        <!-- Backend Indicator -->
+        <div class="backend-indicator">
+          {#if activeBackend === 'vllm'}
+            <span class="backend-badge vllm">⚡ vLLM</span>
+          {:else}
+            <span class="backend-badge ollama">🦙 Ollama</span>
+          {/if}
+          {#if localModel}
+            <span class="local-model-name" class:locked={localModel.locked}>
+              {localModel.name}
+              {#if localModel.locked}
+                <span class="lock-icon" title="Model locked - vLLM requires server restart to change">🔒</span>
+              {/if}
+            </span>
+          {/if}
+        </div>
+
         {#if hasModelRegistry}
           <!-- Multi-model registry view with interactive switching -->
           {#each Object.entries(modelRoles) as [role, info]}
@@ -646,37 +706,131 @@
                 </button>
 
                 {#if modelDropdownOpen[role]}
-                  <div class="model-dropdown">
+                  <div class="model-dropdown categorized">
                     <div class="dropdown-header">Select model for {role}</div>
-                    {#each uniqueModels as model}
-                      {@const isSuggested = !model.roles || model.roles.includes(role)}
-                      {@const isCurrentlySelected = modelRoles[role]?.model === model.model}
-                      <button
-                        class="dropdown-item"
-                        class:selected={isCurrentlySelected}
-                        class:suggested={isSuggested}
-                        on:click|stopPropagation={() => assignModelToRole(role, model.id)}
-                      >
-                        <span class="model-name">
-                          {model.model}
-                          {#if model.provider === 'runpod_serverless' || model.provider === 'huggingface'}
-                            <span class="cloud-indicator">☁️</span>
-                          {/if}
-                          {#if isSuggested}
-                            <span class="suggested-indicator">✓</span>
-                          {/if}
+
+                    <!-- Category: Local Models -->
+                    {#if modelCategories.local.length > 0}
+                      <div class="dropdown-category">
+                        <span class="category-label">
+                          {activeBackend === 'vllm' ? '⚡ vLLM (locked)' : '🦙 Local'}
                         </span>
-                        {#if model.adapters && model.adapters.length > 0}
-                          <span class="adapter-indicator-small">+LoRA</span>
-                        {/if}
-                        {#if model.provider === 'runpod_serverless'}
-                          <span class="provider-badge cloud">RunPod Cloud</span>
-                        {/if}
-                        {#if model.description}
-                          <span class="model-desc">{model.description}</span>
-                        {/if}
-                      </button>
-                    {/each}
+                        {#each modelCategories.local as model}
+                          {@const isCurrentlySelected = modelRoles[role]?.model === model.model}
+                          <button
+                            class="dropdown-item"
+                            class:selected={isCurrentlySelected}
+                            class:locked={model.locked}
+                            on:click|stopPropagation={() => assignModelToRole(role, model.id)}
+                          >
+                            <span class="model-name">
+                              {model.model}
+                              {#if model.locked}
+                                <span class="default-badge">active</span>
+                              {/if}
+                            </span>
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+
+                    <!-- Category: LoRA Adapters -->
+                    {#if modelCategories.lora.length > 0}
+                      <div class="dropdown-category">
+                        <span class="category-label">🎯 LoRA Adapters</span>
+                        {#each modelCategories.lora as adapter}
+                          <button
+                            class="dropdown-item"
+                            on:click|stopPropagation={() => assignModelToRole(role, adapter.id)}
+                          >
+                            <span class="model-name">
+                              {adapter.name}
+                              {#if adapter.isDualAdapter}
+                                <span class="dual-badge">dual</span>
+                              {/if}
+                            </span>
+                            {#if adapter.date}
+                              <span class="model-desc">{adapter.date}</span>
+                            {/if}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+
+                    <!-- Category: Remote/Cloud Models -->
+                    {#if modelCategories.remote.length > 0}
+                      <div class="dropdown-category">
+                        <span class="category-label">☁️ Cloud</span>
+                        {#each modelCategories.remote as model}
+                          {@const isCurrentlySelected = modelRoles[role]?.model === model.model}
+                          <button
+                            class="dropdown-item"
+                            class:selected={isCurrentlySelected}
+                            on:click|stopPropagation={() => assignModelToRole(role, model.id)}
+                          >
+                            <span class="model-name">
+                              {model.model}
+                              <span class="cloud-indicator">☁️</span>
+                            </span>
+                            <span class="provider-badge cloud">{model.provider === 'runpod_serverless' ? 'RunPod' : model.provider}</span>
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+
+                    <!-- Category: Big Brother (Claude escalation) -->
+                    {#if modelCategories.bigBrother.length > 0}
+                      <div class="dropdown-category">
+                        <span class="category-label">🛡️ Escalation</span>
+                        {#each modelCategories.bigBrother as model}
+                          {@const isCurrentlySelected = modelRoles[role]?.model === model.model}
+                          <button
+                            class="dropdown-item"
+                            class:selected={isCurrentlySelected}
+                            on:click|stopPropagation={() => assignModelToRole(role, model.id)}
+                          >
+                            <span class="model-name">
+                              {model.model}
+                              <span class="bb-badge">🛡️</span>
+                            </span>
+                            <span class="model-desc">Claude Code</span>
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+
+                    <!-- Fallback: Show all models if no categories (Ollama mode) -->
+                    {#if activeBackend === 'ollama' && modelCategories.local.length === 0}
+                      {#each uniqueModels as model}
+                        {@const isSuggested = !model.roles || model.roles.includes(role)}
+                        {@const isCurrentlySelected = modelRoles[role]?.model === model.model}
+                        <button
+                          class="dropdown-item"
+                          class:selected={isCurrentlySelected}
+                          class:suggested={isSuggested}
+                          on:click|stopPropagation={() => assignModelToRole(role, model.id)}
+                        >
+                          <span class="model-name">
+                            {model.model}
+                            {#if model.provider === 'runpod_serverless' || model.provider === 'huggingface'}
+                              <span class="cloud-indicator">☁️</span>
+                            {/if}
+                            {#if isSuggested}
+                              <span class="suggested-indicator">✓</span>
+                            {/if}
+                          </span>
+                          {#if model.adapters && model.adapters.length > 0}
+                            <span class="adapter-indicator-small">+LoRA</span>
+                          {/if}
+                          {#if model.provider === 'runpod_serverless'}
+                            <span class="provider-badge cloud">RunPod Cloud</span>
+                          {/if}
+                          {#if model.description}
+                            <span class="model-desc">{model.description}</span>
+                          {/if}
+                        </button>
+                      {/each}
+                    {/if}
                   </div>
                 {/if}
               {/if}
@@ -1753,6 +1907,179 @@
     background: linear-gradient(135deg, rgba(248,113,113,0.35), rgba(252,165,165,0.3));
     border-color: rgba(248,113,113,0.5);
     box-shadow: 0 0 16px rgba(248,113,113,0.3);
+  }
+
+  /* ============================================
+     Backend Indicator & Adaptive Widget Styles
+     ============================================ */
+
+  .backend-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.5rem;
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  :global(.dark) .backend-indicator {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .backend-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.375rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .backend-badge.vllm {
+    background: linear-gradient(135deg, rgba(234, 179, 8, 0.2), rgba(250, 204, 21, 0.15));
+    color: rgb(161 98 7);
+    border: 1px solid rgba(234, 179, 8, 0.3);
+  }
+
+  .backend-badge.ollama {
+    background: linear-gradient(135deg, rgba(34, 197, 94, 0.15), rgba(74, 222, 128, 0.1));
+    color: rgb(21 128 61);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+  }
+
+  :global(.dark) .backend-badge.vllm {
+    background: linear-gradient(135deg, rgba(250, 204, 21, 0.2), rgba(253, 224, 71, 0.15));
+    color: rgb(253 224 71);
+    border-color: rgba(250, 204, 21, 0.35);
+  }
+
+  :global(.dark) .backend-badge.ollama {
+    background: linear-gradient(135deg, rgba(74, 222, 128, 0.2), rgba(134, 239, 172, 0.15));
+    color: rgb(134 239 172);
+    border-color: rgba(74, 222, 128, 0.3);
+  }
+
+  .local-model-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.7rem;
+    color: rgb(55 65 81);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 140px;
+  }
+
+  .local-model-name.locked {
+    color: rgb(107 114 128);
+  }
+
+  :global(.dark) .local-model-name {
+    color: rgb(209 213 219);
+  }
+
+  :global(.dark) .local-model-name.locked {
+    color: rgb(156 163 175);
+  }
+
+  .lock-icon {
+    font-size: 0.65rem;
+    margin-left: 0.2rem;
+    opacity: 0.7;
+  }
+
+  /* Dropdown Categories */
+  .dropdown-category {
+    padding: 0.25rem 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  }
+
+  .dropdown-category:last-child {
+    border-bottom: none;
+  }
+
+  :global(.dark) .dropdown-category {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .category-label {
+    display: block;
+    padding: 0.35rem 0.75rem 0.25rem;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: rgb(107 114 128);
+  }
+
+  :global(.dark) .category-label {
+    color: rgb(156 163 175);
+  }
+
+  /* Default/Active Badge */
+  .default-badge {
+    display: inline-block;
+    padding: 0.05rem 0.25rem;
+    border-radius: 0.2rem;
+    font-size: 0.6rem;
+    font-weight: 600;
+    background: rgba(34, 197, 94, 0.15);
+    color: rgb(21 128 61);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    margin-left: 0.25rem;
+  }
+
+  :global(.dark) .default-badge {
+    background: rgba(74, 222, 128, 0.2);
+    color: rgb(134 239 172);
+  }
+
+  /* Dual LoRA Badge */
+  .dual-badge {
+    display: inline-block;
+    padding: 0.05rem 0.25rem;
+    border-radius: 0.2rem;
+    font-size: 0.6rem;
+    font-weight: 600;
+    background: rgba(139, 92, 246, 0.15);
+    color: rgb(109 40 217);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    margin-left: 0.25rem;
+  }
+
+  :global(.dark) .dual-badge {
+    background: rgba(167, 139, 250, 0.2);
+    color: rgb(196 181 253);
+  }
+
+  /* Big Brother Badge */
+  .bb-badge {
+    font-size: 0.7rem;
+    margin-left: 0.25rem;
+  }
+
+  /* Locked State */
+  .dropdown-item.locked {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .dropdown-item.locked:hover {
+    background: transparent;
+  }
+
+  .dropdown-item:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .dropdown-item:disabled:hover {
+    background: transparent;
   }
 
 </style>

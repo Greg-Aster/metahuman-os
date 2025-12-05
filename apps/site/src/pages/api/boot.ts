@@ -10,6 +10,8 @@ import {
   loadPersonaCore,
   isHeadless,
   checkOllamaHealth,
+  loadBackendConfig,
+  isVLLMRunning,
 } from '@metahuman/core'
 import { loadCognitiveMode } from '@metahuman/core/cognitive-mode'
 
@@ -148,6 +150,7 @@ export const GET: APIRoute = async ({ cookies }) => {
   let modelInfo = null
   let cognitiveMode = 'emulation'
   let ollamaStatus = null
+  let backendStatus = null
 
   try {
     persona = loadPersonaCore()
@@ -181,16 +184,52 @@ export const GET: APIRoute = async ({ cookies }) => {
       modelInfo = { model: fallbackModel?.model || 'Local Models' }
     } catch {}
 
-    // Check Ollama health status
-    try {
-      ollamaStatus = await checkOllamaHealth()
-    } catch (e) {
+    // Get active backend configuration
+    const backendConfig = loadBackendConfig()
+    const activeBackend = backendConfig.activeBackend
+
+    // Check backend health status based on which backend is active
+    if (activeBackend === 'vllm') {
+      // Check vLLM status
+      const vllmRunning = await isVLLMRunning()
+      backendStatus = {
+        activeBackend: 'vllm',
+        running: vllmRunning,
+        hasModels: vllmRunning, // vLLM always has a model loaded if running
+        modelCount: vllmRunning ? 1 : 0,
+        models: vllmRunning ? [backendConfig.vllm.model] : [],
+        error: vllmRunning ? null : 'vLLM is not running'
+      }
+      // Also set ollamaStatus to indicate it's intentionally off
       ollamaStatus = {
         running: false,
         hasModels: false,
         modelCount: 0,
         models: [],
-        error: String(e)
+        error: null // No error - it's intentionally off
+      }
+    } else {
+      // Check Ollama health status
+      backendStatus = { activeBackend: 'ollama' }
+      try {
+        ollamaStatus = await checkOllamaHealth()
+        backendStatus = {
+          ...backendStatus,
+          running: ollamaStatus.running,
+          hasModels: ollamaStatus.hasModels,
+          modelCount: ollamaStatus.modelCount,
+          models: ollamaStatus.models,
+          error: ollamaStatus.error
+        }
+      } catch (e) {
+        ollamaStatus = {
+          running: false,
+          hasModels: false,
+          modelCount: 0,
+          models: [],
+          error: String(e)
+        }
+        backendStatus = { ...backendStatus, ...ollamaStatus }
       }
     }
   } catch (e) {
@@ -208,7 +247,8 @@ export const GET: APIRoute = async ({ cookies }) => {
       cognitiveMode,
       isAuthenticated,
       headlessMode,
-      ollamaStatus
+      ollamaStatus,
+      backendStatus
     }),
     { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }
   )

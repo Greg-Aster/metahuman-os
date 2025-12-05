@@ -60,6 +60,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       ...(typeof body.preloadAtStartup === 'boolean' && {
         preloadAtStartup: body.preloadAtStartup,
       }),
+      ...(typeof body.cpuOnly === 'boolean' && { cpuOnly: body.cpuOnly }),
     };
 
     saveEmbeddingConfig(updatedConfig);

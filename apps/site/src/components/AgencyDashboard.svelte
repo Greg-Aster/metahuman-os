@@ -946,27 +946,66 @@
   async function handleOutcomeReview(id: string) {
     agentProcessingId = id;
     processingId = id;
-    startLoadingMessages('executing');  // Reuse executing messages for review phase
+    streamingOutput = '';  // Clear any previous output
+    streamingPhase = 'Starting review...';
+    currentLoadingMessage = 'Starting outcome review...';
 
     try {
-      const res = await fetch(`/api/agency/desires/${id}/outcome-review`, { method: 'POST' });
-      const data = await res.json();
+      // Use streaming endpoint to show progress
+      const eventSource = new EventSource(`/api/agency/desires/${id}/outcome-review-stream`);
+      streamEventSource = eventSource;
 
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to review outcome');
-      }
+      eventSource.onmessage = async (event) => {
+        try {
+          const data = JSON.parse(event.data);
 
-      // Show result message
-      if (data.success) {
-        console.log(`[AgencyDashboard] ✅ Outcome review complete: ${data.outcomeReview?.verdict}`);
-      } else {
-        console.log(`[AgencyDashboard] ⚠️ Outcome review failed: ${data.error}`);
-      }
+          switch (data.type) {
+            case 'phase':
+              streamingPhase = data.phase;
+              currentLoadingMessage = data.phase;
+              break;
 
-      await loadAll(true, true);
+            case 'log':
+              // Append log messages to streaming output
+              streamingOutput += (streamingOutput ? '\n' : '') + data.message;
+              break;
+
+            case 'result':
+              // Process completed successfully
+              console.log(`[AgencyDashboard] ✅ Outcome review complete: ${data.data?.outcomeReview?.verdict}`);
+              break;
+
+            case 'error':
+              error = data.message || 'Unknown error';
+              console.log(`[AgencyDashboard] ❌ Outcome review error: ${error}`);
+              break;
+
+            case 'done':
+              // Close stream and overlay when done
+              eventSource.close();
+              streamEventSource = null;
+              stopLoadingMessages();
+              processingId = null;
+              // Refresh list after completion
+              await loadAll(true, true);
+              break;
+          }
+        } catch (e) {
+          console.error('[AgencyDashboard] Error parsing SSE:', e);
+        }
+      };
+
+      eventSource.onerror = (err) => {
+        console.error('[AgencyDashboard] SSE error:', err);
+        eventSource.close();
+        streamEventSource = null;
+        stopLoadingMessages();
+        processingId = null;
+        error = 'Connection lost during outcome review';
+      };
+
     } catch (e) {
       error = (e as Error).message;
-    } finally {
       stopLoadingMessages();
       processingId = null;
     }
@@ -1981,12 +2020,12 @@
           </div>
         {/if}
 
-        <!-- LLM Output display -->
+        <!-- Progress log display -->
         {#if streamingOutput}
           <div class="streaming-output-container">
             <div class="streaming-output-header">
-              <span>LLM Output</span>
-              <span class="streaming-output-length">{streamingOutput.length} chars</span>
+              <span>📋 Progress Log</span>
+              <span class="streaming-output-length">{streamingOutput.split('\n').length} steps</span>
             </div>
             <pre class="streaming-output">{streamingOutput}</pre>
           </div>
@@ -1995,6 +2034,15 @@
         <div class="agent-loading-bar">
           <div class="agent-loading-progress"></div>
         </div>
+
+        <!-- Close button -->
+        <button
+          class="overlay-close-btn"
+          on:click={() => stopLoadingMessages()}
+          title="Close overlay"
+        >
+          ✕ Close
+        </button>
       </div>
     </div>
   {/if}
@@ -3831,6 +3879,25 @@
   @keyframes loading-progress {
     0% { transform: translateX(-100%); }
     100% { transform: translateX(400%); }
+  }
+
+  /* Close button for overlay */
+  .overlay-close-btn {
+    margin-top: 1rem;
+    padding: 0.5rem 1.5rem;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .overlay-close-btn:hover {
+    background: rgba(255, 255, 255, 0.25);
+    border-color: rgba(255, 255, 255, 0.5);
+    color: white;
   }
 
   /* Expanded content when streaming output is available */

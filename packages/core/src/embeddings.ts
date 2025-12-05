@@ -11,6 +11,8 @@ export interface EmbeddingConfig {
   provider: EmbeddingProvider
   preloadAtStartup: boolean
   description?: string
+  /** Force CPU-only inference via num_gpu=0 (leaves GPU free for vLLM) */
+  cpuOnly?: boolean
 }
 
 const CONFIG_PATH = path.join(systemPaths.etc, 'embeddings.json')
@@ -30,6 +32,7 @@ export function loadEmbeddingConfig(): EmbeddingConfig {
       model: 'nomic-embed-text',
       provider: 'ollama',
       preloadAtStartup: true,
+      cpuOnly: true, // Default to CPU to avoid GPU conflicts with vLLM
     }
     fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true })
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(defaultConfig, null, 2))
@@ -67,12 +70,14 @@ export async function preloadEmbeddingModel(): Promise<void> {
   }
 
   try {
-    console.log(`[embeddings] Preloading model "${config.model}"...`)
+    const cpuOnly = config.cpuOnly ?? false
+    const device = cpuOnly ? 'CPU' : 'GPU'
+    console.log(`[embeddings] Preloading model "${config.model}" on ${device}...`)
     await ensureEmbeddingModelAvailable(config.model)
 
     // Run a dummy embedding to load the model into memory
-    await ollama.embeddings(config.model, 'warmup')
-    console.log(`[embeddings] ✓ Model "${config.model}" preloaded and ready`)
+    await ollama.embeddings(config.model, 'warmup', cpuOnly ? { num_gpu: 0 } : undefined)
+    console.log(`[embeddings] ✓ Model "${config.model}" preloaded on ${device} and ready`)
   } catch (error) {
     console.error(`[embeddings] Failed to preload model:`, error)
   }
@@ -118,7 +123,9 @@ export async function embedText(
       }
 
       try {
-        const res = await ollama.embeddings(model, prompt)
+        // Pass cpuOnly option from config (num_gpu: 0 forces CPU inference)
+        const cpuOnly = config.cpuOnly ?? false
+        const res = await ollama.embeddings(model, prompt, cpuOnly ? { num_gpu: 0 } : undefined)
 
         // Log if we had to truncate
         if (attempt > 0) {

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "_WARNING": "████████████████████████████████████████████████████████████████████████████████",
   "_WARNING2": "██  DO NOT USE OR MODIFY - THIS IS A FUCKING GLOBAL CONFIG                    ██",
-  "_WARNING3": "██  USER-SPECIFIC MODEL CONFIG: profiles/{username}/etc/models.json          ██",
+  "_WARNING3": "██  USER-SPECIFIC MODEL CONFIG FOUND USING STORAGE-ROUTER SYSTEM               ██",
   "_WARNING4": "██  This file is ONLY a fallback for anonymous/system operations             ██",
   "_WARNING5": "████████████████████████████████████████████████████████████████████████████████",
   "description": "FALLBACK model registry - USE profiles/{username}/etc/models.json FOR USER CONFIG!",
@@ -385,6 +385,31 @@
         "coldStartWarning": "First request may take 20-30s if GPU is cold",
         "purpose": "Cloud GPU inference for general tasks"
       }
+    },
+    "big-brother.claude": {
+      "provider": "claude-code",
+      "model": "claude-sonnet-4",
+      "adapters": [],
+      "roles": [
+        "orchestrator",
+        "planner",
+        "coder"
+      ],
+      "description": "Claude Code escalation for complex tasks - use when local models are stuck",
+      "options": {
+        "contextWindow": 200000,
+        "temperature": 0.7,
+        "timeout": 300000
+      },
+      "metadata": {
+        "priority": "low",
+        "alwaysLoaded": false,
+        "estimatedLatency": "slow",
+        "source": "big-brother",
+        "purpose": "Escalation path for operator when local models fail repeatedly",
+        "autoEscalate": true,
+        "escalationThreshold": 3
+      }
     }
   },
   "roleHierarchy": {
@@ -462,6 +487,11 @@
       "baseUrl": "https://api.runpod.ai/v2",
       "timeout": 120000,
       "retries": 2
+    },
+    "claude-code": {
+      "baseUrl": "local",
+      "timeout": 300000,
+      "retries": 1
     }
   }
 }
