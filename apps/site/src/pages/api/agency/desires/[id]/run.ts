@@ -9,6 +9,8 @@ import {
   type DesireExecution,
   type PlanStep,
 } from '@metahuman/core';
+import { loadOperatorConfig } from '@metahuman/core/config';
+import { isClaudeSessionReady, sendPrompt, startClaudeSession } from '@metahuman/core/claude-session';
 
 const LOG_PREFIX = '[API:agency/run]';
 
@@ -58,8 +60,8 @@ interface OperatorResponse {
 }
 
 /**
- * Execute a single plan step via the Big Brother operator.
- * ALL execution goes through the operator - it handles skill selection intelligently.
+ * Execute a single plan step via Claude CLI (Big Brother mode) or operator API.
+ * When Big Brother delegateAll is enabled, routes directly to Claude CLI.
  */
 async function executeStep(
   step: PlanStep,
@@ -69,11 +71,120 @@ async function executeStep(
 ): Promise<{ success: boolean; result?: unknown; error?: string; operatorResponse?: OperatorResponse }> {
   console.log(`${LOG_PREFIX} 🔧 Executing step ${step.order}: ${step.action}`);
 
+  // Check if Big Brother delegation mode is enabled
+  const operatorConfig = loadOperatorConfig();
+  const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
+  const delegateAll = operatorConfig.bigBrotherMode?.delegateAll === true;
+
   // Build the goal for Big Brother
   // Include skill hint if specified, but let operator decide
   const goal = step.skill
     ? `Execute: ${step.action}\n\nSuggested skill: ${step.skill}\nInputs: ${JSON.stringify(step.inputs || {})}`
     : step.action;
+
+  // =========================================================================
+  // BIG BROTHER DELEGATION MODE: Route directly to Claude CLI
+  // =========================================================================
+  if (bigBrotherEnabled && delegateAll) {
+    console.log(`${LOG_PREFIX}    🤖 Big Brother delegation mode - routing to Claude CLI`);
+
+    try {
+      // Ensure Claude session is ready
+      if (!isClaudeSessionReady()) {
+        console.log(`${LOG_PREFIX}    ⏳ Starting Claude session...`);
+        const started = await startClaudeSession();
+        if (!started) {
+          return {
+            success: false,
+            error: 'Failed to start Claude CLI session',
+          };
+        }
+      }
+
+      // Build prompt for Claude CLI
+      const prompt = `You are executing a task for MetaHuman OS Agency system.
+
+## Desire Context
+**Title**: ${desire.title}
+**Description**: ${desire.description}
+**Reason**: ${desire.reason || 'Not specified'}
+
+## Current Step (${step.order} of ${desire.plan?.steps?.length || '?'})
+**Action**: ${step.action}
+**Expected Outcome**: ${step.expectedOutcome || 'Complete successfully'}
+**Risk Level**: ${step.risk}
+${step.skill ? `**Suggested Approach**: ${step.skill}` : ''}
+${step.inputs ? `**Inputs**: ${JSON.stringify(step.inputs, null, 2)}` : ''}
+
+## Instructions
+1. Execute this step to completion using your tools (Read, Write, Bash, etc.)
+2. Be thorough and verify your work
+3. Report what you accomplished
+
+Please execute this step now.`;
+
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'big_brother_step_delegation',
+        actor: 'agency-run',
+        details: {
+          desireId: desire.id,
+          stepOrder: step.order,
+          action: step.action,
+        },
+      });
+
+      const response = await sendPrompt(prompt, 120000); // 2 minute timeout
+
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'big_brother_step_completed',
+        actor: 'agency-run',
+        details: {
+          desireId: desire.id,
+          stepOrder: step.order,
+          responseLength: response.length,
+        },
+      });
+
+      console.log(`${LOG_PREFIX}    ✅ Claude CLI execution completed`);
+
+      return {
+        success: true,
+        result: {
+          claudeResponse: response,
+          executedVia: 'claude-cli',
+          timestamp: new Date().toISOString(),
+        },
+      };
+    } catch (error) {
+      console.log(`${LOG_PREFIX}    ❌ Claude CLI error: ${(error as Error).message}`);
+
+      audit({
+        level: 'error',
+        category: 'action',
+        event: 'big_brother_step_failed',
+        actor: 'agency-run',
+        details: {
+          desireId: desire.id,
+          stepOrder: step.order,
+          error: (error as Error).message,
+        },
+      });
+
+      return {
+        success: false,
+        error: `Claude CLI execution failed: ${(error as Error).message}`,
+      };
+    }
+  }
+
+  // =========================================================================
+  // FALLBACK: Use operator API (local skills)
+  // =========================================================================
+  console.log(`${LOG_PREFIX}    📡 Routing to operator API...`);
 
   // Build rich context for the operator
   const context = `

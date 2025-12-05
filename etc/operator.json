@@ -22,8 +22,9 @@
     "parallelSkillExecution": false
   },
   "bigBrotherMode": {
-    "enabled": false,
+    "enabled": true,
     "provider": "claude-code",
+    "delegateAll": true,
     "escalateOnStuck": true,
     "escalateOnRepeatedFailures": true,
     "maxRetries": 1,

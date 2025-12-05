@@ -25,7 +25,7 @@ const LOG_PREFIX = '[API:agency/desires]';
  * GET /api/agency/desires
  * Returns desires filtered by status
  * Query params:
- *   - status: 'nascent' | 'pending' | 'evaluating' | 'planning' | 'reviewing' | 'approved' | 'executing' | 'completed' | 'rejected' | 'abandoned' | 'failed' | 'all'
+ *   - status: 'nascent' | 'pending' | 'evaluating' | 'planning' | 'reviewing' | 'approved' | 'executing' | 'awaiting_review' | 'completed' | 'rejected' | 'abandoned' | 'failed' | 'all'
  */
 const getHandler: APIRoute = async ({ cookies, request }) => {
   try {
@@ -46,7 +46,7 @@ const getHandler: APIRoute = async ({ cookies, request }) => {
       // Get all desires across all statuses
       const statuses: DesireStatus[] = [
         'nascent', 'pending', 'evaluating', 'planning', 'reviewing',
-        'approved', 'executing', 'completed', 'rejected', 'abandoned', 'failed'
+        'approved', 'executing', 'awaiting_review', 'completed', 'rejected', 'abandoned', 'failed'
       ];
       desires = [];
       for (const s of statuses) {
