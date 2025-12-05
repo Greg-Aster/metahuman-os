@@ -144,6 +144,7 @@
     reviewing: number;
     approved: number;
     executing: number;
+    awaiting_review: number;
     completed: number;
     rejected: number;
     abandoned: number;
@@ -495,6 +496,7 @@
       case 'awaiting_approval': return 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200';
       case 'approved': return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
       case 'executing': return 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200';
+      case 'awaiting_review': return 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200';
       case 'completed': return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200';
       case 'rejected':
       case 'failed': return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
@@ -941,6 +943,35 @@
     }
   }
 
+  async function handleOutcomeReview(id: string) {
+    agentProcessingId = id;
+    processingId = id;
+    startLoadingMessages('executing');  // Reuse executing messages for review phase
+
+    try {
+      const res = await fetch(`/api/agency/desires/${id}/outcome-review`, { method: 'POST' });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to review outcome');
+      }
+
+      // Show result message
+      if (data.success) {
+        console.log(`[AgencyDashboard] ✅ Outcome review complete: ${data.outcomeReview?.verdict}`);
+      } else {
+        console.log(`[AgencyDashboard] ⚠️ Outcome review failed: ${data.error}`);
+      }
+
+      await loadAll(true, true);
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      stopLoadingMessages();
+      processingId = null;
+    }
+  }
+
   async function handleRevise(id: string) {
     const critique = critiqueText[id];
     if (!critique || critique.trim().length === 0) {
@@ -1098,6 +1129,7 @@
           <option value="awaiting_approval">⭐ Awaiting Approval</option>
           <option value="approved">Approved</option>
           <option value="executing">Executing</option>
+          <option value="awaiting_review">🔍 Awaiting Review</option>
           <option value="completed">Completed</option>
           <option value="rejected">Rejected</option>
           <option value="abandoned">Abandoned</option>
@@ -1254,6 +1286,64 @@
                   ❌ Reject
                 </button>
               </div>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+
+    <!-- AWAITING OUTCOME REVIEW - Post-Execution Review Section -->
+    {#if desires.filter(d => d.status === 'awaiting_review').length > 0}
+      <div class="pending-review-section mt-4" style="border-left-color: #6366f1;">
+        <div class="pending-review-header">
+          <h2 class="pending-review-title">🔍 Awaiting Outcome Review</h2>
+          <span class="pending-review-count">{desires.filter(d => d.status === 'awaiting_review').length} task(s) completed</span>
+        </div>
+
+        {#each desires.filter(d => d.status === 'awaiting_review') as desire}
+          <div class="review-card" style="border-left: 4px solid #6366f1;">
+            <div class="review-card-header">
+              <div class="flex items-center gap-2">
+                <span class="source-icon text-2xl">{getSourceIcon(desire.source)}</span>
+                <div>
+                  <h3 class="review-card-title">{desire.title}</h3>
+                  <p class="text-xs muted">{desire.description}</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="badge bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">awaiting_review</span>
+              </div>
+            </div>
+
+            <!-- Execution Summary -->
+            {#if desire.execution}
+              <div class="execution-summary-box">
+                <div class="execution-summary-header">
+                  <span class="text-sm font-semibold">⚡ Execution Complete</span>
+                  <span class="text-xs muted">
+                    {desire.execution.stepsCompleted || 0}/{desire.execution.stepsTotal || 0} steps
+                  </span>
+                </div>
+                {#if desire.execution.completedAt}
+                  <p class="text-xs muted">Completed: {formatTimestamp(desire.execution.completedAt)}</p>
+                {/if}
+              </div>
+            {/if}
+
+            <!-- Action Buttons -->
+            <div class="review-action-buttons">
+              <button
+                class="btn-approve-large"
+                disabled={processingId === desire.id || agentProcessingId === desire.id}
+                on:click={() => handleOutcomeReview(desire.id)}
+              >
+                {#if agentProcessingId === desire.id}
+                  <span class="loading-spinner"></span>
+                  {currentLoadingMessage || 'Reviewing outcome...'}
+                {:else}
+                  🔍 Run Outcome Review
+                {/if}
+              </button>
             </div>
           </div>
         {/each}
@@ -1813,6 +1903,23 @@
                 </button>
               {/if}
 
+              <!-- Outcome Review for awaiting_review desires -->
+              {#if desire.status === 'awaiting_review'}
+                <button
+                  class="btn-execute btn-agent"
+                  disabled={processingId === desire.id || agentProcessingId === desire.id}
+                  on:click={() => handleOutcomeReview(desire.id)}
+                  title="Run outcome review to verify completion"
+                >
+                  {#if agentProcessingId === desire.id}
+                    <span class="loading-spinner"></span>
+                    {currentLoadingMessage || 'Reviewing...'}
+                  {:else}
+                    🔍 Run Outcome Review
+                  {/if}
+                </button>
+              {/if}
+
               <!-- Quick approve (skip to approved) -->
               {#if ['nascent', 'pending', 'planning', 'reviewing'].includes(desire.status)}
                 <button
@@ -1835,7 +1942,7 @@
                   Reject
                 </button>
               {/if}
-              {#if ['nascent', 'pending', 'rejected', 'abandoned', 'failed', 'completed'].includes(desire.status)}
+              {#if ['nascent', 'pending', 'rejected', 'abandoned', 'failed', 'completed', 'awaiting_review'].includes(desire.status)}
                 <button
                   class="btn-delete"
                   disabled={processingId === desire.id}
@@ -3194,6 +3301,26 @@
 
   .execution-meta {
     margin-top: 0.25rem;
+  }
+
+  /* Execution Summary Box (for awaiting review section) */
+  .execution-summary-box {
+    background: #f0f9ff;
+    border: 1px solid #3b82f6;
+    border-radius: 6px;
+    padding: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  :global(.dark) .execution-summary-box {
+    background: #1e3a5f;
+    border-color: #60a5fa;
+  }
+
+  .execution-summary-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
   }
 
   /* Outcome Review */

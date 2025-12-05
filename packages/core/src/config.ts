@@ -158,6 +158,7 @@ export interface OperatorConfig {
   bigBrotherMode?: {
     enabled: boolean;
     provider: 'claude-code' | 'ollama' | 'openai';
+    delegateAll?: boolean; // When true, delegate ALL tasks to Claude CLI instead of local skills
     escalateOnStuck: boolean;
     escalateOnRepeatedFailures: boolean;
     maxRetries: number;

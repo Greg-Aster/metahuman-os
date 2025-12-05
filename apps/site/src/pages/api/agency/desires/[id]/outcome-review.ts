@@ -11,6 +11,8 @@ import {
   type OutcomeVerdict,
 } from '@metahuman/core';
 import { callLLM, type RouterMessage } from '@metahuman/core/model-router';
+import { loadOperatorConfig } from '@metahuman/core/config';
+import { isClaudeSessionReady, sendPrompt, startClaudeSession } from '@metahuman/core/claude-session';
 
 const LOG_PREFIX = '[API:agency/outcome-review]';
 
@@ -36,8 +38,11 @@ interface VerificationResult {
 }
 
 /**
- * Use Big Brother operator to VERIFY outcomes before trusting self-reported success.
+ * Use Claude CLI to VERIFY outcomes before trusting self-reported success.
  * This is critical - the executor might claim success without actually doing anything!
+ *
+ * When Big Brother delegateAll is enabled, uses Claude CLI directly.
+ * Otherwise falls back to operator API.
  */
 async function verifyOutcomeWithOperator(
   desire: Desire,
@@ -47,42 +52,141 @@ async function verifyOutcomeWithOperator(
   const evidence: string[] = [];
   const errors: string[] = [];
 
+  // Check if Big Brother delegation mode is enabled
+  const operatorConfig = loadOperatorConfig();
+  const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
+  const delegateAll = operatorConfig.bigBrotherMode?.delegateAll === true;
+
   // Build verification goal based on what the plan was supposed to do
   const operatorGoal = plan?.operatorGoal || desire.description;
 
   // Determine what type of verification we need
   const goalLower = operatorGoal.toLowerCase();
-  let verificationGoal = '';
+  let verificationPrompt = '';
 
   if (goalLower.includes('file') || goalLower.includes('write') || goalLower.includes('create')) {
     // File operation - verify files exist
-    // Extract potential file paths from the plan steps
     const filePaths: string[] = [];
     plan?.steps?.forEach(step => {
       if (step.inputs?.path) filePaths.push(step.inputs.path as string);
       if (step.inputs?.file_path) filePaths.push(step.inputs.file_path as string);
-      // Also check action text for paths
       const pathMatch = step.action.match(/["']([^"']+\.[a-z]+)["']/i);
       if (pathMatch) filePaths.push(pathMatch[1]);
     });
 
     if (filePaths.length > 0) {
-      verificationGoal = `VERIFICATION TASK: Check if these files exist and have content: ${filePaths.join(', ')}. Use fs_list or fs_read to verify. Return the verification results.`;
+      verificationPrompt = `VERIFICATION TASK: Check if these files exist and have content: ${filePaths.join(', ')}. Read each file to verify it exists and has appropriate content.`;
     } else {
-      verificationGoal = `VERIFICATION TASK: The goal was "${operatorGoal}". Use fs_list to check if any relevant files were created. Report what you find.`;
+      verificationPrompt = `VERIFICATION TASK: The goal was "${operatorGoal}". Check the filesystem to see if any relevant files were created. List the directory contents and read any new files.`;
     }
   } else if (goalLower.includes('task')) {
-    verificationGoal = `VERIFICATION TASK: Check if any tasks were created or updated related to "${operatorGoal}". Use task_list to verify. Report what you find.`;
-  } else if (goalLower.includes('search') || goalLower.includes('web')) {
-    // Web search - harder to verify, but we can check if results were returned
-    verificationGoal = `VERIFICATION TASK: The goal was to search for "${operatorGoal}". Check if search results are available or cached. Report what you find.`;
+    verificationPrompt = `VERIFICATION TASK: Check if any tasks were created or updated related to "${operatorGoal}". List current tasks and check for relevant entries.`;
   } else {
-    // Generic verification
-    verificationGoal = `VERIFICATION TASK: The desire "${desire.title}" claims to be completed. The goal was: "${operatorGoal}". Investigate whether the outcome actually occurred. Use available skills (fs_list, task_list, etc.) to gather evidence. Report your findings.`;
+    verificationPrompt = `VERIFICATION TASK: The desire "${desire.title}" claims to be completed. The goal was: "${operatorGoal}". Investigate whether the outcome actually occurred. Check files, tasks, or other artifacts that should exist. Report your findings.`;
   }
 
-  console.log(`${LOG_PREFIX} 🔍 Running verification via operator...`);
-  console.log(`${LOG_PREFIX}    Verification goal: ${verificationGoal.substring(0, 100)}...`);
+  console.log(`${LOG_PREFIX} 🔍 Running verification...`);
+
+  // =========================================================================
+  // BIG BROTHER MODE: Use Claude CLI directly for verification
+  // =========================================================================
+  if (bigBrotherEnabled && delegateAll) {
+    console.log(`${LOG_PREFIX}    🤖 Using Claude CLI for verification`);
+
+    try {
+      // Ensure Claude session is ready
+      if (!isClaudeSessionReady()) {
+        console.log(`${LOG_PREFIX}    ⏳ Starting Claude session...`);
+        const started = await startClaudeSession();
+        if (!started) {
+          errors.push('Failed to start Claude CLI session for verification');
+          return { verified: false, evidence, errors };
+        }
+      }
+
+      const prompt = `You are verifying whether a task was actually completed for MetaHuman OS.
+
+## Desire Being Verified
+**Title**: ${desire.title}
+**Description**: ${desire.description}
+**Original Goal**: ${operatorGoal}
+**Execution Status**: ${desire.execution?.status || 'unknown'}
+**Steps Claimed Completed**: ${desire.execution?.stepsCompleted || 0} / ${plan?.steps?.length || 0}
+
+## Verification Task
+${verificationPrompt}
+
+## Instructions
+1. Use your tools (Read, Bash, Glob, etc.) to check if the outcome actually occurred
+2. Look for concrete evidence (files exist, content is correct, tasks were created)
+3. Be thorough - don't trust self-reported success
+4. Report EXACTLY what you found - exists/doesn't exist, content summary
+
+Please verify now and report your findings.`;
+
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'big_brother_verification_started',
+        actor: 'outcome-review',
+        details: {
+          desireId: desire.id,
+          title: desire.title,
+        },
+      });
+
+      const response = await sendPrompt(prompt, 90000); // 90 second timeout
+
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'big_brother_verification_completed',
+        actor: 'outcome-review',
+        details: {
+          desireId: desire.id,
+          responseLength: response.length,
+        },
+      });
+
+      console.log(`${LOG_PREFIX}    ✅ Claude CLI verification completed`);
+
+      // Parse Claude's response to determine verification status
+      const responseLower = response.toLowerCase();
+      const hasPositiveIndicators = responseLower.includes('exists') ||
+        responseLower.includes('found') ||
+        responseLower.includes('confirmed') ||
+        responseLower.includes('successfully') ||
+        responseLower.includes('content:') ||
+        responseLower.includes('verified');
+      const hasNegativeIndicators = responseLower.includes('not found') ||
+        responseLower.includes('does not exist') ||
+        responseLower.includes('no such file') ||
+        responseLower.includes('failed') ||
+        responseLower.includes('error:') ||
+        responseLower.includes('could not');
+
+      evidence.push(`Claude CLI verification: ${response.substring(0, 500)}${response.length > 500 ? '...' : ''}`);
+
+      // Determine verification status
+      const verified = hasPositiveIndicators && !hasNegativeIndicators;
+
+      return {
+        verified,
+        evidence,
+        errors,
+        operatorResponse: { claudeResponse: response, executedVia: 'claude-cli' }
+      };
+    } catch (error) {
+      console.log(`${LOG_PREFIX}    ❌ Claude CLI verification error: ${(error as Error).message}`);
+      errors.push(`Claude CLI verification failed: ${(error as Error).message}`);
+      return { verified: false, evidence, errors };
+    }
+  }
+
+  // =========================================================================
+  // FALLBACK: Use operator API (local skills)
+  // =========================================================================
+  console.log(`${LOG_PREFIX}    📡 Routing verification to operator API...`);
 
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -94,10 +198,10 @@ async function verifyOutcomeWithOperator(
       method: 'POST',
       headers,
       body: JSON.stringify({
-        goal: verificationGoal,
+        goal: verificationPrompt,
         context: `Verifying outcome of desire: ${desire.title}\nOriginal goal: ${operatorGoal}\nExecution status: ${desire.execution?.status}`,
         autoApprove: true,
-        allowMemoryWrites: false, // Read-only verification
+        allowMemoryWrites: false,
         mode: 'strict',
       }),
     });
@@ -113,13 +217,12 @@ async function verifyOutcomeWithOperator(
     if (operatorResult.success && operatorResult.result) {
       evidence.push(`Operator verification: ${operatorResult.result}`);
 
-      // Check scratchpad for actual skill calls
       if (operatorResult.scratchpad) {
         const actionSkills = operatorResult.scratchpad.filter(
           (s: { action: string }) => !['conversational_response', 'think', 'plan'].includes(s.action)
         );
         if (actionSkills.length > 0) {
-          evidence.push(`Skills used for verification: ${actionSkills.map((s: { action: string }) => s.action).join(', ')}`);
+          evidence.push(`Skills used: ${actionSkills.map((s: { action: string }) => s.action).join(', ')}`);
         }
       }
 
