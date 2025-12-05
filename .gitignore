@@ -5,6 +5,7 @@ node_modules/
 .pnpm-store/
 pnpm-lock.yaml
 venv/
+.venv*/
 __pycache__/
 *.pyc
 *.pyo
@@ -116,6 +117,7 @@ Thumbs.db
 # ============================================
 /metahuman-runs/
 /docs/archive/
+/docs/run_logs/
 *.pid
 *.lock
 !pnpm-lock.yaml

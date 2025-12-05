@@ -43,7 +43,6 @@ export class OllamaProvider implements LLMProvider {
   private endpoint: string;
   private defaultModel: string;
   private activeAdapter: string | null = null;
-  private static adapterLogged = false; // Track if we've already logged the adapter
 
   constructor(endpoint = 'http://localhost:11434') {
     this.endpoint = endpoint;
@@ -62,19 +61,10 @@ export class OllamaProvider implements LLMProvider {
       if (registry.globalSettings?.useAdapter && registry.globalSettings?.activeAdapter) {
         const activeAdapter = registry.globalSettings.activeAdapter;
         this.activeAdapter = activeAdapter;
-        if (!OllamaProvider.adapterLogged) {
-          const adapterName = typeof activeAdapter === 'object' && activeAdapter.modelName
-            ? activeAdapter.modelName
-            : JSON.stringify(activeAdapter);
-          console.log(`[llm] Using adapter: ${adapterName}`);
-          OllamaProvider.adapterLogged = true;
-        }
+        // Don't log - let the provider bridge handle logging based on active backend
       } else {
         this.activeAdapter = null;
-        if (!OllamaProvider.adapterLogged) {
-          console.log(`[llm] Using base model: ${this.defaultModel}`);
-          OllamaProvider.adapterLogged = true;
-        }
+        // Don't log - let the provider bridge handle logging based on active backend
       }
     } catch (error) {
       console.error('Error reading model registry, falling back to defaults:', error);
@@ -241,6 +231,99 @@ export class OpenAIProvider implements LLMProvider {
 }
 
 /**
+ * vLLM Provider - High-throughput inference via vLLM's OpenAI-compatible API
+ *
+ * vLLM uses HuggingFace models and provides superior throughput via PagedAttention.
+ * Unlike Ollama, it loads one model at a time and requires server restart to switch.
+ */
+export class VLLMProvider implements LLMProvider {
+  name = 'vllm';
+  private endpoint: string;
+
+  constructor(endpoint = 'http://localhost:8000') {
+    this.endpoint = endpoint.replace(/\/$/, '');
+  }
+
+  async generate(messages: LLMMessage[], options: LLMOptions = {}): Promise<LLMResponse> {
+    try {
+      const response = await fetch(`${this.endpoint}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: options.model || 'default',
+          messages: messages.map(m => ({ role: m.role, content: m.content })),
+          max_tokens: options.maxTokens ?? 2048,
+          temperature: options.temperature ?? 0.7,
+          stream: false,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unknown error');
+        throw new Error(`vLLM request failed (${response.status}): ${errorText}`);
+      }
+
+      const data = await response.json() as {
+        choices: Array<{ message: { content: string } }>;
+        model: string;
+        usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+      };
+
+      return {
+        content: data.choices[0]?.message?.content || '',
+        model: data.model,
+        usage: data.usage ? {
+          promptTokens: data.usage.prompt_tokens,
+          completionTokens: data.usage.completion_tokens,
+          totalTokens: data.usage.total_tokens,
+        } : undefined,
+      };
+    } catch (error) {
+      throw new Error(`vLLM generation failed: ${(error as Error).message}`);
+    }
+  }
+
+  async generateJSON<T = any>(messages: LLMMessage[], options: LLMOptions = {}): Promise<T> {
+    // Add JSON instruction to system prompt
+    const jsonMessages = [...messages];
+    const systemIdx = jsonMessages.findIndex(m => m.role === 'system');
+
+    if (systemIdx >= 0) {
+      jsonMessages[systemIdx] = {
+        ...jsonMessages[systemIdx],
+        content: jsonMessages[systemIdx].content + '\n\nRespond with valid JSON only. No markdown, no explanation.',
+      };
+    } else {
+      jsonMessages.unshift({
+        role: 'system',
+        content: 'Respond with valid JSON only. No markdown, no explanation.',
+      });
+    }
+
+    const response = await this.generate(jsonMessages, {
+      ...options,
+      temperature: options.temperature ?? 0.3, // Lower temp for structured output
+    });
+
+    try {
+      // Handle potential markdown code blocks
+      let content = response.content.trim();
+      if (content.startsWith('```json')) {
+        content = content.slice(7);
+      } else if (content.startsWith('```')) {
+        content = content.slice(3);
+      }
+      if (content.endsWith('```')) {
+        content = content.slice(0, -3);
+      }
+      return JSON.parse(content.trim()) as T;
+    } catch (error) {
+      throw new Error(`Failed to parse vLLM JSON response: ${(error as Error).message}`);
+    }
+  }
+}
+
+/**
  * LLM Manager - Selects and manages providers
  *
  * In local mode: Uses Ollama (default) and Mock providers
@@ -254,6 +337,7 @@ export class LLMManager {
   constructor() {
     // Register default local providers
     this.registerProvider('ollama', new OllamaProvider());
+    this.registerProvider('vllm', new VLLMProvider());
     this.registerProvider('mock', new MockProvider());
 
     // Note: Server providers are loaded lazily via loadServerProviders()

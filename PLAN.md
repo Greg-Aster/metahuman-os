@@ -1851,26 +1851,228 @@ Start with **Track B** for quick wins, then add **Track A** for true offline.
 
 ```
 Sprint 1: Cloud Independence (Week 1-2)
-├── M1: Configurable server URL
-├── M2: Server health detection
-├── M4: Deploy Astro to cloud VM
-└── M5: Direct RunPod option
+├── M1: Configurable server URL        ✅ COMPLETE (2025-12-04)
+├── M2: Server health detection        ✅ COMPLETE (2025-12-04)
+├── M4: Deploy Astro to cloud VM       ⏳ PENDING
+└── M5: Direct RunPod option           ⏳ PENDING
     Result: App works without home server ✓
 
 Sprint 2: True Offline (Week 3-4)
-├── M0: Build llama.cpp for Android
-├── M0: NativeLLMPlugin implementation
-├── M0: Model download UI
-└── M7: Tier selection logic
+├── M7: Tier selection logic           ✅ COMPLETE (2025-12-04)
+├── M0: NativeLLMPlugin interface      ✅ COMPLETE (2025-12-04)
+├── M0: Model download UI              ✅ COMPLETE (2025-12-04)
+├── M0: Build llama.cpp for Android    ⏳ PENDING (native C++ work)
+└── M0: JNI bridge implementation      ⏳ PENDING (native C++ work)
     Result: Basic offline chat works ✓
 
 Sprint 3: Sync & Polish (Week 5-6)
-├── M8: Memory sync protocol
-├── M3: Multiple server profiles
-├── M6: Offline resilience (queue)
-└── UI polish & testing
+├── M8: Memory sync protocol           ✅ COMPLETE (2025-12-04)
+├── M3: Multiple server profiles       ⏳ PENDING
+├── M6: Offline resilience (queue)     ⏳ PENDING (partially done via M8)
+└── UI polish & testing                ⏳ PENDING
     Result: Full three-tier system ✓
 ```
+
+---
+
+## Implementation Progress Log
+
+### 2025-12-04: Sprint 1 Partial Complete
+
+#### Phase M1: Configurable Server URL ✅
+**Files Created:**
+- `apps/site/src/lib/client/api-config.ts` - Dynamic server URL management
+  - `initServerUrl()` - Initialize from Capacitor Preferences on app start
+  - `setServerUrl(url)` - Save server URL persistently
+  - `testServerConnection(url)` - Test connectivity with latency measurement
+  - `isCapacitorNative()` - Platform detection (web vs mobile)
+  - `getDefaultServers()` - Returns preset server options (home/cloud)
+  - `apiUrl(path)` - Build full URL from API path
+  - `apiFetch(path, init)` - Fetch wrapper with correct base URL
+  - `apiEventSource(path)` - EventSource wrapper for streaming
+
+**Packages Added:**
+- `@capacitor/preferences` in `apps/mobile/package.json`
+- `@capacitor/core`, `@capacitor/preferences` (dev) in `apps/site/package.json`
+
+#### Phase M2: Server Health Detection ✅
+**Files Created:**
+- `apps/site/src/lib/client/server-health.ts` - Health monitoring service
+  - `healthStatus` - Svelte writable store with connection status
+  - `checkHealth()` - Single health check with latency
+  - `startHealthMonitor()` - Periodic monitoring (30s interval)
+  - `stopHealthMonitor()` - Stop monitoring
+  - `forceHealthCheck()` - Immediate check
+  - `getQualityColor/Label/Emoji()` - UI helpers
+  - Quality tiers: excellent (<100ms), good (<250ms), fair (<500ms), poor (<1000ms), offline
+  - Auto-pauses when browser tab is hidden
+
+- `apps/site/src/components/ServerHealthIndicator.svelte` - Compact health indicator
+  - Shows connection quality dot (color-coded)
+  - Click to force refresh
+  - Shows latency in non-compact mode
+
+- `apps/site/src/components/ServerSettings.svelte` - Full server configuration UI
+  - Connection status with live updates
+  - Server selection (Home/Cloud/Custom)
+  - Test connection button
+  - Tier info documentation
+  - **MOBILE-ONLY**: Only accessible in Capacitor native app
+
+**Files Modified:**
+- `apps/site/src/components/CenterContent.svelte`
+  - Added `isMobileApp` detection via `isCapacitorNative()`
+  - Added conditional "📡 Server" tab under System settings
+  - Tab only appears when running in mobile app
+  - Web server UI remains unchanged
+
+**Architecture Decision:**
+- Web server code unchanged - "Server" tab only shows when `isCapacitorNative() === true`
+- Shared code lives in `apps/site/src/lib/client/` with runtime platform detection
+- Mobile gets full server configuration; web uses relative URLs automatically
+
+#### Phase M7: Tier Selection Engine ✅
+**Files Created:**
+- `apps/site/src/lib/client/tier-selection.ts` - Automatic compute tier selection
+  - Three tiers defined: offline (Qwen3-1.7B), server (Qwen3:14B), cloud (Qwen3-Coder-30B)
+  - `selectBestTier()` - Auto-select based on connectivity, battery, task requirements
+  - `initTierSelection()` - Initialize with periodic status checks (60s)
+  - `setSelectionMode()` - Set auto/prefer-offline/prefer-server/prefer-cloud/manual
+  - `tierStatuses` - Svelte store tracking availability of each tier
+  - `deviceStatus` - Svelte store with battery level, network type, save data mode
+  - `selectedTier` - Svelte store with currently active tier
+  - Device status detection via Browser APIs and optional @capacitor/device
+  - Intelligent fallback: low battery → offline, slow network → offline, server latency high → cloud
+
+- `apps/site/src/lib/client/plugins/native-llm.ts` - On-device LLM plugin interface
+  - TypeScript interface for Capacitor native plugin (future JNI/llama.cpp)
+  - Methods: `loadModel()`, `generate()`, `chat()`, `listModels()`, `downloadModel()`
+  - Event listeners for download progress and streaming tokens
+  - Graceful web fallback via `native-llm-web.ts`
+
+- `apps/site/src/lib/client/plugins/native-llm-web.ts` - Web fallback for native LLM
+  - No-op implementations for web platform
+  - All methods return "not available" responses
+
+- `apps/site/src/components/TierSelector.svelte` - Tier selection UI
+  - Full mode: Shows all 3 tier cards with status, latency, capabilities
+  - Compact mode: Just icon and name for header/sidebar use
+  - Selection mode picker (Auto, Prefer Offline, Prefer Server, Manual)
+  - Device status display (battery, network type, data saver)
+  - Auto-refresh with selection reason display
+
+**Files Modified:**
+- `apps/site/src/components/ServerSettings.svelte`
+  - Integrated TierSelector component in Compute Tier section
+  - Added import for TierSelector
+
+**Tier Selection Logic:**
+1. Check all tier availability in parallel
+2. Filter by capability requirements (e.g., 'code' requires server or cloud)
+3. Filter by device constraints (battery, network)
+4. Apply selection mode preferences
+5. Auto mode uses smart heuristics:
+   - Low battery (<15%) → prefer offline
+   - Data saver enabled → prefer offline
+   - Slow network (2G) → prefer offline
+   - High server latency (>2000ms) → try cloud or offline
+   - Default: server > cloud > offline by priority
+
+#### Phase M8: Memory Sync Protocol ✅
+**Files Created:**
+- `apps/site/src/lib/client/memory-sync.ts` - Bi-directional memory sync
+  - Local-first architecture: All changes saved locally first
+  - `saveMemoryLocally()`, `updateMemoryLocally()`, `deleteMemoryLocally()` - Local CRUD
+  - `addToQueue()` - Queue changes for sync when offline
+  - `performSync()` - Push pending changes, pull server updates
+  - `syncState` Svelte store - Track pending count, conflicts, sync status
+  - `hasPendingChanges`, `hasConflicts` - Derived stores for UI
+  - Conflict detection and resolution (server-wins default, manual option)
+  - Background sync every 30 seconds when connected
+  - Automatic sync trigger on `online` event
+  - Uses Capacitor Preferences for mobile, localStorage for web
+
+- `apps/site/src/components/SyncStatus.svelte` - Sync status UI
+  - Compact mode: Icon with badge for pending/conflict count
+  - Full mode: Detailed status with last sync time, pending changes, conflicts
+  - Force sync button
+  - Conflict resolution modal (keep local / keep server)
+
+- `apps/site/src/pages/api/memory/sync/push.ts` - Server push endpoint
+  - POST: Create new memories from mobile
+  - PUT: Update existing memories
+  - Conflict detection for existing memories
+  - Audit logging for all sync operations
+
+- `apps/site/src/pages/api/memory/sync/pull.ts` - Server pull endpoint
+  - GET: Fetch memories modified since timestamp
+  - Incremental sync with limit/pagination
+  - Filter by memory type
+
+- `apps/site/src/pages/api/memory/sync/[id].ts` - Individual memory endpoint
+  - DELETE: Soft delete (archive) memory
+  - GET: Check if memory exists
+
+**Files Modified:**
+- `apps/site/src/components/ServerSettings.svelte`
+  - Added SyncStatus component in Memory Sync section
+  - Shows sync status for mobile users
+
+**Sync Protocol:**
+1. User creates/updates memory → Saved locally with `syncStatus: 'pending'`
+2. Background sync checks every 30s (or on `online` event)
+3. Push: Send pending changes to server
+4. Pull: Fetch server changes since `lastSyncTimestamp`
+5. Conflict resolution: Server-wins by default, or manual resolution
+6. Update local `syncStatus` to 'synced' on success
+
+#### Phase M0: On-Device LLM Framework ✅ (Interface Complete)
+**Files Created:**
+- `apps/site/src/lib/client/plugins/native-llm.ts` - TypeScript plugin interface
+  - `NativeLLMPlugin` interface with full API
+  - `NativeLLMWrapper` class for unified access
+  - Methods: `loadModel()`, `unloadModel()`, `isModelLoaded()`, `generate()`, `chat()`
+  - Methods: `listModels()`, `downloadModel()`, `deleteModel()`
+  - Event listeners: `downloadProgress`, `generateProgress`
+  - Automatic platform detection (native vs web fallback)
+
+- `apps/site/src/lib/client/plugins/native-llm-web.ts` - Web fallback implementation
+  - No-op implementations for non-native platforms
+  - Returns empty/error responses gracefully
+
+- `apps/mobile/android/app/src/main/java/com/metahuman/os/plugins/llm/NativeLLMPlugin.kt` - Android native plugin
+  - Capacitor plugin skeleton with @PluginMethod annotations
+  - Methods: `isModelLoaded()`, `loadModel()`, `unloadModel()`, `generate()`, `chat()`
+  - Methods: `listModels()`, `downloadModel()`, `deleteModel()`
+  - Event emission: `downloadProgress` for download tracking
+  - JNI stubs for future llama.cpp integration
+
+- `apps/site/src/components/ModelManager.svelte` - Model management UI
+  - Lists downloaded on-device models
+  - Load/unload model controls
+  - Download progress indicator
+  - Available models catalog (Qwen3-1.7B, Qwen3-4B)
+  - Mobile-only (gated by `isCapacitorNative()`)
+
+**Files Modified:**
+- `apps/mobile/android/app/src/main/java/com/metahuman/os/MainActivity.java`
+  - Added import for NativeLLMPlugin
+  - Registered plugin in `onCreate()`
+
+- `apps/site/src/components/ServerSettings.svelte`
+  - Added ModelManager component import
+  - Added "On-Device AI" section with ModelManager
+
+**Status: Interface Complete, Native Implementation Pending**
+The TypeScript interface, Kotlin plugin skeleton, and UI are complete. The plugin currently returns simulated responses. Full llama.cpp integration requires:
+1. Download and build llama.cpp for Android (CMake + NDK)
+2. Write JNI bridge (C++ → Kotlin)
+3. Implement model loading and inference in native code
+4. Test on physical device with GGUF models
+
+**Model Recommendations (Qwen3 family, consistent across tiers):**
+- On-device: Qwen3-1.7B-Q4_K_M (~1.1GB) - good balance of quality/speed
+- Alternative: Qwen3-4B-Q4_K_M (~2.5GB) - better quality, slower
 
 ---
 

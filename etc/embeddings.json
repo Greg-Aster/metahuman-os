@@ -3,5 +3,6 @@
   "model": "nomic-embed-text",
   "provider": "ollama",
   "preloadAtStartup": true,
-  "description": "Embedding model configuration for semantic memory search"
+  "cpuOnly": true,
+  "description": "Embedding model for semantic memory search (CPU-only to avoid GPU conflicts with vLLM)"
 }

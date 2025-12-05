@@ -22,6 +22,8 @@ export * from './function-memory';
 export * from './audit';
 export * from './llm';
 export * from './ollama';
+export * from './vllm';
+export * from './llm-backend';
 export * from './model-resolver';
 export * from './model-router';
 export * from './specialist-broker';

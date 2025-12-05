@@ -22,6 +22,13 @@ import {
   auditDataChange,
   auditSecurity,
   ollama,
+  vllm,
+  loadBackendConfig,
+  saveBackendConfig,
+  getBackendStatus,
+  detectAvailableBackends,
+  switchBackend,
+  getActiveBackend,
   listAvailableAgents,
   getAgentLogs,
   getAgentStats,
@@ -802,6 +809,244 @@ async function ollamaCmd(args: string[]): Promise<void> {
   }
 }
 
+async function vllmCmd(args: string[]): Promise<void> {
+  const subcommand = args[0] || '';
+
+  if (!subcommand) {
+    console.log(`
+vLLM Management — Control local vLLM server
+============================================
+
+Usage: mh vllm <subcommand> [options]
+
+Subcommands:
+  status              Check if vLLM server is running
+  start [options]     Start vLLM server
+  stop                Stop vLLM server
+  restart             Restart vLLM server
+
+Start Options:
+  --model <id>        HuggingFace model ID (default: from config)
+  --gpu-util <0-1>    GPU memory utilization (default: 0.9)
+
+Examples:
+  mh vllm status
+  mh vllm start --model Qwen/Qwen2.5-14B-Instruct
+  mh vllm start --gpu-util 0.8
+  mh vllm stop
+`);
+    return;
+  }
+
+  try {
+    switch (subcommand) {
+      case 'status': {
+        const health = await vllm.getHealth();
+        if (health.running) {
+          console.log('✅ vLLM server is running');
+          console.log(`  - Endpoint: ${health.endpoint}`);
+          console.log(`  - Model: ${health.model || '(unknown)'}`);
+          if (health.pid) console.log(`  - PID: ${health.pid}`);
+        } else {
+          console.log('❌ vLLM server is not running');
+          if (health.error) console.log(`  - Error: ${health.error}`);
+        }
+        break;
+      }
+
+      case 'start': {
+        const config = loadBackendConfig();
+
+        // Parse options
+        let model = config.vllm.model;
+        let gpuUtil = config.vllm.gpuMemoryUtilization;
+
+        for (let i = 1; i < args.length; i++) {
+          if (args[i] === '--model' && args[i + 1]) {
+            model = args[++i];
+          } else if (args[i] === '--gpu-util' && args[i + 1]) {
+            gpuUtil = parseFloat(args[++i]);
+          }
+        }
+
+        console.log(`Starting vLLM server with model: ${model}...`);
+        console.log(`  GPU memory utilization: ${gpuUtil}`);
+
+        const result = await vllm.startServer({
+          endpoint: config.vllm.endpoint,
+          model,
+          gpuMemoryUtilization: gpuUtil,
+          maxModelLen: config.vllm.maxModelLen,
+          tensorParallelSize: config.vllm.tensorParallelSize,
+          dtype: config.vllm.dtype,
+          quantization: config.vllm.quantization,
+        });
+
+        if (result.success) {
+          console.log(`✅ vLLM server started (PID: ${result.pid})`);
+          console.log('  Note: Server may take a few minutes to load the model.');
+        } else {
+          console.error(`❌ Failed to start vLLM server: ${result.error}`);
+          process.exit(1);
+        }
+        break;
+      }
+
+      case 'stop': {
+        console.log('Stopping vLLM server...');
+        await vllm.stopServer();
+        console.log('✅ vLLM server stopped');
+        break;
+      }
+
+      case 'restart': {
+        const config = loadBackendConfig();
+
+        console.log('Restarting vLLM server...');
+        await vllm.stopServer();
+
+        const result = await vllm.startServer({
+          endpoint: config.vllm.endpoint,
+          model: config.vllm.model,
+          gpuMemoryUtilization: config.vllm.gpuMemoryUtilization,
+          maxModelLen: config.vllm.maxModelLen,
+          tensorParallelSize: config.vllm.tensorParallelSize,
+          dtype: config.vllm.dtype,
+          quantization: config.vllm.quantization,
+        });
+
+        if (result.success) {
+          console.log(`✅ vLLM server restarted (PID: ${result.pid})`);
+        } else {
+          console.error(`❌ Failed to restart vLLM server: ${result.error}`);
+          process.exit(1);
+        }
+        break;
+      }
+
+      default:
+        console.error(`Unknown subcommand: ${subcommand}`);
+        console.error('Run: mh vllm (without args) for help');
+        process.exit(1);
+    }
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
+}
+
+async function backendCmd(args: string[]): Promise<void> {
+  const subcommand = args[0] || '';
+
+  if (!subcommand) {
+    console.log(`
+LLM Backend Management — Switch between Ollama and vLLM
+========================================================
+
+Usage: mh backend <subcommand> [options]
+
+Subcommands:
+  status              Show current backend status and configuration
+  switch <backend>    Switch to a different backend (ollama|vllm)
+  detect              Detect available backends on the system
+
+Examples:
+  mh backend status
+  mh backend switch ollama
+  mh backend switch vllm
+  mh backend detect
+`);
+    return;
+  }
+
+  try {
+    switch (subcommand) {
+      case 'status': {
+        const [activeStatus, available] = await Promise.all([
+          getBackendStatus(),
+          detectAvailableBackends(),
+        ]);
+        const config = loadBackendConfig();
+
+        console.log(`\nLLM Backend Status`);
+        console.log(`==================`);
+        console.log(`Active Backend: ${config.activeBackend.toUpperCase()}`);
+
+        console.log(`\nOllama:`);
+        console.log(`  - Status: ${available.ollama.running ? '✅ Running' : available.ollama.installed ? '⚪ Stopped' : '❌ Not installed'}`);
+        console.log(`  - Endpoint: ${config.ollama.endpoint}`);
+        if (available.ollama.model) {
+          console.log(`  - Model: ${available.ollama.model}`);
+        }
+        if (config.activeBackend === 'ollama') {
+          console.log(`  - [ACTIVE]`);
+        }
+
+        console.log(`\nvLLM:`);
+        console.log(`  - Status: ${available.vllm.running ? '✅ Running' : available.vllm.installed ? '⚪ Stopped' : '❌ Not installed'}`);
+        console.log(`  - Endpoint: ${config.vllm.endpoint}`);
+        if (available.vllm.model) {
+          console.log(`  - Model: ${available.vllm.model}`);
+        }
+        if (config.activeBackend === 'vllm') {
+          console.log(`  - [ACTIVE]`);
+        }
+        break;
+      }
+
+      case 'switch': {
+        const backend = args[1] as 'ollama' | 'vllm';
+        if (!backend || !['ollama', 'vllm'].includes(backend)) {
+          console.error('Usage: mh backend switch <ollama|vllm>');
+          process.exit(1);
+        }
+
+        console.log(`Switching to ${backend}...`);
+        const result = await switchBackend(backend, { actor: 'cli' });
+
+        if (result.success) {
+          console.log(`✅ Switched to ${backend}`);
+        } else {
+          console.error(`❌ Failed to switch: ${result.error}`);
+          process.exit(1);
+        }
+        break;
+      }
+
+      case 'detect': {
+        console.log('Detecting available backends...');
+        const available = await detectAvailableBackends();
+
+        console.log(`\nAvailable Backends:`);
+        console.log(`  Ollama: ${available.ollama.installed ? '✅ Available' : '❌ Not available'}`);
+        if (available.ollama.installed) {
+          console.log(`    - Running: ${available.ollama.running ? 'Yes' : 'No'}`);
+          if (available.ollama.model) {
+            console.log(`    - Model: ${available.ollama.model}`);
+          }
+        }
+
+        console.log(`  vLLM: ${available.vllm.installed ? '✅ Available' : '❌ Not available'}`);
+        if (available.vllm.installed) {
+          console.log(`    - Running: ${available.vllm.running ? 'Yes' : 'No'}`);
+          if (available.vllm.model) {
+            console.log(`    - Model: ${available.vllm.model}`);
+          }
+        }
+        break;
+      }
+
+      default:
+        console.error(`Unknown subcommand: ${subcommand}`);
+        console.error('Run: mh backend (without args) for help');
+        process.exit(1);
+    }
+  } catch (error) {
+    console.error(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
+}
+
 async function find(args: string[]): Promise<void> {
   const description = args.join(' ');
   if (!description) {
@@ -982,12 +1227,23 @@ Agents & Automation:
   agent status        Show agent run statistics
   agent logs [name]   View recent agent activity
 
-Ollama & AI:
+Ollama:
   ollama status       Check if Ollama is running
   ollama list         List installed models
   ollama pull <model> Install a model (e.g., phi3:mini)
   ollama chat <model> Interactive chat with a raw model (not persona-aware)
   ollama ask <model>  Ask a one-shot question
+
+vLLM:
+  vllm status         Check if vLLM server is running
+  vllm start          Start vLLM server (--model, --gpu-util options)
+  vllm stop           Stop vLLM server
+  vllm restart        Restart vLLM server
+
+LLM Backends:
+  backend status      Show current backend status (Ollama/vLLM)
+  backend switch      Switch active backend (ollama|vllm)
+  backend detect      Detect available backends
 
 Audio Processing:
   audio ingest <path> Copy audio files to inbox for transcription
@@ -1934,6 +2190,12 @@ async function main() {
         break;
       case 'ollama':
         await ollamaCmd(args);
+        break;
+      case 'vllm':
+        await vllmCmd(args);
+        break;
+      case 'backend':
+        await backendCmd(args);
         break;
       case 'guide':
         console.log(`User Guide: ${systemPaths.root}/docs/USER_GUIDE.md`);

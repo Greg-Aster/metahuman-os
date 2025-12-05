@@ -2,9 +2,18 @@
   import { onMount } from 'svelte';
   import OnboardingWizard from './OnboardingWizard.svelte';
   import ProfileSelector from './ProfileSelector.svelte';
-  import { apiFetch } from '../lib/client/api-config';
+  import { apiFetch, isCapacitorNative, getApiBaseUrl } from '../lib/client/api-config';
+  import { healthStatus, forceHealthCheck } from '../lib/client/server-health';
+  import {
+    validateLocalUser,
+    registerLocalUser,
+    cacheServerUser,
+    hasLocalUsers,
+    getAllLocalUsers,
+    type LocalUser,
+  } from '../lib/client/local-memory';
 
-  let view: 'splash' | 'login' | 'register' | 'post-register' | 'onboarding' | 'forgot-password' | 'recovery-codes' = 'splash';
+  let view: 'splash' | 'login' | 'register' | 'register-type' | 'register-local' | 'post-register' | 'onboarding' | 'forgot-password' | 'recovery-codes' | 'sync-prompt' = 'splash';
   let isAuthenticated = false;
   let isCheckingAuth = true;
   let bootData: any = null;
@@ -13,12 +22,20 @@
   let showProfileSelector = false;
   let guestSessionError = '';
 
+  // Server connection state
+  let serverConnected = false;
+  let isMobile = false;
+  let localUsers: LocalUser[] = [];
+
   // Form fields
   let username = '';
   let password = '';
   let confirmPassword = '';
   let displayName = '';
   let email = '';
+
+  // Local profile options
+  let profileType: 'local' | 'server' = 'server';
 
   // Recovery code fields
   let recoveryCode = '';
@@ -31,21 +48,40 @@
   let agreeToTerms = false;
   let agreeToEthicalUse = false;
 
+  // Subscribe to health status
+  $: serverConnected = $healthStatus.connected;
+
   // Check if user is already authenticated
   async function checkAuth() {
+    isMobile = isCapacitorNative();
+
+    // Check for local users first
+    try {
+      localUsers = await getAllLocalUsers();
+    } catch (e) {
+      console.warn('Could not check local users:', e);
+    }
+
+    // Try server auth
     try {
       const res = await apiFetch('/api/auth/me');
       if (res.ok) {
         const data = await res.json();
         if (data.user) {
           isAuthenticated = true;
+          isCheckingAuth = false;
           return;
         }
       }
     } catch (error) {
-      console.error('Auth check failed:', error);
-    } finally {
-      isCheckingAuth = false;
+      console.warn('Server auth check failed (may be offline):', error);
+    }
+
+    isCheckingAuth = false;
+
+    // If server unavailable, check health in background
+    if (isMobile) {
+      forceHealthCheck();
     }
   }
 
@@ -57,33 +93,72 @@
         bootData = await res.json();
       }
     } catch (error) {
-      console.error('Failed to load boot data:', error);
+      console.warn('Failed to load boot data (may be offline):', error);
     }
   }
 
-  // Handle login
+  // Handle login - tries local first, then server
   async function handleLogin(e: Event) {
     e.preventDefault();
     error = '';
     loading = true;
 
     try {
-      const res = await apiFetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      });
+      // First, try local authentication
+      const localUser = await validateLocalUser(username, password);
+      if (localUser) {
+        console.log('[AuthGate] Local auth successful for:', username);
 
-      const data = await res.json();
+        // If it's a server profile and server is connected, also do server login
+        if (localUser.profileType === 'server' && serverConnected) {
+          try {
+            const res = await apiFetch('/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ username, password }),
+            });
+            if (res.ok) {
+              console.log('[AuthGate] Server login also successful');
+            }
+          } catch (e) {
+            console.warn('[AuthGate] Server login failed, continuing with local:', e);
+          }
+        }
 
-      if (data.success) {
         isAuthenticated = true;
-        window.location.reload(); // Reload to initialize user context
+        window.location.reload();
+        return;
+      }
+
+      // No local user found - try server if connected
+      if (serverConnected) {
+        const res = await apiFetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+
+        const data = await res.json();
+
+        if (data.success) {
+          // Cache the user locally for offline access
+          const serverUrl = getApiBaseUrl();
+          await cacheServerUser(username, password, serverUrl, data.user?.displayName);
+          console.log('[AuthGate] Server login successful, cached locally');
+
+          isAuthenticated = true;
+          window.location.reload();
+          return;
+        } else {
+          error = data.error || 'Login failed';
+        }
       } else {
-        error = data.error || 'Login failed';
+        // No local user and server offline
+        error = 'User not found locally. Connect to server to sync.';
+        view = 'sync-prompt';
       }
     } catch (err) {
-      error = 'Network error. Please try again.';
+      error = 'Login failed. Check your credentials.';
       console.error('Login error:', err);
     } finally {
       loading = false;

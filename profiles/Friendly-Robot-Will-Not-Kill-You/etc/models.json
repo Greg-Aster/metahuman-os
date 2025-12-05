@@ -210,6 +210,87 @@
         "estimatedLatency": "fast",
         "sizeGB": 9.3
       }
+    },
+    "big-brother.claude": {
+      "provider": "claude-code",
+      "model": "claude-sonnet-4",
+      "adapters": [],
+      "roles": [
+        "orchestrator",
+        "planner",
+        "coder"
+      ],
+      "description": "Claude Code escalation for complex tasks - use when local models are stuck",
+      "options": {
+        "contextWindow": 200000,
+        "temperature": 0.7,
+        "timeout": 300000
+      },
+      "metadata": {
+        "priority": "low",
+        "alwaysLoaded": false,
+        "estimatedLatency": "slow",
+        "source": "big-brother",
+        "purpose": "Escalation path for operator when local models fail repeatedly",
+        "autoEscalate": true,
+        "escalationThreshold": 3
+      }
+    },
+    "cloud.qwen3-coder-30b": {
+      "provider": "runpod_serverless",
+      "model": "Qwen3-Coder-30B-A3B-Instruct-AWQ",
+      "adapters": [],
+      "roles": [
+        "coder",
+        "orchestrator",
+        "persona",
+        "planner",
+        "curator",
+        "psychotherapist"
+      ],
+      "description": "Cloud-hosted Qwen3 Coder 30B via RunPod Serverless - high-performance coding and reasoning",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.7,
+        "topP": 0.95,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "high",
+        "alwaysLoaded": false,
+        "estimatedLatency": "medium",
+        "source": "runpod-serverless",
+        "endpointTier": "default",
+        "coldStartWarning": "First request may take 30-60s if GPU is cold",
+        "purpose": "Cloud GPU inference for high-capability tasks"
+      }
+    },
+    "cloud.qwen3-14b": {
+      "provider": "runpod_serverless",
+      "model": "Qwen3-14B-Instruct",
+      "adapters": [],
+      "roles": [
+        "orchestrator",
+        "persona",
+        "summarizer",
+        "fallback"
+      ],
+      "description": "Cloud-hosted Qwen3 14B via RunPod Serverless - balanced performance model",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.7,
+        "topP": 0.95,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "medium",
+        "alwaysLoaded": false,
+        "estimatedLatency": "fast",
+        "source": "runpod-serverless",
+        "endpointTier": "14b",
+        "coldStartWarning": "First request may take 20-30s if GPU is cold",
+        "purpose": "Cloud GPU inference for general tasks"
+      }
     }
   },
   "roleHierarchy": {
@@ -278,6 +359,16 @@
       "baseUrl": "https://api.openai.com/v1",
       "timeout": 60000,
       "retries": 3
+    },
+    "runpod_serverless": {
+      "baseUrl": "https://api.runpod.ai/v2",
+      "timeout": 120000,
+      "retries": 2
+    },
+    "claude-code": {
+      "baseUrl": "local",
+      "timeout": 300000,
+      "retries": 1
     }
   }
 }

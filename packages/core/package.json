@@ -60,7 +60,8 @@
     "./profile-migration": "./src/profile-migration.ts",
     "./encryption": "./src/encryption.ts",
     "./deployment": "./src/deployment.ts",
-    "./providers": "./src/providers/index.ts"
+    "./providers": "./src/providers/index.ts",
+    "./cognitive-layers": "./src/cognitive-layers/index.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.939.0",

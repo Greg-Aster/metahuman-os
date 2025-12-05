@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { systemPaths, getAuthenticatedUser, storageClient } from '@metahuman/core'
 import { OllamaClient } from '@metahuman/core/ollama'
-import { listAdapterDatasets, getActiveAdapter } from '@metahuman/core'
+import { listAdapterDatasets, getActiveAdapter, loadBackendConfig } from '@metahuman/core'
 
 function resolveModelsPath(username: string): string {
   // Use storage router to resolve user-specific config path
@@ -49,12 +49,17 @@ const getHandler: APIRoute = async ({ cookies }) => {
 
     const registry = readModelRegistry(user.username)
     const globalSettings = registry.globalSettings || {}
-    const ollama = new OllamaClient()
+    const backendConfig = loadBackendConfig()
     let baseModels: string[] = []
-    try {
-      const tags = await ollama.listModels()
-      baseModels = tags.map(m => m.name)
-    } catch {}
+
+    // Only fetch Ollama models when Ollama is the active backend
+    if (backendConfig.activeBackend === 'ollama') {
+      const ollama = new OllamaClient()
+      try {
+        const tags = await ollama.listModels()
+        baseModels = tags.map(m => m.name)
+      } catch {}
+    }
     const loras = listAdapterDatasets().map(d => ({ date: d.date, status: d.status, evalScore: d.evalScore }))
     const dualAvailable = fs.existsSync(path.join(systemPaths.out, 'adapters', 'history-merged', 'adapter-merged.gguf'))
     const active = getActiveAdapter()

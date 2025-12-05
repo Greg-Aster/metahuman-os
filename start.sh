@@ -204,16 +204,57 @@ else
     echo
 fi
 
-# Check if Ollama is running
-echo "Checking Ollama status..."
-if command_exists "ollama" && ollama list >/dev/null 2>&1; then
-    print_status "Ollama is running"
-else
-    print_warning "Ollama is not running or not installed"
-    print_warning "The web interface may have limited functionality"
-    print_warning "Install Ollama from: https://ollama.ai"
-    echo
+# Check LLM backend status (backend-aware)
+echo "Checking LLM backend status..."
+LLM_BACKEND_CONFIG="$REPO_ROOT/etc/llm-backend.json"
+ACTIVE_BACKEND="ollama"  # default
+
+if [ -f "$LLM_BACKEND_CONFIG" ]; then
+    ACTIVE_BACKEND=$(grep -o '"activeBackend"[[:space:]]*:[[:space:]]*"[^"]*"' "$LLM_BACKEND_CONFIG" | grep -o '"[^"]*"$' | tr -d '"' || echo "ollama")
 fi
+
+echo "  Active backend: $ACTIVE_BACKEND"
+
+if [ "$ACTIVE_BACKEND" = "vllm" ]; then
+    # Check if vLLM is running or can be started
+    if curl -sf "http://localhost:8000/health" >/dev/null 2>&1; then
+        print_status "vLLM is running"
+    else
+        print_warning "vLLM is not running"
+        print_warning "Starting vLLM server..."
+        # Try to start vLLM via the CLI
+        "$REPO_ROOT/bin/mh" vllm start >/dev/null 2>&1 &
+        VLLM_START_PID=$!
+
+        # Wait up to 60 seconds for vLLM to start
+        echo "  Waiting for vLLM to initialize (this may take a minute)..."
+        for i in $(seq 1 60); do
+            if curl -sf "http://localhost:8000/health" >/dev/null 2>&1; then
+                print_status "vLLM server started successfully"
+                break
+            fi
+            sleep 1
+            printf "."
+        done
+        echo
+
+        if ! curl -sf "http://localhost:8000/health" >/dev/null 2>&1; then
+            print_warning "vLLM failed to start within timeout"
+            print_warning "Start it manually with: ./bin/mh vllm start"
+            print_warning "Or switch to Ollama with: ./bin/mh backend switch ollama"
+        fi
+    fi
+else
+    # Check if Ollama is running
+    if command_exists "ollama" && ollama list >/dev/null 2>&1; then
+        print_status "Ollama is running"
+    else
+        print_warning "Ollama is not running or not installed"
+        print_warning "The web interface may have limited functionality"
+        print_warning "Install Ollama from: https://ollama.ai"
+    fi
+fi
+echo
 
 # Check if we need to install Node.js dependencies
 echo "Checking for Node.js dependencies..."

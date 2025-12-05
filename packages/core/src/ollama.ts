@@ -291,17 +291,31 @@ export class OllamaClient {
 
   /**
    * Generate embeddings for text
+   * @param model - Ollama model name
+   * @param prompt - Text to embed
+   * @param options - Optional settings (num_gpu: 0 forces CPU-only inference)
    */
-  async embeddings(model: string, prompt: string): Promise<OllamaEmbeddingsResponse> {
+  async embeddings(
+    model: string,
+    prompt: string,
+    options?: { num_gpu?: number }
+  ): Promise<OllamaEmbeddingsResponse> {
+    const body: Record<string, unknown> = { model, prompt };
+
+    // num_gpu: 0 forces CPU inference (leaves GPU free for vLLM)
+    if (options?.num_gpu !== undefined) {
+      body.options = { num_gpu: options.num_gpu };
+    }
+
     const response = await fetch(`${this.endpoint}/api/embeddings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, prompt }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new Error(`Embeddings request failed: ${response.status}${body ? ` - ${body}` : ''}`);
+      const bodyText = await response.text().catch(() => '');
+      throw new Error(`Embeddings request failed: ${response.status}${bodyText ? ` - ${bodyText}` : ''}`);
     }
 
     return response.json();
@@ -326,6 +340,199 @@ export class OllamaClient {
       throw new Error(`Failed to get running models: ${response.status}`);
     }
     return response.json();
+  }
+
+  /**
+   * Unload all models from GPU memory
+   * Sends a generate request with keep_alive: 0 for each loaded model
+   */
+  async unloadAllModels(): Promise<{ unloaded: string[]; errors: string[] }> {
+    const unloaded: string[] = [];
+    const errors: string[] = [];
+
+    try {
+      const running = await this.getRunningModels();
+
+      for (const model of running.models) {
+        try {
+          console.log(`[ollama] Unloading model: ${model.name}`);
+          const response = await fetch(`${this.endpoint}/api/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: model.name,
+              prompt: '',
+              keep_alive: 0,
+            }),
+          });
+
+          if (response.ok) {
+            unloaded.push(model.name);
+            console.log(`[ollama] Unloaded: ${model.name}`);
+          } else {
+            errors.push(`${model.name}: ${response.status}`);
+          }
+        } catch (err) {
+          errors.push(`${model.name}: ${(err as Error).message}`);
+        }
+      }
+    } catch (err) {
+      errors.push(`Failed to get running models: ${(err as Error).message}`);
+    }
+
+    return { unloaded, errors };
+  }
+
+  /**
+   * Stop the Ollama service
+   * Falls back to pkill if systemctl requires sudo password
+   */
+  async stopService(): Promise<{ success: boolean; error?: string }> {
+    const { execSync } = await import('node:child_process');
+
+    // First, unload all models to free VRAM
+    console.log('[ollama] Unloading models first...');
+    try {
+      await this.unloadAllModels();
+    } catch {
+      // Continue even if unload fails
+    }
+
+    // Try systemctl without sudo first (works on many systems)
+    console.log('[ollama] Attempting to stop Ollama service...');
+    try {
+      execSync('systemctl stop ollama', { stdio: 'pipe', timeout: 5000 });
+      await new Promise(r => setTimeout(r, 1000));
+      console.log('[ollama] Service stopped via systemctl');
+      return { success: true };
+    } catch {
+      // Try with sudo -n (no password prompt)
+      try {
+        execSync('sudo -n systemctl stop ollama', { stdio: 'pipe', timeout: 5000 });
+        await new Promise(r => setTimeout(r, 1000));
+        console.log('[ollama] Service stopped via sudo systemctl');
+        return { success: true };
+      } catch {
+        console.log('[ollama] systemctl failed, using pkill fallback...');
+      }
+    }
+
+    // Fallback: kill ollama processes directly
+    try {
+      // Try SIGTERM first for graceful shutdown
+      try {
+        execSync('pkill -f "ollama serve"', { stdio: 'pipe' });
+      } catch { /* No process found */ }
+
+      await new Promise(r => setTimeout(r, 1000));
+
+      // Force kill if still running
+      try {
+        execSync('pkill -9 -f "ollama serve"', { stdio: 'pipe' });
+      } catch { /* No process found */ }
+
+      // Also kill any remaining ollama processes
+      try {
+        execSync('pkill -9 -f "^ollama"', { stdio: 'pipe' });
+      } catch { /* No process found */ }
+
+      await new Promise(r => setTimeout(r, 500));
+
+      // Verify it's stopped
+      const stillRunning = await this.isRunning();
+      if (stillRunning) {
+        return { success: false, error: 'Ollama still running after pkill' };
+      }
+
+      console.log('[ollama] Service stopped via pkill');
+      return { success: true };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      console.error('[ollama] Failed to stop service:', error);
+      return { success: false, error };
+    }
+  }
+
+  /**
+   * Start the Ollama service
+   * Falls back to direct binary execution if systemctl requires password
+   */
+  async startService(): Promise<{ success: boolean; error?: string }> {
+    const { execSync, spawn } = await import('node:child_process');
+
+    // Try systemctl without sudo first (works on many systems)
+    console.log('[ollama] Attempting to start Ollama service...');
+    const trySystemctl = async (cmd: string): Promise<boolean> => {
+      try {
+        execSync(cmd, { stdio: 'pipe', timeout: 5000 });
+        const maxWait = 10000;
+        const start = Date.now();
+        while (Date.now() - start < maxWait) {
+          if (await this.isRunning()) {
+            return true;
+          }
+          await new Promise(r => setTimeout(r, 500));
+        }
+      } catch { }
+      return false;
+    };
+
+    if (await trySystemctl('systemctl start ollama')) {
+      console.log('[ollama] Service started via systemctl');
+      return { success: true };
+    }
+
+    if (await trySystemctl('sudo -n systemctl start ollama')) {
+      console.log('[ollama] Service started via sudo systemctl');
+      return { success: true };
+    }
+
+    console.log('[ollama] systemctl failed, starting ollama directly...');
+
+    // Fallback: start ollama serve directly
+    try {
+      // Check if ollama binary exists
+      let ollamaPath = 'ollama';
+      try {
+        execSync('which ollama', { stdio: 'pipe' });
+      } catch {
+        // Try common install locations
+        const paths = ['/usr/local/bin/ollama', '/usr/bin/ollama'];
+        for (const p of paths) {
+          try {
+            const fs = await import('node:fs');
+            if (fs.existsSync(p)) {
+              ollamaPath = p;
+              break;
+            }
+          } catch { }
+        }
+      }
+
+      // Spawn ollama serve in background
+      const child = spawn(ollamaPath, ['serve'], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+
+      // Wait for it to start
+      const maxWait = 10000;
+      const start = Date.now();
+      while (Date.now() - start < maxWait) {
+        if (await this.isRunning()) {
+          console.log('[ollama] Service started directly');
+          return { success: true };
+        }
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      return { success: false, error: 'Timeout waiting for ollama serve to start' };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      console.error('[ollama] Failed to start service:', error);
+      return { success: false, error };
+    }
   }
 
   /**
@@ -472,4 +679,19 @@ export async function checkOllamaHealth(): Promise<{
  */
 export async function isRunning(): Promise<boolean> {
   return ollama.isRunning();
+}
+
+/**
+ * Stop the Ollama systemd service
+ * This fully stops Ollama and frees all GPU memory
+ */
+export async function stopOllamaService(): Promise<{ success: boolean; error?: string }> {
+  return ollama.stopService();
+}
+
+/**
+ * Start the Ollama systemd service
+ */
+export async function startOllamaService(): Promise<{ success: boolean; error?: string }> {
+  return ollama.startService();
 }

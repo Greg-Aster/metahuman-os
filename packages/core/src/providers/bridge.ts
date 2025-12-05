@@ -2,14 +2,22 @@
  * Provider Bridge (Core)
  *
  * Unified entry point for ALL LLM providers.
- * - Local providers (ollama, mock) are handled here
+ * - Local providers (ollama, vllm, mock) are handled here
  * - Cloud providers (runpod, huggingface) are delegated to @metahuman/server
  *
  * model-router.ts calls this ONE function - it knows nothing about specific providers.
+ *
+ * BACKEND-AWARE: Automatically routes to Ollama or vLLM based on etc/llm-backend.json
+ * AUTO-START: Automatically starts the configured backend if not running
  */
 
-import { ollama } from '../ollama.js';
+import { ollama, isRunning as isOllamaRunning } from '../ollama.js';
+import { vllm, isVLLMRunning } from '../vllm.js';
+import { loadBackendConfig } from '../llm-backend.js';
 import { loadDeploymentConfig } from '../deployment.js';
+
+// Track if we've already logged the active backend
+let backendLoggedOnce = false;
 import {
   type ProviderMessage,
   type ProviderOptions,
@@ -28,6 +36,9 @@ export * from './types.js';
  *
  * This is the ONLY function model-router needs to call.
  * Routes to local or cloud provider based on provider type.
+ *
+ * For local providers (ollama), automatically routes to the active backend
+ * (Ollama or vLLM) based on etc/llm-backend.json configuration.
  */
 export async function callProvider(
   providerName: ProviderType,
@@ -50,10 +61,22 @@ export async function callProvider(
     return callCloudProvider(providerName, messages, options, config, onProgress);
   }
 
-  // Local providers
+  // Local providers - check which backend is active
   switch (providerName) {
-    case 'ollama':
+    case 'ollama': {
+      // Route to active backend (Ollama or vLLM)
+      const backendConfig = loadBackendConfig();
+      if (backendConfig.activeBackend === 'vllm') {
+        return callVLLMProvider(messages, options, backendConfig.vllm.endpoint, onProgress);
+      }
       return callOllamaProvider(messages, options, onProgress);
+    }
+
+    case 'vllm': {
+      // Explicit vLLM call
+      const backendConfig = loadBackendConfig();
+      return callVLLMProvider(messages, options, backendConfig.vllm.endpoint, onProgress);
+    }
 
     case 'mock':
       return callMockProvider(messages, options);
@@ -88,6 +111,22 @@ async function callOllamaProvider(
   onProgress?: ProviderProgressCallback
 ): Promise<ProviderResponse> {
   const model = options.model || 'qwen3:14b';
+
+  // Log active backend once
+  if (!backendLoggedOnce) {
+    console.log(`[provider-bridge] Active backend: Ollama (${model})`);
+    backendLoggedOnce = true;
+  }
+
+  // Check if Ollama is running
+  const running = await isOllamaRunning();
+  if (!running) {
+    onProgress?.({
+      phase: 'failed',
+      message: 'Ollama is not running. Start it with: ollama serve',
+    });
+    throw new Error('Ollama is not running. Start it with: ollama serve');
+  }
 
   // Check if model is already loaded or if we need to wait
   const isLoaded = await ollama.isModelLoaded(model);
@@ -191,6 +230,134 @@ async function callOllamaProvider(
 }
 
 /**
+ * vLLM provider implementation
+ * Uses the same OpenAI-compatible API that vLLM serves
+ * Auto-starts vLLM if not running
+ */
+async function callVLLMProvider(
+  messages: ProviderMessage[],
+  options: ProviderOptions,
+  endpoint: string,
+  onProgress?: ProviderProgressCallback
+): Promise<ProviderResponse> {
+  const backendConfig = loadBackendConfig();
+  const model = options.model || backendConfig.vllm.model || 'default';
+
+  // Log active backend once
+  if (!backendLoggedOnce) {
+    console.log(`[provider-bridge] Active backend: vLLM (${model})`);
+    backendLoggedOnce = true;
+  }
+
+  // Check if vLLM is running, auto-start if not
+  const running = await isVLLMRunning();
+  if (!running) {
+    onProgress?.({
+      phase: 'loading',
+      message: `Starting vLLM server...`,
+    });
+
+    console.log('[provider-bridge] vLLM not running, attempting to start...');
+
+    // Try to start vLLM
+    const startResult = await vllm.startServer({
+      endpoint: backendConfig.vllm.endpoint,
+      model: backendConfig.vllm.model,
+      gpuMemoryUtilization: backendConfig.vllm.gpuMemoryUtilization,
+      maxModelLen: backendConfig.vllm.maxModelLen,
+      tensorParallelSize: backendConfig.vllm.tensorParallelSize,
+      dtype: backendConfig.vllm.dtype,
+      quantization: backendConfig.vllm.quantization,
+      enforceEager: backendConfig.vllm.enforceEager,
+      autoUtilization: backendConfig.vllm.autoUtilization,
+    });
+
+    if (!startResult.success) {
+      onProgress?.({
+        phase: 'failed',
+        message: `Failed to start vLLM: ${startResult.error}`,
+      });
+      throw new Error(`vLLM failed to start: ${startResult.error}`);
+    }
+
+    console.log(`[provider-bridge] vLLM started (PID: ${startResult.pid})`);
+
+    // Wait for vLLM to be ready (it takes time to load the model)
+    onProgress?.({
+      phase: 'loading',
+      message: `Loading model ${model} (this may take a minute)...`,
+    });
+
+    const maxWaitMs = 120000; // 2 minutes
+    const pollIntervalMs = 2000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWaitMs) {
+      const ready = await isVLLMRunning();
+      if (ready) {
+        console.log('[provider-bridge] vLLM is ready');
+        break;
+      }
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+      onProgress?.({
+        phase: 'loading',
+        message: `Loading model... (${Math.round((Date.now() - startTime) / 1000)}s)`,
+      });
+    }
+
+    // Final check
+    if (!(await isVLLMRunning())) {
+      throw new Error('vLLM failed to become ready within timeout');
+    }
+  }
+
+  onProgress?.({
+    phase: 'loading',
+    message: `Connecting to vLLM (${model})...`,
+  });
+
+  // Temporarily set endpoint on vllm client
+  const originalEndpoint = (vllm as any).endpoint;
+  (vllm as any).endpoint = endpoint;
+
+  try {
+    onProgress?.({
+      phase: 'running',
+      message: `Generating with ${model}...`,
+    });
+
+    const response = await vllm.chat(
+      messages.map(m => ({ role: m.role as 'system' | 'user' | 'assistant', content: m.content })),
+      {
+        model,
+        temperature: options.temperature,
+        maxTokens: options.maxTokens,
+        topP: options.topP,
+      }
+    );
+
+    onProgress?.({
+      phase: 'completed',
+      message: `${model} ready`,
+    });
+
+    return {
+      content: response.content,
+      model: response.model || model,
+      provider: 'vllm',
+      usage: response.usage ? {
+        promptTokens: response.usage.prompt_tokens || 0,
+        completionTokens: response.usage.completion_tokens || 0,
+        totalTokens: response.usage.total_tokens || 0,
+      } : undefined,
+    };
+  } finally {
+    // Restore original endpoint
+    (vllm as any).endpoint = originalEndpoint;
+  }
+}
+
+/**
  * Mock provider for testing
  */
 async function callMockProvider(
@@ -286,6 +453,9 @@ export async function isProviderAvailable(providerName: ProviderType): Promise<b
   switch (providerName) {
     case 'ollama':
       return ollama.isRunning();
+
+    case 'vllm':
+      return vllm.isRunning();
 
     case 'mock':
       return true;

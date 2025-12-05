@@ -12,10 +12,10 @@
   "dependencies": {
     "@astrojs/svelte": "^5.7.2",
     "@astrojs/tailwind": "^5.1.0",
-    "@capacitor/core": "^6.2.1",
     "@metahuman/core": "workspace:*",
     "astro": "^4.14.0",
     "autoprefixer": "^10.4.20",
+    "idb": "^8.0.3",
     "litegraph.js": "1.0.0-5",
     "marked": "^12.0.2",
     "node-fetch": "^2.7.0",
@@ -26,6 +26,8 @@
   },
   "devDependencies": {
     "@astrojs/node": "^8.3.4",
+    "@capacitor/core": "^6.2.1",
+    "@capacitor/preferences": "^7.0.2",
     "typescript": "^5.5.0"
   },
   "packageManager": "pnpm@10.15.1+sha512.34e538c329b5553014ca8e8f4535997f96180a1d0f614339357449935350d924e22f8614682191264ec33d1462ac21561aff97f6bb18065351c162c7e8f6de67"
