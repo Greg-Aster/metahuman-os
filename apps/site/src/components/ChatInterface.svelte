@@ -1035,7 +1035,7 @@
             {#if $activeBackend === 'vllm'}
               No model is loaded in vLLM. Configure and start the server from Settings → Backend.
             {:else}
-              No models are currently loaded. Please install a model using: <code>ollama pull phi3:mini</code>
+              No models are currently loaded. Please install a model using: <code>ollama pull </code>
             {/if}
           {/if}
           {#if $backendError}
