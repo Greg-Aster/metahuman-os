@@ -38,6 +38,7 @@ const DESIRE_DIRS: Record<string, string> = {
   awaiting_approval: 'awaiting_approval',  // Separate directory for user review
   approved: 'active',
   executing: 'active',
+  awaiting_review: 'awaiting_review',  // Post-execution, waiting for outcome review
   completed: 'completed',
   rejected: 'rejected',
   abandoned: 'abandoned',
