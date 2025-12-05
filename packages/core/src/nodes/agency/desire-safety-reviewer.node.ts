@@ -41,9 +41,26 @@ Be conservative with safety. When in doubt, flag concerns.
 Respond with valid JSON matching the schema.`;
 
 const execute: NodeExecutor = async (inputs, _context, properties) => {
-  const desire = inputs.desire as Desire | undefined;
-  const plan = inputs.plan as DesirePlan | undefined;
-  const decisionRules = (inputs.decisionRules as string) || '';
+  // Inputs come via slot positions from graph links:
+  // slot 0: {desire, found} from desire_loader
+  // slot 2: formatted decision rules string from policy_loader
+  const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | undefined;
+  const slot2 = inputs[2] as string | { formatted?: string } | undefined;
+
+  // Extract desire and plan (plan is embedded in desire)
+  const desire = slot0?.desire || (inputs.desire as Desire | undefined);
+  const plan = desire?.plan || (inputs.plan as DesirePlan | undefined);
+
+  // Get decision rules from slot or named input
+  let decisionRules = '';
+  if (typeof slot2 === 'string') {
+    decisionRules = slot2;
+  } else if (slot2 && typeof slot2 === 'object' && 'formatted' in slot2) {
+    decisionRules = slot2.formatted || '';
+  } else if (inputs.decisionRules) {
+    decisionRules = inputs.decisionRules as string;
+  }
+
   const temperature = (properties?.temperature as number) || 0.1;
 
   if (!desire || !plan) {
@@ -52,7 +69,7 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
       risks: ['Missing desire or plan'],
       mitigations: [],
       approved: false,
-      reasoning: 'Cannot review safety without desire and plan',
+      reasoning: `Cannot review safety without desire and plan. Got desire: ${!!desire}, plan: ${!!plan}`,
     };
   }
 

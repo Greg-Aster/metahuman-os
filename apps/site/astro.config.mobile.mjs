@@ -53,9 +53,12 @@ export default defineConfig({
   // Static output for mobile - no server required
   output: 'static',
 
+  // Output directly to mobile/www folder (separation of concerns)
+  // This way the mobile build never touches the server's dist folder
+  outDir: '../mobile/www',
+
   // Build configuration
   build: {
-    // Output to dist/ directory
     format: 'directory',
   },
 

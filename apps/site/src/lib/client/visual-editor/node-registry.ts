@@ -2544,6 +2544,103 @@ class DreamerLearningsWriterNodeImpl extends CognitiveNodeBase {
   }
 }
 
+// ============================================================================
+// AGENCY NODE IMPLEMENTATIONS (Desire System)
+// ============================================================================
+
+class DesireMemoryAnalyzerNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'desire_memory_analyzer')!;
+  constructor() { super(DesireMemoryAnalyzerNodeImpl.schema); }
+  async onExecute() {
+    // Mock - in real implementation would load unanalyzed memories
+    this.setOutputData(0, []);    // memories array
+    this.setOutputData(1, 0);     // count
+    this.setOutputData(2, false); // hasMore
+  }
+}
+
+class DesireDetectorNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'desire_detector')!;
+  constructor() { super(DesireDetectorNodeImpl.schema); }
+  async onExecute() {
+    const userInput = this.getInputData(0);
+    // Mock - in real implementation would call LLM to detect desires
+    this.setOutputData(0, false); // detected
+    this.setOutputData(1, null);  // desire
+    this.setOutputData(2, 0);     // confidence
+    this.setOutputData(3, 'No input provided'); // reasoning
+  }
+}
+
+class DesireFolderCreatorNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'desire_folder_creator')!;
+  constructor() { super(DesireFolderCreatorNodeImpl.schema); }
+  async onExecute() {
+    const desire = this.getInputData(0);
+    // Mock - in real implementation would create folder structure
+    this.setOutputData(0, desire);          // desire with folderPath
+    this.setOutputData(1, '/mock/path');    // folderPath
+    this.setOutputData(2, true);            // success
+  }
+}
+
+class DesireUpdaterNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'desire_updater')!;
+  constructor() { super(DesireUpdaterNodeImpl.schema); }
+  async onExecute() {
+    const desire = this.getInputData(0);
+    // Mock - in real implementation would update desire status
+    this.setOutputData(0, desire); // updated desire
+    this.setOutputData(1, true);   // success
+  }
+}
+
+// ============================================================================
+// CONTROL FLOW NODE IMPLEMENTATIONS (Additional)
+// ============================================================================
+
+class ConditionalNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'conditional')!;
+  constructor() { super(ConditionalNodeImpl.schema); }
+  onExecute() {
+    const value = this.getInputData(0);
+    const condition = this.properties.condition || 'value === true';
+
+    // Simple evaluation - in visual editor, just pass through
+    // In real execution, would evaluate the condition
+    let result = false;
+    try {
+      // Simple evaluation for common patterns
+      if (condition === 'value === true' || condition === 'detected === true') {
+        result = value === true || value?.detected === true;
+      } else if (condition === 'value === false' || condition === 'detected === false') {
+        result = value === false || value?.detected === false;
+      } else {
+        result = Boolean(value);
+      }
+    } catch {
+      result = Boolean(value);
+    }
+
+    this.setOutputData(0, result ? value : null);  // ifTrue
+    this.setOutputData(1, result ? null : value);  // ifFalse
+  }
+}
+
+// ============================================================================
+// OUTPUT NODE IMPLEMENTATIONS (Additional)
+// ============================================================================
+
+class ResultAggregatorNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'result_aggregator')!;
+  constructor() { super(ResultAggregatorNodeImpl.schema); }
+  onExecute() {
+    const input = this.getInputData(0);
+    // Pass through - aggregates results from graph
+    this.setOutputData(0, input);
+  }
+}
+
   // Return all node implementation classes
   return {
     MicInputNodeImpl,
@@ -2660,6 +2757,15 @@ class DreamerLearningsWriterNodeImpl extends CognitiveNodeBase {
     DreamerContinuationGeneratorNodeImpl,
     DreamerLearningsExtractorNodeImpl,
     DreamerLearningsWriterNodeImpl,
+    // Agency (Desire System)
+    DesireMemoryAnalyzerNodeImpl,
+    DesireDetectorNodeImpl,
+    DesireFolderCreatorNodeImpl,
+    DesireUpdaterNodeImpl,
+    // Additional Control Flow
+    ConditionalNodeImpl,
+    // Additional Output
+    ResultAggregatorNodeImpl,
   };
 }
 
@@ -2843,6 +2949,18 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
     LiteGraph.registerNodeType('cognitive/training_pair_appender', nodeImpls.TrainingPairAppenderNodeImpl);
     LiteGraph.registerNodeType('cognitive/memory_marker', nodeImpls.MemoryMarkerNodeImpl);
 
+    // Agency nodes (Desire System)
+    LiteGraph.registerNodeType('agency/desire_memory_analyzer', nodeImpls.DesireMemoryAnalyzerNodeImpl);
+    LiteGraph.registerNodeType('agency/desire_detector', nodeImpls.DesireDetectorNodeImpl);
+    LiteGraph.registerNodeType('agency/desire_folder_creator', nodeImpls.DesireFolderCreatorNodeImpl);
+    LiteGraph.registerNodeType('agency/desire_updater', nodeImpls.DesireUpdaterNodeImpl);
+
+    // Control Flow (Additional)
+    LiteGraph.registerNodeType('control/conditional', nodeImpls.ConditionalNodeImpl);
+
+    // Output (Additional)
+    LiteGraph.registerNodeType('output/result_aggregator', nodeImpls.ResultAggregatorNodeImpl);
+
     console.log('[CognitiveNodes] Registration completed successfully');
   } catch (error) {
     console.error('[CognitiveNodes] Registration error:', error);
@@ -2871,13 +2989,25 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
  * Get list of all registered cognitive nodes for the UI
  */
 export function getCognitiveNodesList() {
-  return nodeSchemas.map(schema => ({
-    id: schema.id,  // Add id property for palette clicks
-    type: `cognitive/${schema.id}`,
-    name: schema.name,
-    category: schema.category,
-    description: schema.description,
-    color: schema.color,      // Add color for palette display
-    bgColor: schema.bgColor,  // Add bgColor for palette display
-  }));
+  return nodeSchemas.map(schema => {
+    // Determine the type prefix based on category
+    let typePrefix = 'cognitive';
+    if (schema.category === 'agency') {
+      typePrefix = 'agency';
+    } else if (schema.category === 'control_flow' && schema.id === 'conditional') {
+      typePrefix = 'control';
+    } else if (schema.category === 'output' && schema.id === 'result_aggregator') {
+      typePrefix = 'output';
+    }
+
+    return {
+      id: schema.id,  // Add id property for palette clicks
+      type: `${typePrefix}/${schema.id}`,
+      name: schema.name,
+      category: schema.category,
+      description: schema.description,
+      color: schema.color,      // Add color for palette display
+      bgColor: schema.bgColor,  // Add bgColor for palette display
+    };
+  });
 }

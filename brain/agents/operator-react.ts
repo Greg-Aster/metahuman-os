@@ -130,6 +130,175 @@ export interface ReactState {
 }
 
 // ============================================================================
+// Goal Intent Classification (Phase: False Completion Fix)
+// ============================================================================
+
+/**
+ * Goal intent types for completion validation
+ */
+export type GoalIntent =
+  | 'action_file'        // Requires fs_write, fs_read, fs_list, fs_delete
+  | 'action_web'         // Requires web_search, http_get
+  | 'action_command'     // Requires shell_execute, shell_safe
+  | 'action_memory'      // Requires search_index, memory operations
+  | 'action_task'        // Requires task_create, task_update_status, task_list
+  | 'query_information'  // Can complete with conversational_response
+  | 'query_status'       // Can complete with conversational_response
+  | 'creative_writing'   // Can complete with conversational_response
+  | 'unknown';           // Default - use heuristics
+
+/**
+ * Classify goal intent to determine required skill types.
+ * This prevents false completion when action goals are answered conversationally.
+ *
+ * @param goal - User's goal/request
+ * @returns Classified goal intent
+ */
+export function classifyGoalIntent(goal: string): GoalIntent {
+  const goalLower = goal.toLowerCase();
+
+  // File action keywords (require fs_* skills)
+  const fileActionKeywords = [
+    'write a file', 'create a file', 'save to file', 'generate file',
+    'write file', 'create file', 'save file', 'output file',
+    'write to', 'save to', 'create the file', 'make a file',
+    'write out', 'export to file', 'dump to file'
+  ];
+  if (fileActionKeywords.some(k => goalLower.includes(k))) {
+    return 'action_file';
+  }
+
+  // File read/list keywords (also require fs_* skills)
+  const fileReadKeywords = [
+    'read file', 'read the file', 'open file', 'show file contents',
+    'list files', 'list directory', 'show files', 'find files',
+    'what files', 'which files', 'delete file', 'remove file'
+  ];
+  if (fileReadKeywords.some(k => goalLower.includes(k))) {
+    return 'action_file';
+  }
+
+  // Web action keywords (require web_search, http_get)
+  const webKeywords = [
+    'search the web', 'search online', 'look up online', 'find online',
+    'web search', 'google', 'fetch from url', 'get from url',
+    'download from', 'http request'
+  ];
+  if (webKeywords.some(k => goalLower.includes(k))) {
+    return 'action_web';
+  }
+
+  // Command/shell keywords (require shell_* skills)
+  const commandKeywords = [
+    'run command', 'execute command', 'shell command', 'terminal command',
+    'run script', 'execute script', 'bash', 'npm', 'git'
+  ];
+  if (commandKeywords.some(k => goalLower.includes(k))) {
+    return 'action_command';
+  }
+
+  // Task management keywords (require task_* skills)
+  const taskActionKeywords = [
+    'create a task', 'add a task', 'make a task', 'new task',
+    'update task', 'complete task', 'finish task', 'mark task',
+    'delete task', 'remove task'
+  ];
+  if (taskActionKeywords.some(k => goalLower.includes(k))) {
+    return 'action_task';
+  }
+
+  // Task query keywords (also require task_* skills to get real data)
+  const taskQueryKeywords = [
+    'list tasks', 'show tasks', 'what tasks', 'my tasks',
+    'pending tasks', 'active tasks', 'task status'
+  ];
+  if (taskQueryKeywords.some(k => goalLower.includes(k))) {
+    return 'action_task';
+  }
+
+  // Memory/search keywords (require search_index)
+  const memoryKeywords = [
+    'search memory', 'search memories', 'find in memory',
+    'remember when', 'recall', 'what do you remember'
+  ];
+  if (memoryKeywords.some(k => goalLower.includes(k))) {
+    return 'action_memory';
+  }
+
+  // Pure conversational patterns (can complete with conversational_response)
+  const conversationalPatterns = [
+    /^(hi|hey|hello|howdy|greetings|yo|sup)\b/i,
+    /how (are|is) (you|it|things|everything)/i,
+    /what('s| is) up/i,
+    /^(thanks|thank you|thx)/i,
+    /^(good morning|good afternoon|good evening|good night)/i,
+    /^(bye|goodbye|see you|later)/i,
+    /(tell me about yourself|who are you|what can you do)/i,
+    /^(explain|describe|what is|what are|why|how does)/i,
+    /^(can you help|could you|would you|please)/i,
+  ];
+  if (conversationalPatterns.some(p => p.test(goalLower))) {
+    return 'query_information';
+  }
+
+  // Questions about concepts (not requiring actions)
+  if (/^(what|why|how|when|where|who|which|explain)\s/i.test(goalLower)) {
+    // But if it mentions files/tasks/etc, it needs actions
+    if (/\b(file|folder|task|directory|document)\b/i.test(goalLower)) {
+      return 'unknown'; // Let heuristics decide
+    }
+    return 'query_information';
+  }
+
+  // Default: unknown - will require at least some evidence
+  return 'unknown';
+}
+
+/**
+ * Get required skill prefixes for a goal intent
+ */
+function getRequiredSkillPrefixes(intent: GoalIntent): string[] {
+  switch (intent) {
+    case 'action_file':
+      return ['fs_'];
+    case 'action_web':
+      return ['web_', 'http_'];
+    case 'action_command':
+      return ['shell_'];
+    case 'action_task':
+      return ['task_'];
+    case 'action_memory':
+      return ['search_'];
+    default:
+      return [];
+  }
+}
+
+/**
+ * Check if any required action skills were called in the scratchpad
+ */
+function hasRequiredActionSkills(steps: ReActStep[], intent: GoalIntent): boolean {
+  const requiredPrefixes = getRequiredSkillPrefixes(intent);
+
+  if (requiredPrefixes.length === 0) {
+    return true; // No specific skills required
+  }
+
+  // Check if any step used a skill matching required prefixes
+  return steps.some(step =>
+    requiredPrefixes.some(prefix => step.action.startsWith(prefix))
+  );
+}
+
+/**
+ * Check if ANY action skill was called (not just conversational_response)
+ */
+function hasAnyActionSkill(steps: ReActStep[]): boolean {
+  const nonActionSkills = ['conversational_response', 'think', 'plan'];
+  return steps.some(step => !nonActionSkills.includes(step.action));
+}
+
+// ============================================================================
 // Configuration
 // ============================================================================
 
@@ -485,7 +654,19 @@ Observation: ${s.observation}
   // Build the planning prompt
   const systemPrompt = `You are a unified reasoning agent that handles ALL user requests - both actions and conversations.
 
-IMPORTANT RULES:
+CRITICAL ACTION RULES (MUST FOLLOW):
+1. If the goal asks you to CREATE/WRITE/SAVE a FILE → you MUST use fs_write skill
+2. If the goal asks you to READ/OPEN a FILE → you MUST use fs_read skill
+3. If the goal asks you to LIST/FIND FILES → you MUST use fs_list skill
+4. If the goal asks about TASKS → you MUST use task_list/task_create skills
+5. If the goal asks to SEARCH → you MUST use web_search or search_index skills
+6. NEVER use conversational_response to DESCRIBE what you would do - ACTUALLY DO IT
+7. conversational_response is ONLY for:
+   - Pure conversation (greetings, questions about concepts)
+   - Presenting FINAL RESULTS after completing actions
+8. If you haven't executed the required action yet, you have NOT completed the task
+
+WORKFLOW RULES:
 - Plan ONE step at a time, not multiple steps
 - Base your decision on ACTUAL observations from previous steps
 - NEVER guess or hallucinate data - only use what you've observed
@@ -500,10 +681,12 @@ SKILL SELECTION GUIDE:
 - If you have gathered information and need to ANSWER the user → use conversational_response with context
 
 EXAMPLES:
+- "Write a file called test.txt" → fs_write (MUST use fs_write, NOT conversational_response)
+- "Create a file with hello world" → fs_write (MUST actually create the file)
 - "Look for a user guide in docs folder" → fs_list (need to see what files exist)
 - "What is a user guide?" → conversational_response (just explaining a concept)
 - "How are you doing?" → conversational_response (casual conversation)
-- After fs_list finds files → conversational_response (answer with the file list)
+- After fs_write creates file → conversational_response (confirm file was created)
 
 Available Skills:
 ${skillsContext}
@@ -863,6 +1046,9 @@ function formatObservation(result: SkillResult, config: ReActConfig): string {
  * OPTIMIZATION: Use deterministic rules to skip LLM call when completion
  * is obvious (e.g., after conversational_response or first fs action).
  *
+ * CRITICAL FIX: Validates that action skills were actually called for
+ * action-oriented goals. Prevents false completion via conversational_response.
+ *
  * @param context - Current ReAct context
  * @returns true if task is complete, false otherwise
  */
@@ -884,26 +1070,13 @@ async function checkCompletion(context: ReActContext): Promise<boolean> {
 
   const lastStep = context.steps[context.steps.length - 1];
 
+  // Classify goal intent for validation
+  const goalIntent = classifyGoalIntent(context.goal);
+
   // OPTIMIZATION: Fast-path for deterministic completion rules
   // This saves 50-100ms per obvious case
 
-  // Rule 1: conversational_response skill is always terminal (produces final answer)
-  if (lastStep.action === 'conversational_response' && !lastStep.observation.startsWith('Error:')) {
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'react_completion_fastpath',
-      details: {
-        rule: 'conversational_response_terminal',
-        complete: true,
-        savedLatency: '50-100ms',
-      },
-      actor: 'operator-react',
-    });
-    return true;
-  }
-
-  // Rule 2: Errors require adaptation, definitely not complete
+  // Rule 0 (NEW): Errors require adaptation, definitely not complete
   if (lastStep.observation.startsWith('Error:')) {
     audit({
       level: 'info',
@@ -919,7 +1092,76 @@ async function checkCompletion(context: ReActContext): Promise<boolean> {
     return false;
   }
 
-  // Rule 3: First file system action is never complete (need to respond to user)
+  // Rule 1 (UPDATED): conversational_response is terminal ONLY if:
+  // - Goal is purely conversational (query_information, creative_writing), OR
+  // - Required action skills have already been called
+  if (lastStep.action === 'conversational_response' && !lastStep.observation.startsWith('Error:')) {
+    // Check if this goal requires action skills
+    const requiredPrefixes = getRequiredSkillPrefixes(goalIntent);
+
+    if (requiredPrefixes.length > 0) {
+      // Goal requires specific action skills - verify they were called
+      const hasRequired = hasRequiredActionSkills(context.steps, goalIntent);
+
+      if (!hasRequired) {
+        // FALSE COMPLETION DETECTED: LLM tried to complete without action
+        audit({
+          level: 'warn',
+          category: 'action',
+          event: 'react_false_completion_blocked',
+          details: {
+            rule: 'action_required_not_met',
+            goalIntent,
+            requiredPrefixes,
+            actionsUsed: context.steps.map(s => s.action),
+            goal: context.goal,
+          },
+          actor: 'operator-react',
+        });
+
+        // NOT complete - force continuation
+        return false;
+      }
+    } else if (goalIntent === 'unknown') {
+      // Unknown intent - require at least SOME action skill was called
+      const hasAnyAction = hasAnyActionSkill(context.steps);
+
+      if (!hasAnyAction) {
+        audit({
+          level: 'warn',
+          category: 'action',
+          event: 'react_false_completion_blocked',
+          details: {
+            rule: 'unknown_intent_no_action',
+            goalIntent,
+            actionsUsed: context.steps.map(s => s.action),
+            goal: context.goal,
+          },
+          actor: 'operator-react',
+        });
+
+        // NOT complete - force continuation
+        return false;
+      }
+    }
+
+    // All validation passed - conversational_response is terminal
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'react_completion_fastpath',
+      details: {
+        rule: 'conversational_response_terminal',
+        goalIntent,
+        complete: true,
+        savedLatency: '50-100ms',
+      },
+      actor: 'operator-react',
+    });
+    return true;
+  }
+
+  // Rule 2: First file system action is never complete (need to respond to user)
   if (context.steps.length === 1 && lastStep.action.startsWith('fs_')) {
     audit({
       level: 'info',
@@ -935,7 +1177,7 @@ async function checkCompletion(context: ReActContext): Promise<boolean> {
     return false;
   }
 
-  // Rule 4: First task operation is never complete (need to respond to user)
+  // Rule 3: First task operation is never complete (need to respond to user)
   if (context.steps.length === 1 && lastStep.action.startsWith('task_')) {
     audit({
       level: 'info',
@@ -951,7 +1193,7 @@ async function checkCompletion(context: ReActContext): Promise<boolean> {
     return false;
   }
 
-  // Rule 5: First web search is never complete (need to respond to user)
+  // Rule 4: First web search is never complete (need to respond to user)
   if (context.steps.length === 1 && lastStep.action === 'web_search') {
     audit({
       level: 'info',
@@ -976,6 +1218,7 @@ async function checkCompletion(context: ReActContext): Promise<boolean> {
       reason: 'ambiguous_case',
       lastAction: lastStep.action,
       stepCount: context.steps.length,
+      goalIntent,
     },
     actor: 'operator-react',
   });
@@ -1276,6 +1519,17 @@ async function planNextStepV2(
 
 ${toolCatalog}
 ${contextNarrative}
+## CRITICAL ACTION RULES (MUST FOLLOW)
+
+1. If goal asks to CREATE/WRITE/SAVE a FILE → you MUST use fs_write skill
+2. If goal asks to READ/OPEN a FILE → you MUST use fs_read skill
+3. If goal asks to LIST/FIND FILES → you MUST use fs_list skill
+4. If goal asks about TASKS → you MUST use task_list/task_create skills
+5. If goal asks to SEARCH → you MUST use web_search or search_index skills
+6. NEVER use conversational_response to DESCRIBE what you would do - ACTUALLY DO IT
+7. conversational_response is ONLY for presenting FINAL RESULTS after actions complete
+8. If you haven't executed the required action, you have NOT completed the task
+
 ## Reasoning Process
 
 For each step, provide your reasoning in this JSON format:
@@ -1286,12 +1540,12 @@ For each step, provide your reasoning in this JSON format:
   "responseStyle": "default"  // Use "strict" for data-only responses, "default" for conversation
 }
 
-## Critical Rules
+## Workflow Rules
 
 1. **ONLY use data from Observations** - Never invent, assume, or hallucinate information
 2. **One action at a time** - Execute one tool, observe result, then plan next step
 3. **Cite your sources** - Reference specific observation numbers when making claims
-4. **Detect completion** - Set "respond": true when you have enough information to answer
+4. **Detect completion** - Set "respond": true ONLY when you have executed required actions AND have results
 5. **Handle errors gracefully** - If a tool fails, try alternatives or ask for clarification${contextNarrative ? '\n6. **Leverage context** - Use relevant memories, function guides, and tool history when applicable' : ''}
 
 ## Current Scratchpad
@@ -1395,7 +1649,20 @@ ${invalidResponse}`
     userId: userContext?.userId
   });
 
-  const planning = JSON.parse(extractJsonBlock(response.content)) as PlanningResponse;
+  // Safely parse the JSON response
+  let planning: PlanningResponse;
+  try {
+    const jsonContent = extractJsonBlock(response.content);
+    planning = JSON.parse(jsonContent) as PlanningResponse;
+  } catch (parseError) {
+    console.error(`[operator] Retry parsing failed: ${(parseError as Error).message}`);
+    console.error(`[operator] Raw response: ${response.content?.substring(0, 500)}...`);
+    // Return a minimal valid response that will allow the loop to continue
+    return {
+      thought: `JSON parsing failed during retry. Error: ${(parseError as Error).message}. Original response was malformed.`,
+      respond: false,
+    };
+  }
 
   if (!planning.thought) {
     throw new Error('Retry failed: still missing "thought" field');
@@ -2209,30 +2476,60 @@ async function runReActLoopV2(
 
     state.scratchpad.push(entry);
 
-    // Check for completion
+    // Check for completion with goal intent validation (FALSE COMPLETION FIX)
     if (planning.respond) {
-      const requiresEvidence = !isPureChatRequest(goal);
+      const goalIntent = classifyGoalIntent(goal);
+      const requiredPrefixes = getRequiredSkillPrefixes(goalIntent);
       const toolExecuted = hasExecutedTool(state.scratchpad);
 
-      if (requiresEvidence && !toolExecuted) {
-        const warning = 'Planned response lacks supporting tool execution; gather evidence before replying.';
+      // Check if required action skills were executed
+      let missingRequiredAction = false;
+      let warningMessage = '';
+
+      if (requiredPrefixes.length > 0) {
+        // Goal requires specific skills - check if they were called
+        const actionsUsed = state.scratchpad
+          .filter(e => e.action)
+          .map(e => e.action!.tool);
+
+        const hasRequired = actionsUsed.some(action =>
+          requiredPrefixes.some(prefix => action.startsWith(prefix))
+        );
+
+        if (!hasRequired) {
+          missingRequiredAction = true;
+          warningMessage = `Goal requires ${requiredPrefixes.join('/')} skill but none were executed. You MUST execute the required action before responding.`;
+        }
+      } else if (goalIntent === 'unknown' && !toolExecuted) {
+        // Unknown intent but no tools executed - likely false completion
+        missingRequiredAction = true;
+        warningMessage = 'Planned response lacks supporting tool execution; gather evidence before replying.';
+      }
+
+      if (missingRequiredAction) {
         onProgress?.({
           type: 'warning',
-          content: warning,
+          content: warningMessage,
           step: state.currentStep
         });
 
         audit({
           level: 'warn',
           category: 'action',
-          event: 'react_v2_missing_evidence',
-          details: { goal, iteration: state.currentStep },
+          event: 'react_v2_false_completion_blocked',
+          details: {
+            goal,
+            goalIntent,
+            requiredPrefixes,
+            actionsUsed: state.scratchpad.filter(e => e.action).map(e => e.action!.tool),
+            iteration: state.currentStep
+          },
           actor: 'operator-react-v2',
         });
 
         state.scratchpad.push({
           step: state.currentStep,
-          thought: `${planning.thought}\n\n${warning}`,
+          thought: `${planning.thought}\n\n⚠️ ${warningMessage}`,
           timestamp: new Date().toISOString()
         });
 

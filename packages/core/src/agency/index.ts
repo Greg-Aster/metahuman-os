@@ -43,6 +43,7 @@ export {
 } from './config.js';
 
 export {
+  // Original status-based storage
   saveDesire,
   loadDesire,
   deleteDesire,
@@ -51,6 +52,7 @@ export {
   listPendingDesires,
   listNascentDesires,
   listDesiresByStatus,
+  listDesiresPendingApproval,
   listAllDesires,
   savePlan,
   loadPlan,
@@ -62,6 +64,23 @@ export {
   incrementMetric,
   initializeAgencyStorage,
   saveAgencyConfig,
+  // New folder-based storage
+  getDesireFolderPath,
+  createDesireFolder,
+  saveDesireManifest,
+  loadDesireFromFolder,
+  addScratchpadEntryToFolder,
+  listScratchpadEntries,
+  loadScratchpadEntry,
+  loadScratchpadEntriesPaginated,
+  savePlanToFolder,
+  listPlanVersions,
+  loadPlanFromFolder,
+  saveOutcomeReviewToFolder,
+  saveExecutionToFolder,
+  getDesireFolderSize,
+  listDesireFolders,
+  listDesiresFromFolders,
 } from './storage.js';
 
 // Convenience namespace

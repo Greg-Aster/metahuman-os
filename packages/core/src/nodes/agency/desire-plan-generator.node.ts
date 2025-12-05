@@ -24,12 +24,21 @@ import { callLLM, type RouterMessage } from '../../model-router.js';
 const SYSTEM_PROMPT = `You are the Planning module of MetaHuman OS. Your job is to create concrete, executable plans for desires.
 
 ## Guidelines
-- Only use available skills from the tool catalog
-- Respect the current trust level constraints
-- Follow decision rules strictly
-- Minimize risk where possible
-- Break complex desires into atomic, sequential steps
-- Each step should use exactly one skill
+- Create clear, actionable steps that an intelligent AI assistant (Big Brother/Claude) can execute
+- Steps can be high-level - the operator is intelligent and will figure out specifics
+- Break complex desires into 3-10 sequential steps
+- Each step should have a clear action and expected outcome
+- You MAY reference available skills/tools if applicable, but you can also specify general actions
+- For complex tasks, describe WHAT to do, not HOW specifically
+
+## Execution Context
+Plans will be executed by "Big Brother" - an intelligent Claude-based operator that can:
+- Search the web and gather information
+- Read and write files
+- Execute code and shell commands
+- Create and manage tasks
+- Communicate with the user
+- Think creatively to solve complex problems
 
 ## Risk Assessment
 - none: Read-only, information gathering
@@ -37,6 +46,8 @@ const SYSTEM_PROMPT = `You are the Planning module of MetaHuman OS. Your job is 
 - medium: External communications, data modifications
 - high: Irreversible actions, external system interactions
 - critical: Financial, security, or privacy implications
+
+IMPORTANT: Always generate at least 1 step. Never return empty steps. If the desire seems impossible, create steps to research how to accomplish it or gather the necessary resources.
 
 Respond with valid JSON matching the plan schema.`;
 
@@ -113,46 +124,48 @@ Consider the critique carefully and make meaningful changes to address the conce
 
 **Title**: ${desire.title}
 **Description**: ${desire.description}
-**Reason**: ${desire.reason}
-**Source**: ${desire.source}
-**Risk Level**: ${desire.risk}
+**Reason**: ${desire.reason || 'Not specified'}
+**Source**: ${desire.source || 'user'}
+**Risk Level**: ${desire.risk || 'medium'}
 ${revisionContext}
-## Available Skills
-${toolCatalog || 'No skill catalog available - use general steps'}
+## Available Tools (Optional Reference)
+${toolCatalog ? 'These tools are available but you can also use general actions:\n' + toolCatalog : 'Use general high-level actions - Big Brother will determine specific tools.'}
 
 ## Decision Rules
-${decisionRules || 'No specific rules'}
+${decisionRules || 'No specific rules - use good judgment'}
 
 ## Relevant Context
 ${relevantMemories || 'No additional context'}
 
 ## Task
 
-Create an execution plan with:
-1. Clear, ordered steps (1-10 steps max)
-2. Specific skill to use for each step (from the catalog)
-3. Required inputs for each skill
-4. Expected outcome per step
-5. Risk assessment per step
-6. A single "operatorGoal" string summarizing what to accomplish
+Create an execution plan with 3-10 steps. Each step should be clear enough for an intelligent AI (Claude/Big Brother) to execute.
+
+Requirements:
+1. Clear, ordered steps describing WHAT to do
+2. Expected outcome for each step
+3. Risk assessment per step (none/low/medium/high/critical)
+4. A single "operatorGoal" summarizing the overall objective
 ${isRevision ? '\nIMPORTANT: This is a revision. Address the user critique and improve upon the previous plan.' : ''}
+
+CRITICAL: You MUST generate at least 1 step. Do not return empty steps array.
 
 Output as JSON:
 {
   "steps": [
     {
       "order": 1,
-      "action": "Description of what this step does",
-      "skill": "skill_name",
+      "action": "Clear description of what this step accomplishes",
+      "skill": "optional_skill_name_or_general",
       "inputs": { "key": "value" },
-      "expectedOutcome": "What should happen",
+      "expectedOutcome": "What should happen when this step completes",
       "risk": "low",
       "requiresApproval": false
     }
   ],
   "estimatedRisk": "low",
-  "operatorGoal": "Single sentence goal for the operator",
-  "requiredSkills": ["skill1", "skill2"]
+  "operatorGoal": "Single sentence describing what the operator should accomplish",
+  "requiredSkills": []
 }`;
 
   const messages: RouterMessage[] = [
@@ -180,8 +193,12 @@ Output as JSON:
 
     // Parse JSON response
     const content = response.content.trim();
+    console.log('[plan-generator] Raw LLM response length:', content.length);
+    console.log('[plan-generator] Raw LLM response (first 1000 chars):', content.substring(0, 1000));
+
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
+      console.error('[plan-generator] No JSON found in response');
       return {
         plan: null,
         success: false,
@@ -189,7 +206,33 @@ Output as JSON:
       };
     }
 
-    const parsed = JSON.parse(jsonMatch[0]) as PlanGenerationOutput;
+    let parsed: PlanGenerationOutput;
+    try {
+      parsed = JSON.parse(jsonMatch[0]) as PlanGenerationOutput;
+      console.log('[plan-generator] Parsed steps count:', parsed.steps?.length || 0);
+      console.log('[plan-generator] Parsed operatorGoal:', parsed.operatorGoal);
+      if (parsed.steps && parsed.steps.length > 0) {
+        console.log('[plan-generator] First step:', JSON.stringify(parsed.steps[0]).substring(0, 200));
+      }
+    } catch (parseError) {
+      console.error('[plan-generator] JSON parse error:', parseError);
+      console.error('[plan-generator] Failed JSON:', jsonMatch[0].substring(0, 500));
+      return {
+        plan: null,
+        success: false,
+        error: `JSON parse error: ${(parseError as Error).message}`,
+      };
+    }
+
+    // Validate parsed output has steps
+    if (!parsed.steps || !Array.isArray(parsed.steps) || parsed.steps.length === 0) {
+      console.error('[plan-generator] Parsed output has no steps:', JSON.stringify(parsed));
+      return {
+        plan: null,
+        success: false,
+        error: 'LLM response contained no plan steps',
+      };
+    }
 
     // Convert to DesirePlan
     const plan: DesirePlan = {

@@ -12,11 +12,11 @@
 import path from 'node:path';
 import fs from 'fs-extra';
 import { ensureProfileIntegrity } from '../packages/core/src/profile.js';
-import { paths } from '../packages/core/src/paths.js';
+import { systemPaths } from '../packages/core/src/paths.js';
 import { audit } from '../packages/core/src/audit.js';
 
 async function main() {
-  const profilesDir = path.join(paths.root, 'profiles');
+  const profilesDir = path.join(systemPaths.root, 'profiles');
   if (!(await fs.pathExists(profilesDir))) {
     console.log('No profiles directory found. Nothing to repair.');
     return;

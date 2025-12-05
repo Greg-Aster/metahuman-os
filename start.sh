@@ -16,6 +16,16 @@ if [ -f "$START_CONFIG_FILE" ]; then
     source "$START_CONFIG_FILE"
 fi
 
+# Load environment variables from .env file (for production server)
+ENV_FILE="$REPO_ROOT/.env"
+if [ -f "$ENV_FILE" ]; then
+    echo "Loading environment from .env..."
+    set -a  # Auto-export all variables
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+fi
+
 # Optional skips (can be provided via env or .start-config)
 SKIP_DEP_INSTALL=${SKIP_DEP_INSTALL:-0}
 SKIP_PYTHON_DEPS=${SKIP_PYTHON_DEPS:-$SKIP_DEP_INSTALL}

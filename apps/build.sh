@@ -3,11 +3,9 @@
 # Unified Build Script for MetaHuman OS
 # For those who don't want to remember which command does what
 #
-# IMPORTANT: Server and Mobile builds share apps/site/dist/
-# - Server build creates SSR output (needed for ./start.sh)
-# - Mobile build creates static output (bundled into APK)
-# When building both, we build Mobile FIRST, then Server LAST
-# so that ./start.sh works immediately after.
+# Server and Mobile builds are independent:
+# - Server build: apps/site/dist/ (SSR for ./start.sh)
+# - Mobile build: apps/mobile/www/ (static for APK)
 #
 
 set -e
@@ -31,8 +29,8 @@ show_menu() {
     echo "What do you want to build?"
     echo ""
     echo -e "  ${GREEN}1)${NC} Server only     - Build for ./start.sh"
-    echo -e "  ${GREEN}2)${NC} Mobile only     - Build APK for Android ${YELLOW}(will break ./start.sh)${NC}"
-    echo -e "  ${GREEN}3)${NC} Both            - Mobile APK + Server ${YELLOW}(recommended)${NC}"
+    echo -e "  ${GREEN}2)${NC} Mobile only     - Build APK for Android"
+    echo -e "  ${GREEN}3)${NC} Both            - Server + Mobile APK"
     echo ""
     echo -e "  ${YELLOW}0)${NC} Exit"
     echo ""
@@ -55,35 +53,20 @@ build_mobile() {
     echo -e "${GREEN}✓ Mobile build complete${NC}"
 }
 
-build_mobile_with_warning() {
-    echo ""
-    echo -e "${YELLOW}⚠ WARNING: Mobile build overwrites apps/site/dist/${NC}"
-    echo -e "${YELLOW}  After this, ./start.sh will NOT work until you rebuild server.${NC}"
-    echo ""
-    read -p "Continue? [y/N]: " confirm
-    if [[ "$confirm" =~ ^[Yy]$ ]]; then
-        build_mobile
-        echo ""
-        echo -e "${YELLOW}⚠ Remember: Run './build.sh server' to restore ./start.sh functionality${NC}"
-    else
-        echo "Cancelled."
-    fi
+build_mobile_standalone() {
+    # Mobile build now outputs to apps/mobile/www, not apps/site/dist
+    # So no warning needed - builds are independent
+    build_mobile
 }
 
 build_both() {
     echo ""
-    echo -e "${BLUE}Building both Mobile and Server...${NC}"
-    echo -e "${YELLOW}  Order: Mobile first → Server last (so ./start.sh works)${NC}"
+    echo -e "${BLUE}Building Server and Mobile...${NC}"
     echo ""
 
-    # Build mobile first (will overwrite dist/)
-    build_mobile
-
-    echo ""
-    echo -e "${BLUE}Mobile APK is ready. Now rebuilding server...${NC}"
-
-    # Rebuild server last (restores SSR output for ./start.sh)
+    # Builds are now independent - order doesn't matter
     build_server
+    build_mobile
 }
 
 # Check for command line argument
@@ -94,7 +77,7 @@ if [ -n "$1" ]; then
             exit 0
             ;;
         mobile|2)
-            build_mobile_with_warning
+            build_mobile_standalone
             exit 0
             ;;
         both|all|3)
@@ -105,8 +88,8 @@ if [ -n "$1" ]; then
             echo "Usage: $0 [server|mobile|both]"
             echo ""
             echo "  server  - Build production server (for ./start.sh)"
-            echo "  mobile  - Build Android APK (warning: overwrites server build)"
-            echo "  both    - Build Mobile APK + Server (recommended)"
+            echo "  mobile  - Build Android APK"
+            echo "  both    - Build Server + Mobile APK"
             exit 1
             ;;
     esac
@@ -123,7 +106,7 @@ while true; do
             break
             ;;
         2)
-            build_mobile_with_warning
+            build_mobile_standalone
             break
             ;;
         3)

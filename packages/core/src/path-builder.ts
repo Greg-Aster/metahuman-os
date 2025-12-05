@@ -80,13 +80,33 @@ function getProfileStorageConfigLazy(username: string): ProfileStorageConfigFull
 }
 
 /**
- * Find metahuman root by looking for pnpm-workspace.yaml
+ * Find metahuman root directory
+ *
+ * Resolution order:
+ * 1. METAHUMAN_ROOT environment variable (for server deployments)
+ * 2. Walk up from current file to find pnpm-workspace.yaml (for local dev)
+ *
+ * Server deployments should set METAHUMAN_ROOT to the network volume path
+ * (e.g., /runpod-volume/metahuman)
  */
 export function findRepoRoot(): string {
-  // Start from the current file's directory and walk up to filesystem root (cross-platform)
+  // Server mode: Use METAHUMAN_ROOT if set
+  const envRoot = process.env.METAHUMAN_ROOT;
+  if (envRoot) {
+    // Validate the path exists
+    if (fs.existsSync(envRoot)) {
+      console.log(`[path-builder] Using METAHUMAN_ROOT: ${envRoot}`);
+      return envRoot;
+    } else {
+      console.warn(`[path-builder] METAHUMAN_ROOT set but path does not exist: ${envRoot}`);
+      // Fall through to local detection
+    }
+  }
+
+  // Local mode: Walk up from current file to find pnpm-workspace.yaml
   let dir = path.dirname(fileURLToPath(import.meta.url));
   const fsRoot = path.parse(dir).root;
-  // Walk up until reaching the filesystem root
+
   while (true) {
     if (fs.existsSync(path.join(dir, 'pnpm-workspace.yaml'))) {
       return dir;
@@ -95,7 +115,11 @@ export function findRepoRoot(): string {
     if (parent === dir || dir === fsRoot) break;
     dir = parent;
   }
-  throw new Error('Could not find repository root. Make sure "pnpm-workspace.yaml" is present.');
+
+  throw new Error(
+    'Could not find repository root. ' +
+    'Set METAHUMAN_ROOT environment variable or ensure pnpm-workspace.yaml exists.'
+  );
 }
 
 export const ROOT = findRepoRoot();

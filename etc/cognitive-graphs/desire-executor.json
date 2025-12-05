@@ -1,0 +1,128 @@
+{
+  "version": "2.0",
+  "name": "Desire Executor",
+  "description": "Executes approved desire plans through Big Brother operator. Updates status and writes to scratchpad.",
+  "cognitiveMode": "agent",
+  "last_modified": "2025-12-04",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "agency/desire_loader",
+      "pos": [100, 150],
+      "size": [200, 80],
+      "properties": {
+        "statusFilter": ["approved"]
+      },
+      "title": "Load Approved Desire"
+    },
+    {
+      "id": 2,
+      "type": "context/user_context_loader",
+      "pos": [100, 280],
+      "size": [200, 80],
+      "properties": {},
+      "title": "Load User Context"
+    },
+    {
+      "id": 3,
+      "type": "agency/desire_executor",
+      "pos": [400, 180],
+      "size": [240, 120],
+      "properties": {
+        "operatorEndpoint": "/api/operator",
+        "defaultMode": "yolo"
+      },
+      "title": "Execute via Big Brother"
+    },
+    {
+      "id": 4,
+      "type": "agency/desire_updater",
+      "pos": [700, 180],
+      "size": [200, 100],
+      "properties": {
+        "newStatus": "executed",
+        "updateExecution": true,
+        "updateMetrics": true
+      },
+      "title": "Update Desire State"
+    },
+    {
+      "id": 5,
+      "type": "cognitive/scratchpad_writer",
+      "pos": [700, 320],
+      "size": [200, 80],
+      "properties": {
+        "eventType": "execution_completed",
+        "includeStepResults": true
+      },
+      "title": "Record Execution to Scratchpad"
+    },
+    {
+      "id": 6,
+      "type": "cognitive/audit_logger",
+      "pos": [950, 180],
+      "size": [180, 60],
+      "properties": {
+        "category": "agency",
+        "event": "desire_executed"
+      },
+      "title": "Audit Log"
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Executor"
+    },
+    {
+      "id": 2,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "User Context → Executor"
+    },
+    {
+      "id": 3,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Updater"
+    },
+    {
+      "id": 4,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Execution Result → Updater"
+    },
+    {
+      "id": 5,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Execution → Scratchpad"
+    },
+    {
+      "id": 6,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Updated Desire → Audit"
+    }
+  ]
+}

@@ -37,10 +37,22 @@ interface SafetyReviewInput {
 }
 
 const execute: NodeExecutor = async (inputs, context, _properties) => {
-  const desire = inputs.desire as Desire | undefined;
-  const plan = inputs.plan as DesirePlan | undefined;
-  const alignmentReview = inputs.alignmentReview as AlignmentReviewInput | undefined;
-  const safetyReview = inputs.safetyReview as SafetyReviewInput | undefined;
+  // Inputs come via slot positions from graph links:
+  // slot 0: {desire, found} from desire_loader
+  // slot 2: alignment review output from desire_alignment_reviewer
+  // slot 3: safety review output from desire_safety_reviewer
+  const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | undefined;
+  const slot2 = inputs[2] as AlignmentReviewInput | undefined;
+  const slot3 = inputs[3] as SafetyReviewInput | undefined;
+
+  // Extract desire and plan (plan is embedded in desire)
+  const desire = slot0?.desire || (inputs.desire as Desire | undefined);
+  const plan = desire?.plan || (inputs.plan as DesirePlan | undefined);
+
+  // Get reviews from slots or named inputs
+  const alignmentReview = slot2 || (inputs.alignmentReview as AlignmentReviewInput | undefined);
+  const safetyReview = slot3 || (inputs.safetyReview as SafetyReviewInput | undefined);
+
   const username = context.userId;
 
   if (!desire || !plan || !alignmentReview || !safetyReview) {
@@ -48,7 +60,7 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
       verdict: 'reject',
       review: null,
       autoApprove: false,
-      reasoning: 'Missing required inputs for verdict',
+      reasoning: `Missing required inputs for verdict. Got desire: ${!!desire}, plan: ${!!plan}, alignmentReview: ${!!alignmentReview}, safetyReview: ${!!safetyReview}`,
     };
   }
 
@@ -120,14 +132,21 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
 
   // Check if can auto-approve
   let autoApprove = false;
+  let autoApproveReason = '';
+
   if (verdict === 'approve') {
-    autoApprove = await canAutoApprove(plan.estimatedRisk, desire.strength, username);
+    // Get user's current trust level (from desire or default)
+    const currentTrustLevel = desire.requiredTrustLevel || 'supervised_auto';
+    const result = await canAutoApprove(plan.estimatedRisk, desire.strength, currentTrustLevel, username);
+    autoApprove = result.autoApprove;
+    autoApproveReason = result.reason;
   }
 
   return {
     verdict,
     review,
     autoApprove,
+    autoApproveReason,
     reasoning,
   };
 };
@@ -147,6 +166,7 @@ export const DesireVerdictNode: NodeDefinition = defineNode({
     { name: 'verdict', type: 'string', description: 'approve, reject, or revise' },
     { name: 'review', type: 'object', description: 'Complete DesireReview object' },
     { name: 'autoApprove', type: 'boolean', description: 'Whether to skip approval queue' },
+    { name: 'autoApproveReason', type: 'string', optional: true, description: 'Reason for auto-approve decision' },
     { name: 'reasoning', type: 'string', description: 'Explanation of verdict' },
   ],
   properties: {},

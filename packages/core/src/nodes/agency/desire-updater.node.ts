@@ -17,7 +17,12 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import type { Desire, DesireStatus, DesirePlan, DesireReview } from '../../agency/types.js';
-import { saveDesire, moveDesire, savePlan, saveReview } from '../../agency/storage.js';
+import {
+  saveDesireManifest,
+  savePlanToFolder,
+  saveOutcomeReviewToFolder,
+  addScratchpadEntryToFolder,
+} from '../../agency/storage.js';
 import { audit } from '../../audit.js';
 
 interface RejectionInput {
@@ -27,14 +32,25 @@ interface RejectionInput {
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // Inputs come via slot positions from graph links:
-  // slot 0: {desire, found} from desire_loader
-  // slot 1: {valid, plan, errors, warnings, stepCount} from plan_validator
+  // In planner graph:
+  //   slot 0: {desire, found} from desire_loader
+  //   slot 1: {valid, plan, errors, warnings, stepCount} from plan_validator
+  // In reviewer graph:
+  //   slot 0: {desire, found} from desire_loader
+  //   slot 2: {verdict, review, autoApprove, reasoning} from verdict node
   const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | undefined;
   const slot1 = inputs[1] as { valid?: boolean; plan?: DesirePlan } | undefined;
+  const slot2 = inputs[2] as { review?: DesireReview; verdict?: string } | undefined;
 
-  const desire = slot0?.desire;
-  const plan = slot1?.plan;
-  const review = (inputs.review || inputs[2]) as DesireReview | undefined;
+  // Extract desire from slot 0 OR from context (desire-planner agent passes desire in context)
+  const contextDesire = (context as { desire?: Desire }).desire;
+  const desire = slot0?.desire || contextDesire;
+
+  // Extract plan from slot 1 (planner graph) or from desire itself
+  const plan = slot1?.plan || desire?.plan;
+
+  // Extract review from slot 2 (reviewer graph) or named input
+  const review = slot2?.review || (inputs.review as DesireReview | undefined) || (inputs[2] as DesireReview | undefined);
   const rejection = (inputs.rejection || inputs[3]) as RejectionInput | undefined;
 
   // Status can come from properties (in graph definition) or inputs
@@ -63,6 +79,18 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       if (['completed', 'rejected', 'abandoned', 'failed'].includes(newStatus)) {
         updatedDesire.completedAt = now;
       }
+
+      // Add scratchpad entry for status change
+      await addScratchpadEntryToFolder(updatedDesire.id, {
+        type: 'status_change',
+        timestamp: now,
+        description: `Status changed from ${oldStatus} to ${newStatus}`,
+        actor: 'system',
+        data: {
+          from: oldStatus,
+          to: newStatus,
+        },
+      }, username);
     }
 
     // Attach plan if provided
@@ -89,8 +117,20 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
         updatedDesire.critiqueAt = undefined;
       }
 
-      // Save plan separately
-      await savePlan(plan, username);
+      // Save plan to folder
+      await savePlanToFolder(updatedDesire.id, plan, username);
+      await addScratchpadEntryToFolder(updatedDesire.id, {
+        type: 'plan_generated',
+        timestamp: now,
+        description: `Plan v${plan.version} generated with ${plan.steps?.length || 0} steps`,
+        actor: 'llm',
+        agentName: 'desire-planner',
+        data: {
+          planId: plan.id,
+          version: plan.version,
+          stepCount: plan.steps?.length || 0,
+        },
+      }, username);
     }
 
     // Attach review if provided
@@ -98,8 +138,22 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       updatedDesire.review = review;
       updatedDesire.updatedAt = now;
 
-      // Save review separately
-      await saveReview(review, username);
+      // Save review to folder
+      // For outcome reviews, use the outcome review folder function
+      if ('verdict' in review) {
+        await saveOutcomeReviewToFolder(updatedDesire.id, review as unknown as import('../../agency/types.js').DesireOutcomeReview, username);
+      }
+      await addScratchpadEntryToFolder(updatedDesire.id, {
+        type: 'review_completed',
+        timestamp: now,
+        description: `Review completed with verdict: ${(review as { verdict?: string }).verdict || 'N/A'}`,
+        actor: 'llm',
+        agentName: 'outcome-reviewer',
+        data: {
+          reviewId: review.id,
+          verdict: (review as { verdict?: string }).verdict,
+        },
+      }, username);
     }
 
     // Add rejection to history if provided
@@ -114,14 +168,22 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
         canRetry: rejection.rejectedBy === 'review', // Can retry if just review rejection
       });
       updatedDesire.updatedAt = now;
+
+      // Add scratchpad entry for rejection
+      await addScratchpadEntryToFolder(updatedDesire.id, {
+        type: 'rejected',
+        timestamp: now,
+        description: `Rejected by ${rejection.rejectedBy}: ${rejection.reason}`,
+        actor: rejection.rejectedBy === 'user' ? 'user' : 'system',
+        data: {
+          rejectedBy: rejection.rejectedBy,
+          reason: rejection.reason,
+        },
+      }, username);
     }
 
-    // Move or save based on status change
-    if (newStatus && newStatus !== oldStatus) {
-      await moveDesire(updatedDesire, oldStatus, newStatus, username);
-    } else {
-      await saveDesire(updatedDesire, username);
-    }
+    // Save desire manifest to folder
+    await saveDesireManifest(updatedDesire, username);
 
     // Audit the update
     audit({

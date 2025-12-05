@@ -10,7 +10,8 @@
 export * from './users';
 
 export * from './path-builder';  // Core path functions (no dependencies)
-export * from './paths';  // Context-aware paths proxy
+export * from './paths';  // Path utilities (systemPaths, getProfilePaths, ROOT)
+export * from './deployment';  // Deployment mode configuration (local vs server)
 export * from './identity';
 export * from './memory';
 // Note: memory-validation and memory-cleanup are internal utilities, not exported

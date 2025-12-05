@@ -1,0 +1,130 @@
+{
+  "version": "2.0",
+  "name": "Desire Generator",
+  "description": "Creates desire folder structure and initializes scratchpad when a new desire is detected",
+  "cognitiveMode": "agent",
+  "last_modified": "2025-12-04",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "input/user_input",
+      "pos": [100, 150],
+      "size": [200, 80],
+      "properties": {},
+      "title": "User Input / Trigger"
+    },
+    {
+      "id": 2,
+      "type": "agency/desire_detector",
+      "pos": [350, 150],
+      "size": [220, 100],
+      "properties": {
+        "detectExplicit": true,
+        "detectImplicit": false,
+        "minConfidence": 0.7
+      },
+      "title": "Detect Desire Intent"
+    },
+    {
+      "id": 3,
+      "type": "agency/desire_folder_creator",
+      "pos": [620, 150],
+      "size": [200, 100],
+      "properties": {
+        "createScratchpad": true,
+        "createManifest": true
+      },
+      "title": "Create Desire Folder"
+    },
+    {
+      "id": 4,
+      "type": "cognitive/scratchpad_writer",
+      "pos": [620, 300],
+      "size": [200, 80],
+      "properties": {
+        "eventType": "origin",
+        "includeSource": true,
+        "includeTimestamp": true
+      },
+      "title": "Write Initial Scratchpad"
+    },
+    {
+      "id": 5,
+      "type": "agency/desire_updater",
+      "pos": [880, 150],
+      "size": [200, 80],
+      "properties": {
+        "newStatus": "nascent",
+        "setInitialStrength": true
+      },
+      "title": "Set Initial Status"
+    },
+    {
+      "id": 6,
+      "type": "cognitive/audit_logger",
+      "pos": [880, 280],
+      "size": [180, 60],
+      "properties": {
+        "category": "agency",
+        "event": "desire_created"
+      },
+      "title": "Audit Log"
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 2,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "User Input → Desire Detector"
+    },
+    {
+      "id": 2,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Detected Desire → Folder Creator"
+    },
+    {
+      "id": 3,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Folder Info → Scratchpad Writer"
+    },
+    {
+      "id": 4,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Desire Data → Scratchpad Writer"
+    },
+    {
+      "id": 5,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Status Updater"
+    },
+    {
+      "id": 6,
+      "origin_id": 5,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Updated Desire → Audit"
+    }
+  ]
+}
