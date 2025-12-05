@@ -1422,6 +1422,123 @@ export const nodeSchemas: NodeSchema[] = [
     size: [220, 100],
     description: 'AI-driven memory routing using orchestrator hints',
   }),
+
+  // ============================================================================
+  // AGENCY NODES (Desire System)
+  // ============================================================================
+  defineSchema({
+    id: 'desire_memory_analyzer',
+    name: 'Analyze Memories for Desires',
+    category: 'agency',
+    inputs: [],
+    outputs: [
+      { name: 'memories', type: 'array', description: 'Array of unanalyzed memory objects' },
+      { name: 'count', type: 'number', description: 'Number of memories to analyze' },
+      { name: 'hasMore', type: 'boolean', description: 'Whether more unanalyzed memories exist' },
+    ],
+    properties: { limit: 20, daysBack: 7, markAsAnalyzed: true },
+    propertySchemas: {
+      limit: { type: 'number', default: 20, label: 'Limit', description: 'Maximum memories to load per run' },
+      daysBack: { type: 'number', default: 7, label: 'Days Back', description: 'Only analyze memories from the last N days' },
+      markAsAnalyzed: { type: 'boolean', default: true, label: 'Mark as Analyzed', description: 'Update generator scratchpad with analyzed memory IDs' },
+    },
+    description: 'Loads recent unanalyzed memories for desire detection',
+  }),
+  defineSchema({
+    id: 'desire_detector',
+    name: 'Detect Desire',
+    category: 'agency',
+    inputs: [
+      { name: 'userInput', type: 'any', description: 'User message to analyze' },
+      { name: 'context', type: 'string', optional: true, description: 'Conversation context' },
+    ],
+    outputs: [
+      { name: 'detected', type: 'boolean', description: 'Whether a desire was detected' },
+      { name: 'desire', type: 'object', description: 'Extracted or reinforced desire data' },
+      { name: 'confidence', type: 'number', description: 'Detection confidence (0-1)' },
+      { name: 'reasoning', type: 'string', description: 'LLM reasoning for detection' },
+    ],
+    properties: { minConfidence: 0.7, detectExplicit: true, detectImplicit: false },
+    propertySchemas: {
+      minConfidence: { type: 'slider', default: 0.7, min: 0.1, max: 1.0, step: 0.1, label: 'Minimum Confidence' },
+      detectExplicit: { type: 'boolean', default: true, label: 'Detect Explicit Desires' },
+      detectImplicit: { type: 'boolean', default: false, label: 'Detect Implicit Desires' },
+    },
+    description: 'Uses LLM to identify and extract desires from user input',
+  }),
+  defineSchema({
+    id: 'desire_folder_creator',
+    name: 'Create Desire Folder',
+    category: 'agency',
+    inputs: [
+      { name: 'desire', type: 'object', description: 'Desire data to create folder for' },
+    ],
+    outputs: [
+      { name: 'desire', type: 'object', description: 'Desire with folderPath populated' },
+      { name: 'folderPath', type: 'string', description: 'Path to created folder' },
+      { name: 'success', type: 'boolean', description: 'Whether folder was created' },
+    ],
+    properties: { createScratchpad: true, createManifest: true },
+    propertySchemas: {
+      createScratchpad: { type: 'boolean', default: true, label: 'Create Scratchpad' },
+      createManifest: { type: 'boolean', default: true, label: 'Create Manifest' },
+    },
+    description: 'Creates folder structure and initial scratchpad for a new desire',
+  }),
+  defineSchema({
+    id: 'desire_updater',
+    name: 'Update Desire',
+    category: 'agency',
+    inputs: [
+      { name: 'desire', type: 'object', description: 'Desire to update' },
+      { name: 'newStatus', type: 'string', optional: true, description: 'New status to set' },
+      { name: 'plan', type: 'object', optional: true, description: 'Plan to attach' },
+      { name: 'review', type: 'object', optional: true, description: 'Review to attach' },
+    ],
+    outputs: [
+      { name: 'desire', type: 'object', description: 'Updated desire' },
+      { name: 'success', type: 'boolean', description: 'Whether update succeeded' },
+    ],
+    description: 'Updates a desire status and associated data',
+  }),
+
+  // ============================================================================
+  // CONTROL FLOW NODES
+  // ============================================================================
+  defineSchema({
+    id: 'conditional',
+    name: 'Conditional',
+    category: 'control_flow',
+    inputs: [
+      { name: 'value', type: 'any', description: 'Value to evaluate' },
+    ],
+    outputs: [
+      { name: 'ifTrue', type: 'any', description: 'Output when condition is true' },
+      { name: 'ifFalse', type: 'any', description: 'Output when condition is false' },
+    ],
+    properties: { condition: 'value === true' },
+    propertySchemas: {
+      condition: { type: 'string', default: 'value === true', label: 'Condition', description: 'JavaScript expression to evaluate' },
+    },
+    description: 'Routes data based on a condition',
+  }),
+
+  // ============================================================================
+  // OUTPUT NODES (Additional)
+  // ============================================================================
+  defineSchema({
+    id: 'result_aggregator',
+    name: 'Result Aggregator',
+    category: 'output',
+    inputs: [
+      { name: 'input', type: 'any', description: 'Input to aggregate' },
+    ],
+    outputs: [
+      { name: 'result', type: 'any', description: 'Aggregated result' },
+    ],
+    properties: {},
+    description: 'Aggregates and outputs results from the graph',
+  }),
 ];
 
 // Helper function to get schema by ID

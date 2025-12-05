@@ -4,29 +4,29 @@
 
 import { initializeSkills } from './skills/index.ts';
 import { executeSkill, loadTrustLevel, getAvailableSkills, listSkills } from '../packages/core/src/skills.ts';
-import { paths } from '../packages/core/src/paths.ts';
+import { systemPaths } from '../packages/core/src/paths.ts';
 import path from 'node:path';
 
 async function testSkills() {
   console.log('=== Testing Skills System ===');
-  
+
   // Initialize skills
   console.log('Initializing skills...');
   initializeSkills();
-  
+
   const trustLevel = loadTrustLevel();
   console.log('Trust level:', trustLevel);
-  
+
   // List all skills
   console.log('All skills:', listSkills().map(s => s.id));
-  
+
   // List available skills
   const availableSkills = getAvailableSkills(trustLevel);
   console.log('Available skills:', availableSkills.map(s => s.id));
-  
+
   // Test fs_write skill
   console.log('\n--- Testing fs_write skill ---');
-  const testPath = path.join(paths.root, 'out', 'brain_skills_test.txt');
+  const testPath = path.join(systemPaths.root, 'out', 'brain_skills_test.txt');
   console.log('Writing to:', testPath);
   
   const writeResult = await executeSkill('fs_write', {

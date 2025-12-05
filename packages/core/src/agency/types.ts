@@ -56,15 +56,320 @@ export type DesireStatus =
   | 'awaiting_approval' // In approval queue (high-risk)
   | 'approved'          // Ready for execution
   | 'executing'         // Currently being executed
+  | 'awaiting_review'   // Execution done, waiting for outcome review
   | 'completed'         // Successfully executed
   | 'rejected'          // User rejected or LLM review rejected
   | 'abandoned'         // Decayed below threshold
   | 'failed';           // Execution failed
 
 /**
+ * Current processing stage within the pipeline.
+ * More granular than status - tracks exactly where we are in the workflow.
+ */
+export type DesireStage =
+  | 'nascent'           // Just created, waiting for reinforcement
+  | 'strengthening'     // Building strength through reinforcements
+  | 'planning'          // Generating execution plan
+  | 'plan_review'       // Plan being reviewed for safety/alignment
+  | 'user_approval'     // Waiting for user approval (if required)
+  | 'executing'         // Big Brother is executing the plan
+  | 'outcome_review'    // Reviewing execution outcomes
+  | 'complete'          // Terminal state - done
+  | 'failed'            // Terminal state - failed
+  | 'abandoned';        // Terminal state - decayed/given up
+
+/**
+ * Per-stage iteration tracking.
+ * Tracks how many times we've cycled through each stage.
+ */
+export interface StageIterations {
+  planning: number;
+  planReview: number;
+  userApproval: number;
+  executing: number;
+  outcomeReview: number;
+}
+
+/**
  * Risk levels for desires and plan steps.
  */
 export type DesireRisk = 'none' | 'low' | 'medium' | 'high' | 'critical';
+
+// ============================================================================
+// Desire Metrics - Nature Emerges From Behavior
+// ============================================================================
+
+/**
+ * Metrics that track a desire's behavior over time.
+ * The nature of a desire (recurring, one-time, aspirational) emerges from these
+ * metrics rather than being hardcoded. This mirrors how human desires work -
+ * we don't classify them, we just experience them.
+ *
+ * These metrics can be used by the LLM to understand patterns:
+ * - High completionCount + keeps coming back = recurring need
+ * - Single completion + high successScore = achievable goal
+ * - Never fully satisfied + keeps continuing = aspirational pursuit
+ */
+export interface DesireMetrics {
+  // === Lifecycle Tracking ===
+  /** How many complete cycles through the pipeline (plan → execute → review) */
+  cycleCount: number;
+  /** How many times marked "completed" but desire continued/returned */
+  completionCount: number;
+  /** Current cycle number (resets to 1 when desire fully completes) */
+  currentCycle: number;
+
+  // === Time Tracking ===
+  /** Total time spent in active processing states (ms) */
+  totalActiveTimeMs: number;
+  /** Time spent waiting/idle (ms) */
+  totalIdleTimeMs: number;
+  /** Average time per cycle (ms) */
+  avgCycleTimeMs: number;
+  /** Last activity timestamp */
+  lastActivityAt: string;
+
+  // === Strength Dynamics ===
+  /** Highest strength ever reached */
+  peakStrength: number;
+  /** Lowest strength before abandonment threshold */
+  troughStrength: number;
+  /** How many times strength was reinforced */
+  reinforcementCount: number;
+  /** How many times strength decayed */
+  decayCount: number;
+  /** Net reinforcement (reinforcements - decays) */
+  netReinforcement: number;
+
+  // === Planning Dynamics ===
+  /** Total plan versions created */
+  planVersionCount: number;
+  /** Plans rejected by review/user */
+  planRejectionCount: number;
+  /** Plans revised based on critique */
+  planRevisionCount: number;
+
+  // === Execution Dynamics ===
+  /** Total execution attempts */
+  executionAttemptCount: number;
+  /** Successful executions */
+  executionSuccessCount: number;
+  /** Failed executions */
+  executionFailCount: number;
+  /** Average success score across attempts (0-1) */
+  avgSuccessScore: number;
+
+  // === User Interaction ===
+  /** Direct user modifications/inputs */
+  userInputCount: number;
+  /** User approvals */
+  userApprovalCount: number;
+  /** User rejections */
+  userRejectionCount: number;
+  /** User critiques/revisions requested */
+  userCritiqueCount: number;
+}
+
+/**
+ * Initialize empty metrics for a new desire.
+ */
+export function initializeDesireMetrics(): DesireMetrics {
+  return {
+    cycleCount: 0,
+    completionCount: 0,
+    currentCycle: 1,
+    totalActiveTimeMs: 0,
+    totalIdleTimeMs: 0,
+    avgCycleTimeMs: 0,
+    lastActivityAt: new Date().toISOString(),
+    peakStrength: 0,
+    troughStrength: 1,
+    reinforcementCount: 0,
+    decayCount: 0,
+    netReinforcement: 0,
+    planVersionCount: 0,
+    planRejectionCount: 0,
+    planRevisionCount: 0,
+    executionAttemptCount: 0,
+    executionSuccessCount: 0,
+    executionFailCount: 0,
+    avgSuccessScore: 0,
+    userInputCount: 0,
+    userApprovalCount: 0,
+    userRejectionCount: 0,
+    userCritiqueCount: 0,
+  };
+}
+
+/**
+ * Initialize empty stage iterations for a new desire.
+ */
+export function initializeStageIterations(): StageIterations {
+  return {
+    planning: 0,
+    planReview: 0,
+    userApproval: 0,
+    executing: 0,
+    outcomeReview: 0,
+  };
+}
+
+/**
+ * Map DesireStatus to DesireStage.
+ * Status is the stored state, Stage is the current processing step.
+ */
+export function statusToStage(status: DesireStatus): DesireStage {
+  switch (status) {
+    case 'nascent':
+      return 'nascent';
+    case 'pending':
+      return 'strengthening';
+    case 'evaluating':
+    case 'planning':
+      return 'planning';
+    case 'reviewing':
+      return 'plan_review';
+    case 'awaiting_approval':
+      return 'user_approval';
+    case 'approved':
+    case 'executing':
+      return 'executing';
+    case 'awaiting_review':
+      return 'outcome_review';
+    case 'completed':
+      return 'complete';
+    case 'rejected':
+    case 'failed':
+      return 'failed';
+    case 'abandoned':
+      return 'abandoned';
+    default:
+      return 'nascent';
+  }
+}
+
+// ============================================================================
+// Scratchpad Types - Full Lifecycle Logging
+// ============================================================================
+
+/**
+ * A single entry in the desire's scratchpad log.
+ * Records every significant event in the desire's journey.
+ */
+export interface DesireScratchpadEntry {
+  /** ISO timestamp of the entry */
+  timestamp: string;
+  /** Type of event */
+  type: DesireScratchpadEntryType;
+  /** Human-readable description */
+  description: string;
+  /** Actor who triggered this event */
+  actor: 'system' | 'user' | 'agent' | 'llm';
+  /** Which agent/service if applicable */
+  agentName?: string;
+  /** Additional structured data */
+  data?: Record<string, unknown>;
+}
+
+/**
+ * Types of desire scratchpad entries.
+ */
+export type DesireScratchpadEntryType =
+  | 'origin'              // Desire was created
+  | 'reinforcement'       // Strength increased due to related input
+  | 'decay'               // Strength decreased due to inactivity
+  | 'threshold_crossed'   // Crossed activation threshold
+  | 'status_change'       // Status changed (with from/to)
+  | 'plan_generated'      // A plan was created
+  | 'plan_revised'        // Plan was revised based on feedback
+  | 'user_critique'       // User provided feedback
+  | 'review_started'      // LLM review began
+  | 'review_completed'    // LLM review finished
+  | 'approval_requested'  // Sent to approval queue
+  | 'approved'            // User approved
+  | 'rejected'            // User or system rejected
+  | 'execution_started'   // Began execution
+  | 'execution_step'      // A step was executed
+  | 'execution_completed' // Execution finished
+  | 'execution_failed'    // Execution failed
+  | 'outcome_review'      // Post-execution review
+  | 'retry_scheduled'     // Desire sent back for retry
+  | 'completed'           // Desire marked as complete
+  | 'recurring_reset'     // Recurring desire reset to continue
+  | 'strength_adjusted'   // Strength manually or automatically adjusted
+  | 'user_input'          // User provided direct input
+  | 'note';               // General note/observation
+
+/**
+ * Scratchpad summary - lightweight stats stored in manifest.
+ * Individual entries are stored as separate files in the scratchpad/ folder.
+ *
+ * Folder structure:
+ *   desires/<desire-id>/
+ *     manifest.json           # Desire + this summary
+ *     scratchpad/
+ *       0001-origin.json
+ *       0002-reinforcement.json
+ *       ...
+ *     plans/
+ *       v1.json
+ *       v2.json
+ *     reviews/
+ *       alignment-v1.json
+ *       outcome-001.json
+ *     executions/
+ *       attempt-001.json
+ */
+export interface DesireScratchpadSummary {
+  /** Total number of scratchpad entries (files in scratchpad/) */
+  entryCount: number;
+  /** Last entry sequence number */
+  lastEntryNumber: number;
+  /** Last entry timestamp */
+  lastEntryAt?: string;
+  /** Last entry type */
+  lastEntryType?: DesireScratchpadEntryType;
+}
+
+// ============================================================================
+// Outcome Review Types - Post-Execution Assessment
+// ============================================================================
+
+/**
+ * Outcome of post-execution review.
+ */
+export type OutcomeVerdict =
+  | 'completed'    // Desire fully satisfied, can be archived
+  | 'continue'     // Keep pursuing (recurring/aspirational)
+  | 'retry'        // Try again with new approach
+  | 'escalate'     // Needs human intervention
+  | 'abandon';     // Cannot be achieved, give up
+
+/**
+ * Post-execution review by the outcome reviewer agent.
+ */
+export interface DesireOutcomeReview {
+  /** Unique identifier */
+  id: string;
+  /** The verdict */
+  verdict: OutcomeVerdict;
+  /** Detailed reasoning for the verdict */
+  reasoning: string;
+  /** Success score (0-1) - how well was the desire satisfied? */
+  successScore: number;
+  /** Lessons learned from this attempt */
+  lessonsLearned: string[];
+  /** Suggestions for next attempt (if retry/continue) */
+  nextAttemptSuggestions?: string[];
+  /** New strength value (for continue/retry) */
+  adjustedStrength?: number;
+  /** ISO timestamp of review */
+  reviewedAt: string;
+  /** Whether user should be notified */
+  notifyUser: boolean;
+  /** Message for user (if notifyUser is true) */
+  userMessage?: string;
+}
 
 // ============================================================================
 // Core Desire Interface
@@ -84,6 +389,14 @@ export interface Desire {
   description: string;
   /** Why does the system want this? What need does it fulfill? */
   reason: string;
+
+  // Behavioral metrics - nature emerges from these, not hardcoded types
+  /** Metrics tracking the desire's behavior over time */
+  metrics: DesireMetrics;
+
+  // Folder-based storage
+  /** Path to this desire's folder (relative to desires root) */
+  folderPath?: string;
 
   // Source tracking
   /** Which service/input inspired this desire */
@@ -120,6 +433,10 @@ export interface Desire {
   // Lifecycle
   /** Current status in the lifecycle */
   status: DesireStatus;
+  /** Current processing stage (more granular than status) */
+  currentStage?: DesireStage;
+  /** Per-stage iteration counts */
+  stageIterations?: StageIterations;
   /** ISO timestamp when created */
   createdAt: string;
   /** ISO timestamp of last update */
@@ -146,6 +463,14 @@ export interface Desire {
   // Review (populated after review phase)
   /** Review decision for the plan */
   review?: DesireReview;
+
+  // Outcome Review (populated after execution review)
+  /** Post-execution outcome review - determines next steps */
+  outcomeReview?: DesireOutcomeReview;
+
+  // Scratchpad summary (full log stored as individual files in folder)
+  /** Summary of scratchpad - entries are in <folderPath>/scratchpad/ */
+  scratchpad?: DesireScratchpadSummary;
 
   // Execution (populated during/after execution)
   /** Execution state and results */
@@ -241,21 +566,38 @@ export interface DesireReview {
 // ============================================================================
 
 /**
- * Execution state for a desire.
+ * Result of executing a single plan step.
  */
+export interface StepResult {
+  /** Step order that was executed */
+  stepOrder: number;
+  /** Whether this step succeeded */
+  success: boolean;
+  /** Result data from the step */
+  result?: unknown;
+  /** Error message if step failed */
+  error?: string;
+  /** ISO timestamp when step completed */
+  completedAt: string;
+}
+
 export interface DesireExecution {
   /** ISO timestamp when execution started */
   startedAt: string;
   /** ISO timestamp when execution completed */
   completedAt?: string;
   /** Current execution status */
-  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'running' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
   /** Operator session ID for tracking */
   operatorSessionId?: string;
+  /** Current step being executed (1-based) */
+  currentStep?: number;
   /** Number of plan steps completed */
-  stepsCompleted: number;
+  stepsCompleted?: number;
   /** Total number of plan steps */
-  stepsTotal: number;
+  stepsTotal?: number;
+  /** Results for each executed step */
+  stepResults?: StepResult[];
   /** Execution result (if completed) */
   result?: unknown;
   /** Error message (if failed) */
@@ -354,13 +696,22 @@ export interface AgencyLimitsConfig {
 /**
  * Risk policy configuration.
  */
+/**
+ * Review bypass setting for desire approval.
+ */
+export type ReviewBypassSetting = 'never' | 'trust_based' | 'always';
+
 export interface AgencyRiskPolicyConfig {
-  /** Risk levels that can be auto-approved */
+  /** Review bypass behavior: 'never' | 'trust_based' | 'always' */
+  reviewBypass: ReviewBypassSetting;
+  /** Risk levels that can be auto-approved (when reviewBypass is 'trust_based') */
   autoApproveRisk: DesireRisk[];
-  /** Risk levels that require approval */
+  /** Risk levels that require approval (when reviewBypass is 'trust_based') */
   requireApprovalRisk: DesireRisk[];
   /** Risk levels that are never executed */
   blockRisk: DesireRisk[];
+  /** Minimum trust level for auto-approval */
+  autoApproveTrustLevel: TrustLevel;
 }
 
 /**
@@ -669,4 +1020,68 @@ export function applyReinforcement(
   reinforcementBoost: number
 ): number {
   return Math.min(1.0, currentStrength + reinforcementBoost);
+}
+
+/**
+ * Create a new scratchpad entry.
+ */
+export function createScratchpadEntry(
+  type: DesireScratchpadEntryType,
+  description: string,
+  actor: DesireScratchpadEntry['actor'],
+  agentName?: string,
+  data?: Record<string, unknown>
+): DesireScratchpadEntry {
+  return {
+    timestamp: new Date().toISOString(),
+    type,
+    description,
+    actor,
+    agentName,
+    data,
+  };
+}
+
+/**
+ * Initialize a new empty scratchpad summary.
+ */
+export function initializeScratchpadSummary(): DesireScratchpadSummary {
+  return {
+    entryCount: 0,
+    lastEntryNumber: 0,
+  };
+}
+
+/**
+ * Update scratchpad summary after adding an entry.
+ * The actual entry file is written separately by storage functions.
+ */
+export function updateScratchpadSummary(
+  summary: DesireScratchpadSummary | undefined,
+  entry: DesireScratchpadEntry
+): DesireScratchpadSummary {
+  const s = summary || initializeScratchpadSummary();
+  return {
+    entryCount: s.entryCount + 1,
+    lastEntryNumber: s.lastEntryNumber + 1,
+    lastEntryAt: entry.timestamp,
+    lastEntryType: entry.type,
+  };
+}
+
+/**
+ * Generate scratchpad entry filename.
+ * Format: NNNN-type.json (e.g., 0001-origin.json)
+ */
+export function getScratchpadEntryFilename(entryNumber: number, type: DesireScratchpadEntryType): string {
+  const paddedNum = String(entryNumber).padStart(4, '0');
+  return `${paddedNum}-${type}.json`;
+}
+
+/**
+ * Generate a unique outcome review ID.
+ */
+export function generateOutcomeReviewId(desireId: string): string {
+  const timestamp = Date.now();
+  return `outcome-review-${desireId}-${timestamp}`;
 }

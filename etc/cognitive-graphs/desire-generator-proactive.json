@@ -1,0 +1,153 @@
+{
+  "version": "2.0",
+  "name": "Proactive Desire Generator",
+  "description": "Analyzes recent user memories to detect implicit desires. Runs periodically to find patterns and goals the user hasn't explicitly stated.",
+  "cognitiveMode": "agent",
+  "last_modified": "2025-12-04",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "agency/desire_memory_analyzer",
+      "pos": [100, 150],
+      "size": [220, 100],
+      "properties": {
+        "limit": 20,
+        "daysBack": 7,
+        "markAsAnalyzed": true
+      },
+      "title": "Load Unanalyzed Memories"
+    },
+    {
+      "id": 2,
+      "type": "agency/desire_detector",
+      "pos": [380, 150],
+      "size": [220, 100],
+      "properties": {
+        "detectExplicit": true,
+        "detectImplicit": true,
+        "minConfidence": 0.75
+      },
+      "title": "Detect Desires from Memories"
+    },
+    {
+      "id": 3,
+      "type": "control/conditional",
+      "pos": [650, 150],
+      "size": [160, 80],
+      "properties": {
+        "condition": "detected === true"
+      },
+      "title": "Desire Detected?"
+    },
+    {
+      "id": 4,
+      "type": "agency/desire_folder_creator",
+      "pos": [860, 100],
+      "size": [200, 100],
+      "properties": {
+        "createScratchpad": true,
+        "createManifest": true
+      },
+      "title": "Create Desire Folder"
+    },
+    {
+      "id": 5,
+      "type": "agency/desire_updater",
+      "pos": [1100, 100],
+      "size": [200, 80],
+      "properties": {
+        "newStatus": "nascent"
+      },
+      "title": "Set Initial Status"
+    },
+    {
+      "id": 6,
+      "type": "cognitive/audit_logger",
+      "pos": [1100, 220],
+      "size": [180, 60],
+      "properties": {
+        "category": "agency",
+        "event": "proactive_desire_created"
+      },
+      "title": "Audit Log"
+    },
+    {
+      "id": 7,
+      "type": "output/result_aggregator",
+      "pos": [860, 250],
+      "size": [180, 60],
+      "properties": {},
+      "title": "Skip (No Desire)"
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 2,
+      "target_slot": 0,
+      "type": "array",
+      "comment": "Memories → Desire Detector"
+    },
+    {
+      "id": 2,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 0,
+      "type": "boolean",
+      "comment": "Detection Result → Conditional"
+    },
+    {
+      "id": 3,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "If Detected → Create Folder"
+    },
+    {
+      "id": 4,
+      "origin_id": 2,
+      "origin_slot": 1,
+      "target_id": 4,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire Data → Folder Creator"
+    },
+    {
+      "id": 5,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Status Updater"
+    },
+    {
+      "id": 6,
+      "origin_id": 5,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Updated Desire → Audit"
+    },
+    {
+      "id": 7,
+      "origin_id": 3,
+      "origin_slot": 1,
+      "target_id": 7,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "If Not Detected → Skip"
+    }
+  ],
+  "metadata": {
+    "trigger": "scheduled",
+    "interval": "1h",
+    "description": "Runs hourly to scan recent memories for implicit desires"
+  }
+}

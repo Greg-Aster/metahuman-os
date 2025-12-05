@@ -88,6 +88,18 @@ const getHandler: APIRoute = async ({ cookies }) => {
 
     const registry = readModelRegistry(user.username)
 
+    // Also load SYSTEM models.json for cloud provider models
+    // Cloud models are defined system-wide, not per-user
+    let systemRegistry: any = { models: {} }
+    try {
+      const systemModelsPath = path.join(systemPaths.etc, 'models.json')
+      if (fs.existsSync(systemModelsPath)) {
+        systemRegistry = JSON.parse(fs.readFileSync(systemModelsPath, 'utf-8'))
+      }
+    } catch (err) {
+      console.error('[model-registry] Failed to load system models.json:', err)
+    }
+
     // Fetch all available models from Ollama
     const ollama = new OllamaClient()
     let ollamaModels: Array<{ name: string; size?: number; modified_at?: string }> = []
@@ -102,12 +114,18 @@ const getHandler: APIRoute = async ({ cookies }) => {
       // Continue with registry-only models if Ollama is unavailable
     }
 
-    // Build available models list from registry + Ollama
-    // IMPORTANT: Only include registry models that actually exist in Ollama
+    // Build available models list from registry + Ollama + System cloud models
     const ollamaModelNames = new Set(ollamaModels.map(m => m.name))
+    const cloudProviders = ['runpod_serverless', 'huggingface', 'openai']
+
+    // Process user registry models (local providers must exist in Ollama)
     const registryModels = Object.entries(registry.models || {})
       .filter(([_id, config]: [string, any]) => {
-        // Only include if the model exists in Ollama
+        // Cloud providers from user registry
+        if (cloudProviders.includes(config.provider)) {
+          return true
+        }
+        // Local providers must exist in Ollama
         return ollamaModelNames.has(config.model)
       })
       .map(([id, config]: [string, any]) => ({
@@ -121,6 +139,29 @@ const getHandler: APIRoute = async ({ cookies }) => {
         metadata: config.metadata || {},
         options: config.options || {},
         source: 'registry' as const
+      }))
+
+    // Add cloud models from SYSTEM registry that aren't in user registry
+    const userModelIds = new Set(registryModels.map(m => m.id))
+    const systemCloudModels = Object.entries(systemRegistry.models || {})
+      .filter(([id, config]: [string, any]) => {
+        // Only cloud providers from system config
+        if (!cloudProviders.includes(config.provider)) return false
+        // Skip if already in user registry
+        if (userModelIds.has(id)) return false
+        return true
+      })
+      .map(([id, config]: [string, any]) => ({
+        id,
+        provider: config.provider,
+        model: config.model,
+        roles: Array.from(new Set(config.roles || [])),
+        description: config.description || '',
+        adapters: config.adapters || [],
+        baseModel: config.baseModel || null,
+        metadata: config.metadata || {},
+        options: config.options || {},
+        source: 'system' as const
       }))
 
     // Add Ollama models that aren't in the registry
@@ -140,7 +181,7 @@ const getHandler: APIRoute = async ({ cookies }) => {
         source: 'ollama' as const
       }))
 
-    const availableModels = [...registryModels, ...ollamaOnlyModels]
+    const availableModels = [...registryModels, ...systemCloudModels, ...ollamaOnlyModels]
 
     // Extract current role assignments
     const roleAssignments = registry.defaults || {}
@@ -208,19 +249,47 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
 
     registry.models = registry.models || {}
 
-    // Auto-register Ollama models that aren't yet in the registry
+    // Auto-register models that aren't yet in the user's registry
     if (!registry.models[modelId]) {
-      const isOllamaModel = modelId.startsWith('ollama.')
-      const inferredName = isOllamaModel ? modelId.replace(/^ollama\./, '') : modelId
+      // First, check if this model exists in the SYSTEM registry (for cloud models)
+      let systemModelConfig: any = null
+      try {
+        const systemModelsPath = path.join(systemPaths.etc, 'models.json')
+        if (fs.existsSync(systemModelsPath)) {
+          const systemRegistry = JSON.parse(fs.readFileSync(systemModelsPath, 'utf-8'))
+          if (systemRegistry.models && systemRegistry.models[modelId]) {
+            systemModelConfig = systemRegistry.models[modelId]
+          }
+        }
+      } catch (err) {
+        console.error('[model-registry] Failed to check system registry:', err)
+      }
 
-      registry.models[modelId] = {
-        provider: 'ollama',
-        model: inferredName,
-        roles: [role],
-        adapters: [],
-        description: `Imported from Ollama tag ${inferredName}`,
-        options: {},
-        metadata: { source: 'ollama-discovery' }
+      if (systemModelConfig) {
+        // Copy from system registry (preserves cloud provider)
+        registry.models[modelId] = {
+          provider: systemModelConfig.provider,
+          model: systemModelConfig.model,
+          roles: [role],
+          adapters: systemModelConfig.adapters || [],
+          description: systemModelConfig.description || `Imported from system registry`,
+          options: systemModelConfig.options || {},
+          metadata: { ...systemModelConfig.metadata, source: 'system-registry' }
+        }
+      } else {
+        // Fallback: assume Ollama model
+        const isOllamaModel = modelId.startsWith('ollama.')
+        const inferredName = isOllamaModel ? modelId.replace(/^ollama\./, '') : modelId
+
+        registry.models[modelId] = {
+          provider: 'ollama',
+          model: inferredName,
+          roles: [role],
+          adapters: [],
+          description: `Imported from Ollama tag ${inferredName}`,
+          options: {},
+          metadata: { source: 'ollama-discovery' }
+        }
       }
     }
 

@@ -35,6 +35,7 @@ import type { Desire } from '@metahuman/core';
 import { loadConfig, isAgencyEnabled } from '@metahuman/core';
 import { listDesiresByStatus } from '@metahuman/core';
 import * as ollama from '@metahuman/core/ollama';
+import { initializeSkills } from '../skills/index.js';
 
 const LOCK_NAME = 'desire-planner';
 const LOG_PREFIX = '[AGENCY:planner]';
@@ -384,6 +385,9 @@ async function main(): Promise<void> {
       console.warn(`${LOG_PREFIX} Ollama not running; skipping. Start with: ollama serve`);
       return;
     }
+
+    // Initialize skills registry so the tool catalog is populated
+    initializeSkills();
 
     // Process only logged-in users
     const users = getLoggedInUsers();

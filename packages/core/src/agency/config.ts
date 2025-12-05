@@ -99,9 +99,11 @@ export const DEFAULT_AGENCY_CONFIG: AgencyConfig = {
   },
 
   riskPolicy: {
+    reviewBypass: 'trust_based',
     autoApproveRisk: ['none', 'low'],
     requireApprovalRisk: ['medium', 'high', 'critical'],
     blockRisk: ['critical'],
+    autoApproveTrustLevel: 'bounded_auto',
   },
 
   logging: {
@@ -327,27 +329,85 @@ export async function getEnabledSources(username?: string): Promise<DesireSource
 }
 
 /**
- * Check if a risk level can be auto-approved.
+ * Trust level hierarchy for comparison.
+ */
+const TRUST_LEVEL_ORDER: Record<string, number> = {
+  'observe': 0,
+  'suggest': 1,
+  'supervised_auto': 2,
+  'bounded_auto': 3,
+  'adaptive_auto': 4,
+};
+
+/**
+ * Check if current trust level meets minimum required.
+ */
+function meetsMinTrustLevel(current: string, required: string): boolean {
+  const currentLevel = TRUST_LEVEL_ORDER[current] ?? 0;
+  const requiredLevel = TRUST_LEVEL_ORDER[required] ?? 0;
+  return currentLevel >= requiredLevel;
+}
+
+/**
+ * Check if a desire can be auto-approved based on review bypass settings.
+ *
+ * @param risk - Risk level of the plan
+ * @param strength - Strength of the desire
+ * @param currentTrustLevel - Current user trust level (from identity kernel)
+ * @param username - Optional username for user-specific config
+ * @returns Whether the desire can skip the approval queue
  */
 export async function canAutoApprove(
   risk: string,
   strength: number,
+  currentTrustLevel?: string,
   username?: string
-): Promise<boolean> {
+): Promise<{ autoApprove: boolean; reason: string }> {
   const config = await loadConfig(username);
 
-  // Check mode
-  if (config.mode !== 'autonomous') {
-    return false;
+  // Check review bypass setting
+  if (config.riskPolicy.reviewBypass === 'never') {
+    return { autoApprove: false, reason: 'Review bypass disabled (never)' };
+  }
+
+  if (config.riskPolicy.reviewBypass === 'always') {
+    return { autoApprove: true, reason: 'Review bypass enabled (always)' };
+  }
+
+  // Trust-based logic
+  // Check if risk is in auto-approve list
+  const riskAllowed = config.riskPolicy.autoApproveRisk.includes(
+    risk as typeof config.riskPolicy.autoApproveRisk[number]
+  );
+
+  if (!riskAllowed) {
+    return { autoApprove: false, reason: `Risk level "${risk}" requires manual approval` };
   }
 
   // Check strength threshold
   if (strength < config.thresholds.autoApprove) {
-    return false;
+    return {
+      autoApprove: false,
+      reason: `Strength ${strength.toFixed(2)} below auto-approve threshold ${config.thresholds.autoApprove}`,
+    };
   }
 
-  // Check risk policy
-  return config.riskPolicy.autoApproveRisk.includes(risk as typeof config.riskPolicy.autoApproveRisk[number]);
+  // Check trust level
+  const trustLevel = currentTrustLevel || 'supervised_auto';
+  const requiredTrust = config.riskPolicy.autoApproveTrustLevel;
+
+  if (!meetsMinTrustLevel(trustLevel, requiredTrust)) {
+    return {
+      autoApprove: false,
+      reason: `Trust level "${trustLevel}" below required "${requiredTrust}"`,
+    };
+  }
+
+  // All checks passed
+  return {
+    autoApprove: true,
+    reason: `Auto-approved: risk=${risk}, strength=${strength.toFixed(2)}, trust=${trustLevel}`,
+  };
 }
 
 /**

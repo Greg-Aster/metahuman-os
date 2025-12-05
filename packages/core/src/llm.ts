@@ -242,15 +242,22 @@ export class OpenAIProvider implements LLMProvider {
 
 /**
  * LLM Manager - Selects and manages providers
+ *
+ * In local mode: Uses Ollama (default) and Mock providers
+ * In server mode: Dynamically loads RunPod/HuggingFace providers from @metahuman/server
  */
 export class LLMManager {
   private providers: Map<string, LLMProvider> = new Map();
   private defaultProvider: string = 'ollama';
+  private serverProvidersLoaded: boolean = false;
 
   constructor() {
-    // Register default providers
+    // Register default local providers
     this.registerProvider('ollama', new OllamaProvider());
     this.registerProvider('mock', new MockProvider());
+
+    // Note: Server providers are loaded lazily via loadServerProviders()
+    // This is called automatically when getProvider() is called for a server provider
   }
 
   registerProvider(name: string, provider: LLMProvider): void {
@@ -264,23 +271,124 @@ export class LLMManager {
     this.defaultProvider = name;
   }
 
+  /**
+   * Dynamically load server providers from @metahuman/server package
+   * This is called automatically when a server provider is requested
+   *
+   * @returns true if server providers were loaded, false if already loaded or failed
+   */
+  async loadServerProviders(): Promise<boolean> {
+    if (this.serverProvidersLoaded) {
+      return false;
+    }
+
+    try {
+      // Dynamic import - won't fail build if @metahuman/server not installed
+      const serverModule = await import('@metahuman/server');
+
+      // Load deployment config to get provider settings
+      const { loadDeploymentConfig } = await import('./deployment.js');
+      const config = loadDeploymentConfig();
+
+      // Register RunPod provider if configured
+      if (config.server.runpod?.apiKey && config.server.runpod?.endpoints?.default) {
+        const runpodProvider = new serverModule.RunPodServerlessProvider({
+          apiKey: config.server.runpod.apiKey,
+          endpointId: config.server.runpod.endpoints.default,
+        });
+        this.registerProvider('runpod_serverless', runpodProvider);
+        console.log('[llm] Registered RunPod serverless provider');
+      }
+
+      // Register HuggingFace provider if configured
+      if (config.server.huggingface?.apiKey && config.server.huggingface?.endpointUrl) {
+        const hfProvider = new serverModule.HuggingFaceProvider({
+          apiKey: config.server.huggingface.apiKey,
+          endpointUrl: config.server.huggingface.endpointUrl,
+        });
+        this.registerProvider('huggingface', hfProvider);
+        console.log('[llm] Registered HuggingFace provider');
+      }
+
+      this.serverProvidersLoaded = true;
+      return true;
+
+    } catch (error) {
+      // @metahuman/server not installed or import failed
+      // This is expected in local mode - not an error
+      console.log('[llm] Server providers not available (local mode or @metahuman/server not installed)');
+      this.serverProvidersLoaded = true; // Don't retry
+      return false;
+    }
+  }
+
+  /**
+   * Check if a provider name is a server provider
+   */
+  private isServerProvider(name: string): boolean {
+    return ['runpod_serverless', 'huggingface'].includes(name);
+  }
+
   getProvider(name?: string): LLMProvider {
     const providerName = name || this.defaultProvider;
+
+    // If requesting a server provider and not loaded yet, try to load
+    if (this.isServerProvider(providerName) && !this.serverProvidersLoaded) {
+      // Note: This is sync, but loadServerProviders is async
+      // For sync access, providers must be pre-loaded
+      // Use getProviderAsync for guaranteed server provider access
+      console.warn(`[llm] Server provider '${providerName}' requested but not loaded. Use getProviderAsync() or call loadServerProviders() first.`);
+    }
+
     const provider = this.providers.get(providerName);
 
     if (!provider) {
-      throw new Error(`Provider '${providerName}' not found`);
+      throw new Error(`Provider '${providerName}' not found. Available: ${Array.from(this.providers.keys()).join(', ')}`);
     }
 
     return provider;
   }
 
+  /**
+   * Get provider with async server provider loading support
+   */
+  async getProviderAsync(name?: string): Promise<LLMProvider> {
+    const providerName = name || this.defaultProvider;
+
+    // Load server providers if requesting one and not loaded yet
+    if (this.isServerProvider(providerName) && !this.serverProvidersLoaded) {
+      await this.loadServerProviders();
+    }
+
+    return this.getProvider(providerName);
+  }
+
+  /**
+   * Check if a provider is available
+   */
+  hasProvider(name: string): boolean {
+    return this.providers.has(name);
+  }
+
+  /**
+   * List all available providers
+   */
+  listProviders(): string[] {
+    return Array.from(this.providers.keys());
+  }
+
   async generate(messages: LLMMessage[], provider?: string, options?: LLMOptions): Promise<LLMResponse> {
-    return this.getProvider(provider).generate(messages, options);
+    const p = provider && this.isServerProvider(provider)
+      ? await this.getProviderAsync(provider)
+      : this.getProvider(provider);
+    return p.generate(messages, options);
   }
 
   async generateJSON<T = any>(messages: LLMMessage[], provider?: string, options?: LLMOptions): Promise<T> {
-    return this.getProvider(provider).generateJSON<T>(messages, options);
+    const p = provider && this.isServerProvider(provider)
+      ? await this.getProviderAsync(provider)
+      : this.getProvider(provider);
+    return p.generateJSON<T>(messages, options);
   }
 }
 
