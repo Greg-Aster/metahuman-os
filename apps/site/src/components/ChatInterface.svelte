@@ -61,14 +61,15 @@
   // Initialize Activity Tracking
   const activityApi = useActivityTracking();
 
-  // Initialize Ollama Status
-  const ollamaApi = useOllamaStatus();
+  // Initialize LLM Backend Status (supports both Ollama and vLLM)
+  const backendApi = useOllamaStatus();
   const {
-    running: ollamaRunning,
-    hasModels: ollamaHasModels,
-    modelCount: ollamaModelCount,
-    error: ollamaError
-  } = ollamaApi;
+    running: backendRunning,
+    hasModels: backendHasModels,
+    modelCount: backendModelCount,
+    error: backendError,
+    activeBackend
+  } = backendApi;
 
   // Initialize Microphone composable
   const mic = useMicrophone({
@@ -243,8 +244,8 @@
       }
     }, 10000);
 
-    // Check Ollama health status
-    ollamaApi.checkStatus();
+    // Check LLM backend health status
+    backendApi.checkStatus();
 
     // Initialize or restore conversation session ID
     try {
@@ -422,9 +423,13 @@
   async function sendMessage() {
     if (!input.trim() || loading) return;
 
-    // Check Ollama status before sending
-    if (!ollamaApi.isReady()) {
-      alert('Cannot send message: Ollama is not running or no models are loaded. Please start Ollama and load a model first.');
+    // Check LLM backend status before sending
+    if (!backendApi.isReady()) {
+      const backend = get(activeBackend);
+      const msg = backend === 'vllm'
+        ? 'Cannot send message: vLLM server is not running. Please start vLLM from Settings → Backend.'
+        : 'Cannot send message: Ollama is not running or no models are loaded. Please start Ollama and load a model first.';
+      alert(msg);
       return;
     }
 
@@ -870,8 +875,8 @@
     }
   }
 
-  function checkOllamaStatus() {
-    ollamaApi.checkStatus();
+  function checkBackendStatus() {
+    backendApi.checkStatus();
   }
 
   // Watch for LLM completion and auto-send queued messages
@@ -1007,29 +1012,37 @@
 
   <!-- Messages Area -->
 
-  <!-- Ollama Status Warning Banner -->
-  {#if !$ollamaRunning || !$ollamaHasModels}
+  <!-- LLM Backend Status Warning Banner -->
+  {#if !$backendRunning || !$backendHasModels}
     <div class="ollama-warning-banner">
       <div class="warning-icon">⚠️</div>
       <div class="warning-content">
         <div class="warning-title">
-          {#if !$ollamaRunning}
-            Ollama Service Not Running
+          {#if !$backendRunning}
+            {$activeBackend === 'vllm' ? 'vLLM Server Not Running' : 'Ollama Service Not Running'}
           {:else}
             No Language Models Loaded
           {/if}
         </div>
         <div class="warning-message">
-          {#if !$ollamaRunning}
-            The Ollama service is not running. Please start it using: <code>systemctl start ollama</code>
-          {:else if $ollamaModelCount === 0}
-            No models are currently loaded. Please install a model using: <code>ollama pull phi3:mini</code>
+          {#if !$backendRunning}
+            {#if $activeBackend === 'vllm'}
+              The vLLM server is not running. Start it from Settings → Backend or use the vLLM control panel.
+            {:else}
+              The Ollama service is not running. Please start it using: <code>systemctl start ollama</code>
+            {/if}
+          {:else if $backendModelCount === 0}
+            {#if $activeBackend === 'vllm'}
+              No model is loaded in vLLM. Configure and start the server from Settings → Backend.
+            {:else}
+              No models are currently loaded. Please install a model using: <code>ollama pull phi3:mini</code>
+            {/if}
           {/if}
-          {#if $ollamaError}
-            <div class="warning-error">Error: {$ollamaError}</div>
+          {#if $backendError}
+            <div class="warning-error">Error: {$backendError}</div>
           {/if}
         </div>
-        <button class="warning-refresh-btn" on:click={checkOllamaStatus}>
+        <button class="warning-refresh-btn" on:click={checkBackendStatus}>
           Recheck Status
         </button>
       </div>

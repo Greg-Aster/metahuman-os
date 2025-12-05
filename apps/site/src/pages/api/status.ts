@@ -7,6 +7,7 @@ import { loadCognitiveMode } from '@metahuman/core/cognitive-mode';
 import { getIndexStatus } from '@metahuman/core/vector-index';
 import { listAvailableAgents } from '@metahuman/core/agent-monitor';
 import { isRunning as isOllamaRunning } from '@metahuman/core/ollama';
+import { loadBackendConfig, isVLLMRunning } from '@metahuman/core';
 import { getRuntimeMode } from '@metahuman/core/runtime-mode';
 import { getUserOrAnonymous, getProfilePaths, systemPaths, cleanupOrphanedToolOutputs } from '@metahuman/core';
 import { loadCuriosityConfig } from '@metahuman/core/config';
@@ -303,17 +304,30 @@ const handler: APIRoute = async ({ cookies }) => {
       }));
     } catch {}
 
-    // SYSTEM HEALTH
+    // SYSTEM HEALTH - backend-aware
+    const backendConfig = loadBackendConfig();
+    const activeBackend = backendConfig.activeBackend;
+
     let systemHealth: any = {
-      ollama: 'unknown',
+      activeBackend,
+      llmBackend: 'unknown',
+      ollama: activeBackend === 'ollama' ? 'unknown' : 'inactive', // Only check if active
       auditLogSize: 0,
       storageUsed: 0,
     };
 
     try {
-      systemHealth.ollama = await isOllamaRunning() ? 'connected' : 'disconnected';
+      if (activeBackend === 'vllm') {
+        const vllmRunning = await isVLLMRunning();
+        systemHealth.llmBackend = vllmRunning ? 'connected' : 'disconnected';
+        systemHealth.vllm = vllmRunning ? 'connected' : 'disconnected';
+      } else {
+        const ollamaRunning = await isOllamaRunning();
+        systemHealth.llmBackend = ollamaRunning ? 'connected' : 'disconnected';
+        systemHealth.ollama = ollamaRunning ? 'connected' : 'disconnected';
+      }
     } catch {
-      systemHealth.ollama = 'error';
+      systemHealth.llmBackend = 'error';
     }
 
     try {

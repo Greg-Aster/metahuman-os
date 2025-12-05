@@ -260,17 +260,19 @@ export function useActivityTracking() {
 }
 
 /**
- * Ollama Status Composable
- * Monitors Ollama health and model availability
+ * LLM Backend Status Composable
+ * Monitors active LLM backend (Ollama or vLLM) health and model availability
+ * Note: Function still named useOllamaStatus for backward compatibility
  */
 export function useOllamaStatus() {
   const running = writable<boolean>(true);
   const hasModels = writable<boolean>(true);
   const modelCount = writable<number>(0);
   const error = writable<string | null>(null);
+  const activeBackend = writable<'ollama' | 'vllm'>('ollama');
 
   /**
-   * Check Ollama status from boot endpoint
+   * Check backend status from boot endpoint
    */
   async function checkStatus(): Promise<void> {
     try {
@@ -278,20 +280,25 @@ export function useOllamaStatus() {
       if (!response.ok) return;
 
       const data = await response.json();
-      if (data.ollamaStatus) {
-        running.set(data.ollamaStatus.running);
-        hasModels.set(data.ollamaStatus.hasModels);
-        modelCount.set(data.ollamaStatus.modelCount || 0);
-        error.set(data.ollamaStatus.error || null);
+      // Use backendStatus (backend-aware) instead of ollamaStatus
+      const status = data.backendStatus || data.ollamaStatus;
+      if (status) {
+        running.set(status.running);
+        hasModels.set(status.hasModels);
+        modelCount.set(status.modelCount || 0);
+        error.set(status.error || null);
+        if (status.activeBackend) {
+          activeBackend.set(status.activeBackend);
+        }
       }
     } catch (e) {
-      console.error('[ollama] Failed to check status:', e);
-      error.set('Failed to check Ollama status');
+      console.error('[backend] Failed to check status:', e);
+      error.set('Failed to check backend status');
     }
   }
 
   /**
-   * Check if Ollama is ready for use
+   * Check if LLM backend is ready for use
    */
   function isReady(): boolean {
     return get(running) && get(hasModels);
@@ -303,6 +310,7 @@ export function useOllamaStatus() {
     hasModels,
     modelCount,
     error,
+    activeBackend,
 
     // Methods
     checkStatus,

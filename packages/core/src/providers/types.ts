@@ -63,8 +63,11 @@ export interface ProviderConfig {
 
 /**
  * Provider type - determines where requests are routed
+ *
+ * Local providers: ollama, vllm, mock (handled by core bridge)
+ * Cloud providers: runpod_serverless, huggingface (handled by @metahuman/server)
  */
-export type ProviderType = 'ollama' | 'mock' | 'runpod_serverless' | 'huggingface' | 'openai' | 'local';
+export type ProviderType = 'ollama' | 'vllm' | 'mock' | 'runpod_serverless' | 'huggingface' | 'openai' | 'local';
 
 /**
  * Check if a provider is a cloud provider (requires server package)
@@ -77,5 +80,5 @@ export function isCloudProvider(provider: ProviderType): boolean {
  * Check if a provider is a local provider (handled by core)
  */
 export function isLocalProvider(provider: ProviderType): boolean {
-  return provider === 'ollama' || provider === 'mock';
+  return provider === 'ollama' || provider === 'vllm' || provider === 'mock';
 }

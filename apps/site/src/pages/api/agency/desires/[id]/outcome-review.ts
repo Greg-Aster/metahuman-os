@@ -634,14 +634,14 @@ export const POST: APIRoute = async ({ params, cookies, request }) => {
         break;
     }
 
-    await captureEvent(dialogueText, {
+    captureEvent(dialogueText, {
       type: 'inner_dialogue',
-      source: 'outcome-reviewer',
+      tags: ['agency', 'outcome', 'review', 'inner'],
       metadata: {
+        source: 'outcome-reviewer',
         desireId: id,
         verdict: reviewResult.verdict,
         successScore: reviewResult.successScore,
-        tags: ['agency', 'outcome', 'review', 'inner'],
       },
     });
 
