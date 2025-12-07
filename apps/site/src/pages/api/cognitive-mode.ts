@@ -6,48 +6,59 @@ import {
   applyModeDefaults,
   type CognitiveModeId,
 } from '@metahuman/core/cognitive-mode';
-import { audit } from '@metahuman/core';
+import { audit, withUserContext } from '@metahuman/core';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
 import { loadTrustCoupling, getMappedTrustLevel } from '@metahuman/core';
 import { setTrustLevel } from '@metahuman/core';
-import { auditConfigAccess, requireOwner } from '../../middleware/cognitiveModeGuard';
-import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
+import { getUserOrAnonymous } from '@metahuman/core';
 
 const getHandler: APIRoute = async ({ cookies }) => {
   const user = getUserOrAnonymous(cookies);
 
+  // For guest users (anonymous with selected profile), user.id/username will be 'guest'
+  const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
+
   // Allow anonymous users WITH guest profile to view (read-only)
   // Block anonymous users WITHOUT guest profile
-  if (user.role === 'anonymous' && !user.activeProfile) {
+  if (user.role === 'anonymous' && !isGuestWithProfile) {
     return new Response(
       JSON.stringify({ error: 'Authentication required to view cognitive mode.' }),
       { status: 401, headers: { 'Content-Type': 'application/json' } }
     );
   }
 
-  const config = loadCognitiveMode();
-  const modes = listCognitiveModes();
+  // Wrap in user context so storageClient can resolve paths for the logged-in user
+  // For guests, use 'guest' as username to resolve paths to profiles/guest/
+  return await withUserContext(
+    { userId: user.id, username: user.username, role: user.role as any },
+    async () => {
+      const config = loadCognitiveMode();
+      const modes = listCognitiveModes();
 
-  // Get the actual enforced mode (may differ from saved mode for anonymous users)
-  const policy = getSecurityPolicy({ cookies });
-  const enforcedMode = policy.mode;
+      // Get the actual enforced mode (may differ from saved mode for anonymous users)
+      const policy = getSecurityPolicy({ cookies });
+      const enforcedMode = policy.mode;
 
-  return new Response(
-    JSON.stringify({
-      mode: enforcedMode, // Return the enforced mode, not the saved preference
-      savedMode: config.currentMode, // Also include what's saved in the file
-      lastChanged: config.lastChanged,
-      locked: config.locked ?? false, // Include locked status
-      history: config.history ?? [],
-      modes,
-    }),
-    { status: 200, headers: { 'Content-Type': 'application/json' } }
+      return new Response(
+        JSON.stringify({
+          mode: enforcedMode, // Return the enforced mode, not the saved preference
+          savedMode: config.currentMode, // Also include what's saved in the file
+          lastChanged: config.lastChanged,
+          locked: config.locked ?? false, // Include locked status
+          history: config.history ?? [],
+          modes,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
   );
 };
 
 const postHandler: APIRoute = async ({ cookies, request }) => {
   try {
     const user = getUserOrAnonymous(cookies);
+    console.log(`[cognitive-mode] POST - user: ${user.username}, role: ${user.role}, id: ${user.id}`);
+
     if (user.role === 'anonymous') {
       return new Response(
         JSON.stringify({ success: false, error: 'Authentication required to modify cognitive mode.' }),
@@ -55,7 +66,8 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
       );
     }
 
-    // SECURITY: Guests cannot change cognitive mode (they're stuck in emulation)
+    // SECURITY: Authenticated users with 'guest' role cannot change cognitive mode
+    // (Note: Anonymous guests are already blocked above by the role === 'anonymous' check)
     if (user.role === 'guest') {
       return new Response(
         JSON.stringify({ success: false, error: 'Guests cannot change cognitive mode (emulation only)' }),
@@ -65,6 +77,7 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
 
     const body = await request.json();
     const mode = String(body?.mode ?? '').toLowerCase() as CognitiveModeId;
+    console.log(`[cognitive-mode] POST - requested mode: ${mode}`);
 
     if (!mode || !listCognitiveModes().some(def => def.id === mode)) {
       return new Response(
@@ -73,55 +86,63 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
       );
     }
 
-    const actor = typeof body?.actor === 'string' ? body.actor : user.username || user.userId || 'web_ui';
-    const currentMode = loadCognitiveMode();
+    const actor = typeof body?.actor === 'string' ? body.actor : user.username || 'web_ui';
+    console.log(`[cognitive-mode] POST - wrapping in context for user: ${user.username}`);
 
-    // Audit the mode change attempt (removed auditConfigAccess call - was causing 500 error)
+    // Wrap in user context so storageClient can resolve paths
+    return await withUserContext(
+      { userId: user.id, username: user.username, role: user.role as any },
+      async () => {
+        console.log(`[cognitive-mode] POST - inside withUserContext, loading current mode...`);
+        const currentMode = loadCognitiveMode();
+        console.log(`[cognitive-mode] POST - current mode: ${currentMode.currentMode}`);
 
-    // Additional audit with mode details
-    audit({
-      level: 'warn',
-      category: 'security',
-      event: 'cognitive_mode_change',
-      details: {
-        from: currentMode.currentMode,
-        to: mode,
-        actor
-      },
-      actor
-    });
+        // Audit the mode change attempt
+        audit({
+          level: 'warn',
+          category: 'security',
+          event: 'cognitive_mode_change',
+          details: {
+            from: currentMode.currentMode,
+            to: mode,
+            actor
+          },
+          actor
+        });
 
-    const updated = saveCognitiveMode(mode, actor);
-    applyModeDefaults(mode);
+        const updated = saveCognitiveMode(mode, actor);
+        applyModeDefaults(mode);
 
-    // Check if trust level should be automatically adjusted based on coupling
-    const coupling = loadTrustCoupling();
-    if (coupling.coupled) {
-      const mappedTrustLevel = getMappedTrustLevel(mode);
-      setTrustLevel(mappedTrustLevel);
+        // Check if trust level should be automatically adjusted based on coupling
+        const coupling = loadTrustCoupling();
+        if (coupling.coupled) {
+          const mappedTrustLevel = getMappedTrustLevel(mode);
+          setTrustLevel(mappedTrustLevel);
 
-      audit({
-        level: 'info',
-        category: 'security',
-        event: 'trust_level_auto_adjusted',
-        details: {
-          trigger: 'cognitive_mode_change',
-          mode,
-          newTrustLevel: mappedTrustLevel,
-          reason: 'Trust coupling enabled',
-        },
-        actor,
-      });
-    }
+          audit({
+            level: 'info',
+            category: 'security',
+            event: 'trust_level_auto_adjusted',
+            details: {
+              trigger: 'cognitive_mode_change',
+              mode,
+              newTrustLevel: mappedTrustLevel,
+              reason: 'Trust coupling enabled',
+            },
+            actor,
+          });
+        }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        mode: updated.currentMode,
-        lastChanged: updated.lastChanged,
-        history: updated.history ?? [],
-      }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
+        return new Response(
+          JSON.stringify({
+            success: true,
+            mode: updated.currentMode,
+            lastChanged: updated.lastChanged,
+            history: updated.history ?? [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
     );
   } catch (error) {
     return new Response(

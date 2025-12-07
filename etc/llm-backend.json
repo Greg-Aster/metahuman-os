@@ -15,7 +15,8 @@
     "dtype": "auto",
     "quantization": "awq",
     "enforceEager": true,
-    "autoUtilization": false
+    "autoUtilization": false,
+    "enableThinking": false
   },
   "$schema": "https://metahuman.dev/schemas/llm-backend.json",
   "version": "1.0.0",

@@ -241,7 +241,9 @@ async function callVLLMProvider(
   onProgress?: ProviderProgressCallback
 ): Promise<ProviderResponse> {
   const backendConfig = loadBackendConfig();
-  const model = options.model || backendConfig.vllm.model || 'default';
+  // Always use the vLLM backend's configured model - vLLM only loads one model at startup
+  // and doesn't understand Ollama model names (e.g., qwen3:14b vs Qwen/Qwen3-14B-AWQ)
+  const model = backendConfig.vllm.model || options.model || 'default';
 
   // Log active backend once
   if (!backendLoggedOnce) {
@@ -270,6 +272,7 @@ async function callVLLMProvider(
       quantization: backendConfig.vllm.quantization,
       enforceEager: backendConfig.vllm.enforceEager,
       autoUtilization: backendConfig.vllm.autoUtilization,
+      enableThinking: backendConfig.vllm.enableThinking,
     });
 
     if (!startResult.success) {
@@ -333,6 +336,7 @@ async function callVLLMProvider(
         temperature: options.temperature,
         maxTokens: options.maxTokens,
         topP: options.topP,
+        enableThinking: backendConfig.vllm.enableThinking,
       }
     );
 

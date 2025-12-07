@@ -1,6 +1,6 @@
 {
   "tts": {
-    "provider": "piper",
+    "provider": "kokoro",
     "piper": {
       "binary": "/home/greggles/metahuman/bin/piper/piper",
       "model": "/home/greggles/metahuman/out/voices/en_US-lessac-medium.onnx",
@@ -39,7 +39,8 @@
       "speed": 1,
       "autoFallbackToPiper": true,
       "useCustomVoicepack": false,
-      "customVoicepackPath": "/home/greggles/metahuman/profiles/Friendly-Robot-Will-Not-Kill-You/out/voices/kokoro-voicepacks/default.pt"
+      "customVoicepackPath": "/home/greggles/metahuman/profiles/Friendly-Robot-Will-Not-Kill-You/out/voices/kokoro-voicepacks/default.pt",
+      "device": "cuda"
     }
   },
   "stt": {
@@ -48,7 +49,18 @@
       "model": "base.en",
       "device": "cpu",
       "computeType": "int8",
-      "language": "en"
+      "language": "en",
+      "vad": {
+        "voiceThreshold": 12,
+        "silenceDelay": 5000,
+        "minDuration": 500
+      },
+      "server": {
+        "useServer": true,
+        "url": "http://127.0.0.1:9883",
+        "autoStart": true,
+        "port": 9883
+      }
     }
   },
   "cache": {

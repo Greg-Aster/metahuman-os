@@ -146,8 +146,9 @@ function streamGraphExecutionWithProgress(params: GraphPipelineParams) {
   console.log('[streamGraphExecutionWithProgress] mode:', params.mode);
   console.log('[streamGraphExecutionWithProgress] message:', params.message?.substring(0, 50));
   console.log('[streamGraphExecutionWithProgress] cognitiveMode:', params.cognitiveMode);
+  console.log('[streamGraphExecutionWithProgress] userContext:', params.userContext);
 
-  const { mode, message, sessionId } = params;
+  const { mode, message, sessionId, cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator, yoloMode } = params;
 
   const stream = new ReadableStream({
     async start(controller) {

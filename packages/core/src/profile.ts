@@ -239,7 +239,7 @@ async function createDefaultPersona(profileRoot: string, username: string): Prom
 /**
  * Create default configuration files for new user
  */
-async function createDefaultConfigs(profileRoot: string, username: string): Promise<void> {
+async function createDefaultConfigs(profileRoot: string, _username: string): Promise<void> {
   const etcDir = path.join(profileRoot, 'etc');
   const personaDir = path.join(profileRoot, 'persona');
 
@@ -326,13 +326,47 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
   const piperBinary = path.join(ROOT, 'bin', 'piper', 'piper');
   const voice = {
     tts: {
-      provider: 'piper',
+      provider: 'kokoro',
       piper: {
         binary: piperBinary,
         model: defaultVoiceModel,
         config: defaultVoiceConfig,
         speakingRate: 1.0,
         outputFormat: 'wav',
+      },
+      kokoro: {
+        langCode: 'a',
+        voice: 'af_heart',
+        speed: 1,
+        autoFallbackToPiper: true,
+        useCustomVoicepack: false,
+        customVoicepackPath: path.join(profileRoot, 'out', 'voices', 'kokoro-voicepacks', 'default.pt'),
+        device: 'cuda',
+      },
+      rvc: {
+        referenceAudioDir: path.join(profileRoot, 'out', 'voices', 'rvc-samples'),
+        modelsDir: path.join(profileRoot, 'out', 'voices', 'rvc-models'),
+        speakerId: 'default',
+        pitchShift: 0,
+        speed: 1,
+        outputFormat: 'wav',
+        autoFallbackToPiper: true,
+        indexRate: 1,
+        volumeEnvelope: 0,
+        protect: 0.15,
+        f0Method: 'rmvpe',
+        device: 'cuda',
+        pauseOllamaDuringInference: true,
+      },
+      sovits: {
+        serverUrl: 'http://127.0.0.1:9880',
+        referenceAudioDir: path.join(profileRoot, 'out', 'voices', 'sovits'),
+        speakerId: 'default',
+        temperature: 0.6,
+        speed: 1,
+        outputFormat: 'wav',
+        timeout: 30000,
+        autoFallbackToPiper: true,
       },
     },
     stt: {
@@ -342,6 +376,17 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
         device: 'cpu',
         computeType: 'int8',
         language: 'en',
+        vad: {
+          voiceThreshold: 12,
+          silenceDelay: 5000,
+          minDuration: 500,
+        },
+        server: {
+          useServer: true,
+          url: 'http://127.0.0.1:9883',
+          autoStart: true,
+          port: 9883,
+        },
       },
     },
     cache: {
@@ -364,6 +409,455 @@ async function createDefaultConfigs(profileRoot: string, username: string): Prom
   };
 
   await writeJsonIfMissing(path.join(etcDir, 'voice.json'), voice);
+
+  // agents.json - Agent scheduler configuration
+  const agents = {
+    $schema: 'https://metahuman.dev/schemas/agents.json',
+    version: '1.0.0',
+    description: 'Central agent scheduler configuration',
+    globalSettings: {
+      pauseAll: false,
+      quietHours: {
+        enabled: false,
+        start: '22:00',
+        end: '08:00',
+      },
+      maxConcurrentAgents: 3,
+      maxConcurrentLLMAgents: 1,
+      maxConcurrentNonLLMAgents: 10,
+      pauseQueueOnActivity: true,
+      activityResumeDelay: 240,
+    },
+    agents: {
+      reflector: {
+        id: 'reflector',
+        enabled: false,
+        type: 'interval',
+        priority: 'normal',
+        agentPath: 'reflector.ts',
+        usesLLM: true,
+        interval: 900,
+        runOnBoot: false,
+        autoRestart: true,
+        maxRetries: 3,
+        comment: 'Disabled in favor of activity-based reflections via boredom-maintenance',
+      },
+      organizer: {
+        id: 'organizer',
+        enabled: true,
+        type: 'activity',
+        priority: 'high',
+        agentPath: 'organizer.ts',
+        usesLLM: true,
+        inactivityThreshold: 600,
+        runOnBoot: false,
+        autoRestart: false,
+        maxRetries: 3,
+        comment: 'Runs after 10 minutes of inactivity to avoid competing with user for VRAM',
+      },
+      curator: {
+        id: 'curator',
+        enabled: true,
+        type: 'activity',
+        priority: 'normal',
+        agentPath: 'curator.ts',
+        usesLLM: true,
+        inactivityThreshold: 600,
+        runOnBoot: false,
+        autoRestart: false,
+        maxRetries: 2,
+        comment: 'LLM-based memory curation - processes 5 memories per run after 10 minutes of user inactivity',
+      },
+      'night-pipeline': {
+        id: 'night-pipeline',
+        enabled: true,
+        type: 'time-of-day',
+        priority: 'low',
+        agentPath: 'night-pipeline.ts',
+        usesLLM: true,
+        schedule: '02:00',
+        runOnBoot: false,
+        autoRestart: false,
+        maxRetries: 1,
+        comment: 'Runs nightly processing: dreamer, audio backlog, LoRA training',
+      },
+      'boredom-maintenance': {
+        id: 'boredom-maintenance',
+        enabled: true,
+        type: 'activity',
+        priority: 'low',
+        agentPath: 'reflector.ts',
+        usesLLM: true,
+        inactivityThreshold: 900,
+        runOnBoot: false,
+        autoRestart: false,
+        maxRetries: 1,
+      },
+      curiosity: {
+        id: 'curiosity',
+        enabled: true,
+        type: 'activity',
+        priority: 'low',
+        agentPath: 'curiosity-service.ts',
+        usesLLM: true,
+        inactivityThreshold: 900,
+        runOnBoot: false,
+        autoRestart: false,
+        maxRetries: 2,
+        comment: 'Triggers only after conversation inactivity',
+      },
+      'curiosity-researcher': {
+        id: 'curiosity-researcher',
+        enabled: true,
+        type: 'interval',
+        priority: 'low',
+        agentPath: 'curiosity-researcher.ts',
+        usesLLM: true,
+        interval: 3600,
+        runOnBoot: false,
+        autoRestart: true,
+        maxRetries: 2,
+        comment: 'Performs research on pending curiosity questions by searching memories',
+      },
+      'inner-curiosity': {
+        id: 'inner-curiosity',
+        enabled: true,
+        type: 'interval',
+        priority: 'low',
+        agentPath: 'inner-curiosity.ts',
+        usesLLM: true,
+        interval: 3600,
+        runOnBoot: false,
+        autoRestart: true,
+        maxRetries: 2,
+        comment: 'Generates self-directed questions and answers them using local memory',
+      },
+      psychoanalyzer: {
+        id: 'psychoanalyzer',
+        enabled: true,
+        type: 'manual',
+        priority: 'normal',
+        agentPath: 'psychoanalyzer.ts',
+        usesLLM: true,
+        runOnBoot: false,
+        autoRestart: false,
+        maxRetries: 1,
+        comment: 'Manual-run agent that reviews recent memories with psychotherapist model',
+      },
+    },
+  };
+
+  await writeJsonIfMissing(path.join(etcDir, 'agents.json'), agents);
+
+  // chat-settings.json - Chat behavior configuration
+  const chatSettings = {
+    $schema: 'https://metahuman.dev/schemas/chat-settings.json',
+    version: '1.0.0',
+    description: 'Chat behavior configuration - controls how context, history, and personality influence responses',
+    lastUpdated: new Date().toISOString(),
+    settings: {
+      contextInfluence: {
+        description: 'How much weight to give memory context vs. current user input (0-1)',
+        value: 0.5,
+        min: 0,
+        max: 1,
+        step: 0.1,
+      },
+      historyInfluence: {
+        description: 'How much weight to give conversation history (0-1)',
+        value: 0.6,
+        min: 0,
+        max: 1,
+        step: 0.1,
+      },
+      facetInfluence: {
+        description: 'How strongly to apply persona facet characteristics (0-1)',
+        value: 0.7,
+        min: 0,
+        max: 1,
+        step: 0.1,
+      },
+      temperature: {
+        description: 'Model creativity/randomness (0.0 = deterministic, 1.0 = very creative)',
+        value: 0.6,
+        min: 0,
+        max: 1,
+        step: 0.05,
+      },
+      semanticSearchThreshold: {
+        description: 'Minimum similarity score for memory retrieval (0-1)',
+        value: 0.62,
+        min: 0,
+        max: 1,
+        step: 0.05,
+      },
+      maxContextChars: {
+        description: 'Maximum characters of context to include in prompts',
+        value: 900,
+        min: 200,
+        max: 4000,
+        step: 100,
+      },
+      maxHistoryMessages: {
+        description: 'Maximum conversation history messages to retain',
+        value: 30,
+        min: 5,
+        max: 100,
+        step: 5,
+      },
+      userInputPriority: {
+        description: 'Always prioritize current user input over context/history',
+        value: true,
+      },
+      innerDialogHistoryLimit: {
+        description: 'Maximum messages to display in Inner Dialog tab',
+        value: 80,
+        min: 20,
+        max: 500,
+        step: 10,
+      },
+      innerDialogHistoryDays: {
+        description: 'Days of audit logs to scan for Inner Dialog',
+        value: 7,
+        min: 1,
+        max: 365,
+        step: 1,
+      },
+      unifiedConsciousness: {
+        description: 'Include inner dialogue (reflections, dreams) in conversation context',
+        value: false,
+      },
+    },
+    presets: {
+      balanced: {
+        description: 'Balanced between context awareness and responsiveness',
+        contextInfluence: 0.5,
+        historyInfluence: 0.6,
+        facetInfluence: 0.7,
+        temperature: 0.6,
+        semanticSearchThreshold: 0.62,
+        maxContextChars: 900,
+        maxHistoryMessages: 30,
+        userInputPriority: true,
+        innerDialogHistoryLimit: 80,
+        innerDialogHistoryDays: 7,
+        unifiedConsciousness: false,
+      },
+      focused: {
+        description: 'Prioritize user\'s current question, minimal context interference',
+        contextInfluence: 0.3,
+        historyInfluence: 0.4,
+        facetInfluence: 0.5,
+        temperature: 0.5,
+        semanticSearchThreshold: 0.7,
+        maxContextChars: 500,
+        maxHistoryMessages: 15,
+        userInputPriority: true,
+        innerDialogHistoryLimit: 50,
+        innerDialogHistoryDays: 3,
+        unifiedConsciousness: false,
+      },
+      immersive: {
+        description: 'Deep context awareness, strong personality, rich history',
+        contextInfluence: 0.8,
+        historyInfluence: 0.85,
+        facetInfluence: 0.9,
+        temperature: 0.7,
+        semanticSearchThreshold: 0.55,
+        maxContextChars: 1500,
+        maxHistoryMessages: 50,
+        userInputPriority: false,
+        innerDialogHistoryLimit: 150,
+        innerDialogHistoryDays: 30,
+        unifiedConsciousness: true,
+      },
+      minimal: {
+        description: 'Clean slate, minimal context, direct responses',
+        contextInfluence: 0.2,
+        historyInfluence: 0.3,
+        facetInfluence: 0.3,
+        temperature: 0.4,
+        semanticSearchThreshold: 0.8,
+        maxContextChars: 300,
+        maxHistoryMessages: 10,
+        userInputPriority: true,
+        innerDialogHistoryLimit: 30,
+        innerDialogHistoryDays: 1,
+        unifiedConsciousness: false,
+      },
+    },
+    activePreset: 'balanced',
+  };
+
+  await writeJsonIfMissing(path.join(etcDir, 'chat-settings.json'), chatSettings);
+
+  // runtime.json - Runtime settings
+  const runtime = {
+    headless: false,
+    lastChangedBy: 'system',
+    changedAt: new Date().toISOString(),
+    claimedBy: null,
+    operator: {
+      reactV2: true,
+      useReasoningService: false,
+      useContextPackage: true,
+    },
+    cognitive: {
+      useNodePipeline: true,
+      changedAt: new Date().toISOString(),
+      changedBy: 'system',
+    },
+  };
+
+  await writeJsonIfMissing(path.join(etcDir, 'runtime.json'), runtime);
+
+  // operator.json - Operator configuration
+  const operator = {
+    version: '2.0',
+    scratchpad: {
+      maxSteps: 10,
+      trimToLastN: 10,
+      enableVerbatimMode: true,
+      enableErrorRetry: true,
+    },
+    models: {
+      useSingleModel: false,
+      planningModel: 'default.coder',
+      responseModel: 'persona',
+    },
+    logging: {
+      enableScratchpadDump: false,
+      logDirectory: 'logs/run/agents',
+      verboseErrors: true,
+    },
+    performance: {
+      cacheCatalog: true,
+      catalogTTL: 60000,
+      parallelSkillExecution: false,
+    },
+    bigBrotherMode: {
+      enabled: false,
+      provider: 'claude-code',
+      escalateOnStuck: true,
+      escalateOnRepeatedFailures: true,
+      maxRetries: 1,
+      includeFullScratchpad: true,
+      autoApplySuggestions: false,
+    },
+  };
+
+  await writeJsonIfMissing(path.join(etcDir, 'operator.json'), operator);
+
+  // curiosity.json - Curiosity service configuration
+  const curiosity = {
+    maxOpenQuestions: 5,
+    researchMode: 'local',
+    inactivityThresholdSeconds: 1800,
+    questionTopics: [],
+    minTrustLevel: 'observe',
+    questionIntervalSeconds: 120,
+  };
+
+  await writeJsonIfMissing(path.join(etcDir, 'curiosity.json'), curiosity);
+
+  // trust-coupling.json - Trust level coupling with cognitive modes
+  const trustCoupling = {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    version: '1.0.0',
+    description: 'Trust level coupling with cognitive modes',
+    coupled: true,
+    mappings: {
+      dual: 'adaptive_auto',
+      agent: 'suggest',
+      emulation: 'observe',
+    },
+    description_text: {
+      dual: 'Full cognitive mirroring with supervised autonomy',
+      agent: 'Assistant mode with suggestion-based trust',
+      emulation: 'Read-only demonstration mode with observe-only trust',
+    },
+  };
+
+  await writeJsonIfMissing(path.join(etcDir, 'trust-coupling.json'), trustCoupling);
+
+  // embeddings.json - Embedding model configuration
+  const embeddings = {
+    enabled: true,
+    model: 'nomic-embed-text',
+    provider: 'ollama',
+    preloadAtStartup: true,
+    description: 'Embedding model configuration for semantic memory search',
+  };
+
+  await writeJsonIfMissing(path.join(etcDir, 'embeddings.json'), embeddings);
+
+  // model-registry.json - Model tracking for fine-tuning
+  const modelRegistry = {
+    comment: 'Model registry tracks fine-tuning lineage and current base model',
+    notes: [
+      'This file is automatically updated after each successful training run.',
+      'The current_base_model is used for the next fine-tuning cycle.',
+      'Original model is always preserved for reference.',
+    ],
+    original_base_model: 'Qwen/Qwen3-14B',
+    current_base_model: 'Qwen/Qwen3-14B',
+    model_type: 'huggingface',
+    training_history: [],
+    output_formats: {
+      unquantized: {
+        format: 'safetensors',
+        purpose: 'Future fine-tuning',
+        location: 'model/',
+        keep: true,
+      },
+      quantized: {
+        format: 'gguf',
+        quantization: 'Q8_0',
+        purpose: 'Local inference (Ollama)',
+        location: 'model.gguf',
+        keep: true,
+      },
+    },
+    versioning: {
+      enabled: true,
+      auto_update_base: true,
+      keep_all_versions: true,
+    },
+  };
+
+  await writeJsonIfMissing(path.join(etcDir, 'model-registry.json'), modelRegistry);
+
+  // addons.json - Addon configuration (empty by default)
+  const addons = {
+    $schema: 'https://metahuman.dev/schemas/addons.json',
+    version: '1.0.0',
+    description: 'Addon configuration for extending MetaHuman capabilities',
+    addons: {},
+  };
+
+  await writeJsonIfMissing(path.join(etcDir, 'addons.json'), addons);
+
+  // Copy additional system config files if they exist
+  const systemConfigsToCopy = [
+    'cognitive-layers.json',
+    'fine-tune-config.json',
+    'persona-generator.json',
+    'psychoanalyzer.json',
+    'runpod.json',
+    'training-data.json',
+    'auto-approval.json',
+    'adapter-builder.json',
+    'logging.json',
+  ];
+
+  for (const configFile of systemConfigsToCopy) {
+    const systemConfig = path.join(systemPaths.etc, configFile);
+    const profileConfig = path.join(etcDir, configFile);
+
+    if (await fs.pathExists(systemConfig) && !(await fs.pathExists(profileConfig))) {
+      await fs.copy(systemConfig, profileConfig);
+    }
+  }
 }
 
 /**
@@ -402,6 +896,7 @@ export async function ensureProfileIntegrity(username: string): Promise<void> {
 
 async function ensureProfileDirectories(profileRoot: string): Promise<void> {
   const dirs = [
+    // Memory directories
     path.join(profileRoot, 'memory', 'episodic'),
     path.join(profileRoot, 'memory', 'tasks', 'active'),
     path.join(profileRoot, 'memory', 'tasks', 'completed'),
@@ -410,15 +905,63 @@ async function ensureProfileDirectories(profileRoot: string): Promise<void> {
     path.join(profileRoot, 'memory', 'inbox', '_archive'),
     path.join(profileRoot, 'memory', 'index'),
     path.join(profileRoot, 'memory', 'calendar'),
+    path.join(profileRoot, 'memory', 'audio'),
+    path.join(profileRoot, 'memory', 'curated'),
+    path.join(profileRoot, 'memory', 'curiosity'),
+    path.join(profileRoot, 'memory', 'preferences'),
+    path.join(profileRoot, 'memory', 'procedural'),
+    path.join(profileRoot, 'memory', 'semantic'),
+    path.join(profileRoot, 'memory', 'training'),
+    // Persona directories
     path.join(profileRoot, 'persona'),
     path.join(profileRoot, 'persona', 'facets'),
+    path.join(profileRoot, 'persona', 'capabilities'),
+    path.join(profileRoot, 'persona', 'overrides'),
+    // Agency desire lifecycle directories
+    path.join(profileRoot, 'persona', 'desires'),
+    path.join(profileRoot, 'persona', 'desires', 'nascent'),
+    path.join(profileRoot, 'persona', 'desires', 'pending'),
+    path.join(profileRoot, 'persona', 'desires', 'active'),
+    path.join(profileRoot, 'persona', 'desires', 'completed'),
+    path.join(profileRoot, 'persona', 'desires', 'rejected'),
+    path.join(profileRoot, 'persona', 'desires', 'abandoned'),
+    path.join(profileRoot, 'persona', 'desires', 'plans'),
+    path.join(profileRoot, 'persona', 'desires', 'reviews'),
+    path.join(profileRoot, 'persona', 'desires', 'metrics'),
+    path.join(profileRoot, 'persona', 'desires', 'awaiting_approval'),
+    path.join(profileRoot, 'persona', 'desires', 'folders'),
+    // Output directories
     path.join(profileRoot, 'out', 'adapters'),
     path.join(profileRoot, 'out', 'datasets'),
     path.join(profileRoot, 'out', 'state'),
+    path.join(profileRoot, 'out', 'voice-cache'),
+    path.join(profileRoot, 'out', 'voices'),
+    path.join(profileRoot, 'out', 'voice-training'),
+    path.join(profileRoot, 'out', 'fine-tuned-models'),
+    path.join(profileRoot, 'out', 'remote-training'),
+    path.join(profileRoot, 'out', 'summaries'),
+    path.join(profileRoot, 'out', 'progress'),
+    path.join(profileRoot, 'out', 'approval-queue'),
+    path.join(profileRoot, 'out', 'code-drafts'),
+    // Log directories
     path.join(profileRoot, 'logs', 'audit'),
     path.join(profileRoot, 'logs', 'decisions'),
     path.join(profileRoot, 'logs', 'actions'),
+    path.join(profileRoot, 'logs', 'run'),
+    path.join(profileRoot, 'logs', 'run', 'agents'),
+    // State directories (runtime state)
+    path.join(profileRoot, 'state'),
+    path.join(profileRoot, 'state', 'agency'),
+    path.join(profileRoot, 'state', 'agency', 'desires'),
+    path.join(profileRoot, 'state', 'agency', 'metrics'),
+    path.join(profileRoot, 'state', 'agency', 'plans'),
+    path.join(profileRoot, 'state', 'agency', 'reviews'),
+    path.join(profileRoot, 'state', 'curiosity'),
+    path.join(profileRoot, 'state', 'recent-tools'),
+    // Config directory
     path.join(profileRoot, 'etc'),
+    // Training data directory
+    path.join(profileRoot, 'training-data'),
   ];
 
   for (const dir of dirs) {

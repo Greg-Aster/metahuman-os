@@ -57,7 +57,7 @@ export class UnifiedChat {
     } else {
       // Auto-select based on connectivity, battery, task complexity
       const result = await selectBestTier(['chat']);
-      tier = result.tier;
+      tier = result.selectedTier;
     }
 
     // Execute on selected tier
@@ -244,7 +244,7 @@ export class UnifiedChat {
     console.warn(`Tier ${failedTier} failed:`, error);
 
     // Try tiers in order of preference
-    const fallbackOrder: TierType[] = ['server', 'cloud', 'offline'].filter(t => t !== failedTier);
+    const fallbackOrder = (['server', 'cloud', 'offline'] as TierType[]).filter(t => t !== failedTier);
 
     for (const tier of fallbackOrder) {
       try {

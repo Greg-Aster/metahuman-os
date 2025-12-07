@@ -656,7 +656,7 @@
     if (!confirm('Approve this desire for execution?')) return;
     processingId = id;
     try {
-      const res = await fetch(`/api/agency/desires/${id}/approve`, { method: 'POST' });
+      const res = await apiFetch(`/api/agency/desires/${id}/approve`, { method: 'POST' });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || 'Failed to approve desire');
@@ -675,7 +675,7 @@
 
     processingId = id;
     try {
-      const res = await fetch(`/api/agency/desires/${id}/reject`, {
+      const res = await apiFetch(`/api/agency/desires/${id}/reject`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: reason || 'User rejected' }),
@@ -697,7 +697,7 @@
 
     processingId = id;
     try {
-      const res = await fetch(`/api/agency/desires/${id}/reset?target=planning`, {
+      const res = await apiFetch(`/api/agency/desires/${id}/reset?target=planning`, {
         method: 'POST',
       });
       const data = await res.json();
@@ -719,7 +719,7 @@
     if (!confirm('Delete this desire permanently?')) return;
     processingId = id;
     try {
-      const res = await fetch(`/api/agency/desires/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/agency/desires/${id}`, { method: 'DELETE' });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || 'Failed to delete desire');
@@ -735,7 +735,7 @@
   async function handleAdvanceStage(id: string, newStatus: string) {
     processingId = id;
     try {
-      const res = await fetch(`/api/agency/desires/${id}/advance`, {
+      const res = await apiFetch(`/api/agency/desires/${id}/advance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ newStatus }),
@@ -769,8 +769,8 @@
     streamingSteps = 0;
 
     try {
-      // Use fetch with POST to send critique, then read as EventSource-like stream
-      const response = await fetch(`/api/agency/desires/${id}/generate-plan-stream`, {
+      // Use apiFetch with POST to send critique, then read as EventSource-like stream
+      const response = await apiFetch(`/api/agency/desires/${id}/generate-plan-stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(critique ? { critique } : {}),
@@ -891,7 +891,7 @@
     startLoadingMessages('reviewing');
 
     try {
-      const res = await fetch(`/api/agency/desires/${id}/review`, {
+      const res = await apiFetch(`/api/agency/desires/${id}/review`, {
         method: 'POST',
       });
       if (!res.ok) {
@@ -920,7 +920,7 @@
 
     try {
       // Use the /run endpoint for inline execution (not just status change)
-      const res = await fetch(`/api/agency/desires/${id}/run`, { method: 'POST' });
+      const res = await apiFetch(`/api/agency/desires/${id}/run`, { method: 'POST' });
       const data = await res.json();
 
       if (!res.ok) {
@@ -1020,7 +1020,7 @@
 
     revisingId = id;
     try {
-      const res = await fetch(`/api/agency/desires/${id}/revise`, {
+      const res = await apiFetch(`/api/agency/desires/${id}/revise`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ critique: critique.trim() }),

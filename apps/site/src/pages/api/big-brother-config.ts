@@ -1,14 +1,37 @@
 import type { APIRoute } from 'astro';
 import { loadOperatorConfig, saveUserConfig, invalidateOperatorConfig } from '@metahuman/core/config';
-import { getAuthenticatedUser } from '@metahuman/core/auth';
+import { getUserOrAnonymous } from '@metahuman/core/auth';
 import { audit } from '@metahuman/core';
 
 /**
  * GET: Retrieve current Big Brother mode configuration
+ * Guests get a disabled config with a warning
  */
 export const GET: APIRoute = async ({ cookies }) => {
   try {
-    const user = getAuthenticatedUser(cookies);
+    const user = getUserOrAnonymous(cookies);
+
+    // Guests can see the config but it's always disabled for them
+    if (user.role === 'anonymous') {
+      return new Response(JSON.stringify({
+        success: true,
+        config: {
+          enabled: false,
+          provider: 'claude-code',
+          escalateOnStuck: false,
+          escalateOnRepeatedFailures: false,
+          maxRetries: 0,
+          includeFullScratchpad: false,
+          autoApplySuggestions: false
+        },
+        guestMode: true,
+        warning: 'Big Brother mode is not available for guest users'
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
     const config = loadOperatorConfig();
 
     return new Response(JSON.stringify({
@@ -39,10 +62,23 @@ export const GET: APIRoute = async ({ cookies }) => {
 
 /**
  * POST: Update Big Brother mode configuration
+ * Guests get a friendly error instead of 401
  */
 export const POST: APIRoute = async ({ cookies, request }) => {
   try {
-    const user = getAuthenticatedUser(cookies);
+    const user = getUserOrAnonymous(cookies);
+
+    // Guests cannot modify settings
+    if (user.role === 'anonymous') {
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Big Brother settings cannot be modified in guest mode',
+        guestMode: true
+      }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
 
     // Only owners can modify Big Brother settings
     if (user.role !== 'owner') {

@@ -3,6 +3,13 @@
  *
  * Saves conversation to episodic memory
  * Returns detailed metadata including file path and encryption status
+ *
+ * IMPORTANT: This node expects pre-stripped content.
+ * Use ThinkingStripperNode upstream in the pipeline to remove <think> blocks
+ * before passing to this node.
+ *
+ * Pipeline example:
+ *   PersonaLLM → ThinkingStripper → MemoryCapture
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';

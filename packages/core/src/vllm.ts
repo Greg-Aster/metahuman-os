@@ -65,6 +65,8 @@ export interface VLLMConfig {
   enforceEager?: boolean;
   /** Auto-detect optimal GPU utilization based on available memory */
   autoUtilization?: boolean;
+  /** Enable thinking mode for Qwen3 models (default: true, set false to disable <think> tags) */
+  enableThinking?: boolean;
 }
 
 export interface VLLMModel {
@@ -396,6 +398,12 @@ export class VLLMClient {
       console.log('[vllm] Eager mode enabled (CUDA graphs disabled for memory stability)');
     }
 
+    // Note: Thinking mode for Qwen3 is controlled per-request via chat_template_kwargs
+    // in the API request body, not via server startup flags. See chat() method.
+    if (config.enableThinking === false) {
+      console.log('[vllm] Thinking mode will be disabled in API requests');
+    }
+
     // Spawn vLLM server process
     return new Promise((resolve) => {
       try {
@@ -631,19 +639,28 @@ export class VLLMClient {
       maxTokens?: number;
       topP?: number;
       stream?: boolean;
+      /** Control Qwen3 thinking mode. Set false to disable <think> tags. */
+      enableThinking?: boolean;
     }
   ): Promise<VLLMChatResponse> {
+    const body: Record<string, unknown> = {
+      model: options?.model || this.currentModel || 'default',
+      messages: messages.map(m => ({ role: m.role, content: m.content })),
+      max_tokens: options?.maxTokens ?? 2048,
+      temperature: options?.temperature ?? 0.7,
+      top_p: options?.topP ?? 0.95,
+      stream: false,
+    };
+
+    // Add chat_template_kwargs for Qwen3 thinking mode control
+    if (options?.enableThinking !== undefined) {
+      body.chat_template_kwargs = { enable_thinking: options.enableThinking };
+    }
+
     const response = await fetch(`${this.endpoint}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: options?.model || this.currentModel || 'default',
-        messages: messages.map(m => ({ role: m.role, content: m.content })),
-        max_tokens: options?.maxTokens ?? 2048,
-        temperature: options?.temperature ?? 0.7,
-        top_p: options?.topP ?? 0.95,
-        stream: false,
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -674,18 +691,27 @@ export class VLLMClient {
       model?: string;
       temperature?: number;
       maxTokens?: number;
+      /** Control Qwen3 thinking mode. Set false to disable <think> tags. */
+      enableThinking?: boolean;
     }
   ): Promise<void> {
+    const body: Record<string, unknown> = {
+      model: options?.model || this.currentModel || 'default',
+      messages: messages.map(m => ({ role: m.role, content: m.content })),
+      max_tokens: options?.maxTokens ?? 2048,
+      temperature: options?.temperature ?? 0.7,
+      stream: true,
+    };
+
+    // Add chat_template_kwargs for Qwen3 thinking mode control
+    if (options?.enableThinking !== undefined) {
+      body.chat_template_kwargs = { enable_thinking: options.enableThinking };
+    }
+
     const response = await fetch(`${this.endpoint}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: options?.model || this.currentModel || 'default',
-        messages: messages.map(m => ({ role: m.role, content: m.content })),
-        max_tokens: options?.maxTokens ?? 2048,
-        temperature: options?.temperature ?? 0.7,
-        stream: true,
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {

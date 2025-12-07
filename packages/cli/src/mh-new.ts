@@ -880,6 +880,9 @@ Examples:
           tensorParallelSize: config.vllm.tensorParallelSize,
           dtype: config.vllm.dtype,
           quantization: config.vllm.quantization,
+          enforceEager: config.vllm.enforceEager,
+          autoUtilization: config.vllm.autoUtilization,
+          enableThinking: config.vllm.enableThinking,
         });
 
         if (result.success) {
@@ -913,6 +916,9 @@ Examples:
           tensorParallelSize: config.vllm.tensorParallelSize,
           dtype: config.vllm.dtype,
           quantization: config.vllm.quantization,
+          enforceEager: config.vllm.enforceEager,
+          autoUtilization: config.vllm.autoUtilization,
+          enableThinking: config.vllm.enableThinking,
         });
 
         if (result.success) {

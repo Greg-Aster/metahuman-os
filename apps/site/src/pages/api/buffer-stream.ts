@@ -17,7 +17,8 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getAuthenticatedUser, getProfilePaths, getBufferNotificationPath } from '@metahuman/core';
+import os from 'node:os';
+import { getUserOrAnonymous, getProfilePaths, getBufferNotificationPath } from '@metahuman/core';
 
 export const GET: APIRoute = ({ request, cookies }) => {
   // Get mode from query params
@@ -32,11 +33,12 @@ export const GET: APIRoute = ({ request, cookies }) => {
   }
 
   // Get user for profile path resolution
-  let username: string | null = null;
-  try {
-    const user = getAuthenticatedUser(cookies);
-    username = user.username;
-  } catch {
+  // Guest users (anonymous with selected profile) have id/username = 'guest'
+  const user = getUserOrAnonymous(cookies);
+  const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
+
+  // Block pure anonymous users (no selected profile)
+  if (user.role === 'anonymous' && !isGuestWithProfile) {
     // Return SSE error event instead of JSON so EventSource can handle it
     // This prevents silent failures when auth cookie is missing/invalid
     const errorStream = new ReadableStream({
@@ -55,9 +57,34 @@ export const GET: APIRoute = ({ request, cookies }) => {
     });
   }
 
-  const profilePaths = getProfilePaths(username);
-  const bufferFilename = `conversation-buffer-${mode}.json`;
-  const bufferPath = path.join(profilePaths.state, bufferFilename);
+  const username = user.username;
+
+  // For guest users, use a session-specific temp directory to avoid sharing buffers
+  // Each guest session gets its own isolated conversation buffer
+  let bufferPath: string;
+  let notifyPath: string;
+
+  if (isGuestWithProfile) {
+    // Get session ID for unique temp directory
+    const sessionCookie = cookies.get('mh_session');
+    const sessionId = sessionCookie?.value?.substring(0, 16) || 'default';
+    const guestTempDir = path.join(os.tmpdir(), 'metahuman-guest', sessionId);
+
+    // Ensure temp directory exists
+    if (!fs.existsSync(guestTempDir)) {
+      fs.mkdirSync(guestTempDir, { recursive: true });
+    }
+
+    const bufferFilename = `conversation-buffer-${mode}.json`;
+    bufferPath = path.join(guestTempDir, bufferFilename);
+    notifyPath = path.join(guestTempDir, `.buffer-notify-${mode}`);
+  } else {
+    // Authenticated users use their profile storage
+    const profilePaths = getProfilePaths(username);
+    const bufferFilename = `conversation-buffer-${mode}.json`;
+    bufferPath = path.join(profilePaths.state, bufferFilename);
+    notifyPath = getBufferNotificationPath(username, mode as 'conversation' | 'inner');
+  }
 
   const stream = new ReadableStream({
     start(controller) {
@@ -105,7 +132,7 @@ export const GET: APIRoute = ({ request, cookies }) => {
 
       // Watch LOCAL notification file (works on all filesystems including LUKS/NFS)
       // The notification file is touched whenever the buffer is written
-      const notifyPath = getBufferNotificationPath(username!, mode as 'conversation' | 'inner');
+      // notifyPath is set above based on user type (guest uses temp dir, authenticated uses profile)
       const notifyDir = path.dirname(notifyPath);
       const notifyFilename = path.basename(notifyPath);
 

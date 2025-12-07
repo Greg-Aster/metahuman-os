@@ -1,0 +1,56 @@
+{
+  "comment": "Model registry tracks fine-tuning lineage and current base model",
+  "notes": [
+    "This file is automatically updated after each successful training run.",
+    "The 'current_base_model' is used for the next fine-tuning cycle.",
+    "Original model is always preserved for reference.",
+    "Model paths can be local (trained models) or HuggingFace (original)."
+  ],
+  "original_base_model": "Qwen/Qwen3-14B",
+  "current_base_model": "/media/greggles/STACK/metahuman-profiles/greggles/out/fine-tuned-models/2025-12-03/2025-12-03-182930-b19860/model",
+  "model_type": "local",
+  "training_history": [
+    {
+      "version": 1,
+      "run_id": "6a800c5bdad71a33",
+      "run_label": "2025-12-03-174854-6a800c",
+      "timestamp": "2025-12-03T18:12:46.777Z",
+      "base_model_used": "unsloth/Qwen3-14B",
+      "output_model_path": "/media/greggles/STACK/metahuman-profiles/greggles/out/fine-tuned-models/2025-12-03/2025-12-03-174854-6a800c/model",
+      "gguf_path": "/media/greggles/STACK/metahuman-profiles/greggles/out/fine-tuned-models/2025-12-03/2025-12-03-174854-6a800c/model.gguf",
+      "samples_trained": 320,
+      "training_success": true
+    },
+    {
+      "version": 2,
+      "run_id": "b19860b04d1e7126",
+      "run_label": "2025-12-03-182930-b19860",
+      "timestamp": "2025-12-03T18:46:02.378Z",
+      "base_model_used": "unsloth/Qwen3-14B",
+      "output_model_path": "/media/greggles/STACK/metahuman-profiles/greggles/out/fine-tuned-models/2025-12-03/2025-12-03-182930-b19860/model",
+      "gguf_path": "/media/greggles/STACK/metahuman-profiles/greggles/out/fine-tuned-models/2025-12-03/2025-12-03-182930-b19860/model.gguf",
+      "samples_trained": 332,
+      "training_success": true
+    }
+  ],
+  "output_formats": {
+    "unquantized": {
+      "format": "safetensors",
+      "purpose": "Future fine-tuning",
+      "location": "model/",
+      "keep": true
+    },
+    "quantized": {
+      "format": "gguf",
+      "quantization": "Q8_0",
+      "purpose": "Local inference (Ollama)",
+      "location": "model.gguf",
+      "keep": true
+    }
+  },
+  "versioning": {
+    "enabled": true,
+    "auto_update_base": true,
+    "keep_all_versions": true
+  }
+}

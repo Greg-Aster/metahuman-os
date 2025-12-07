@@ -47,8 +47,18 @@
     id: string;
     username: string;
     role: 'owner' | 'guest' | 'anonymous';
+    metadata?: {
+      displayName?: string;
+      sourceProfile?: string;
+      activeProfile?: string;
+    };
   }
   let currentUser: User | null = null;
+
+  // Get display name for user (handles guest profiles)
+  $: displayUsername = currentUser?.role === 'anonymous' && currentUser?.metadata?.sourceProfile
+    ? `Guest: ${currentUser.metadata.sourceProfile}`
+    : currentUser?.metadata?.displayName || currentUser?.username || 'Anonymous';
   let userMenuOpen = false;
   let userMenuAnchor: HTMLElement | null = null;
 
@@ -374,7 +384,7 @@
           <span class="brand-name hidden sm:inline">{personaName}</span>
           {#if currentUser}
             <span class="text-xs text-gray-500 dark:text-gray-400 font-normal">
-              <span class="hidden sm:inline">(</span>{currentUser.username}<span class="hidden sm:inline">)</span>
+              <span class="hidden sm:inline">(</span>{displayUsername}<span class="hidden sm:inline">)</span>
             </span>
           {/if}
         </button>
@@ -385,12 +395,15 @@
               <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
                 <div class="flex items-center gap-3">
                   <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-semibold">
-                    {currentUser.username.charAt(0).toUpperCase()}
+                    {(currentUser.metadata?.sourceProfile || currentUser.username).charAt(0).toUpperCase()}
                   </div>
                   <div class="flex-1">
                     <div class="font-semibold text-gray-900 dark:text-gray-100">
-                      {currentUser.username}
+                      {displayUsername}
                     </div>
+                    {#if currentUser.role === 'anonymous' && currentUser.metadata?.sourceProfile}
+                      <div class="text-xs text-gray-500">Viewing public profile</div>
+                    {/if}
                   </div>
                 </div>
               </div>

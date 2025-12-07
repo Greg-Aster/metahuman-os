@@ -10,7 +10,8 @@
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getAuthenticatedUser, getProfilePaths } from '@metahuman/core';
+import os from 'node:os';
+import { getUserOrAnonymous, getProfilePaths } from '@metahuman/core';
 
 export const GET: APIRoute = ({ request, cookies }) => {
   const url = new URL(request.url);
@@ -23,19 +24,30 @@ export const GET: APIRoute = ({ request, cookies }) => {
     });
   }
 
-  let username: string;
-  try {
-    const user = getAuthenticatedUser(cookies);
-    username = user.username;
-  } catch {
-    return new Response(JSON.stringify({ error: 'Not authenticated' }), {
-      status: 401,
+  const user = getUserOrAnonymous(cookies);
+  const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
+
+  // Pure anonymous (no selected profile) get empty buffer
+  if (user.role === 'anonymous' && !isGuestWithProfile) {
+    return new Response(JSON.stringify({ messages: [], mode, lastUpdated: null }), {
+      status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
   }
 
-  const profilePaths = getProfilePaths(username);
-  const bufferPath = path.join(profilePaths.state, `conversation-buffer-${mode}.json`);
+  // Determine buffer path based on user type
+  let bufferPath: string;
+  if (isGuestWithProfile) {
+    // Guest users get session-specific temp directory
+    const sessionCookie = cookies.get('mh_session');
+    const sessionId = sessionCookie?.value?.substring(0, 16) || 'default';
+    const guestTempDir = path.join(os.tmpdir(), 'metahuman-guest', sessionId);
+    bufferPath = path.join(guestTempDir, `conversation-buffer-${mode}.json`);
+  } else {
+    // Authenticated users use their profile storage
+    const profilePaths = getProfilePaths(user.username);
+    bufferPath = path.join(profilePaths.state, `conversation-buffer-${mode}.json`);
+  }
 
   try {
     if (!fs.existsSync(bufferPath)) {

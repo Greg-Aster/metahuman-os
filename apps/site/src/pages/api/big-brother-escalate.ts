@@ -1,16 +1,30 @@
 import type { APIRoute } from 'astro';
 import { escalateToBigBrother, type EscalationRequest } from '@metahuman/core/big-brother';
 import { loadOperatorConfig } from '@metahuman/core/config';
-import { getAuthenticatedUser } from '@metahuman/core/auth';
+import { getUserOrAnonymous } from '@metahuman/core/auth';
 import { audit } from '@metahuman/core';
 
 /**
  * POST: Escalate a stuck state to Big Brother for guidance
  * Used by the BigBrotherNode in the node editor
+ * Guests get a friendly error instead of 401
  */
 export const POST: APIRoute = async ({ cookies, request }) => {
   try {
-    const user = getAuthenticatedUser(cookies);
+    const user = getUserOrAnonymous(cookies);
+
+    // Guests cannot use Big Brother escalation
+    if (user.role === 'anonymous') {
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Big Brother escalation is not available in guest mode',
+        guestMode: true,
+        suggestions: ['Log in with an authenticated account to use this feature']
+      }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
 
     const body = await request.json();
     const { goal, scratchpad, errorType, context } = body;

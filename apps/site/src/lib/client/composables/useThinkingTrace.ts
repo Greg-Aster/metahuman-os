@@ -73,7 +73,7 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
       auditStream = null;
     }
 
-    auditStream = new EventSource('/api/stream');
+    auditStream = new EventSource('/api/monitor/stream');
     auditStream.onmessage = (event) => {
       try {
         const parsed = JSON.parse(event.data) as AuditStreamEvent;

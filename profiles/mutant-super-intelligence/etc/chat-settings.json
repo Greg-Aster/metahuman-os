@@ -1,0 +1,149 @@
+{
+  "$schema": "https://metahuman.dev/schemas/chat-settings.json",
+  "version": "1.0.0",
+  "description": "Chat behavior configuration - controls how context, history, and personality influence responses",
+  "lastUpdated": "2025-11-15T07:04:09.268Z",
+  "settings": {
+    "contextInfluence": {
+      "description": "How much weight to give memory context vs. current user input (0-1)",
+      "value": 0.5,
+      "min": 0,
+      "max": 1,
+      "step": 0.1,
+      "notes": "Lower = prioritize user's current question, Higher = prioritize memories and context"
+    },
+    "historyInfluence": {
+      "description": "How much weight to give conversation history (0-1)",
+      "value": 0.6,
+      "min": 0,
+      "max": 1,
+      "step": 0.1,
+      "notes": "Lower = focus on current message, Higher = maintain continuity with past conversation"
+    },
+    "facetInfluence": {
+      "description": "How strongly to apply persona facet characteristics (0-1)",
+      "value": 0.7,
+      "min": 0,
+      "max": 1,
+      "step": 0.1,
+      "notes": "Lower = subtle facet flavor, Higher = strong facet personality traits"
+    },
+    "temperature": {
+      "description": "Model creativity/randomness (0.0 = deterministic, 1.0 = very creative)",
+      "value": 0.6,
+      "min": 0,
+      "max": 1,
+      "step": 0.05,
+      "notes": "Conversation mode default. Inner dialogue uses temperature - 0.1"
+    },
+    "semanticSearchThreshold": {
+      "description": "Minimum similarity score for memory retrieval (0-1)",
+      "value": 0.62,
+      "min": 0,
+      "max": 1,
+      "step": 0.05,
+      "notes": "Lower = more memories (possibly less relevant), Higher = fewer memories (more relevant)"
+    },
+    "maxContextChars": {
+      "description": "Maximum characters of context to include in prompts",
+      "value": 900,
+      "min": 200,
+      "max": 4000,
+      "step": 100,
+      "notes": "More context = better grounding but longer prompts and potential drowning"
+    },
+    "maxHistoryMessages": {
+      "description": "Maximum conversation history messages to retain",
+      "value": 30,
+      "min": 5,
+      "max": 100,
+      "step": 5,
+      "notes": "Conversation will summarize and prune history beyond this limit"
+    },
+    "userInputPriority": {
+      "description": "Always prioritize current user input over context/history",
+      "value": true,
+      "notes": "When true, adds explicit instruction to focus on user's current question"
+    },
+    "innerDialogHistoryLimit": {
+      "description": "Maximum messages to display in Inner Dialog tab",
+      "value": 80,
+      "min": 20,
+      "max": 500,
+      "step": 10,
+      "notes": "Shows reflections, dreams, and inner dialogue. Higher values may slow page load"
+    },
+    "innerDialogHistoryDays": {
+      "description": "Days of audit logs to scan for Inner Dialog",
+      "value": 7,
+      "min": 1,
+      "max": 365,
+      "step": 1,
+      "notes": "Recent reflections/dreams only. Increase to see older inner thoughts"
+    },
+    "unifiedConsciousness": {
+      "description": "Include inner dialogue (reflections, dreams) in conversation context",
+      "value": false,
+      "notes": "When enabled, inner thoughts influence conversational responses. Creates more integrated consciousness but may cause inner thoughts to 'bleed' into conversation."
+    }
+  },
+  "presets": {
+    "balanced": {
+      "description": "Balanced between context awareness and responsiveness",
+      "contextInfluence": 0.5,
+      "historyInfluence": 0.6,
+      "facetInfluence": 0.7,
+      "temperature": 0.6,
+      "semanticSearchThreshold": 0.62,
+      "maxContextChars": 900,
+      "maxHistoryMessages": 30,
+      "userInputPriority": true,
+      "innerDialogHistoryLimit": 80,
+      "innerDialogHistoryDays": 7,
+      "unifiedConsciousness": false
+    },
+    "focused": {
+      "description": "Prioritize user's current question, minimal context interference",
+      "contextInfluence": 0.3,
+      "historyInfluence": 0.4,
+      "facetInfluence": 0.5,
+      "temperature": 0.5,
+      "semanticSearchThreshold": 0.7,
+      "maxContextChars": 500,
+      "maxHistoryMessages": 15,
+      "userInputPriority": true,
+      "innerDialogHistoryLimit": 50,
+      "innerDialogHistoryDays": 3,
+      "unifiedConsciousness": false
+    },
+    "immersive": {
+      "description": "Deep context awareness, strong personality, rich history",
+      "contextInfluence": 0.8,
+      "historyInfluence": 0.85,
+      "facetInfluence": 0.9,
+      "temperature": 0.7,
+      "semanticSearchThreshold": 0.55,
+      "maxContextChars": 1500,
+      "maxHistoryMessages": 50,
+      "userInputPriority": false,
+      "innerDialogHistoryLimit": 150,
+      "innerDialogHistoryDays": 30,
+      "unifiedConsciousness": true
+    },
+    "minimal": {
+      "description": "Clean slate, minimal context, direct responses",
+      "contextInfluence": 0.2,
+      "historyInfluence": 0.3,
+      "facetInfluence": 0.3,
+      "temperature": 0.4,
+      "semanticSearchThreshold": 0.8,
+      "maxContextChars": 300,
+      "maxHistoryMessages": 10,
+      "userInputPriority": true,
+      "innerDialogHistoryLimit": 30,
+      "innerDialogHistoryDays": 1,
+      "unifiedConsciousness": false
+    }
+  },
+  "activePreset": "focused"
+}

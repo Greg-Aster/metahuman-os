@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { clearAuditStreamTrigger } from '../stores/clear-events';
+  import { apiFetch } from '../lib/client/api-config';
 
   interface LogEntry {
     timestamp: string;
@@ -43,7 +44,7 @@
 
     try {
       const today = new Date().toISOString().slice(0, 10);
-      const response = await fetch(`/api/audit?date=${today}`);
+      const response = await apiFetch(`/api/audit?date=${today}`);
       if (!response.ok) throw new Error('Failed to fetch audit logs');
 
       const data = await response.json();

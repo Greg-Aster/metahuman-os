@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { getUserOrAnonymous, getProfilePaths } from '@metahuman/core';
 
 const rootPath = path.resolve(process.cwd(), '../..');
 const KOKORO_DIR = path.join(rootPath, 'external', 'kokoro');
@@ -32,12 +33,34 @@ export const GET: APIRoute = async () => {
  * POST /api/kokoro-server
  * Start or stop Kokoro server
  */
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, cookies }) => {
   try {
-    const { action, port, lang } = await request.json();
+    const { action, port, lang, device } = await request.json();
 
     if (action === 'start') {
-      const result = await startServer(port || 9882, lang || 'a');
+      // If device not explicitly provided, try to read from user's voice.json
+      let effectiveDevice = device;
+      if (!effectiveDevice) {
+        const user = getUserOrAnonymous(cookies);
+        const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
+
+        if (user.role !== 'anonymous' || isGuestWithProfile) {
+          try {
+            const profilePaths = getProfilePaths(user.username);
+            if (fs.existsSync(profilePaths.voiceConfig)) {
+              const voiceConfig = JSON.parse(fs.readFileSync(profilePaths.voiceConfig, 'utf-8'));
+              effectiveDevice = voiceConfig.tts?.kokoro?.device;
+            }
+          } catch (e) {
+            console.warn('[kokoro-server] Failed to read voice config for device setting:', e);
+          }
+        }
+
+        // Default to cuda if still not set
+        effectiveDevice = effectiveDevice || 'cuda';
+      }
+
+      const result = await startServer(port || 9882, lang || 'a', effectiveDevice);
       return new Response(JSON.stringify(result), {
         status: result.success ? 200 : 500,
         headers: { 'Content-Type': 'application/json' },
@@ -134,7 +157,8 @@ async function getServerStatus(): Promise<{
 
 async function startServer(
   port: number = 9882,
-  lang: string = 'a'
+  lang: string = 'a',
+  device: string = 'cuda'
 ): Promise<{
   success: boolean;
   message?: string;
@@ -186,7 +210,7 @@ async function startServer(
 
     const server = spawn(
       pythonBin,
-      [serverScript, '--port', port.toString(), '--lang', lang],
+      [serverScript, '--port', port.toString(), '--lang', lang, '--device', device],
       {
         cwd: KOKORO_DIR,
         detached: true,

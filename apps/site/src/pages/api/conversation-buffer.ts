@@ -1,7 +1,9 @@
 import type { APIRoute } from 'astro';
 import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { getProfilePaths, getUserOrAnonymous, audit } from '@metahuman/core';
+import type { AstroCookies } from 'astro';
 
 /**
  * Conversation Buffer API
@@ -32,13 +34,61 @@ interface ConversationBuffer {
 
 const DEFAULT_MESSAGE_LIMIT = 50;
 
-function getBufferPath(username: string, mode: Mode): string {
-  const profilePaths = getProfilePaths(username);
-  return path.join(profilePaths.state, `conversation-buffer-${mode}.json`);
+interface GuestContext {
+  isGuest: true;
+  sessionId: string;
 }
 
-function loadBuffer(username: string, mode: Mode): ConversationBuffer | null {
-  const bufferPath = getBufferPath(username, mode);
+interface AuthenticatedContext {
+  isGuest: false;
+  username: string;
+}
+
+type UserContext = GuestContext | AuthenticatedContext;
+
+function getGuestTempDir(sessionId: string): string {
+  return path.join(os.tmpdir(), 'metahuman-guest', sessionId);
+}
+
+function getBufferPathForContext(ctx: UserContext, mode: Mode): string {
+  if (ctx.isGuest) {
+    const guestTempDir = getGuestTempDir(ctx.sessionId);
+    return path.join(guestTempDir, `conversation-buffer-${mode}.json`);
+  } else {
+    const profilePaths = getProfilePaths(ctx.username);
+    return path.join(profilePaths.state, `conversation-buffer-${mode}.json`);
+  }
+}
+
+function getUserContext(cookies: AstroCookies): UserContext | null {
+  const user = getUserOrAnonymous(cookies);
+  const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
+
+  if (user.role === 'anonymous' && !isGuestWithProfile) {
+    // Pure anonymous - no access
+    return null;
+  }
+
+  if (isGuestWithProfile) {
+    const sessionCookie = cookies.get('mh_session');
+    const sessionId = sessionCookie?.value?.substring(0, 16) || 'default';
+    return { isGuest: true, sessionId };
+  }
+
+  return { isGuest: false, username: user.username };
+}
+
+function getUserLabel(ctx: UserContext): string {
+  if (ctx.isGuest) {
+    return `guest:${ctx.sessionId}`;
+  } else {
+    return ctx.username;
+  }
+}
+
+// Context-aware buffer operations
+function loadBufferForContext(ctx: UserContext, mode: Mode): ConversationBuffer | null {
+  const bufferPath = getBufferPathForContext(ctx, mode);
   if (!existsSync(bufferPath)) {
     return null;
   }
@@ -65,8 +115,8 @@ function loadBuffer(username: string, mode: Mode): ConversationBuffer | null {
   }
 }
 
-function saveBuffer(username: string, buffer: ConversationBuffer): boolean {
-  const bufferPath = getBufferPath(username, buffer.mode);
+function saveBufferForContext(ctx: UserContext, buffer: ConversationBuffer): boolean {
+  const bufferPath = getBufferPathForContext(ctx, buffer.mode);
 
   try {
     // Ensure directory exists
@@ -90,6 +140,20 @@ function saveBuffer(username: string, buffer: ConversationBuffer): boolean {
   }
 }
 
+function deleteBufferForContext(ctx: UserContext, mode: Mode): boolean {
+  const bufferPath = getBufferPathForContext(ctx, mode);
+
+  try {
+    if (existsSync(bufferPath)) {
+      unlinkSync(bufferPath);
+    }
+    return true;
+  } catch (error) {
+    console.error(`[conversation-buffer] Failed to delete ${mode} buffer:`, error);
+    return false;
+  }
+}
+
 function pruneBuffer(buffer: ConversationBuffer): void {
   if (buffer.messages.length <= buffer.messageLimit) return;
 
@@ -106,23 +170,8 @@ function pruneBuffer(buffer: ConversationBuffer): void {
   });
 }
 
-function deleteBuffer(username: string, mode: Mode): boolean {
-  const bufferPath = getBufferPath(username, mode);
-
-  try {
-    if (existsSync(bufferPath)) {
-      unlinkSync(bufferPath);
-    }
-    return true;
-  } catch (error) {
-    console.error(`[conversation-buffer] Failed to delete ${mode} buffer:`, error);
-    return false;
-  }
-}
-
 // GET: Fetch conversation buffer
 const getHandler: APIRoute = async ({ cookies, request }) => {
-  const user = getUserOrAnonymous(cookies);
   const url = new URL(request.url);
   const mode = (url.searchParams.get('mode') || 'conversation') as Mode;
 
@@ -133,8 +182,10 @@ const getHandler: APIRoute = async ({ cookies, request }) => {
     );
   }
 
-  // Anonymous users get empty buffer
-  if (user.role === 'anonymous') {
+  const ctx = getUserContext(cookies);
+
+  // Pure anonymous users (no guest profile) get empty buffer
+  if (!ctx) {
     return new Response(
       JSON.stringify({
         mode,
@@ -146,7 +197,7 @@ const getHandler: APIRoute = async ({ cookies, request }) => {
     );
   }
 
-  const buffer = loadBuffer(user.username, mode);
+  const buffer = loadBufferForContext(ctx, mode);
 
   if (!buffer) {
     // Return empty buffer structure
@@ -169,10 +220,10 @@ const getHandler: APIRoute = async ({ cookies, request }) => {
 
 // POST: Append message to buffer
 const postHandler: APIRoute = async ({ cookies, request }) => {
-  const user = getUserOrAnonymous(cookies);
+  const ctx = getUserContext(cookies);
 
-  // Anonymous users can't write to buffer
-  if (user.role === 'anonymous') {
+  // Pure anonymous users can't write to buffer
+  if (!ctx) {
     console.warn('[conversation-buffer] Anonymous user cannot write to buffer');
     return new Response(
       JSON.stringify({ error: 'Authentication required to save messages' }),
@@ -198,7 +249,7 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
   }
 
   // Load or create buffer
-  let buffer = loadBuffer(user.username, mode);
+  let buffer = loadBufferForContext(ctx, mode);
   if (!buffer) {
     buffer = {
       mode,
@@ -220,7 +271,7 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
   pruneBuffer(buffer);
 
   // Save buffer
-  const saved = saveBuffer(user.username, buffer);
+  const saved = saveBufferForContext(ctx, buffer);
 
   if (!saved) {
     return new Response(
@@ -229,7 +280,8 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
     );
   }
 
-  console.log(`[conversation-buffer] ✅ Saved ${message.role} message to ${mode} buffer (${buffer.messages.length} total)`);
+  const userLabel = getUserLabel(ctx);
+  console.log(`[conversation-buffer] ✅ Saved ${message.role} message to ${mode} buffer for ${userLabel} (${buffer.messages.length} total)`);
 
   return new Response(
     JSON.stringify({ success: true, messageCount: buffer.messages.length }),
@@ -239,10 +291,10 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
 
 // DELETE: Clear conversation buffer
 const deleteHandler: APIRoute = async ({ cookies, request }) => {
-  const user = getUserOrAnonymous(cookies);
+  const ctx = getUserContext(cookies);
 
-  // Anonymous users can't delete buffer
-  if (user.role === 'anonymous') {
+  // Pure anonymous users can't delete buffer
+  if (!ctx) {
     return new Response(
       JSON.stringify({ error: 'Authentication required' }),
       { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -259,14 +311,15 @@ const deleteHandler: APIRoute = async ({ cookies, request }) => {
     );
   }
 
-  const deleted = deleteBuffer(user.username, mode);
+  const deleted = deleteBufferForContext(ctx, mode);
 
+  const userLabel = getUserLabel(ctx);
   audit({
     level: 'info',
     category: 'action',
     event: 'conversation_buffer_cleared',
-    details: { mode },
-    actor: user.username,
+    details: { mode, isGuest: ctx.isGuest },
+    actor: userLabel,
   });
 
   return new Response(

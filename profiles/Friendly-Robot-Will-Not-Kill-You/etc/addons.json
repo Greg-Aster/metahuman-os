@@ -1,0 +1,182 @@
+{
+  "$schema": "./addons-schema.json",
+  "addons": {
+    "gpt-sovits": {
+      "name": "GPT-SoVITS TTS",
+      "description": "Advanced voice cloning with few-shot learning. Enables highly realistic voice synthesis from minimal training data.",
+      "category": "tts",
+      "enabled": true,
+      "installed": true,
+      "size": "~2.5 GB",
+      "requirements": {
+        "python": ">=3.9",
+        "gpu": "recommended",
+        "vram": "12GB+ recommended"
+      },
+      "dependencies": {
+        "pip": [
+          "librosa>=0.10.0",
+          "soundfile>=0.12.0",
+          "webrtcvad>=2.0.0",
+          "omegaconf>=2.3.0"
+        ],
+        "system": [
+          "ffmpeg"
+        ]
+      },
+      "installation": {
+        "script": "bin/install-sovits.sh",
+        "commands": [
+          "mh sovits install"
+        ]
+      },
+      "configuration": {
+        "file": "etc/voice.json",
+        "ui": "VoiceSettings"
+      },
+      "status": {
+        "command": "mh sovits status"
+      }
+    },
+    "rvc": {
+      "name": "RVC Voice Cloning",
+      "description": "High-fidelity voice cloning using Retrieval-based Voice Conversion. Requires training but delivers outstanding quality with fine-grained pitch control.",
+      "category": "tts",
+      "enabled": true,
+      "installed": true,
+      "size": "~2 GB",
+      "requirements": {
+        "python": ">=3.9",
+        "gpu": "recommended",
+        "vram": "4GB+ recommended"
+      },
+      "dependencies": {
+        "pip": [
+          "torch",
+          "librosa",
+          "soundfile",
+          "scipy",
+          "numpy",
+          "faiss-cpu",
+          "praat-parselmouth"
+        ],
+        "system": [
+          "ffmpeg"
+        ]
+      },
+      "installation": {
+        "script": "bin/install-rvc.sh",
+        "commands": [
+          "mh rvc install"
+        ]
+      },
+      "configuration": {
+        "file": "etc/voice.json",
+        "ui": "VoiceSettings"
+      },
+      "status": {
+        "command": "mh rvc status"
+      },
+      "note": "Requires 10-15 minutes of training audio. Two-stage synthesis: Piper generates base audio, RVC applies voice conversion."
+    },
+    "kokoro": {
+      "name": "Kokoro TTS",
+      "description": "StyleTTS2-based neural voice synthesis with 54 pre-built voices across 8 languages. Supports custom voice pack training with Apache 2.0 licensed weights.",
+      "category": "tts",
+      "enabled": true,
+      "installed": true,
+      "size": "~1.5 GB",
+      "requirements": {
+        "python": ">=3.9",
+        "gpu": "optional",
+        "vram": "2GB+ recommended"
+      },
+      "dependencies": {
+        "pip": [
+          "kokoro>=0.9.4",
+          "soundfile>=0.12.0",
+          "misaki[en]",
+          "misaki[ja]",
+          "misaki[zh]",
+          "espeakng",
+          "fastapi>=0.104.0",
+          "uvicorn>=0.24.0"
+        ],
+        "system": [
+          "espeak-ng",
+          "ffmpeg"
+        ]
+      },
+      "installation": {
+        "script": "bin/install-kokoro.sh",
+        "commands": [
+          "mh kokoro install"
+        ]
+      },
+      "configuration": {
+        "file": "etc/voice.json",
+        "ui": "VoiceSettings"
+      },
+      "status": {
+        "command": "mh kokoro status"
+      },
+      "note": "82M parameter StyleTTS2 model. Includes 54 voices (English, Japanese, Chinese, etc.). Custom voice packs require 5+ minutes of curated speech."
+    },
+    "whisper-stt": {
+      "name": "Whisper Speech-to-Text",
+      "description": "High-quality speech recognition using OpenAI's Whisper model. Supports multiple languages and accents.",
+      "category": "stt",
+      "enabled": false,
+      "installed": true,
+      "size": "~1.5 GB",
+      "requirements": {
+        "python": ">=3.8",
+        "gpu": "optional"
+      },
+      "dependencies": {
+        "pip": [
+          "faster-whisper>=1.0.0"
+        ]
+      },
+      "note": "Already installed as part of core MetaHuman dependencies"
+    },
+    "web-search": {
+      "name": "Web Search Integration",
+      "description": "Enable MetaHuman to search the web for real-time information. Requires external API keys.",
+      "category": "research",
+      "enabled": false,
+      "installed": false,
+      "size": "~10 MB",
+      "requirements": {
+        "api_key": "required"
+      },
+      "dependencies": {
+        "pip": []
+      },
+      "configuration": {
+        "file": "etc/web-search.json",
+        "required_keys": [
+          "SEARCH_API_KEY"
+        ]
+      }
+    }
+  },
+  "categories": {
+    "tts": {
+      "name": "Text-to-Speech",
+      "description": "Voice synthesis engines"
+    },
+    "stt": {
+      "name": "Speech-to-Text",
+      "description": "Speech recognition engines"
+    },
+    "research": {
+      "name": "Research Tools",
+      "description": "External information gathering"
+    },
+    "training": {
+      "name": "Training & Fine-tuning",
+      "description": "Model training utilities"
+    }
+  }
+}

@@ -410,9 +410,40 @@
     bigBrother: []
   };
 
+  // Fetch backend status from public endpoint (works for all users)
+  async function loadBackendStatus() {
+    try {
+      const response = await apiFetch('/api/llm-backend/status');
+      const data = await response.json();
+      if (data.active) {
+        activeBackend = data.active.backend || 'ollama';
+        // Update local model info from backend status
+        if (activeBackend === 'vllm' && data.active.model) {
+          localModel = {
+            id: 'vllm.active',
+            name: data.active.model,
+            provider: 'vllm',
+            locked: true
+          };
+          modelCategories.local = [{
+            id: 'vllm.active',
+            model: data.active.model,
+            provider: 'vllm',
+            locked: true
+          }];
+        }
+      }
+    } catch (error) {
+      console.error('Error loading backend status:', error);
+    }
+  }
+
   async function loadModelRegistry() {
     if (loadingModelRegistry) return;
     loadingModelRegistry = true;
+
+    // Always fetch backend status first (works for all users)
+    await loadBackendStatus();
 
     try {
       const response = await apiFetch('/api/model-registry');
@@ -422,15 +453,16 @@
         availableModels = data.availableModels || [];
         roleAssignments = data.roleAssignments || {};
 
-        // NEW: Extract backend info and model categories
-        activeBackend = data.activeBackend || 'ollama';
-        localModel = data.localModel || null;
-        modelCategories = data.modelCategories || {
-          local: [],
-          lora: [],
-          remote: [],
-          bigBrother: []
-        };
+        // Model registry may override backend info for owners
+        if (data.activeBackend) {
+          activeBackend = data.activeBackend;
+        }
+        if (data.localModel) {
+          localModel = data.localModel;
+        }
+        if (data.modelCategories) {
+          modelCategories = data.modelCategories;
+        }
 
         // Deduplicate models by model name
         const seen = new Map<string, AvailableModel>();
@@ -448,7 +480,9 @@
         }
         uniqueModels = Array.from(seen.values());
       } else {
-        console.error('Failed to load model registry:', data.error);
+        // Non-owner users won't have access to model registry
+        // Backend status was already loaded above
+        console.log('Model registry not accessible (expected for non-owner users)');
       }
     } catch (error) {
       console.error('Error loading model registry:', error);
@@ -481,7 +515,7 @@
     statusRefreshInFlight = true;
     try {
       const cacheBust = `_t=${Date.now()}`;
-      const res = await fetch(`/api/status?${cacheBust}`, { cache: 'no-store' });
+      const res = await apiFetch(`/api/status?${cacheBust}`, { cache: 'no-store' });
       if (!res.ok) {
         throw new Error(`Failed to refresh status (${res.status})`);
       }
@@ -672,10 +706,10 @@
             <span class="backend-badge ollama">🦙 Ollama</span>
           {/if}
           {#if localModel}
-            <span class="local-model-name" class:locked={localModel.locked}>
+            <span class="local-model-name">
               {localModel.name}
               {#if localModel.locked}
-                <span class="lock-icon" title="Model locked - vLLM requires server restart to change">🔒</span>
+                <span class="loaded-indicator" title="Currently loaded in vLLM - select for any role">✓</span>
               {/if}
             </span>
           {/if}
@@ -713,20 +747,20 @@
                     {#if modelCategories.local.length > 0}
                       <div class="dropdown-category">
                         <span class="category-label">
-                          {activeBackend === 'vllm' ? '⚡ vLLM (locked)' : '🦙 Local'}
+                          {activeBackend === 'vllm' ? '⚡ vLLM' : '🦙 Local'}
                         </span>
                         {#each modelCategories.local as model}
                           {@const isCurrentlySelected = modelRoles[role]?.model === model.model}
                           <button
                             class="dropdown-item"
                             class:selected={isCurrentlySelected}
-                            class:locked={model.locked}
+                            class:vllm-active={model.locked}
                             on:click|stopPropagation={() => assignModelToRole(role, model.id)}
                           >
                             <span class="model-name">
                               {model.model}
                               {#if model.locked}
-                                <span class="default-badge">active</span>
+                                <span class="vllm-badge">loaded</span>
                               {/if}
                             </span>
                           </button>
@@ -1973,22 +2007,20 @@
     max-width: 140px;
   }
 
-  .local-model-name.locked {
-    color: rgb(107 114 128);
-  }
-
   :global(.dark) .local-model-name {
     color: rgb(209 213 219);
   }
 
-  :global(.dark) .local-model-name.locked {
-    color: rgb(156 163 175);
+  .loaded-indicator {
+    display: inline-block;
+    font-size: 0.6rem;
+    margin-left: 0.25rem;
+    color: rgb(34 197 94);
+    font-weight: bold;
   }
 
-  .lock-icon {
-    font-size: 0.65rem;
-    margin-left: 0.2rem;
-    opacity: 0.7;
+  :global(.dark) .loaded-indicator {
+    color: rgb(134 239 172);
   }
 
   /* Dropdown Categories */
@@ -2063,14 +2095,42 @@
     margin-left: 0.25rem;
   }
 
-  /* Locked State */
-  .dropdown-item.locked {
-    opacity: 0.6;
-    cursor: not-allowed;
+  /* vLLM Active State - NOT disabled, just shows it's the loaded model */
+  .dropdown-item.vllm-active {
+    /* Normal clickable appearance - not grayed out */
+    background: rgba(250, 204, 21, 0.08);
+    border-left: 2px solid rgba(250, 204, 21, 0.5);
   }
 
-  .dropdown-item.locked:hover {
-    background: transparent;
+  .dropdown-item.vllm-active:hover {
+    background: rgba(250, 204, 21, 0.15);
+  }
+
+  :global(.dark) .dropdown-item.vllm-active {
+    background: rgba(250, 204, 21, 0.1);
+  }
+
+  :global(.dark) .dropdown-item.vllm-active:hover {
+    background: rgba(250, 204, 21, 0.18);
+  }
+
+  /* vLLM "loaded" badge */
+  .vllm-badge {
+    display: inline-block;
+    padding: 0.05rem 0.25rem;
+    border-radius: 0.2rem;
+    font-size: 0.6rem;
+    font-weight: 600;
+    background: rgba(250, 204, 21, 0.2);
+    color: rgb(161 98 7);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    margin-left: 0.25rem;
+  }
+
+  :global(.dark) .vllm-badge {
+    background: rgba(250, 204, 21, 0.25);
+    color: rgb(253 224 71);
   }
 
   .dropdown-item:disabled {

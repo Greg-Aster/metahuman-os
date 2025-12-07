@@ -181,7 +181,7 @@
       observer.observe(bottomSentinel);
     }
 
-    eventSource = new EventSource('/api/stream');
+    eventSource = new EventSource('/api/monitor/stream');
 
     eventSource.onopen = () => {
       connectionStatus = 'Connected';

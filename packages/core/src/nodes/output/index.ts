@@ -10,3 +10,4 @@ export { AuditLoggerNode } from './audit-logger.node.js';
 export { StreamWriterNode } from './stream-writer.node.js';
 export { ChatViewNode } from './chat-view.node.js';
 export { TTSNode } from './tts.node.js';
+export { ThinkingStripperNode } from './thinking-stripper.node.js';

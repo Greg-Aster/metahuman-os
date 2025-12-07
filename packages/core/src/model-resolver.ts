@@ -9,9 +9,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT } from './path-builder.js';
 import { storageClient } from './storage-client.js';
+import { loadBackendConfig, type BackendType } from './llm-backend.js';
 
 export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'fallback';
-export type ModelProvider = 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface';
+export type ModelProvider = 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm';
 
 export interface ModelDefinition {
   provider: ModelProvider;
@@ -70,6 +71,53 @@ export interface ResolvedModel {
 
 const CACHE_TTL = 60000; // 1 minute
 const registryCache = new Map<string, { registry: ModelRegistry; timestamp: number }>();
+
+/**
+ * Get the active LLM backend (ollama or vllm)
+ * Used to ensure model resolution respects the configured backend
+ */
+function getActiveBackend(): BackendType {
+  try {
+    const config = loadBackendConfig();
+    return config.activeBackend;
+  } catch {
+    return 'ollama'; // Default fallback
+  }
+}
+
+/**
+ * Apply backend override to resolved model
+ * When vLLM is active but model is configured for Ollama, use vLLM's model instead
+ * This ensures consistent behavior regardless of how cognitive mode mappings are configured
+ */
+function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry): ResolvedModel {
+  const activeBackend = getActiveBackend();
+
+  // If resolved model uses ollama but vLLM is active, check for vllm.active model
+  if (activeBackend === 'vllm' && resolved.provider === 'ollama') {
+    const vllmModel = registry.models['vllm.active'];
+    if (vllmModel) {
+      return {
+        id: 'vllm.active',
+        provider: 'vllm' as ModelProvider,
+        model: vllmModel.model,
+        adapters: vllmModel.adapters || [],
+        baseModel: vllmModel.baseModel,
+        roles: vllmModel.roles,
+        options: { ...resolved.options, ...vllmModel.options },
+        metadata: { ...resolved.metadata, ...vllmModel.metadata, backendOverride: 'vllm' },
+      };
+    }
+  }
+
+  // If resolved model uses vllm but Ollama is active, use default model
+  if (activeBackend === 'ollama' && resolved.provider === 'vllm') {
+    // Keep the original but the bridge will handle routing to Ollama
+    // The model name won't matter since Ollama will use its loaded model
+  }
+
+  return resolved;
+}
 
 /**
  * Invalidate the model registry cache
@@ -207,7 +255,8 @@ export function resolveModel(
     }
   }
 
-  return resolved;
+  // Apply backend override to ensure correct model for active backend
+  return applyBackendOverride(resolved, registry);
 }
 
 /**
@@ -221,7 +270,7 @@ export function resolveModelById(modelId: string, username?: string): ResolvedMo
     throw new Error(`Model definition not found for ID: ${modelId}`);
   }
 
-  return {
+  const resolved: ResolvedModel = {
     id: modelId,
     provider: modelDef.provider,
     model: modelDef.model,
@@ -231,10 +280,17 @@ export function resolveModelById(modelId: string, username?: string): ResolvedMo
     options: { ...modelDef.options },
     metadata: { ...modelDef.metadata || {} },
   };
+
+  // Apply backend override to ensure correct model for active backend
+  return applyBackendOverride(resolved, registry);
 }
 
 /**
  * Resolve model based on cognitive mode
+ *
+ * BACKEND-AWARE: When vLLM is active but cognitive mode maps to an Ollama model,
+ * this function will override to use vllm.active instead. This ensures consistent
+ * behavior across all cognitive modes when a specific backend is active.
  */
 export function resolveModelForCognitiveMode(
   cognitiveMode: string,
@@ -255,12 +311,31 @@ export function resolveModelForCognitiveMode(
 
     // If specific model ID provided, use it
     if (modelId && typeof modelId === 'string') {
-      return resolveModelById(modelId, username);
+      const resolved = resolveModelById(modelId, username);
+      // Apply backend override to ensure correct model for active backend
+      return applyBackendOverride(resolved, registry);
     }
+
+    // Role exists in mapping but has no value (undefined, not null)
+    // This is a configuration issue - warn loudly
+    console.warn(
+      `[model-resolver] ⚠️ MISSING CONFIG: Role '${role}' has no model assigned in cognitive mode '${cognitiveMode}'.` +
+      `\n  → Falling back to default: ${registry.defaults[role] || 'NONE'}` +
+      `\n  → Fix: Add "${role}": "vllm.active" to cognitiveModeMappings.${cognitiveMode} in models.json`
+    );
+  } else {
+    // No cognitive mode mapping exists at all for this mode
+    console.warn(
+      `[model-resolver] ⚠️ MISSING CONFIG: Cognitive mode '${cognitiveMode}' has no mappings defined.` +
+      `\n  → Falling back to defaults for role '${role}': ${registry.defaults[role] || 'NONE'}` +
+      `\n  → Fix: Add cognitiveModeMappings.${cognitiveMode} section to models.json`
+    );
   }
 
-  // Fall back to default role resolution
-  return resolveModel(role, undefined, username);
+  // Fall back to default role resolution (with warning already logged above)
+  const resolved = resolveModel(role, undefined, username);
+  // Apply backend override to ensure correct model for active backend
+  return applyBackendOverride(resolved, registry);
 }
 
 /**

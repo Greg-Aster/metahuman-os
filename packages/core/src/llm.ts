@@ -239,23 +239,43 @@ export class OpenAIProvider implements LLMProvider {
 export class VLLMProvider implements LLMProvider {
   name = 'vllm';
   private endpoint: string;
+  private enableThinking: boolean = true;
 
   constructor(endpoint = 'http://localhost:8000') {
     this.endpoint = endpoint.replace(/\/$/, '');
+
+    // Read enableThinking from llm-backend config
+    try {
+      const backendConfigPath = path.join(ROOT, 'etc', 'llm-backend.json');
+      if (fs.existsSync(backendConfigPath)) {
+        const backendConfig = JSON.parse(fs.readFileSync(backendConfigPath, 'utf-8'));
+        this.enableThinking = backendConfig.vllm?.enableThinking ?? true;
+      }
+    } catch {
+      // Default to thinking enabled if config read fails
+      this.enableThinking = true;
+    }
   }
 
   async generate(messages: LLMMessage[], options: LLMOptions = {}): Promise<LLMResponse> {
     try {
+      const body: Record<string, unknown> = {
+        model: options.model || 'default',
+        messages: messages.map(m => ({ role: m.role, content: m.content })),
+        max_tokens: options.maxTokens ?? 2048,
+        temperature: options.temperature ?? 0.7,
+        stream: false,
+      };
+
+      // Add chat_template_kwargs to control Qwen3 thinking mode
+      if (!this.enableThinking) {
+        body.chat_template_kwargs = { enable_thinking: false };
+      }
+
       const response = await fetch(`${this.endpoint}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: options.model || 'default',
-          messages: messages.map(m => ({ role: m.role, content: m.content })),
-          max_tokens: options.maxTokens ?? 2048,
-          temperature: options.temperature ?? 0.7,
-          stream: false,
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {

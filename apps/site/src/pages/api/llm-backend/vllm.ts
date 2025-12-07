@@ -47,6 +47,7 @@ const handler: APIRoute = async ({ cookies, request }) => {
           quantization: config.vllm.quantization,
           enforceEager: config.vllm.enforceEager,
           autoUtilization: config.vllm.autoUtilization,
+          enableThinking: config.vllm.enableThinking,
         });
 
         return new Response(JSON.stringify({
@@ -79,6 +80,7 @@ const handler: APIRoute = async ({ cookies, request }) => {
           quantization: config.vllm.quantization,
           enforceEager: config.vllm.enforceEager,
           autoUtilization: config.vllm.autoUtilization,
+          enableThinking: config.vllm.enableThinking,
         });
 
         return new Response(JSON.stringify({

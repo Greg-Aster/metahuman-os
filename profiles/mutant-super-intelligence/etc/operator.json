@@ -1,0 +1,34 @@
+{
+  "version": "2.0",
+  "scratchpad": {
+    "maxSteps": 10,
+    "trimToLastN": 10,
+    "enableVerbatimMode": true,
+    "enableErrorRetry": true
+  },
+  "models": {
+    "useSingleModel": false,
+    "planningModel": "default.coder",
+    "responseModel": "persona"
+  },
+  "logging": {
+    "enableScratchpadDump": false,
+    "logDirectory": "logs/run/agents",
+    "verboseErrors": true
+  },
+  "performance": {
+    "cacheCatalog": true,
+    "catalogTTL": 60000,
+    "parallelSkillExecution": false
+  },
+  "bigBrotherMode": {
+    "enabled": false,
+    "provider": "claude-code",
+    "delegateAll": true,
+    "escalateOnStuck": true,
+    "escalateOnRepeatedFailures": true,
+    "maxRetries": 1,
+    "includeFullScratchpad": true,
+    "autoApplySuggestions": false
+  }
+}

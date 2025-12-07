@@ -19,6 +19,64 @@
     speakMessage: { content: string };
   }>();
 
+  /**
+   * Parse <think> blocks from message content
+   * Returns { thinking: string | null, content: string }
+   */
+  function parseThinkingBlocks(content: string): { thinking: string | null; content: string } {
+    if (!content) return { thinking: null, content: '' };
+
+    // Match <think>...</think> blocks (case insensitive, multiline)
+    const thinkPattern = /<think>([\s\S]*?)<\/think>/gi;
+    const matches = content.match(thinkPattern);
+
+    if (!matches || matches.length === 0) {
+      return { thinking: null, content: content.trim() };
+    }
+
+    // Extract thinking content (combine multiple blocks if present)
+    let thinking = '';
+    for (const match of matches) {
+      const inner = match.replace(/<\/?think>/gi, '').trim();
+      if (inner) {
+        thinking += (thinking ? '\n\n' : '') + inner;
+      }
+    }
+
+    // Remove thinking blocks from content
+    const strippedContent = content
+      .replace(thinkPattern, '')
+      .replace(/^\s*\n+/, '') // Remove leading newlines
+      .trim();
+
+    return {
+      thinking: thinking || null,
+      content: strippedContent
+    };
+  }
+
+  /**
+   * Get parsed message parts (memoized per message)
+   */
+  const parsedCache = new Map<string, { thinking: string | null; content: string }>();
+
+  function getParsedMessage(message: ChatMessage): { thinking: string | null; content: string } {
+    // Only parse assistant messages (model responses)
+    if (message.role !== 'assistant') {
+      return { thinking: null, content: message.content };
+    }
+
+    // Use cache key based on content
+    const cacheKey = message.content;
+    if (parsedCache.has(cacheKey)) {
+      return parsedCache.get(cacheKey)!;
+    }
+
+    const parsed = parseThinkingBlocks(message.content);
+    parsedCache.set(cacheKey, parsed);
+    return parsed;
+  }
+
   function handleMessageClick(message: ChatMessage, index: number) {
     dispatch('messageClick', { message, index });
   }
@@ -33,7 +91,9 @@
 
   function handleSpeak(e: MouseEvent, content: string) {
     e.stopPropagation();
-    dispatch('speakMessage', { content });
+    // Strip thinking from content before speaking (TTS should only speak final answer)
+    const { content: strippedContent } = parseThinkingBlocks(content);
+    dispatch('speakMessage', { content: strippedContent });
   }
 
   function formatTime(timestamp: number): string {
@@ -61,6 +121,15 @@
           initiallyOpen={false}
         />
       {:else}
+        {@const parsed = getParsedMessage(message)}
+        <!-- Show thinking block above message if present (for assistant messages) -->
+        {#if parsed.thinking}
+          <Thinking
+            steps={parsed.thinking}
+            label="🧠 Reasoning · {formatTime(message.timestamp)}"
+            initiallyOpen={false}
+          />
+        {/if}
         <div
           class="message message-{message.role}"
           class:message-selected={selectedMessageIndex === i}
@@ -97,7 +166,7 @@
             {/if}
           </div>
           <div class="message-content">
-            {message.content}
+            {parsed.content}
             <!-- TTS replay button inside bubble at bottom right -->
             <button class="msg-mic-btn" title="Listen to this message" on:click={(e) => handleSpeak(e, message.content)}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

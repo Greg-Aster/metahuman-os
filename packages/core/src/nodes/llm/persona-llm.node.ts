@@ -115,7 +115,7 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
       const temperature = mode === 'inner' ? baseTemperature - 0.1 : baseTemperature;
 
       const response = await callLLM({
-        role: 'fallback',
+        role: 'persona',  // Uses persona role - must be configured in cognitiveModeMappings
         messages,
         cognitiveMode: context.cognitiveMode,
         options: {
