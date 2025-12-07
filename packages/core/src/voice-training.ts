@@ -2175,6 +2175,41 @@ function cleanupRVCCheckpoints(speakerId: string, experimentDir: string): boolea
     const gbFreed = (totalSizeFreed / 1e9).toFixed(2);
     console.log(`[RVC Checkpoint Cleanup] Deleted ${deletedCount} files, freed ${gbFreed} GB`);
 
+    // Also clean up preprocessed audio directories (sliced audio, extracted features)
+    // These are large and no longer needed after training completes
+    const preprocessDirs = ['sliced_audios', 'sliced_audios_16k', 'extracted', 'f0', 'f0_voiced'];
+    let preprocessSizeFreed = 0;
+    let preprocessDirsDeleted = 0;
+
+    for (const dirName of preprocessDirs) {
+      const dirPath = path.join(experimentDir, dirName);
+      if (fs.existsSync(dirPath)) {
+        try {
+          // Calculate size before deletion
+          const files = fs.readdirSync(dirPath);
+          for (const file of files) {
+            try {
+              const filePath = path.join(dirPath, file);
+              const stat = fs.statSync(filePath);
+              if (stat.isFile()) {
+                preprocessSizeFreed += stat.size;
+              }
+            } catch {}
+          }
+
+          // Delete directory recursively
+          fs.rmSync(dirPath, { recursive: true, force: true });
+          preprocessDirsDeleted++;
+          console.log(`[RVC Checkpoint Cleanup] Deleted preprocessed dir: ${dirName}`);
+        } catch (error) {
+          console.error(`[RVC Checkpoint Cleanup] Failed to delete ${dirName}:`, error);
+        }
+      }
+    }
+
+    const totalGbFreed = ((totalSizeFreed + preprocessSizeFreed) / 1e9).toFixed(2);
+    console.log(`[RVC Checkpoint Cleanup] Total freed: ${totalGbFreed} GB (${preprocessDirsDeleted} preprocess dirs)`);
+
     audit({
       level: 'info',
       category: 'action',
@@ -2183,8 +2218,9 @@ function cleanupRVCCheckpoints(speakerId: string, experimentDir: string): boolea
         speakerId,
         experimentDir,
         deletedCount,
-        totalSizeFreed,
-        gbFreed: parseFloat(gbFreed),
+        totalSizeFreed: totalSizeFreed + preprocessSizeFreed,
+        gbFreed: parseFloat(totalGbFreed),
+        preprocessDirsDeleted,
       },
       actor: 'system',
     });

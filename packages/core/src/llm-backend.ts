@@ -61,6 +61,8 @@ export interface VLLMBackendConfig {
   enforceEager?: boolean;
   /** Auto-detect optimal GPU utilization based on available memory */
   autoUtilization?: boolean;
+  /** Enable thinking mode for Qwen3 models (default: true, set false to disable <think> tags) */
+  enableThinking?: boolean;
 }
 
 export interface BackendConfig {
@@ -345,6 +347,7 @@ export async function switchBackend(
           quantization: config.vllm.quantization,
           enforceEager: config.vllm.enforceEager,
           autoUtilization: config.vllm.autoUtilization,
+          enableThinking: config.vllm.enableThinking,
         });
 
         if (!result.success) {
@@ -443,6 +446,7 @@ export async function ensureBackendRunning(): Promise<{ running: boolean; error?
       quantization: config.vllm.quantization,
       enforceEager: config.vllm.enforceEager,
       autoUtilization: config.vllm.autoUtilization,
+      enableThinking: config.vllm.enableThinking,
     });
 
     if (!result.success) {

@@ -9,6 +9,7 @@
 
 import { writable, get } from 'svelte/store';
 import { calculateVoiceVolume } from '../utils/audio-utils.js';
+import { apiFetch } from '../api-config';
 
 // TypeScript declarations for Web Speech API
 interface SpeechRecognitionEvent extends Event {
@@ -101,7 +102,7 @@ interface UseMicrophoneOptions {
  * stealing VRAM while user is actively using voice input.
  */
 function signalMicActivity(): void {
-  fetch('/api/activity-ping', { method: 'POST' }).catch(() => {
+  apiFetch('/api/activity-ping', { method: 'POST' }).catch(() => {
     // Silently ignore errors - activity tracking is best-effort
   });
 }
@@ -290,7 +291,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
    */
   async function loadVADSettings(): Promise<void> {
     try {
-      const response = await fetch('/api/voice-settings');
+      const response = await apiFetch('/api/voice-settings');
       if (response.ok) {
         const config = await response.json();
         if (config.stt?.vad) {
@@ -1226,7 +1227,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
       }
 
       const buf = await blob.arrayBuffer();
-      const res = await fetch(`/api/stt?format=webm&collect=1&dur=${dur}`, {
+      const res = await apiFetch(`/api/stt?format=webm&collect=1&dur=${dur}`, {
         method: 'POST',
         body: buf
       });

@@ -805,6 +805,31 @@
     filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.4));
   }
 
+  /* Thinking Mode Toggle (vLLM/Qwen3) */
+  .thinking-toggle {
+    @apply inline-flex items-center gap-1 px-2 py-1.5 border border-black/15 dark:border-white/20 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 rounded-md cursor-pointer transition-all;
+  }
+
+  .thinking-toggle:hover {
+    @apply bg-gray-50 dark:bg-gray-800;
+  }
+
+  .thinking-toggle.active {
+    @apply bg-purple-600 dark:bg-purple-500 text-white dark:text-gray-900 border-purple-600 dark:border-purple-500;
+  }
+
+  .thinking-toggle.loading {
+    @apply opacity-60 cursor-wait;
+  }
+
+  .thinking-icon {
+    @apply text-base;
+  }
+
+  .thinking-badge {
+    @apply text-xs bg-purple-700 dark:bg-purple-400 text-white dark:text-gray-900 rounded px-1 font-bold;
+  }
+
   /* Big Brother Toggle */
   .big-brother-toggle {
     @apply inline-flex items-center gap-1 px-2 py-1.5 border border-black/15 dark:border-white/20 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 rounded-md cursor-pointer transition-all;
@@ -864,6 +889,11 @@
 
   .icon-btn.active {
     @apply bg-violet-600 dark:bg-violet-500 text-white dark:text-gray-900 border-violet-600 dark:border-violet-500;
+  }
+
+  .icon-btn.tts-active {
+    @apply bg-green-600 dark:bg-green-500 text-white border-green-600 dark:border-green-500;
+    box-shadow: 0 0 8px 2px rgba(34, 197, 94, 0.5);
   }
 
   .icon-btn .badge {

@@ -458,11 +458,14 @@ const getHandler: APIRoute = async ({ cookies }) => {
     // Get user (never throws, returns anonymous if not authenticated)
     const user = getUserOrAnonymous(cookies);
 
+    // Check if this is a guest with selected profile (anonymous but using guest profile)
+    const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
+
     // Use storage router to get correct profile path based on user's storage config
     let voiceConfigPath: string;
     let profileRoot: string;
 
-    if (user.role !== 'anonymous') {
+    if (user.role !== 'anonymous' || isGuestWithProfile) {
       // Get profile root from storage router (handles external storage)
       const storageResult = storageClient.getProfileRoot(user.username);
       if (storageResult.success && storageResult.profileRoot) {
@@ -533,7 +536,7 @@ const getHandler: APIRoute = async ({ cookies }) => {
         // PID file exists and process is running, but health check failed
         // Server is likely still starting up (loading model)
         whisperServerStatus = 'loading';
-      } else if (config.stt.whisper.server.autoStart && user.role !== 'anonymous') {
+      } else if (config.stt.whisper.server.autoStart && (user.role !== 'anonymous' || isGuestWithProfile)) {
         // No server running and no PID file - safe to start
         whisperServerStatus = 'starting';
         console.log('[voice-settings] Auto-starting Whisper server...');

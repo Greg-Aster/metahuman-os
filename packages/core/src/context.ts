@@ -59,6 +59,10 @@ export function withUserContext<T>(
     const profileUser =
       user.activeProfile && user.role !== 'owner' ? user.activeProfile : user.username;
     profilePaths = getProfilePaths(profileUser);
+  } else if (user.activeProfile) {
+    // Anonymous users (guests) with an active profile use that profile's paths
+    // This allows guests to view/interact with public profiles
+    profilePaths = getProfilePaths(user.activeProfile);
   }
 
   const context: UserContext = {

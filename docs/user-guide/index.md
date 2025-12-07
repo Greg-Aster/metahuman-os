@@ -99,33 +99,41 @@ Essential documentation for understanding and using MetaHuman OS:
     - Tool catalog
     - Custom skill creation
 
+12. **[Agency System](advanced-features/24-agency-system.md)** NEW
+    - Autonomous goal-directed behavior
+    - Desire lifecycle (nascent → completed)
+    - Strength and reinforcement system
+    - Planning, self-review, and execution
+    - Big Brother Claude CLI integration
+    - Outcome verification
+
 ---
 
 ## 🎤 Voice & Personality
 
 Advanced features for personalizing your MetaHuman:
 
-12. **[Voice System (Text-to-Speech)](23-voice-system.md)**
+13. **[Voice System (Text-to-Speech)](23-voice-system.md)**
     - **Piper**: Fast synthetic voices (no training)
     - **GPT-SoVITS**: Instant voice cloning (5-10 second samples)
     - **RVC**: High-quality voice conversion (requires training)
     - **Kokoro**: StyleTTS2 with custom voicepacks
     - Training workflows and troubleshooting
 
-13. **[Persona Management System](25-persona-generation.md)**
+14. **[Persona Management System](25-persona-generation.md)**
     - **PersonaGenerator**: Therapist-style interview system
     - **PersonaEditor**: Manual persona editing
     - **Psychoanalyzer**: Automatic evolution from memories
     - Persona lifecycle management
 
-14. **[LoRA Adapter Training](11-special-features.md#lora-adapter-training)**
+15. **[LoRA Adapter Training](11-special-features.md#lora-adapter-training)**
     - Dataset curation and approval
     - Training pipeline
     - Evaluation metrics
     - Dual-adapter system (historical + recent)
     - Activation and testing
 
-15. **[Fine-Tuning & Monthly Updates](13-advanced-usage.md#full-fine-tuning-with-monthly-updates)**
+16. **[Fine-Tuning & Monthly Updates](13-advanced-usage.md#full-fine-tuning-with-monthly-updates)**
     - Cognitive mode training (dual, emulation, agent)
     - Monthly incremental updates
     - Foundation training strategies
@@ -137,20 +145,20 @@ Advanced features for personalizing your MetaHuman:
 
 Deep dive into the AI systems powering MetaHuman OS:
 
-16. **[Cognitive Architecture](27-cognitive-architecture.md)**
+17. **[Cognitive Architecture](27-cognitive-architecture.md)**
     - Multi-layer intelligence system
     - Authentic personality emulation
     - Computational efficiency
     - Human-like reasoning
 
-17. **[Node-Based Cognitive System](28-node-based-cognitive-system.md)**
+18. **[Node-Based Cognitive System](28-node-based-cognitive-system.md)**
     - Visual workflow design
     - Node editor interface
     - Graph executor engine
     - Modular ReAct components
     - Custom workflow creation
 
-18. **[Graceful Failure & Guidance Learning](26-graceful-failure-and-guidance-learning.md)**
+19. **[Graceful Failure & Guidance Learning](26-graceful-failure-and-guidance-learning.md)**
     - Error handling
     - Learning from corrections
     - Operator resilience
@@ -161,32 +169,32 @@ Deep dive into the AI systems powering MetaHuman OS:
 
 Essential guides for safe, reliable operation:
 
-19. **[Security & Trust Model](10-security-trust.md)**
+20. **[Security & Trust Model](10-security-trust.md)**
     - Progressive trust levels
     - Audit trail
     - Policy enforcement
     - Reversibility guarantees
 
-20. **[Authentication & Profiles](17-authentication-setup.md)**
+21. **[Authentication & Profiles](17-authentication-setup.md)**
     - User registration and login
     - Profile management
     - Guest access
     - Session handling
 
-21. **[Multi-User Profiles & Guest Mode](19-multi-user-profiles.md)**
+22. **[Multi-User Profiles & Guest Mode](19-multi-user-profiles.md)**
     - Isolated user profiles
     - Guest access setup
     - Permission model
     - Persona facets
     - "Mutant Super Intelligence" merged mode
 
-22. **[Headless Runtime Mode](20-headless-runtime-mode.md)**
+23. **[Headless Runtime Mode](20-headless-runtime-mode.md)**
     - Remote access without conflicts
     - Pausing local agents
     - Dedicated web server
     - Mobile access
 
-23. **[Cloudflare Tunnel Setup](17-cloudflare-tunnel-setup.md)**
+24. **[Cloudflare Tunnel Setup](17-cloudflare-tunnel-setup.md)**
     - Secure remote access
     - Domain configuration
     - Zero-trust networking
@@ -197,26 +205,26 @@ Essential guides for safe, reliable operation:
 
 For power users and customization:
 
-24. **[Configuration Files Reference](14-configuration-files.md)**
+25. **[Configuration Files Reference](14-configuration-files.md)**
     - `etc/` directory structure
     - All config files documented
     - Template variables
     - Hot-reload behavior
 
-25. **[Advanced Usage](13-advanced-usage.md)**
+26. **[Advanced Usage](13-advanced-usage.md)**
     - Advanced workflows
     - Customization options
     - Power user features
     - Performance tuning
 
-26. **[Special Features](11-special-features.md)**
+27. **[Special Features](11-special-features.md)**
     - Audio processing (ASR/TTS)
     - Vector search
     - LoRA adapters
     - Self-healing coder
     - Addon system
 
-27. **[Special States & Protocols](18-special-states.md)**
+28. **[Special States & Protocols](18-special-states.md)**
     - "Wetware Deceased" mode
     - Lifeline Protocol (emergency)
     - Kill Switch
@@ -228,25 +236,25 @@ For power users and customization:
 
 Additional resources and help:
 
-28. **[Troubleshooting](12-troubleshooting.md)**
+29. **[Troubleshooting](12-troubleshooting.md)**
     - Common issues and solutions
     - Error messages
     - Debugging tips
     - Recovery procedures
 
-29. **[Known Issues & Experimental Features](15-known-issues.md)**
+30. **[Known Issues & Experimental Features](15-known-issues.md)**
     - Features in development
     - Limitations and caveats
     - Beta features
     - Workarounds
 
-30. **[What's Next (Roadmap)](16-whats-next.md)**
+31. **[What's Next (Roadmap)](16-whats-next.md)**
     - Future features
     - Development priorities
     - Upcoming releases
     - Community contributions
 
-31. **[Support](17-support.md)**
+32. **[Support](17-support.md)**
     - Getting help
     - Reporting issues
     - Contributing
@@ -258,13 +266,13 @@ Additional resources and help:
 
 Important policies and commitments:
 
-32. **[Terms of Service](21-terms-of-service.md)**
+33. **[Terms of Service](21-terms-of-service.md)**
     - Privacy commitment
     - Data security responsibilities
     - Local-first infrastructure
     - Limitation of liability
 
-33. **[Ethical Use Policy](22-ethical-use-policy.md)**
+34. **[Ethical Use Policy](22-ethical-use-policy.md)**
     - Prohibited uses
     - Ethical principles
     - Responsible AI guidelines

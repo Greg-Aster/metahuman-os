@@ -1,0 +1,75 @@
+{
+  "$schema": "https://metahuman.dev/schemas/psychoanalyzer.json",
+  "version": "1.0.0",
+  "description": "Psychoanalyzer agent configuration - reviews memories and updates persona incrementally",
+  "enabled": true,
+  "schedule": {
+    "mode": "manual",
+    "interval": null,
+    "nextRun": null,
+    "note": "Run manually via CLI: ./bin/mh agent run psychoanalyzer"
+  },
+  "memorySelection": {
+    "strategy": "recent",
+    "daysBack": 14,
+    "maxMemories": 100,
+    "minMemories": 10,
+    "excludeTypes": ["audit", "system"],
+    "priorityTags": ["insight", "reflection", "goal", "value", "decision"]
+  },
+  "analysis": {
+    "model": "psychotherapist",
+    "temperature": 0.3,
+    "focusAreas": [
+      "values_evolution",
+      "goals_progress",
+      "communication_patterns",
+      "interests_changes",
+      "decision_heuristics",
+      "personality_shifts"
+    ],
+    "confidenceThreshold": 0.6,
+    "note": "Only update persona if confidence is above threshold"
+  },
+  "updateStrategy": {
+    "mode": "incremental",
+    "preserveUserEdits": true,
+    "mergeStrategy": "merge",
+    "fields": {
+      "identity": false,
+      "personality.communicationStyle": true,
+      "personality.interests": true,
+      "personality.aesthetic": true,
+      "values.core": true,
+      "goals": true,
+      "context.currentFocus": true,
+      "context.projects": true,
+      "decisionHeuristics": true,
+      "writingStyle.motifs": true
+    },
+    "note": "Fields marked true can be auto-updated. Identity is protected."
+  },
+  "reconciliation": {
+    "enabled": true,
+    "removeStaleGoals": true,
+    "removeStaleInterests": true,
+    "updateGoalStatuses": true,
+    "removeContradictedValues": false,
+    "removeUnusedHeuristics": true,
+    "note": "Reconciliation keeps persona fresh by removing outdated content. removeContradictedValues is conservative (disabled by default) as values evolve slowly."
+  },
+  "archival": {
+    "enabled": true,
+    "path": "archives",
+    "format": "YYYY-MM-DD-HHmmss.json",
+    "keepVersions": 50,
+    "generateChangelog": true,
+    "changelogPath": "archives/CHANGELOG.md"
+  },
+  "notifications": {
+    "createMemory": true,
+    "memoryType": "inner_dialogue",
+    "title": "🧠 Persona Updated by Psychoanalyzer",
+    "includeChangeSummary": true
+  }
+}

@@ -200,7 +200,7 @@
       }
 
       // Load full log file
-      const res = await fetch(`/api/training/log-file?file=${encodeURIComponent(run.logFile)}`);
+      const res = await apiFetch(`/api/training/log-file?file=${encodeURIComponent(run.logFile)}`);
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.logs) {

@@ -435,7 +435,7 @@ async function loadMemoryContent(relPath: string) {
   }
 
   try {
-    const res = await fetch(`/api/memory-content?relPath=${encodeURIComponent(relPath)}`);
+    const res = await apiFetch(`/api/memory-content?relPath=${encodeURIComponent(relPath)}`);
     const data = await res.json();
     if (!res.ok || !data.success) {
       throw new Error(data?.error || 'Failed to load memory content');

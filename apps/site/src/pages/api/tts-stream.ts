@@ -117,8 +117,12 @@ export const POST: APIRoute = async ({ request, cookies }) => {
         normalize: false,
       };
 
+      // Check if this is a guest with selected profile (anonymous but using guest profile)
+      const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
+
       // Load user voice config to get custom voicepack path
-      if (user.role !== 'anonymous') {
+      // Allow both authenticated users AND guests with profile
+      if (user.role !== 'anonymous' || isGuestWithProfile) {
         const profilePaths = getProfilePaths(user.username);
         const voiceConfigPath = profilePaths.voiceConfig;
 
@@ -199,7 +203,9 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       speed: speed,
     };
 
-    if (selectedProvider === 'rvc' && user.role !== 'anonymous') {
+    // Also check for guest with profile for RVC
+    const isGuestForRvc = user.role === 'anonymous' && user.id === 'guest';
+    if (selectedProvider === 'rvc' && (user.role !== 'anonymous' || isGuestForRvc)) {
       const profilePaths = getProfilePaths(user.username);
       const voiceConfigPath = profilePaths.voiceConfig;
 
@@ -243,7 +249,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
             voice: rvcConfig.voice,
             speakingRate: rvcConfig.speed,
             pitchShift: rvcConfig.pitchShift,
-            username: user.role !== 'anonymous' ? user.username : undefined,
+            username: (user.role !== 'anonymous' || isGuestForRvc) ? user.username : undefined,
             signal: request.signal,
           });
 

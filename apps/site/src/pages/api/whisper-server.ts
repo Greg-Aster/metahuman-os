@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { getAuthenticatedUser, getUserOrAnonymous, systemPaths, storageClient } from '@metahuman/core';
+import { getUserOrAnonymous, systemPaths, storageClient } from '@metahuman/core';
 
 /**
  * GET: Check Whisper server status
@@ -11,7 +11,10 @@ import { getAuthenticatedUser, getUserOrAnonymous, systemPaths, storageClient } 
 const getHandler: APIRoute = async ({ cookies }) => {
   try {
     const user = getUserOrAnonymous(cookies);
-    if (user.role === 'anonymous') {
+    const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
+
+    // Block pure anonymous (no selected profile)
+    if (user.role === 'anonymous' && !isGuestWithProfile) {
       return new Response(
         JSON.stringify({ error: 'Authentication required' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -75,7 +78,16 @@ const getHandler: APIRoute = async ({ cookies }) => {
 
 const postHandler: APIRoute = async ({ request, cookies }) => {
   try {
-    const user = getAuthenticatedUser(cookies);
+    const user = getUserOrAnonymous(cookies);
+    const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
+
+    // Block pure anonymous (no selected profile)
+    if (user.role === 'anonymous' && !isGuestWithProfile) {
+      return new Response(
+        JSON.stringify({ error: 'Authentication required', success: false }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
 
     const body = await request.json();
     const { action } = body;
