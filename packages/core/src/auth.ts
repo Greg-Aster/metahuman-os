@@ -21,9 +21,12 @@ export interface AuthenticatedUser {
 }
 
 export interface AnonymousUser {
-  id: 'anonymous';
-  username: 'anonymous';
+  id: 'anonymous' | 'guest';
+  username: 'anonymous' | 'guest';
   role: 'anonymous';
+  metadata?: {
+    sourceProfile?: string;
+  };
 }
 
 export type User = AuthenticatedUser | AnonymousUser;
@@ -104,6 +107,23 @@ export function getUserOrAnonymous(cookies: Cookies): User {
   try {
     return getAuthenticatedUser(cookies);
   } catch (error) {
+    // Check if this is an anonymous session with a selected guest profile
+    // If so, return 'guest' as username so paths resolve to profiles/guest
+    const sessionCookie = cookies.get('mh_session');
+    if (sessionCookie) {
+      const session = validateSession(sessionCookie.value);
+      if (session?.role === 'anonymous' && session.metadata?.activeProfile === 'guest') {
+        return {
+          id: 'guest',
+          username: 'guest',
+          role: 'anonymous' as const,
+          // Preserve source profile info for display
+          metadata: {
+            sourceProfile: session.metadata.sourceProfile,
+          },
+        } as User;
+      }
+    }
     return {
       id: 'anonymous',
       username: 'anonymous',

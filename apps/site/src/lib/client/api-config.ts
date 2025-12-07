@@ -138,6 +138,15 @@ export async function testServerConnection(url: string): Promise<{
 
     const latencyMs = Date.now() - start;
 
+    // 401/403 means server IS reachable, just needs auth - treat as connected
+    if (response.status === 401 || response.status === 403) {
+      return {
+        success: true,
+        latencyMs,
+        version: undefined  // Can't get version without auth
+      };
+    }
+
     if (!response.ok) {
       return {
         success: false,

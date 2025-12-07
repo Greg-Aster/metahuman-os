@@ -1,0 +1,68 @@
+{
+  "$schema": "training-data-config-schema",
+  "description": "Configuration for LoRA training data collection and curation",
+  "version": "1.0.0",
+  "curator": {
+    "batchSize": 100,
+    "qualityThreshold": 6.0,
+    "temperature": 0.3
+  },
+  "collection": {
+    "maxDays": 999999,
+    "maxSamplesPerSource": 3000
+  },
+  "memoryTypes": {
+    "enabled": [
+      "conversation",
+      "observation",
+      "reflection",
+      "reflection_summary",
+      "inner_dialogue",
+      "decision",
+      "dream",
+      "journal",
+      "curiosity_question",
+      "summary"
+    ],
+    "priorities": {
+      "therapy_session": 10,
+      "conversation": 9,
+      "inner_dialogue": 8,
+      "reflection": 7,
+      "reflection_summary": 7,
+      "decision": 6,
+      "observation": 5,
+      "curiosity_question": 4,
+      "dream": 3,
+      "journal": 3,
+      "summary": 2
+    }
+  },
+  "phases": {
+    "description": "Recommended configurations for different training phases",
+    "phase1_conservative": {
+      "curator": {
+        "batchSize": 50,
+        "maxSamplesPerSource": 1000
+      },
+      "expectedSamples": "~800-1200",
+      "processingTime": "~15 mins"
+    },
+    "phase2_optimal": {
+      "curator": {
+        "batchSize": 100,
+        "maxSamplesPerSource": 3000
+      },
+      "expectedSamples": "~2500-3000",
+      "processingTime": "~30 mins"
+    },
+    "phase3_maximum": {
+      "curator": {
+        "batchSize": 150,
+        "maxSamplesPerSource": 5000
+      },
+      "expectedSamples": "~4000-5000",
+      "processingTime": "~45-60 mins"
+    }
+  }
+}

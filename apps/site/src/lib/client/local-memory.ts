@@ -7,6 +7,24 @@
 
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 
+// Conversation buffer types
+export type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'dream' | 'reasoning';
+export type BufferMode = 'conversation' | 'inner';
+
+export interface BufferMessage {
+  role: MessageRole;
+  content: string;
+  timestamp: number;
+  meta?: Record<string, any>;
+}
+
+export interface ConversationBuffer {
+  mode: BufferMode;
+  messages: BufferMessage[];
+  lastUpdated: string;
+  messageLimit: number;
+}
+
 // Database schema
 interface LocalMemoryDB extends DBSchema {
   memories: {
@@ -29,6 +47,11 @@ interface LocalMemoryDB extends DBSchema {
       'by-synced': boolean;
       'by-deleted': boolean;
     };
+  };
+  // Conversation buffers for offline chat
+  conversationBuffers: {
+    key: string;  // 'conversation' or 'inner'
+    value: ConversationBuffer;
   };
   persona: {
     key: string;
@@ -88,6 +111,8 @@ interface LocalMemoryDB extends DBSchema {
       createdAt: string;
       lastLoginAt?: string;
       syncedAt?: string;  // Last sync with server
+      pendingVerification?: boolean;  // True if credentials haven't been verified with server
+      verificationFailed?: boolean;   // True if server rejected the credentials
     };
     indexes: {
       'by-profileType': string;
@@ -103,7 +128,9 @@ export type LocalPersona = LocalMemoryDB['persona']['value'];
 export type LocalTask = LocalMemoryDB['tasks']['value'];
 
 const DB_NAME = 'metahuman-local';
-const DB_VERSION = 2;  // Bumped for users store
+const DB_VERSION = 3;  // Bumped for conversationBuffers store
+
+const DEFAULT_MESSAGE_LIMIT = 50;
 
 let dbInstance: IDBPDatabase<LocalMemoryDB> | null = null;
 
@@ -150,6 +177,11 @@ export async function getDB(): Promise<IDBPDatabase<LocalMemoryDB>> {
       if (!db.objectStoreNames.contains('users')) {
         const userStore = db.createObjectStore('users', { keyPath: 'username' });
         userStore.createIndex('by-profileType', 'profileType');
+      }
+
+      // Conversation buffers store for offline chat
+      if (!db.objectStoreNames.contains('conversationBuffers')) {
+        db.createObjectStore('conversationBuffers', { keyPath: 'mode' });
       }
     },
   });
@@ -717,8 +749,184 @@ export async function cacheServerUser(
     createdAt: existing?.createdAt || now,
     lastLoginAt: now,
     syncedAt: now,
+    pendingVerification: false,  // Verified since we just logged in successfully
+    verificationFailed: false,
   };
 
   await db.put('users', user);
   return user;
+}
+
+/**
+ * Create a pending-verification user for offline login
+ * This allows login when server is offline, with verification happening later
+ */
+export async function createPendingUser(
+  username: string,
+  password: string,
+  serverUrl: string,
+  displayName?: string
+): Promise<LocalUser> {
+  const db = await getDB();
+  const now = new Date().toISOString();
+  const passwordHash = await hashPassword(password);
+
+  // Check if user already exists
+  const existing = await db.get('users', username);
+  if (existing && !existing.pendingVerification) {
+    // Already have a verified user - don't overwrite
+    throw new Error('User already exists and is verified');
+  }
+
+  const user: LocalUser = {
+    username,
+    displayName: displayName || username,
+    passwordHash,
+    profileType: 'server',
+    serverUrl,
+    encrypted: false,
+    createdAt: existing?.createdAt || now,
+    lastLoginAt: now,
+    pendingVerification: true,  // Needs server verification
+    verificationFailed: false,
+  };
+
+  await db.put('users', user);
+  return user;
+}
+
+/**
+ * Mark a pending user as verified (called after successful server login)
+ */
+export async function markUserVerified(username: string): Promise<LocalUser | null> {
+  const db = await getDB();
+  const user = await db.get('users', username);
+
+  if (!user) {
+    return null;
+  }
+
+  const updatedUser: LocalUser = {
+    ...user,
+    pendingVerification: false,
+    verificationFailed: false,
+    syncedAt: new Date().toISOString(),
+  };
+
+  await db.put('users', updatedUser);
+  return updatedUser;
+}
+
+/**
+ * Mark a pending user's verification as failed
+ */
+export async function markVerificationFailed(username: string): Promise<LocalUser | null> {
+  const db = await getDB();
+  const user = await db.get('users', username);
+
+  if (!user) {
+    return null;
+  }
+
+  const updatedUser: LocalUser = {
+    ...user,
+    verificationFailed: true,
+  };
+
+  await db.put('users', updatedUser);
+  return updatedUser;
+}
+
+// ============ Conversation Buffer Operations ============
+
+/**
+ * Get conversation buffer (local-first for offline support)
+ */
+export async function getConversationBuffer(mode: BufferMode): Promise<ConversationBuffer> {
+  const db = await getDB();
+  const buffer = await db.get('conversationBuffers', mode);
+
+  if (!buffer) {
+    return {
+      mode,
+      messages: [],
+      lastUpdated: new Date().toISOString(),
+      messageLimit: DEFAULT_MESSAGE_LIMIT,
+    };
+  }
+
+  return buffer;
+}
+
+/**
+ * Append a message to the conversation buffer
+ */
+export async function appendToBuffer(
+  mode: BufferMode,
+  message: Omit<BufferMessage, 'timestamp'> & { timestamp?: number }
+): Promise<ConversationBuffer> {
+  const db = await getDB();
+  let buffer = await db.get('conversationBuffers', mode);
+
+  if (!buffer) {
+    buffer = {
+      mode,
+      messages: [],
+      lastUpdated: new Date().toISOString(),
+      messageLimit: DEFAULT_MESSAGE_LIMIT,
+    };
+  }
+
+  // Add timestamp if not present
+  const newMessage: BufferMessage = {
+    ...message,
+    timestamp: message.timestamp || Date.now(),
+  };
+
+  buffer.messages.push(newMessage);
+
+  // Auto-prune if over limit
+  if (buffer.messages.length > buffer.messageLimit) {
+    const excess = buffer.messages.length - buffer.messageLimit;
+    buffer.messages = buffer.messages.slice(excess);
+  }
+
+  buffer.lastUpdated = new Date().toISOString();
+  await db.put('conversationBuffers', buffer);
+
+  return buffer;
+}
+
+/**
+ * Clear conversation buffer
+ */
+export async function clearBuffer(mode: BufferMode): Promise<void> {
+  const db = await getDB();
+  await db.delete('conversationBuffers', mode);
+}
+
+/**
+ * Replace entire buffer (for syncing from server)
+ */
+export async function replaceBuffer(buffer: ConversationBuffer): Promise<void> {
+  const db = await getDB();
+  await db.put('conversationBuffers', buffer);
+}
+
+/**
+ * Get all buffers (for syncing)
+ */
+export async function getAllBuffers(): Promise<ConversationBuffer[]> {
+  const db = await getDB();
+  return db.getAll('conversationBuffers');
+}
+
+/**
+ * Get buffer messages filtered for display (excludes system messages)
+ */
+export async function getDisplayMessages(mode: BufferMode): Promise<BufferMessage[]> {
+  const buffer = await getConversationBuffer(mode);
+  return buffer.messages.filter(
+    msg => msg.role !== 'system' && !msg.meta?.summaryMarker
+  );
 }

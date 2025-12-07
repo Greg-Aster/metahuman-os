@@ -659,6 +659,22 @@ export const nodeSchemas: NodeSchema[] = [
     properties: { provider: '', autoPlay: true },
     description: 'Converts text to speech',
   }),
+  defineSchema({
+    id: 'thinking_stripper',
+    name: 'Thinking Stripper',
+    category: 'output',
+    inputs: [
+      { name: 'response', type: 'any', description: 'LLM response that may contain <think> blocks' },
+    ],
+    outputs: [
+      { name: 'response', type: 'string', description: 'Response with thinking stripped (alias for stripped)' },
+      { name: 'stripped', type: 'string', description: 'Response with <think> blocks removed' },
+      { name: 'thinking', type: 'string', description: 'Extracted thinking content (null if none)' },
+      { name: 'hadThinking', type: 'boolean', description: 'Whether response contained thinking' },
+    ],
+    properties: {},
+    description: 'Extracts <think> blocks for UI display, provides stripped content for memory/TTS',
+  }),
 
   // SKILL NODES
   defineSchema({

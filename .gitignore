@@ -26,6 +26,15 @@ build/
 !/profiles/mutant-super-intelligence/
 !/profiles/mutant-super-intelligence/**
 
+# Exclude personal/runtime data from ALL profiles (including whitelisted demos)
+profiles/*/memory/
+profiles/*/state/
+profiles/*/training-data/
+profiles/*/out/voice-cache/
+profiles/*/out/voice-training/
+profiles/*/out/adapters/
+profiles/*/persona/desires/
+
 # Legacy root-level personal data (for backward compatibility)
 # Personal persona configuration (keep templates only)
 /persona/users.json

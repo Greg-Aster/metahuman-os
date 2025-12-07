@@ -12,6 +12,11 @@
   import { useMicrophone } from '../lib/client/composables/useMicrophone';
   import { useThinkingTrace } from '../lib/client/composables/useThinkingTrace';
   import { useMessages, useActivityTracking, useOllamaStatus, type ChatMessage, type MessageRole, type ReasoningStage } from '../lib/client/composables/useMessages';
+  // Offline support
+  import { healthStatus, isConnected, forceHealthCheck } from '../lib/client/server-health';
+  import { getDisplayMessages, appendToBuffer, clearBuffer, type BufferMode, type BufferMessage } from '../lib/client/local-memory';
+  import { unifiedChat, type ChatResponse } from '../lib/client/unified-chat';
+  import { apiEventSource, apiFetch } from '../lib/client/api-config';
 
   // Component state
   let input = '';
@@ -34,6 +39,9 @@
   // Convenience toggles
   let ttsEnabled = false;
   let boredomTtsEnabled = false; // For inner dialog voice
+  // vLLM Thinking Mode (Qwen3)
+  let thinkingModeEnabled = false;
+  let thinkingModeLoading = false;
   // Curiosity questions
   let curiosityQuestions: any[] = [];
   let lastQuestionCheck = 0;
@@ -194,11 +202,55 @@
     updateReasoningDepth(Number(target.value), true);
   }
 
+  // vLLM Thinking Mode toggle
+  async function loadThinkingMode() {
+    try {
+      const res = await apiFetch('/api/llm-backend/status');
+      if (res.ok) {
+        const data = await res.json();
+        // Only relevant when vLLM is active
+        if (data.config?.vllm?.enableThinking !== undefined) {
+          thinkingModeEnabled = data.config.vllm.enableThinking;
+        }
+      }
+    } catch (error) {
+      console.error('[thinking-mode] Failed to load status:', error);
+    }
+  }
+
+  async function toggleThinkingMode() {
+    if (thinkingModeLoading) return;
+    thinkingModeLoading = true;
+
+    try {
+      const newValue = !thinkingModeEnabled;
+      const res = await apiFetch('/api/llm-backend/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vllm: { enableThinking: newValue }
+        }),
+      });
+
+      if (res.ok) {
+        thinkingModeEnabled = newValue;
+        console.log(`[thinking-mode] ${newValue ? 'Enabled' : 'Disabled'} - model will ${newValue ? 'show <think> tags' : 'respond directly'}`);
+      } else {
+        console.error('[thinking-mode] Failed to update config');
+      }
+    } catch (error) {
+      console.error('[thinking-mode] Error toggling:', error);
+    } finally {
+      thinkingModeLoading = false;
+    }
+  }
+
   // Server-first conversation buffer management
 
 
   onMount(async () => {
     loadChatPrefs();
+    loadThinkingMode(); // Load vLLM thinking mode setting
     mic.loadVADSettings(); // Load VAD settings from voice config
 
     // Enable hardware button capture only if user opted in via Voice Settings
@@ -215,7 +267,7 @@
 
     // Load Big Brother configuration from server
     try {
-      const res = await fetch('/api/big-brother-config');
+      const res = await apiFetch('/api/big-brother-config');
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.config) {
@@ -306,40 +358,66 @@
 
   /**
    * Fetch buffer content directly (for initial load and tab switches)
-   * This is simpler and more reliable than waiting for SSE
+   * Always tries server first, falls back to local IndexedDB on error.
+   * This avoids race conditions where isConnected is false on page reload
+   * before the health check has run.
    */
   async function fetchBuffer(streamMode: 'conversation' | 'inner') {
+    // Always try server first - don't rely on isConnected which may not be accurate yet
     try {
-      console.log(`[chat] Fetching ${streamMode} buffer...`);
-      const response = await fetch(`/api/buffer?mode=${streamMode}`);
+      console.log(`[chat] Fetching ${streamMode} buffer from server...`);
+      const response = await apiFetch(`/api/buffer?mode=${streamMode}`);
       if (response.ok) {
         const data = await response.json();
         if (Array.isArray(data.messages)) {
           console.log(`[chat] Loaded ${data.messages.length} messages from ${streamMode} buffer`);
           messages.set(data.messages);
+          return;
         }
-      } else {
-        console.error('[chat] Buffer fetch failed:', response.status);
       }
+      // Non-OK response - fall through to local fallback
+      console.warn('[chat] Buffer fetch returned non-OK status:', response.status);
     } catch (err) {
-      console.error('[chat] Buffer fetch error:', err);
+      console.warn('[chat] Server buffer fetch failed, trying local storage:', err);
+    }
+
+    // Fallback to local IndexedDB
+    try {
+      console.log(`[chat] Fetching ${streamMode} from local storage...`);
+      const localMessages = await getDisplayMessages(streamMode as BufferMode);
+      console.log(`[chat] Loaded ${localMessages.length} messages from local storage`);
+      // Convert BufferMessage to ChatMessage format
+      const chatMessages = localMessages.map(m => ({
+        role: m.role,
+        content: m.content,
+        timestamp: m.timestamp,
+        meta: m.meta,
+      }));
+      messages.set(chatMessages);
+    } catch (err) {
+      console.error('[chat] Local buffer fetch also failed:', err);
+      messages.set([]);
     }
   }
 
   /**
    * Connect to buffer SSE stream for real-time updates
    * Uses fs.watch on server - no polling needed, instant updates
+   * Always attempts connection - SSE has its own error handling
    */
   function connectBufferStream(streamMode: 'conversation' | 'inner') {
     // First, fetch buffer directly for immediate display
     fetchBuffer(streamMode);
 
+    // Close existing stream if any
     if (innerDialogueStream) {
       innerDialogueStream.close();
     }
 
+    // Always try to connect SSE - don't rely on isConnected which may not be accurate yet
+    // The SSE onerror handler will deal with connection failures gracefully
     console.log(`[chat] Connecting to ${streamMode} buffer stream...`);
-    innerDialogueStream = new EventSource(`/api/buffer-stream?mode=${streamMode}`);
+    innerDialogueStream = apiEventSource(`/api/buffer-stream?mode=${streamMode}`);
 
     innerDialogueStream.onmessage = (event) => {
       try {
@@ -366,6 +444,13 @@
 
     innerDialogueStream.onerror = (err) => {
       console.error('[chat] Buffer stream error - connection may have been reset:', err);
+      // Check if we're now offline
+      const stillConnected = get(isConnected);
+      if (!stillConnected) {
+        console.log('[chat] Now offline, switching to local storage mode');
+        fetchBuffer(streamMode);
+        return;
+      }
       // Attempt reconnection after a delay
       setTimeout(() => {
         console.log('[chat] Attempting buffer stream reconnection...');
@@ -419,11 +504,80 @@
     }
   });
 
+  /**
+   * Send message in offline mode using UnifiedChat with tier selection
+   * Routes to: offline LLM → server → cloud based on availability
+   */
+  async function sendMessageOffline() {
+    const userMessage = input.trim();
+    if (!userMessage) return;
+
+    input = '';
+    messagesApi.clearSelection();
+
+    // Add user message to UI and local buffer
+    messagesApi.pushMessage('user', userMessage);
+    await appendToBuffer(mode as BufferMode, { role: 'user', content: userMessage });
+
+    loading = true;
+    thinkingTraceApi.start();
+    thinkingTraceApi.setStatusLabel('🔄 Selecting best tier...');
+
+    try {
+      console.log('[sendMessage-offline] Using UnifiedChat for offline/tiered routing');
+
+      // Use unified chat which handles tier selection and fallbacks
+      const result: ChatResponse = await unifiedChat.sendMessage(userMessage);
+
+      console.log(`[sendMessage-offline] Response from tier: ${result.tier} (${result.model})`);
+
+      // Add assistant response to UI and local buffer
+      messagesApi.pushMessage('assistant', result.response, undefined, {
+        tier: result.tier,
+        model: result.model,
+        latencyMs: result.latencyMs,
+      });
+      await appendToBuffer(mode as BufferMode, {
+        role: 'assistant',
+        content: result.response,
+        meta: { tier: result.tier, model: result.model },
+      });
+
+      // TTS if enabled
+      if (ttsEnabled && result.response) {
+        void ttsApi.speakText(result.response);
+      }
+
+      thinkingTraceApi.stop();
+    } catch (err) {
+      console.error('[sendMessage-offline] Error:', err);
+      const errorMsg = err instanceof Error ? err.message : 'Failed to get response';
+      messagesApi.pushMessage('system', `⚠️ ${errorMsg}`);
+      thinkingTraceApi.stop();
+    } finally {
+      loading = false;
+    }
+  }
 
   async function sendMessage() {
     if (!input.trim() || loading) return;
 
-    // Check LLM backend status before sending
+    let connected = get(isConnected);
+
+    // On mobile or if connection status is uncertain, do a quick health check
+    const { isCapacitorNative } = await import('../lib/client/api-config');
+    if (isCapacitorNative() || !connected) {
+      const healthResult = await forceHealthCheck();
+      connected = healthResult.connected;
+    }
+
+    // If offline, use UnifiedChat with tier selection
+    if (!connected) {
+      await sendMessageOffline();
+      return;
+    }
+
+    // Check LLM backend status before sending (only when online)
     if (!backendApi.isReady()) {
       const backend = get(activeBackend);
       const msg = backend === 'vllm'
@@ -508,7 +662,7 @@
       // Use EventSource for streaming with a GET request
       // Force graph pipeline; some runtime toggles can disable it after settings load
       params.set('graph', 'true');
-      chatResponseStream = new EventSource(`/api/persona_chat?${params.toString()}`);
+      chatResponseStream = apiEventSource(`/api/persona_chat?${params.toString()}`);
       console.log('[sendMessage] Step 6: EventSource created!');
 
       chatResponseStream.onmessage = (event) => {
@@ -649,14 +803,35 @@
         }
       };
 
-      chatResponseStream.onerror = (err) => {
+      chatResponseStream.onerror = async (err) => {
         console.error('[EventSource] onerror fired! Error:', err);
         console.error('[EventSource] ReadyState:', chatResponseStream?.readyState);
-        messagesApi.pushMessage('system', 'Error: Connection to the server was lost.');
+        chatResponseStream?.close();
+
+        // Force a health check to get accurate connection status
+        const healthResult = await forceHealthCheck();
+
+        // If server is offline, fallback to UnifiedChat
+        if (!healthResult.connected) {
+          console.log('[EventSource] Server confirmed offline, falling back to UnifiedChat');
+          // Remove the user message we just added (will be re-added by sendMessageOffline)
+          const currentMessages = get(messages);
+          if (currentMessages.length > 0 && currentMessages[currentMessages.length - 1].role === 'user') {
+            messages.set(currentMessages.slice(0, -1));
+          }
+          // Restore input and try offline
+          input = userMessage;
+          thinkingTraceApi.stop();
+          loading = false;
+          reasoningStages = [];
+          await sendMessageOffline();
+          return;
+        }
+
+        messagesApi.pushMessage('system', 'Error: Connection to the server was lost. Try again or check server status.');
         thinkingTraceApi.stop();
         loading = false;
         reasoningStages = [];
-        chatResponseStream?.close();
       };
 
     } catch (err) {
@@ -677,7 +852,7 @@
     try {
       console.log('[stop-request] Cancelling session:', $conversationSessionId);
 
-      const response = await fetch('/api/cancel-chat', {
+      const response = await apiFetch('/api/cancel-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -717,7 +892,7 @@
 
   async function checkClaudeSessionStatus() {
     try {
-      const res = await fetch('/api/claude-session');
+      const res = await apiFetch('/api/claude-session');
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.status) {
@@ -737,7 +912,7 @@
     claudeSessionChecking = true;
     try {
       console.log('[claude-session] Starting Claude CLI session...');
-      const res = await fetch('/api/claude-session', {
+      const res = await apiFetch('/api/claude-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'start' })
@@ -765,7 +940,7 @@
 
   async function stopClaudeSession() {
     try {
-      await fetch('/api/claude-session', {
+      await apiFetch('/api/claude-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'stop' })
@@ -783,7 +958,7 @@
 
     // Update server configuration
     try {
-      const res = await fetch('/api/big-brother-config', {
+      const res = await apiFetch('/api/big-brother-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -822,7 +997,7 @@
 
   async function handleValidate(relPath: string, status: 'correct' | 'incorrect') {
     try {
-      const res = await fetch('/api/memories/validate', {
+      const res = await apiFetch('/api/memories/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ relPath, status }),
@@ -852,7 +1027,7 @@
 
     // Clear audit log files from disk for privacy
     try {
-      const response = await fetch('/api/audit/clear', {
+      const response = await apiFetch('/api/audit/clear', {
         method: 'DELETE',
       });
 
@@ -925,27 +1100,21 @@
       </select>
     </div>
 
-    <!-- Reasoning Depth Slider -->
-    <div class="reasoning-toggle">
-      <div class="reasoning-slider-wrapper">
-        <input
-          id="reasoning-range"
-          type="range"
-          class="reasoning-slider-input"
-          min="0"
-          max={reasoningLabels.length - 1}
-          step="1"
-          value={reasoningDepth}
-          on:input={handleReasoningInput}
-          on:change={handleReasoningChange}
-          title="Reasoning: {reasoningLabels[reasoningDepth]}"
-          aria-label="Reasoning depth: {reasoningLabels[reasoningDepth]}"
-        />
-        <div class="reasoning-emoji" style="left: {(reasoningDepth / (reasoningLabels.length - 1)) * 100}%">
-          🧠
-        </div>
-      </div>
-    </div>
+    <!-- Thinking Mode Toggle (vLLM/Qwen3) -->
+    <button
+      class="thinking-toggle {thinkingModeEnabled ? 'active' : ''}"
+      class:loading={thinkingModeLoading}
+      title={thinkingModeEnabled
+        ? 'Thinking ON - Model reasons before answering (click to disable)'
+        : 'Thinking OFF - Direct responses (click to enable reasoning)'}
+      on:click={toggleThinkingMode}
+      disabled={thinkingModeLoading}
+    >
+      <span class="thinking-icon">🧠</span>
+      {#if thinkingModeEnabled}
+        <span class="thinking-badge">On</span>
+      {/if}
+    </button>
 
     <!-- Big Brother Mode Toggle -->
     <button
@@ -974,7 +1143,7 @@
     <!-- Quick voice/tts controls -->
     <div class="quick-audio">
       <button
-        class="icon-btn"
+        class="icon-btn {ttsEnabled ? 'tts-active' : ''}"
         title={ttsEnabled ? 'Disable speech' : 'Enable speech'}
         on:click={() => {
           ttsEnabled = !ttsEnabled;
@@ -985,7 +1154,6 @@
         }}>
         <!-- Speaker icon -->
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 5V5L7 10H3zM16.5 12a4.5 4.5 0 00-1.5-3.356V15.356A4.5 4.5 0 0016.5 12z"></path></svg>
-        {#if ttsEnabled}<span class="badge">On</span>{/if}
       </button>
 
       <!-- Inner dialog voice toggle (only visible in inner mode) -->

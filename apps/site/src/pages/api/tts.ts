@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { generateSpeech, generateMultiVoiceSpeech } from '@metahuman/core';
+import { generateSpeech, generateMultiVoiceSpeech, withUserContext, getUserOrAnonymous, validateSession } from '@metahuman/core';
 
 /**
  * POST /api/tts
@@ -35,42 +35,67 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
       });
     }
 
-    // User context is automatically set by withUserContext middleware
-    // For guest users viewing other profiles, context.profilePaths points to the viewed profile
-    const normalizedProvider = normalizeProvider(provider);
-    let audioBuffer: Buffer;
+    // Get user for context
+    const user = getUserOrAnonymous(cookies);
 
-    // Check if multi-voice mode is requested (for Mutant Super Intelligence)
-    if (models && Array.isArray(models) && models.length > 0) {
-      // Generate speech with multiple voices mixed together
-      audioBuffer = await generateMultiVoiceSpeech(text, models, {
-        signal: request.signal,
-        speakingRate,
-        provider: normalizedProvider,
-        // No username needed - context handles profile resolution
-      });
-    } else {
-      // Generate speech audio with optional overrides (single voice)
-      audioBuffer = await generateSpeech(text, {
-        signal: request.signal,
-        voice: voiceId || model, // Use voiceId (preferred) or model (legacy)
-        speakingRate: speakingRate || speed, // speakingRate for Piper, speed for SoVITS/RVC/Kokoro
-        pitchShift, // RVC-specific
-        langCode, // Kokoro-specific language code
-        provider: normalizedProvider,
-        // No username needed - context handles profile resolution
-      });
+    // For guests viewing a profile, get the source profile so they hear that persona's voice
+    let activeProfile: string | undefined;
+
+    if (user.role === 'anonymous') {
+      const sessionCookie = cookies.get('mh_session');
+      if (sessionCookie) {
+        const session = validateSession(sessionCookie.value);
+        // Use the source profile (the profile they selected to view) for voice settings
+        activeProfile = session?.metadata?.sourceProfile || 'guest';
+      } else {
+        activeProfile = 'guest';
+      }
     }
 
-    // Return audio as WAV stream
-    return new Response(audioBuffer, {
-      status: 200,
-      headers: {
-        'Content-Type': 'audio/wav',
-        'Content-Length': audioBuffer.length.toString(),
-        'Cache-Control': 'public, max-age=31536000', // Cache for 1 year (immutable content)
+    // Wrap in user context so voice config paths can be resolved
+    // For guests, activeProfile tells context.ts which profile's paths to use
+    return await withUserContext(
+      {
+        userId: user.id,
+        username: user.username,
+        role: user.role as any,
+        activeProfile,
       },
-    });
+      async () => {
+        const normalizedProvider = normalizeProvider(provider) as 'piper' | 'gpt-sovits' | 'rvc' | undefined;
+        let audioBuffer: Buffer;
+
+        // Check if multi-voice mode is requested (for Mutant Super Intelligence)
+        if (models && Array.isArray(models) && models.length > 0) {
+          // Generate speech with multiple voices mixed together
+          audioBuffer = await generateMultiVoiceSpeech(text, models, {
+            signal: request.signal,
+            speakingRate,
+            provider: normalizedProvider,
+          });
+        } else {
+          // Generate speech audio with optional overrides (single voice)
+          audioBuffer = await generateSpeech(text, {
+            signal: request.signal,
+            voice: voiceId || model, // Use voiceId (preferred) or model (legacy)
+            speakingRate: speakingRate || speed, // speakingRate for Piper, speed for SoVITS/RVC/Kokoro
+            pitchShift, // RVC-specific
+            langCode, // Kokoro-specific language code
+            provider: normalizedProvider,
+          });
+        }
+
+        // Return audio as WAV stream
+        return new Response(new Uint8Array(audioBuffer), {
+          status: 200,
+          headers: {
+            'Content-Type': 'audio/wav',
+            'Content-Length': audioBuffer.length.toString(),
+            'Cache-Control': 'public, max-age=31536000', // Cache for 1 year (immutable content)
+          },
+        });
+      }
+    );
   } catch (error) {
     if ((error as Error).name === 'AbortError') {
       return new Response(null, { status: 499, statusText: 'Client Closed Request' });

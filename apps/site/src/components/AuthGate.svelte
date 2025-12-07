@@ -2,13 +2,12 @@
   import { onMount } from 'svelte';
   import OnboardingWizard from './OnboardingWizard.svelte';
   import ProfileSelector from './ProfileSelector.svelte';
-  import { apiFetch, isCapacitorNative, getApiBaseUrl } from '../lib/client/api-config';
+  import { apiFetch, isCapacitorNative, getApiBaseUrl, initServerUrl } from '../lib/client/api-config';
   import { healthStatus, forceHealthCheck } from '../lib/client/server-health';
   import {
     validateLocalUser,
     registerLocalUser,
     cacheServerUser,
-    hasLocalUsers,
     getAllLocalUsers,
     type LocalUser,
   } from '../lib/client/local-memory';
@@ -35,7 +34,7 @@
   let email = '';
 
   // Local profile options
-  let profileType: 'local' | 'server' = 'server';
+  let profileType: 'local' | 'server' = 'local';  // Default to local-first
 
   // Recovery code fields
   let recoveryCode = '';
@@ -54,6 +53,11 @@
   // Check if user is already authenticated
   async function checkAuth() {
     isMobile = isCapacitorNative();
+
+    // On mobile, ensure server URL is initialized before making API calls
+    if (isMobile) {
+      await initServerUrl();
+    }
 
     // Check for local users first
     try {
@@ -97,7 +101,7 @@
     }
   }
 
-  // Handle login - tries local first, then server
+  // Handle login - local-first authentication with optional server sync
   async function handleLogin(e: Event) {
     e.preventDefault();
     error = '';
@@ -109,19 +113,22 @@
       if (localUser) {
         console.log('[AuthGate] Local auth successful for:', username);
 
-        // If it's a server profile and server is connected, also do server login
-        if (localUser.profileType === 'server' && serverConnected) {
+        // If server is connected, sync profile data
+        if (serverConnected) {
           try {
+            // Establish server session for API calls
             const res = await apiFetch('/api/auth/login', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ username, password }),
             });
             if (res.ok) {
-              console.log('[AuthGate] Server login also successful');
+              console.log('[AuthGate] Server session established, profile will sync');
+              // TODO: Trigger profile data sync here
+              // await syncProfileData(username);
             }
           } catch (e) {
-            console.warn('[AuthGate] Server login failed, continuing with local:', e);
+            console.warn('[AuthGate] Server sync skipped (offline):', e);
           }
         }
 
@@ -130,36 +137,73 @@
         return;
       }
 
-      // No local user found - try server if connected
+      // No local user found - try server first if connected, otherwise show options
       if (serverConnected) {
-        const res = await apiFetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password }),
-        });
+        try {
+          const res = await apiFetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+          });
 
-        const data = await res.json();
+          const data = await res.json();
 
-        if (data.success) {
-          // Cache the user locally for offline access
-          const serverUrl = getApiBaseUrl();
-          await cacheServerUser(username, password, serverUrl, data.user?.displayName);
-          console.log('[AuthGate] Server login successful, cached locally');
+          if (data.success) {
+            // Cache the user locally for offline access
+            const serverUrl = getApiBaseUrl();
+            await cacheServerUser(username, password, serverUrl, data.user?.displayName);
+            console.log('[AuthGate] Server login successful, cached locally');
 
-          isAuthenticated = true;
-          window.location.reload();
-          return;
-        } else {
-          error = data.error || 'Login failed';
+            isAuthenticated = true;
+            window.location.reload();
+            return;
+          } else {
+            // Server rejected - user may not exist or wrong password
+            // Show sync-prompt with option to create local profile
+            error = data.error || 'Login failed. You can create a local profile instead.';
+            view = 'sync-prompt';
+          }
+        } catch (e) {
+          // Network error despite health check saying connected
+          error = 'Connection error. You can create a local profile.';
+          view = 'sync-prompt';
         }
       } else {
-        // No local user and server offline
-        error = 'User not found locally. Connect to server to sync.';
+        // No local user and server offline - show options
         view = 'sync-prompt';
       }
     } catch (err) {
       error = 'Login failed. Check your credentials.';
       console.error('Login error:', err);
+    } finally {
+      loading = false;
+    }
+  }
+
+  // Create local profile (local-first: all profile data stored on device)
+  async function handleOfflineLogin() {
+    error = '';
+    loading = true;
+
+    try {
+      // Create a local profile - authentication is always local
+      await registerLocalUser(username, password, {
+        displayName: displayName || username,
+        profileType: 'local',  // Local-first: profile data lives on device
+        encrypted: false,
+      });
+      console.log('[AuthGate] Created local profile:', username);
+
+      isAuthenticated = true;
+      window.location.reload();
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('already exists')) {
+        error = 'User already exists locally. Try logging in normally.';
+        view = 'login';
+      } else {
+        error = err instanceof Error ? err.message : 'Failed to create profile';
+      }
+      console.error('Create profile error:', err);
     } finally {
       loading = false;
     }
@@ -221,6 +265,47 @@
     } catch (err) {
       error = 'Network error. Please try again.';
       console.error('Registration error:', err);
+    } finally {
+      loading = false;
+    }
+  }
+
+  // Handle local profile registration (for offline use)
+  async function handleLocalRegister() {
+    error = '';
+
+    if (password !== confirmPassword) {
+      error = 'Passwords do not match';
+      return;
+    }
+
+    if (password.length < 6) {
+      error = 'Password must be at least 6 characters';
+      return;
+    }
+
+    loading = true;
+
+    try {
+      await registerLocalUser(username, password, {
+        displayName: displayName || username,
+        profileType: 'local',
+        encrypted: false,
+      });
+
+      // Auto-login after registration
+      const user = await validateLocalUser(username, password);
+      if (user) {
+        isAuthenticated = true;
+        // Skip onboarding for local profiles (can be done later)
+        window.location.reload();
+      } else {
+        error = 'Profile created but login failed. Try logging in manually.';
+        view = 'login';
+      }
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to create local profile';
+      console.error('Local registration error:', err);
     } finally {
       loading = false;
     }
@@ -344,7 +429,18 @@
 {#if !isAuthenticated || view === 'post-register' || view === 'onboarding' || view === 'recovery-codes'}
   <div class="auth-backdrop">
     <div class="auth-container" class:onboarding-container={view === 'onboarding'}>
-      {#if view === 'onboarding'}
+      {#if isCheckingAuth}
+        <!-- Loading state while checking authentication -->
+        <div class="splash-content">
+          <div class="logo-section">
+            <div class="logo-icon loading-pulse">
+              <span class="logo-letter">🧠💻</span>
+            </div>
+            <h1 class="app-title">MetaHuman OS</h1>
+            <p class="app-tagline">Checking authentication...</p>
+          </div>
+        </div>
+      {:else if view === 'onboarding'}
         <!-- Onboarding Wizard -->
         <OnboardingWizard onComplete={handleOnboardingComplete} />
       {:else if view === 'post-register'}
@@ -407,6 +503,14 @@
             <p class="app-tagline">Autonomous Digital Personality Extension</p>
           </div>
 
+          <!-- Offline Banner when server is not connected (mobile only) -->
+          {#if !serverConnected && isMobile}
+            <div class="offline-banner">
+              <span class="offline-indicator">📡</span>
+              <span>Server offline - local mode available</span>
+            </div>
+          {/if}
+
           <div class="welcome-text">
             <p>
               MetaHuman OS is a personal AI system that mirrors your identity, memories, and
@@ -421,15 +525,34 @@
               </svg>
               Login
             </button>
-            <button class="btn btn-secondary" on:click={() => view = 'register'}>
-              <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
-                <path d="M8 1a3 3 0 100 6 3 3 0 000-6zM6 9c-2.67 0-8 1.34-8 4v2h9v-2c0-1.48-1.21-2.77-3-3.46zM14 9h-2v2h-2v2h2v2h2v-2h2v-2h-2V9z" fill="currentColor"/>
-              </svg>
-              Create Account
-            </button>
-            <button class="btn btn-ghost" on:click={continueAsGuest}>
-              Continue as Guest
-            </button>
+            {#if !isMobile || serverConnected}
+              <!-- Web: Always show these (server IS the connection) -->
+              <!-- Mobile: Show when server is connected -->
+              <button class="btn btn-secondary" on:click={() => view = 'register'}>
+                <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+                  <path d="M8 1a3 3 0 100 6 3 3 0 000-6zM6 9c-2.67 0-8 1.34-8 4v2h9v-2c0-1.48-1.21-2.77-3-3.46zM14 9h-2v2h-2v2h2v2h2v-2h2v-2h-2V9z" fill="currentColor"/>
+                </svg>
+                Create Account
+              </button>
+              <button class="btn btn-ghost" on:click={continueAsGuest}>
+                Continue as Guest
+              </button>
+            {:else}
+              <!-- Mobile offline: Show local profile options -->
+              <button class="btn btn-secondary" on:click={() => view = 'register-local'}>
+                <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+                  <path d="M8 1a3 3 0 100 6 3 3 0 000-6zM6 9c-2.67 0-8 1.34-8 4v2h9v-2c0-1.48-1.21-2.77-3-3.46zM14 9h-2v2h-2v2h2v2h2v-2h2v-2h-2V9z" fill="currentColor"/>
+                </svg>
+                Create Local Profile
+              </button>
+              <button class="btn btn-ghost" on:click={async () => {
+                loading = true;
+                await forceHealthCheck();
+                loading = false;
+              }} disabled={loading}>
+                {loading ? 'Checking...' : 'Retry Server Connection'}
+              </button>
+            {/if}
           </div>
 
           <div class="footer-info">
@@ -733,6 +856,163 @@
             </p>
           </div>
         </div>
+      {:else if view === 'sync-prompt'}
+        <!-- User Not Found - shown when user not found locally -->
+        <div class="form-content">
+          <button class="back-button" on:click={() => view = 'login'}>
+            <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
+              <path d="M8 14L2 8l6-6M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+
+          <div class="form-header">
+            <div class="offline-icon">👤</div>
+            <h2>User Not Found</h2>
+            <p>No local profile for "{username}"</p>
+          </div>
+
+          {#if error}
+            <div class="error-message">{error}</div>
+          {/if}
+
+          <div class="offline-options">
+            <!-- Option 1: Create local profile with these credentials -->
+            <div class="option-card primary-option">
+              <div class="option-icon">➕</div>
+              <h3>Create Local Profile</h3>
+              <p>Create a new profile as "{username}" on this device</p>
+              <button class="btn btn-primary btn-block" on:click={handleOfflineLogin} disabled={loading}>
+                {loading ? 'Creating...' : 'Create Profile'}
+              </button>
+            </div>
+
+            <!-- Option 2: Sync from server (if connected) -->
+            <div class="option-card">
+              <div class="option-icon">🔄</div>
+              <h3>Sync from Server</h3>
+              <p>Pull existing profile data from server</p>
+              {#if serverConnected}
+                <button class="btn btn-secondary btn-block" on:click={() => view = 'login'}>
+                  Connect & Sync
+                </button>
+              {:else}
+                <button class="btn btn-secondary btn-block" on:click={async () => {
+                  loading = true;
+                  await forceHealthCheck();
+                  loading = false;
+                  if (serverConnected) {
+                    view = 'login';
+                  }
+                }} disabled={loading}>
+                  {loading ? 'Connecting...' : 'Connect to Server'}
+                </button>
+                <div class="server-status" style="margin-top: 0.75rem;">
+                  <span class="status-dot offline"></span>
+                  <span>Server offline</span>
+                </div>
+              {/if}
+            </div>
+
+            {#if localUsers.length > 0}
+              <div class="option-card">
+                <div class="option-icon">👥</div>
+                <h3>Other Local Profiles</h3>
+                <div class="local-users-list">
+                  {#each localUsers as user}
+                    <button class="local-user-btn" on:click={() => { username = user.username; view = 'login'; }}>
+                      {user.displayName || user.username}
+                      <span class="user-type">{user.profileType}</span>
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          </div>
+        </div>
+      {:else if view === 'register-local'}
+        <!-- Local Profile Registration (offline) -->
+        <div class="form-content">
+          <button class="back-button" on:click={() => view = serverConnected ? 'splash' : 'sync-prompt'}>
+            <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
+              <path d="M8 14L2 8l6-6M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+
+          <div class="form-header">
+            <h2>Create Local Profile</h2>
+            <p>This profile will be stored on your device only</p>
+          </div>
+
+          <form on:submit|preventDefault={handleLocalRegister}>
+            <div class="form-group">
+              <label for="local-username">Username *</label>
+              <input
+                id="local-username"
+                type="text"
+                bind:value={username}
+                required
+                disabled={loading}
+                autocomplete="username"
+                pattern="[a-zA-Z0-9_-]+"
+                title="Letters, numbers, underscore, and hyphen only"
+                minlength="3"
+                maxlength="50"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="local-display-name">Display Name</label>
+              <input
+                id="local-display-name"
+                type="text"
+                bind:value={displayName}
+                disabled={loading}
+                placeholder="Optional"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="local-password">Password *</label>
+              <input
+                id="local-password"
+                type="password"
+                bind:value={password}
+                required
+                disabled={loading}
+                autocomplete="new-password"
+                minlength="6"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="local-confirm-password">Confirm Password *</label>
+              <input
+                id="local-confirm-password"
+                type="password"
+                bind:value={confirmPassword}
+                required
+                disabled={loading}
+                autocomplete="new-password"
+                minlength="6"
+              />
+            </div>
+
+            {#if error}
+              <div class="error-message">{error}</div>
+            {/if}
+
+            <div class="local-profile-note">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M8 1C4.13 1 1 4.13 1 8s3.13 7 7 7 7-3.13 7-7-3.13-7-7-7zm0 2c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm1 9H7V7h2v5z" fill="currentColor"/>
+              </svg>
+              <span>This creates a local profile. Connect to a server later to sync your data.</span>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block" disabled={loading}>
+              {loading ? 'Creating...' : 'Create Local Profile'}
+            </button>
+          </form>
+        </div>
       {:else if view === 'recovery-codes'}
         <!-- Recovery Codes Display (After Registration) -->
         <div class="form-content recovery-codes-view">
@@ -845,6 +1125,21 @@
       transform: translateY(0);
       opacity: 1;
     }
+  }
+
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.7;
+      transform: scale(1.05);
+    }
+  }
+
+  .loading-pulse {
+    animation: pulse 1.5s ease-in-out infinite;
   }
 
   :global(html:not(.dark)) .auth-container {
@@ -1542,6 +1837,156 @@
 
   :global(html:not(.dark)) .recovery-codes-footer strong {
     color: rgba(0, 0, 0, 0.9);
+  }
+
+  /* Offline Banner on Splash */
+  .offline-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: linear-gradient(135deg, rgba(249, 115, 22, 0.2) 0%, rgba(220, 38, 38, 0.2) 100%);
+    border: 1px solid rgba(249, 115, 22, 0.4);
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    color: #fb923c;
+    font-size: 0.9rem;
+  }
+
+  :global(html:not(.dark)) .offline-banner {
+    background: linear-gradient(135deg, rgba(249, 115, 22, 0.15) 0%, rgba(220, 38, 38, 0.15) 100%);
+    color: #ea580c;
+  }
+
+  .offline-indicator {
+    font-size: 1.2rem;
+  }
+
+  /* Offline / Sync Prompt Styles */
+  .offline-icon {
+    width: 60px;
+    height: 60px;
+    margin: 0 auto 1rem;
+    background: linear-gradient(135deg, #f97316 0%, #dc2626 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+  }
+
+  .offline-info {
+    padding: 1rem;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 0.9rem;
+  }
+
+  :global(html:not(.dark)) .offline-info {
+    color: rgba(0, 0, 0, 0.8);
+  }
+
+  .offline-options {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .local-users-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+
+  .local-user-btn {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .local-user-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+
+  :global(html:not(.dark)) .local-user-btn {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.2);
+    color: rgba(0, 0, 0, 0.9);
+  }
+
+  :global(html:not(.dark)) .local-user-btn:hover {
+    background: rgba(0, 0, 0, 0.06);
+  }
+
+  .user-type {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    background: rgba(96, 165, 250, 0.2);
+    border-radius: 4px;
+    color: #60a5fa;
+  }
+
+  .server-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    justify-content: center;
+    padding: 0.75rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.6);
+  }
+
+  :global(html:not(.dark)) .server-status {
+    background: rgba(0, 0, 0, 0.03);
+    color: rgba(0, 0, 0, 0.6);
+  }
+
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #10b981;
+  }
+
+  .status-dot.offline {
+    background: #ef4444;
+  }
+
+  .local-profile-note {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: rgba(96, 165, 250, 0.1);
+    border: 1px solid rgba(96, 165, 250, 0.3);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.8);
+  }
+
+  :global(html:not(.dark)) .local-profile-note {
+    color: rgba(0, 0, 0, 0.8);
+  }
+
+  .local-profile-note svg {
+    flex-shrink: 0;
+    color: #60a5fa;
   }
 
   /* Responsive */

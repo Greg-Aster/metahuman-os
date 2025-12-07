@@ -35,6 +35,7 @@ export const GET: APIRoute = async () => {
           maxModelLen: config.vllm.maxModelLen,
           enforceEager: config.vllm.enforceEager,
           autoUtilization: config.vllm.autoUtilization,
+          enableThinking: config.vllm.enableThinking,
         },
       },
     }), {

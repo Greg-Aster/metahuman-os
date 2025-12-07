@@ -4,7 +4,7 @@ import {
   startRvcServer,
   stopRvcServer,
 } from '../../lib/server/rvc-server';
-import { getAuthenticatedUser } from '@metahuman/core';
+import { getUserOrAnonymous } from '@metahuman/core';
 
 /**
  * GET /api/rvc-server
@@ -12,8 +12,12 @@ import { getAuthenticatedUser } from '@metahuman/core';
  */
 export const GET: APIRoute = async ({ cookies }) => {
   try {
-    const user = getAuthenticatedUser(cookies);
-    const status = await getRvcServerStatus(user.username);
+    const user = getUserOrAnonymous(cookies);
+    const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
+
+    // Use username for authenticated users and guests with profile
+    const username = (user.role !== 'anonymous' || isGuestWithProfile) ? user.username : 'guest';
+    const status = await getRvcServerStatus(username);
     return new Response(JSON.stringify(status), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -33,11 +37,13 @@ export const GET: APIRoute = async ({ cookies }) => {
  */
 export const POST: APIRoute = async ({ request, cookies }) => {
   try {
-    const user = getAuthenticatedUser(cookies);
+    const user = getUserOrAnonymous(cookies);
+    const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
+    const username = (user.role !== 'anonymous' || isGuestWithProfile) ? user.username : 'guest';
     const { action } = await request.json();
 
     if (action === 'start') {
-      const result = await startRvcServer(user.username);
+      const result = await startRvcServer(username);
       return new Response(JSON.stringify(result), {
         status: result.success ? 200 : 500,
         headers: { 'Content-Type': 'application/json' },
@@ -52,7 +58,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       // Stop then start
       await stopRvcServer();
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      const result = await startRvcServer(user.username);
+      const result = await startRvcServer(username);
       return new Response(JSON.stringify(result), {
         status: result.success ? 200 : 500,
         headers: { 'Content-Type': 'application/json' },

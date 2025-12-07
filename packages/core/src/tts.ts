@@ -64,13 +64,27 @@ function loadUserConfig(username?: string): VoiceConfig {
   // Check if we have user context (e.g., guest viewing another profile)
   const userContext = getUserContext();
 
+  // DEBUG: Log context state for troubleshooting
+  console.log('[TTS loadUserConfig] Context state:', {
+    username,
+    hasUserContext: !!userContext,
+    userContextUsername: userContext?.username,
+    userContextActiveProfile: userContext?.activeProfile,
+    hasProfilePaths: !!userContext?.profilePaths,
+    profilePathsRoot: userContext?.profilePaths?.root,
+    voiceConfigPath: userContext?.profilePaths?.voiceConfig,
+  });
+
   // Use context's profilePaths if available (for guest users viewing other profiles)
   // Otherwise construct from username parameter
   const userConfigPath = userContext?.profilePaths?.voiceConfig ||
     (username && username !== 'anonymous' ? getProfilePaths(username).voiceConfig : null);
 
+  console.log('[TTS loadUserConfig] Selected config path:', userConfigPath);
+
   // If no config path or username is anonymous with no context, return global config
   if (!userConfigPath) {
+    console.log('[TTS loadUserConfig] No config path, using global config');
     return globalConfig;
   }
 
@@ -162,13 +176,15 @@ function resolveConfigPaths(rawConfig: VoiceConfig, username?: string): VoiceCon
     // Replace {PROFILE_DIR} with user-specific profile directory
     // Uses storage router to resolve correct path (internal, external, or encrypted)
     if (resolvedPath.includes('{PROFILE_DIR}')) {
-      if (username && username !== 'anonymous') {
+      if (userContext?.profilePaths) {
+        // Prioritize context's profilePaths - this handles guests viewing other profiles correctly
+        // The context's profilePaths is already resolved to the correct profile (e.g., bitter-greg)
+        resolvedPath = resolvedPath.replace(/\{PROFILE_DIR\}/g, userContext.profilePaths.root);
+      } else if (username && username !== 'anonymous' && username !== 'guest') {
         // Use getProfilePaths which respects storage router configuration
+        // Excludes 'guest' since guests should always have context-provided paths
         const profilePaths = getProfilePaths(username);
         resolvedPath = resolvedPath.replace(/\{PROFILE_DIR\}/g, profilePaths.root);
-      } else if (userContext?.profilePaths) {
-        // Fallback to context's profilePaths if available
-        resolvedPath = resolvedPath.replace(/\{PROFILE_DIR\}/g, userContext.profilePaths.root);
       } else {
         // SECURITY: No silent fallback - throw error if no user context for profile paths
         // This prevents accidentally writing sensitive data to unencrypted locations

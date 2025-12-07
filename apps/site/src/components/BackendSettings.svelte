@@ -27,6 +27,7 @@
   let vllmEnforceEager = true;
   let vllmAutoUtilization = false;
   let vllmMaxModelLen = 4096;
+  let vllmEnableThinking = true; // Qwen3 thinking mode (shows <think> tags)
 
   // Ollama config
   let ollamaEndpoint = 'http://localhost:11434';
@@ -65,6 +66,7 @@
         vllmEnforceEager = data.config.vllm.enforceEager;
         vllmAutoUtilization = data.config.vllm.autoUtilization;
         vllmMaxModelLen = data.config.vllm.maxModelLen;
+        vllmEnableThinking = data.config.vllm.enableThinking ?? true;
         ollamaEndpoint = data.config.ollama.endpoint;
         ollamaModel = data.config.ollama.defaultModel;
         error = null;
@@ -159,6 +161,7 @@
             enforceEager: vllmEnforceEager,
             autoUtilization: vllmAutoUtilization,
             maxModelLen: vllmMaxModelLen,
+            enableThinking: vllmEnableThinking,
           },
         }),
       });
@@ -552,6 +555,21 @@
             <span>Auto GPU Allocation</span>
           </label>
           <span class="config-hint">Automatically detect optimal GPU utilization based on available memory.</span>
+        </div>
+
+        <div class="config-row checkbox-row">
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              bind:checked={vllmEnableThinking}
+            />
+            <span>Thinking Mode (Qwen3)</span>
+          </label>
+          <span class="config-hint">
+            {vllmEnableThinking
+              ? 'Enabled: Model will show reasoning steps in <think> tags.'
+              : 'Disabled: No <think> tags in output (direct responses only).'}
+          </span>
         </div>
 
         <div class="config-actions">

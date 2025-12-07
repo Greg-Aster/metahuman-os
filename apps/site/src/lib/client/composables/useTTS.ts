@@ -46,11 +46,14 @@ function isNativeTTSAvailable(): boolean {
 
 /**
  * Normalize text for speech synthesis
- * Removes markdown formatting, code blocks, and other non-speakable content
+ * Removes markdown formatting, code blocks, thinking blocks, and other non-speakable content
  */
 function normalizeTextForSpeech(text: string): string {
   if (!text) return '';
   let output = text;
+
+  // Remove <think>...</think> blocks (model reasoning - should not be spoken)
+  output = output.replace(/<think>[\s\S]*?<\/think>/gi, ' ');
 
   // Remove code blocks entirely
   output = output.replace(/```[\s\S]*?```/g, ' ');

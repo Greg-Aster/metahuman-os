@@ -1686,6 +1686,78 @@ class TTSNodeImpl extends CognitiveNodeBase {
   }
 }
 
+class ThinkingStripperNodeImpl extends CognitiveNodeBase {
+  static schema = nodeSchemas.find((s) => s.id === 'thinking_stripper')!;
+
+  constructor() {
+    super(ThinkingStripperNodeImpl.schema);
+  }
+
+  onExecute() {
+    const rawInput = this.getInputData(0);
+
+    // Extract response string from various input formats
+    let response = '';
+    if (typeof rawInput === 'string') {
+      response = rawInput;
+    } else if (rawInput?.response) {
+      if (typeof rawInput.response === 'string') {
+        response = rawInput.response;
+      } else if (typeof rawInput.response === 'object' && rawInput.response?.response) {
+        response = rawInput.response.response;
+      } else if (typeof rawInput.response === 'object' && rawInput.response?.content) {
+        response = rawInput.response.content;
+      }
+    } else if (rawInput?.content && typeof rawInput.content === 'string') {
+      response = rawInput.content;
+    }
+
+    // Parse and strip <think> blocks
+    const { thinking, stripped, hadThinking } = this.parseThinkingBlocks(response);
+
+    // Set outputs
+    this.setOutputData(0, stripped);  // response (stripped)
+    this.setOutputData(1, stripped);  // stripped
+    this.setOutputData(2, thinking);  // thinking (extracted)
+    this.setOutputData(3, hadThinking);  // hadThinking
+
+    // Visual feedback
+    this.boxcolor = hadThinking ? '#9b59b6' : '#2d5'; // Purple if thinking found, green otherwise
+  }
+
+  private parseThinkingBlocks(content: string): { thinking: string | null; stripped: string; hadThinking: boolean } {
+    if (!content) return { thinking: null, stripped: '', hadThinking: false };
+
+    const thinkPattern = /<think>([\s\S]*?)<\/think>/gi;
+    const matches = content.match(thinkPattern);
+
+    if (!matches || matches.length === 0) {
+      return { thinking: null, stripped: content.trim(), hadThinking: false };
+    }
+
+    // Extract all thinking content (may have multiple blocks)
+    let thinking = '';
+    for (const match of matches) {
+      const inner = match.replace(/<\/?think>/gi, '').trim();
+      if (inner) {
+        thinking += (thinking ? '\n\n' : '') + inner;
+      }
+    }
+
+    // Strip thinking blocks from content
+    const stripped = content
+      .replace(thinkPattern, '')
+      .replace(/^\s*\n+/, '') // Remove leading newlines after stripping
+      .trim();
+
+    return {
+      thinking: thinking || null,
+      stripped,
+      hadThinking: true,
+    };
+  }
+}
+
 // ============================================================================
 // SKILL NODE IMPLEMENTATIONS
 // ============================================================================
@@ -2679,6 +2751,7 @@ class ResultAggregatorNodeImpl extends CognitiveNodeBase {
     StreamWriterNodeImpl,
     ChatViewNodeImpl,
     TTSNodeImpl,
+    ThinkingStripperNodeImpl,
     FsReadNodeImpl,
     FsWriteNodeImpl,
     FsListNodeImpl,
@@ -2866,6 +2939,7 @@ export function registerCognitiveNodes(LiteGraphRef?: any, LGraphNodeRef?: any) 
     LiteGraph.registerNodeType('cognitive/stream_writer', nodeImpls.StreamWriterNodeImpl);
     LiteGraph.registerNodeType('cognitive/chat_view', nodeImpls.ChatViewNodeImpl);
     LiteGraph.registerNodeType('cognitive/tts', nodeImpls.TTSNodeImpl);
+    LiteGraph.registerNodeType('cognitive/thinking_stripper', nodeImpls.ThinkingStripperNodeImpl);
 
     // Skill nodes
     LiteGraph.registerNodeType('cognitive/skill_fs_read', nodeImpls.FsReadNodeImpl);
