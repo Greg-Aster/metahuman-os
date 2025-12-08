@@ -1,0 +1,113 @@
+{
+  "enabled": true,
+  "mode": "supervised",
+
+  "errorCapture": {
+    "enabled": true,
+    "autoCapture": true,
+    "patterns": [
+      "Error:",
+      "ERR!",
+      "TypeError",
+      "ReferenceError",
+      "SyntaxError",
+      "ENOENT",
+      "EACCES",
+      "EPERM",
+      "Cannot find module",
+      "Module not found",
+      "Compilation failed",
+      "Build failed",
+      "Test failed",
+      "FATAL",
+      "Uncaught",
+      "Unhandled"
+    ],
+    "excludePatterns": [
+      "node_modules",
+      "deprecated"
+    ],
+    "maxErrorsPerHour": 100
+  },
+
+  "maintenance": {
+    "enabled": true,
+    "intervalHours": 24,
+    "scope": ["**/*"],
+    "checks": [
+      "type_errors",
+      "unused_exports",
+      "deprecated_apis",
+      "security_vulnerabilities",
+      "documentation_drift",
+      "dead_code"
+    ],
+    "excludePaths": [
+      "node_modules",
+      "dist",
+      "vendor",
+      "external",
+      ".git"
+    ]
+  },
+
+  "fixes": {
+    "autoStage": true,
+    "requireApproval": false,
+    "autoApproveRisk": ["none", "low"],
+    "requireApprovalRisk": ["medium", "high", "critical"],
+    "testBeforeApprove": true,
+    "testBeforeAutoApply": true,
+    "maxPendingFixes": 50
+  },
+
+  "fileScope": {
+    "allowAllFiles": true,
+    "excludePaths": [
+      "node_modules",
+      ".git",
+      "dist"
+    ]
+  },
+
+  "externalApis": {
+    "enabled": true,
+    "allowStackOverflow": true,
+    "allowGitHub": true,
+    "allowNpmDocs": true,
+    "allowMDN": true
+  },
+
+  "documentation": {
+    "autoUpdate": true,
+    "targets": [
+      "CLAUDE.md",
+      "docs/user-guide/",
+      "docs/SYSTEM-INIT.md"
+    ],
+    "systemInitPath": "docs/SYSTEM-INIT.md"
+  },
+
+  "notifications": {
+    "statusIndicator": true,
+    "showInStatusWidget": true,
+    "onErrorCapture": false,
+    "onFixReady": true,
+    "onMaintenanceComplete": true
+  },
+
+  "healthThresholds": {
+    "green": {
+      "maxNewErrors": 0,
+      "maxPendingFixes": 5
+    },
+    "yellow": {
+      "maxNewErrors": 5,
+      "maxPendingFixes": 15
+    },
+    "red": {
+      "errorCountAbove": 5,
+      "pendingFixesAbove": 15
+    }
+  }
+}
