@@ -35,6 +35,17 @@ profiles/*/out/voice-training/
 profiles/*/out/adapters/
 profiles/*/persona/desires/
 
+# Sensitive config files in profiles (API keys, credentials)
+profiles/*/etc/runpod.json
+profiles/*/etc/llm-credentials.json
+profiles/*/etc/voice.json
+profiles/*/etc/*.key
+profiles/*/etc/*.pem
+
+# Personal documents at root (trip plans, notes, etc.)
+/*_Plan.md
+/*_plan.md
+
 # Legacy root-level personal data (for backward compatibility)
 # Personal persona configuration (keep templates only)
 /persona/users.json
@@ -95,11 +106,18 @@ profiles/*/persona/desires/
 dist/
 build/
 
+# Mobile build artifacts (large binary files - regenerate with setup scripts)
+apps/mobile/android/app/libs/
+apps/mobile/android/app/src/main/assets/
+apps/mobile/www/
+*mobile-build-backup*
+
 # ============================================
 # ENVIRONMENT & SECRETS
 # ============================================
 .env
 .env.local
+.env.development
 .env.development.local
 .env.test.local
 .env.production.local

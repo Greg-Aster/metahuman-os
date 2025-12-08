@@ -1,0 +1,21 @@
+{
+  "$schema": "https://metahuman.dev/schemas/usage-policy.json",
+  "description": "System-wide LLM usage policy. Set by system owner to control guest access and quotas.",
+
+  "allowGuestUsage": true,
+
+  "defaultQuotas": {
+    "dailyTokenLimit": 100000,
+    "monthlyTokenLimit": 1000000,
+    "requestsPerMinute": 10
+  },
+
+  "providerPriority": ["runpod", "claude", "openrouter", "openai"],
+
+  "notes": [
+    "allowGuestUsage: If true, users without their own API keys can use system keys",
+    "dailyTokenLimit: 0 means unlimited",
+    "monthlyTokenLimit: 0 means unlimited",
+    "providerPriority: Order to try providers when resolving credentials"
+  ]
+}
