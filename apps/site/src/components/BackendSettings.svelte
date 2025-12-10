@@ -1,24 +1,70 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { apiFetch } from '../lib/client/api-config';
+  import { apiFetch, getSyncServerUrl } from '../lib/client/api-config';
+  import {
+    fetchCredentialsFromServer,
+    getLocalCredentials,
+    saveLocalCredentials,
+    type SyncableCredentials,
+  } from '../lib/client/profile-sync';
+
+  // Backend types
+  type BackendType = 'ollama' | 'vllm' | 'remote' | 'auto';
+  // Note: Claude is NOT a remote provider - Big Brother uses Claude via CLI terminal
+  type RemoteProviderType = 'runpod' | 'openrouter' | 'openai' | 'server';
 
   // Backend status
   interface BackendStatus {
-    backend: 'ollama' | 'vllm';
+    backend: BackendType;
     running: boolean;
     model?: string;
     endpoint: string;
     health: 'healthy' | 'starting' | 'degraded' | 'offline';
+    resolvedBackend?: 'ollama' | 'vllm' | 'remote' | 'offline';
+    remoteProvider?: RemoteProviderType;
   }
 
   interface AvailableBackends {
     ollama: { installed: boolean; running: boolean; model?: string };
     vllm: { installed: boolean; running: boolean; model?: string };
+    remote: { configured: boolean; provider?: RemoteProviderType; hasCredentials: boolean };
   }
 
-  let activeBackend: 'ollama' | 'vllm' = 'ollama';
+  // Big Brother config (CLI LLM escalation)
+  type BigBrotherProvider = 'claude-code' | 'aider' | 'gemini' | 'codex' | 'ollama-cli' | 'custom';
+
+  const bigBrotherProviderOptions: { value: BigBrotherProvider; label: string; description: string }[] = [
+    { value: 'claude-code', label: 'Claude Code', description: 'Anthropic Claude via CLI' },
+    { value: 'aider', label: 'Aider', description: 'Aider with any model (GPT-4, Claude, Qwen)' },
+    { value: 'gemini', label: 'Gemini CLI', description: 'Google Gemini via CLI' },
+    { value: 'codex', label: 'OpenAI Codex', description: 'OpenAI Codex CLI' },
+    { value: 'ollama-cli', label: 'Ollama CLI', description: 'Local models via Ollama' },
+    { value: 'custom', label: 'Custom', description: 'Custom CLI command' },
+  ];
+
+  interface BigBrotherConfig {
+    enabled: boolean;
+    provider: BigBrotherProvider;
+    escalateOnStuck: boolean;
+    escalateOnRepeatedFailures: boolean;
+    maxRetries: number;
+    includeFullScratchpad: boolean;
+    autoApplySuggestions: boolean;
+  }
+
+  // RunPod config
+  interface RunPodConfig {
+    apiKey: string | null;
+    templateId: string | null;
+    gpuType: string | null;
+  }
+
+  let activeBackend: BackendType = 'ollama';
   let status: BackendStatus | null = null;
   let available: AvailableBackends | null = null;
+
+  // Platform detection
+  let isMobile = false;
 
   // vLLM config - these will be populated from server config on load
   let vllmModel = '';
@@ -33,6 +79,31 @@
   let ollamaEndpoint = 'http://localhost:11434';
   let ollamaModel = 'qwen3:14b';
 
+  // Remote provider config (from llm-backend.json)
+  let remoteProvider: RemoteProviderType = 'runpod';
+  let remoteServerUrl = '';
+  let remoteModel = '';
+  let resolvedBackend: 'ollama' | 'vllm' | 'remote' | 'offline' | null = null;
+
+  // Big Brother config (CLI LLM - from operator.json)
+  let bigBrotherConfig: BigBrotherConfig | null = null;
+  let bigBrotherEnabled = false;
+  let bigBrotherProvider: BigBrotherProvider = 'claude-code';
+  let savingBigBrother = false;
+
+  // RunPod config (from env/runpod.json)
+  let runpodConfig: RunPodConfig | null = null;
+  let runpodConfigured = false;
+
+  // Manual credential entry (for mobile)
+  let showManualCredentials = false;
+  let manualRunpodApiKey = '';
+  let manualRunpodGpuType = '';
+  let manualRunpodTemplateId = '';
+  let savingManualCredentials = false;
+  let credentialSource: 'local' | 'server' | 'synced' | 'manual' | 'none' = 'none';
+  let syncingCredentials = false;
+
   // Embedding config (for semantic memory search)
   let embeddingEnabled = true;
   let embeddingModel = 'nomic-embed-text';
@@ -43,13 +114,23 @@
   let loading = true;
   let switching = false;
   let savingConfig = false;
+  let savingRemoteConfig = false;
   let vllmStarting = false;
   let vllmStopping = false;
   let error: string | null = null;
 
   onMount(() => {
+    // Detect mobile platform (Capacitor/nodejs-mobile)
+    isMobile = typeof (window as any).Capacitor !== 'undefined' ||
+               typeof (window as any).nodejs !== 'undefined' ||
+               /Android|webOS|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
     loadStatus();
-    loadEmbeddingConfig();
+    loadBigBrotherConfig();
+    loadRunPodConfig();
+    if (!isMobile) {
+      loadEmbeddingConfig();
+    }
   });
 
   async function loadStatus() {
@@ -59,16 +140,29 @@
         const data = await res.json();
         status = data.active;
         available = data.available;
-        activeBackend = data.config.activeBackend;
-        vllmModel = data.config.vllm.model;
-        vllmGpuUtil = data.config.vllm.gpuMemoryUtilization;
-        vllmEndpoint = data.config.vllm.endpoint;
-        vllmEnforceEager = data.config.vllm.enforceEager;
-        vllmAutoUtilization = data.config.vllm.autoUtilization;
-        vllmMaxModelLen = data.config.vllm.maxModelLen;
-        vllmEnableThinking = data.config.vllm.enableThinking ?? true;
-        ollamaEndpoint = data.config.ollama.endpoint;
-        ollamaModel = data.config.ollama.defaultModel;
+        activeBackend = data.config.activeBackend || 'ollama';
+        resolvedBackend = data.active?.resolvedBackend || null;
+
+        // vLLM config
+        vllmModel = data.config.vllm?.model || '';
+        vllmGpuUtil = data.config.vllm?.gpuMemoryUtilization || 0.7;
+        vllmEndpoint = data.config.vllm?.endpoint || 'http://localhost:8000';
+        vllmEnforceEager = data.config.vllm?.enforceEager ?? true;
+        vllmAutoUtilization = data.config.vllm?.autoUtilization ?? false;
+        vllmMaxModelLen = data.config.vllm?.maxModelLen || 4096;
+        vllmEnableThinking = data.config.vllm?.enableThinking ?? true;
+
+        // Ollama config
+        ollamaEndpoint = data.config.ollama?.endpoint || 'http://localhost:11434';
+        ollamaModel = data.config.ollama?.defaultModel || 'qwen3:14b';
+
+        // Remote provider config
+        if (data.config.remote) {
+          remoteProvider = data.config.remote.provider || 'runpod';
+          remoteServerUrl = data.config.remote.serverUrl || '';
+          remoteModel = data.config.remote.model || '';
+        }
+
         error = null;
       }
     } catch (err) {
@@ -90,6 +184,211 @@
       }
     } catch (err) {
       console.error('[BackendSettings] Error loading embedding config:', err);
+    }
+  }
+
+  // Load Big Brother config from /api/big-brother-config (uses etc/operator.json)
+  // On mobile, try fetching from sync server
+  async function loadBigBrotherConfig() {
+    try {
+      // First try local config
+      const res = await apiFetch('/api/big-brother-config');
+      if (res.ok) {
+        const data = await res.json();
+        bigBrotherConfig = data.config;
+        bigBrotherEnabled = data.config?.enabled ?? false;
+        bigBrotherProvider = data.config?.provider || 'claude-code';
+      }
+
+      // If on mobile and got default config, try sync server for actual config
+      if (isMobile && !bigBrotherEnabled) {
+        try {
+          const { getSyncServerUrl } = await import('../lib/client/api-config');
+          const syncUrl = getSyncServerUrl();
+          if (syncUrl) {
+            console.log('[BackendSettings] Trying sync server for Big Brother config:', syncUrl);
+            const syncRes = await fetch(`${syncUrl}/api/big-brother-config`, {
+              credentials: 'include',
+              signal: AbortSignal.timeout(5000),
+            });
+            if (syncRes.ok) {
+              const syncData = await syncRes.json();
+              if (syncData?.config) {
+                bigBrotherConfig = syncData.config;
+                bigBrotherEnabled = syncData.config?.enabled ?? false;
+                bigBrotherProvider = syncData.config?.provider || 'claude-code';
+                console.log('[BackendSettings] Got Big Brother config from sync server');
+              }
+            }
+          }
+        } catch (syncErr) {
+          console.log('[BackendSettings] Sync server not available for Big Brother config');
+        }
+      }
+    } catch (err) {
+      console.error('[BackendSettings] Error loading Big Brother config:', err);
+    }
+  }
+
+  // Save Big Brother config
+  async function saveBigBrotherConfig() {
+    savingBigBrother = true;
+    error = null;
+
+    try {
+      const res = await apiFetch('/api/big-brother-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: bigBrotherEnabled,
+          provider: bigBrotherProvider,
+          escalateOnStuck: bigBrotherConfig?.escalateOnStuck ?? true,
+          escalateOnRepeatedFailures: bigBrotherConfig?.escalateOnRepeatedFailures ?? true,
+          maxRetries: bigBrotherConfig?.maxRetries ?? 1,
+          includeFullScratchpad: bigBrotherConfig?.includeFullScratchpad ?? true,
+          autoApplySuggestions: bigBrotherConfig?.autoApplySuggestions ?? false,
+        }),
+      });
+
+      if (res.ok) {
+        await loadBigBrotherConfig();
+      } else {
+        const data = await res.json();
+        error = data.error || 'Failed to save Big Brother config';
+      }
+    } catch (err) {
+      error = 'Failed to save Big Brother config';
+    } finally {
+      savingBigBrother = false;
+    }
+  }
+
+  // Get Big Brother provider label
+  function getBigBrotherProviderLabel(provider: BigBrotherProvider): string {
+    const opt = bigBrotherProviderOptions.find(o => o.value === provider);
+    return opt?.label || provider;
+  }
+
+  // Load RunPod config using three methods:
+  // 1. Local API (works on desktop, returns defaults on mobile)
+  // 2. Sync server credentials (mobile fetches from desktop)
+  // 3. Locally saved credentials (from previous sync or manual entry)
+  async function loadRunPodConfig() {
+    credentialSource = 'none';
+
+    try {
+      // Method 1: Try local API first (works on desktop)
+      const res = await apiFetch('/api/runpod/config');
+      if (res.ok) {
+        const config = await res.json();
+        if (config?.apiKey) {
+          runpodConfig = config;
+          runpodConfigured = true;
+          credentialSource = 'local';
+          console.log('[BackendSettings] Got RunPod config from local API');
+          return;
+        }
+      }
+    } catch (err) {
+      console.log('[BackendSettings] Local RunPod API not available');
+    }
+
+    // If on mobile and local config is empty, try other methods
+    if (isMobile && !runpodConfigured) {
+      // Method 2: Try fetching from sync server
+      try {
+        const syncedCreds = await fetchCredentialsFromServer();
+        if (syncedCreds?.runpod?.apiKey) {
+          runpodConfig = syncedCreds.runpod;
+          runpodConfigured = true;
+          credentialSource = 'synced';
+          console.log('[BackendSettings] Got RunPod config from sync server');
+          return;
+        }
+      } catch (syncErr) {
+        console.log('[BackendSettings] Sync server not available for credentials');
+      }
+
+      // Method 3: Try locally saved credentials (from previous sync or manual entry)
+      try {
+        const localCreds = await getLocalCredentials();
+        if (localCreds?.runpod?.apiKey) {
+          runpodConfig = localCreds.runpod;
+          runpodConfigured = true;
+          credentialSource = 'manual';
+          console.log('[BackendSettings] Got RunPod config from local storage');
+          return;
+        }
+      } catch (localErr) {
+        console.log('[BackendSettings] No local credentials stored');
+      }
+    }
+  }
+
+  // Sync credentials from desktop server (Method 2)
+  async function syncCredentialsFromServer() {
+    syncingCredentials = true;
+    error = null;
+
+    try {
+      const syncedCreds = await fetchCredentialsFromServer();
+      if (syncedCreds) {
+        // Update RunPod config
+        if (syncedCreds.runpod?.apiKey) {
+          runpodConfig = syncedCreds.runpod;
+          runpodConfigured = true;
+          credentialSource = 'synced';
+        }
+
+        // Update Big Brother config
+        if (syncedCreds.bigBrother) {
+          bigBrotherConfig = syncedCreds.bigBrother as BigBrotherConfig;
+          bigBrotherEnabled = syncedCreds.bigBrother.enabled;
+          bigBrotherProvider = (syncedCreds.bigBrother.provider as BigBrotherProvider) || 'claude-code';
+        }
+
+        console.log('[BackendSettings] Credentials synced from server');
+      } else {
+        error = 'No credentials available from server. Make sure you are logged in on both devices.';
+      }
+    } catch (err) {
+      error = 'Failed to sync credentials from server';
+      console.error('[BackendSettings] Sync error:', err);
+    } finally {
+      syncingCredentials = false;
+    }
+  }
+
+  // Save manual credentials (Method 3)
+  async function saveManualCredentials() {
+    savingManualCredentials = true;
+    error = null;
+
+    try {
+      const credentials: SyncableCredentials = {
+        runpod: {
+          apiKey: manualRunpodApiKey || null,
+          gpuType: manualRunpodGpuType || null,
+          templateId: manualRunpodTemplateId || null,
+        },
+      };
+
+      await saveLocalCredentials(credentials);
+
+      // Update local state
+      if (manualRunpodApiKey) {
+        runpodConfig = credentials.runpod!;
+        runpodConfigured = true;
+        credentialSource = 'manual';
+      }
+
+      showManualCredentials = false;
+      console.log('[BackendSettings] Manual credentials saved');
+    } catch (err) {
+      error = 'Failed to save credentials';
+      console.error('[BackendSettings] Save error:', err);
+    } finally {
+      savingManualCredentials = false;
     }
   }
 
@@ -119,7 +418,7 @@
     }
   }
 
-  async function switchBackend(to: 'ollama' | 'vllm') {
+  async function switchBackend(to: BackendType) {
     if (switching || to === activeBackend) return;
     switching = true;
     error = null;
@@ -142,6 +441,37 @@
       error = 'Failed to switch backend';
     } finally {
       switching = false;
+    }
+  }
+
+  async function saveRemoteConfig() {
+    savingRemoteConfig = true;
+    error = null;
+
+    try {
+      const res = await apiFetch('/api/llm-backend/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          remote: {
+            provider: remoteProvider,
+            serverUrl: remoteServerUrl,
+            model: remoteModel,
+          },
+        }),
+      });
+
+      if (res.ok) {
+        // Reload to confirm what was saved
+        await loadStatus();
+      } else {
+        const data = await res.json();
+        error = data.error || 'Failed to save remote config';
+      }
+    } catch (err) {
+      error = 'Failed to save remote config';
+    } finally {
+      savingRemoteConfig = false;
     }
   }
 
@@ -324,12 +654,42 @@
       default: return 'Unknown';
     }
   }
+
+  function getBackendIcon(backend: BackendType): string {
+    switch (backend) {
+      case 'ollama': return '🦙';
+      case 'vllm': return '⚡';
+      case 'remote': return '☁️';
+      case 'auto': return '🔄';
+      default: return '❓';
+    }
+  }
+
+  function getBackendLabel(backend: BackendType): string {
+    switch (backend) {
+      case 'ollama': return 'Ollama';
+      case 'vllm': return 'vLLM';
+      case 'remote': return 'Remote';
+      case 'auto': return 'Auto';
+      default: return 'Unknown';
+    }
+  }
+
+  function getProviderLabel(provider: RemoteProviderType): string {
+    const labels: Record<RemoteProviderType, string> = {
+      runpod: 'RunPod Serverless',
+      openrouter: 'OpenRouter',
+      openai: 'OpenAI',
+      server: 'Desktop Server',
+    };
+    return labels[provider] || provider;
+  }
 </script>
 
 <div class="backend-settings">
   <h3>LLM Backend</h3>
   <p class="description">
-    Choose which local inference engine to use. Ollama uses GGUF models, vLLM uses HuggingFace models with higher throughput.
+    Choose your inference backend: local (Ollama/vLLM) or remote (RunPod, OpenRouter, Desktop Server). Auto mode picks the best available.
   </p>
 
   {#if error}
@@ -343,7 +703,10 @@
     <div class="status-summary">
       <div class="summary-header">
         <span class="summary-label">Active Backend:</span>
-        <span class="summary-value">{activeBackend === 'ollama' ? '🦙 Ollama' : '⚡ vLLM'}</span>
+        <span class="summary-value">{getBackendIcon(activeBackend)} {getBackendLabel(activeBackend)}</span>
+        {#if resolvedBackend && resolvedBackend !== activeBackend}
+          <span class="resolved-badge">→ {getBackendIcon(resolvedBackend)} {getBackendLabel(resolvedBackend)}</span>
+        {/if}
       </div>
       <div class="summary-details">
         {#if activeBackend === 'ollama'}
@@ -356,7 +719,7 @@
             <span class="status-badge stopped">Stopped</span>
             <span class="status-hint">Start Ollama with: ollama serve</span>
           {/if}
-        {:else}
+        {:else if activeBackend === 'vllm'}
           {#if available?.vllm.running}
             <span class="status-badge running">Running</span>
             {#if available.vllm.model}
@@ -367,17 +730,80 @@
             <span class="status-badge stopped">Stopped</span>
             <span class="status-hint">Configure and start below</span>
           {/if}
+        {:else if activeBackend === 'remote'}
+          <span class="status-badge running">Active</span>
+          <span class="model-badge">{getProviderLabel(remoteProvider)}</span>
+          {#if remoteModel}
+            <span class="model-note">{remoteModel}</span>
+          {/if}
+        {:else if activeBackend === 'auto'}
+          {#if resolvedBackend === 'offline'}
+            <span class="status-badge stopped">Offline</span>
+            <span class="status-hint">No backends available</span>
+          {:else if resolvedBackend}
+            <span class="status-badge running">Using {getBackendLabel(resolvedBackend)}</span>
+          {:else}
+            <span class="status-badge running">Auto-selecting</span>
+          {/if}
         {/if}
       </div>
     </div>
 
+    <!-- Backend Mode Selector -->
+    <div class="backend-mode-selector">
+      <button
+        class="mode-btn"
+        class:active={activeBackend === 'auto'}
+        on:click={() => switchBackend('auto')}
+        disabled={switching}
+        title="Automatically select best available backend"
+      >
+        🔄 Auto
+      </button>
+      <button
+        class="mode-btn"
+        class:active={activeBackend === 'ollama'}
+        on:click={() => switchBackend('ollama')}
+        disabled={switching || isMobile || !available?.ollama.installed}
+        title={isMobile ? 'Not available on mobile' : 'Use Ollama for local inference'}
+      >
+        🦙 Ollama
+      </button>
+      <button
+        class="mode-btn"
+        class:active={activeBackend === 'vllm'}
+        on:click={() => switchBackend('vllm')}
+        disabled={switching || isMobile || !available?.vllm.installed}
+        title={isMobile ? 'Not available on mobile' : 'Use vLLM for high-throughput inference'}
+      >
+        ⚡ vLLM
+      </button>
+      <button
+        class="mode-btn"
+        class:active={activeBackend === 'remote'}
+        on:click={() => switchBackend('remote')}
+        disabled={switching}
+        title="Use remote cloud providers"
+      >
+        ☁️ Remote
+      </button>
+    </div>
+
+    {#if isMobile}
+      <p class="mobile-notice">
+        📱 Mobile mode: Local backends (Ollama/vLLM) are not available. Use Remote or Auto mode.
+      </p>
+    {/if}
+
     <div class="backend-cards">
       <!-- Ollama Card -->
-      <div class="backend-card" class:active={activeBackend === 'ollama'}>
+      <div class="backend-card" class:active={activeBackend === 'ollama'} class:unavailable={isMobile}>
         <div class="backend-header">
           <span class="backend-icon">🦙</span>
           <span class="backend-name">Ollama</span>
-          {#if available?.ollama.running}
+          {#if isMobile}
+            <span class="status-dot unavailable"></span>
+          {:else if available?.ollama.running}
             <span class="status-dot running"></span>
           {:else if available?.ollama.installed}
             <span class="status-dot stopped"></span>
@@ -388,26 +814,35 @@
 
         <div class="backend-info">
           <p class="backend-desc">Local inference with GGUF models</p>
-          <div class="backend-detail">
-            <span class="label">Status:</span>
-            <span class="value" style="color: {available?.ollama.running ? '#22c55e' : '#ef4444'}">
-              {available?.ollama.running ? 'Running' : available?.ollama.installed ? 'Stopped' : 'Not Installed'}
-            </span>
-          </div>
-          {#if available?.ollama.model}
+          {#if isMobile}
             <div class="backend-detail">
-              <span class="label">Model:</span>
-              <span class="value model">{available.ollama.model}</span>
+              <span class="label">Status:</span>
+              <span class="value" style="color: #6b7280">Desktop Only</span>
+            </div>
+          {:else}
+            <div class="backend-detail">
+              <span class="label">Status:</span>
+              <span class="value" style="color: {available?.ollama.running ? '#22c55e' : '#ef4444'}">
+                {available?.ollama.running ? 'Running' : available?.ollama.installed ? 'Stopped' : 'Not Installed'}
+              </span>
+            </div>
+            {#if available?.ollama.model}
+              <div class="backend-detail">
+                <span class="label">Model:</span>
+                <span class="value model">{available.ollama.model}</span>
+              </div>
+            {/if}
+            <div class="backend-detail">
+              <span class="label">Endpoint:</span>
+              <span class="value endpoint">{ollamaEndpoint}</span>
             </div>
           {/if}
-          <div class="backend-detail">
-            <span class="label">Endpoint:</span>
-            <span class="value endpoint">{ollamaEndpoint}</span>
-          </div>
         </div>
 
         <div class="backend-actions">
-          {#if activeBackend === 'ollama'}
+          {#if isMobile}
+            <span class="unavailable-badge">Desktop Only</span>
+          {:else if activeBackend === 'ollama'}
             <span class="active-badge">Active</span>
             {#if available?.ollama.running}
               <button
@@ -439,11 +874,13 @@
       </div>
 
       <!-- vLLM Card -->
-      <div class="backend-card" class:active={activeBackend === 'vllm'}>
+      <div class="backend-card" class:active={activeBackend === 'vllm'} class:unavailable={isMobile}>
         <div class="backend-header">
           <span class="backend-icon">⚡</span>
           <span class="backend-name">vLLM</span>
-          {#if available?.vllm.running}
+          {#if isMobile}
+            <span class="status-dot unavailable"></span>
+          {:else if available?.vllm.running}
             <span class="status-dot running"></span>
           {:else if available?.vllm.installed}
             <span class="status-dot stopped"></span>
@@ -454,26 +891,35 @@
 
         <div class="backend-info">
           <p class="backend-desc">High-throughput with HuggingFace models</p>
-          <div class="backend-detail">
-            <span class="label">Status:</span>
-            <span class="value" style="color: {available?.vllm.running ? '#22c55e' : '#ef4444'}">
-              {available?.vllm.running ? 'Running' : available?.vllm.installed ? 'Stopped' : 'Not Installed'}
-            </span>
-          </div>
-          {#if available?.vllm.model}
+          {#if isMobile}
             <div class="backend-detail">
-              <span class="label">Model:</span>
-              <span class="value model">{available.vllm.model}</span>
+              <span class="label">Status:</span>
+              <span class="value" style="color: #6b7280">Desktop Only</span>
+            </div>
+          {:else}
+            <div class="backend-detail">
+              <span class="label">Status:</span>
+              <span class="value" style="color: {available?.vllm.running ? '#22c55e' : '#ef4444'}">
+                {available?.vllm.running ? 'Running' : available?.vllm.installed ? 'Stopped' : 'Not Installed'}
+              </span>
+            </div>
+            {#if available?.vllm.model}
+              <div class="backend-detail">
+                <span class="label">Model:</span>
+                <span class="value model">{available.vllm.model}</span>
+              </div>
+            {/if}
+            <div class="backend-detail">
+              <span class="label">Endpoint:</span>
+              <span class="value endpoint">{vllmEndpoint}</span>
             </div>
           {/if}
-          <div class="backend-detail">
-            <span class="label">Endpoint:</span>
-            <span class="value endpoint">{vllmEndpoint}</span>
-          </div>
         </div>
 
         <div class="backend-actions">
-          {#if activeBackend === 'vllm'}
+          {#if isMobile}
+            <span class="unavailable-badge">Desktop Only</span>
+          {:else if activeBackend === 'vllm'}
             <span class="active-badge">Active</span>
           {:else}
             <button
@@ -485,6 +931,261 @@
             </button>
           {/if}
         </div>
+      </div>
+
+      <!-- Remote Provider Card -->
+      <div class="backend-card" class:active={activeBackend === 'remote'}>
+        <div class="backend-header">
+          <span class="backend-icon">☁️</span>
+          <span class="backend-name">Remote</span>
+          <span class="status-dot" class:running={runpodConfigured || bigBrotherEnabled} class:stopped={!runpodConfigured && !bigBrotherEnabled}></span>
+        </div>
+
+        <div class="backend-info">
+          <p class="backend-desc">Cloud GPU or Desktop Server</p>
+          <div class="backend-detail">
+            <span class="label">RunPod:</span>
+            <span class="value" style="color: {runpodConfigured ? '#22c55e' : '#6b7280'}">
+              {runpodConfigured ? '✓ Configured' : 'Not configured'}
+            </span>
+          </div>
+          <div class="backend-detail">
+            <span class="label">Big Brother:</span>
+            <span class="value" style="color: {bigBrotherEnabled ? '#22c55e' : '#6b7280'}">
+              {bigBrotherEnabled ? `✓ ${getBigBrotherProviderLabel(bigBrotherProvider)}` : isMobile ? 'Desktop only' : 'Disabled'}
+            </span>
+          </div>
+          {#if remoteServerUrl}
+            <div class="backend-detail">
+              <span class="label">Server:</span>
+              <span class="value endpoint">{remoteServerUrl}</span>
+            </div>
+          {/if}
+        </div>
+
+        <div class="backend-actions">
+          {#if activeBackend === 'remote'}
+            <span class="active-badge">Active</span>
+          {:else}
+            <button
+              class="switch-btn"
+              on:click={() => switchBackend('remote')}
+              disabled={switching}
+            >
+              {switching ? 'Switching...' : 'Switch to Remote'}
+            </button>
+          {/if}
+        </div>
+      </div>
+    </div>
+
+    <!-- Big Brother Mode (CLI LLM Escalation) -->
+    <div class="remote-config big-brother-config">
+      <h4>🤖 Big Brother Mode (CLI LLM)</h4>
+      <p class="config-desc">
+        Escalate to a CLI LLM for complex reasoning. Requires terminal access on desktop.
+      </p>
+
+      <div class="config-row checkbox-row">
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            bind:checked={bigBrotherEnabled}
+            on:change={saveBigBrotherConfig}
+            disabled={savingBigBrother || isMobile}
+          />
+          <span>Enable Big Brother Mode</span>
+        </label>
+        {#if isMobile}
+          <span class="config-hint warning">Not available on mobile (requires terminal)</span>
+        {:else}
+          <span class="config-hint">
+            {bigBrotherEnabled ? `${getBigBrotherProviderLabel(bigBrotherProvider)} will handle complex tasks` : 'Disabled - using local models only'}
+          </span>
+        {/if}
+      </div>
+
+      {#if !isMobile}
+        <div class="config-row">
+          <label for="big-brother-provider">CLI Provider</label>
+          <select
+            id="big-brother-provider"
+            bind:value={bigBrotherProvider}
+            on:change={saveBigBrotherConfig}
+            disabled={savingBigBrother}
+          >
+            {#each bigBrotherProviderOptions as opt}
+              <option value={opt.value}>{opt.label} - {opt.description}</option>
+            {/each}
+          </select>
+        </div>
+
+        {#if bigBrotherConfig}
+          <div class="config-details">
+            <div class="config-detail">
+              <span class="detail-label">Active Provider:</span>
+              <span class="detail-value">{getBigBrotherProviderLabel(bigBrotherProvider)}</span>
+            </div>
+            <div class="config-detail">
+              <span class="detail-label">Escalate on stuck:</span>
+              <span class="detail-value">{bigBrotherConfig.escalateOnStuck ? 'Yes' : 'No'}</span>
+            </div>
+            <div class="config-detail">
+              <span class="detail-label">Auto-retry failures:</span>
+              <span class="detail-value">{bigBrotherConfig.escalateOnRepeatedFailures ? 'Yes' : 'No'}</span>
+            </div>
+          </div>
+        {/if}
+      {/if}
+
+      {#if savingBigBrother}
+        <span class="saving-indicator">Saving...</span>
+      {/if}
+    </div>
+
+    <!-- RunPod Cloud GPU -->
+    <div class="remote-config runpod-config">
+      <h4>☁️ RunPod Cloud GPU</h4>
+      <p class="config-desc">
+        Serverless GPU inference for high-performance models. Works on all devices.
+      </p>
+
+      <div class="config-status">
+        {#if runpodConfigured}
+          <span class="status-badge running">✓ Configured</span>
+          <span class="config-hint">
+            {#if credentialSource === 'local'}
+              From local config
+            {:else if credentialSource === 'synced'}
+              Synced from desktop
+            {:else if credentialSource === 'manual'}
+              Manually entered
+            {:else}
+              API key detected
+            {/if}
+          </span>
+        {:else}
+          <span class="status-badge stopped">Not Configured</span>
+          {#if isMobile}
+            <span class="config-hint">Sync from desktop or enter manually</span>
+          {:else}
+            <span class="config-hint">Set RUNPOD_API_KEY in .env or etc/runpod.json</span>
+          {/if}
+        {/if}
+      </div>
+
+      {#if runpodConfig && runpodConfigured}
+        <div class="config-details">
+          <div class="config-detail">
+            <span class="detail-label">API Key:</span>
+            <span class="detail-value masked">{runpodConfig.apiKey?.slice(0, 8)}...****</span>
+          </div>
+          {#if runpodConfig.gpuType}
+            <div class="config-detail">
+              <span class="detail-label">GPU Type:</span>
+              <span class="detail-value">{runpodConfig.gpuType}</span>
+            </div>
+          {/if}
+          {#if runpodConfig.templateId}
+            <div class="config-detail">
+              <span class="detail-label">Template:</span>
+              <span class="detail-value">{runpodConfig.templateId}</span>
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      <!-- Mobile credential options -->
+      {#if isMobile}
+        <div class="credential-actions">
+          <button
+            class="sync-btn"
+            on:click={syncCredentialsFromServer}
+            disabled={syncingCredentials}
+            title="Fetch credentials from your desktop server"
+          >
+            {syncingCredentials ? '🔄 Syncing...' : '🔄 Sync from Desktop'}
+          </button>
+          <button
+            class="manual-btn"
+            on:click={() => showManualCredentials = !showManualCredentials}
+          >
+            {showManualCredentials ? '✕ Cancel' : '✏️ Enter Manually'}
+          </button>
+        </div>
+
+        {#if showManualCredentials}
+          <div class="manual-entry">
+            <div class="config-row">
+              <label for="manual-runpod-key">RunPod API Key</label>
+              <input
+                id="manual-runpod-key"
+                type="password"
+                bind:value={manualRunpodApiKey}
+                placeholder="rp_xxxxxxxxxxxxxxxx"
+              />
+            </div>
+            <div class="config-row">
+              <label for="manual-runpod-gpu">GPU Type (optional)</label>
+              <input
+                id="manual-runpod-gpu"
+                type="text"
+                bind:value={manualRunpodGpuType}
+                placeholder="NVIDIA RTX A6000"
+              />
+            </div>
+            <div class="config-row">
+              <label for="manual-runpod-template">Template ID (optional)</label>
+              <input
+                id="manual-runpod-template"
+                type="text"
+                bind:value={manualRunpodTemplateId}
+                placeholder="template-id"
+              />
+            </div>
+            <div class="config-actions">
+              <button
+                class="save-btn"
+                on:click={saveManualCredentials}
+                disabled={savingManualCredentials || !manualRunpodApiKey}
+              >
+                {savingManualCredentials ? 'Saving...' : 'Save Credentials'}
+              </button>
+            </div>
+          </div>
+        {/if}
+      {:else}
+        <p class="config-note">
+          Configure via environment: RUNPOD_API_KEY, RUNPOD_GPU_TYPE, RUNPOD_TEMPLATE_ID
+        </p>
+      {/if}
+    </div>
+
+    <!-- Remote Server (Desktop Connection) -->
+    <div class="remote-config server-config">
+      <h4>🖥️ Connect to Desktop Server</h4>
+      <p class="config-desc">
+        Connect mobile app to your desktop MetaHuman server via Cloudflare Tunnel.
+      </p>
+
+      <div class="config-row">
+        <label for="remote-server">Server URL</label>
+        <input
+          id="remote-server"
+          type="text"
+          bind:value={remoteServerUrl}
+          placeholder="https://your-tunnel.trycloudflare.com"
+        />
+      </div>
+
+      <div class="config-actions">
+        <button
+          class="save-btn"
+          on:click={saveRemoteConfig}
+          disabled={savingRemoteConfig}
+        >
+          {savingRemoteConfig ? 'Saving...' : 'Save Server URL'}
+        </button>
       </div>
     </div>
 
@@ -1316,5 +2017,394 @@
     .backend-cards {
       grid-template-columns: 1fr;
     }
+
+    .backend-mode-selector {
+      flex-wrap: wrap;
+    }
+
+    .mode-btn {
+      flex: 1 1 45%;
+    }
+  }
+
+  /* Backend Mode Selector */
+  .backend-mode-selector {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    padding: 0.5rem;
+    background: #f3f4f6;
+    border-radius: 0.75rem;
+  }
+
+  :global(.dark) .backend-mode-selector {
+    background: #1f2937;
+  }
+
+  .mode-btn {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    background: transparent;
+    border: 2px solid transparent;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #6b7280;
+  }
+
+  :global(.dark) .mode-btn {
+    color: #9ca3af;
+  }
+
+  .mode-btn:hover:not(:disabled) {
+    background: rgba(139, 92, 246, 0.1);
+    color: #7c3aed;
+  }
+
+  :global(.dark) .mode-btn:hover:not(:disabled) {
+    background: rgba(167, 139, 250, 0.15);
+    color: #a78bfa;
+  }
+
+  .mode-btn.active {
+    background: white;
+    border-color: #8b5cf6;
+    color: #7c3aed;
+    box-shadow: 0 2px 4px rgba(139, 92, 246, 0.1);
+  }
+
+  :global(.dark) .mode-btn.active {
+    background: #374151;
+    border-color: #a78bfa;
+    color: #c4b5fd;
+  }
+
+  .mode-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Resolved Badge */
+  .resolved-badge {
+    font-size: 0.8125rem;
+    color: #6b7280;
+    margin-left: 0.5rem;
+  }
+
+  :global(.dark) .resolved-badge {
+    color: #9ca3af;
+  }
+
+  /* Remote Config Section */
+  .remote-config {
+    background: #faf5ff;
+    border: 1px solid #e9d5ff;
+    border-radius: 0.75rem;
+    padding: 1rem;
+    margin-top: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  :global(.dark) .remote-config {
+    background: rgba(168, 85, 247, 0.1);
+    border-color: rgba(168, 85, 247, 0.3);
+  }
+
+  .remote-config h4 {
+    margin: 0 0 0.75rem 0;
+    color: #7c3aed;
+  }
+
+  :global(.dark) .remote-config h4 {
+    color: #c4b5fd;
+  }
+
+  /* Select dropdown */
+  .config-row select {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    background: white;
+    color: #1f2937;
+    cursor: pointer;
+  }
+
+  :global(.dark) .config-row select {
+    background: #1f2937;
+    border-color: #4b5563;
+    color: #f3f4f6;
+  }
+
+  .config-row select:focus {
+    outline: none;
+    border-color: #8b5cf6;
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+  }
+
+  /* Mobile notice */
+  .mobile-notice {
+    background: #fef3c7;
+    border: 1px solid #fbbf24;
+    color: #92400e;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+  }
+
+  :global(.dark) .mobile-notice {
+    background: rgba(251, 191, 36, 0.1);
+    border-color: rgba(251, 191, 36, 0.3);
+    color: #fcd34d;
+  }
+
+  /* Unavailable badge for mobile-only elements */
+  .unavailable-badge {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #6b7280;
+    background: #e5e7eb;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+  }
+
+  :global(.dark) .unavailable-badge {
+    background: #374151;
+    color: #9ca3af;
+  }
+
+  /* Dimmed card for unavailable backends on mobile */
+  .backend-card.unavailable {
+    opacity: 0.6;
+    pointer-events: none;
+  }
+
+  /* Config status row */
+  .config-status {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+
+  /* Config details section */
+  .config-details {
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    margin-top: 0.75rem;
+  }
+
+  :global(.dark) .config-details {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .config-detail {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8125rem;
+    padding: 0.25rem 0;
+  }
+
+  .detail-label {
+    color: #6b7280;
+  }
+
+  :global(.dark) .detail-label {
+    color: #9ca3af;
+  }
+
+  .detail-value {
+    font-weight: 500;
+    color: #374151;
+  }
+
+  :global(.dark) .detail-value {
+    color: #e5e7eb;
+  }
+
+  .detail-value.masked {
+    font-family: monospace;
+    letter-spacing: 0.05em;
+  }
+
+  /* Warning style for config hint */
+  .config-hint.warning {
+    color: #dc2626;
+  }
+
+  :global(.dark) .config-hint.warning {
+    color: #f87171;
+  }
+
+  /* Big Brother config specific styling */
+  .big-brother-config {
+    background: #eff6ff;
+    border-color: #93c5fd;
+  }
+
+  :global(.dark) .big-brother-config {
+    background: rgba(59, 130, 246, 0.1);
+    border-color: rgba(59, 130, 246, 0.3);
+  }
+
+  .big-brother-config h4 {
+    color: #1d4ed8;
+  }
+
+  :global(.dark) .big-brother-config h4 {
+    color: #93c5fd;
+  }
+
+  .big-brother-config .config-desc {
+    color: #1e40af;
+  }
+
+  :global(.dark) .big-brother-config .config-desc {
+    color: #93c5fd;
+  }
+
+  /* RunPod config specific styling */
+  .runpod-config {
+    background: #f0fdf4;
+    border-color: #86efac;
+  }
+
+  :global(.dark) .runpod-config {
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(34, 197, 94, 0.3);
+  }
+
+  .runpod-config h4 {
+    color: #166534;
+  }
+
+  :global(.dark) .runpod-config h4 {
+    color: #86efac;
+  }
+
+  .runpod-config .config-desc {
+    color: #15803d;
+  }
+
+  :global(.dark) .runpod-config .config-desc {
+    color: #86efac;
+  }
+
+  /* Server config styling */
+  .server-config {
+    background: #f5f5f5;
+    border-color: #d1d5db;
+  }
+
+  :global(.dark) .server-config {
+    background: rgba(107, 114, 128, 0.1);
+    border-color: rgba(107, 114, 128, 0.3);
+  }
+
+  .server-config h4 {
+    color: #374151;
+  }
+
+  :global(.dark) .server-config h4 {
+    color: #d1d5db;
+  }
+
+  .server-config .config-desc {
+    color: #4b5563;
+  }
+
+  :global(.dark) .server-config .config-desc {
+    color: #9ca3af;
+  }
+
+  /* Credential actions (sync/manual buttons) */
+  .credential-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .sync-btn, .manual-btn {
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 1px solid transparent;
+  }
+
+  .sync-btn {
+    background: #3b82f6;
+    color: white;
+    border-color: #2563eb;
+  }
+
+  .sync-btn:hover:not(:disabled) {
+    background: #2563eb;
+  }
+
+  .sync-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .manual-btn {
+    background: #f3f4f6;
+    color: #374151;
+    border-color: #d1d5db;
+  }
+
+  :global(.dark) .manual-btn {
+    background: #374151;
+    color: #e5e7eb;
+    border-color: #4b5563;
+  }
+
+  .manual-btn:hover {
+    background: #e5e7eb;
+  }
+
+  :global(.dark) .manual-btn:hover {
+    background: #4b5563;
+  }
+
+  /* Manual credential entry form */
+  .manual-entry {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 0.5rem;
+    border: 1px dashed #d1d5db;
+  }
+
+  :global(.dark) .manual-entry {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: #4b5563;
+  }
+
+  .manual-entry .config-row {
+    margin-bottom: 0.75rem;
+  }
+
+  .manual-entry .config-row:last-of-type {
+    margin-bottom: 0;
+  }
+
+  .manual-entry .config-actions {
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  :global(.dark) .manual-entry .config-actions {
+    border-color: #374151;
   }
 </style>

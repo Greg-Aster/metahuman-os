@@ -23,8 +23,8 @@ import {
   loadTrustLevel,
   executeGraph,
   validateCognitiveGraph,
+  getActiveBackend,
   type CognitiveGraph,
-  ollama
 } from '@metahuman/core';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -76,17 +76,12 @@ async function generateUserQuestion(username: string): Promise<boolean> {
   // inactivityThreshold seconds of conversation inactivity.
 
   try {
-    // Preflight: ensure Ollama is available
-    const running = await ollama.isRunning();
-    if (!running) {
-      console.warn('[curiosity-service] Ollama is not running; skipping question generation. Start with: ollama serve');
-      audit({
-        category: 'system',
-        level: 'warn',
-        message: 'Curiosity service skipped: Ollama not running',
-        actor: 'curiosity-service',
-      });
-      return false;
+    // Log which backend is active (model router handles actual availability)
+    try {
+      const backend = getActiveBackend();
+      console.log(`[curiosity-service] Using LLM backend: ${backend}`);
+    } catch (e) {
+      console.log('[curiosity-service] Using model router (backend auto-selected)');
     }
 
     // Load curiosity cognitive graph
@@ -253,4 +248,14 @@ async function run() {
   }
 }
 
-run().catch(console.error);
+// Export for use by other parts of the system (mobile, web, etc.)
+export {
+  generateUserQuestion,
+  loadCuriosityGraph,
+};
+
+// Only run if executed directly (not imported)
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+  run().catch(console.error);
+}

@@ -121,6 +121,9 @@
       case 'AgencyDashboard':
         module = await import('./AgencyDashboard.svelte');
         break;
+      case 'SystemCoderDashboard':
+        module = await import('./SystemCoderDashboard.svelte');
+        break;
       default:
         throw new Error(`Unknown component: ${name}`);
     }
@@ -1443,6 +1446,20 @@ async function loadMemoryContent(relPath: string) {
       <div class="view-content">
         {#await loadComponent('AgencyDashboard')}
           <div class="loading-placeholder">Loading agency dashboard...</div>
+        {:then Component}
+          <svelte:component this={Component} />
+        {/await}
+      </div>
+    </div>
+  {:else if $activeView === 'system-coder'}
+    <div class="view-container">
+      <div class="view-header">
+        <h2 class="view-title">🔧 System Coder</h2>
+        <p class="view-subtitle">Self-healing code maintenance agent</p>
+      </div>
+      <div class="view-content">
+        {#await loadComponent('SystemCoderDashboard')}
+          <div class="loading-placeholder">Loading system coder dashboard...</div>
         {:then Component}
           <svelte:component this={Component} />
         {/await}

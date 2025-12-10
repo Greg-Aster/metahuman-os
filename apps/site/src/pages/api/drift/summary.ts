@@ -1,36 +1,9 @@
-import type { APIRoute } from 'astro';
-import { getUserOrAnonymous } from '@metahuman/core';
-import { loadDriftSummary, initializeSummary } from '@metahuman/core';
-
 /**
- * GET /api/drift/summary
- * Returns drift metrics summary for the authenticated user
+ * Drift Summary API - GET /api/drift/summary
+ *
+ * Astro adapter - ONE LINE to call unified handler.
+ * All business logic is in @metahuman/core (same as mobile).
  */
-export const GET: APIRoute = async ({ cookies }) => {
-  try {
-    const user = getUserOrAnonymous(cookies);
-    if (user.role === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required to view drift metrics.' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+import { astroHandler } from '@metahuman/core/api/adapters/astro';
 
-    let summary = await loadDriftSummary(user.username);
-
-    // Initialize if no summary exists
-    if (!summary) {
-      summary = await initializeSummary(user.username);
-    }
-
-    return new Response(JSON.stringify(summary), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  } catch (error) {
-    return new Response(
-      JSON.stringify({ error: (error as Error).message }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
-  }
-};
+export const GET = astroHandler;

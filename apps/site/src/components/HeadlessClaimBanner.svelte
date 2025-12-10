@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { apiFetch } from '../lib/client/api-config';
+  import { apiFetch, isCapacitorNative } from '../lib/client/api-config';
 
   interface RuntimeMode {
     headless: boolean;
@@ -14,8 +14,12 @@
   let error: string | null = null;
   let claiming = false;
   let showBanner = false;
+  let isMobile = false;
 
   async function loadRuntimeMode() {
+    // Skip on mobile - headless mode is a server-only feature
+    if (isMobile) return;
+
     try {
       const res = await apiFetch('/api/runtime/mode');
       if (res.ok) {
@@ -24,7 +28,8 @@
         showBanner = runtimeMode.headless;
       }
     } catch (err) {
-      console.error('Failed to load runtime mode:', err);
+      // Silently fail - this is not critical for app operation
+      console.warn('Failed to load runtime mode (expected on mobile):', err);
     }
   }
 
@@ -59,6 +64,11 @@
   }
 
   onMount(() => {
+    isMobile = isCapacitorNative();
+
+    // Skip loading on mobile - this is a server-only feature
+    if (isMobile) return;
+
     loadRuntimeMode();
     // Check every 10 seconds for changes
     const interval = setInterval(loadRuntimeMode, 10000);

@@ -129,9 +129,17 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
       return { response: response.content };
     } catch (error) {
       console.error('[PersonaLLM] Error:', error);
+      const errorMsg = (error as Error).message;
+      // Provide helpful message for common errors
+      let userMessage = 'I apologize, but I encountered an error generating a response.';
+      if (errorMsg.includes('offline') || errorMsg.includes('not running') || errorMsg.includes('No remote provider')) {
+        userMessage = 'LLM backend is unavailable. Please configure a working LLM in Settings.';
+      } else if (errorMsg.includes('API key')) {
+        userMessage = 'API key is missing or invalid. Please configure your LLM credentials in Settings.';
+      }
       return {
-        response: 'I apologize, but I encountered an error generating a response.',
-        error: (error as Error).message,
+        response: userMessage,
+        error: errorMsg,
       };
     }
   },

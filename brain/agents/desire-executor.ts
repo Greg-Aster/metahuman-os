@@ -183,28 +183,34 @@ async function processApprovedDesires(username?: string): Promise<{
     executed++;
 
     // Update desire with execution results
-    const finalDesire = {
-      ...executingDesire,
-      execution,
-      updatedAt: new Date().toISOString(),
-    };
+    const now = new Date().toISOString();
 
     if (execution.status === 'completed') {
-      finalDesire.status = 'completed';
-      finalDesire.completedAt = new Date().toISOString();
+      const finalDesire: Desire = {
+        ...executingDesire,
+        status: 'completed',
+        execution,
+        completedAt: now,
+        updatedAt: now,
+      };
       await moveDesire(finalDesire, 'executing', 'completed', username);
       succeeded++;
 
-      await incrementMetric('desiresCompleted', username);
+      await incrementMetric('totalCompleted', 1, username);
 
       console.log(`${LOG_PREFIX}   ✓ Completed successfully`);
     } else {
-      finalDesire.status = 'failed';
-      finalDesire.completedAt = new Date().toISOString();
+      const finalDesire: Desire = {
+        ...executingDesire,
+        status: 'failed',
+        execution,
+        completedAt: now,
+        updatedAt: now,
+      };
       await moveDesire(finalDesire, 'executing', 'failed', username);
       failed++;
 
-      await incrementMetric('desiresFailed', username);
+      await incrementMetric('totalFailed', 1, username);
 
       console.log(`${LOG_PREFIX}   ✗ Failed: ${execution.error}`);
     }
@@ -233,11 +239,11 @@ async function processApprovedDesires(username?: string): Promise<{
 
     await captureEvent(dialogueText, {
       type: 'inner_dialogue',
-      source: 'desire-executor',
+      tags: ['agency', 'execution', 'inner'],
       metadata: {
         desireId: desire.id,
         executionStatus: execution.status,
-        tags: ['agency', 'execution', 'inner'],
+        source: 'desire-executor',
       },
     });
   }
@@ -250,7 +256,7 @@ async function processApprovedDesires(username?: string): Promise<{
 // ============================================================================
 
 async function main(): Promise<void> {
-  initGlobalLogger();
+  initGlobalLogger('desire-executor');
   console.log(`${LOG_PREFIX} Starting desire executor agent...`);
 
   // Check for existing lock
@@ -301,8 +307,18 @@ async function main(): Promise<void> {
   }
 }
 
-// Run if executed directly
-main().catch((error) => {
-  console.error(`${LOG_PREFIX} Fatal error:`, error);
-  process.exit(1);
-});
+// Export for use by other parts of the system (mobile, web, etc.)
+export {
+  processApprovedDesires,
+  executePlan,
+  executeStep,
+};
+
+// Only run if executed directly (not imported)
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+  main().catch((error) => {
+    console.error(`${LOG_PREFIX} Fatal error:`, error);
+    process.exit(1);
+  });
+}

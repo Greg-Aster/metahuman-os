@@ -21,7 +21,7 @@
  * - Vector embeddings index
  */
 
-import { apiFetch } from './api-config';
+import { apiFetch, getSyncServerUrl, remoteFetch, normalizeUrl } from './api-config';
 import { healthStatus } from './server-health';
 import {
   getDB,
@@ -55,12 +55,36 @@ export interface ProfileMetadata {
   personaKeys: string[];
 }
 
+export interface SyncableCredentials {
+  runpod?: {
+    apiKey: string | null;
+    endpointId: string | null;  // The actual endpoint ID for API calls
+    templateId: string | null;  // Template metadata (not used for API calls)
+    gpuType: string | null;
+  };
+  bigBrother?: {
+    enabled: boolean;
+    provider: string;
+    escalateOnStuck: boolean;
+    escalateOnRepeatedFailures: boolean;
+    maxRetries: number;
+    includeFullScratchpad: boolean;
+    autoApplySuggestions: boolean;
+  };
+  remote?: {
+    provider: string;
+    serverUrl: string;
+    model: string;
+  };
+}
+
 export interface ProfileData {
   metadata: ProfileMetadata;
   persona: Record<string, any>;
   memories: LocalMemory[];
   tasks: LocalTask[];
   settings: Record<string, any>;
+  credentials?: SyncableCredentials;
 }
 
 export interface SyncStatus {
@@ -80,6 +104,7 @@ export interface DownloadProgress {
 
 const PROFILE_KEY = 'activeProfile';
 const PROFILES_KEY = 'profiles';
+const CREDENTIALS_KEY = 'syncedCredentials';
 
 /**
  * Get list of all profiles stored locally
@@ -252,7 +277,7 @@ export async function downloadProfile(
     createdAt: serverMeta.createdAt || now,
     updatedAt: now,
     source: 'server',
-    serverUrl: health.url,
+    serverUrl: getSyncServerUrl(),
     version: serverMeta.version || 1,
     memoryCount: memoriesDownloaded,
     personaKeys,
@@ -260,7 +285,7 @@ export async function downloadProfile(
 
   // Save to profiles list
   const profiles = await getLocalProfiles();
-  const existingIndex = profiles.findIndex(p => p.serverUrl === health.url);
+  const existingIndex = profiles.findIndex(p => p.serverUrl === getSyncServerUrl());
   if (existingIndex >= 0) {
     profiles[existingIndex] = metadata;
   } else {
@@ -542,5 +567,613 @@ export async function initProfileSync(): Promise<void> {
         console.warn('Could not auto-download profile:', e);
       }
     }
+  }
+}
+
+// ============================================================================
+// Credentials Sync (for mobile to fetch from desktop server)
+// ============================================================================
+
+/**
+ * Save credentials to local storage (IndexedDB)
+ * Used when credentials are fetched from sync server or entered manually
+ */
+export async function saveLocalCredentials(credentials: SyncableCredentials): Promise<void> {
+  await setSetting(CREDENTIALS_KEY, credentials);
+}
+
+/**
+ * Get locally stored credentials
+ */
+export async function getLocalCredentials(): Promise<SyncableCredentials | null> {
+  return getSetting<SyncableCredentials | null>(CREDENTIALS_KEY, null);
+}
+
+/**
+ * Fetch credentials from desktop sync server
+ * Requires active connection to sync server with authentication
+ *
+ * @param authToken Optional auth token for sync server (if using token-based auth)
+ * @returns Credentials from server or null if unavailable
+ */
+export async function fetchCredentialsFromServer(authToken?: string): Promise<SyncableCredentials | null> {
+  const syncUrl = getSyncServerUrl();
+  if (!syncUrl) {
+    console.log('[profile-sync] No sync server configured');
+    return null;
+  }
+
+  try {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+
+    // Add auth token if provided
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
+
+    const normalizedUrl = normalizeUrl(syncUrl);
+    const response = await remoteFetch(`${normalizedUrl}/api/profile-sync/credentials`, {
+      method: 'GET',
+      headers,
+      credentials: 'include', // Include cookies for session auth
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn('[profile-sync] Failed to fetch credentials:', response.status, errorText);
+      return null;
+    }
+
+    const data = await response.json();
+    if (data.success && data.credentials) {
+      // Save credentials locally for offline use
+      await saveLocalCredentials(data.credentials);
+      console.log('[profile-sync] Credentials synced from server');
+      return data.credentials;
+    }
+
+    return null;
+  } catch (error) {
+    console.warn('[profile-sync] Error fetching credentials:', error);
+    return null;
+  }
+}
+
+/**
+ * Sync credentials - tries server first, falls back to local storage
+ */
+export async function syncCredentials(authToken?: string): Promise<SyncableCredentials | null> {
+  // First try to fetch from server
+  const serverCredentials = await fetchCredentialsFromServer(authToken);
+  if (serverCredentials) {
+    return serverCredentials;
+  }
+
+  // Fall back to local storage
+  return getLocalCredentials();
+}
+
+/**
+ * Clear locally stored credentials
+ */
+export async function clearLocalCredentials(): Promise<void> {
+  await setSetting(CREDENTIALS_KEY, null);
+}
+
+// ============================================================================
+// Remote Server Sync (with authentication)
+// ============================================================================
+
+import {
+  getSyncServerCredentials,
+  saveSyncServerCredentials,
+  saveSyncedCredentials,
+  updateSyncTimestamp,
+  type SyncServerCredentials,
+  type SyncedCredentials,
+} from './local-memory';
+// mobile-fs imports removed - sync now uses unified LOCAL API (filesystem writes handled server-side)
+
+export interface RemoteSyncProgress {
+  phase: 'authenticating' | 'fetching-profile' | 'fetching-credentials' | 'importing' | 'complete' | 'error';
+  message: string;
+  current?: number;
+  total?: number;
+  error?: string;
+}
+
+export interface RemoteSyncResult {
+  success: boolean;
+  profileFiles?: number;
+  memoriesImported?: number;
+  credentialsSynced?: boolean;
+  error?: string;
+}
+
+/**
+ * Authenticate with remote server using Basic Auth
+ * Returns session cookie if successful
+ *
+ * Uses remoteFetch() which:
+ * - Normalizes URL (adds https:// if missing)
+ * - Uses CapacitorHttp on mobile to bypass CORS
+ */
+async function authenticateWithRemoteServer(
+  serverUrl: string,
+  username: string,
+  password: string
+): Promise<{ success: boolean; error?: string; cookie?: string }> {
+  try {
+    // Normalize URL and build full endpoint
+    const normalizedServerUrl = normalizeUrl(serverUrl);
+    const url = `${normalizedServerUrl}/api/auth/login`;
+    console.log('[profile-sync] Authenticating with', url);
+
+    const response = await remoteFetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ username, password }),
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return { success: false, error: `Authentication failed: ${response.status} - ${text}` };
+    }
+
+    const data = await response.json();
+
+    if (!data.success) {
+      return { success: false, error: data.error || 'Authentication failed' };
+    }
+
+    // Get session from response body (primary) or headers (fallback)
+    // Our auth API returns sessionId in the body
+    let sessionId = data.sessionId || data.session;
+
+    // Fallback: try to get from headers
+    if (!sessionId) {
+      const setCookie = response.headers.get('set-cookie');
+      if (setCookie) {
+        const match = setCookie.match(/mh_session=([^;]+)/);
+        sessionId = match?.[1];
+      }
+    }
+
+    if (!sessionId) {
+      console.error('[profile-sync] No session ID in auth response:', { data, headers: Object.fromEntries(response.headers.entries()) });
+      return { success: false, error: 'No session ID returned from server' };
+    }
+
+    // Return as cookie format for subsequent requests
+    return { success: true, cookie: `mh_session=${sessionId}` };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+/**
+ * Fetch credentials from remote server (requires owner role)
+ */
+async function fetchCredentialsFromRemote(
+  serverUrl: string,
+  cookie: string
+): Promise<{ success: boolean; credentials?: SyncedCredentials; error?: string }> {
+  try {
+    const normalizedServerUrl = normalizeUrl(serverUrl);
+    const url = `${normalizedServerUrl}/api/profile-sync/credentials`;
+    console.log('[profile-sync] Fetching credentials from', url);
+
+    const response = await remoteFetch(url, {
+      method: 'GET',
+      headers: {
+        'Cookie': cookie,
+      },
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      // 403 is expected for non-owner users - just skip credentials
+      if (response.status === 403) {
+        console.log('[profile-sync] Credentials sync requires owner role - skipping');
+        return { success: true, credentials: undefined };
+      }
+      const text = await response.text();
+      return { success: false, error: `Failed to fetch credentials: ${response.status} - ${text}` };
+    }
+
+    const data = await response.json();
+
+    if (data.error) {
+      return { success: false, error: data.error };
+    }
+
+    return { success: true, credentials: data.credentials };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+/**
+ * Test connection to remote sync server
+ */
+export async function testRemoteServerConnection(
+  serverUrl: string,
+  username: string,
+  password: string
+): Promise<{ success: boolean; error?: string }> {
+  const authResult = await authenticateWithRemoteServer(serverUrl, username, password);
+  return { success: authResult.success, error: authResult.error };
+}
+
+/**
+ * Configure and save sync server credentials
+ */
+export async function configureRemoteSyncServer(
+  serverUrl: string,
+  username: string,
+  password: string
+): Promise<{ success: boolean; error?: string }> {
+  // Test connection first
+  const testResult = await testRemoteServerConnection(serverUrl, username, password);
+  if (!testResult.success) {
+    return testResult;
+  }
+
+  // Save credentials
+  await saveSyncServerCredentials({
+    serverUrl: serverUrl.replace(/\/$/, ''), // Remove trailing slash
+    username,
+    password,
+    verified: true,
+  });
+
+  return { success: true };
+}
+
+/**
+ * Sync from configured remote server
+ * Downloads profile, credentials, and optionally memories
+ *
+ * @param onProgress - Progress callback
+ * @param options - Sync options
+ *   - includeMemories: Download memories (default: true)
+ *   - includeCredentials: Download credentials (default: true)
+ *   - priorityOnly: Use priority export (persona/config only) (default: true)
+ *   - memoryDays: Only sync memories from last N days (default: 7, 0 = all)
+ */
+export async function syncFromRemoteServer(
+  onProgress?: (progress: RemoteSyncProgress) => void,
+  options?: {
+    includeMemories?: boolean;
+    includeCredentials?: boolean;
+    priorityOnly?: boolean;
+    memoryDays?: number;
+  }
+): Promise<RemoteSyncResult> {
+  const opts = {
+    includeMemories: true,
+    includeCredentials: true,
+    priorityOnly: true,
+    memoryDays: 7, // Default to last 7 days
+    ...options,
+  };
+
+  // Get saved credentials
+  const creds = await getSyncServerCredentials();
+  if (!creds) {
+    return { success: false, error: 'No sync server configured. Please set up sync server first.' };
+  }
+
+  const result: RemoteSyncResult = { success: false };
+
+  try {
+    // Phase 1: Authenticate
+    onProgress?.({ phase: 'authenticating', message: 'Connecting to server...' });
+
+    const authResult = await authenticateWithRemoteServer(creds.serverUrl, creds.username, creds.password);
+    if (!authResult.success || !authResult.cookie) {
+      onProgress?.({ phase: 'error', message: 'Authentication failed', error: authResult.error });
+      return { success: false, error: authResult.error };
+    }
+
+    const cookie = authResult.cookie;
+
+    // Phase 2: Fetch profile
+    onProgress?.({ phase: 'fetching-profile', message: 'Downloading profile...' });
+
+    const normalizedServerUrl = normalizeUrl(creds.serverUrl);
+    const endpoint = opts.priorityOnly ? '/api/profile-sync/export-priority' : '/api/profile-sync/export';
+    const profileResponse = await remoteFetch(`${normalizedServerUrl}${endpoint}`, {
+      method: 'GET',
+      headers: { 'Cookie': cookie },
+      credentials: 'include',
+    });
+
+    if (!profileResponse.ok) {
+      const text = await profileResponse.text();
+      onProgress?.({ phase: 'error', message: 'Failed to fetch profile', error: text });
+      return { success: false, error: `Failed to fetch profile: ${profileResponse.status}` };
+    }
+
+    const profileBundle = await profileResponse.json();
+    result.profileFiles = profileBundle.files?.length || 0;
+
+    // Phase 3: Import profile files via LOCAL API (writes to filesystem)
+    // This is the unified approach - same code works on web and mobile
+    // The local API handler writes files to the profile directory on disk
+    onProgress?.({
+      phase: 'importing',
+      message: 'Importing profile files...',
+      current: 0,
+      total: result.profileFiles
+    });
+
+    try {
+      // POST the entire bundle to LOCAL /api/profile-sync/import
+      // This writes files to the filesystem (NOT IndexedDB)
+      const importResponse = await apiFetch('/api/profile-sync/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profileBundle),
+      });
+
+      if (!importResponse.ok) {
+        const errorText = await importResponse.text();
+        console.error('[profile-sync] Import failed:', importResponse.status, errorText);
+        onProgress?.({ phase: 'error', message: 'Failed to import profile', error: errorText });
+        return { success: false, error: `Import failed: ${importResponse.status}` };
+      }
+
+      const importResult = await importResponse.json();
+      console.log('[profile-sync] Import result:', importResult);
+
+      onProgress?.({
+        phase: 'importing',
+        message: `Imported ${importResult.imported || result.profileFiles} files`,
+        current: result.profileFiles,
+        total: result.profileFiles,
+      });
+    } catch (err) {
+      console.error('[profile-sync] Import error:', err);
+      onProgress?.({ phase: 'error', message: 'Import failed', error: (err as Error).message });
+      return { success: false, error: (err as Error).message };
+    }
+
+    // Phase 4: Fetch credentials (if requested)
+    if (opts.includeCredentials) {
+      onProgress?.({ phase: 'fetching-credentials', message: 'Syncing credentials...' });
+
+      const credsResult = await fetchCredentialsFromRemote(creds.serverUrl, cookie);
+      if (credsResult.success && credsResult.credentials) {
+        await saveSyncedCredentials(credsResult.credentials);
+        result.credentialsSynced = true;
+        console.log('[profile-sync] Credentials synced:', Object.keys(credsResult.credentials));
+      }
+    }
+
+    // Phase 5: Fetch memories (if requested)
+    // Downloads from remote server, then POSTs to LOCAL API to write to filesystem
+    if (opts.includeMemories) {
+      // Build memory URL with date filter
+      const daysParam = opts.memoryDays > 0 ? `&days=${opts.memoryDays}` : '';
+      const daysLabel = opts.memoryDays > 0 ? ` (last ${opts.memoryDays} days)` : '';
+      onProgress?.({ phase: 'importing', message: `Syncing memories${daysLabel}...` });
+
+      let offset = 0;
+      let totalMemories = 0;
+      let hasMore = true;
+
+      while (hasMore) {
+        const memResponse = await remoteFetch(
+          `${normalizedServerUrl}/api/profile-sync/memories?offset=${offset}&limit=100${daysParam}`,
+          {
+            method: 'GET',
+            headers: { 'Cookie': cookie },
+            credentials: 'include',
+          }
+        );
+
+        if (!memResponse.ok) {
+          console.warn('[profile-sync] Memory fetch failed:', memResponse.status);
+          break;
+        }
+
+        const memData = await memResponse.json();
+
+        if (memData.memories && memData.memories.length > 0) {
+          // POST each memory to LOCAL API (writes to filesystem, NOT IndexedDB)
+          for (const memory of memData.memories) {
+            try {
+              const pushResponse = await apiFetch('/api/memory/sync/push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ memory }),
+              });
+
+              if (!pushResponse.ok) {
+                // 409 Conflict means memory already exists - that's fine
+                if (pushResponse.status !== 409) {
+                  console.warn(`[profile-sync] Memory push failed for ${memory.id}:`, pushResponse.status);
+                }
+              }
+            } catch (err) {
+              console.warn(`[profile-sync] Memory push error for ${memory.id}:`, err);
+            }
+          }
+
+          totalMemories += memData.memories.length;
+
+          onProgress?.({
+            phase: 'importing',
+            message: `Imported ${totalMemories} memories...`,
+            current: totalMemories,
+            total: memData.total,
+          });
+        }
+
+        hasMore = memData.hasMore || false;
+        offset += 100;
+      }
+
+      result.memoriesImported = totalMemories;
+    }
+
+    // Update last sync timestamp
+    await updateSyncTimestamp();
+
+    onProgress?.({ phase: 'complete', message: 'Sync complete!' });
+
+    result.success = true;
+    return result;
+
+  } catch (error) {
+    const errorMsg = (error as Error).message;
+    onProgress?.({ phase: 'error', message: 'Sync failed', error: errorMsg });
+    return { success: false, error: errorMsg };
+  }
+}
+
+/**
+ * Get current remote sync server configuration (without password)
+ */
+export async function getRemoteSyncConfig(): Promise<{
+  configured: boolean;
+  serverUrl?: string;
+  username?: string;
+  lastSyncAt?: string;
+  verified?: boolean;
+}> {
+  const creds = await getSyncServerCredentials();
+  if (!creds) {
+    return { configured: false };
+  }
+
+  return {
+    configured: true,
+    serverUrl: creds.serverUrl,
+    username: creds.username,
+    lastSyncAt: creds.lastSyncAt,
+    verified: creds.verified,
+  };
+}
+
+/**
+ * Clear remote sync configuration
+ */
+export async function clearRemoteSyncConfig(): Promise<void> {
+  const { clearSyncServerCredentials, clearSyncedCredentials } = await import('./local-memory');
+  await clearSyncServerCredentials();
+  await clearSyncedCredentials();
+}
+
+/**
+ * Remote server sync comparison result
+ */
+export interface SyncComparison {
+  connected: boolean;
+  serverUrl: string;
+  serverUsername: string;
+  error?: string;
+  server: {
+    memoryCount: number;
+    profileVersion?: string;
+    lastUpdated?: string;
+  };
+  local: {
+    memoryCount: number;
+    lastSync?: string;
+  };
+  differences: {
+    newMemoriesOnServer: number;
+    newerOnServer: boolean;
+    syncRecommended: boolean;
+  };
+}
+
+/**
+ * Check remote server status and compare with local data
+ * Returns memory counts and sync status for comparison
+ */
+export async function checkRemoteSyncStatus(): Promise<SyncComparison> {
+  const creds = await getSyncServerCredentials();
+  if (!creds) {
+    throw new Error('No sync server configured');
+  }
+
+  // Get local memory count
+  const localMemories = await getRecentMemories(100000); // Get all
+  const localCount = localMemories.length;
+  const lastSync = creds.lastSyncAt || null;
+
+  // Authenticate with remote server
+  const authResult = await authenticateWithRemoteServer(creds.serverUrl, creds.username, creds.password);
+  if (!authResult.success || !authResult.cookie) {
+    return {
+      connected: false,
+      serverUrl: creds.serverUrl,
+      serverUsername: creds.username,
+      error: authResult.error || 'Authentication failed',
+      server: { memoryCount: 0 },
+      local: { memoryCount: localCount, lastSync: lastSync || undefined },
+      differences: { newMemoriesOnServer: 0, newerOnServer: false, syncRecommended: false },
+    };
+  }
+
+  // Fetch server status
+  try {
+    const normalizedServerUrl = normalizeUrl(creds.serverUrl);
+    const response = await remoteFetch(`${normalizedServerUrl}/api/status`, {
+      method: 'GET',
+      headers: { 'Cookie': authResult.cookie },
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server status check failed: ${response.status}`);
+    }
+
+    const status = await response.json();
+    const serverMemoryCount = status.memoryStats?.totalFiles || 0;
+    const serverLastUpdated = status.lastUpdated || null;
+
+    // Calculate differences
+    const newOnServer = Math.max(0, serverMemoryCount - localCount);
+    const newerOnServer = serverLastUpdated && lastSync
+      ? new Date(serverLastUpdated) > new Date(lastSync)
+      : serverMemoryCount > localCount;
+
+    return {
+      connected: true,
+      serverUrl: creds.serverUrl,
+      serverUsername: creds.username,
+      server: {
+        memoryCount: serverMemoryCount,
+        lastUpdated: serverLastUpdated,
+      },
+      local: {
+        memoryCount: localCount,
+        lastSync: lastSync || undefined,
+      },
+      differences: {
+        newMemoriesOnServer: newOnServer,
+        newerOnServer,
+        syncRecommended: newOnServer > 0 || newerOnServer,
+      },
+    };
+  } catch (error) {
+    return {
+      connected: true,
+      serverUrl: creds.serverUrl,
+      serverUsername: creds.username,
+      error: (error as Error).message,
+      server: { memoryCount: 0 },
+      local: { memoryCount: localCount, lastSync: lastSync || undefined },
+      differences: { newMemoriesOnServer: 0, newerOnServer: false, syncRecommended: false },
+    };
   }
 }

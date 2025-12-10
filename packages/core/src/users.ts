@@ -7,8 +7,8 @@
 
 import fs from 'fs';
 import path from 'path';
-import { randomUUID } from 'crypto';
 import bcrypt from 'bcryptjs';
+import { generateUUID } from './uuid.js';
 import { systemPaths, registerProfileStorageConfigGetter } from './path-builder.js';
 import { audit } from './audit.js';
 import type { OnboardingState } from './types/onboarding.js';
@@ -157,7 +157,15 @@ function loadUsers(): UserStore {
  */
 function saveUsers(store: UserStore): void {
   try {
-    fs.writeFileSync(getUsersFilePath(), JSON.stringify(store, null, 2), 'utf-8');
+    const usersFile = getUsersFilePath();
+    const usersDir = path.dirname(usersFile);
+
+    // Ensure directory exists (important for mobile first-run)
+    if (!fs.existsSync(usersDir)) {
+      fs.mkdirSync(usersDir, { recursive: true });
+    }
+
+    fs.writeFileSync(usersFile, JSON.stringify(store, null, 2), 'utf-8');
   } catch (error) {
     console.error('[users] Failed to save users:', error);
     throw error;
@@ -262,7 +270,7 @@ export function createUser(
   }
 
   const user: User = {
-    id: randomUUID(),
+    id: generateUUID(),
     username,
     passwordHash: hashPassword(password),
     role,

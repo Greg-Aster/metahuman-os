@@ -16,19 +16,6 @@
     "activityResumeDelay": 240
   },
   "agents": {
-    "reflector": {
-      "id": "reflector",
-      "enabled": false,
-      "type": "interval",
-      "priority": "normal",
-      "agentPath": "reflector.ts",
-      "usesLLM": true,
-      "interval": 900,
-      "runOnBoot": false,
-      "autoRestart": true,
-      "maxRetries": 3,
-      "comment": "Disabled in favor of activity-based reflections via boredom-maintenance"
-    },
     "organizer": {
       "id": "organizer",
       "enabled": true,
@@ -68,8 +55,8 @@
       "maxRetries": 1,
       "comment": "Runs nightly processing: dreamer, audio backlog, LoRA training (orchestrated by sleep-service.ts)"
     },
-    "boredom-maintenance": {
-      "id": "boredom-maintenance",
+    "reflector": {
+      "id": "reflector",
       "enabled": true,
       "type": "activity",
       "priority": "low",
@@ -78,7 +65,8 @@
       "inactivityThreshold": 900,
       "runOnBoot": false,
       "autoRestart": false,
-      "maxRetries": 1
+      "maxRetries": 1,
+      "comment": "Activity-based reflections - triggers after 15 min of inactivity"
     },
     "curiosity": {
       "id": "curiosity",

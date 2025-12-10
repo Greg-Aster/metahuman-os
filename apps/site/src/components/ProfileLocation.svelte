@@ -299,8 +299,8 @@
     const encryptionOptions = encryptionType !== 'none' ? {
       type: encryptionType,
       password: encryptionPassword,
-      containerSize: encryptionType === 'veracrypt' ? containerSize : undefined,
-      useLoginPassword: encryptionType === 'aes256' ? useMigrationLoginPassword : undefined,
+      containerSize: (encryptionType === 'veracrypt' || encryptionType === 'luks') ? containerSize : undefined,
+      useLoginPassword: (encryptionType === 'aes256' || encryptionType === 'luks') ? useMigrationLoginPassword : undefined,
     } : undefined;
 
     try {

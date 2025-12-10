@@ -171,6 +171,13 @@ function handleFallback(
 }
 
 /**
+ * Check if running on mobile (nodejs-mobile)
+ */
+function isMobileEnvironment(): boolean {
+  return process.env.METAHUMAN_MOBILE === 'true';
+}
+
+/**
  * Resolve the profile root directory for a user
  *
  * Checks for custom profile path in user metadata.
@@ -179,12 +186,25 @@ function handleFallback(
  * SECURITY: When external/encrypted storage is configured with fallbackBehavior: 'error',
  * this function throws instead of silently falling back to unencrypted storage.
  *
+ * MOBILE: On mobile devices, custom desktop paths are ignored and mobile default paths
+ * are used instead (the desktop path wouldn't be accessible on mobile anyway).
+ *
  * @param username - Username
  * @returns Profile path resolution result
  * @throws Error if custom path is unavailable and fallbackBehavior is 'error'
  */
 export function resolveProfileRoot(username: string): ProfilePathResolution {
   const defaultRoot = path.join(ROOT, 'profiles', username);
+
+  // On mobile, always use mobile default paths
+  // Desktop-specific paths (LUKS, external drives) aren't accessible on mobile
+  if (isMobileEnvironment()) {
+    return {
+      root: defaultRoot,
+      usingFallback: false,
+      storageType: 'internal',
+    };
+  }
 
   // Try to get custom storage config
   const storageConfig = getProfileStorageConfigLazy(username);

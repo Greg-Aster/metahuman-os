@@ -29,7 +29,7 @@ import {
   listActiveTasks,
   searchMemory,
   storageClient,
-  ollama,
+  getActiveBackend,
   callLLM,
   type RouterMessage,
 } from '@metahuman/core';
@@ -47,7 +47,7 @@ import {
   type DreamSummary,
   type DesireSummary,
   generateDesireId,
-  getSourceWeight,
+  initializeDesireMetrics,
   applyDecay,
   applyReinforcement,
   isAboveThreshold,
@@ -640,7 +640,9 @@ Example response:
  */
 function createDesire(candidate: DesireCandidate, config: Awaited<ReturnType<typeof loadConfig>>): Desire {
   const now = new Date().toISOString();
-  const sourceWeight = getSourceWeight(candidate.source);
+  // Use config-based weight or fall back to default weights
+  const sourceConfig = config.sources[candidate.source];
+  const sourceWeight = sourceConfig?.enabled ? sourceConfig.weight : (DESIRE_SOURCE_WEIGHTS[candidate.source] ?? 0.5);
 
   // Use config's initial strength, not candidate's - desires must grow organically
   const initialStrength = config.thresholds.decay.initialStrength;
@@ -669,6 +671,7 @@ function createDesire(candidate: DesireCandidate, config: Awaited<ReturnType<typ
     createdAt: now,
     updatedAt: now,
     tags: [candidate.source, candidate.risk],
+    metrics: initializeDesireMetrics(),
   };
 }
 
@@ -1167,18 +1170,12 @@ async function main() {
   }
 
   try {
-    // Check Ollama
-    const running = await ollama.isRunning();
-    if (!running) {
-      console.warn(`${LOG_PREFIX} Ollama is not running; skipping. Start with: ollama serve`);
-      audit({
-        category: 'agent',
-        level: 'warn',
-        event: 'desire_generator_skipped',
-        message: 'Desire generator skipped: Ollama not running',
-        actor: 'desire-generator',
-      });
-      return;
+    // Log which backend is active (model router handles actual availability)
+    try {
+      const backend = getActiveBackend();
+      console.log(`${LOG_PREFIX} Using LLM backend: ${backend}`);
+    } catch (e) {
+      console.log(`${LOG_PREFIX} Using model router (backend auto-selected)`);
     }
 
     // Process only logged-in users (not all profiles)
@@ -1222,7 +1219,24 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  console.error(`${LOG_PREFIX} Fatal error:`, error);
-  process.exit(1);
-});
+// Export for use by other parts of the system (mobile, web, etc.)
+export {
+  generateDesiresForUser,
+  gatherInputs,
+  identifyDesires,
+  loadPersonaGoals,
+  loadTasks,
+  loadRecentMemories,
+  loadCuriosityQuestions,
+  loadReflections,
+  loadDreams,
+};
+
+// Only run if executed directly (not imported)
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+  main().catch(error => {
+    console.error(`${LOG_PREFIX} Fatal error:`, error);
+    process.exit(1);
+  });
+}

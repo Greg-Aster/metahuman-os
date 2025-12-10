@@ -1,15 +1,27 @@
 /**
  * Mobile Agent Wrappers
  *
- * Wraps core agent functionality for in-process execution on mobile.
+ * Wraps unified agent functionality for in-process execution on mobile.
  * These agents are registered with the MobileAgentScheduler and run
  * without spawning child processes.
  *
- * Mobile-Compatible Agents:
- * - organizer: Memory enrichment (needs LLM via RunPod/Claude)
- * - ingestor: Process inbox files (no LLM needed)
+ * All agents use the model router which respects the user's LLM configuration
+ * (local Ollama, vLLM, RunPod, Claude, etc.)
  *
- * Server-Only Agents (not included):
+ * Mobile-Compatible Agents (using unified agents):
+ * - organizer: Memory enrichment
+ * - ingestor: Process inbox files
+ * - reflector: Generate reflections from memory chains
+ * - dreamer: Create dream narratives
+ * - curiosity: User-facing curiosity questions
+ * - inner-curiosity: Self-directed Q&A
+ * - digest: Activity summaries
+ * - desire-generator: Synthesize desires from system inputs
+ * - desire-planner: Generate execution plans for desires
+ * - desire-executor: Execute approved desire plans
+ * - desire-reviewer: Review completed/failed desires
+ *
+ * Server-Only Agents (cannot run on mobile):
  * - transcriber: Requires Whisper/GPU
  * - fine-tune-trainer: Requires GPU training
  * - lora-trainer: Requires GPU training
@@ -19,7 +31,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { withUserContext } from '../context.js';
-import { captureEvent, searchMemory } from '../memory.js';
+import { captureEvent } from '../memory.js';
 import { callLLM, type RouterMessage } from '../model-router.js';
 import { audit, auditAction } from '../audit.js';
 import { storageClient } from '../storage-client.js';
@@ -29,8 +41,21 @@ import {
   type MobileAgentRegistration,
 } from './mobile-scheduler.js';
 
+// Import from brain agents (unified codebase - same agents as server)
+import { generateUserReflection } from '../../../../brain/agents/reflector.js';
+import { generateUserDreams } from '../../../../brain/agents/dreamer.js';
+import { generateUserQuestion } from '../../../../brain/agents/curiosity-service.js';
+import { generateInnerQuestion } from '../../../../brain/agents/inner-curiosity.js';
+import { runDigest as brainRunDigest } from '../../../../brain/agents/digest.js';
+
+// Agency system agents
+import { generateDesiresForUser } from '../../../../brain/agents/desire-generator.js';
+import { processPlanningDesires, loadPlannerConfig } from '../../../../brain/agents/desire-planner.js';
+import { processApprovedDesires } from '../../../../brain/agents/desire-executor.js';
+import { processDesires as processDesireOutcomes } from '../../../../brain/agents/desire-outcome-reviewer.js';
+
 // ============================================================================
-// Organizer Agent (Mobile Version)
+// Organizer Agent (Mobile Version - keeps original implementation)
 // ============================================================================
 
 interface AnalysisResult {
@@ -58,6 +83,7 @@ async function analyzeMemoryContent(content: string): Promise<AnalysisResult> {
       role: 'curator',
       messages,
       options: { temperature: 0.3 },
+      keepAlive: '0', // Unload immediately for background agent
     });
 
     const result = JSON.parse(response.content) as AnalysisResult;
@@ -116,7 +142,6 @@ function findUnprocessedMemories(episodicDir: string, limit: number = 5): string
 
 /**
  * Mobile Organizer Agent
- * Processes unprocessed memories and enriches them with LLM-extracted tags/entities
  */
 async function runOrganizer(context: MobileAgentContext): Promise<void> {
   console.log('[mobile-organizer] Starting...');
@@ -140,7 +165,7 @@ async function runOrganizer(context: MobileAgentContext): Promise<void> {
       }
 
       const episodicDir = result.path;
-      const unprocessed = findUnprocessedMemories(episodicDir, 3); // Process 3 at a time on mobile
+      const unprocessed = findUnprocessedMemories(episodicDir, 3);
 
       console.log(`[mobile-organizer] Found ${unprocessed.length} unprocessed memories`);
 
@@ -149,10 +174,8 @@ async function runOrganizer(context: MobileAgentContext): Promise<void> {
           const memory = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
           console.log(`[mobile-organizer] Processing: ${memory.id}`);
 
-          // Analyze content
           const analysis = await analyzeMemoryContent(memory.content);
 
-          // Update memory
           memory.tags = [...new Set([...(memory.tags || []), ...analysis.tags])];
           memory.entities = [...new Set([...(memory.entities || []), ...analysis.entities])];
           memory.metadata = {
@@ -162,7 +185,6 @@ async function runOrganizer(context: MobileAgentContext): Promise<void> {
             processedBy: 'mobile-organizer',
           };
 
-          // Write back
           fs.writeFileSync(filePath, JSON.stringify(memory, null, 2));
 
           auditAction({
@@ -184,13 +206,9 @@ async function runOrganizer(context: MobileAgentContext): Promise<void> {
 }
 
 // ============================================================================
-// Ingestor Agent (Mobile Version)
+// Ingestor Agent (Mobile Version - keeps original implementation)
 // ============================================================================
 
-/**
- * Mobile Ingestor Agent
- * Processes files from the inbox directory and converts them to memories
- */
 async function runIngestor(context: MobileAgentContext): Promise<void> {
   console.log('[mobile-ingestor] Starting...');
 
@@ -226,7 +244,7 @@ async function runIngestor(context: MobileAgentContext): Promise<void> {
 
       console.log(`[mobile-ingestor] Found ${files.length} files in inbox`);
 
-      for (const file of files.slice(0, 5)) { // Process 5 at a time
+      for (const file of files.slice(0, 5)) {
         const filePath = path.join(inboxDir, file);
 
         try {
@@ -236,7 +254,6 @@ async function runIngestor(context: MobileAgentContext): Promise<void> {
           let eventContent = content;
           let eventType = 'observation';
 
-          // Handle different file types
           if (ext === '.json') {
             try {
               const parsed = JSON.parse(content);
@@ -247,7 +264,6 @@ async function runIngestor(context: MobileAgentContext): Promise<void> {
             }
           }
 
-          // Capture as memory
           const eventId = captureEvent(eventContent, {
             type: eventType,
             tags: ['ingested', 'mobile'],
@@ -258,7 +274,6 @@ async function runIngestor(context: MobileAgentContext): Promise<void> {
             },
           });
 
-          // Move to archive
           const archiveDir = path.join(inboxDir, '_archive');
           fs.mkdirSync(archiveDir, { recursive: true });
           fs.renameSync(filePath, path.join(archiveDir, file));
@@ -275,6 +290,217 @@ async function runIngestor(context: MobileAgentContext): Promise<void> {
 }
 
 // ============================================================================
+// Brain Agent Wrappers (unified codebase - same code as server)
+// ============================================================================
+
+/**
+ * Reflector wrapper - uses brain/agents/reflector.ts
+ */
+async function runReflectorWrapper(context: MobileAgentContext): Promise<void> {
+  if (!context.username) {
+    console.log('[mobile-reflector] No username, skipping');
+    return;
+  }
+
+  await withUserContext(
+    { userId: context.username, username: context.username, role: 'owner' },
+    async () => {
+      try {
+        const success = await generateUserReflection(context.username!);
+        console.log(`[mobile-reflector] ${success ? 'Complete' : 'Skipped'}`);
+      } catch (error) {
+        console.error('[mobile-reflector] Error:', (error as Error).message);
+      }
+    }
+  );
+}
+
+/**
+ * Dreamer wrapper - uses brain/agents/dreamer.ts
+ */
+async function runDreamerWrapper(context: MobileAgentContext): Promise<void> {
+  if (!context.username) {
+    console.log('[mobile-dreamer] No username, skipping');
+    return;
+  }
+
+  await withUserContext(
+    { userId: context.username, username: context.username, role: 'owner' },
+    async () => {
+      try {
+        const result = await generateUserDreams(context.username!);
+        console.log(`[mobile-dreamer] Complete: ${result.dreamsGenerated} dreams, ${result.memoriesCurated} memories`);
+      } catch (error) {
+        console.error('[mobile-dreamer] Error:', (error as Error).message);
+      }
+    }
+  );
+}
+
+/**
+ * Curiosity wrapper - uses brain/agents/curiosity-service.ts
+ */
+async function runCuriosityWrapper(context: MobileAgentContext): Promise<void> {
+  if (!context.username) {
+    console.log('[mobile-curiosity] No username, skipping');
+    return;
+  }
+
+  await withUserContext(
+    { userId: context.username, username: context.username, role: 'owner' },
+    async () => {
+      try {
+        const success = await generateUserQuestion(context.username!);
+        console.log(`[mobile-curiosity] ${success ? 'Question generated' : 'Skipped'}`);
+      } catch (error) {
+        console.error('[mobile-curiosity] Error:', (error as Error).message);
+      }
+    }
+  );
+}
+
+/**
+ * Inner Curiosity wrapper - uses brain/agents/inner-curiosity.ts
+ */
+async function runInnerCuriosityWrapper(context: MobileAgentContext): Promise<void> {
+  if (!context.username) {
+    console.log('[mobile-inner-curiosity] No username, skipping');
+    return;
+  }
+
+  await withUserContext(
+    { userId: context.username, username: context.username, role: 'owner' },
+    async () => {
+      try {
+        const success = await generateInnerQuestion(context.username!);
+        console.log(`[mobile-inner-curiosity] ${success ? 'Inner Q&A generated' : 'Skipped'}`);
+      } catch (error) {
+        console.error('[mobile-inner-curiosity] Error:', (error as Error).message);
+      }
+    }
+  );
+}
+
+/**
+ * Digest wrapper - uses brain/agents/digest.ts
+ */
+async function runDigestWrapper(context: MobileAgentContext): Promise<void> {
+  if (!context.username) {
+    console.log('[mobile-digest] No username, skipping');
+    return;
+  }
+
+  await withUserContext(
+    { userId: context.username, username: context.username, role: 'owner' },
+    async () => {
+      try {
+        await brainRunDigest();
+        console.log('[mobile-digest] Complete');
+      } catch (error) {
+        console.error('[mobile-digest] Error:', (error as Error).message);
+      }
+    }
+  );
+}
+
+// ============================================================================
+// Agent Registration
+// ============================================================================
+
+// ============================================================================
+// Agency System Agent Wrappers (desire-*)
+// ============================================================================
+
+/**
+ * Desire Generator wrapper - uses brain/agents/desire-generator.ts
+ */
+async function runDesireGeneratorWrapper(context: MobileAgentContext): Promise<void> {
+  if (!context.username) {
+    console.log('[mobile-desire-generator] No username, skipping');
+    return;
+  }
+
+  await withUserContext(
+    { userId: context.username, username: context.username, role: 'owner' },
+    async () => {
+      try {
+        const count = await generateDesiresForUser(context.username!);
+        console.log(`[mobile-desire-generator] Complete: ${count} desires generated`);
+      } catch (error) {
+        console.error('[mobile-desire-generator] Error:', (error as Error).message);
+      }
+    }
+  );
+}
+
+/**
+ * Desire Planner wrapper - uses brain/agents/desire-planner.ts
+ */
+async function runDesirePlannerWrapper(context: MobileAgentContext): Promise<void> {
+  if (!context.username) {
+    console.log('[mobile-desire-planner] No username, skipping');
+    return;
+  }
+
+  await withUserContext(
+    { userId: context.username, username: context.username, role: 'owner' },
+    async () => {
+      try {
+        const config = await loadPlannerConfig();
+        const result = await processPlanningDesires(context.username!, config);
+        console.log(`[mobile-desire-planner] Complete: ${result.planned} planned, ${result.approved} approved`);
+      } catch (error) {
+        console.error('[mobile-desire-planner] Error:', (error as Error).message);
+      }
+    }
+  );
+}
+
+/**
+ * Desire Executor wrapper - uses brain/agents/desire-executor.ts
+ */
+async function runDesireExecutorWrapper(context: MobileAgentContext): Promise<void> {
+  if (!context.username) {
+    console.log('[mobile-desire-executor] No username, skipping');
+    return;
+  }
+
+  await withUserContext(
+    { userId: context.username, username: context.username, role: 'owner' },
+    async () => {
+      try {
+        const result = await processApprovedDesires(context.username!);
+        console.log(`[mobile-desire-executor] Complete: ${result.executed} executed, ${result.succeeded} succeeded`);
+      } catch (error) {
+        console.error('[mobile-desire-executor] Error:', (error as Error).message);
+      }
+    }
+  );
+}
+
+/**
+ * Desire Outcome Reviewer wrapper - uses brain/agents/desire-outcome-reviewer.ts
+ */
+async function runDesireReviewerWrapper(context: MobileAgentContext): Promise<void> {
+  if (!context.username) {
+    console.log('[mobile-desire-reviewer] No username, skipping');
+    return;
+  }
+
+  await withUserContext(
+    { userId: context.username, username: context.username, role: 'owner' },
+    async () => {
+      try {
+        const result = await processDesireOutcomes(context.username!);
+        console.log(`[mobile-desire-reviewer] Complete: ${result.reviewed} reviewed`);
+      } catch (error) {
+        console.error('[mobile-desire-reviewer] Error:', (error as Error).message);
+      }
+    }
+  );
+}
+
+// ============================================================================
 // Agent Registration
 // ============================================================================
 
@@ -283,6 +509,7 @@ async function runIngestor(context: MobileAgentContext): Promise<void> {
  */
 export function registerMobileAgents(): void {
   const agents: MobileAgentRegistration[] = [
+    // Original agents
     {
       id: 'organizer',
       name: 'Memory Organizer',
@@ -298,6 +525,80 @@ export function registerMobileAgents(): void {
       usesLLM: false,
       priority: 'low',
       intervalSeconds: 60, // Every minute
+    },
+    // Unified agents
+    {
+      id: 'reflector',
+      name: 'Reflector',
+      run: runReflectorWrapper,
+      usesLLM: true,
+      priority: 'low',
+      intervalSeconds: 600, // Every 10 minutes
+    },
+    {
+      id: 'dreamer',
+      name: 'Dreamer',
+      run: runDreamerWrapper,
+      usesLLM: true,
+      priority: 'low',
+      intervalSeconds: 3600, // Every hour (dreams are rare)
+    },
+    {
+      id: 'curiosity',
+      name: 'Curiosity',
+      run: runCuriosityWrapper,
+      usesLLM: true,
+      priority: 'low',
+      intervalSeconds: 900, // Every 15 minutes
+    },
+    {
+      id: 'inner-curiosity',
+      name: 'Inner Curiosity',
+      run: runInnerCuriosityWrapper,
+      usesLLM: true,
+      priority: 'low',
+      intervalSeconds: 1200, // Every 20 minutes
+    },
+    {
+      id: 'digest',
+      name: 'Daily Digest',
+      run: runDigestWrapper,
+      usesLLM: true,
+      priority: 'low',
+      intervalSeconds: 86400, // Once per day
+    },
+    // Agency system agents
+    {
+      id: 'desire-generator',
+      name: 'Desire Generator',
+      run: runDesireGeneratorWrapper,
+      usesLLM: true,
+      priority: 'low',
+      intervalSeconds: 1800, // Every 30 minutes
+    },
+    {
+      id: 'desire-planner',
+      name: 'Desire Planner',
+      run: runDesirePlannerWrapper,
+      usesLLM: true,
+      priority: 'normal',
+      intervalSeconds: 300, // Every 5 minutes
+    },
+    {
+      id: 'desire-executor',
+      name: 'Desire Executor',
+      run: runDesireExecutorWrapper,
+      usesLLM: true,
+      priority: 'normal',
+      intervalSeconds: 300, // Every 5 minutes
+    },
+    {
+      id: 'desire-reviewer',
+      name: 'Desire Outcome Reviewer',
+      run: runDesireReviewerWrapper,
+      usesLLM: true,
+      priority: 'low',
+      intervalSeconds: 600, // Every 10 minutes
     },
   ];
 
@@ -327,4 +628,17 @@ export function stopMobileAgents(): void {
 }
 
 // Export individual agent functions for manual triggering
-export { runOrganizer, runIngestor };
+export {
+  runOrganizer,
+  runIngestor,
+  runReflectorWrapper as runReflector,
+  runDreamerWrapper as runDreamer,
+  runCuriosityWrapper as runCuriosity,
+  runInnerCuriosityWrapper as runInnerCuriosity,
+  runDigestWrapper as runDigest,
+  // Agency system
+  runDesireGeneratorWrapper as runDesireGenerator,
+  runDesirePlannerWrapper as runDesirePlanner,
+  runDesireExecutorWrapper as runDesireExecutor,
+  runDesireReviewerWrapper as runDesireReviewer,
+};

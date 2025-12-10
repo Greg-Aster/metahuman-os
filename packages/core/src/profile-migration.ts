@@ -8,7 +8,11 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { pipeline } from 'node:stream/promises';
+import { promisify } from 'util';
+import { pipeline as pipelineCallback } from 'stream';
+
+// Node.js 12 compatible pipeline
+const pipeline = promisify(pipelineCallback);
 import { createReadStream, createWriteStream } from 'node:fs';
 import crypto from 'node:crypto';
 import { getProfilePaths, getDefaultProfilePath, ROOT } from './path-builder.js';
@@ -34,6 +38,13 @@ import {
   unmountContainer,
   CONTAINER_EXTENSION,
 } from './veracrypt.js';
+import {
+  checkLuks,
+  createMetaHumanLuksContainer,
+  openAndMountLuks,
+  unmountAndCloseLuks,
+  LUKS_EXTENSION,
+} from './luks.js';
 
 /**
  * Characters that are invalid in filenames on FAT32/exFAT/NTFS filesystems
@@ -105,7 +116,7 @@ export interface MigrationProgress {
 /**
  * Encryption type for migration
  */
-export type EncryptionType = 'none' | 'aes256' | 'veracrypt';
+export type EncryptionType = 'none' | 'aes256' | 'luks' | 'veracrypt';
 
 /**
  * Encryption options for migration
@@ -551,6 +562,108 @@ export async function* migrateProfile(
     }
   }
 
+  // Step 0a: Handle LUKS container setup (if selected)
+  let luksContainerPath: string | undefined;
+  if (encryption?.type === 'luks') {
+    if (!encryption.password) {
+      yield {
+        step: 'encryption_setup',
+        status: 'failed',
+        message: 'Encryption password required',
+        error: 'Password is required for LUKS encryption',
+      };
+      return {
+        success: false,
+        sourcePath,
+        destinationPath: destination,
+        filesProcessed: 0,
+        bytesProcessed: 0,
+        duration: Date.now() - startTime,
+        error: 'Password required for encryption',
+      };
+    }
+
+    yield {
+      step: 'encryption_setup',
+      status: 'running',
+      message: 'Checking LUKS (cryptsetup) installation...',
+    };
+
+    const luksStatus = checkLuks();
+    if (!luksStatus.installed) {
+      yield {
+        step: 'encryption_setup',
+        status: 'failed',
+        message: 'LUKS not available',
+        error: 'cryptsetup must be installed for LUKS encryption. Run: sudo apt install cryptsetup',
+      };
+      return {
+        success: false,
+        sourcePath,
+        destinationPath: destination,
+        filesProcessed: 0,
+        bytesProcessed: 0,
+        duration: Date.now() - startTime,
+        error: 'cryptsetup not installed',
+      };
+    }
+
+    yield {
+      step: 'encryption_setup',
+      status: 'running',
+      message: 'Creating LUKS encrypted container...',
+    };
+
+    try {
+      // Default to 100GB for LUKS, or use containerSize if specified (in MB)
+      const sizeMB = encryption.containerSize
+        ? Math.floor(encryption.containerSize / (1024 * 1024))
+        : 102400; // 100GB default
+
+      // Create LUKS container:
+      // - Container file stored in parent of destination (e.g., /media/greggles/STACK/metahuman-user.luks)
+      // - Mount point is the destination path itself (e.g., /media/greggles/STACK/metahuman-profiles/user)
+      const containerDir = path.dirname(destination);
+      const result = await createMetaHumanLuksContainer(
+        containerDir,
+        username,
+        encryption.password,
+        sizeMB,
+        {
+          mountPoint: destination,
+          onProgress: (msg) => {
+            // Progress callback
+          },
+        }
+      );
+
+      luksContainerPath = result.containerPath;
+      actualDestination = result.mountPoint;
+
+      yield {
+        step: 'encryption_setup',
+        status: 'completed',
+        message: `LUKS container created at ${result.containerPath}`,
+      };
+    } catch (error) {
+      yield {
+        step: 'encryption_setup',
+        status: 'failed',
+        message: 'Failed to create LUKS container',
+        error: (error as Error).message,
+      };
+      return {
+        success: false,
+        sourcePath,
+        destinationPath: destination,
+        filesProcessed: 0,
+        bytesProcessed: 0,
+        duration: Date.now() - startTime,
+        error: (error as Error).message,
+      };
+    }
+  }
+
   // Step 0b: Setup AES-256 encryption key (if selected)
   if (encryption?.type === 'aes256') {
     if (!encryption.password) {
@@ -948,8 +1061,8 @@ export async function* migrateProfile(
     deviceType === 'usb' || deviceType === 'network' ? 'external' :
     deviceType === 'internal' ? 'internal' : 'internal';
 
-  // Override to 'encrypted' if using application-level encryption
-  if (encryption?.type === 'aes256' || encryption?.type === 'veracrypt') {
+  // Override to 'encrypted' if using any encryption type
+  if (encryption?.type === 'aes256' || encryption?.type === 'veracrypt' || encryption?.type === 'luks') {
     storageType = 'encrypted';
   }
 
@@ -961,7 +1074,11 @@ export async function* migrateProfile(
     // Store encryption metadata for profile loading
     encryption: encryption?.type !== 'none' ? {
       type: encryption?.type || 'none',
-      volumePath: veracryptContainerPath,
+      volumePath: veracryptContainerPath || luksContainerPath,
+      // LUKS-specific settings
+      mapperName: encryption?.type === 'luks' ? `metahuman-${username}` : undefined,
+      mountPoint: encryption?.type === 'luks' ? actualDestination : undefined,
+      useLoginPassword: encryption?.useLoginPassword,
     } : undefined,
   };
 
@@ -1051,6 +1168,7 @@ export async function* migrateProfile(
       filesEncrypted,
       encryption: encryption?.type || 'none',
       veracryptContainer: veracryptContainerPath,
+      luksContainer: luksContainerPath,
       duration: Date.now() - startTime,
     },
     actor: userId,
@@ -1061,7 +1179,9 @@ export async function* migrateProfile(
     ? ` (${filesEncrypted} files encrypted with AES-256)`
     : encryption?.type === 'veracrypt'
       ? ' (VeraCrypt container created)'
-      : '';
+      : encryption?.type === 'luks'
+        ? ' (LUKS encrypted container created)'
+        : '';
 
   yield {
     step: 'complete',
@@ -1080,7 +1200,7 @@ export async function* migrateProfile(
     encryption: encryption?.type && encryption.type !== 'none' ? {
       type: encryption.type,
       filesEncrypted: encryption.type === 'aes256' ? filesEncrypted : undefined,
-      containerPath: veracryptContainerPath,
+      containerPath: veracryptContainerPath || luksContainerPath,
     } : undefined,
   };
 }

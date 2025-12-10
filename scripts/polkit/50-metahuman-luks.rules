@@ -1,0 +1,31 @@
+/*
+ * MetaHuman OS - LUKS Encryption Polkit Rules
+ *
+ * This rules file allows members of the 'metahuman' group to manage
+ * LUKS encrypted profiles without password prompts.
+ *
+ * Install to: /etc/polkit-1/rules.d/50-metahuman-luks.rules
+ *
+ * After installation, add users to the metahuman group:
+ *   sudo groupadd metahuman
+ *   sudo usermod -aG metahuman $USER
+ *   (logout and login for group to take effect)
+ */
+
+polkit.addRule(function(action, subject) {
+    // Only apply to MetaHuman LUKS action
+    if (action.id !== "com.metahuman.luks.manage") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    // Check if user is in the metahuman group
+    if (subject.isInGroup("metahuman")) {
+        // Log for debugging (check with journalctl -u polkit)
+        polkit.log("MetaHuman LUKS: Allowing action for user " + subject.user + " (in metahuman group)");
+        return polkit.Result.YES;
+    }
+
+    // For users not in the group, fall back to default (will prompt for password)
+    polkit.log("MetaHuman LUKS: User " + subject.user + " not in metahuman group, requiring auth");
+    return polkit.Result.NOT_HANDLED;
+});
