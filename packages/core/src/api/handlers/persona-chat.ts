@@ -368,7 +368,8 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
   // Parse params from query (GET) or body (POST)
   const params = req.method === 'GET' ? query || {} : body || {};
 
-  const message = params.message || '';
+  // Ensure message is always a string (mobile may send different types)
+  const message = typeof params.message === 'string' ? params.message : String(params.message || '');
   const mode: Mode = params.mode === 'conversation' ? 'conversation' : 'inner';
   const newSession = params.newSession === 'true' || params.newSession === true;
   const sessionId = params.sessionId || `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;

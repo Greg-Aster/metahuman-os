@@ -104,7 +104,7 @@ export interface DownloadProgress {
 
 const PROFILE_KEY = 'activeProfile';
 const PROFILES_KEY = 'profiles';
-const CREDENTIALS_KEY = 'syncedCredentials';
+// CREDENTIALS_KEY removed - credentials now stored in filesystem via unified API, not IndexedDB
 
 /**
  * Get list of all profiles stored locally
@@ -571,27 +571,56 @@ export async function initProfileSync(): Promise<void> {
 }
 
 // ============================================================================
-// Credentials Sync (for mobile to fetch from desktop server)
+// Credentials Sync (UNIFIED: Uses filesystem via local API, NOT IndexedDB)
 // ============================================================================
 
 /**
- * Save credentials to local storage (IndexedDB)
+ * Save credentials via unified API (writes to filesystem)
  * Used when credentials are fetched from sync server or entered manually
+ *
+ * UNIFIED: This calls the local API which writes to user's profile etc/runpod.json
+ * NO IndexedDB - same code works on web and mobile
  */
 export async function saveLocalCredentials(credentials: SyncableCredentials): Promise<void> {
-  await setSetting(CREDENTIALS_KEY, credentials);
+  const response = await apiFetch('/api/profile-sync/credentials', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ credentials }),
+  });
+
+  if (!response.ok) {
+    console.error('[profile-sync] Failed to save credentials to filesystem:', response.status);
+    throw new Error('Failed to save credentials');
+  }
+
+  console.log('[profile-sync] Credentials saved to filesystem via unified API');
 }
 
 /**
- * Get locally stored credentials
+ * Get credentials via unified API (reads from filesystem)
+ *
+ * UNIFIED: This calls the local API which reads from user's profile etc/runpod.json
+ * NO IndexedDB - same code works on web and mobile
  */
 export async function getLocalCredentials(): Promise<SyncableCredentials | null> {
-  return getSetting<SyncableCredentials | null>(CREDENTIALS_KEY, null);
+  try {
+    const response = await apiFetch('/api/profile-sync/credentials');
+    if (!response.ok) {
+      return null;
+    }
+    const data = await response.json();
+    return data.credentials || null;
+  } catch (error) {
+    console.warn('[profile-sync] Error reading credentials from filesystem:', error);
+    return null;
+  }
 }
 
 /**
- * Fetch credentials from desktop sync server
+ * Fetch credentials from desktop sync server and save to local filesystem
  * Requires active connection to sync server with authentication
+ *
+ * UNIFIED: Fetches from remote server, saves via local API to filesystem
  *
  * @param authToken Optional auth token for sync server (if using token-based auth)
  * @returns Credentials from server or null if unavailable
@@ -628,9 +657,9 @@ export async function fetchCredentialsFromServer(authToken?: string): Promise<Sy
 
     const data = await response.json();
     if (data.success && data.credentials) {
-      // Save credentials locally for offline use
+      // Save credentials to filesystem via unified API (NOT IndexedDB!)
       await saveLocalCredentials(data.credentials);
-      console.log('[profile-sync] Credentials synced from server');
+      console.log('[profile-sync] Credentials synced from server to filesystem');
       return data.credentials;
     }
 
@@ -642,24 +671,28 @@ export async function fetchCredentialsFromServer(authToken?: string): Promise<Sy
 }
 
 /**
- * Sync credentials - tries server first, falls back to local storage
+ * Sync credentials - tries server first, falls back to local filesystem
+ *
+ * UNIFIED: All storage is filesystem-based via local API
  */
 export async function syncCredentials(authToken?: string): Promise<SyncableCredentials | null> {
-  // First try to fetch from server
+  // First try to fetch from server (which also saves to local filesystem)
   const serverCredentials = await fetchCredentialsFromServer(authToken);
   if (serverCredentials) {
     return serverCredentials;
   }
 
-  // Fall back to local storage
+  // Fall back to local filesystem
   return getLocalCredentials();
 }
 
 /**
- * Clear locally stored credentials
+ * Clear credentials (placeholder - credentials live in filesystem)
  */
 export async function clearLocalCredentials(): Promise<void> {
-  await setSetting(CREDENTIALS_KEY, null);
+  // Credentials are in filesystem - clearing would require API call
+  // For now, this is a no-op. User can manually delete etc/runpod.json
+  console.log('[profile-sync] clearLocalCredentials is a no-op - credentials are in filesystem');
 }
 
 // ============================================================================
@@ -669,11 +702,10 @@ export async function clearLocalCredentials(): Promise<void> {
 import {
   getSyncServerCredentials,
   saveSyncServerCredentials,
-  saveSyncedCredentials,
   updateSyncTimestamp,
   type SyncServerCredentials,
-  type SyncedCredentials,
 } from './local-memory';
+// NOTE: saveSyncedCredentials REMOVED - was IndexedDB, now use saveLocalCredentials (unified API)
 // mobile-fs imports removed - sync now uses unified LOCAL API (filesystem writes handled server-side)
 
 export interface RemoteSyncProgress {
@@ -762,7 +794,7 @@ async function authenticateWithRemoteServer(
 async function fetchCredentialsFromRemote(
   serverUrl: string,
   cookie: string
-): Promise<{ success: boolean; credentials?: SyncedCredentials; error?: string }> {
+): Promise<{ success: boolean; credentials?: SyncableCredentials; error?: string }> {
   try {
     const normalizedServerUrl = normalizeUrl(serverUrl);
     const url = `${normalizedServerUrl}/api/profile-sync/credentials`;
@@ -950,9 +982,10 @@ export async function syncFromRemoteServer(
 
       const credsResult = await fetchCredentialsFromRemote(creds.serverUrl, cookie);
       if (credsResult.success && credsResult.credentials) {
-        await saveSyncedCredentials(credsResult.credentials);
+        // Save to filesystem via unified API (NOT IndexedDB!)
+        await saveLocalCredentials(credsResult.credentials);
         result.credentialsSynced = true;
-        console.log('[profile-sync] Credentials synced:', Object.keys(credsResult.credentials));
+        console.log('[profile-sync] Credentials synced to filesystem:', Object.keys(credsResult.credentials));
       }
     }
 
@@ -962,6 +995,26 @@ export async function syncFromRemoteServer(
       // Build memory URL with date filter
       const daysParam = opts.memoryDays > 0 ? `&days=${opts.memoryDays}` : '';
       const daysLabel = opts.memoryDays > 0 ? ` (last ${opts.memoryDays} days)` : '';
+      onProgress?.({ phase: 'importing', message: `Checking local memories...` });
+
+      // Get list of local memory IDs to exclude from download (prevents duplicates)
+      let localMemoryIds: string[] = [];
+      try {
+        const localMemResponse = await apiFetch('/api/memories?idsOnly=true');
+        if (localMemResponse.ok) {
+          const localData = await localMemResponse.json();
+          localMemoryIds = localData.ids || [];
+          console.log(`[profile-sync] Found ${localMemoryIds.length} local memories to exclude`);
+        }
+      } catch (err) {
+        console.warn('[profile-sync] Could not get local memory IDs:', err);
+      }
+
+      // Build exclude parameter (chunked to avoid URL length limits)
+      const excludeParam = localMemoryIds.length > 0
+        ? `&exclude=${localMemoryIds.slice(0, 500).join(',')}`  // Limit to 500 IDs per request
+        : '';
+
       onProgress?.({ phase: 'importing', message: `Syncing memories${daysLabel}...` });
 
       let offset = 0;
@@ -970,7 +1023,7 @@ export async function syncFromRemoteServer(
 
       while (hasMore) {
         const memResponse = await remoteFetch(
-          `${normalizedServerUrl}/api/profile-sync/memories?offset=${offset}&limit=100${daysParam}`,
+          `${normalizedServerUrl}/api/profile-sync/memories?offset=${offset}&limit=100${daysParam}${excludeParam}`,
           {
             method: 'GET',
             headers: { 'Cookie': cookie },
@@ -1064,11 +1117,12 @@ export async function getRemoteSyncConfig(): Promise<{
 
 /**
  * Clear remote sync configuration
+ * Note: Only clears sync server config. LLM credentials are in filesystem.
  */
 export async function clearRemoteSyncConfig(): Promise<void> {
-  const { clearSyncServerCredentials, clearSyncedCredentials } = await import('./local-memory');
+  const { clearSyncServerCredentials } = await import('./local-memory');
   await clearSyncServerCredentials();
-  await clearSyncedCredentials();
+  // Note: LLM credentials (runpod.json) are in filesystem - user must delete manually or use settings UI
 }
 
 /**

@@ -24,7 +24,8 @@
    * Returns { thinking: string | null, content: string }
    */
   function parseThinkingBlocks(content: string): { thinking: string | null; content: string } {
-    if (!content) return { thinking: null, content: '' };
+    // Guard against null, undefined, or non-string content
+    if (!content || typeof content !== 'string') return { thinking: null, content: String(content || '') };
 
     // Match <think>...</think> blocks (case insensitive, multiline)
     const thinkPattern = /<think>([\s\S]*?)<\/think>/gi;
@@ -61,18 +62,21 @@
   const parsedCache = new Map<string, { thinking: string | null; content: string }>();
 
   function getParsedMessage(message: ChatMessage): { thinking: string | null; content: string } {
+    // Safely convert content to string (handles null, undefined, objects)
+    const contentStr = typeof message.content === 'string' ? message.content : String(message.content || '');
+
     // Only parse assistant messages (model responses)
     if (message.role !== 'assistant') {
-      return { thinking: null, content: message.content };
+      return { thinking: null, content: contentStr };
     }
 
     // Use cache key based on content
-    const cacheKey = message.content;
+    const cacheKey = contentStr;
     if (parsedCache.has(cacheKey)) {
       return parsedCache.get(cacheKey)!;
     }
 
-    const parsed = parseThinkingBlocks(message.content);
+    const parsed = parseThinkingBlocks(contentStr);
     parsedCache.set(cacheKey, parsed);
     return parsed;
   }
