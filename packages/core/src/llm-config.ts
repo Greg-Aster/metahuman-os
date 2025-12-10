@@ -185,7 +185,8 @@ export function loadSystemCredentials(): SystemCredentials {
       if (data.apiKey) {
         creds.runpod = {
           apiKey: data.apiKey,
-          endpointId: data.templateId || data.endpointId,
+          // Prefer endpointId over templateId (templateId is just metadata)
+          endpointId: data.endpointId || data.templateId,
         };
       }
     } catch (e) {
@@ -254,16 +255,34 @@ export function loadUsagePolicy(): UsagePolicy {
 
 /**
  * Load user's credentials
+ * Checks both llm-credentials.json (new format) and runpod.json (legacy/sync format)
  */
 export function loadUserCredentials(username: string): UserCredentials | null {
   try {
+    // First try the new unified credentials file
     const credPath = resolveUserConfigPath(username, 'llm-credentials.json');
-
-    if (!fs.existsSync(credPath)) {
-      return null;
+    if (fs.existsSync(credPath)) {
+      return JSON.parse(fs.readFileSync(credPath, 'utf-8'));
     }
 
-    return JSON.parse(fs.readFileSync(credPath, 'utf-8'));
+    // Fallback: check profile's runpod.json (used by mobile sync and credentials-sync)
+    const runpodPath = resolveUserConfigPath(username, 'runpod.json');
+    if (fs.existsSync(runpodPath)) {
+      const runpodConfig = JSON.parse(fs.readFileSync(runpodPath, 'utf-8'));
+      if (runpodConfig.apiKey) {
+        // Convert runpod.json format to UserCredentials format
+        // Prefer endpointId over templateId (templateId is just metadata)
+        return {
+          offlineProvider: 'runpod',
+          runpod: {
+            apiKey: runpodConfig.apiKey,
+            endpointId: runpodConfig.endpointId || runpodConfig.templateId,
+          },
+        };
+      }
+    }
+
+    return null;
   } catch (e) {
     console.warn(`[llm-config] Failed to load credentials for ${username}:`, e);
     return null;

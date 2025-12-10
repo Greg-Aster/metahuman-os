@@ -10,6 +10,7 @@ import { successResponse, badRequestResponse, unauthorizedResponse } from '../ty
 import { withUserContext } from '../../context.js';
 import { captureEvent, searchMemory } from '../../memory.js';
 import { getProfilePaths } from '../../paths.js';
+import { loadCognitiveMode } from '../../cognitive-mode.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -28,12 +29,18 @@ export async function handleCapture(req: UnifiedRequest): Promise<UnifiedRespons
 
   const eventId = await withUserContext(
     { userId: req.user.userId, username: req.user.username, role: req.user.role },
-    () => captureEvent(content, {
-      type: type as any,
-      tags,
-      entities,
-      metadata: { source },
-    })
+    () => {
+      // Get cognitive mode within user context
+      const modeConfig = loadCognitiveMode();
+      const cognitiveMode = modeConfig.currentMode;
+
+      return captureEvent(content, {
+        type: type as any,
+        tags,
+        entities,
+        metadata: { source, cognitiveMode },
+      });
+    }
   );
 
   return successResponse({ success: true, eventId });

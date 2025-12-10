@@ -1,13 +1,14 @@
 /**
  * API Configuration for Mobile/Web
  *
- * Provides centralized API URL configuration that:
- * - Returns remote server URL when running in Capacitor native app
- * - Returns relative paths when running in web browser
- * - Supports user-configurable server URLs for mobile
+ * LOCAL-FIRST ARCHITECTURE:
+ * - Mobile app is a STANDALONE program, NOT a thin client
+ * - API calls on mobile go to local handlers (empty base URL)
+ * - Server URL is ONLY used for explicit sync operations
+ * - Web app uses relative paths (same origin = same machine)
  *
- * This enables the mobile app to bundle the UI locally while making
- * API calls to the remote server, with the ability to switch servers.
+ * The mobile app bundles the UI and handles operations locally.
+ * Server connection is OPTIONAL and only for syncing profiles.
  */
 
 // Default servers
@@ -62,25 +63,45 @@ export async function initServerUrl(): Promise<void> {
 
 /**
  * Get the base URL for API calls (sync version using cache)
- * - Mobile (Capacitor): Returns configured or default server URL
- * - Web: Returns empty string (relative paths)
+ *
+ * LOCAL-FIRST ARCHITECTURE:
+ * - Mobile: Returns empty string (local nodejs-mobile handles requests)
+ * - Web: Returns empty string (same-origin server)
+ *
+ * Remote server URL is ONLY used for explicit sync operations via getSyncServerUrl()
  */
 export function getApiBaseUrl(): string {
-  if (isCapacitorNative()) {
-    // Use cached value, fall back to default if not initialized
-    return cachedServerUrl || DEFAULT_SERVERS.local;
-  }
-  // Web - use relative paths (same origin)
+  // Both mobile and web use empty string (local/same-origin)
+  // Mobile handles requests via nodejs-mobile (through nodeBridge)
+  // Web handles requests via same-origin server
   return '';
 }
 
 /**
- * Get the base URL for API calls (async version, reads from storage)
- * Use this when you need the guaranteed current value
+ * Get the sync server URL for explicit sync operations ONLY
+ * This is the ONLY place remote server should be used
+ */
+export function getSyncServerUrl(): string {
+  return cachedServerUrl || DEFAULT_SERVERS.local;
+}
+
+/**
+ * Get the base URL for API calls (async version)
+ *
+ * LOCAL-FIRST: Always returns empty string (local/same-origin)
+ * Use getSyncServerUrlAsync() for explicit sync operations
  */
 export async function getApiBaseUrlAsync(): Promise<string> {
+  return '';  // Local-first: all API calls go to local/same-origin
+}
+
+/**
+ * Get the sync server URL (async version, reads from storage)
+ * Use this for EXPLICIT sync operations ONLY
+ */
+export async function getSyncServerUrlAsync(): Promise<string> {
   if (!isCapacitorNative()) {
-    return '';  // Web uses relative URLs
+    return DEFAULT_SERVERS.local;  // Web can still sync to server
   }
 
   try {
@@ -195,32 +216,156 @@ export function apiUrl(path: string): string {
 
 /**
  * Fetch wrapper that automatically uses the correct API base URL
- * Preserves all fetch options and adds credentials for cross-origin requests
+ *
+ * LOCAL-FIRST ARCHITECTURE:
+ * - Mobile: Routes through nodeBridge for local nodejs-mobile handling
+ * - Web: Standard fetch to same-origin server
+ *
+ * This is THE universal API function - same code for both platforms.
+ * Mobile handles everything locally, web uses the same-origin server.
  *
  * @param path - API path starting with /api/
  * @param init - Fetch options
  * @returns Fetch response
  */
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  const url = apiUrl(path);
+  // Mobile: route through nodeBridge for LOCAL handling (nodejs-mobile)
+  // This makes mobile a standalone program, not dependent on remote server
+  if (isCapacitorNative()) {
+    const { nodeBridge } = await import('./node-bridge');
+    return nodeBridge(path, init);
+  }
 
-  // For cross-origin requests (mobile), include credentials
+  // Web: standard fetch with relative paths (same-origin server)
+  const url = apiUrl(path);
   const options: RequestInit = {
     ...init,
-    credentials: isCapacitorNative() ? 'include' : (init?.credentials ?? 'same-origin'),
+    credentials: init?.credentials ?? 'same-origin',
   };
 
   return fetch(url, options);
 }
 
 /**
- * Create an EventSource with the correct API base URL
- * Used for streaming responses (chat, buffer updates, etc.)
+ * Create an EventSource for SSE streaming (WEB ONLY)
+ *
+ * UNIFIED APPROACH:
+ * - Web: Uses native EventSource (same-origin, cookies work automatically)
+ * - Mobile: Should NOT use this function - use apiFetch with stream=false instead
+ *
+ * Mobile chat uses apiFetch with stream=false because:
+ * 1. CapacitorHttp (used by nodeBridge) doesn't support streaming
+ * 2. Native EventSource can't send cookies cross-origin to nodejs-mobile server
+ * 3. apiFetch routes through nodeBridge which properly handles cookies
  *
  * @param path - API path with query string
  * @returns EventSource instance
  */
 export function apiEventSource(path: string): EventSource {
-  const url = apiUrl(path);
-  return new EventSource(url, { withCredentials: isCapacitorNative() });
+  // Web only - mobile should use apiFetch with stream=false
+  if (isCapacitorNative()) {
+    console.warn('[apiEventSource] Mobile should use apiFetch with stream=false, not EventSource');
+  }
+
+  return new EventSource(path);
+}
+
+/**
+ * Normalize a URL to ensure it has a protocol (https://)
+ *
+ * Handles common user input mistakes:
+ * - "mh.dndiy.org" -> "https://mh.dndiy.org"
+ * - "http://..." -> "https://..." (upgrade to https)
+ * - "https://..." -> unchanged
+ * - Removes trailing slashes
+ *
+ * @param url - URL string that may or may not have protocol
+ * @returns Normalized URL with https:// protocol
+ */
+export function normalizeUrl(url: string): string {
+  if (!url) return url;
+
+  let normalized = url.trim();
+
+  // Add https:// if no protocol
+  if (!normalized.match(/^https?:\/\//i)) {
+    normalized = `https://${normalized}`;
+  }
+
+  // Upgrade http to https
+  if (normalized.startsWith('http://')) {
+    normalized = normalized.replace('http://', 'https://');
+  }
+
+  // Remove trailing slash
+  normalized = normalized.replace(/\/+$/, '');
+
+  return normalized;
+}
+
+/**
+ * Fetch wrapper for REMOTE servers (external URLs)
+ *
+ * IMPORTANT: This is different from apiFetch() which is for LOCAL API calls.
+ * Use this for sync operations to external servers like mh.dndiy.org.
+ *
+ * On mobile, uses Capacitor's native HTTP to bypass WebView CORS restrictions.
+ * On web, uses standard fetch.
+ *
+ * @param url - Full URL to fetch (will be normalized)
+ * @param init - Fetch options
+ * @returns Response object
+ */
+export async function remoteFetch(url: string, init?: RequestInit): Promise<Response> {
+  // Normalize URL to ensure proper protocol
+  const normalizedUrl = normalizeUrl(url);
+
+  // Mobile: use CapacitorHttp to bypass CORS
+  if (isCapacitorNative()) {
+    try {
+      const { CapacitorHttp } = await import('@capacitor/core');
+      const method = (init?.method || 'GET').toUpperCase();
+
+      // Parse body if present
+      let data: any = undefined;
+      if (init?.body) {
+        try {
+          data = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
+        } catch {
+          data = { _raw: String(init.body) };
+        }
+      }
+
+      console.log('[remoteFetch] URL:', normalizedUrl);
+      console.log('[remoteFetch] Method:', method);
+
+      const response = await CapacitorHttp.request({
+        url: normalizedUrl,
+        method,
+        data,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(init?.headers as Record<string, string> || {}),
+        },
+      });
+
+      console.log('[remoteFetch] Response status:', response.status);
+
+      // Convert to standard Response
+      const body = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+      return new Response(body, {
+        status: response.status,
+        headers: new Headers(response.headers),
+      });
+    } catch (err) {
+      console.error('[remoteFetch] CapacitorHttp error:', err);
+      throw err;
+    }
+  }
+
+  // Web: standard fetch
+  return fetch(normalizedUrl, {
+    ...init,
+    credentials: init?.credentials ?? 'include',
+  });
 }

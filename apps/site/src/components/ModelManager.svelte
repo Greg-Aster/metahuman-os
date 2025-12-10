@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { NativeLLM } from '../lib/client/plugins/native-llm';
   import { isCapacitorNative } from '../lib/client/api-config';
+
+  // Dynamic import for NativeLLM to avoid @capacitor/core bundle issues on web
+  async function getNativeLLM() {
+    const { NativeLLM } = await import('../lib/client/plugins/native-llm');
+    return NativeLLM;
+  }
 
   interface LocalModel {
     name: string;
@@ -62,6 +67,7 @@
     await refreshModels();
 
     // Listen for download progress
+    const NativeLLM = await getNativeLLM();
     const listener = await NativeLLM.addListener('downloadProgress', (event) => {
       downloadProgress = event.progress;
     });
@@ -78,6 +84,7 @@
 
   async function refreshModels() {
     try {
+      const NativeLLM = await getNativeLLM();
       const result = await NativeLLM.listModels();
       localModels = result.models;
 
@@ -98,6 +105,7 @@
     error = null;
 
     try {
+      const NativeLLM = await getNativeLLM();
       const result = await NativeLLM.downloadModel({
         url: model.url,
         filename: `${model.name}.gguf`,
@@ -123,6 +131,7 @@
     error = null;
 
     try {
+      const NativeLLM = await getNativeLLM();
       const result = await NativeLLM.loadModel({
         modelPath: model.path,
         contextSize: 2048,
@@ -142,6 +151,7 @@
 
   async function unloadModel() {
     try {
+      const NativeLLM = await getNativeLLM();
       await NativeLLM.unloadModel();
       loadedModel = null;
     } catch (e) {

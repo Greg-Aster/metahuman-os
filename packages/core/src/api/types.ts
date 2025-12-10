@@ -73,6 +73,12 @@ export interface UnifiedResponse {
 
   /** Cookie operations (for auth) */
   cookies?: CookieOperation[];
+
+  /** Binary data (for file responses like images) */
+  binary?: Buffer;
+
+  /** Content type for binary responses */
+  contentType?: string;
 }
 
 /**

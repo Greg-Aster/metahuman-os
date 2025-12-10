@@ -28,8 +28,8 @@ import {
   initGlobalLogger,
   executeGraph,
   validateCognitiveGraph,
+  getActiveBackend,
   type CognitiveGraph,
-  ollama,
 } from '../../packages/core/src/index.js';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -105,18 +105,12 @@ async function generateUserDreams(
       return { dreamsGenerated: 0, memoriesCurated: 0, preferencesExtracted: 0, heuristicsExtracted: 0 };
     }
 
-    // Preflight: ensure Ollama is available
-    const running = await ollama.isRunning();
-    if (!running) {
-      console.warn('[dreamer] Ollama is not running; skipping dream generation. Start with: ollama serve');
-      audit({
-        category: 'system',
-        level: 'warn',
-        event: 'dreamer_skipped',
-        details: { reason: 'ollama_not_running' },
-        actor: 'dreamer',
-      });
-      return { dreamsGenerated: 0, memoriesCurated: 0, preferencesExtracted: 0, heuristicsExtracted: 0 };
+    // Log which backend is active (model router handles actual availability)
+    try {
+      const backend = getActiveBackend();
+      console.log(`[dreamer] Using LLM backend: ${backend}`);
+    } catch (e) {
+      console.log('[dreamer] Using model router (backend auto-selected)');
     }
 
     // Load dreamer cognitive graph
@@ -359,4 +353,15 @@ async function run() {
   }
 }
 
-run().catch(console.error);
+// Export for use by other parts of the system (mobile, web, etc.)
+export {
+  generateUserDreams,
+  loadSleepConfig,
+  loadDreamerGraph,
+};
+
+// Only run if executed directly (not imported)
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+  run().catch(console.error);
+}

@@ -4,7 +4,7 @@
  * Only available when running in Capacitor Android app
  */
 
-import { registerPlugin } from '@capacitor/core';
+// Type-only import - erased at runtime, safe for web
 import type { PluginListenerHandle } from '@capacitor/core';
 
 // Hardware button event types
@@ -64,12 +64,85 @@ export interface NativeVoice {
   isNetworkConnectionRequired: boolean;
 }
 
-// Register the plugin - this will be available as NativeVoice
-const NativeVoice = registerPlugin<NativeVoicePlugin>('NativeVoice', {
-  web: () => import('./native-voice-web').then(m => new m.NativeVoiceWeb()),
-});
+// Lazy-loaded plugin instance (only initialized on native platforms)
+let _nativeVoicePlugin: NativeVoicePlugin | null = null;
 
-export { NativeVoice };
+/**
+ * Get the NativeVoice plugin instance.
+ * Uses dynamic import to avoid loading @capacitor/core on web.
+ */
+async function getNativeVoicePlugin(): Promise<NativeVoicePlugin> {
+  if (_nativeVoicePlugin) {
+    return _nativeVoicePlugin;
+  }
+
+  // Check if we're on native platform first
+  if (!isCapacitorNative()) {
+    // Return web fallback
+    const { NativeVoiceWeb } = await import('./native-voice-web');
+    _nativeVoicePlugin = new NativeVoiceWeb() as unknown as NativeVoicePlugin;
+    return _nativeVoicePlugin;
+  }
+
+  // Dynamic import of Capacitor only on native
+  const { registerPlugin } = await import('@capacitor/core');
+  _nativeVoicePlugin = registerPlugin<NativeVoicePlugin>('NativeVoice', {
+    web: () => import('./native-voice-web').then(m => new m.NativeVoiceWeb()),
+  });
+  return _nativeVoicePlugin;
+}
+
+// Proxy object that lazily initializes the plugin
+export const NativeVoice: NativeVoicePlugin = {
+  async isAvailable() {
+    const plugin = await getNativeVoicePlugin();
+    return plugin.isAvailable();
+  },
+  async startListening(options) {
+    const plugin = await getNativeVoicePlugin();
+    return plugin.startListening(options);
+  },
+  async stopListening() {
+    const plugin = await getNativeVoicePlugin();
+    return plugin.stopListening();
+  },
+  async cancelListening() {
+    const plugin = await getNativeVoicePlugin();
+    return plugin.cancelListening();
+  },
+  async speak(options) {
+    const plugin = await getNativeVoicePlugin();
+    return plugin.speak(options);
+  },
+  async stopSpeaking() {
+    const plugin = await getNativeVoicePlugin();
+    return plugin.stopSpeaking();
+  },
+  async getVoices() {
+    const plugin = await getNativeVoicePlugin();
+    return plugin.getVoices();
+  },
+  async enableHardwareButtons() {
+    const plugin = await getNativeVoicePlugin();
+    return plugin.enableHardwareButtons();
+  },
+  async disableHardwareButtons() {
+    const plugin = await getNativeVoicePlugin();
+    return plugin.disableHardwareButtons();
+  },
+  async isHardwareButtonsEnabled() {
+    const plugin = await getNativeVoicePlugin();
+    return plugin.isHardwareButtonsEnabled();
+  },
+  async addListener(eventName: any, listener: any) {
+    const plugin = await getNativeVoicePlugin();
+    return plugin.addListener(eventName, listener);
+  },
+  async removeAllListeners() {
+    const plugin = await getNativeVoicePlugin();
+    return plugin.removeAllListeners();
+  },
+};
 
 /**
  * Check if running in Capacitor native app

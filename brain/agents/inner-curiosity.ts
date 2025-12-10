@@ -394,4 +394,15 @@ async function run() {
   }
 }
 
-run().catch(console.error);
+// Export for use by other parts of the system (mobile, web, etc.)
+export {
+  generateInnerQuestion,
+  sampleWeightedMemories,
+  getAllMemories,
+};
+
+// Only run if executed directly (not imported)
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+  run().catch(console.error);
+}

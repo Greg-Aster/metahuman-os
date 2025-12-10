@@ -1,161 +1,26 @@
 /**
- * Chat API Handlers
+ * Chat Provider Management Handlers
  *
- * Handles chat requests for both web and mobile.
- * Uses direct cloud API calls when local LLM is unavailable.
+ * Manages cloud LLM provider credentials and usage tracking.
+ * Used by mobile app for configuring RunPod, Claude, OpenRouter, etc.
+ *
+ * NOTE: The actual chat functionality uses /api/persona_chat (unified handler).
+ * This file only handles provider credential management.
  */
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import {
   resolveCredentials,
-  checkQuota,
-  recordUsage,
   getUsageSummary,
   loadUserCredentials,
   saveUserCredentials,
   type UserCredentials,
 } from '../../llm-config.js';
-import { callMobileProvider, testProvider, type ChatMessage } from '../../mobile-providers.js';
-import { getProfilePaths } from '../../paths.js';
-import fs from 'node:fs';
-
-// ============================================================================
-// In-memory conversation history
-// ============================================================================
-
-const conversationHistories: Map<string, ChatMessage[]> = new Map();
+import { testProvider } from '../../mobile-providers.js';
 
 // ============================================================================
 // Handlers
 // ============================================================================
-
-/**
- * POST /api/chat - Send a chat message (mobile/offline mode)
- */
-export async function handleChat(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user, body } = req;
-
-  if (!body?.message) {
-    return { status: 400, error: 'Message is required' };
-  }
-
-  const {
-    message,
-    mode = 'conversation',
-    sessionId,
-    model,
-    provider: preferredProvider,
-    temperature,
-    maxTokens,
-  } = body as {
-    message: string;
-    mode?: string;
-    sessionId?: string;
-    model?: string;
-    provider?: string;
-    temperature?: number;
-    maxTokens?: number;
-  };
-
-  const historyKey = `${user.username}:${mode}:${sessionId || 'default'}`;
-
-  // Check quota
-  const quotaCheck = checkQuota(user.username);
-  if (!quotaCheck.allowed) {
-    return { status: 429, error: quotaCheck.reason || 'Quota exceeded' };
-  }
-
-  // Resolve credentials
-  const creds = resolveCredentials(user.username, preferredProvider);
-  if (!creds) {
-    return {
-      status: 503,
-      error: 'No LLM provider available. Configure API keys in Settings → LLM Providers.',
-    };
-  }
-
-  // Build conversation history
-  let history = conversationHistories.get(historyKey) || [];
-
-  // Add system prompt if new conversation
-  if (history.length === 0) {
-    const systemPrompt = await buildSystemPrompt(user.username, mode);
-    history.push({ role: 'system', content: systemPrompt });
-  }
-
-  // Add user message
-  history.push({ role: 'user', content: message });
-
-  try {
-    console.log(`[chat-handler] Calling ${creds.provider} for ${user.username}`);
-
-    const response = await callMobileProvider(
-      {
-        provider: creds.provider,
-        apiKey: creds.apiKey,
-        endpoint: creds.endpoint,
-        model: model || creds.model,
-      },
-      history,
-      {
-        model: model || creds.model,
-        temperature: temperature ?? 0.7,
-        maxTokens: maxTokens ?? 2048,
-      }
-    );
-
-    // Add assistant response to history
-    history.push({ role: 'assistant', content: response.content });
-
-    // Trim history to last 20 messages (keep system prompt)
-    if (history.length > 21) {
-      const systemPrompt = history[0];
-      history = [systemPrompt, ...history.slice(-20)];
-    }
-    conversationHistories.set(historyKey, history);
-
-    // Record usage
-    if (response.usage) {
-      recordUsage(user.username, {
-        provider: creds.provider,
-        model: response.model,
-        promptTokens: response.usage.promptTokens,
-        completionTokens: response.usage.completionTokens,
-        source: creds.source,
-      });
-    }
-
-    return {
-      status: 200,
-      data: {
-        response: response.content,
-        model: response.model,
-        provider: creds.provider,
-        source: creds.source,
-        usage: response.usage,
-      },
-    };
-  } catch (error) {
-    console.error('[chat-handler] Error:', error);
-    return { status: 500, error: (error as Error).message };
-  }
-}
-
-/**
- * DELETE /api/chat - Clear conversation history
- */
-export async function handleClearChat(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user, body } = req;
-  const { mode = 'conversation', sessionId } = (body || {}) as {
-    mode?: string;
-    sessionId?: string;
-  };
-
-  const historyKey = `${user.username}:${mode}:${sessionId || 'default'}`;
-  conversationHistories.delete(historyKey);
-
-  return { status: 200, data: { cleared: true } };
-}
 
 /**
  * GET /api/chat/usage - Get usage summary
@@ -352,49 +217,4 @@ export async function handleDeleteCredentials(req: UnifiedRequest): Promise<Unif
       message: `${provider} credentials removed`,
     },
   };
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-async function buildSystemPrompt(username: string, mode: string): Promise<string> {
-  try {
-    const profilePaths = getProfilePaths(username);
-    const corePath = profilePaths.personaCore;
-
-    if (!fs.existsSync(corePath)) {
-      return getDefaultSystemPrompt(mode);
-    }
-
-    const persona = JSON.parse(fs.readFileSync(corePath, 'utf-8'));
-    const identity = persona.identity || {};
-    const personality = persona.personality || {};
-    const values = persona.values?.core || [];
-
-    const tone = personality.communicationStyle?.tone;
-    const toneText = Array.isArray(tone) ? tone.join(', ') : tone || 'adaptive';
-    const valueList = values.map((v: any) => v.value || v).filter(Boolean).join(', ');
-
-    return `
-You are ${identity.name || 'an AI assistant'}, an autonomous digital personality extension.
-Your role is: ${identity.role || 'general assistant'}.
-Your purpose is: ${identity.purpose || 'to help and assist'}.
-
-Your personality is defined by these traits:
-- Communication Style: ${toneText}.
-- Values: ${valueList || 'Not specified'}.
-
-You are having a ${mode === 'inner' ? 'internal dialogue' : 'conversation'}.
-    `.trim();
-  } catch (error) {
-    console.warn('[chat-handler] Failed to load persona:', error);
-    return getDefaultSystemPrompt(mode);
-  }
-}
-
-function getDefaultSystemPrompt(mode: string): string {
-  return mode === 'inner'
-    ? 'You are having an internal dialogue with yourself.'
-    : 'You are a helpful AI assistant.';
 }

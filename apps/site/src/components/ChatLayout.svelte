@@ -4,6 +4,7 @@
   import { statusStore, statusRefreshTrigger, nodeEditorMode } from '../stores/navigation';
   import { startPolicyPolling, fetchSecurityPolicy, policyStore, isReadOnly } from '../stores/security-policy';
   import { apiFetch } from '../lib/client/api-config';
+  import { initNodeBridge } from '../lib/client/node-bridge';
   import UserMenu from './UserMenu.svelte';
   import HeadlessClaimBanner from './HeadlessClaimBanner.svelte';
   // NodeEditorLayout is loaded dynamically to avoid bundling @metahuman/core in client
@@ -247,6 +248,10 @@
 
   // Load sidebar preferences from localStorage and ensure core agents are running
   onMount(() => {
+    // Initialize nodejs-mobile bridge for mobile local-first architecture
+    // This starts the Node.js runtime that handles API requests locally
+    void initNodeBridge();
+
     updateScreenSize();
 
     // On desktop, default to open; on mobile, default to closed

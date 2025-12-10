@@ -4,7 +4,7 @@
  * Capacitor plugin interface for downloading and installing APK updates.
  */
 
-import { registerPlugin } from '@capacitor/core';
+// Type-only import - erased at runtime, safe for web
 import type { PluginListenerHandle } from '@capacitor/core';
 
 export interface AppInfo {
@@ -129,9 +129,65 @@ class NativeUpdaterWeb implements NativeUpdaterPlugin {
   }
 }
 
-// Register the plugin or use web fallback
-import { Capacitor } from '@capacitor/core';
+// Helper to check if we're on native platform (without importing Capacitor)
+function isCapacitorNative(): boolean {
+  if (typeof window === 'undefined') return false;
+  const cap = (window as any).Capacitor;
+  return cap?.isNativePlatform?.() === true;
+}
 
-export const NativeUpdater: NativeUpdaterPlugin = Capacitor.isNativePlatform()
-  ? registerPlugin<NativeUpdaterPlugin>('NativeUpdater')
-  : new NativeUpdaterWeb();
+// Lazy-loaded plugin instance
+let _nativeUpdaterPlugin: NativeUpdaterPlugin | null = null;
+
+/**
+ * Get the NativeUpdater plugin instance.
+ * Uses dynamic import to avoid loading @capacitor/core on web.
+ */
+async function getNativeUpdaterPlugin(): Promise<NativeUpdaterPlugin> {
+  if (_nativeUpdaterPlugin) {
+    return _nativeUpdaterPlugin;
+  }
+
+  // Check if we're on native platform first
+  if (!isCapacitorNative()) {
+    _nativeUpdaterPlugin = new NativeUpdaterWeb();
+    return _nativeUpdaterPlugin;
+  }
+
+  // Dynamic import of Capacitor only on native
+  const { registerPlugin } = await import('@capacitor/core');
+  _nativeUpdaterPlugin = registerPlugin<NativeUpdaterPlugin>('NativeUpdater');
+  return _nativeUpdaterPlugin;
+}
+
+// Proxy object that lazily initializes the plugin
+export const NativeUpdater: NativeUpdaterPlugin = {
+  async getAppInfo() {
+    const plugin = await getNativeUpdaterPlugin();
+    return plugin.getAppInfo();
+  },
+  async downloadAndInstall(options) {
+    const plugin = await getNativeUpdaterPlugin();
+    return plugin.downloadAndInstall(options);
+  },
+  async cancelDownload() {
+    const plugin = await getNativeUpdaterPlugin();
+    return plugin.cancelDownload();
+  },
+  async canInstallApk() {
+    const plugin = await getNativeUpdaterPlugin();
+    return plugin.canInstallApk();
+  },
+  async requestInstallPermission() {
+    const plugin = await getNativeUpdaterPlugin();
+    return plugin.requestInstallPermission();
+  },
+  async addListener(eventName: any, listenerFunc: any) {
+    const plugin = await getNativeUpdaterPlugin();
+    return plugin.addListener(eventName, listenerFunc);
+  },
+  async removeAllListeners() {
+    const plugin = await getNativeUpdaterPlugin();
+    return plugin.removeAllListeners();
+  },
+};

@@ -55,13 +55,18 @@
     "./big-brother": "./src/big-brother.ts",
     "./claude-session": "./src/claude-session.ts",
     "./graph-error-handler": "./src/graph-error-handler.ts",
+    "./graph-streaming": "./src/graph-streaming.ts",
     "./path-security": "./src/path-security.ts",
     "./external-storage": "./src/external-storage.ts",
     "./profile-migration": "./src/profile-migration.ts",
     "./encryption": "./src/encryption.ts",
     "./deployment": "./src/deployment.ts",
     "./providers": "./src/providers/index.ts",
-    "./cognitive-layers": "./src/cognitive-layers/index.ts"
+    "./cognitive-layers": "./src/cognitive-layers/index.ts",
+    "./api": "./src/api/index.ts",
+    "./api/handlers/profile-sync": "./src/api/handlers/profile-sync.ts",
+    "./api/adapters/http": "./src/api/adapters/http.ts",
+    "./api/adapters/astro": "./src/api/adapters/astro.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.939.0",

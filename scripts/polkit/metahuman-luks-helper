@@ -1,0 +1,163 @@
+#!/bin/bash
+#
+# MetaHuman OS - LUKS Helper Script
+#
+# This script is called via pkexec to perform privileged LUKS operations.
+# It validates arguments to prevent arbitrary command execution.
+#
+# Install to: /usr/local/bin/metahuman-luks-helper
+# Make executable: chmod 755 /usr/local/bin/metahuman-luks-helper
+#
+# Usage:
+#   metahuman-luks-helper open <volume.luks> <mapper-name>
+#   metahuman-luks-helper close <mapper-name>
+#   metahuman-luks-helper mount <mapper-name> <mount-point>
+#   metahuman-luks-helper unmount <mount-point>
+#   metahuman-luks-helper format <volume.luks>
+#   metahuman-luks-helper mkfs <mapper-name>
+
+set -e
+
+# Validate mapper name (must be metahuman-*)
+validate_mapper() {
+    local mapper="$1"
+    if [[ ! "$mapper" =~ ^metahuman-[a-zA-Z0-9_-]+$ ]]; then
+        echo "Error: Invalid mapper name. Must be metahuman-<username>" >&2
+        exit 1
+    fi
+}
+
+# Validate volume path (must be *.luks and exist or be creatable)
+validate_volume() {
+    local volume="$1"
+    if [[ ! "$volume" =~ \.luks$ ]]; then
+        echo "Error: Volume must have .luks extension" >&2
+        exit 1
+    fi
+    # Check for path traversal attempts
+    if [[ "$volume" =~ \.\. ]]; then
+        echo "Error: Path traversal not allowed" >&2
+        exit 1
+    fi
+}
+
+# Validate mount point (must be under allowed directories)
+validate_mountpoint() {
+    local mountpoint="$1"
+    # Allow mount points under /media/ or /mnt/
+    if [[ ! "$mountpoint" =~ ^/(media|mnt)/ ]]; then
+        echo "Error: Mount point must be under /media/ or /mnt/" >&2
+        exit 1
+    fi
+    # Check for path traversal attempts
+    if [[ "$mountpoint" =~ \.\. ]]; then
+        echo "Error: Path traversal not allowed" >&2
+        exit 1
+    fi
+}
+
+ACTION="$1"
+shift || { echo "Usage: $0 <action> [args...]" >&2; exit 1; }
+
+case "$ACTION" in
+    open)
+        VOLUME="$1"
+        MAPPER="$2"
+        validate_volume "$VOLUME"
+        validate_mapper "$MAPPER"
+
+        if [ ! -f "$VOLUME" ]; then
+            echo "Error: Volume file not found: $VOLUME" >&2
+            exit 1
+        fi
+
+        # Read password from stdin
+        /usr/sbin/cryptsetup luksOpen "$VOLUME" "$MAPPER"
+        ;;
+
+    close)
+        MAPPER="$1"
+        validate_mapper "$MAPPER"
+        /usr/sbin/cryptsetup luksClose "$MAPPER"
+        ;;
+
+    mount)
+        MAPPER="$1"
+        MOUNTPOINT="$2"
+        validate_mapper "$MAPPER"
+        validate_mountpoint "$MOUNTPOINT"
+
+        # Create mount point if it doesn't exist
+        mkdir -p "$MOUNTPOINT"
+
+        /usr/bin/mount "/dev/mapper/$MAPPER" "$MOUNTPOINT"
+        ;;
+
+    unmount)
+        MOUNTPOINT="$1"
+        validate_mountpoint "$MOUNTPOINT"
+        /usr/bin/umount "$MOUNTPOINT"
+        ;;
+
+    format)
+        VOLUME="$1"
+        validate_volume "$VOLUME"
+
+        if [ ! -f "$VOLUME" ]; then
+            echo "Error: Volume file not found: $VOLUME" >&2
+            exit 1
+        fi
+
+        # Read password from stdin
+        /usr/sbin/cryptsetup luksFormat \
+            --type luks2 \
+            --cipher aes-xts-plain64 \
+            --key-size 512 \
+            --hash sha256 \
+            --iter-time 2000 \
+            --batch-mode \
+            "$VOLUME"
+        ;;
+
+    mkfs)
+        MAPPER="$1"
+        validate_mapper "$MAPPER"
+
+        if [ ! -e "/dev/mapper/$MAPPER" ]; then
+            echo "Error: Mapper device not found: /dev/mapper/$MAPPER" >&2
+            exit 1
+        fi
+
+        /usr/sbin/mkfs.ext4 -L metahuman "/dev/mapper/$MAPPER"
+        ;;
+
+    uuid)
+        VOLUME="$1"
+        validate_volume "$VOLUME"
+        /usr/sbin/cryptsetup luksUUID "$VOLUME"
+        ;;
+
+    dump)
+        VOLUME="$1"
+        validate_volume "$VOLUME"
+        /usr/sbin/cryptsetup luksDump "$VOLUME"
+        ;;
+
+    chown)
+        MOUNTPOINT="$1"
+        OWNER="$2"
+        validate_mountpoint "$MOUNTPOINT"
+        # Validate owner format (user:group or just user)
+        if [[ ! "$OWNER" =~ ^[a-zA-Z0-9_-]+(:?[a-zA-Z0-9_-]+)?$ ]]; then
+            echo "Error: Invalid owner format" >&2
+            exit 1
+        fi
+        /usr/bin/chown "$OWNER" "$MOUNTPOINT"
+        ;;
+
+    *)
+        echo "Unknown action: $ACTION" >&2
+        echo "Valid actions: open, close, mount, unmount, format, mkfs, uuid, dump, chown" >&2
+        exit 1
+        ;;
+esac

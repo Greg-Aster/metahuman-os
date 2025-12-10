@@ -1,10 +1,12 @@
-import type { APIRoute } from 'astro';
-import { requestCancellation } from './persona_chat';
-
 /**
- * Cancel Chat API
- * Allows users to interrupt long-running chat requests
+ * Cancel Chat API - POST /api/cancel-chat
+ *
+ * Astro adapter - routes to unified handler.
+ * This is a legacy endpoint - prefer using POST /api/persona_chat/cancel directly.
  */
+import type { APIRoute } from 'astro';
+import { requestCancellation } from '@metahuman/core/graph-streaming';
+
 export const POST: APIRoute = async ({ request }) => {
   try {
     const body = await request.json();

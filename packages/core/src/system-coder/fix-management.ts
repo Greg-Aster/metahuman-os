@@ -6,8 +6,8 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { audit } from '../audit.js';
+import { generateUUID } from '../uuid.js';
 import { getProfilePaths } from '../path-builder.js';
 import type {
   ProposedFix,
@@ -41,7 +41,7 @@ export function createFix(
   ensureSystemCoderDirs(username);
 
   const timestamp = new Date().toISOString();
-  const id = `fix-${timestamp.replace(/[:.]/g, '-')}-${randomUUID().substring(0, 8)}`;
+  const id = `fix-${timestamp.replace(/[:.]/g, '-')}-${generateUUID().substring(0, 8)}`;
 
   const proposedFix: ProposedFix = {
     id,

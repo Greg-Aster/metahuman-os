@@ -13,8 +13,11 @@
 
 import { ollama, isRunning as isOllamaRunning } from '../ollama.js';
 import { vllm, isVLLMRunning } from '../vllm.js';
-import { loadBackendConfig } from '../llm-backend.js';
+import { loadBackendConfig, getBackendStatus } from '../llm-backend.js';
 import { loadDeploymentConfig } from '../deployment.js';
+import { callMobileProvider } from '../mobile-providers.js';
+import { getUserContext } from '../context.js';
+import { resolveCredentials } from '../llm-config.js';
 
 // Track if we've already logged the active backend
 let backendLoggedOnce = false;
@@ -48,31 +51,83 @@ export async function callProvider(
 ): Promise<ProviderResponse> {
   // Get config
   const deploymentConfig = loadDeploymentConfig();
+
+  // Get credentials from user profile (same pattern as model-router.ts)
+  const ctx = getUserContext();
+  const username = ctx?.username;
+  const userCreds = username ? resolveCredentials(username, 'runpod') : null;
+
+  // Build config with user credentials taking priority over deployment config
   const config: ProviderConfig = {
     ollama: {
       endpoint: deploymentConfig.local.ollamaEndpoint,
     },
-    runpod: deploymentConfig.server?.runpod,
+    // User profile credentials override deployment config
+    runpod: userCreds?.provider === 'runpod' && userCreds.apiKey
+      ? {
+          apiKey: userCreds.apiKey,
+          endpoints: { default: userCreds.endpoint || '' },
+        }
+      : deploymentConfig.server?.runpod,
     huggingface: deploymentConfig.server?.huggingface,
   };
 
   // Route to appropriate handler
   if (isCloudProvider(providerName)) {
+    // On mobile (Node.js 12), use mobile-providers.ts which uses native https
+    // @metahuman/server uses native fetch which doesn't exist in Node.js 12
+    const isMobile = process.env.METAHUMAN_MOBILE === 'true';
+    if (isMobile && providerName === 'runpod_serverless' && config.runpod?.apiKey) {
+      return callMobileRunPodProvider(messages, options, config.runpod, onProgress);
+    }
     return callCloudProvider(providerName, messages, options, config, onProgress);
   }
 
   // Local providers - check which backend is active
   switch (providerName) {
+    case 'local':
     case 'ollama': {
-      // Route to active backend (Ollama or vLLM)
+      // On mobile, skip local backends entirely and use remote provider
+      const isMobile = process.env.METAHUMAN_MOBILE === 'true';
+      if (isMobile) {
+        const backendConfig = loadBackendConfig();
+        return callRemoteProvider(messages, options, backendConfig, onProgress);
+      }
+
+      // Use intelligent backend detection for 'local' or 'ollama' provider
       const backendConfig = loadBackendConfig();
-      if (backendConfig.activeBackend === 'vllm') {
+      const activeBackend = backendConfig.activeBackend;
+
+      // Handle 'auto' mode - use intelligent detection
+      if (activeBackend === 'auto' || activeBackend === 'remote') {
+        const backendStatus = await getBackendStatus();
+
+        if (backendStatus.resolvedBackend === 'vllm') {
+          return callVLLMProvider(messages, options, backendConfig.vllm.endpoint, onProgress);
+        } else if (backendStatus.resolvedBackend === 'ollama') {
+          return callOllamaProvider(messages, options, onProgress);
+        } else if (backendStatus.resolvedBackend === 'remote') {
+          // Route to remote provider
+          return callRemoteProvider(messages, options, backendConfig, onProgress);
+        } else {
+          throw new Error('No LLM backend available. Configure a local LLM (Ollama/vLLM) or remote provider.');
+        }
+      }
+
+      // Explicit backend selection
+      if (activeBackend === 'vllm') {
         return callVLLMProvider(messages, options, backendConfig.vllm.endpoint, onProgress);
       }
       return callOllamaProvider(messages, options, onProgress);
     }
 
     case 'vllm': {
+      // On mobile, redirect vLLM to remote provider
+      const isMobileVllm = process.env.METAHUMAN_MOBILE === 'true';
+      if (isMobileVllm) {
+        const backendConfig = loadBackendConfig();
+        return callRemoteProvider(messages, options, backendConfig, onProgress);
+      }
       // Explicit vLLM call
       const backendConfig = loadBackendConfig();
       return callVLLMProvider(messages, options, backendConfig.vllm.endpoint, onProgress);
@@ -84,6 +139,58 @@ export async function callProvider(
     default:
       throw new Error(`Unknown provider: ${providerName}`);
   }
+}
+
+/**
+ * Call a remote provider (Claude, RunPod, OpenRouter, OpenAI)
+ */
+async function callRemoteProvider(
+  messages: ProviderMessage[],
+  options: ProviderOptions,
+  backendConfig: any,
+  onProgress?: ProviderProgressCallback
+): Promise<ProviderResponse> {
+  const remoteConfig = backendConfig.remote;
+  if (!remoteConfig?.provider) {
+    throw new Error('No remote provider configured');
+  }
+
+  onProgress?.({ phase: 'running', message: `Using remote provider: ${remoteConfig.provider}` });
+
+  // Convert messages to mobile provider format
+  const mobileMessages = messages.map(m => ({
+    role: m.role,
+    content: m.content,
+  }));
+
+  // Get credentials from user profile (same pattern as model-router.ts)
+  const ctx = getUserContext();
+  const username = ctx?.username;
+
+  // Resolve credentials: user profile → system config → env vars
+  const resolved = username ? resolveCredentials(username, remoteConfig.provider) : null;
+
+  const credentials = {
+    provider: remoteConfig.provider,
+    apiKey: resolved?.apiKey || process.env[`${remoteConfig.provider.toUpperCase()}_API_KEY`] || '',
+    endpoint: resolved?.endpoint || remoteConfig.serverUrl,
+    model: remoteConfig.model || options.model,
+  };
+
+  if (!credentials.apiKey && remoteConfig.provider !== 'server') {
+    throw new Error(`No API key found for ${remoteConfig.provider}. Configure credentials in Settings or set ${remoteConfig.provider.toUpperCase()}_API_KEY environment variable.`);
+  }
+
+  const response = await callMobileProvider(credentials, mobileMessages, {
+    model: options.model,
+    temperature: options.temperature,
+    maxTokens: options.maxTokens,
+    topP: options.topP,
+  });
+
+  onProgress?.({ phase: 'completed', message: 'Remote response received' });
+
+  return response;
 }
 
 // Models that can coexist in VRAM with chat models (small utility models)
@@ -373,6 +480,52 @@ async function callMockProvider(
     content: `[MOCK] Echoing: ${lastMessage?.content || 'empty'}`,
     model: options.model || 'mock',
     provider: 'mock',
+  };
+}
+
+/**
+ * Mobile RunPod provider - uses mobile-providers.ts which works on Node.js 12
+ * This is used on mobile instead of @metahuman/server which requires native fetch
+ */
+async function callMobileRunPodProvider(
+  messages: ProviderMessage[],
+  options: ProviderOptions,
+  runpodConfig: { apiKey: string; endpoints: Record<string, string | undefined> },
+  onProgress?: ProviderProgressCallback
+): Promise<ProviderResponse> {
+  onProgress?.({ phase: 'loading', message: `Connecting to RunPod (mobile)...` });
+
+  const mobileMessages = messages.map(m => ({
+    role: m.role,
+    content: m.content,
+  }));
+
+  const endpoint = runpodConfig.endpoints.default || '';
+  console.log(`[provider-bridge] callMobileRunPodProvider - endpoint: ${endpoint}, apiKey: ${runpodConfig.apiKey?.substring(0, 10)}...`);
+
+  const credentials = {
+    provider: 'runpod' as const,
+    apiKey: runpodConfig.apiKey,
+    endpoint,
+    model: options.model,
+  };
+
+  onProgress?.({ phase: 'running', message: `Generating with RunPod...` });
+
+  const response = await callMobileProvider(credentials, mobileMessages, {
+    model: options.model,
+    temperature: options.temperature,
+    maxTokens: options.maxTokens,
+    topP: options.topP,
+  });
+
+  onProgress?.({ phase: 'completed', message: `RunPod response received` });
+
+  return {
+    content: response.content,
+    model: response.model,
+    provider: 'runpod_serverless',
+    usage: response.usage,
   };
 }
 

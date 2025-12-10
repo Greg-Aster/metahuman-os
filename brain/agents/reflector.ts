@@ -13,7 +13,10 @@ import {
   withUserContext,
   executeGraph,
   validateCognitiveGraph,
+  callLLM,
+  getActiveBackend,
   type CognitiveGraph,
+  type RouterMessage,
 } from '../../packages/core/src/index';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -341,19 +344,6 @@ What am I noticing? What thoughts or feelings are emerging?
   }
 
   try {
-    // Preflight: ensure Ollama is available
-    const running = await ollama.isRunning();
-    if (!running) {
-      console.warn('[reflector] Ollama is not running; skipping reflection cycle. Start with: ollama serve');
-      audit({
-        category: 'system',
-        level: 'warn',
-        message: 'Reflector skipped: Ollama not running',
-        actor: 'reflector',
-      });
-      return;
-    }
-
     // Load reflector cognitive graph
     const graph = await loadReflectorGraph();
 
@@ -464,18 +454,12 @@ async function run() {
     metadata: { action: 'reflection_start', mode: 'multi-user' }
   });
 
-  // Preflight: ensure Ollama is available
-  const running = await ollama.isRunning();
-  if (!running) {
-    console.warn('[reflector] Ollama is not running; skipping reflection cycle. Start with: ollama serve');
-    audit({
-      category: 'system',
-      level: 'warn',
-      message: 'Reflector skipped: Ollama not running',
-      actor: 'reflector',
-    });
-    lock.release();
-    return;
+  // Log which backend is active (model router handles actual availability)
+  try {
+    const backend = getActiveBackend();
+    console.log(`[reflector] Using LLM backend: ${backend}`);
+  } catch (e) {
+    console.log('[reflector] Using model router (backend auto-selected)');
   }
 
   try {
@@ -526,4 +510,16 @@ async function run() {
   }
 }
 
-run().catch(console.error);
+// Export for use by other parts of the system (mobile, web, etc.)
+export {
+  generateUserReflection,
+  getAssociativeMemoryChain,
+  getAllMemories,
+  extractKeywords,
+};
+
+// Only run if executed directly (not imported)
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+  run().catch(console.error);
+}

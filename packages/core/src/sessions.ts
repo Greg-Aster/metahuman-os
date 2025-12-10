@@ -7,8 +7,8 @@
 
 import fs from 'fs';
 import path from 'path';
-import { randomUUID } from 'crypto';
 import { systemPaths } from './path-builder.js';
+import { generateUUID } from './uuid.js';
 import { audit } from './audit.js';
 
 /**
@@ -114,7 +114,7 @@ export function createSession(
   const expiresAt = new Date(now.getTime() + duration);
 
   const session: Session = {
-    id: randomUUID(),
+    id: generateUUID(),
     userId,
     role,
     createdAt: now.toISOString(),

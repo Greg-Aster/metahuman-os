@@ -8,6 +8,7 @@ import com.getcapacitor.BridgeActivity;
 import com.metahuman.os.plugins.voice.NativeVoicePlugin;
 import com.metahuman.os.plugins.llm.NativeLLMPlugin;
 import com.metahuman.os.plugins.updater.NativeUpdaterPlugin;
+import com.metahuman.os.plugins.NodejsMobilePlugin;
 
 /**
  * MainActivity with direct key event interception for Bluetooth headphone buttons.
@@ -35,6 +36,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NativeVoicePlugin.class);
         registerPlugin(NativeLLMPlugin.class);
         registerPlugin(NativeUpdaterPlugin.class);
+        registerPlugin(NodejsMobilePlugin.class);
         super.onCreate(savedInstanceState);
     }
 

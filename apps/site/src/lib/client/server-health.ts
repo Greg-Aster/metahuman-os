@@ -1,15 +1,17 @@
 /**
  * Server Health Monitor
  *
- * Provides continuous health monitoring for server connections:
- * - Periodic health checks with configurable intervals
- * - Connection quality scoring based on latency
- * - Automatic reconnection detection
- * - Event-based status updates for UI components
+ * LOCAL-FIRST ARCHITECTURE:
+ * - Mobile: Checks local nodejs-mobile health (not remote server)
+ * - Web: Checks same-origin server health
+ *
+ * This monitors the LOCAL system health, not remote server connectivity.
+ * Remote server connectivity is only relevant for explicit sync operations.
  */
 
 import { writable, derived, type Readable, type Writable } from 'svelte/store';
-import { getApiBaseUrl, testServerConnection, isCapacitorNative } from './api-config';
+import { isCapacitorNative } from './api-config';
+import { isNodeReady, isNodejsMobileAvailable } from './node-bridge';
 
 export interface HealthStatus {
   connected: boolean;
@@ -72,38 +74,28 @@ function calculateQuality(latencyMs: number, connected: boolean): HealthStatus['
 
 /**
  * Perform a single health check
+ *
+ * LOCAL-FIRST ARCHITECTURE:
+ * - Mobile: Check if nodejs-mobile is ready (no remote server calls)
+ * - Web: Check same-origin server health via local fetch
  */
 export async function checkHealth(): Promise<HealthStatus> {
-  const serverUrl = getApiBaseUrl();
   let status: HealthStatus;
+  const start = Date.now();
 
-  // For web mode, use the current origin
-  const urlToCheck = serverUrl || (typeof window !== 'undefined' ? window.location.origin : '');
+  // Mobile: Check nodejs-mobile health (local only, never remote)
+  if (isCapacitorNative()) {
+    const nodeAvailable = isNodejsMobileAvailable();
+    const nodeReady = isNodeReady();
 
-  if (!urlToCheck) {
-    status = {
-      connected: false,
-      latencyMs: 0,
-      quality: 'offline',
-      lastCheck: new Date(),
-      consecutiveFailures: 1,
-      error: 'No server URL configured',
-    };
-    healthStatus.set(status);
-    return status;
-  }
-
-  try {
-    const result = await testServerConnection(urlToCheck);
-
-    if (result.success) {
+    if (nodeAvailable && nodeReady) {
       status = {
         connected: true,
-        latencyMs: result.latencyMs,
-        quality: calculateQuality(result.latencyMs, true),
+        latencyMs: 0,  // Local is instant
+        quality: 'excellent',
         lastCheck: new Date(),
         consecutiveFailures: 0,
-        serverVersion: result.version,
+        serverVersion: 'local',
       };
     } else {
       // Get current consecutive failures
@@ -112,21 +104,65 @@ export async function checkHealth(): Promise<HealthStatus> {
 
       status = {
         connected: false,
-        latencyMs: result.latencyMs,
+        latencyMs: 0,
         quality: 'offline',
         lastCheck: new Date(),
         consecutiveFailures: currentFailures + 1,
-        error: result.error,
+        error: nodeAvailable ? 'Local runtime starting...' : 'nodejs-mobile not available',
+      };
+    }
+
+    healthStatus.set(status);
+    return status;
+  }
+
+  // Web: Check same-origin server health
+  try {
+    const response = await fetch('/api/boot', {
+      method: 'GET',
+      signal: AbortSignal.timeout(5000),
+    });
+
+    const latencyMs = Date.now() - start;
+
+    // 401/403 means server is reachable, just needs auth
+    if (response.ok || response.status === 401 || response.status === 403) {
+      let version: string | undefined;
+      if (response.ok) {
+        try {
+          const data = await response.json();
+          version = data.version;
+        } catch { /* ignore */ }
+      }
+
+      status = {
+        connected: true,
+        latencyMs,
+        quality: calculateQuality(latencyMs, true),
+        lastCheck: new Date(),
+        consecutiveFailures: 0,
+        serverVersion: version,
+      };
+    } else {
+      let currentFailures = 0;
+      healthStatus.subscribe(s => { currentFailures = s.consecutiveFailures; })();
+
+      status = {
+        connected: false,
+        latencyMs,
+        quality: 'offline',
+        lastCheck: new Date(),
+        consecutiveFailures: currentFailures + 1,
+        error: `Server returned ${response.status}`,
       };
     }
   } catch (err) {
-    // Get current consecutive failures
     let currentFailures = 0;
     healthStatus.subscribe(s => { currentFailures = s.consecutiveFailures; })();
 
     status = {
       connected: false,
-      latencyMs: 0,
+      latencyMs: Date.now() - start,
       quality: 'offline',
       lastCheck: new Date(),
       consecutiveFailures: currentFailures + 1,

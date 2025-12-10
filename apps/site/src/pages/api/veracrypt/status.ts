@@ -1,38 +1,9 @@
 /**
- * VeraCrypt Status API
+ * VeraCrypt Status API - GET /api/veracrypt/status
  *
- * Returns the VeraCrypt installation status for the current system.
+ * Astro adapter - ONE LINE to call unified handler.
+ * All business logic is in @metahuman/core (same as mobile).
  */
+import { astroHandler } from '@metahuman/core/api/adapters/astro';
 
-import type { APIRoute } from 'astro';
-import { checkVeraCrypt, getInstallInstructions } from '@metahuman/core';
-
-export const GET: APIRoute = async () => {
-  try {
-    const status = checkVeraCrypt();
-
-    return new Response(
-      JSON.stringify({
-        ...status,
-        installInstructions: status.installed ? undefined : getInstallInstructions(),
-      }),
-      {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
-  } catch (error) {
-    console.error('[api/veracrypt/status] Error:', error);
-    return new Response(
-      JSON.stringify({
-        installed: false,
-        platform: 'unknown',
-        error: (error as Error).message,
-      }),
-      {
-        status: 200, // Return 200 even on error, just with installed: false
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
-  }
-};
+export const GET = astroHandler;

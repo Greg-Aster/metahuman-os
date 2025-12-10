@@ -3,7 +3,6 @@
   import {
     initMemorySync,
     stopBackgroundSync,
-    forceSync,
     syncState,
     hasPendingChanges,
     hasConflicts,
@@ -26,6 +25,8 @@
     type UpdateState,
   } from '../lib/client/app-update';
   import { getSetting } from '../lib/client/local-memory';
+  import { getRemoteSyncConfig, syncFromRemoteServer } from '../lib/client/profile-sync';
+  import SyncManager from './SyncManager.svelte';
 
   export let compact = false;
 
@@ -47,6 +48,26 @@
   let showUpdateModal = false;
   let isMobile = false;
 
+  // Sync Manager state
+  let showSyncManager = false;
+  let syncProgress: { current: number; total: number; category: string } | null = null;
+
+  // Remote server config state
+  let isRemoteConfigured = false;
+  let remoteServerUrl: string | null = null;
+  let lastRemoteSync: string | null = null;
+
+  // Sync report dialog
+  let showSyncReport = false;
+  let syncReport: {
+    success: boolean;
+    profileFiles?: number;
+    memoriesImported?: number;
+    credentialsSynced?: boolean;
+    error?: string;
+    timestamp: string;
+  } | null = null;
+
   const unsubState = syncState.subscribe(s => {
     state = s;
     syncing = s.isSyncing;
@@ -59,7 +80,19 @@
   onMount(async () => {
     isMobile = isCapacitorNative();
     await initMemorySync();
+    await loadRemoteConfig();
   });
+
+  async function loadRemoteConfig() {
+    try {
+      const config = await getRemoteSyncConfig();
+      isRemoteConfigured = config.configured;
+      remoteServerUrl = config.serverUrl || null;
+      lastRemoteSync = config.lastSyncAt || null;
+    } catch (err) {
+      console.warn('[SyncStatus] Failed to load remote config:', err);
+    }
+  }
 
   onDestroy(() => {
     unsubState();
@@ -70,21 +103,155 @@
     stopBackgroundSync();
   });
 
+  function handleOpenSyncManager() {
+    if (syncing) return;
+    showSyncManager = true;
+  }
+
   async function handleSync() {
     if (syncing) return;
 
-    // Start sync
-    await forceSync();
+    syncing = true;
+    try {
+      // Use REMOTE sync which writes to filesystem via local API
+      console.log('[SyncStatus] Quick sync - calling syncFromRemoteServer...');
+      const result = await syncFromRemoteServer(
+        (progress) => {
+          syncProgress = {
+            current: progress.current || 0,
+            total: progress.total || 1,
+            category: progress.message
+          };
+        },
+        {
+          includeMemories: true,
+          includeCredentials: true,
+          priorityOnly: true,
+        }
+      );
 
-    // On mobile, also check for app updates
-    if (isMobile) {
-      try {
-        // Get server URL from settings or use default
-        const serverUrl = await getSetting('syncServerUrl', 'https://mh.dndiy.org');
-        await checkForUpdate(serverUrl);
-      } catch (e) {
-        console.warn('[SyncStatus] Update check failed:', e);
+      // ALWAYS show sync report - never silently fail
+      syncReport = {
+        success: result.success,
+        profileFiles: result.profileFiles,
+        memoriesImported: result.memoriesImported,
+        credentialsSynced: result.credentialsSynced,
+        error: result.error,
+        timestamp: new Date().toISOString(),
+      };
+      showSyncReport = true;
+
+      if (!result.success) {
+        console.error('[SyncStatus] Quick sync failed:', result.error);
+      } else {
+        console.log('[SyncStatus] Quick sync complete:', result);
       }
+
+      // On mobile, also check for app updates
+      if (isMobile) {
+        try {
+          const serverUrl = await getSetting('syncServerUrl', 'https://mh.dndiy.org');
+          await checkForUpdate(serverUrl);
+        } catch (e) {
+          console.warn('[SyncStatus] Update check failed:', e);
+        }
+      }
+    } catch (e) {
+      // Catch any unexpected errors and show report
+      syncReport = {
+        success: false,
+        error: (e as Error).message,
+        timestamp: new Date().toISOString(),
+      };
+      showSyncReport = true;
+      console.error('[SyncStatus] Sync error:', e);
+    } finally {
+      syncing = false;
+      syncProgress = null;
+    }
+  }
+
+  async function handleSyncWithOptions(event: CustomEvent<{ options: string[] }>) {
+    if (syncing) return;
+
+    const { options } = event.detail;
+    console.log('[SyncStatus] Starting sync with options:', options);
+
+    // Set syncing state
+    syncing = true;
+    syncProgress = null;
+
+    try {
+      // Use REMOTE sync which writes to filesystem via local API
+      // This is the unified approach - same code for web and mobile
+      const includeMemories = options.includes('memories');
+      const includeCredentials = options.includes('config');
+
+      console.log('[SyncStatus] Calling syncFromRemoteServer...');
+
+      const result = await syncFromRemoteServer(
+        (progress) => {
+          syncProgress = {
+            current: progress.current || 0,
+            total: progress.total || 1,
+            category: progress.message
+          };
+        },
+        {
+          includeMemories,
+          includeCredentials,
+          priorityOnly: true, // Use priority export to avoid OOM
+        }
+      );
+
+      // ALWAYS show sync report - never silently fail
+      syncReport = {
+        success: result.success,
+        profileFiles: result.profileFiles,
+        memoriesImported: result.memoriesImported,
+        credentialsSynced: result.credentialsSynced,
+        error: result.error,
+        timestamp: new Date().toISOString(),
+      };
+      showSyncReport = true;
+
+      if (result.success) {
+        console.log('[SyncStatus] Sync complete:', result);
+      } else {
+        console.error('[SyncStatus] Sync failed:', result.error);
+      }
+
+      // Check for app updates if requested
+      if (options.includes('update') && isMobile) {
+        try {
+          const serverUrl = await getSetting('syncServerUrl', 'https://mh.dndiy.org');
+          await checkForUpdate(serverUrl);
+        } catch (e) {
+          console.warn('[SyncStatus] Update check failed:', e);
+        }
+      }
+
+    } catch (e) {
+      // Catch any unexpected errors and show report
+      syncReport = {
+        success: false,
+        error: (e as Error).message,
+        timestamp: new Date().toISOString(),
+      };
+      showSyncReport = true;
+      console.error('[SyncStatus] Sync error:', e);
+    } finally {
+      syncing = false;
+      syncProgress = null;
+      showSyncManager = false;
+    }
+  }
+
+  async function handleCloseSyncManager() {
+    if (!syncing) {
+      showSyncManager = false;
+      // Reload remote config in case it was changed
+      await loadRemoteConfig();
     }
   }
 
@@ -158,7 +325,7 @@
   <!-- Compact: just icon and count -->
   <button
     class="sync-compact"
-    on:click={handleSync}
+    on:click={handleOpenSyncManager}
     disabled={syncing}
     title={`Sync: ${getStatusLabel()}${updateAvailable ? ' - Update available!' : ''}`}
   >
@@ -184,7 +351,7 @@
   <div class="sync-status">
     <div class="sync-header">
       <h4>Sync Status</h4>
-      <button class="sync-btn" on:click={handleSync} disabled={syncing}>
+      <button class="sync-btn" on:click={handleOpenSyncManager} disabled={syncing}>
         {#if syncing}
           <span class="spinning">↻</span> Syncing...
         {:else}
@@ -203,6 +370,32 @@
         <span class="info-label">Last sync:</span>
         <span class="info-value">{formatTimestamp(state.lastSyncTimestamp)}</span>
       </div>
+
+      <!-- Remote Server Status -->
+      {#if isRemoteConfigured && remoteServerUrl}
+        <div class="info-row remote-server">
+          <span class="info-label">Remote:</span>
+          <span class="info-value remote-url">
+            <span class="connected-icon">🔗</span>
+            {new URL(remoteServerUrl).hostname}
+          </span>
+        </div>
+        {#if lastRemoteSync}
+          <div class="info-row">
+            <span class="info-label">Remote sync:</span>
+            <span class="info-value">{formatTimestamp(lastRemoteSync)}</span>
+          </div>
+        {/if}
+      {:else if isMobile}
+        <div class="info-row not-configured">
+          <span class="info-label">Remote:</span>
+          <span class="info-value">
+            <button class="link-btn config-link" on:click={handleOpenSyncManager}>
+              Configure server
+            </button>
+          </span>
+        </div>
+      {/if}
 
       {#if state.pendingCount > 0}
         <div class="info-row warning">
@@ -358,6 +551,71 @@
         <p class="update-note">
           The download will open in your browser. After downloading, open the APK to install.
         </p>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Sync Manager Modal -->
+<SyncManager
+  isOpen={showSyncManager}
+  isSyncing={syncing}
+  {syncProgress}
+  on:sync={handleSyncWithOptions}
+  on:close={handleCloseSyncManager}
+/>
+
+<!-- Sync Report Modal - ALWAYS shows after sync to prevent silent failures -->
+{#if showSyncReport && syncReport}
+  <div class="modal-overlay" on:click={() => showSyncReport = false}>
+    <div class="modal-content sync-report-modal" on:click|stopPropagation>
+      <div class="modal-header">
+        <h3>{syncReport.success ? '✅ Sync Complete' : '❌ Sync Failed'}</h3>
+        <button class="close-btn" on:click={() => showSyncReport = false}>×</button>
+      </div>
+
+      <div class="sync-report-content">
+        {#if syncReport.success}
+          <div class="report-stats">
+            {#if syncReport.profileFiles !== undefined}
+              <div class="stat-item">
+                <span class="stat-label">Profile files imported:</span>
+                <span class="stat-value">{syncReport.profileFiles}</span>
+              </div>
+            {/if}
+            {#if syncReport.memoriesImported !== undefined}
+              <div class="stat-item">
+                <span class="stat-label">Memories synced:</span>
+                <span class="stat-value">{syncReport.memoriesImported}</span>
+              </div>
+            {/if}
+            {#if syncReport.credentialsSynced}
+              <div class="stat-item">
+                <span class="stat-label">Credentials:</span>
+                <span class="stat-value">✓ Synced</span>
+              </div>
+            {/if}
+          </div>
+          <p class="sync-success-message">Your profile has been synced successfully from the remote server.</p>
+        {:else}
+          <div class="error-details">
+            <p class="error-label">Error:</p>
+            <p class="error-message">{syncReport.error || 'Unknown error occurred'}</p>
+          </div>
+          <p class="sync-error-hint">
+            Please check your sync server settings and try again.
+          </p>
+        {/if}
+
+        <div class="sync-timestamp">
+          Completed: {new Date(syncReport.timestamp).toLocaleString()}
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn-primary" on:click={() => showSyncReport = false}>
+          OK
+        </button>
       </div>
     </div>
   </div>
@@ -969,5 +1227,156 @@
     color: #9ca3af;
     text-align: center;
     line-height: 1.4;
+  }
+
+  /* Remote Server Status */
+  .remote-server .info-value {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .connected-icon {
+    font-size: 0.75rem;
+  }
+
+  .remote-url {
+    font-family: monospace;
+    color: #22c55e;
+  }
+
+  :global(.dark) .remote-url {
+    color: #4ade80;
+  }
+
+  .not-configured .info-value {
+    color: #9ca3af;
+  }
+
+  .config-link {
+    color: #3b82f6;
+    font-size: 0.75rem;
+  }
+
+  .config-link:hover {
+    text-decoration: underline;
+  }
+
+  /* Sync Report Modal */
+  .sync-report-modal {
+    max-width: 400px;
+  }
+
+  .sync-report-content {
+    padding: 1rem 0;
+  }
+
+  .report-stats {
+    background: rgba(34, 197, 94, 0.1);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .stat-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid rgba(34, 197, 94, 0.2);
+  }
+
+  .stat-item:last-child {
+    border-bottom: none;
+  }
+
+  .stat-label {
+    color: #6b7280;
+  }
+
+  .stat-value {
+    font-weight: 600;
+    color: #22c55e;
+  }
+
+  :global(.dark) .stat-label {
+    color: #9ca3af;
+  }
+
+  :global(.dark) .stat-value {
+    color: #4ade80;
+  }
+
+  .sync-success-message {
+    color: #22c55e;
+    font-size: 0.875rem;
+    text-align: center;
+    margin: 0;
+  }
+
+  :global(.dark) .sync-success-message {
+    color: #4ade80;
+  }
+
+  .error-details {
+    background: rgba(239, 68, 68, 0.1);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .error-label {
+    font-weight: 600;
+    color: #ef4444;
+    margin: 0 0 0.5rem 0;
+  }
+
+  .error-message {
+    color: #ef4444;
+    margin: 0;
+    font-family: monospace;
+    font-size: 0.875rem;
+    word-break: break-word;
+  }
+
+  :global(.dark) .error-label,
+  :global(.dark) .error-message {
+    color: #f87171;
+  }
+
+  .sync-error-hint {
+    color: #6b7280;
+    font-size: 0.875rem;
+    text-align: center;
+    margin: 0;
+  }
+
+  .sync-timestamp {
+    text-align: center;
+    font-size: 0.75rem;
+    color: #9ca3af;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(156, 163, 175, 0.2);
+  }
+
+  .modal-actions {
+    display: flex;
+    justify-content: center;
+    padding-top: 1rem;
+  }
+
+  .btn-primary {
+    background: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 0.5rem 2rem;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn-primary:hover {
+    background: #2563eb;
   }
 </style>

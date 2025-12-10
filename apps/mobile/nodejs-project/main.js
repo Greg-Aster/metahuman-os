@@ -3,15 +3,32 @@
  *
  * This runs inside the Android app via nodejs-mobile.
  * It handles:
- * - API requests from the UI (via message bridge)
+ * - API requests from the UI (via HTTP server - SAME AS WEB)
  * - Agent execution
  * - Local file storage
  * - LLM routing
+ *
+ * UNIFIED ARCHITECTURE:
+ * Mobile runs an HTTP server on localhost, WebView makes fetch() requests.
+ * This means cookies work identically to web - SAME CODE FOR BOTH.
  */
 
 const cordova = require('cordova-bridge');
+const http = require('http');
 const path = require('path');
 const fs = require('fs');
+
+// ============================================================================
+// POLYFILL: AbortController for Node.js v12
+// Node.js v12 (used by nodejs-mobile) doesn't have AbortController (added in v15).
+// We need to polyfill it before loading any other modules that might use it.
+// ============================================================================
+if (typeof AbortController === 'undefined') {
+  const { AbortController, AbortSignal } = require('./shims/abort-controller.js');
+  global.AbortController = AbortController;
+  global.AbortSignal = AbortSignal;
+  console.log('[Node.js] AbortController polyfill loaded');
+}
 
 // Get the app's data directory for file storage
 const dataDir = cordova.app.datadir();
@@ -27,58 +44,266 @@ process.env.METAHUMAN_MOBILE = 'true';
 process.env.METAHUMAN_DATA_DIR = dataDir;
 process.env.METAHUMAN_ROOT = dataDir; // Override root for mobile
 
-// Try to load the bundled handlers
-let handleMobileRequest = null;
+// ============================================================================
+// COPY BUNDLED CONFIG FILES TO DATA DIRECTORY
+// On first run (or when configs are missing), copy bundled files from assets
+// ============================================================================
+function copyBundledConfigs() {
+  // The bundled configs are in the same directory as main.js
+  // nodejs-mobile extracts nodejs-project/ contents to files/www/
+  // So main.js and etc/ end up as siblings in files/www/
+  const bundledEtc = path.join(__dirname, 'etc');
+  const dataEtc = path.join(dataDir, 'etc');
+
+  console.log('[Node.js] Looking for bundled etc at:', bundledEtc);
+
+  // Check if bundled etc exists
+  if (!fs.existsSync(bundledEtc)) {
+    console.log('[Node.js] No bundled etc/ directory found');
+    return;
+  }
+
+  // Create target directories
+  const cognitiveGraphsDir = path.join(dataEtc, 'cognitive-graphs');
+  const customGraphsDir = path.join(cognitiveGraphsDir, 'custom');
+
+  try {
+    fs.mkdirSync(cognitiveGraphsDir, { recursive: true });
+    fs.mkdirSync(customGraphsDir, { recursive: true });
+  } catch (e) {
+    console.error('[Node.js] Failed to create etc directories:', e.message);
+  }
+
+  // Copy cognitive graphs (always overwrite to get latest)
+  const bundledGraphs = path.join(bundledEtc, 'cognitive-graphs');
+  if (fs.existsSync(bundledGraphs)) {
+    try {
+      const files = fs.readdirSync(bundledGraphs);
+      for (const file of files) {
+        const src = path.join(bundledGraphs, file);
+        const stat = fs.statSync(src);
+        if (stat.isFile() && file.endsWith('.json')) {
+          const dst = path.join(cognitiveGraphsDir, file);
+          fs.copyFileSync(src, dst);
+          console.log('[Node.js] Copied cognitive graph:', file);
+        }
+      }
+    } catch (e) {
+      console.error('[Node.js] Failed to copy cognitive graphs:', e.message);
+    }
+  }
+
+  // Copy custom graphs if they exist
+  const bundledCustom = path.join(bundledGraphs, 'custom');
+  if (fs.existsSync(bundledCustom)) {
+    try {
+      const files = fs.readdirSync(bundledCustom);
+      for (const file of files) {
+        if (file.endsWith('.json')) {
+          fs.copyFileSync(
+            path.join(bundledCustom, file),
+            path.join(customGraphsDir, file)
+          );
+          console.log('[Node.js] Copied custom graph:', file);
+        }
+      }
+    } catch (e) {
+      console.error('[Node.js] Failed to copy custom graphs:', e.message);
+    }
+  }
+
+  // Copy essential config files (only if they don't exist to preserve user changes)
+  const configFiles = ['models.json', 'agents.json', 'llm-backend.json'];
+  for (const file of configFiles) {
+    const src = path.join(bundledEtc, file);
+    const dst = path.join(dataEtc, file);
+    if (fs.existsSync(src) && !fs.existsSync(dst)) {
+      try {
+        fs.copyFileSync(src, dst);
+        console.log('[Node.js] Copied config:', file);
+      } catch (e) {
+        console.error('[Node.js] Failed to copy', file + ':', e.message);
+      }
+    }
+  }
+
+  console.log('[Node.js] ✅ Config files initialized');
+}
+
+// Run config copy before loading handlers
+copyBundledConfigs();
+
+// ============================================================================
+// POLYFILL: fs/promises for Node.js v12
+// Node.js v12 (used by nodejs-mobile) doesn't have the 'fs/promises' module.
+// We patch Module._resolveFilename to redirect it to our shim.
+// ============================================================================
+const Module = require('module');
+const originalResolveFilename = Module._resolveFilename;
+Module._resolveFilename = function(request, parent, isMain, options) {
+  if (request === 'fs/promises') {
+    // Redirect to our shim
+    return originalResolveFilename(path.join(__dirname, 'shims', 'fs-promises.js'), parent, isMain, options);
+  }
+  return originalResolveFilename(request, parent, isMain, options);
+};
+
+// Try to load the unified HTTP adapter - SAME CODE AS WEB
+let handleHttpRequest = null;
 let initializeMobileAgents = null;
 let stopMobileAgents = null;
 let handlersLoaded = false;
 let agentsInitialized = false;
 
 try {
-  // The handlers are bundled into dist/handlers.js
+  // Load unified HTTP adapter - SAME CODE AS WEB SERVER
+  // This includes: cookie parsing, user resolution, routing, response formatting
+  const httpAdapter = require('./dist/http-adapter.js');
+  handleHttpRequest = httpAdapter.handleHttpRequest;
+
+  // Also load agent management (mobile-specific)
   const handlers = require('./dist/handlers.js');
-  handleMobileRequest = handlers.handleMobileRequest;
   initializeMobileAgents = handlers.initializeMobileAgents;
   stopMobileAgents = handlers.stopMobileAgents;
+
   handlersLoaded = true;
-  console.log('[Node.js] ✅ Bundled handlers loaded successfully');
+  console.log('[Node.js] ✅ Unified HTTP adapter loaded - SAME CODE AS WEB');
 } catch (error) {
-  console.error('[Node.js] ⚠️ Failed to load bundled handlers:', error.message);
+  console.error('[Node.js] ⚠️ Failed to load unified HTTP adapter:', error.message);
   console.log('[Node.js] Falling back to stub handlers');
 }
 
-// Handle messages from UI
-cordova.channel.on('request', async (msg) => {
-  console.log('[Node.js] Received request:', msg.id, msg.path);
+// =============================================================================
+// HTTP SERVER - Uses unified HTTP adapter (SAME CODE AS WEB)
+// =============================================================================
 
-  try {
-    let response;
+const HTTP_PORT = 4322; // Mobile uses different port than web (4321)
+let httpServer = null;
 
-    // Route to bundled handlers if available
-    if (handlersLoaded && handleMobileRequest) {
+// Parse JSON body from request
+function parseBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      if (!body) return resolve(undefined);
       try {
-        response = await handleMobileRequest(msg);
-        console.log('[Node.js] Handler response status:', response.status);
-      } catch (handlerError) {
-        console.error('[Node.js] Handler error:', handlerError);
-        response = { id: msg.id, status: 500, error: handlerError.message };
+        resolve(JSON.parse(body));
+      } catch (e) {
+        resolve(body);
       }
-    } else {
-      // Fallback to stub handlers
-      response = await handleRequestStub(msg);
+    });
+    req.on('error', reject);
+  });
+}
+
+// Create HTTP server - Uses unified HTTP adapter (SAME CODE AS WEB)
+function startHttpServer() {
+  httpServer = http.createServer(async (req, res) => {
+    // Enable CORS for WebView
+    // Note: When credentials are included, origin must be explicit (not *)
+    const origin = req.headers.origin || 'https://localhost';
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cookie');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+    // Handle preflight
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
     }
 
-    // Send response back to UI
-    cordova.channel.post('response', response);
-  } catch (error) {
-    console.error('[Node.js] Request error:', error);
-    cordova.channel.post('response', {
-      id: msg.id,
-      status: 500,
-      error: error.message
-    });
-  }
-});
+    const url = new URL(req.url, `http://localhost:${HTTP_PORT}`);
+    const body = await parseBody(req);
+
+    console.log('[HTTP]', req.method, url.pathname);
+
+    try {
+      if (handlersLoaded && handleHttpRequest) {
+        // Use unified HTTP adapter - SAME CODE AS WEB
+        // Cookie parsing, user resolution, routing all happen inside
+        console.log('[HTTP] Calling handleHttpRequest for:', url.pathname);
+        console.log('[HTTP] Cookie header:', req.headers.cookie);
+        const result = await handleHttpRequest({
+          path: url.pathname,
+          method: req.method,
+          body,
+          query: Object.fromEntries(url.searchParams),
+          headers: req.headers,
+          cookieHeader: req.headers.cookie,
+        });
+        console.log('[HTTP] Result received - isStreaming:', result.isStreaming, 'hasStream:', !!result.stream);
+        console.log('[HTTP] Result status:', result.status, 'body preview:', typeof result.body === 'string' ? result.body.substring(0, 200) : '(non-string)');
+
+        // Set response cookies (formatted by unified adapter)
+        if (result.cookies && result.cookies.length > 0) {
+          res.setHeader('Set-Cookie', result.cookies);
+        }
+
+        // Set response headers
+        for (const [key, value] of Object.entries(result.headers)) {
+          res.setHeader(key, value);
+        }
+
+        // Handle streaming responses (SSE)
+        if (result.isStreaming && result.stream) {
+          console.log('[HTTP] Streaming response detected for:', url.pathname);
+          console.log('[HTTP] Headers:', JSON.stringify(result.headers));
+          res.writeHead(result.status);
+          try {
+            let chunkCount = 0;
+            for await (const chunk of result.stream) {
+              chunkCount++;
+              console.log('[HTTP] Stream chunk', chunkCount, ':', chunk.substring(0, 100));
+              res.write(chunk);
+            }
+            console.log('[HTTP] Stream complete, total chunks:', chunkCount);
+          } catch (streamError) {
+            console.error('[HTTP] Stream error:', streamError);
+          } finally {
+            res.end();
+          }
+        } else {
+          // Non-streaming response
+          res.writeHead(result.status);
+          res.end(result.body);
+        }
+      } else {
+        // Fallback to stub handlers
+        const stubResponse = await handleRequestStub({
+          id: 'stub',
+          path: url.pathname,
+          method: req.method,
+          body,
+        });
+
+        res.setHeader('Content-Type', 'application/json');
+        res.writeHead(stubResponse.status || 200);
+        res.end(JSON.stringify(stubResponse.data || { error: stubResponse.error }));
+      }
+    } catch (error) {
+      console.error('[HTTP] Handler error:', error);
+      res.setHeader('Content-Type', 'application/json');
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  });
+
+  httpServer.listen(HTTP_PORT, '127.0.0.1', () => {
+    console.log(`[Node.js] ✅ HTTP server listening on http://127.0.0.1:${HTTP_PORT}`);
+    // Notify UI of the HTTP port
+    cordova.channel.post('http-ready', { port: HTTP_PORT });
+  });
+
+  httpServer.on('error', (err) => {
+    console.error('[Node.js] HTTP server error:', err);
+  });
+}
+
+// Start HTTP server
+startHttpServer();
 
 // Stub handlers (fallback when bundled handlers fail to load)
 async function handleRequestStub(request) {

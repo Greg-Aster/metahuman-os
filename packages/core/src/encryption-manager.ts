@@ -414,7 +414,8 @@ export async function setupEncryption(
   options?: {
     volumePath?: string;    // For luks/veracrypt: where to create the container
     volumeSizeMB?: number;  // For luks/veracrypt: size of container
-    useLoginPassword?: boolean; // For aes256: use same password as login
+    mountPoint?: string;    // For luks/veracrypt: where to mount the volume
+    useLoginPassword?: boolean; // For aes256/luks: use same password as login
     onProgress?: (message: string) => void;
   }
 ): Promise<UnlockResult> {
@@ -488,7 +489,10 @@ export async function setupEncryption(
           user.username,
           password,
           sizeMB,
-          options?.onProgress
+          {
+            mountPoint: options?.mountPoint,
+            onProgress: options?.onProgress,
+          }
         );
 
         // Update user config
@@ -499,6 +503,7 @@ export async function setupEncryption(
           volumePath: result.containerPath,
           mountPoint: result.mountPoint,
           mapperName: `metahuman-${user.username}`,
+          useLoginPassword: options?.useLoginPassword,
         };
 
         updateUserMetadata(userId, {

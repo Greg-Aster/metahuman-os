@@ -6,6 +6,8 @@
         <domain includeSubdomains="false">10.0.2.2</domain>
         <!-- Direct localhost reference -->
         <domain includeSubdomains="false">localhost</domain>
+        <!-- IP address version of localhost (required for nodejs-mobile HTTP server) -->
+        <domain includeSubdomains="false">127.0.0.1</domain>
         <!-- Local network for physical device testing -->
         <domain includeSubdomains="true">192.168.0.0</domain>
         <domain includeSubdomains="true">192.168.1.0</domain>

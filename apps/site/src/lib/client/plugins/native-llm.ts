@@ -10,7 +10,7 @@
  * - iOS: apps/mobile/ios/App/App/Plugins/LLM/ (future)
  */
 
-import { registerPlugin } from '@capacitor/core';
+// Dynamic import used - no static @capacitor/core import to avoid web bundle issues
 import { isCapacitorNative } from '../api-config';
 
 // ============================================================================
@@ -120,13 +120,36 @@ export interface NativeLLMPlugin {
 }
 
 // ============================================================================
-// Plugin Registration
+// Plugin Registration (Lazy-loaded to avoid @capacitor/core on web)
 // ============================================================================
 
-// Register the plugin - will be available on native platforms
-const NativeLLMPluginImpl = registerPlugin<NativeLLMPlugin>('NativeLLM', {
-  web: () => import('./native-llm-web').then(m => new m.NativeLLMWeb()),
-});
+// Cached plugin instance
+let _nativeLLMPlugin: NativeLLMPlugin | null = null;
+
+/**
+ * Get the NativeLLM plugin instance.
+ * Uses dynamic import to avoid loading @capacitor/core on web.
+ */
+async function getNativeLLMPlugin(): Promise<NativeLLMPlugin> {
+  if (_nativeLLMPlugin) {
+    return _nativeLLMPlugin;
+  }
+
+  // Check if we're on native platform first
+  if (!isCapacitorNative()) {
+    // Return web fallback
+    const { NativeLLMWeb } = await import('./native-llm-web');
+    _nativeLLMPlugin = new NativeLLMWeb() as unknown as NativeLLMPlugin;
+    return _nativeLLMPlugin;
+  }
+
+  // Dynamic import of Capacitor only on native
+  const { registerPlugin } = await import('@capacitor/core');
+  _nativeLLMPlugin = registerPlugin<NativeLLMPlugin>('NativeLLM', {
+    web: () => import('./native-llm-web').then(m => new m.NativeLLMWeb()),
+  });
+  return _nativeLLMPlugin;
+}
 
 // ============================================================================
 // Wrapper with Availability Check
@@ -143,7 +166,8 @@ class NativeLLMWrapper implements NativeLLMPlugin {
     if (!isCapacitorNative()) {
       return { loaded: false };
     }
-    return NativeLLMPluginImpl.isModelLoaded();
+    const plugin = await getNativeLLMPlugin();
+    return plugin.isModelLoaded();
   }
 
   async loadModel(options: {
@@ -152,12 +176,14 @@ class NativeLLMWrapper implements NativeLLMPlugin {
     gpuLayers?: number;
   }): Promise<{ success: boolean; error?: string; loadTimeMs?: number }> {
     this.checkAvailability();
-    return NativeLLMPluginImpl.loadModel(options);
+    const plugin = await getNativeLLMPlugin();
+    return plugin.loadModel(options);
   }
 
   async unloadModel(): Promise<{ success: boolean }> {
     this.checkAvailability();
-    return NativeLLMPluginImpl.unloadModel();
+    const plugin = await getNativeLLMPlugin();
+    return plugin.unloadModel();
   }
 
   async generate(options: {
@@ -173,7 +199,8 @@ class NativeLLMWrapper implements NativeLLMPlugin {
     finishReason: 'stop' | 'length' | 'error';
   }> {
     this.checkAvailability();
-    return NativeLLMPluginImpl.generate(options);
+    const plugin = await getNativeLLMPlugin();
+    return plugin.generate(options);
   }
 
   async chat(options: {
@@ -186,7 +213,8 @@ class NativeLLMWrapper implements NativeLLMPlugin {
     tokensPerSecond: number;
   }> {
     this.checkAvailability();
-    return NativeLLMPluginImpl.chat(options);
+    const plugin = await getNativeLLMPlugin();
+    return plugin.chat(options);
   }
 
   async listModels(): Promise<{
@@ -200,7 +228,8 @@ class NativeLLMWrapper implements NativeLLMPlugin {
     if (!isCapacitorNative()) {
       return { models: [] };
     }
-    return NativeLLMPluginImpl.listModels();
+    const plugin = await getNativeLLMPlugin();
+    return plugin.listModels();
   }
 
   async downloadModel(options: {
@@ -208,7 +237,8 @@ class NativeLLMWrapper implements NativeLLMPlugin {
     filename: string;
   }): Promise<{ success: boolean; path?: string; error?: string }> {
     this.checkAvailability();
-    return NativeLLMPluginImpl.downloadModel(options);
+    const plugin = await getNativeLLMPlugin();
+    return plugin.downloadModel(options);
   }
 
   async getStatus(): Promise<{
@@ -226,14 +256,16 @@ class NativeLLMWrapper implements NativeLLMPlugin {
         cpuUsagePercent: 0,
       };
     }
-    return NativeLLMPluginImpl.getStatus();
+    const plugin = await getNativeLLMPlugin();
+    return plugin.getStatus();
   }
 
   async cancelInference(): Promise<{ cancelled: boolean }> {
     if (!isCapacitorNative()) {
       return { cancelled: false };
     }
-    return NativeLLMPluginImpl.cancelInference();
+    const plugin = await getNativeLLMPlugin();
+    return plugin.cancelInference();
   }
 
   addListener(
@@ -251,11 +283,12 @@ class NativeLLMWrapper implements NativeLLMPlugin {
     if (!isCapacitorNative()) {
       return { remove: () => {} };
     }
+    const plugin = await getNativeLLMPlugin();
     // Use type assertion to handle the union - native plugin handles type safety
     if (eventName === 'downloadProgress') {
-      return NativeLLMPluginImpl.addListener(eventName, callback);
+      return plugin.addListener(eventName, callback);
     } else {
-      return NativeLLMPluginImpl.addListener(eventName, callback);
+      return plugin.addListener(eventName, callback);
     }
   }
 }

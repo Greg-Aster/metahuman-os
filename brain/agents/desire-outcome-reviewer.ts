@@ -72,7 +72,7 @@ function addScratchpadEntry(
   entry: DesireScratchpadEntry
 ): DesireScratchpadSummary {
   const current = summary || initializeScratchpadSummary();
-  return updateScratchpadSummary(current, entry.type as DesireScratchpadEntryType);
+  return updateScratchpadSummary(current, entry);
 }
 
 /**
@@ -665,11 +665,11 @@ async function processDesires(username?: string): Promise<{
     if (review.notifyUser && review.userMessage) {
       await captureEvent(review.userMessage, {
         type: 'inner_dialogue',
-        source: 'desire-outcome-reviewer',
+        tags: ['agency', 'outcome', 'notification'],
         metadata: {
           desireId: desire.id,
           verdict: review.verdict,
-          tags: ['agency', 'outcome', 'notification'],
+          source: 'desire-outcome-reviewer',
         },
       });
     }
@@ -678,12 +678,12 @@ async function processDesires(username?: string): Promise<{
     const dialogueText = `Reviewed outcome for "${desire.title}": ${review.verdict}. ${review.reasoning}`;
     await captureEvent(dialogueText, {
       type: 'inner_dialogue',
-      source: 'desire-outcome-reviewer',
+      tags: ['agency', 'outcome-review', 'inner'],
       metadata: {
         desireId: desire.id,
         verdict: review.verdict,
         successScore: review.successScore,
-        tags: ['agency', 'outcome-review', 'inner'],
+        source: 'desire-outcome-reviewer',
       },
     });
   }
@@ -696,7 +696,7 @@ async function processDesires(username?: string): Promise<{
 // ============================================================================
 
 async function main(): Promise<void> {
-  initGlobalLogger();
+  initGlobalLogger('desire-outcome-reviewer');
   console.log(`${LOG_PREFIX} Starting desire outcome reviewer agent...`);
 
   // Check for existing lock
@@ -751,8 +751,17 @@ async function main(): Promise<void> {
   }
 }
 
-// Run if executed directly
-main().catch((error) => {
-  console.error(`${LOG_PREFIX} Fatal error:`, error);
-  process.exit(1);
-});
+// Export for use by other parts of the system (mobile, web, etc.)
+export {
+  processDesires,
+  reviewOutcome,
+};
+
+// Only run if executed directly (not imported)
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+  main().catch((error) => {
+    console.error(`${LOG_PREFIX} Fatal error:`, error);
+    process.exit(1);
+  });
+}

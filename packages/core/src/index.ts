@@ -8,6 +8,7 @@
 // IMPORTANT: users.ts must be imported BEFORE path-builder to ensure
 // profile storage config registration via dependency injection
 export * from './users';
+export * from './uuid';  // UUID generation (Node.js 12 compatible polyfill)
 
 export * from './path-builder';  // Core path functions (no dependencies)
 export * from './paths';  // Path utilities (systemPaths, getProfilePaths, ROOT)
@@ -325,6 +326,7 @@ export type { VeraCryptStatus, VeraCryptContainer, CreateContainerOptions, Mount
 // LUKS integration (Linux native encryption)
 export {
   checkLuks,
+  isPolkitConfigured,
   isLuksOpen,
   isLuksMounted,
   getLuksMountPoint,
@@ -374,6 +376,12 @@ export * from './plugin-system';
 
 // Agency System
 export * from './agency/index.js';
+
+// Drift System (voice/style consistency monitoring)
+export * from './drift/index.js';
+
+// System Coder (error capture, fix management, maintenance)
+export * from './system-coder/index.js';
 
 // Version
 export const VERSION = '0.1.0';

@@ -115,6 +115,7 @@ async function callRunPod(
   }
 
   const url = `https://api.runpod.ai/v2/${endpointId}/runsync`;
+  console.log(`[mobile-providers] RunPod URL: ${url}`);
 
   const payload = {
     input: {
