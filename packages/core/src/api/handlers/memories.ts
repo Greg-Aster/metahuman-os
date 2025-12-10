@@ -48,26 +48,44 @@ export async function handleCapture(req: UnifiedRequest): Promise<UnifiedRespons
 
 /**
  * GET /api/memories - List recent memories
+ * Query params:
+ *   - limit: Max memories to return (default 50)
+ *   - idsOnly: If true, return only memory IDs (fast, for deduplication)
  */
 export async function handleListMemories(req: UnifiedRequest): Promise<UnifiedResponse> {
   const limit = parseInt(req.query?.limit || '50', 10);
+  const idsOnly = req.query?.idsOnly === 'true';
 
-  const memories = await withUserContext(
+  const result = await withUserContext(
     { userId: req.user.userId, username: req.user.username, role: req.user.role },
     async () => {
       const profilePaths = getProfilePaths(req.user.username);
       const episodicDir = profilePaths.episodic;
 
       if (!fs.existsSync(episodicDir)) {
-        return [];
+        return idsOnly ? { ids: [] } : { memories: [] };
       }
 
-      const allMemories: any[] = [];
-
-      // Get all year directories, sorted descending
+      // Get all year directories
       const years = fs.readdirSync(episodicDir)
         .filter(f => /^\d{4}$/.test(f))
         .sort((a, b) => parseInt(b) - parseInt(a));
+
+      // idsOnly mode: Just collect filenames (fast, no file reads)
+      if (idsOnly) {
+        const allIds: string[] = [];
+        for (const year of years) {
+          const yearDir = path.join(episodicDir, year);
+          const files = fs.readdirSync(yearDir)
+            .filter(f => f.endsWith('.json'))
+            .map(f => f.replace('.json', ''));  // Extract ID from filename
+          allIds.push(...files);
+        }
+        return { ids: allIds };
+      }
+
+      // Normal mode: Load full memory content
+      const allMemories: any[] = [];
 
       for (const year of years) {
         if (allMemories.length >= limit) break;
@@ -93,10 +111,19 @@ export async function handleListMemories(req: UnifiedRequest): Promise<UnifiedRe
         }
       }
 
-      return allMemories;
+      return { memories: allMemories };
     }
   );
 
+  if (idsOnly && 'ids' in result) {
+    return successResponse({
+      success: true,
+      ids: result.ids,
+      count: result.ids.length,
+    });
+  }
+
+  const memories = ('memories' in result ? result.memories : []) || [];
   return successResponse({
     success: true,
     memories,

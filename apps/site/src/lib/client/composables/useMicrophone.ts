@@ -154,7 +154,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   // COOLDOWN: TTS finished, brief wait before returning to READY
   type ConversationState = 'IDLE' | 'READY' | 'LISTENING' | 'PROCESSING' | 'SPEAKING' | 'COOLDOWN';
   let conversationState: ConversationState = 'IDLE';
-  let conversationStateDebug = true; // Set to true to see state transitions in console
+  let conversationStateDebug = false; // Set to true to see state transitions in console
 
   /**
    * Transition conversation state machine
@@ -1229,6 +1229,9 @@ export function useMicrophone(options: UseMicrophoneOptions) {
       const buf = await blob.arrayBuffer();
       const res = await apiFetch(`/api/stt?format=webm&collect=1&dur=${dur}`, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'audio/webm'
+        },
         body: buf
       });
 

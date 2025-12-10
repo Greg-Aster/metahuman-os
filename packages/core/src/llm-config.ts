@@ -21,41 +21,32 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getProfilePaths, systemPaths } from './paths.js';
-
-// Storage router for proper path resolution (handles external drives, encryption)
-// We try to import it synchronously - will fail on mobile where it's not bundled
-let _storage: typeof import('../../../brain/services/storage-router.js').storage | undefined;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  _storage = require('../../../brain/services/storage-router.js').storage;
-} catch {
-  // Mobile or storage-router unavailable - will use getProfilePaths fallback
-  _storage = undefined;
-}
+import { storageClient } from './storage-client.js';
 
 /**
  * Resolve the correct path for user config files
- * Uses storage router if available (handles external drives), otherwise falls back to getProfilePaths
+ * Uses storage router (handles external drives, encryption, device-specific paths)
+ * This is the ONLY source of truth for user profile locations.
  */
 function resolveUserConfigPath(username: string, filename: string): string {
-  // Try storage router first (handles external drives, custom paths)
-  if (_storage) {
-    try {
-      const result = _storage.resolvePath({
-        username,
-        category: 'config',
-        subcategory: 'etc',
-        relativePath: filename,
-      });
-      if (result.success && result.path) {
-        return result.path;
-      }
-    } catch (e) {
-      console.warn(`[llm-config] Storage router failed for ${username}, using fallback:`, e);
+  // ALWAYS use storage router for proper path resolution
+  // Handles: external drives, encrypted storage, device-specific paths
+  try {
+    const result = storageClient.resolvePath({
+      username,
+      category: 'config',
+      subcategory: 'etc',
+      relativePath: filename,
+    });
+    if (result.success && result.path) {
+      return result.path;
     }
+    console.warn(`[llm-config] Storage router returned failure for ${username}/${filename}:`, result.error);
+  } catch (e) {
+    console.warn(`[llm-config] Storage router error for ${username}/${filename}:`, e);
   }
 
-  // Fallback to getProfilePaths (mobile, or storage router unavailable)
+  // Fallback to getProfilePaths (only if storage router completely fails)
   const profilePaths = getProfilePaths(username);
   return path.join(profilePaths.etc, filename);
 }

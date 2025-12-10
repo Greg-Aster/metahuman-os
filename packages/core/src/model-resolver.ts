@@ -7,8 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT } from './path-builder.js';
-import { storageClient } from './storage-client.js';
+import { getProfilePaths } from './path-builder.js';
 import { loadBackendConfig, type BackendType } from './llm-backend.js';
 
 export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'fallback';
@@ -93,6 +92,11 @@ function getActiveBackend(): BackendType {
 function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry): ResolvedModel {
   const activeBackend = getActiveBackend();
 
+  // Cloud providers (runpod_serverless, etc.) are NEVER overridden - user's choice is respected
+  if (resolved.provider === 'runpod_serverless' || resolved.provider === 'huggingface') {
+    return resolved;
+  }
+
   // If resolved model uses ollama but vLLM is active, check for vllm.active model
   if (activeBackend === 'vllm' && resolved.provider === 'ollama') {
     const vllmModel = registry.models['vllm.active'];
@@ -173,41 +177,35 @@ export function loadModelRegistry(forceFresh = false, username?: string): ModelR
 }
 
 function resolveRegistryPath(username?: string): string {
-  // Use storage router to resolve user-specific config path
-  if (username) {
-    try {
-      const result = storageClient.resolvePath({
-        username,
-        category: 'config',
-        subcategory: 'etc',
-        relativePath: 'models.json',
-      });
+  console.log(`[model-resolver] resolveRegistryPath called with username=${username}`);
 
-      if (result.success && result.path) {
-        // Check if user's config actually exists
-        if (fs.existsSync(result.path)) {
-          return result.path;
-        } else {
-          // User is authenticated but their models.json doesn't exist - FAIL with helpful message
-          const errorMsg = `[model-resolver] ERROR: User models.json not found!\n` +
-            `  Expected location: ${result.path}\n` +
-            `  The user '${username}' needs a models.json config file.\n` +
-            `  Create it by copying from etc/models.json or via the Settings UI.`;
-          console.error(errorMsg);
-          throw new Error(`User models.json not found at ${result.path}. Please create your user-specific model configuration.`);
-        }
-      }
-    } catch (err) {
-      // Re-throw if it's our custom error
-      if (err instanceof Error && err.message.includes('User models.json not found')) {
-        throw err;
-      }
-      console.warn(`[model-resolver] Failed to resolve user path for ${username}:`, err);
-    }
+  // Username is REQUIRED - no fallback to system config
+  if (!username) {
+    throw new Error(`Username is required to load model registry. System fallback is disabled.`);
   }
 
-  // Only use global config for anonymous/system operations
-  return path.join(ROOT, 'etc', 'models.json');
+  // Use getProfilePaths which correctly handles mobile vs desktop paths
+  try {
+    const profilePaths = getProfilePaths(username);
+    const modelsPath = path.join(profilePaths.etc, 'models.json');
+    console.log(`[model-resolver] Resolved models.json path: ${modelsPath}`);
+
+    if (fs.existsSync(modelsPath)) {
+      return modelsPath;
+    } else {
+      const errorMsg = `[model-resolver] ERROR: User models.json not found!\n` +
+        `  Expected location: ${modelsPath}\n` +
+        `  The user '${username}' needs a models.json config file.`;
+      console.error(errorMsg);
+      throw new Error(`User models.json not found at ${modelsPath}`);
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('models.json not found')) {
+      throw err;
+    }
+    console.error(`[model-resolver] Failed to resolve path for ${username}:`, err);
+    throw new Error(`Failed to resolve user models.json path for '${username}': ${err}`);
+  }
 }
 
 /**

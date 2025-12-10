@@ -83,13 +83,24 @@ function getProfileStorageConfigLazy(username: string): ProfileStorageConfigFull
  * Find metahuman root directory
  *
  * Resolution order:
- * 1. METAHUMAN_ROOT environment variable (for server deployments)
- * 2. Walk up from current file to find pnpm-workspace.yaml (for local dev)
+ * 1. Mobile environment (METAHUMAN_MOBILE=true) - uses app data directory
+ * 2. METAHUMAN_ROOT environment variable (for server deployments)
+ * 3. Walk up from current file to find pnpm-workspace.yaml (for local dev)
  *
  * Server deployments should set METAHUMAN_ROOT to the network volume path
  * (e.g., /runpod-volume/metahuman)
  */
 export function findRepoRoot(): string {
+  // MOBILE: Use app's files directory as root (set by main.js)
+  // This MUST be checked first - mobile sets METAHUMAN_ROOT but we want to be explicit
+  if (process.env.METAHUMAN_MOBILE === 'true') {
+    const mobileRoot = process.env.METAHUMAN_DATA_DIR ||
+                       process.env.METAHUMAN_ROOT ||
+                       '/data/user/0/com.metahuman.os/files';
+    console.log(`[path-builder] Mobile environment detected, using root: ${mobileRoot}`);
+    return mobileRoot;
+  }
+
   // Server mode: Use METAHUMAN_ROOT if set
   const envRoot = process.env.METAHUMAN_ROOT;
   if (envRoot) {

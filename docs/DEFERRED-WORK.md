@@ -2,6 +2,24 @@
 
 This file tracks features that were stubbed or simplified for mobile compatibility and need proper implementation later.
 
+## Profile Sync Cleanup
+
+### 0. IndexedDB Removal from Sync Functions
+**Status**: Partially complete
+**Completed**:
+- `syncFromRemoteServer()` now POSTs to local import API instead of IndexedDB
+- Added date range filtering for memory sync (default 7 days)
+
+**Remaining Work**:
+- Remove IndexedDB from `downloadProfile()` function
+- Remove IndexedDB from `syncProfile()` function
+- Clean up any remaining IndexedDB references in profile-sync.ts
+- Consider removing idb dependency if no longer needed elsewhere
+
+**Files**: `apps/site/src/lib/client/profile-sync.ts`
+
+---
+
 ## Mobile Compatibility Stubs
 
 ### 1. Encryption Handler (`packages/core/src/api/handlers/encryption.ts`)
@@ -25,6 +43,32 @@ This file tracks features that were stubbed or simplified for mobile compatibili
 
 **Current Behavior**: Returns "Voice training not available on mobile" error
 **Future Work**: Android Storage Access Framework, iOS Files integration
+
+---
+
+### 2.5. Native Voice Plugin (`apps/mobile/android/.../plugins/voice/NativeVoicePlugin.java`)
+**Status**: Stub implementation only
+**Intended Features**:
+- Native Android audio recording (better quality than WebView)
+- Hardware button capture for push-to-talk
+- Background audio playback
+- Wake word detection
+
+**Current Behavior**: Returns "not implemented" for all methods
+**Future Work**: Full Android AudioRecord/MediaPlayer implementation
+
+---
+
+### 2.6. Native LLM Plugin (`apps/mobile/android/.../plugins/llm/NativeLLMPlugin.java`)
+**Status**: Stub implementation only
+**Intended Features**:
+- On-device LLM inference using llama.cpp or similar
+- Model loading/unloading from device storage
+- Quantized model support for mobile GPUs
+- Offline inference capability
+
+**Current Behavior**: Returns "not implemented" for all methods
+**Future Work**: llama.cpp JNI bindings, model management, GPU acceleration (Vulkan/OpenCL)
 
 ---
 
@@ -72,6 +116,56 @@ This file tracks features that were stubbed or simplified for mobile compatibili
 
 ---
 
+## Program Update System
+
+### 5.5. Mobile APK Update UI Component
+**Status**: Backend complete, UI needed
+**Completed**:
+- NativeUpdater Android plugin (download + install APK)
+- Server endpoints `/api/mobile/version` and `/api/mobile/download`
+- Client-side `app-updater.ts` with platform detection
+
+**Missing UI**:
+- Settings panel component to check for updates
+- Download progress display
+- Release notes display
+- "What's new" dialog after update
+
+**Files**: Need new Svelte component in `apps/site/src/components/`
+
+---
+
+### 5.6. APK Release Workflow
+**Status**: Manual process, needs automation
+**Current Process**:
+1. Build APK with `./scripts/build-mobile.sh`
+2. Manually copy to `apps/mobile/releases/`
+3. Manually update `version.json`
+
+**Future Work**:
+- Build script to auto-increment versionCode
+- Auto-generate release notes from git commits
+- CI/CD integration for releases
+- Optional: GitHub Releases integration
+
+---
+
+### 5.7. Server Update UI Component
+**Status**: Backend complete, UI needed
+**Completed**:
+- Server endpoints `/api/server-update` (check/pull) and `/api/server-update/restart`
+- Client-side `app-updater.ts` with git status checking
+
+**Missing UI**:
+- Settings panel to show available updates
+- Commit list display
+- Update button with confirmation
+- Restart prompt after successful update
+
+**Files**: Need new Svelte component in `apps/site/src/components/`
+
+---
+
 ## UI/UX Improvements Needed
 
 ### 6. Status Widget Remote Provider Display
@@ -100,8 +194,13 @@ This file tracks features that were stubbed or simplified for mobile compatibili
 
 | Item | Priority | Effort | Impact |
 |------|----------|--------|--------|
+| IndexedDB Cleanup | HIGH | Low | Code cleanup |
 | Remote Provider APIs | HIGH | Medium | Critical for mobile |
+| Program Update UI | HIGH | Low | Essential feature |
+| APK Release Workflow | MEDIUM | Low | DevOps improvement |
 | Backend Auto-Detection | MEDIUM | Low | Improves UX |
+| Native Voice Plugin | MEDIUM | High | Better audio quality |
+| Native LLM Plugin | LOW | Very High | Offline inference |
 | Encryption (mobile) | LOW | High | Security feature |
 | External Storage | LOW | Medium | Power user feature |
 | Profile Path Security | LOW | Low | Already works |
@@ -119,4 +218,4 @@ This file tracks features that were stubbed or simplified for mobile compatibili
 
 ---
 
-*Last Updated: 2025-12-09*
+*Last Updated: 2025-12-10*

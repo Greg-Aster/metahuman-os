@@ -9,6 +9,7 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { getProfilePaths } from '../../paths.js';
+import { storageClient } from '../../storage-client.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -176,24 +177,34 @@ export async function handleSaveCredentialsSync(req: UnifiedRequest): Promise<Un
       };
     }
 
-    // Save credentials to user's profile etc/ directory
-    // Single source of truth - both web and mobile use the same location
-    const profilePaths = getProfilePaths(user.username);
-
-    // Ensure profile etc/ directory exists
-    if (!fs.existsSync(profilePaths.etc)) {
-      fs.mkdirSync(profilePaths.etc, { recursive: true });
-    }
+    // Save credentials to user's profile etc/ directory using storageClient
+    // This ensures consistent path resolution with llm-config.ts which reads these files
+    const resolveConfigPath = (filename: string): string => {
+      const result = storageClient.resolvePath({
+        username: user.username,
+        category: 'config',
+        subcategory: 'etc',
+        relativePath: filename,
+      });
+      if (result.success && result.path) {
+        return result.path;
+      }
+      // Fallback to getProfilePaths (only if storage router completely fails)
+      const profilePaths = getProfilePaths(user.username);
+      return path.join(profilePaths.etc, filename);
+    };
 
     // Save RunPod config to profile etc/runpod.json
     if (credentials.runpod) {
-      const runpodPath = path.join(profilePaths.etc, 'runpod.json');
+      const runpodPath = resolveConfigPath('runpod.json');
+      fs.mkdirSync(path.dirname(runpodPath), { recursive: true });
       fs.writeFileSync(runpodPath, JSON.stringify(credentials.runpod, null, 2));
     }
 
     // Save remote backend config to profile etc/llm-backend.json
     if (credentials.remote) {
-      const backendPath = path.join(profilePaths.etc, 'llm-backend.json');
+      const backendPath = resolveConfigPath('llm-backend.json');
+      fs.mkdirSync(path.dirname(backendPath), { recursive: true });
       let backendConfig: Record<string, unknown> = {};
       if (fs.existsSync(backendPath)) {
         try {

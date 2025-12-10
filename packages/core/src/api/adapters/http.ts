@@ -12,6 +12,7 @@ import { routeRequest } from '../router.js';
 import type { UnifiedRequest, UnifiedResponse, UnifiedUser } from '../types.js';
 import { validateSession } from '../../sessions.js';
 import { getUser } from '../../users.js';
+import { withUserContext } from '../../context.js';
 
 /**
  * Parse cookies from Cookie header string
@@ -67,6 +68,7 @@ export function buildUnifiedRequest(params: {
   path: string;
   method: string;
   body?: unknown;
+  rawBody?: Buffer;
   query?: Record<string, string>;
   headers?: Record<string, string>;
   cookieHeader?: string | null;
@@ -79,6 +81,7 @@ export function buildUnifiedRequest(params: {
     path: params.path.split('?')[0], // Remove query string from path
     method: params.method as UnifiedRequest['method'],
     body: params.body,
+    rawBody: params.rawBody,
     query: params.query || {},
     headers: params.headers || {},
     user,
@@ -141,6 +144,7 @@ export async function handleHttpRequest(params: {
   path: string;
   method: string;
   body?: unknown;
+  rawBody?: Buffer;
   query?: Record<string, string>;
   headers?: Record<string, string>;
   cookieHeader?: string | null;
@@ -148,10 +152,19 @@ export async function handleHttpRequest(params: {
   // Build unified request
   const request = buildUnifiedRequest(params);
 
-  // Route to handler
+  // Route to handler WITH user context set
+  // This ensures getUserContext() works in downstream code (e.g., bridge.ts, model-router.ts)
   let response: UnifiedResponse;
   try {
-    response = await routeRequest(request);
+    // Wrap handler in user context so getUserContext() returns the authenticated user
+    response = await withUserContext(
+      {
+        userId: request.user.userId,
+        username: request.user.username,
+        role: request.user.role,
+      },
+      () => routeRequest(request)
+    );
   } catch (error) {
     console.error('[http-adapter] Handler error:', error);
     response = {

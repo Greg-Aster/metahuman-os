@@ -26,17 +26,22 @@ import {
   decrypt,
   ENCRYPTED_EXTENSION,
 } from '../../packages/core/src/encryption.js';
+import { resolveProfileRoot as pathBuilderResolveProfileRoot, systemPaths, getDefaultProfilePath } from '../../packages/core/src/path-builder.js';
 
 /**
  * Resolve username from request or context
  * Allows backwards-compatible migration where callers can omit username
  */
 function resolveUsername(username?: string): string | null {
-  if (username) return username;
+  if (username) {
+    return username;
+  }
   const context = getUserContext();
   if (context && context.username && context.username !== 'anonymous') {
     return context.username;
   }
+  // Only log when debugging username resolution issues
+  // console.log(`[storage-router] resolveUsername: NO USERNAME`);
   return null;
 }
 
@@ -149,37 +154,15 @@ export interface ReadResult {
   error?: string;
 }
 
-/**
- * Find the repository root by walking up the directory tree
- */
-function findRepoRoot(): string {
-  // Start from current file and walk up
-  let dir = path.dirname(new URL(import.meta.url).pathname);
-  const fsRoot = path.parse(dir).root;
-  while (true) {
-    if (fs.existsSync(path.join(dir, 'pnpm-workspace.yaml'))) {
-      return dir;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir || dir === fsRoot) break;
-    dir = parent;
-  }
-  // Fallback to env or home
-  return process.env.METAHUMAN_ROOT || path.join(process.env.HOME || '/home', 'metahuman');
-}
-
-const REPO_ROOT = findRepoRoot();
-
-/**
- * Get the default profile root for a user (fallback when no storage config)
- */
-function getDefaultProfileRoot(username: string): string {
-  // Default to profiles/{username}/ within the repo
-  return path.join(REPO_ROOT, 'profiles', username);
-}
+// NOTE: isMobileEnvironment(), findRepoRoot(), REPO_ROOT, getDefaultProfileRoot() were REMOVED
+// because resolveProfileRoot() now delegates to path-builder.ts which is the single source of truth.
+// See docs/SCRATCHPAD-RUNPOD-FIX.md "UNIFIED PATH ROUTING FIX" section.
 
 /**
  * Resolve the profile root for a user based on their storage configuration
+ *
+ * DELEGATES to path-builder.ts which is the SINGLE SOURCE OF TRUTH for path resolution.
+ * This ensures consistent behavior across mobile and desktop.
  */
 export function resolveProfileRoot(username?: string): StorageResponse {
   const resolvedUsername = resolveUsername(username);
@@ -192,43 +175,19 @@ export function resolveProfileRoot(username?: string): StorageResponse {
   }
 
   try {
-    const storageConfig = getProfileStorageConfig(resolvedUsername);
+    // Delegate to path-builder - THE single source of truth for profile root resolution
+    // path-builder handles: mobile detection, custom storage paths, fallback behavior
+    const resolution = pathBuilderResolveProfileRoot(resolvedUsername);
 
-    if (!storageConfig || !storageConfig.path) {
-      // No storage config - use default location
-      const defaultRoot = getDefaultProfileRoot(resolvedUsername);
-      return {
-        success: true,
-        path: defaultRoot,
-        profileRoot: defaultRoot,
-        storageType: 'internal',
-      };
-    }
-
-    // Check if the configured path exists
-    if (!fs.existsSync(storageConfig.path)) {
-      // Path doesn't exist - could be unmounted drive
-      if (storageConfig.fallbackBehavior === 'error') {
-        return {
-          success: false,
-          error: `Profile storage path not available: ${storageConfig.path}`,
-        };
-      }
-      // Readonly fallback - return path but mark as unavailable
-      return {
-        success: true,
-        path: storageConfig.path,
-        profileRoot: storageConfig.path,
-        storageType: storageConfig.type,
-        error: 'Storage path unavailable - readonly mode',
-      };
-    }
+    // Map 'unknown' to 'internal' for StorageResponse compatibility
+    const storageType = resolution.storageType === 'unknown' ? 'internal' : resolution.storageType;
 
     return {
       success: true,
-      path: storageConfig.path,
-      profileRoot: storageConfig.path,
-      storageType: storageConfig.type,
+      path: resolution.root,
+      profileRoot: resolution.root,
+      storageType,
+      error: resolution.usingFallback ? resolution.fallbackReason : undefined,
     };
   } catch (error) {
     return {
@@ -628,7 +587,7 @@ export function getStorageStatus(username?: string): {
     return {
       configured: false,
       available: true,
-      path: REPO_ROOT,
+      path: systemPaths.root,
       type: 'internal',
     };
   }
@@ -638,7 +597,7 @@ export function getStorageStatus(username?: string): {
     return {
       configured: false,
       available: true,
-      path: getDefaultProfileRoot(resolvedUsername),
+      path: getDefaultProfilePath(resolvedUsername),
       type: 'internal',
     };
   }

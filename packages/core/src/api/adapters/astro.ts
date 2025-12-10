@@ -39,12 +39,28 @@ export const astroHandler: AstroAPIRoute = async (context: AstroAPIContext) => {
 
   // Parse body for non-GET requests
   let body: unknown;
+  let rawBody: Buffer | undefined;
   if (request.method !== 'GET' && request.method !== 'HEAD') {
-    try {
-      const text = await request.text();
-      body = text ? JSON.parse(text) : undefined;
-    } catch {
-      body = undefined;
+    const contentType = request.headers.get('content-type') || '';
+
+    // Handle binary bodies (audio, images, etc.) - pass as rawBody
+    if (contentType.startsWith('audio/') ||
+        contentType.startsWith('image/') ||
+        contentType === 'application/octet-stream') {
+      try {
+        const arrayBuffer = await request.arrayBuffer();
+        rawBody = Buffer.from(arrayBuffer);
+      } catch {
+        rawBody = undefined;
+      }
+    } else {
+      // Parse JSON body
+      try {
+        const text = await request.text();
+        body = text ? JSON.parse(text) : undefined;
+      } catch {
+        body = undefined;
+      }
     }
   }
 
@@ -65,6 +81,7 @@ export const astroHandler: AstroAPIRoute = async (context: AstroAPIContext) => {
     path: url.pathname,
     method: request.method,
     body,
+    rawBody,
     query,
     headers,
     cookieHeader: request.headers.get('cookie'),
