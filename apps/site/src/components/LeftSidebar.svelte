@@ -450,16 +450,22 @@
     loadingModelRegistry = true;
 
     try {
-      const response = await apiFetch('/api/model-registry');
+      // Pass current cognitive mode to get EFFECTIVE role assignments
+      const mode = get(currentMode);
+      const queryParams = mode ? `?cognitiveMode=${encodeURIComponent(mode)}` : '';
+      const response = await apiFetch(`/api/model-registry${queryParams}`);
       const data = await response.json();
 
       if (data.success) {
         availableModels = data.availableModels || [];
         roleAssignments = data.roleAssignments || {};
 
-        // Model registry may override backend info for owners
+        // Model registry provides actual backend status (what's running)
         if (data.activeBackend) {
           activeBackend = data.activeBackend;
+        }
+        if (data.resolvedBackend) {
+          resolvedBackend = data.resolvedBackend;
         }
         if (data.localModel) {
           localModel = data.localModel;
@@ -533,6 +539,7 @@
   }
 
   async function assignModelToRole(role: string, modelId: string) {
+    console.log(`[LeftSidebar] assignModelToRole called: role=${role}, modelId=${modelId}`);
     try {
       const mode = get(currentMode);
       const payload: Record<string, any> = { role, modelId };
@@ -540,13 +547,16 @@
         payload.cognitiveMode = mode;
       }
 
+      console.log(`[LeftSidebar] Making POST to /api/model-registry with payload:`, payload);
       const response = await apiFetch('/api/model-registry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
+      console.log(`[LeftSidebar] POST response status: ${response.status}`);
       const result = await response.json();
+      console.log(`[LeftSidebar] POST result:`, result);
 
       if (result.success) {
         roleAssignments[role] = modelId;
@@ -708,7 +718,7 @@
         <!-- Backend Indicator -->
         <div class="backend-indicator">
           {#if resolvedBackend === 'remote' || activeBackend === 'remote'}
-            <span class="backend-badge remote">☁️ {remoteProvider ? remoteProviderNames[remoteProvider] : 'Remote'}</span>
+            <span class="backend-badge remote">☁️ Remote</span>
           {:else if resolvedBackend === 'vllm' || activeBackend === 'vllm'}
             <span class="backend-badge vllm">⚡ vLLM</span>
           {:else if resolvedBackend === 'ollama' || activeBackend === 'ollama'}
@@ -720,7 +730,8 @@
           {:else}
             <span class="backend-badge ollama">🦙 Ollama</span>
           {/if}
-          {#if localModel}
+          {#if localModel && (resolvedBackend === 'vllm' || activeBackend === 'vllm')}
+            <!-- vLLM only: Show the locked model name since vLLM runs ONE model at a time -->
             <span class="local-model-name">
               {localModel.name}
               {#if localModel.locked}
@@ -739,7 +750,17 @@
               </span>
               <span class="role-name">{role}</span>
               <span class="role-arrow">→</span>
-              {#if info.error}
+              {#if info.needsConfig}
+                <!-- Provider unavailable - show clickable button to select available model -->
+                <button
+                  class="role-model needs-config"
+                  title="{info.unavailableReason || 'Model unavailable'} - Click to select an available model"
+                  on:click|stopPropagation={() => toggleModelDropdown(role)}
+                >
+                  select
+                  <span class="dropdown-arrow">▼</span>
+                </button>
+              {:else if info.error}
                 <span class="role-model error" title={info.error}>error</span>
               {:else}
                 <button
@@ -753,8 +774,10 @@
                   {/if}
                   <span class="dropdown-arrow">▼</span>
                 </button>
+              {/if}
 
-                {#if modelDropdownOpen[role]}
+              <!-- Model dropdown - rendered outside if/else so it works for both needsConfig and normal buttons -->
+              {#if modelDropdownOpen[role]}
                   <div class="model-dropdown categorized">
                     <div class="dropdown-header">Select model for {role}</div>
 
@@ -882,7 +905,6 @@
                     {/if}
                   </div>
                 {/if}
-              {/if}
             </div>
           {/each}
         {/if}
@@ -1234,6 +1256,30 @@
 
   :global(.dark) .role-model.error {
     color: rgb(248 113 113);
+  }
+
+  .role-model.needs-config {
+    color: rgb(234 179 8);
+    font-style: italic;
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    padding: 0;
+    font-size: inherit;
+    font-family: inherit;
+  }
+
+  .role-model.needs-config:hover {
+    color: rgb(250 204 21);
+    text-decoration: underline;
+  }
+
+  :global(.dark) .role-model.needs-config {
+    color: rgb(250 204 21);
+  }
+
+  :global(.dark) .role-model.needs-config:hover {
+    color: rgb(253 224 71);
   }
 
   .adapter-indicator {

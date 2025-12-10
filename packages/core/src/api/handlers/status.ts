@@ -22,14 +22,8 @@ import { getMemoryMetrics } from '../../memory-metrics-cache.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Cache implementation for /api/status
-const statusCache = new Map<string, { data: any; timestamp: number }>();
-const CACHE_TTL = 5000; // 5 seconds
-
-// Export function to invalidate status cache
-export function invalidateStatusCache(): void {
-  statusCache.clear();
-}
+// NOTE: statusCache was REMOVED - it was redundant with model-resolver's registryCache
+// and caused cache invalidation bugs. Model data is already cached by registryCache (1 min TTL).
 
 /**
  * GET /api/status - Full system status
@@ -41,7 +35,6 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
   try {
     const { user } = req;
     const isAuthenticated = user.isAuthenticated;
-    const now = Date.now();
 
     // Load cognitive mode
     let cognitiveMode = 'emulation';
@@ -52,14 +45,7 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
       // Default to emulation if can't load
     }
 
-    // Cache key includes cognitive mode and user
-    const cacheKey = `status-${cognitiveMode}-${user.username || 'anon'}`;
-
-    // Return cached if fresh
-    const cached = statusCache.get(cacheKey);
-    if (cached && now - cached.timestamp < CACHE_TTL) {
-      return successResponse(cached.data);
-    }
+    console.log(`[status] Building status for user=${user.username}, cognitiveMode=${cognitiveMode}, isAuth=${isAuthenticated}`);
 
     // Load user-specific data only for authenticated users
     let persona: any;
@@ -171,24 +157,62 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
     let registryVersion: string | null = null;
     const modelUsername = isAuthenticated ? user.username : undefined;
 
+    // Get backend status to know which providers are available
+    const backendStatus = await getBackendStatus();
+    const availableProviders = new Set<string>();
+
+    // Add available providers based on what's actually running
+    if (backendStatus.resolvedBackend === 'ollama' && backendStatus.running) {
+      availableProviders.add('ollama');
+    }
+    if (backendStatus.resolvedBackend === 'vllm' && backendStatus.running) {
+      availableProviders.add('vllm');
+    }
+    // Remote providers are always "available" (RunPod, OpenAI, etc.)
+    // The actual API call will fail if credentials are wrong, but they're selectable
+    availableProviders.add('runpod_serverless');
+    availableProviders.add('openai');
+    availableProviders.add('openrouter');
+    availableProviders.add('huggingface');
+    availableProviders.add('claude-code');
+    availableProviders.add('anthropic');
+
     try {
       const registry = loadModelRegistry(false, modelUsername);
       registryVersion = registry.version;
 
       const modeMappings = registry.cognitiveModeMappings?.[cognitiveMode];
+      console.log(`[status] cognitiveModeMappings for '${cognitiveMode}':`, JSON.stringify(modeMappings || {}, null, 2));
+
       if (modeMappings) {
         for (const [role, modelId] of Object.entries(modeMappings)) {
           if (role === 'description' || modelId === null) continue;
+          console.log(`[status] Role '${role}' mapped to modelId '${modelId}' in cognitiveModeMappings`);
           try {
             const resolved = resolveModelForCognitiveMode(cognitiveMode, role as any, modelUsername);
-            modelRoles[role] = {
-              modelId: resolved.id,
-              provider: resolved.provider,
-              model: resolved.model,
-              adapters: resolved.adapters,
-              baseModel: resolved.baseModel,
-              temperature: resolved.options.temperature,
-            };
+            console.log(`[status] Resolved for role '${role}': id=${resolved.id}, provider=${resolved.provider}, model=${resolved.model}`);
+
+            // Only include if the provider is available
+            if (availableProviders.has(resolved.provider)) {
+              modelRoles[role] = {
+                modelId: resolved.id,
+                provider: resolved.provider,
+                model: resolved.model,
+                adapters: resolved.adapters,
+                baseModel: resolved.baseModel,
+                temperature: resolved.options.temperature,
+              };
+            } else {
+              // Provider not available - mark as needing configuration
+              // Don't show as "error" - user just needs to select an available model
+              modelRoles[role] = {
+                modelId: resolved.id,
+                provider: resolved.provider,
+                model: null, // NULL means no model available
+                needsConfig: true, // User should select an available model
+                unavailableReason: `${resolved.provider} not available`,
+              };
+            }
           } catch {}
         }
       } else {
@@ -196,14 +220,28 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
         for (const role of roles) {
           try {
             const resolved = resolveModelForCognitiveMode(cognitiveMode, role, modelUsername);
-            modelRoles[role] = {
-              modelId: resolved.id,
-              provider: resolved.provider,
-              model: resolved.model,
-              adapters: resolved.adapters,
-              baseModel: resolved.baseModel,
-              temperature: resolved.options.temperature,
-            };
+
+            // Only include if the provider is available
+            if (availableProviders.has(resolved.provider)) {
+              modelRoles[role] = {
+                modelId: resolved.id,
+                provider: resolved.provider,
+                model: resolved.model,
+                adapters: resolved.adapters,
+                baseModel: resolved.baseModel,
+                temperature: resolved.options.temperature,
+              };
+            } else {
+              // Provider not available - mark as needing configuration
+              // Don't show as "error" - user just needs to select an available model
+              modelRoles[role] = {
+                modelId: resolved.id,
+                provider: resolved.provider,
+                model: null, // NULL means no model available
+                needsConfig: true, // User should select an available model
+                unavailableReason: `${resolved.provider} not available`,
+              };
+            }
           } catch {}
         }
       }
@@ -311,7 +349,10 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
       }
 
       // Load cloud models from user's profile models.json
-      systemHealth.cloudModels = loadCloudModelsFromRegistry(isAuthenticated ? user.username : undefined);
+      const cloudUsername = isAuthenticated ? user.username : undefined;
+      console.log(`[status] Loading cloud models for: isAuthenticated=${isAuthenticated}, username=${cloudUsername}`);
+      systemHealth.cloudModels = loadCloudModelsFromRegistry(cloudUsername);
+      console.log(`[status] Loaded ${systemHealth.cloudModels.length} cloud models`);
     } catch {
       systemHealth.llmBackend = 'error';
     }
@@ -436,9 +477,6 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
       },
     };
 
-    // Cache the response
-    statusCache.set(cacheKey, { data: responseData, timestamp: now });
-
     return successResponse(responseData);
   } catch (error) {
     console.error('[status] Error:', error);
@@ -475,12 +513,14 @@ function loadCloudModelsFromRegistry(username?: string): Array<{ id: string; mod
 
   // Must have a username to load profile-specific models
   if (!username) {
+    console.log(`[status] loadCloudModelsFromRegistry: No username provided, returning empty`);
     return cloudModels;
   }
 
   try {
     const profilePaths = getProfilePaths(username);
     const modelsPath = path.join(profilePaths.etc, 'models.json');
+    console.log(`[status] loadCloudModelsFromRegistry: Checking ${modelsPath}`);
     if (!fs.existsSync(modelsPath)) {
       console.log(`[status] No models.json found at ${modelsPath}`);
       return cloudModels;

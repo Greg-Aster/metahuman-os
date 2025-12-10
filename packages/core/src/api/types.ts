@@ -32,6 +32,9 @@ export interface UnifiedRequest {
   /** Request body (parsed JSON) */
   body?: any;
 
+  /** Raw binary body (for audio, images, etc.) */
+  rawBody?: Buffer;
+
   /** Query parameters */
   query?: Record<string, string>;
 

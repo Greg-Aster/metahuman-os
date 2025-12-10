@@ -512,11 +512,34 @@ export async function handleGetProfileMemories(req: UnifiedRequest): Promise<Uni
     });
   }
 
-  // Collect all memory files
-  const allFiles: { path: string; mtime: Date }[] = [];
+  // Get list of memory IDs to exclude (already on device)
+  const excludeIds = query?.exclude
+    ? (Array.isArray(query.exclude) ? query.exclude : query.exclude.split(','))
+    : [];
+  const excludeSet = new Set(excludeIds);
+
+  // Collect memory files using FILENAME date prefix (efficient - no file reads)
+  // Files are named: YYYY-MM-DD-<uuid>.json
+  const allFiles: { path: string; filename: string; datePrefix: string }[] = [];
+
+  // Calculate cutoff date string for comparison (YYYY-MM-DD format)
+  const cutoffDateStr = cutoffDate
+    ? cutoffDate.toISOString().split('T')[0]  // "2024-01-15"
+    : null;
+
+  // Filter years first for efficiency
+  const cutoffYear = cutoffDate ? cutoffDate.getFullYear() : 0;
 
   const years = fs.readdirSync(episodicDir, { withFileTypes: true })
     .filter(dirent => dirent.isDirectory())
+    .filter(dirent => {
+      // Skip years before cutoff (if cutoff specified)
+      if (cutoffYear > 0) {
+        const year = parseInt(dirent.name, 10);
+        return !isNaN(year) && year >= cutoffYear;
+      }
+      return true;
+    })
     .map(dirent => dirent.name);
 
   for (const year of years) {
@@ -524,25 +547,37 @@ export async function handleGetProfileMemories(req: UnifiedRequest): Promise<Uni
     if (fs.existsSync(yearDir)) {
       const files = fs.readdirSync(yearDir)
         .filter(file => file.endsWith('.json'))
+        .filter(file => {
+          // Extract date from filename: YYYY-MM-DD-<uuid>.json
+          const datePrefix = file.substring(0, 10);  // "2024-01-15"
+
+          // Filter by date prefix (string comparison works for ISO dates)
+          if (cutoffDateStr && datePrefix < cutoffDateStr) {
+            return false;
+          }
+
+          // Skip excluded IDs (extract ID from filename)
+          const memId = file.replace('.json', '');
+          if (excludeSet.has(memId)) {
+            return false;
+          }
+
+          return true;
+        })
         .map(file => {
           const filePath = path.join(yearDir, file);
-          const stat = fs.statSync(filePath);
-          return { path: filePath, mtime: stat.mtime };
+          const datePrefix = file.substring(0, 10);
+          return { path: filePath, filename: file, datePrefix };
         });
       allFiles.push(...files);
     }
   }
 
-  // Filter by date if specified
-  const filteredFiles = cutoffDate
-    ? allFiles.filter(f => f.mtime >= cutoffDate!)
-    : allFiles;
-
-  // Sort by modification time (newest first)
-  filteredFiles.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+  // Sort by date prefix (newest first) - string comparison works for ISO dates
+  allFiles.sort((a, b) => b.datePrefix.localeCompare(a.datePrefix));
 
   // Apply pagination
-  const pageFiles = filteredFiles.slice(offset, offset + limit);
+  const pageFiles = allFiles.slice(offset, offset + limit);
 
   for (const fileInfo of pageFiles) {
     try {
@@ -554,15 +589,14 @@ export async function handleGetProfileMemories(req: UnifiedRequest): Promise<Uni
     }
   }
 
-  const hasMore = offset + limit < filteredFiles.length;
+  const hasMore = offset + limit < allFiles.length;
 
-  console.log(`[profile-sync] Memories: ${filteredFiles.length} total${cutoffDate ? ` (filtered to last ${daysParam || 'since ' + cutoffDate.toISOString()})` : ''}, returning ${memories.length} at offset ${offset}`);
+  console.log(`[profile-sync] Memories: ${allFiles.length} total${cutoffDate ? ` (filtered to last ${daysParam} days)` : ''}, excluded ${excludeSet.size}, returning ${memories.length} at offset ${offset}`);
 
   return successResponse({
     memories,
     hasMore,
-    total: filteredFiles.length,
-    totalUnfiltered: allFiles.length,
+    total: allFiles.length,
     offset,
     limit,
     filtered: cutoffDate ? true : false,

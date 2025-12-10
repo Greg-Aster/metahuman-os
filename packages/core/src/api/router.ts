@@ -600,10 +600,10 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/models', handler: handleGetModels, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/models', handler: handleSetModels, requiresAuth: true, guard: 'owner' },
 
-  // Model Registry
-  { method: 'GET', pattern: '/api/model-registry', handler: handleGetModelRegistry, requiresAuth: true, guard: 'owner' },
-  { method: 'POST', pattern: '/api/model-registry', handler: handleAssignModelRole, requiresAuth: true, guard: 'owner' },
-  { method: 'PUT', pattern: '/api/model-registry', handler: handleUpdateModelSettings, requiresAuth: true, guard: 'owner' },
+  // Model Registry - authenticated users can manage their own model preferences
+  { method: 'GET', pattern: '/api/model-registry', handler: handleGetModelRegistry, requiresAuth: true },
+  { method: 'POST', pattern: '/api/model-registry', handler: handleAssignModelRole, requiresAuth: true },
+  { method: 'PUT', pattern: '/api/model-registry', handler: handleUpdateModelSettings, requiresAuth: true },
 
   // Fine-Tune Models
   { method: 'GET', pattern: '/api/fine-tune/models', handler: handleGetFineTuneModels, requiresAuth: true, guard: 'owner' },
