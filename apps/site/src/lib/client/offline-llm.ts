@@ -5,8 +5,13 @@
  * Handles model loading, persona context, and chat generation.
  */
 
-import { NativeLLM } from './plugins/native-llm';
 import { getPersona } from './local-memory';
+
+// Dynamic import for NativeLLM to avoid @capacitor/core bundle issues on web
+async function getNativeLLM() {
+  const { NativeLLM } = await import('./plugins/native-llm');
+  return NativeLLM;
+}
 
 export interface OfflineChatOptions {
   maxTokens?: number;
@@ -32,6 +37,7 @@ export class OfflineLLM {
    */
   async isLoaded(): Promise<boolean> {
     try {
+      const NativeLLM = await getNativeLLM();
       const status = await NativeLLM.isModelLoaded();
       this.loaded = status.loaded;
       this.currentModel = status.modelName || null;
@@ -48,6 +54,7 @@ export class OfflineLLM {
     if (this.loaded) return;
 
     try {
+      const NativeLLM = await getNativeLLM();
       const status = await NativeLLM.isModelLoaded();
       if (status.loaded) {
         this.loaded = true;
@@ -90,6 +97,7 @@ export class OfflineLLM {
     if (!this.loaded) return;
 
     try {
+      const NativeLLM = await getNativeLLM();
       await NativeLLM.unloadModel();
       this.loaded = false;
       this.currentModel = null;
@@ -130,11 +138,12 @@ export class OfflineLLM {
       ? `You are ${persona}. Respond naturally and briefly.`
       : 'You are a helpful assistant. Respond naturally and briefly.';
 
-    const messages = [
+    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: message },
     ];
 
+    const NativeLLM = await getNativeLLM();
     const result = await NativeLLM.chat({ messages });
     return result.response;
   }
@@ -145,6 +154,7 @@ export class OfflineLLM {
   async generate(prompt: string, options?: OfflineChatOptions): Promise<string> {
     await this.ensureLoaded();
 
+    const NativeLLM = await getNativeLLM();
     const result = await NativeLLM.generate({
       prompt,
       maxTokens: options?.maxTokens || 256,
@@ -186,7 +196,8 @@ User: ${message}
 Assistant:`;
 
     // Set up token listener
-    const listener = await NativeLLM.addListener('generateProgress', (event) => {
+    const NativeLLM = await getNativeLLM();
+    const listener = await NativeLLM.addListener('inferenceToken', (event) => {
       onToken(event.token);
     });
 
@@ -206,6 +217,7 @@ Assistant:`;
    */
   async isAvailable(): Promise<boolean> {
     try {
+      const NativeLLM = await getNativeLLM();
       const result = await NativeLLM.listModels();
       return result.models.length > 0;
     } catch {
@@ -218,10 +230,11 @@ Assistant:`;
    */
   async getAvailableModels(): Promise<OfflineModelInfo[]> {
     try {
+      const NativeLLM = await getNativeLLM();
       const result = await NativeLLM.listModels();
       const status = await NativeLLM.isModelLoaded();
 
-      return result.models.map(m => ({
+      return result.models.map((m) => ({
         name: m.name,
         loaded: status.loaded && status.modelName === m.name,
         contextSize: 2048, // Default

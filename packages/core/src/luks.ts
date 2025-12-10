@@ -13,13 +13,165 @@
  *
  * Requirements:
  * - cryptsetup package (sudo apt install cryptsetup)
- * - Root/sudo access for mount operations
+ * - Polkit setup (run: sudo ./scripts/setup-encryption.sh) OR sudo access
+ *
+ * Privilege Escalation:
+ * - Prefers polkit (pkexec) with metahuman-luks-helper script
+ * - Falls back to sudo if polkit not configured
  */
 
-import { execSync, spawn } from 'child_process';
+import { execSync, spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { audit } from './audit.js';
+
+/**
+ * Path to the polkit helper script
+ */
+const LUKS_HELPER_PATH = '/usr/local/bin/metahuman-luks-helper';
+
+/**
+ * Check if polkit helper is installed
+ */
+export function isPolkitConfigured(): boolean {
+  return fs.existsSync(LUKS_HELPER_PATH);
+}
+
+/**
+ * Run a privileged LUKS command
+ * Uses pkexec with helper if available, falls back to sudo
+ */
+async function runPrivileged(
+  action: string,
+  args: string[],
+  password?: string
+): Promise<{ success: boolean; stdout: string; stderr: string }> {
+  const usePolkit = isPolkitConfigured();
+
+  return new Promise((resolve) => {
+    let proc;
+
+    if (usePolkit) {
+      // Use pkexec with our helper script
+      proc = spawn('pkexec', [LUKS_HELPER_PATH, action, ...args], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } else {
+      // Fall back to sudo with direct command
+      const sudoArgs = getSudoArgsForAction(action, args);
+      proc = spawn('sudo', sudoArgs, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    }
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on('close', (code) => {
+      resolve({
+        success: code === 0,
+        stdout: stdout.trim(),
+        stderr: stderr.trim(),
+      });
+    });
+
+    proc.on('error', (err) => {
+      resolve({
+        success: false,
+        stdout: '',
+        stderr: err.message,
+      });
+    });
+
+    // Send password to stdin if provided
+    if (password) {
+      proc.stdin.write(password + '\n');
+    }
+    proc.stdin.end();
+  });
+}
+
+/**
+ * Run a privileged LUKS command synchronously (for info queries)
+ * Uses pkexec with helper if available, falls back to sudo
+ */
+function runPrivilegedSync(
+  action: string,
+  args: string[]
+): { success: boolean; stdout: string; stderr: string } {
+  const usePolkit = isPolkitConfigured();
+
+  try {
+    let result;
+    if (usePolkit) {
+      result = spawnSync('pkexec', [LUKS_HELPER_PATH, action, ...args], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } else {
+      const sudoArgs = getSudoArgsForAction(action, args);
+      result = spawnSync('sudo', sudoArgs, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    }
+
+    return {
+      success: result.status === 0,
+      stdout: result.stdout?.toString().trim() || '',
+      stderr: result.stderr?.toString().trim() || '',
+    };
+  } catch (err) {
+    return {
+      success: false,
+      stdout: '',
+      stderr: (err as Error).message,
+    };
+  }
+}
+
+/**
+ * Convert helper action to sudo args (fallback mode)
+ */
+function getSudoArgsForAction(action: string, args: string[]): string[] {
+  switch (action) {
+    case 'open':
+      return ['cryptsetup', 'luksOpen', args[0], args[1]];
+    case 'close':
+      return ['cryptsetup', 'luksClose', args[0]];
+    case 'mount':
+      return ['mount', `/dev/mapper/${args[0]}`, args[1]];
+    case 'unmount':
+      return ['umount', args[0]];
+    case 'format':
+      return [
+        'cryptsetup', 'luksFormat',
+        '--type', 'luks2',
+        '--cipher', 'aes-xts-plain64',
+        '--key-size', '512',
+        '--hash', 'sha256',
+        '--iter-time', '2000',
+        '--batch-mode',
+        args[0],
+      ];
+    case 'mkfs':
+      return ['mkfs.ext4', '-L', 'metahuman', `/dev/mapper/${args[0]}`];
+    case 'uuid':
+      return ['cryptsetup', 'luksUUID', args[0]];
+    case 'dump':
+      return ['cryptsetup', 'luksDump', args[0]];
+    case 'chown':
+      return ['chown', args[1], args[0]];
+    default:
+      throw new Error(`Unknown action: ${action}`);
+  }
+}
 
 export interface LuksResult {
   success: boolean;
@@ -100,15 +252,8 @@ export function getLuksMountPoint(mapperName: string): string | null {
  * Get UUID of a LUKS container
  */
 export function getLuksUUID(volumePath: string): string | null {
-  try {
-    const output = execSync(`sudo cryptsetup luksUUID ${volumePath}`, {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-    return output.trim() || null;
-  } catch {
-    return null;
-  }
+  const result = runPrivilegedSync('uuid', [volumePath]);
+  return result.success ? result.stdout || null : null;
 }
 
 /**
@@ -120,19 +265,14 @@ export function getLuksInfo(volumePath: string, mapperName: string): LuksVolumeI
   let cipher: string | undefined;
   let keySize: number | undefined;
 
-  try {
-    const output = execSync(`sudo cryptsetup luksDump ${volumePath}`, {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-
+  const dumpResult = runPrivilegedSync('dump', [volumePath]);
+  if (dumpResult.success) {
+    const output = dumpResult.stdout;
     const cipherMatch = output.match(/Cipher name:\s+(.+)/);
     const keySizeMatch = output.match(/MK bits:\s+(\d+)/);
 
     cipher = cipherMatch?.[1]?.trim();
     keySize = keySizeMatch ? parseInt(keySizeMatch[1], 10) : undefined;
-  } catch {
-    // Ignore errors from luksDump
   }
 
   return {
@@ -167,31 +307,9 @@ export async function openLuks(
     return { success: false, error: `Volume not found: ${volumePath}` };
   }
 
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn('sudo', ['cryptsetup', 'luksOpen', volumePath, mapperName], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+  const result = await runPrivileged('open', [volumePath, mapperName], password);
 
-      let stderr = '';
-      proc.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      proc.on('close', (code) => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(new Error(stderr || `cryptsetup exited with code ${code}`));
-        }
-      });
-
-      proc.on('error', (err) => reject(err));
-
-      proc.stdin.write(password + '\n');
-      proc.stdin.end();
-    });
-
+  if (result.success) {
     audit({
       level: 'info',
       category: 'security',
@@ -199,20 +317,19 @@ export async function openLuks(
       details: { volumePath, mapperName },
       actor: 'system',
     });
-
     return { success: true };
-  } catch (err) {
-    const errorMsg = (err as Error).message;
-
-    if (errorMsg.includes('No key available') || errorMsg.includes('wrong')) {
-      return { success: false, error: 'Incorrect password' };
-    }
-    if (errorMsg.includes('not a valid LUKS')) {
-      return { success: false, error: 'Not a valid LUKS volume' };
-    }
-
-    return { success: false, error: errorMsg };
   }
+
+  const errorMsg = result.stderr;
+
+  if (errorMsg.includes('No key available') || errorMsg.includes('wrong')) {
+    return { success: false, error: 'Incorrect password' };
+  }
+  if (errorMsg.includes('not a valid LUKS')) {
+    return { success: false, error: 'Not a valid LUKS volume' };
+  }
+
+  return { success: false, error: errorMsg || 'Failed to open LUKS volume' };
 }
 
 /**
@@ -232,9 +349,9 @@ export async function closeLuks(mapperName: string): Promise<LuksResult> {
     };
   }
 
-  try {
-    execSync(`sudo cryptsetup luksClose ${mapperName}`, { stdio: 'pipe' });
+  const result = await runPrivileged('close', [mapperName]);
 
+  if (result.success) {
     audit({
       level: 'info',
       category: 'security',
@@ -242,11 +359,10 @@ export async function closeLuks(mapperName: string): Promise<LuksResult> {
       details: { mapperName },
       actor: 'system',
     });
-
     return { success: true };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
   }
+
+  return { success: false, error: result.stderr || 'Failed to close LUKS volume' };
 }
 
 /**
@@ -268,20 +384,18 @@ export async function mountLuks(
     return { success: false, error: `Already mounted at ${existingMount}` };
   }
 
-  // Ensure mount point exists
+  // Mount point creation is handled by helper script or we create it here
   if (!fs.existsSync(mountPoint)) {
     try {
       fs.mkdirSync(mountPoint, { recursive: true });
-    } catch (err) {
-      return { success: false, error: `Cannot create mount point: ${(err as Error).message}` };
+    } catch {
+      // If we can't create it, the privileged helper will do it
     }
   }
 
-  const mapperPath = `/dev/mapper/${mapperName}`;
+  const result = await runPrivileged('mount', [mapperName, mountPoint]);
 
-  try {
-    execSync(`sudo mount ${mapperPath} ${mountPoint}`, { stdio: 'pipe' });
-
+  if (result.success) {
     audit({
       level: 'info',
       category: 'security',
@@ -289,11 +403,10 @@ export async function mountLuks(
       details: { mapperName, mountPoint },
       actor: 'system',
     });
-
     return { success: true, mountPoint };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
   }
+
+  return { success: false, error: result.stderr || 'Failed to mount LUKS volume' };
 }
 
 /**
@@ -305,10 +418,13 @@ export async function unmountLuks(mapperName: string): Promise<LuksResult> {
   }
 
   const mountPoint = getLuksMountPoint(mapperName);
+  if (!mountPoint) {
+    return { success: false, error: 'Could not determine mount point' };
+  }
 
-  try {
-    execSync(`sudo umount ${mountPoint}`, { stdio: 'pipe' });
+  const result = await runPrivileged('unmount', [mountPoint]);
 
+  if (result.success) {
     audit({
       level: 'info',
       category: 'security',
@@ -316,15 +432,14 @@ export async function unmountLuks(mapperName: string): Promise<LuksResult> {
       details: { mapperName, mountPoint },
       actor: 'system',
     });
-
     return { success: true };
-  } catch (err) {
-    const errorMsg = (err as Error).message;
-    if (errorMsg.includes('target is busy')) {
-      return { success: false, error: 'Volume is busy. Close all files and applications using it first.' };
-    }
-    return { success: false, error: errorMsg };
   }
+
+  const errorMsg = result.stderr;
+  if (errorMsg.includes('target is busy')) {
+    return { success: false, error: 'Volume is busy. Close all files and applications using it first.' };
+  }
+  return { success: false, error: errorMsg || 'Failed to unmount LUKS volume' };
 }
 
 /**
@@ -397,39 +512,11 @@ export async function createLuksContainer(
 
     onProgress?.('Formatting as LUKS2...');
 
-    // Format as LUKS2 with AES-256-XTS (most secure and performant)
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn(
-        'sudo',
-        [
-          'cryptsetup', 'luksFormat',
-          '--type', 'luks2',
-          '--cipher', 'aes-xts-plain64',
-          '--key-size', '512', // 256-bit AES with XTS requires 512-bit key
-          '--hash', 'sha256',
-          '--iter-time', '2000', // 2 seconds of PBKDF2
-          '--batch-mode',
-          filePath,
-        ],
-        { stdio: ['pipe', 'pipe', 'pipe'] }
-      );
-
-      let stderr = '';
-      proc.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      proc.on('close', (code) => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(new Error(stderr || `luksFormat exited with code ${code}`));
-        }
-      });
-
-      proc.stdin.write(password + '\n');
-      proc.stdin.end();
-    });
+    // Format as LUKS2 using privileged helper
+    const formatResult = await runPrivileged('format', [filePath], password);
+    if (!formatResult.success) {
+      throw new Error(formatResult.stderr || 'Failed to format LUKS container');
+    }
 
     onProgress?.('Creating filesystem...');
 
@@ -439,7 +526,10 @@ export async function createLuksContainer(
     await openLuks(filePath, tempMapper, password);
 
     try {
-      execSync(`sudo mkfs.ext4 -L metahuman /dev/mapper/${tempMapper}`, { stdio: 'pipe' });
+      const mkfsResult = await runPrivileged('mkfs', [tempMapper]);
+      if (!mkfsResult.success) {
+        throw new Error(mkfsResult.stderr || 'Failed to create filesystem');
+      }
     } finally {
       await closeLuks(tempMapper);
     }
@@ -469,25 +559,41 @@ export async function createLuksContainer(
 
 /**
  * Create a MetaHuman-ready LUKS container with profile structure
+ *
+ * @param drivePath - Directory to store the .luks container file
+ * @param username - Username for the profile
+ * @param password - Encryption password
+ * @param sizeMB - Container size in megabytes
+ * @param options - Optional configuration
+ * @param options.mountPoint - Custom mount point (default: /media/metahuman/<username>)
+ * @param options.onProgress - Progress callback
  */
 export async function createMetaHumanLuksContainer(
   drivePath: string,
   username: string,
   password: string,
   sizeMB: number,
-  onProgress?: (message: string) => void
+  onProgressOrOptions?: ((message: string) => void) | {
+    mountPoint?: string;
+    onProgress?: (message: string) => void;
+  }
 ): Promise<{ containerPath: string; mountPoint: string }> {
+  // Handle both old signature (onProgress callback) and new signature (options object)
+  const options = typeof onProgressOrOptions === 'function'
+    ? { onProgress: onProgressOrOptions }
+    : onProgressOrOptions || {};
+
   const containerPath = path.join(drivePath, `metahuman-${username}.luks`);
   const mapperName = `metahuman-${username}`;
-  const mountPoint = path.join('/media/metahuman', username);
+  const mountPoint = options.mountPoint || path.join('/media/metahuman', username);
 
   // Create the container
-  const createResult = await createLuksContainer(containerPath, sizeMB, password, onProgress);
+  const createResult = await createLuksContainer(containerPath, sizeMB, password, options.onProgress);
   if (!createResult.success) {
     throw new Error(createResult.error);
   }
 
-  onProgress?.('Opening container...');
+  options.onProgress?.('Opening container...');
 
   // Open and mount
   const mountResult = await openAndMountLuks(containerPath, mapperName, mountPoint, password);
@@ -495,7 +601,7 @@ export async function createMetaHumanLuksContainer(
     throw new Error(mountResult.error);
   }
 
-  onProgress?.('Creating profile structure...');
+  options.onProgress?.('Creating profile structure...');
 
   // Create standard MetaHuman profile directories
   const dirs = [
@@ -529,7 +635,7 @@ export async function createMetaHumanLuksContainer(
     mapperName,
   }, null, 2));
 
-  onProgress?.('Container ready!');
+  options.onProgress?.('Container ready!');
 
   return { containerPath, mountPoint };
 }

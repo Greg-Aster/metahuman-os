@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { apiFetch } from '../lib/client/api-config';
+  import { apiFetch, isCapacitorNative } from '../lib/client/api-config';
+
+  // Mobile detection - network settings are server features
+  let isMobile = false;
 
   interface TunnelStatus {
     installed: boolean;

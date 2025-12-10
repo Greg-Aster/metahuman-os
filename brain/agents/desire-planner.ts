@@ -28,14 +28,13 @@ import {
   captureEvent,
   executeGraph,
   validateCognitiveGraph,
+  getActiveBackend,
   type CognitiveGraph,
 } from '@metahuman/core';
 
 import type { Desire } from '@metahuman/core';
 import { loadConfig, isAgencyEnabled } from '@metahuman/core';
 import { listDesiresByStatus } from '@metahuman/core';
-import * as ollama from '@metahuman/core/ollama';
-import { initializeSkills } from '../skills/index.js';
 
 const LOCK_NAME = 'desire-planner';
 const LOG_PREFIX = '[AGENCY:planner]';
@@ -331,9 +330,9 @@ async function processPlanningDesires(
       `I reviewed ${batch.length} desire plan(s): ${parts.join(', ')}.`,
       {
         type: 'inner_dialogue',
-        source: 'desire-planner',
+        tags: ['agency', 'planning', 'review', 'inner'],
         metadata: {
-          tags: ['agency', 'planning', 'review', 'inner'],
+          source: 'desire-planner',
           planned,
           approved,
           needsApproval,
@@ -352,7 +351,7 @@ async function processPlanningDesires(
 // ============================================================================
 
 async function main(): Promise<void> {
-  initGlobalLogger();
+  initGlobalLogger('desire-planner');
   console.log(`${LOG_PREFIX} Starting desire planner agent...`);
 
   // Load config
@@ -379,15 +378,13 @@ async function main(): Promise<void> {
   }
 
   try {
-    // Check Ollama
-    const running = await ollama.isRunning();
-    if (!running) {
-      console.warn(`${LOG_PREFIX} Ollama not running; skipping. Start with: ollama serve`);
-      return;
+    // Log which backend is active (model router handles actual availability)
+    try {
+      const backend = getActiveBackend();
+      console.log(`${LOG_PREFIX} Using LLM backend: ${backend}`);
+    } catch (e) {
+      console.log(`${LOG_PREFIX} Using model router (backend auto-selected)`);
     }
-
-    // Initialize skills registry so the tool catalog is populated
-    initializeSkills();
 
     // Process only logged-in users
     const users = getLoggedInUsers();
@@ -442,8 +439,18 @@ async function main(): Promise<void> {
   }
 }
 
-// Run if executed directly
-main().catch((error) => {
-  console.error(`${LOG_PREFIX} Fatal error:`, error);
-  process.exit(1);
-});
+// Export for use by other parts of the system (mobile, web, etc.)
+export {
+  processPlanningDesires,
+  loadPlannerConfig,
+  loadGraph,
+};
+
+// Only run if executed directly (not imported)
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+  main().catch((error) => {
+    console.error(`${LOG_PREFIX} Fatal error:`, error);
+    process.exit(1);
+  });
+}

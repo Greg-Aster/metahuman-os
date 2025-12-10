@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  MetaHuman OS - LUKS Encryption Policy
+
+  This policy allows MetaHuman OS to manage encrypted user profiles.
+  Uses a single helper script for all LUKS operations.
+
+  Install to: /usr/share/polkit-1/actions/com.metahuman.luks.policy
+-->
+<policyconfig>
+  <vendor>MetaHuman OS</vendor>
+  <vendor_url>https://github.com/metahuman-os</vendor_url>
+  <icon_name>drive-harddisk-encrypted</icon_name>
+
+  <!-- Main action for all LUKS operations via helper -->
+  <action id="com.metahuman.luks.manage">
+    <description>Manage MetaHuman encrypted profile storage</description>
+    <message>Authentication is required to manage your encrypted profile</message>
+    <defaults>
+      <!-- auth_admin = require admin password -->
+      <!-- auth_admin_keep = require once, remember for session -->
+      <!-- yes = allow without password -->
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/bin/metahuman-luks-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+</policyconfig>

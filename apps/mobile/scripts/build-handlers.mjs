@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 /**
- * Build mobile handlers bundle
+ * Build mobile bundles
  *
- * Compiles the mobile handlers from @metahuman/core into a single
- * JavaScript file that can run in nodejs-mobile.
+ * Compiles the unified API layer from @metahuman/core into JavaScript
+ * that can run in nodejs-mobile. SAME CODE AS WEB SERVER.
+ *
+ * Outputs:
+ * - handlers.js: Mobile-specific handlers (agents, scheduler)
+ * - http-adapter.js: Unified HTTP adapter (SAME as web uses)
  */
 
 import * as esbuild from 'esbuild';
@@ -45,9 +49,10 @@ const importMetaUrlPlugin = {
 
       // Replace import.meta.url with require('url').pathToFileURL(__filename).href
       // This works in CommonJS where __filename is available
+      // Fallback to METAHUMAN_ROOT if __filename is not available (happens in bundled code)
       const transformed = contents.replace(
         /import\.meta\.url/g,
-        `(typeof __filename !== 'undefined' ? require('url').pathToFileURL(__filename).href : '')`
+        `(typeof __filename !== 'undefined' ? require('url').pathToFileURL(__filename).href : 'file://' + (process.env.METAHUMAN_ROOT || '/data/local/tmp') + '/main.js')`
       );
 
       // Determine loader based on extension
@@ -109,10 +114,52 @@ try {
 
   // Show output file size
   const stats = fs.statSync(path.join(OUTPUT_DIR, 'handlers.js'));
-  console.log(`[build-handlers] Bundle size: ${(stats.size / 1024).toFixed(1)} KB`);
-  console.log('[build-handlers] Build complete!');
+  console.log(`[build-handlers] handlers.js: ${(stats.size / 1024).toFixed(1)} KB`);
 
 } catch (error) {
-  console.error('[build-handlers] Build failed:', error);
+  console.error('[build-handlers] handlers.js build failed:', error);
   process.exit(1);
 }
+
+// =============================================================================
+// Build 2: Unified HTTP Adapter (SAME CODE AS WEB)
+// =============================================================================
+
+console.log('\n[build-handlers] Building unified HTTP adapter...');
+console.log('[build-handlers] Entry:', path.join(CORE_DIR, 'src/api/adapters/http.ts'));
+console.log('[build-handlers] Output:', path.join(OUTPUT_DIR, 'http-adapter.js'));
+
+try {
+  const result2 = await esbuild.build({
+    entryPoints: [path.join(CORE_DIR, 'src/api/adapters/http.ts')],
+    bundle: true,
+    platform: 'node',
+    target: 'node12',
+    format: 'cjs',
+    outfile: path.join(OUTPUT_DIR, 'http-adapter.js'),
+    plugins: [importMetaUrlPlugin],
+    external: ['cordova-bridge'],
+    alias: {
+      '@metahuman/core': CORE_DIR + '/src',
+      'fs/promises': path.join(SHIMS_DIR, 'fs-promises.js'),
+    },
+    sourcemap: true,
+    minify: false,
+    treeShaking: true,
+    metafile: true,
+    logLevel: 'info',
+  });
+
+  const text2 = await esbuild.analyzeMetafile(result2.metafile);
+  console.log('\n[build-handlers] HTTP adapter analysis:');
+  console.log(text2);
+
+  const stats2 = fs.statSync(path.join(OUTPUT_DIR, 'http-adapter.js'));
+  console.log(`[build-handlers] http-adapter.js: ${(stats2.size / 1024).toFixed(1)} KB`);
+
+} catch (error) {
+  console.error('[build-handlers] http-adapter.js build failed:', error);
+  process.exit(1);
+}
+
+console.log('\n[build-handlers] ✅ All builds complete!');

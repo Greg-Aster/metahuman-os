@@ -78,8 +78,7 @@
   const agentInfo: Record<string, { name: string; description: string; icon: string }> = {
     'organizer': { name: 'Organizer', description: 'Enriches memories with LLM-extracted tags and entities', icon: '📋' },
     'curator': { name: 'Curator', description: 'LLM-based memory curation and quality assessment', icon: '🎯' },
-    'reflector': { name: 'Reflector', description: 'Generates internal reflections using memory chains', icon: '🪞' },
-    'boredom-maintenance': { name: 'Mind Wandering', description: 'Triggers reflections based on inactivity', icon: '💭' },
+    'reflector': { name: 'Mind Wandering', description: 'Activity-based reflections triggered after inactivity', icon: '💭' },
     'curiosity': { name: 'Curiosity', description: 'Asks user-facing questions during idle periods', icon: '❓' },
     'curiosity-researcher': { name: 'Curiosity Researcher', description: 'Researches pending curiosity questions', icon: '🔍' },
     'inner-curiosity': { name: 'Inner Curiosity', description: 'Self-directed questions answered internally', icon: '🤔' },
@@ -249,7 +248,7 @@
   // Group agents by category
   function getAgentsByCategory(): Record<string, string[]> {
     return {
-      'Memory & Reflection': ['organizer', 'curator', 'reflector', 'boredom-maintenance'],
+      'Memory & Reflection': ['organizer', 'curator', 'reflector'],
       'Curiosity': ['curiosity', 'curiosity-researcher', 'inner-curiosity'],
       'Agency': ['desire-generator', 'desire-planner', 'desire-executor', 'desire-outcome-reviewer'],
       'Nightly': ['night-pipeline', 'dreamer'],

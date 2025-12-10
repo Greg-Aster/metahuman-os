@@ -2,15 +2,27 @@
   import { onMount } from 'svelte';
   import OnboardingWizard from './OnboardingWizard.svelte';
   import ProfileSelector from './ProfileSelector.svelte';
-  import { apiFetch, isCapacitorNative, getApiBaseUrl, initServerUrl } from '../lib/client/api-config';
+  import { apiFetch, isCapacitorNative, getApiBaseUrl, initServerUrl, getSyncServerUrl, remoteFetch, normalizeUrl } from '../lib/client/api-config';
   import { healthStatus, forceHealthCheck } from '../lib/client/server-health';
-  import {
-    validateLocalUser,
-    registerLocalUser,
-    cacheServerUser,
-    getAllLocalUsers,
-    type LocalUser,
-  } from '../lib/client/local-memory';
+
+  // Simple localStorage for session (same concept as cookies on web)
+  // NO IndexedDB complexity - just store the session ID
+  function getStoredSession(): { sessionId: string; username: string } | null {
+    try {
+      const stored = localStorage.getItem('mh_session');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function storeSession(sessionId: string, username: string): void {
+    localStorage.setItem('mh_session', JSON.stringify({ sessionId, username }));
+  }
+
+  function clearStoredSession(): void {
+    localStorage.removeItem('mh_session');
+  }
 
   let view: 'splash' | 'login' | 'register' | 'register-type' | 'register-local' | 'post-register' | 'onboarding' | 'forgot-password' | 'recovery-codes' | 'sync-prompt' = 'splash';
   let isAuthenticated = false;
@@ -24,7 +36,6 @@
   // Server connection state
   let serverConnected = false;
   let isMobile = false;
-  let localUsers: LocalUser[] = [];
 
   // Form fields
   let username = '';
@@ -36,12 +47,19 @@
   // Local profile options
   let profileType: 'local' | 'server' = 'local';  // Default to local-first
 
+  // Sync server URL (for pulling profiles from a remote server)
+  let syncServerUrl = getSyncServerUrl();
+  let syncLoading = false;
+
   // Recovery code fields
   let recoveryCode = '';
   let newPassword = '';
   let confirmNewPassword = '';
   let generatedRecoveryCodes: string[] = [];
   let registeredUsername = '';
+
+  // Track if login failure suggests user doesn't exist (for sync hint)
+  let showSyncHint = false;
 
   // Agreement checkboxes
   let agreeToTerms = false;
@@ -51,42 +69,32 @@
   $: serverConnected = $healthStatus.connected;
 
   // Check if user is already authenticated
+  // IDENTICAL for web and mobile - just check the API
   async function checkAuth() {
+    console.log('[AuthGate] checkAuth() starting');
     isMobile = isCapacitorNative();
 
-    // On mobile, ensure server URL is initialized before making API calls
-    if (isMobile) {
-      await initServerUrl();
-    }
-
-    // Check for local users first
-    try {
-      localUsers = await getAllLocalUsers();
-    } catch (e) {
-      console.warn('Could not check local users:', e);
-    }
-
-    // Try server auth
+    // Check API auth - SAME code path for web and mobile
+    // Web: cookie sent automatically
+    // Mobile: session ID passed via nodeBridge
     try {
       const res = await apiFetch('/api/auth/me');
       if (res.ok) {
         const data = await res.json();
         if (data.user) {
+          console.log('[AuthGate] Auth successful for:', data.user.username);
           isAuthenticated = true;
           isCheckingAuth = false;
           return;
         }
       }
     } catch (error) {
-      console.warn('Server auth check failed (may be offline):', error);
+      console.warn('[AuthGate] Auth check failed:', error);
     }
 
+    // No authentication found - show login screen
+    console.log('[AuthGate] No auth found, showing login screen');
     isCheckingAuth = false;
-
-    // If server unavailable, check health in background
-    if (isMobile) {
-      forceHealthCheck();
-    }
   }
 
   // Load boot data (persona info for splash)
@@ -101,77 +109,74 @@
     }
   }
 
-  // Handle login - local-first authentication with optional server sync
+  // Handle login - IDENTICAL for web and mobile
+  // Uses the API endpoint which validates against users.json
+  // Web: cookie set automatically | Mobile: session ID returned and stored
   async function handleLogin(e: Event) {
     e.preventDefault();
     error = '';
     loading = true;
 
     try {
-      // First, try local authentication
-      const localUser = await validateLocalUser(username, password);
-      if (localUser) {
-        console.log('[AuthGate] Local auth successful for:', username);
+      // Call API login - SAME code path for both web and mobile
+      // Web: hits /api/auth/login directly
+      // Mobile: hits /api/auth/login via nodeBridge -> nodejs-mobile
+      const res = await apiFetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
 
-        // If server is connected, sync profile data
-        if (serverConnected) {
-          try {
-            // Establish server session for API calls
-            const res = await apiFetch('/api/auth/login', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ username, password }),
-            });
-            if (res.ok) {
-              console.log('[AuthGate] Server session established, profile will sync');
-              // TODO: Trigger profile data sync here
-              // await syncProfileData(username);
-            }
-          } catch (e) {
-            console.warn('[AuthGate] Server sync skipped (offline):', e);
-          }
+      const data = await res.json();
+      console.log('[AuthGate] Login response:', data);
+
+      if (data.success && data.user) {
+        // Store session ID in localStorage (mobile needs this, web uses cookie)
+        if (data.sessionId) {
+          storeSession(data.sessionId, data.user.username);
         }
 
-        isAuthenticated = true;
-        window.location.reload();
-        return;
-      }
-
-      // No local user found - try server first if connected, otherwise show options
-      if (serverConnected) {
+        // VALIDATE PROFILE COMPLETENESS - Don't allow login with empty profile
         try {
-          const res = await apiFetch('/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password }),
-          });
-
-          const data = await res.json();
-
-          if (data.success) {
-            // Cache the user locally for offline access
-            const serverUrl = getApiBaseUrl();
-            await cacheServerUser(username, password, serverUrl, data.user?.displayName);
-            console.log('[AuthGate] Server login successful, cached locally');
-
-            isAuthenticated = true;
-            window.location.reload();
+          const personaRes = await apiFetch('/api/persona-core');
+          if (!personaRes.ok) {
+            error = `PROFILE INCOMPLETE: Your profile exists but core persona data is missing. You must sync from server to get your profile data. Status: ${personaRes.status}`;
+            showSyncHint = true;
             return;
-          } else {
-            // Server rejected - user may not exist or wrong password
-            // Show sync-prompt with option to create local profile
-            error = data.error || 'Login failed. You can create a local profile instead.';
-            view = 'sync-prompt';
           }
-        } catch (e) {
-          // Network error despite health check saying connected
-          error = 'Connection error. You can create a local profile.';
-          view = 'sync-prompt';
+
+          const personaData = await personaRes.json();
+          if (!personaData || !personaData.persona || !personaData.persona.identity || !personaData.persona.identity.name) {
+            error = `PROFILE EMPTY: Your persona data is missing or corrupted. You must sync from server to restore your profile.`;
+            showSyncHint = true;
+            return;
+          }
+        } catch (personaErr) {
+          error = `PROFILE CHECK FAILED: Cannot verify your profile is complete. You may need to sync from server.`;
+          showSyncHint = true;
+          return;
         }
-      } else {
-        // No local user and server offline - show options
-        view = 'sync-prompt';
+
+        // Profile is complete - proceed with login
+        error = `✅ LOGIN SUCCESS! Welcome back, ${data.user.username}. Profile loaded and ready.`;
+        console.log('[AuthGate] LOGIN SUCCESS: Profile validation passed, proceeding...');
+        
+        setTimeout(() => {
+          isAuthenticated = true;
+          window.location.reload();
+        }, 1500);
       }
+
+      // Login failed - show error and determine if user might need to sync
+      // User can click "Sync from Server" button if they need to create/sync account
+      // DON'T auto-redirect to sync-prompt - that was confusing for wrong password
+      error = data.error || 'Login failed. Check your credentials.';
+
+      // Show sync hint to help users who may need to sync from another device
+      // On mobile: Always show hint (likely setting up new device)
+      // On web: Show hint for any authentication failure (user might need to sync)
+      // The hint is dismissible and clears when user starts typing
+      showSyncHint = isMobile || error.toLowerCase().includes('invalid');
     } catch (err) {
       error = 'Login failed. Check your credentials.';
       console.error('Login error:', err);
@@ -180,20 +185,217 @@
     }
   }
 
-  // Create local profile (local-first: all profile data stored on device)
+  // Sync profile from remote server
+  // IDENTICAL for web and mobile - uses fetchExternal to handle CORS on mobile
+  async function handleSyncFromServer() {
+    error = '';
+    syncLoading = true;
+
+    try {
+      console.log('[AuthGate] Syncing from server:', syncServerUrl);
+      console.log('[AuthGate] Username:', username);
+      console.log('[AuthGate] Password length:', password?.length || 0);
+
+      if (!username || !password) {
+        error = 'Please enter both username and password on the login screen first';
+        syncLoading = false;
+        return;
+      }
+
+      // Step 1: Authenticate with the remote server to verify credentials
+      // Uses remoteFetch which handles CORS on mobile via CapacitorHttp
+      const requestBody = { username, password };
+      const normalizedSyncUrl = normalizeUrl(syncServerUrl);
+      console.log('[AuthGate] Sending to remote server:', normalizedSyncUrl + '/api/auth/login');
+      console.log('[AuthGate] Request body keys:', Object.keys(requestBody));
+
+      const serverRes = await remoteFetch(`${normalizedSyncUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(requestBody),
+      });
+
+      console.log('[AuthGate] Remote server response status:', serverRes.status);
+
+      if (!serverRes.ok) {
+        const errorText = await serverRes.text().catch(() => 'Unknown error');
+        error = `Server error (${serverRes.status}): ${errorText}`;
+        return;
+      }
+
+      const serverData = await serverRes.json();
+      if (!serverData.success || !serverData.user) {
+        error = serverData.error || 'Server login failed. Check credentials.';
+        return;
+      }
+
+      console.log('[AuthGate] Server auth successful for:', serverData.user.username);
+      
+      // Capture server session ID for remote API calls
+      const serverSessionId = serverData.sessionId;
+      console.log('[AuthGate] Server session ID captured:', serverSessionId?.slice(0, 8) + '...');
+
+      // Step 2: Create the user locally (via API) so they exist in local users.json
+      // This makes web and mobile identical - both use users.json
+      const createRes = await apiFetch('/api/auth/sync-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username,
+          password,
+          displayName: serverData.user.displayName || serverData.user.username,
+          role: serverData.user.role,
+          serverUrl: syncServerUrl,
+        }),
+      });
+
+      const createData = await createRes.json();
+      if (!createData.success) {
+        error = createData.error || 'Failed to create local profile';
+        return;
+      }
+
+      // Store session now so profile sync requests are authenticated
+      if (createData.sessionId) {
+        storeSession(createData.sessionId, username);
+      }
+
+      // Step 3: Export profile data from remote and import locally
+      console.log('[AuthGate] Downloading profile data from remote...');
+      
+      // Show progress notification
+      error = '📥 SYNCING: Downloading profile data from server...';
+      
+      let profileBundle = null;
+      let syncStrategy = 'unknown';
+      
+      try {
+        // Try priority export first (essential files only to avoid OOM)
+        console.log('[AuthGate] Attempting priority sync (persona + config only)...');
+        error = '📥 SYNCING: Downloading essential profile data (persona, config, conversations)...';
+
+        const priorityRes = await remoteFetch(`${normalizedSyncUrl}/api/profile-sync/export-priority`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Cookie': `mh_session=${serverSessionId}`
+          },
+        });
+
+        if (priorityRes.ok) {
+          profileBundle = await priorityRes.json();
+          syncStrategy = 'priority';
+          error = `📥 SYNCING: Downloaded ${profileBundle.stats?.totalFiles || 0} files from server (${Math.round((profileBundle.stats?.totalSize || 0) / 1024)}KB)`;
+        } else {
+          // Show UI error for priority export failure
+          const priorityError = await priorityRes.text().catch(() => 'Network error');
+          
+          // Fallback to full export (may cause OOM on large profiles)
+          error = '📥 SYNCING: Priority sync failed, trying full profile download...';
+
+          const fullRes = await remoteFetch(`${normalizedSyncUrl}/api/profile-sync/export`, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'Cookie': `mh_session=${serverSessionId}`
+            },
+          });
+
+          if (fullRes.ok) {
+            profileBundle = await fullRes.json();
+            syncStrategy = 'full';
+            error = `📥 SYNCING: Downloaded complete profile - ${profileBundle.stats?.totalFiles || 0} files (${Math.round((profileBundle.stats?.totalSize || 0) / 1024)}KB)`;
+          } else {
+            const fullError = await fullRes.text().catch(() => 'Network error');
+            // STOP HERE - DO NOT LOG USER IN WITH EMPTY PROFILE
+            error = `SYNC FAILED: Cannot download profile from server. Priority sync (${priorityRes.status}): ${priorityError}. Full sync (${fullRes.status}): ${fullError}. You cannot log in without syncing your profile data.`;
+            return;
+          }
+        }
+
+        // Import profile bundle locally
+        if (profileBundle) {
+          error = '💾 SYNCING: Importing profile files to local storage...';
+          
+          const importRes = await apiFetch('/api/profile-sync/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(profileBundle),
+          });
+
+          if (!importRes.ok) {
+            const importError = await importRes.text().catch(() => 'Unknown import error');
+            error = `IMPORT FAILED: Cannot save profile data locally. Error (${importRes.status}): ${importError}. Your profile was not synced.`;
+            return;
+          }
+
+          const importData = await importRes.json();
+          if (!importData.success) {
+            error = `IMPORT FAILED: ${importData.error || 'Failed to save profile files'}. Your profile was not synced.`;
+            return;
+          }
+
+          // SUCCESS - profile actually synced
+          if (!importData.imported || importData.imported === 0) {
+            error = `SYNC INCOMPLETE: No files were imported. Your profile is empty.`;
+            return;
+          }
+          
+          // SHOW SUCCESS MESSAGE
+          error = `✅ SYNC SUCCESS! Imported ${importData.imported} files from ${syncServerUrl}. Profile ready!`;
+          console.log(`[AuthGate] SYNC SUCCESS: ${importData.imported} files imported via ${syncStrategy} sync`);
+        } else {
+          error = 'SYNC FAILED: No profile data received from server. Cannot log you in with empty profile.';
+          return;
+        }
+      } catch (profileErr) {
+        error = `SYNC NETWORK ERROR: Cannot connect to server or download profile. ${profileErr instanceof Error ? profileErr.message : 'Connection failed'}. Check your network and server URL.`;
+        return;
+      }
+
+      // SUCCESS - Actually synced profile data
+      // Give user a moment to see the success message
+      setTimeout(() => {
+        isAuthenticated = true;
+        window.location.reload();
+      }, 2000);
+    } catch (err) {
+      error = `SYNC FAILED: ${err instanceof Error ? err.message : 'Unknown error'}. You cannot log in without syncing your profile.`;
+    } finally {
+      syncLoading = false;
+    }
+  }
+
+  // Create local profile via API - IDENTICAL for web and mobile
   async function handleOfflineLogin() {
     error = '';
     loading = true;
 
     try {
-      // Create a local profile - authentication is always local
-      await registerLocalUser(username, password, {
-        displayName: displayName || username,
-        profileType: 'local',  // Local-first: profile data lives on device
-        encrypted: false,
+      // Create profile via API - works for both web and mobile
+      const res = await apiFetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username,
+          password,
+          displayName: displayName || username,
+        }),
       });
-      console.log('[AuthGate] Created local profile:', username);
 
+      const data = await res.json();
+      if (!data.success) {
+        error = data.error || 'Failed to create profile';
+        return;
+      }
+
+      // Store session and reload
+      if (data.sessionId) {
+        storeSession(data.sessionId, username);
+      }
+
+      console.log('[AuthGate] Created local profile:', username);
       isAuthenticated = true;
       window.location.reload();
     } catch (err) {
@@ -271,6 +473,7 @@
   }
 
   // Handle local profile registration (for offline use)
+  // Uses the same API as handleRegister - IDENTICAL code path for web and mobile
   async function handleLocalRegister() {
     error = '';
 
@@ -287,22 +490,31 @@
     loading = true;
 
     try {
-      await registerLocalUser(username, password, {
-        displayName: displayName || username,
-        profileType: 'local',
-        encrypted: false,
+      // Use API to create profile - SAME code path for both web and mobile
+      const res = await apiFetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username,
+          password,
+          displayName: displayName || username,
+        }),
       });
 
-      // Auto-login after registration
-      const user = await validateLocalUser(username, password);
-      if (user) {
-        isAuthenticated = true;
-        // Skip onboarding for local profiles (can be done later)
-        window.location.reload();
-      } else {
-        error = 'Profile created but login failed. Try logging in manually.';
-        view = 'login';
+      const data = await res.json();
+      if (!data.success) {
+        error = data.error || 'Failed to create profile';
+        return;
       }
+
+      // Store session and reload
+      if (data.sessionId) {
+        storeSession(data.sessionId, username);
+      }
+
+      console.log('[AuthGate] Created local profile:', username);
+      isAuthenticated = true;
+      window.location.reload();
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to create local profile';
       console.error('Local registration error:', err);
@@ -421,6 +633,7 @@
   }
 
   onMount(() => {
+    console.log('[AuthGate] Component mounted, starting auth check');
     checkAuth();
     loadBootData();
   });
@@ -503,14 +716,6 @@
             <p class="app-tagline">Autonomous Digital Personality Extension</p>
           </div>
 
-          <!-- Offline Banner when server is not connected (mobile only) -->
-          {#if !serverConnected && isMobile}
-            <div class="offline-banner">
-              <span class="offline-indicator">📡</span>
-              <span>Server offline - local mode available</span>
-            </div>
-          {/if}
-
           <div class="welcome-text">
             <p>
               MetaHuman OS is a personal AI system that mirrors your identity, memories, and
@@ -525,34 +730,15 @@
               </svg>
               Login
             </button>
-            {#if !isMobile || serverConnected}
-              <!-- Web: Always show these (server IS the connection) -->
-              <!-- Mobile: Show when server is connected -->
-              <button class="btn btn-secondary" on:click={() => view = 'register'}>
-                <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
-                  <path d="M8 1a3 3 0 100 6 3 3 0 000-6zM6 9c-2.67 0-8 1.34-8 4v2h9v-2c0-1.48-1.21-2.77-3-3.46zM14 9h-2v2h-2v2h2v2h2v-2h2v-2h-2V9z" fill="currentColor"/>
-                </svg>
-                Create Account
-              </button>
-              <button class="btn btn-ghost" on:click={continueAsGuest}>
-                Continue as Guest
-              </button>
-            {:else}
-              <!-- Mobile offline: Show local profile options -->
-              <button class="btn btn-secondary" on:click={() => view = 'register-local'}>
-                <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
-                  <path d="M8 1a3 3 0 100 6 3 3 0 000-6zM6 9c-2.67 0-8 1.34-8 4v2h9v-2c0-1.48-1.21-2.77-3-3.46zM14 9h-2v2h-2v2h2v2h2v-2h2v-2h-2V9z" fill="currentColor"/>
-                </svg>
-                Create Local Profile
-              </button>
-              <button class="btn btn-ghost" on:click={async () => {
-                loading = true;
-                await forceHealthCheck();
-                loading = false;
-              }} disabled={loading}>
-                {loading ? 'Checking...' : 'Retry Server Connection'}
-              </button>
-            {/if}
+            <button class="btn btn-secondary" on:click={() => view = 'register'}>
+              <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+                <path d="M8 1a3 3 0 100 6 3 3 0 000-6zM6 9c-2.67 0-8 1.34-8 4v2h9v-2c0-1.48-1.21-2.77-3-3.46zM14 9h-2v2h-2v2h2v2h2v-2h2v-2h-2V9z" fill="currentColor"/>
+              </svg>
+              Create Account
+            </button>
+            <button class="btn btn-ghost" on:click={continueAsGuest}>
+              Continue as Guest
+            </button>
           </div>
 
           <div class="footer-info">
@@ -600,6 +786,7 @@
                 id="login-username"
                 type="text"
                 bind:value={username}
+                on:input={() => { showSyncHint = false; error = ''; }}
                 required
                 disabled={loading}
                 autocomplete="username"
@@ -612,6 +799,7 @@
                 id="login-password"
                 type="password"
                 bind:value={password}
+                on:input={() => { showSyncHint = false; error = ''; }}
                 required
                 disabled={loading}
                 autocomplete="current-password"
@@ -620,6 +808,19 @@
 
             {#if error}
               <div class="error-message">{error}</div>
+            {/if}
+
+            {#if showSyncHint}
+              <div class="sync-hint">
+                <div class="sync-hint-icon">🔄</div>
+                <div class="sync-hint-content">
+                  <strong>First time on this device?</strong>
+                  <p>Your account may exist on another server. Sync to pull your profile here.</p>
+                  <button class="btn btn-secondary" on:click={() => view = 'sync-prompt'}>
+                    Sync from Server
+                  </button>
+                </div>
+              </div>
             {/if}
 
             <button type="submit" class="btn btn-primary btn-block" disabled={loading}>
@@ -638,6 +839,12 @@
               Don't have an account?
               <button class="link-button" on:click={() => view = 'register'}>Create one</button>
             </p>
+            {#if !showSyncHint}
+              <p class="sync-link">
+                Need to sync from another device?
+                <button class="link-button" on:click={() => view = 'sync-prompt'}>Sync from Server</button>
+              </p>
+            {/if}
           </div>
         </div>
       {:else if view === 'register'}
@@ -876,63 +1083,70 @@
           {/if}
 
           <div class="offline-options">
-            <!-- Option 1: Create local profile with these credentials -->
+            <!-- Option 1: Sync from server -->
             <div class="option-card primary-option">
-              <div class="option-icon">➕</div>
-              <h3>Create Local Profile</h3>
-              <p>Create a new profile as "{username}" on this device</p>
-              <button class="btn btn-primary btn-block" on:click={handleOfflineLogin} disabled={loading}>
-                {loading ? 'Creating...' : 'Create Profile'}
+              <div class="option-icon">🔄</div>
+              <h3>Sync from Server</h3>
+              <p>Pull existing profile from a MetaHuman server</p>
+
+              <div class="form-group" style="margin-bottom: 0.5rem;">
+                <label for="sync-server" style="font-size: 0.75rem; opacity: 0.8; margin-bottom: 0.25rem; display: block;">Server URL</label>
+                <input
+                  id="sync-server"
+                  type="url"
+                  bind:value={syncServerUrl}
+                  placeholder="https://mh.dndiy.org"
+                  disabled={syncLoading}
+                  style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05); color: white; font-size: 0.875rem;"
+                />
+              </div>
+
+              <div class="form-group" style="margin-bottom: 0.5rem;">
+                <label for="sync-username" style="font-size: 0.75rem; opacity: 0.8; margin-bottom: 0.25rem; display: block;">Username</label>
+                <input
+                  id="sync-username"
+                  type="text"
+                  bind:value={username}
+                  placeholder="Your username"
+                  disabled={syncLoading}
+                  autocomplete="username"
+                  style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05); color: white; font-size: 0.875rem;"
+                />
+              </div>
+
+              <div class="form-group" style="margin-bottom: 0.75rem;">
+                <label for="sync-password" style="font-size: 0.75rem; opacity: 0.8; margin-bottom: 0.25rem; display: block;">Password</label>
+                <input
+                  id="sync-password"
+                  type="password"
+                  bind:value={password}
+                  placeholder="Your password"
+                  disabled={syncLoading}
+                  autocomplete="current-password"
+                  style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05); color: white; font-size: 0.875rem;"
+                />
+              </div>
+
+              <button class="btn btn-primary btn-block" on:click={handleSyncFromServer} disabled={syncLoading || !syncServerUrl || !username || !password}>
+                {syncLoading ? 'Syncing...' : 'Sync Profile'}
               </button>
             </div>
 
-            <!-- Option 2: Sync from server (if connected) -->
+            <!-- Option 2: Create local profile -->
             <div class="option-card">
-              <div class="option-icon">🔄</div>
-              <h3>Sync from Server</h3>
-              <p>Pull existing profile data from server</p>
-              {#if serverConnected}
-                <button class="btn btn-secondary btn-block" on:click={() => view = 'login'}>
-                  Connect & Sync
-                </button>
-              {:else}
-                <button class="btn btn-secondary btn-block" on:click={async () => {
-                  loading = true;
-                  await forceHealthCheck();
-                  loading = false;
-                  if (serverConnected) {
-                    view = 'login';
-                  }
-                }} disabled={loading}>
-                  {loading ? 'Connecting...' : 'Connect to Server'}
-                </button>
-                <div class="server-status" style="margin-top: 0.75rem;">
-                  <span class="status-dot offline"></span>
-                  <span>Server offline</span>
-                </div>
-              {/if}
+              <div class="option-icon">➕</div>
+              <h3>Create Local Profile</h3>
+              <p>Create a new profile as "{username}" on this device</p>
+              <button class="btn btn-secondary btn-block" on:click={handleOfflineLogin} disabled={loading}>
+                {loading ? 'Creating...' : 'Create Profile'}
+              </button>
             </div>
-
-            {#if localUsers.length > 0}
-              <div class="option-card">
-                <div class="option-icon">👥</div>
-                <h3>Other Local Profiles</h3>
-                <div class="local-users-list">
-                  {#each localUsers as user}
-                    <button class="local-user-btn" on:click={() => { username = user.username; view = 'login'; }}>
-                      {user.displayName || user.username}
-                      <span class="user-type">{user.profileType}</span>
-                    </button>
-                  {/each}
-                </div>
-              </div>
-            {/if}
           </div>
         </div>
       {:else if view === 'register-local'}
-        <!-- Local Profile Registration (offline) -->
+        <!-- Local Profile Registration -->
         <div class="form-content">
-          <button class="back-button" on:click={() => view = serverConnected ? 'splash' : 'sync-prompt'}>
+          <button class="back-button" on:click={() => view = 'splash'}>
             <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
               <path d="M8 14L2 8l6-6M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
@@ -1077,6 +1291,10 @@
       onCancel={handleProfileCancel}
     />
   {/if}
+{:else}
+  <!-- User is authenticated - render main app -->
+  <!-- Children are ONLY mounted when user is logged in -->
+  <slot />
 {/if}
 
 <style>
@@ -1519,6 +1737,66 @@
     color: rgba(0, 0, 0, 0.6);
   }
 
+  .sync-hint {
+    display: flex;
+    gap: 0.75rem;
+    padding: 1rem;
+    margin: 1rem 0;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(139, 92, 246, 0.15));
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 0.75rem;
+    align-items: flex-start;
+  }
+
+  .sync-hint-icon {
+    font-size: 1.5rem;
+    line-height: 1;
+  }
+
+  .sync-hint-content {
+    flex: 1;
+  }
+
+  .sync-hint-content strong {
+    display: block;
+    color: #60a5fa;
+    margin-bottom: 0.25rem;
+  }
+
+  .sync-hint-content p {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.7);
+    margin: 0 0 0.75rem 0;
+  }
+
+  .sync-hint-content .btn {
+    width: 100%;
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+  }
+
+  :global(.dark) .sync-hint-content p {
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  :global(:not(.dark)) .sync-hint-content p {
+    color: rgba(0, 0, 0, 0.6);
+  }
+
+  :global(:not(.dark)) .sync-hint-content strong {
+    color: #3b82f6;
+  }
+
+  :global(:not(.dark)) .sync-hint {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+  }
+
+  .sync-link {
+    font-size: 0.8rem;
+    margin-top: 0.5rem;
+    opacity: 0.8;
+  }
+
   .link-button {
     background: none;
     border: none;
@@ -1839,7 +2117,32 @@
     color: rgba(0, 0, 0, 0.9);
   }
 
-  /* Offline Banner on Splash */
+  /* Local Mode Banner (Mobile Standalone) */
+  .local-mode-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: linear-gradient(135deg, rgba(96, 165, 250, 0.2) 0%, rgba(167, 139, 250, 0.2) 100%);
+    border: 1px solid rgba(96, 165, 250, 0.4);
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    color: #60a5fa;
+    font-size: 0.9rem;
+    font-weight: 500;
+  }
+
+  :global(html:not(.dark)) .local-mode-banner {
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.15) 0%, rgba(124, 58, 237, 0.15) 100%);
+    color: #2563eb;
+  }
+
+  .local-indicator {
+    font-size: 1.2rem;
+  }
+
+  /* Offline Banner on Splash (legacy, kept for server offline scenarios) */
   .offline-banner {
     display: flex;
     align-items: center;

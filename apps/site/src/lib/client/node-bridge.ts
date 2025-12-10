@@ -1,82 +1,90 @@
 /**
  * Node.js Mobile Bridge
  *
- * Provides communication between the Svelte UI and the embedded
- * Node.js runtime (via nodejs-mobile-cordova plugin).
+ * UNIFIED ARCHITECTURE - Same code for web and mobile:
+ * - Mobile: HTTP requests to local nodejs-mobile server (localhost:4322)
+ * - Web: HTTP requests to Astro server (localhost:4321)
  *
- * LOCAL-FIRST ARCHITECTURE:
- * - Mobile: API calls go through nodejs-mobile LOCALLY
- * - If nodejs-mobile not ready: Return offline response (NEVER call remote server)
- * - Web: Uses standard apiFetch to same-origin server
- *
- * The mobile app is a FULL STANDALONE PROGRAM, not a thin client.
- * Server connections are NEVER automatic - only when user explicitly syncs.
+ * Both use standard HTTP with cookies - SAME CODE PATH.
+ * The only difference is the base URL.
  */
 
 import { isCapacitorNative } from './api-config';
-import { apiFetch } from './api-config';
+import { NodejsMobile, isNodejsMobileAvailable as checkNodejsMobileAvailable } from './plugins/nodejs-mobile';
 
-// TypeScript declaration for the nodejs global
-declare global {
-  interface Window {
-    nodejs?: {
-      start: (scriptFileName: string, callback: (err?: Error) => void, options?: { redirectOutputToLogcat?: boolean }) => void;
-      startWithScript: (scriptBody: string, callback: (err?: Error) => void, options?: { redirectOutputToLogcat?: boolean }) => void;
-      channel: {
-        on: (event: string, callback: (msg: any) => void) => void;
-        post: (event: string, message: any) => void;
-        send: (message: any) => void;
-        setListener: (callback: (msg: any) => void) => void;
-      };
-    };
+// CapacitorHttp types for TypeScript (avoids importing @capacitor/core on web)
+type CapacitorHttpType = {
+  get: (options: { url: string }) => Promise<{ status: number; data: unknown; headers: Record<string, string> }>;
+  request: (options: { url: string; method: string; data?: unknown; headers?: Record<string, string> }) => Promise<{ status: number; data: unknown; headers: Record<string, string> }>;
+};
+
+// CapacitorHttp is loaded dynamically only on mobile to avoid breaking web builds
+// The browser can't resolve bare module specifiers like "@capacitor/core"
+let CapacitorHttp: CapacitorHttpType | null = null;
+let capacitorLoaded = false;
+let capacitorLoadPromise: Promise<void> | null = null;
+
+// Load CapacitorHttp on mobile (async initialization)
+// NOTE: We cannot return CapacitorHttp directly because it has a .then() method
+// that throws "CapacitorHttp.then() is not implemented". Returning it would cause
+// JavaScript to try to unwrap it as a Promise.
+async function ensureCapacitorHttp(): Promise<void> {
+  if (capacitorLoaded) return;
+
+  // Avoid multiple concurrent loads
+  if (capacitorLoadPromise) {
+    await capacitorLoadPromise;
+    return;
   }
+
+  capacitorLoadPromise = (async () => {
+    if (typeof window !== 'undefined' && isCapacitorNative()) {
+      try {
+        const mod = await import('@capacitor/core');
+        CapacitorHttp = mod.CapacitorHttp as unknown as CapacitorHttpType;
+        capacitorLoaded = true;
+      } catch {
+        console.warn('[node-bridge] Failed to load CapacitorHttp');
+        capacitorLoaded = true;
+      }
+    } else {
+      capacitorLoaded = true;
+    }
+  })();
+
+  await capacitorLoadPromise;
 }
 
-// Request/Response types
-interface NodeRequest {
-  id: string;
-  path: string;
-  method: string;
-  body?: any;
-  headers?: Record<string, string>;
+// Get CapacitorHttp synchronously (must call ensureCapacitorHttp first)
+function getCapacitorHttp(): CapacitorHttpType | null {
+  return CapacitorHttp;
 }
 
-interface NodeResponse {
-  id: string;
-  status: number;
-  data?: any;
-  error?: string;
-}
+// Mobile HTTP server port (nodejs-mobile runs on this port)
+const MOBILE_HTTP_PORT = 4322;
+const MOBILE_BASE_URL = `http://127.0.0.1:${MOBILE_HTTP_PORT}`;
 
 // State
 let nodeReady = false;
 let nodeStarting = false;
-const pendingRequests = new Map<string, {
-  resolve: (value: Response) => void;
-  reject: (reason: any) => void;
-}>();
-
-// Generate unique request ID
-function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-}
+let httpServerReady = false;
 
 /**
  * Check if nodejs-mobile is available
  */
 export function isNodejsMobileAvailable(): boolean {
-  return typeof window !== 'undefined' && window.nodejs !== undefined;
+  return checkNodejsMobileAvailable();
 }
 
 /**
  * Check if Node.js backend is ready
  */
 export function isNodeReady(): boolean {
-  return nodeReady;
+  return nodeReady && httpServerReady;
 }
 
 /**
- * Start the Node.js runtime
+ * Start the Node.js runtime and wait for HTTP server
  */
 export async function startNodeRuntime(): Promise<void> {
   if (!isCapacitorNative() || !isNodejsMobileAvailable()) {
@@ -90,121 +98,137 @@ export async function startNodeRuntime(): Promise<void> {
 
   nodeStarting = true;
 
-  return new Promise((resolve, reject) => {
-    const nodejs = window.nodejs!;
+  try {
+    // First check if engine is already running (page reload case)
+    const initialStatus = await NodejsMobile.isReady();
+    console.log('[node-bridge] Initial status check:', initialStatus);
 
-    // Listen for ready event
-    nodejs.channel.on('ready', (msg) => {
-      console.log('[node-bridge] Node.js runtime ready:', msg);
+    if (initialStatus.engineStarted) {
+      console.log('[node-bridge] Node.js engine already running');
       nodeReady = true;
+      // Check if HTTP server is responding
+      await waitForHttpServer();
       nodeStarting = false;
-      resolve();
-    });
-
-    // Listen for responses
-    nodejs.channel.on('response', (msg: NodeResponse) => {
-      const pending = pendingRequests.get(msg.id);
-      if (pending) {
-        pendingRequests.delete(msg.id);
-
-        // Convert to Response object
-        const body = JSON.stringify(msg.data || { error: msg.error });
-        const response = new Response(body, {
-          status: msg.status,
-          headers: { 'Content-Type': 'application/json' }
-        });
-
-        pending.resolve(response);
-      }
-    });
+      return;
+    }
 
     // Start Node.js with main.js
     console.log('[node-bridge] Starting Node.js runtime...');
-    nodejs.start('main.js', (err) => {
-      if (err) {
-        console.error('[node-bridge] Failed to start Node.js:', err);
-        nodeStarting = false;
-        reject(err);
-      } else {
-        console.log('[node-bridge] Node.js start callback - waiting for ready event');
-      }
-    }, {
-      redirectOutputToLogcat: true
+    await NodejsMobile.start({ script: 'main.js', redirectOutputToLogcat: true });
+    console.log('[node-bridge] Node.js start called - waiting for HTTP server');
+
+    // Wait for engine to be ready
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        if (!nodeReady) {
+          nodeStarting = false;
+          reject(new Error('Node.js startup timeout'));
+        }
+      }, 15000);
+
+      const checkReady = setInterval(async () => {
+        try {
+          const status = await NodejsMobile.isReady();
+          if (status.engineStarted) {
+            nodeReady = true;
+            clearInterval(checkReady);
+            clearTimeout(timeout);
+            console.log('[node-bridge] Node.js runtime ready');
+            resolve();
+          }
+        } catch (e) {
+          console.error('[node-bridge] isReady check failed:', e);
+        }
+      }, 500);
     });
 
-    // Timeout after 10 seconds
-    setTimeout(() => {
-      if (!nodeReady) {
-        nodeStarting = false;
-        reject(new Error('Node.js startup timeout'));
-      }
-    }, 10000);
-  });
+    // Wait for HTTP server to be ready
+    await waitForHttpServer();
+    nodeStarting = false;
+
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    if (errorMsg.includes('already started')) {
+      console.log('[node-bridge] Engine was already started');
+      nodeReady = true;
+      await waitForHttpServer();
+      nodeStarting = false;
+      return;
+    }
+
+    console.error('[node-bridge] Failed to start Node.js:', error);
+    nodeStarting = false;
+    throw error;
+  }
 }
 
 /**
- * Send a request to the Node.js backend
+ * Wait for HTTP server to be responding
+ * Uses Capacitor's native HTTP plugin to bypass WebView restrictions
  */
-async function sendToNode(path: string, init?: RequestInit): Promise<Response> {
-  if (!nodeReady || !window.nodejs) {
-    throw new Error('Node.js runtime not ready');
+async function waitForHttpServer(timeoutMs: number = 10000): Promise<boolean> {
+  const startTime = Date.now();
+  await ensureCapacitorHttp();
+  const http = getCapacitorHttp();
+
+  if (!http) {
+    console.error('[node-bridge] CapacitorHttp not available');
+    return false;
   }
 
-  const id = generateId();
-  const method = init?.method || 'GET';
-  let body: any = undefined;
-
-  if (init?.body) {
+  while (Date.now() - startTime < timeoutMs) {
     try {
-      body = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
+      // Use Capacitor's native HTTP to bypass WebView restrictions
+      const response = await http.get({
+        url: `${MOBILE_BASE_URL}/api/status`,
+      });
+
+      if (response.status >= 200 && response.status < 300) {
+        httpServerReady = true;
+        console.log('[node-bridge] HTTP server ready');
+        return true;
+      }
     } catch {
-      body = init.body;
+      // Server not ready yet, keep trying
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+
+  console.error('[node-bridge] HTTP server failed to start');
+  return false;
+}
+
+/**
+ * Wait for Node.js runtime to be ready (with timeout)
+ */
+async function waitForNodeReady(timeoutMs: number = 10000): Promise<boolean> {
+  if (nodeReady && httpServerReady) return true;
+
+  // Try to start the runtime if it hasn't been started
+  if (!nodeStarting && !nodeReady) {
+    console.log('[node-bridge] Runtime not started, starting now...');
+    try {
+      await startNodeRuntime();
+    } catch (err) {
+      console.error('[node-bridge] Failed to start runtime:', err);
+      return false;
     }
   }
 
-  const request: NodeRequest = {
-    id,
-    path,
-    method,
-    body
-  };
-
-  return new Promise((resolve, reject) => {
-    // Store pending request
-    pendingRequests.set(id, { resolve, reject });
-
-    // Set timeout
-    const timeout = setTimeout(() => {
-      if (pendingRequests.has(id)) {
-        pendingRequests.delete(id);
-        reject(new Error(`Request timeout: ${path}`));
-      }
-    }, 30000);
-
-    // Send to Node.js
-    window.nodejs!.channel.post('request', request);
-
-    // Clear timeout on resolve/reject
-    const originalResolve = resolve;
-    const originalReject = reject;
-    pendingRequests.set(id, {
-      resolve: (value) => {
-        clearTimeout(timeout);
-        originalResolve(value);
-      },
-      reject: (reason) => {
-        clearTimeout(timeout);
-        originalReject(reason);
-      }
-    });
-  });
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
+    if (nodeReady && httpServerReady) return true;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return nodeReady && httpServerReady;
 }
 
 /**
- * Create an offline response for mobile when Node.js isn't ready
+ * Create an offline response when nodejs-mobile is not available
  */
 function createOfflineResponse(path: string, reason: string): Response {
-  console.warn(`[node-bridge] Offline response for ${path}: ${reason}`);
+  console.warn(`[node-bridge] Unhandled endpoint ${path}: ${reason}`);
   return new Response(
     JSON.stringify({
       success: false,
@@ -214,7 +238,7 @@ function createOfflineResponse(path: string, reason: string): Response {
     }),
     {
       status: 503,
-      statusText: 'Offline',
+      statusText: 'Service Unavailable',
       headers: {
         'Content-Type': 'application/json',
         'X-Offline-Response': 'true',
@@ -224,41 +248,123 @@ function createOfflineResponse(path: string, reason: string): Response {
 }
 
 /**
+ * Get session ID from localStorage (stored by AuthGate after login/sync)
+ */
+function getStoredSessionId(): string | null {
+  try {
+    const stored = localStorage.getItem('mh_session');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return parsed.sessionId || null;
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return null;
+}
+
+/**
+ * Make HTTP request to mobile Node.js server
+ * Uses Capacitor's native HTTP to bypass WebView restrictions
+ */
+async function fetchFromMobile(path: string, init?: RequestInit): Promise<Response> {
+  const url = `${MOBILE_BASE_URL}${path}`;
+  await ensureCapacitorHttp();
+  const http = getCapacitorHttp();
+
+  if (!http) {
+    throw new Error('CapacitorHttp not available');
+  }
+
+  // Use Capacitor's native HTTP plugin to bypass WebView restrictions
+  const method = (init?.method || 'GET').toUpperCase();
+
+  // Parse body if present
+  let data: Record<string, unknown> | undefined;
+  if (init?.body) {
+    try {
+      data = typeof init.body === 'string' ? JSON.parse(init.body) : init.body as unknown as Record<string, unknown>;
+    } catch {
+      // If not JSON, keep as string
+      data = { _raw: String(init.body) };
+    }
+  }
+
+  // Build headers - include session cookie from localStorage
+  // CapacitorHttp doesn't always persist cookies for localhost, so we pass it explicitly
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(init?.headers as Record<string, string> || {}),
+  };
+
+  const sessionId = getStoredSessionId();
+  if (sessionId) {
+    headers['Cookie'] = `mh_session=${sessionId}`;
+  }
+
+  // Make request using Capacitor HTTP
+  const response = await http.request({
+    url,
+    method,
+    data,
+    headers,
+  });
+
+  // Convert CapacitorHttp response to standard Response
+  const responseBody = typeof response.data === 'string'
+    ? response.data
+    : JSON.stringify(response.data);
+
+  return new Response(responseBody, {
+    status: response.status,
+    headers: new Headers(response.headers),
+  });
+}
+
+/**
  * Smart API fetch that routes to Node.js on mobile, server on web
  *
- * LOCAL-FIRST ARCHITECTURE:
- * - Mobile: Use local nodejs-mobile backend ONLY
- * - Mobile (Node.js not ready): Return offline response - NEVER call remote server
- * - Web: Use apiFetch (same-origin server)
+ * UNIFIED ARCHITECTURE:
+ * - Mobile: HTTP to localhost:4322 (nodejs-mobile HTTP server)
+ * - Web: HTTP to same-origin (Astro server)
+ *
+ * Both use cookies for auth - SAME CODE PATH
  *
  * Usage:
  *   import { nodeBridge } from './node-bridge';
  *   const response = await nodeBridge('/api/memories');
  */
 export async function nodeBridge(path: string, init?: RequestInit): Promise<Response> {
-  // Mobile: LOCAL-FIRST - use nodejs-mobile only, NEVER remote server
+  // Mobile: HTTP to local nodejs-mobile server
   if (isCapacitorNative()) {
-    // Check if Node.js is available and ready
     if (!isNodejsMobileAvailable()) {
       return createOfflineResponse(path, 'nodejs-mobile not available');
     }
 
-    if (!nodeReady) {
-      return createOfflineResponse(path, 'Local runtime not ready');
+    // Wait for runtime to be ready
+    if (!nodeReady || !httpServerReady) {
+      console.log(`[node-bridge] Waiting for runtime before ${path}...`);
+      const ready = await waitForNodeReady(10000);
+      if (!ready) {
+        return createOfflineResponse(path, 'Local runtime startup timeout');
+      }
+      console.log(`[node-bridge] Runtime ready, proceeding with ${path}`);
     }
 
-    // Use local Node.js backend
+    // HTTP request to local server - SAME AS WEB, just different port
     try {
-      return await sendToNode(path, init);
+      return await fetchFromMobile(path, init);
     } catch (error) {
-      // Local request failed - return offline, do NOT fall back to remote server
       const errorMsg = error instanceof Error ? error.message : 'Local request failed';
       return createOfflineResponse(path, errorMsg);
     }
   }
 
-  // Web: Use standard apiFetch to same-origin server (web IS the server)
-  return apiFetch(path, init);
+  // Web: Standard fetch to same-origin server
+  return fetch(path, {
+    ...init,
+    credentials: 'include', // Include cookies
+  });
 }
 
 /**

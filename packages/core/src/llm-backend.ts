@@ -40,7 +40,19 @@ function getVLLMPython(): string {
 // Types
 // ============================================================================
 
-export type BackendType = 'ollama' | 'vllm';
+/**
+ * Backend types:
+ * - 'ollama' | 'vllm': Local LLM backends (require GPU)
+ * - 'remote': Cloud provider (RunPod, Claude, OpenRouter, OpenAI)
+ * - 'auto': Intelligent selection - prefer local if available, fallback to remote
+ */
+export type BackendType = 'ollama' | 'vllm' | 'remote' | 'auto';
+
+/** Local backend type (for when using 'auto' or 'remote' with local fallback) */
+export type LocalBackendType = 'ollama' | 'vllm';
+
+/** Remote provider types supported */
+export type RemoteProviderType = 'claude' | 'runpod' | 'openrouter' | 'openai' | 'server';
 
 export interface OllamaBackendConfig {
   endpoint: string;
@@ -65,23 +77,44 @@ export interface VLLMBackendConfig {
   enableThinking?: boolean;
 }
 
+export interface RemoteBackendConfig {
+  /** Active remote provider */
+  provider: RemoteProviderType;
+  /** Remote server URL (for 'server' provider - e.g., Cloudflare tunnel to desktop) */
+  serverUrl?: string;
+  /** Default model for remote provider */
+  model?: string;
+}
+
 export interface BackendConfig {
   activeBackend: BackendType;
+  /** Preferred local backend when using 'auto' mode */
+  preferredLocalBackend?: LocalBackendType;
   ollama: OllamaBackendConfig;
   vllm: VLLMBackendConfig;
+  /** Remote/cloud provider configuration */
+  remote?: RemoteBackendConfig;
 }
 
 export interface BackendStatus {
+  /** Configured backend type */
   backend: BackendType;
+  /** Actual active backend (resolved from 'auto') */
+  resolvedBackend: 'ollama' | 'vllm' | 'remote' | 'offline';
+  /** Remote provider if using remote */
+  remoteProvider?: RemoteProviderType;
   running: boolean;
   model?: string;
-  endpoint: string;
+  endpoint?: string;
   health: 'healthy' | 'starting' | 'degraded' | 'offline';
+  /** Why this backend was selected (for 'auto' mode) */
+  reason?: string;
 }
 
 export interface AvailableBackends {
   ollama: { installed: boolean; running: boolean; model?: string };
   vllm: { installed: boolean; running: boolean; model?: string };
+  remote: { configured: boolean; provider?: RemoteProviderType; hasCredentials: boolean };
 }
 
 // ============================================================================
@@ -162,6 +195,9 @@ export function saveBackendConfig(updates: Partial<BackendConfig>): void {
   if (updates.vllm) {
     newConfig.vllm = { ...config.vllm, ...updates.vllm };
   }
+  if (updates.remote) {
+    newConfig.remote = { ...config.remote, ...updates.remote };
+  }
 
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(newConfig, null, 2));
   cachedConfig = newConfig;
@@ -186,6 +222,26 @@ export async function getBackendStatus(): Promise<BackendStatus> {
   const config = loadBackendConfig();
   const backend = config.activeBackend;
 
+  // Handle 'auto' mode - resolve to actual backend
+  if (backend === 'auto') {
+    return resolveAutoBackend(config);
+  }
+
+  // Handle 'remote' mode
+  if (backend === 'remote') {
+    const remoteConfig = config.remote;
+    return {
+      backend: 'remote',
+      resolvedBackend: 'remote',
+      remoteProvider: remoteConfig?.provider,
+      running: true, // Remote is always "running" if configured
+      model: remoteConfig?.model,
+      endpoint: remoteConfig?.serverUrl,
+      health: remoteConfig?.provider ? 'healthy' : 'offline',
+      reason: 'Configured for remote provider',
+    };
+  }
+
   if (backend === 'ollama') {
     const running = await isOllamaRunning();
     let model: string | undefined;
@@ -199,10 +255,14 @@ export async function getBackendStatus(): Promise<BackendStatus> {
 
     return {
       backend: 'ollama',
+      // If not running, resolve to 'offline' so UI shows correct status
+      resolvedBackend: running ? 'ollama' : 'offline',
       running,
       model,
       endpoint: config.ollama.endpoint,
       health: running ? 'healthy' : 'offline',
+      // Provide helpful reason when backend is unavailable
+      reason: running ? undefined : 'Ollama server is not running. Configure a different LLM backend in Settings.',
     };
   }
 
@@ -216,10 +276,120 @@ export async function getBackendStatus(): Promise<BackendStatus> {
 
   return {
     backend: 'vllm',
+    // If not running, resolve to 'offline' so UI shows correct status
+    resolvedBackend: running ? 'vllm' : 'offline',
     running,
     model,
     endpoint: config.vllm.endpoint,
     health: running ? 'healthy' : 'offline',
+    // Provide helpful reason when backend is unavailable
+    reason: running ? undefined : 'vLLM server is not running. Configure a different LLM backend in Settings.',
+  };
+}
+
+/**
+ * Resolve 'auto' backend to actual backend based on availability
+ *
+ * Priority:
+ * 1. Preferred local backend if running
+ * 2. Any local backend if running
+ * 3. Remote provider if configured
+ * 4. Offline
+ */
+async function resolveAutoBackend(config: BackendConfig): Promise<BackendStatus> {
+  const preferredLocal = config.preferredLocalBackend || 'ollama';
+
+  // Check preferred local backend first
+  if (preferredLocal === 'vllm') {
+    const vllmRunning = await isVLLMRunning();
+    if (vllmRunning) {
+      const model = await vllm.getLoadedModel() || undefined;
+      return {
+        backend: 'auto',
+        resolvedBackend: 'vllm',
+        running: true,
+        model,
+        endpoint: config.vllm.endpoint,
+        health: 'healthy',
+        reason: 'vLLM is running (preferred local backend)',
+      };
+    }
+  } else {
+    const ollamaRunning = await isOllamaRunning();
+    if (ollamaRunning) {
+      let model: string | undefined;
+      try {
+        const result = await ollama.getRunningModels();
+        model = result.models[0]?.name;
+      } catch { }
+      return {
+        backend: 'auto',
+        resolvedBackend: 'ollama',
+        running: true,
+        model,
+        endpoint: config.ollama.endpoint,
+        health: 'healthy',
+        reason: 'Ollama is running (preferred local backend)',
+      };
+    }
+  }
+
+  // Check alternate local backend
+  if (preferredLocal === 'ollama') {
+    const vllmRunning = await isVLLMRunning();
+    if (vllmRunning) {
+      const model = await vllm.getLoadedModel() || undefined;
+      return {
+        backend: 'auto',
+        resolvedBackend: 'vllm',
+        running: true,
+        model,
+        endpoint: config.vllm.endpoint,
+        health: 'healthy',
+        reason: 'vLLM is running (fallback local backend)',
+      };
+    }
+  } else {
+    const ollamaRunning = await isOllamaRunning();
+    if (ollamaRunning) {
+      let model: string | undefined;
+      try {
+        const result = await ollama.getRunningModels();
+        model = result.models[0]?.name;
+      } catch { }
+      return {
+        backend: 'auto',
+        resolvedBackend: 'ollama',
+        running: true,
+        model,
+        endpoint: config.ollama.endpoint,
+        health: 'healthy',
+        reason: 'Ollama is running (fallback local backend)',
+      };
+    }
+  }
+
+  // No local backend available - check remote
+  if (config.remote?.provider) {
+    return {
+      backend: 'auto',
+      resolvedBackend: 'remote',
+      remoteProvider: config.remote.provider,
+      running: true,
+      model: config.remote.model,
+      endpoint: config.remote.serverUrl,
+      health: 'healthy',
+      reason: `No local LLM available, using remote (${config.remote.provider})`,
+    };
+  }
+
+  // Nothing available
+  return {
+    backend: 'auto',
+    resolvedBackend: 'offline',
+    running: false,
+    health: 'offline',
+    reason: 'No local LLM running and no remote provider configured',
   };
 }
 
@@ -227,6 +397,8 @@ export async function getBackendStatus(): Promise<BackendStatus> {
  * Detect which backends are available on this system
  */
 export async function detectAvailableBackends(): Promise<AvailableBackends> {
+  const config = loadBackendConfig();
+
   const [ollamaRunning, vllmRunning] = await Promise.all([
     isOllamaRunning(),
     isVLLMRunning(),
@@ -272,9 +444,15 @@ export async function detectAvailableBackends(): Promise<AvailableBackends> {
     vllmModel = await vllm.getLoadedModel() || undefined;
   }
 
+  // Check remote configuration
+  const remoteConfigured = !!config.remote?.provider;
+  // TODO: Check if credentials exist for the remote provider
+  const hasCredentials = remoteConfigured; // For now, assume configured = has credentials
+
   return {
     ollama: { installed: ollamaInstalled, running: ollamaRunning, model: ollamaModel },
     vllm: { installed: vllmInstalled, running: vllmRunning, model: vllmModel },
+    remote: { configured: remoteConfigured, provider: config.remote?.provider, hasCredentials },
   };
 }
 

@@ -54,6 +54,9 @@ import {
   type UserContext,
   // Runtime mode
   isHeadless,
+  // LUKS encryption
+  isPolkitConfigured,
+  checkLuks,
 } from '@metahuman/core';
 import { verifyRecoveryCode, getRemainingCodes } from '@metahuman/core/recovery-codes';
 import { personaCommand } from './commands/persona.js';
@@ -1275,6 +1278,10 @@ Multi-User Management:
   user whoami         Show current user context
   user info <name>    Show detailed info for a user
 
+System Setup:
+  setup status        Check system configuration status
+  setup encryption    Configure passwordless LUKS encryption
+
 Multi-User Usage:
   --user <name>       Run command as specific user (or -u)
 
@@ -1909,6 +1916,175 @@ function voiceCmd(args: string[]): void {
   }
 }
 
+async function setupCmd(args: string[]): Promise<void> {
+  const subcommand = args[0];
+
+  if (!subcommand) {
+    console.log(`
+Setup Commands — Configure MetaHuman OS
+========================================
+
+Usage: mh setup <subcommand>
+
+Subcommands:
+  encryption          Configure passwordless encryption (LUKS)
+  status              Check setup status
+
+Examples:
+  mh setup status
+  mh setup encryption
+`);
+    return;
+  }
+
+  switch (subcommand) {
+    case 'status': {
+      console.log('\nMetaHuman OS Setup Status');
+      console.log('=========================\n');
+
+      // Check LUKS tools
+      const luks = checkLuks();
+      console.log(`LUKS (cryptsetup): ${luks.installed ? `✓ Installed (v${luks.version})` : '✗ Not installed'}`);
+
+      // Check polkit configuration
+      const polkitReady = isPolkitConfigured();
+      console.log(`Polkit (passwordless encryption): ${polkitReady ? '✓ Configured' : '✗ Not configured'}`);
+
+      // Check metahuman group membership
+      const username = process.env.USER || process.env.USERNAME || '';
+      let inGroup = false;
+      try {
+        const { execSync } = await import('child_process');
+        const groups = execSync(`groups ${username}`, { encoding: 'utf-8' });
+        inGroup = groups.includes('metahuman');
+      } catch {}
+      console.log(`User in 'metahuman' group: ${inGroup ? '✓ Yes' : '✗ No'}`);
+
+      console.log('');
+
+      if (!polkitReady) {
+        console.log('💡 To enable passwordless encryption, run:');
+        console.log('   mh setup encryption');
+      } else if (!inGroup) {
+        console.log('💡 You need to log out and back in for group membership to take effect.');
+      } else {
+        console.log('✓ Encryption setup complete! LUKS volumes can be managed without password prompts.');
+      }
+      break;
+    }
+
+    case 'encryption': {
+      console.log('\nMetaHuman OS — Encryption Setup');
+      console.log('================================\n');
+
+      // Check if already configured
+      if (isPolkitConfigured()) {
+        console.log('✓ Polkit is already configured for passwordless encryption.');
+
+        // Check group membership
+        const username = process.env.USER || process.env.USERNAME || '';
+        let inGroup = false;
+        try {
+          const { execSync } = await import('child_process');
+          const groups = execSync(`groups ${username}`, { encoding: 'utf-8' });
+          inGroup = groups.includes('metahuman');
+        } catch {}
+
+        if (inGroup) {
+          console.log('✓ You are in the metahuman group.');
+          console.log('\n✓ Encryption is fully configured!');
+        } else {
+          console.log('⚠️  You are not in the metahuman group yet.');
+          console.log('\n💡 Log out and back in for group membership to take effect.');
+        }
+        return;
+      }
+
+      // Check if cryptsetup is available
+      const luks = checkLuks();
+      if (!luks.installed) {
+        console.log('⚠️  cryptsetup is not installed.');
+        console.log('\nInstall it with:');
+        console.log('  Ubuntu/Debian: sudo apt install cryptsetup');
+        console.log('  Fedora/RHEL:   sudo dnf install cryptsetup');
+        console.log('  Arch:          sudo pacman -S cryptsetup');
+        console.log('\nThen run: mh setup encryption');
+        return;
+      }
+
+      // Check if setup script exists
+      const setupScript = path.join(systemPaths.root, 'scripts', 'setup-encryption.sh');
+      if (!fs.existsSync(setupScript)) {
+        console.error('Error: Setup script not found at', setupScript);
+        process.exit(1);
+      }
+
+      console.log('This will configure polkit to allow passwordless LUKS operations.');
+      console.log('You will be prompted for your sudo password.\n');
+      console.log('What it does:');
+      console.log('  1. Installs polkit policy (defines allowed actions)');
+      console.log('  2. Installs polkit rules (enables passwordless operation)');
+      console.log('  3. Installs helper script (validates and executes commands)');
+      console.log('  4. Creates "metahuman" group');
+      console.log('  5. Adds your user to the group\n');
+
+      // Prompt for confirmation
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+
+      rl.question('Continue? [Y/n] ', async (answer) => {
+        rl.close();
+
+        if (answer.toLowerCase() === 'n') {
+          console.log('Cancelled.');
+          return;
+        }
+
+        console.log('\nRunning setup script...\n');
+
+        // Run the setup script with sudo
+        const child = spawn('sudo', [setupScript], {
+          stdio: 'inherit',
+          cwd: systemPaths.root,
+        });
+
+        child.on('close', (code) => {
+          if (code === 0) {
+            console.log('\n✓ Setup complete!');
+            console.log('\n⚠️  IMPORTANT: You must log out and log back in');
+            console.log('   for the group membership to take effect.\n');
+            console.log('After logging back in, run: mh setup status');
+
+            audit({
+              level: 'info',
+              category: 'system',
+              event: 'encryption_setup_completed',
+              details: {},
+              actor: 'human',
+            });
+          } else {
+            console.error(`\nSetup failed with exit code ${code}`);
+            process.exit(1);
+          }
+        });
+
+        child.on('error', (err) => {
+          console.error('Failed to run setup script:', err.message);
+          process.exit(1);
+        });
+      });
+      break;
+    }
+
+    default:
+      console.error(`Unknown subcommand: ${subcommand}`);
+      console.error('Run: mh setup (without args) for help');
+      process.exit(1);
+  }
+}
+
 /**
  * Extract --user flag from arguments
  * Returns { username, filteredArgs }
@@ -2238,6 +2414,9 @@ async function main() {
         break;
       case 'profile':
         profileCommand(args);
+        break;
+      case 'setup':
+        await setupCmd(args);
         break;
       case 'help':
       case '--help':

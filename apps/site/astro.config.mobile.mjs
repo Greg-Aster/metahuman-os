@@ -76,7 +76,8 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        // Exclude API routes from the build (they're server-only)
+        // Exclude Node.js built-ins from the build (they're server-only)
+        // NOTE: @capacitor modules MUST be bundled - they contain the JS bridge code
         external: [
           /^node:/,
           'async_hooks',

@@ -159,9 +159,17 @@ const execute: NodeExecutor = async (inputs, context) => {
       };
     } catch (error) {
       console.error('[ResponseSynthesizer] Error generating response from orchestrator guidance:', error);
+      const errorMsg = (error as Error).message;
+      // Provide helpful message for common errors
+      let userMessage = 'I encountered an error while processing your request.';
+      if (errorMsg.includes('offline') || errorMsg.includes('not running') || errorMsg.includes('No remote provider')) {
+        userMessage = 'LLM backend is unavailable. Please configure a working LLM in Settings.';
+      } else if (errorMsg.includes('API key')) {
+        userMessage = 'API key is missing or invalid. Please configure your LLM credentials in Settings.';
+      }
       return {
-        response: 'I encountered an error while processing your request.',
-        error: (error as Error).message,
+        response: userMessage,
+        error: errorMsg,
       };
     }
   }
@@ -408,9 +416,19 @@ Based on these execution steps, provide a clear, helpful response to the user's 
     return result;
   } catch (error) {
     console.error('[ResponseSynthesizer] Error:', error);
+    const errorMsg = (error as Error).message;
+    // Provide helpful message for common errors
+    let userMessage = finalResponse || 'I encountered an error while processing your request.';
+    if (!finalResponse) {
+      if (errorMsg.includes('offline') || errorMsg.includes('not running') || errorMsg.includes('No remote provider')) {
+        userMessage = 'LLM backend is unavailable. Please configure a working LLM in Settings.';
+      } else if (errorMsg.includes('API key')) {
+        userMessage = 'API key is missing or invalid. Please configure your LLM credentials in Settings.';
+      }
+    }
     let result: any = {
-      response: finalResponse || 'I encountered an error while processing your request.',
-      error: (error as Error).message,
+      response: userMessage,
+      error: errorMsg,
     };
 
     if (hasPersona && result.response) {

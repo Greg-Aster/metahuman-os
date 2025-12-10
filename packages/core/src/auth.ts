@@ -14,6 +14,16 @@ export interface Cookies {
   get(name: string): { value: string } | undefined;
 }
 
+// Universal auth input - accepts cookies OR session token string
+export type AuthInput = Cookies | string | undefined;
+
+// Helper to extract session ID from either format
+function getSessionId(auth: AuthInput): string | undefined {
+  if (!auth) return undefined;
+  if (typeof auth === 'string') return auth; // Direct session token (mobile)
+  return auth.get('mh_session')?.value; // Cookie interface (web)
+}
+
 export interface AuthenticatedUser {
   id: string;
   username: string;
@@ -32,33 +42,33 @@ export interface AnonymousUser {
 export type User = AuthenticatedUser | AnonymousUser;
 
 /**
- * Get authenticated user from session cookie
+ * Get authenticated user from session
+ *
+ * UNIVERSAL - works for both web (cookies) and mobile (session token string)
  *
  * Throws error if:
- * - No session cookie
+ * - No session
  * - Invalid session
  * - Session is anonymous
  * - User not found in database
  *
- * Use this for protected endpoints that require authentication.
- *
  * @example
  * ```typescript
- * export const POST: APIRoute = async ({ cookies }) => {
- *   const user = getAuthenticatedUser(cookies);
- *   const paths = getProfilePaths(user.username);
- *   // ... do authenticated stuff
- * };
+ * // Web (Astro cookies)
+ * const user = getAuthenticatedUser(cookies);
+ *
+ * // Mobile (session token string)
+ * const user = getAuthenticatedUser(sessionToken);
  * ```
  */
-export function getAuthenticatedUser(cookies: Cookies): AuthenticatedUser {
-  const sessionCookie = cookies.get('mh_session');
+export function getAuthenticatedUser(auth: AuthInput): AuthenticatedUser {
+  const sessionId = getSessionId(auth);
 
-  if (!sessionCookie) {
-    throw new Error('UNAUTHORIZED: No session cookie');
+  if (!sessionId) {
+    throw new Error('UNAUTHORIZED: No session');
   }
 
-  const session = validateSession(sessionCookie.value);
+  const session = validateSession(sessionId);
 
   if (!session) {
     throw new Error('UNAUTHORIZED: Invalid session');
@@ -86,38 +96,33 @@ export function getAuthenticatedUser(cookies: Cookies): AuthenticatedUser {
 /**
  * Get user or return anonymous user
  *
+ * UNIVERSAL - works for both web (cookies) and mobile (session token string)
+ *
  * Never throws - returns anonymous user if auth fails.
  * Use this for public endpoints that degrade gracefully for anonymous users.
  *
  * @example
  * ```typescript
- * export const GET: APIRoute = async ({ cookies }) => {
- *   const user = getUserOrAnonymous(cookies);
+ * // Web (Astro cookies)
+ * const user = getUserOrAnonymous(cookies);
  *
- *   if (user.role === 'anonymous') {
- *     return new Response(JSON.stringify({ message: 'Please log in' }));
- *   }
- *
- *   const paths = getProfilePaths(user.username);
- *   // ... do user-specific stuff
- * };
+ * // Mobile (session token string)
+ * const user = getUserOrAnonymous(sessionToken);
  * ```
  */
-export function getUserOrAnonymous(cookies: Cookies): User {
+export function getUserOrAnonymous(auth: AuthInput): User {
   try {
-    return getAuthenticatedUser(cookies);
+    return getAuthenticatedUser(auth);
   } catch (error) {
     // Check if this is an anonymous session with a selected guest profile
-    // If so, return 'guest' as username so paths resolve to profiles/guest
-    const sessionCookie = cookies.get('mh_session');
-    if (sessionCookie) {
-      const session = validateSession(sessionCookie.value);
+    const sessionId = getSessionId(auth);
+    if (sessionId) {
+      const session = validateSession(sessionId);
       if (session?.role === 'anonymous' && session.metadata?.activeProfile === 'guest') {
         return {
           id: 'guest',
           username: 'guest',
           role: 'anonymous' as const,
-          // Preserve source profile info for display
           metadata: {
             sourceProfile: session.metadata.sourceProfile,
           },

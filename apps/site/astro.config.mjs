@@ -83,7 +83,15 @@ export default defineConfig({
       // which breaks client-side hydration ("Component is not a constructor" error)
       // Instead, use externalizeMetahumanCoreForClient plugin above to prevent
       // Node.js code from leaking into client bundles
-      rollupOptions: {},
+      rollupOptions: {
+        // Capacitor packages are mobile-only - externalize from server build
+        external: [
+          '@capacitor/app',
+          '@capacitor/browser',
+          '@capacitor/core',
+          /^@capacitor\//,
+        ],
+      },
     },
     server: {
       allowedHosts: [

@@ -133,6 +133,10 @@
     loading = false;
   }
 
+  function isBackendActive(backend: 'ollama' | 'vllm'): boolean {
+    return llmBackend?.activeBackend === backend;
+  }
+
   async function controlLLMBackend(backend: 'ollama' | 'vllm', action: 'start' | 'stop' | 'restart') {
     actionInProgress = `${backend}-${action}`;
 
@@ -267,7 +271,7 @@
         </div>
 
         <!-- Ollama -->
-        <div class="server-card llm-card" class:active-backend={llmBackend.activeBackend === 'ollama'}>
+        <div class="server-card llm-card" class:active-backend={isBackendActive('ollama')}>
           <div class="server-header">
             <div class="server-info">
               <span class="status-icon">

@@ -40,39 +40,44 @@ import '../styles/chat-animations.css';
 
     <!-- PERFORMANCE FIX: Bootstrap critical data before component hydration -->
     <!-- This pre-fetches status data so it's ready when components hydrate -->
+    <!-- LOCAL-FIRST: On mobile, skip bootstrap fetch - nodeBridge handles everything locally -->
     <script is:inline>
-      // Fetch critical status data immediately and store in a global
-      // Components will check for this on mount
-      // Check for Capacitor to use correct API URL
+      // Check for Capacitor (mobile app)
       const isCapacitor = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
-      const apiBaseUrl = isCapacitor ? 'https://mh.dndiy.org' : '';
-      fetch(apiBaseUrl + '/api/status', { cache: 'no-store', credentials: isCapacitor ? 'include' : 'same-origin' })
-        .then(res => res.json())
-        .then(data => {
-          window.__MH_BOOTSTRAP_STATUS__ = data;
-          console.log('[bootstrap] Status data pre-fetched');
-        })
-        .catch(err => {
-          console.error('[bootstrap] Failed to pre-fetch status:', err);
-        });
+
+      // LOCAL-FIRST ARCHITECTURE:
+      // - Mobile: Skip bootstrap fetch - app is standalone, nodeBridge handles all API calls locally
+      // - Web: Pre-fetch from same-origin server (web IS the server)
+      if (!isCapacitor) {
+        // Web only: fetch critical status data immediately
+        fetch('/api/status', { cache: 'no-store', credentials: 'same-origin' })
+          .then(res => res.json())
+          .then(data => {
+            window.__MH_BOOTSTRAP_STATUS__ = data;
+            console.log('[bootstrap] Status data pre-fetched');
+          })
+          .catch(err => {
+            console.error('[bootstrap] Failed to pre-fetch status:', err);
+          });
+      } else {
+        console.log('[bootstrap] Mobile: skipping bootstrap fetch (local-first architecture)');
+      }
     </script>
   </head>
   <body>
-    <!-- Authentication Gate (blocks access until logged in) -->
-    <!-- client:only="svelte" skips SSR and renders only on client (DOM mode, not SSR mode) -->
-    <AuthGate client:only="svelte" />
-
-    <!-- Main Application -->
-    <div id="main-app">
-      <!-- client:only="svelte" required because build.ssr:true compiles SSR-format components -->
-      <!-- This ensures components render on client with DOM compilation mode -->
-      <ChatLayout client:only="svelte">
-        <ThemeToggle slot="header-actions" />
-        <LeftSidebar slot="left-sidebar" client:only="svelte" />
-        <CenterContent slot="center" client:only="svelte" />
-        <RightSidebar slot="right-sidebar" client:only="svelte" />
-      </ChatLayout>
-    </div>
+    <!-- Authentication Gate - ONLY renders children when authenticated -->
+    <!-- Main app is a child, so it DOES NOT load until user is logged in -->
+    <AuthGate client:only="svelte">
+      <!-- Main Application - only renders when AuthGate confirms authentication -->
+      <div id="main-app">
+        <ChatLayout client:only="svelte">
+          <ThemeToggle slot="header-actions" />
+          <LeftSidebar slot="left-sidebar" client:only="svelte" />
+          <CenterContent slot="center" client:only="svelte" />
+          <RightSidebar slot="right-sidebar" client:only="svelte" />
+        </ChatLayout>
+      </div>
+    </AuthGate>
   </body>
 </html>
 

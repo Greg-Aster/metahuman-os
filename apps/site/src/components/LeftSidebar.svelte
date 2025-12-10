@@ -5,6 +5,7 @@
   import { currentMode, isOwner } from '../stores/security-policy';
   import { pendingCount, loadApprovals } from '../stores/approvals';
   import { apiFetch } from '../lib/client/api-config';
+  import SyncStatus from './SyncStatus.svelte';
 
   interface MenuItem {
     id: string;
@@ -20,6 +21,7 @@
     { id: 'persona', label: 'Persona', icon: '👤', description: 'Identity & personality' },
     { id: 'voice', label: 'Voice', icon: '🎤', description: 'Audio & training' },
     { id: 'training', label: 'AI Training', icon: '🧠', description: 'LoRA adapters' },
+    { id: 'system-coder', label: 'System Coder', icon: '🔧', description: 'Self-healing agent' },
     { id: 'terminal', label: 'Terminal', icon: '💻', description: 'Command line' },
     { id: 'system', label: 'System', icon: '⚙️', description: 'Settings & tools' },
   ];
@@ -136,6 +138,23 @@
         modelRoles = data?.modelRoles || {};
         hasModelRegistry = Object.keys(modelRoles).length > 0;
         loading = false;
+
+        // Populate cloud models from unified status endpoint (works on mobile too)
+        if (data.systemHealth?.cloudModels && data.systemHealth.cloudModels.length > 0) {
+          modelCategories.remote = data.systemHealth.cloudModels.map((m: { id: string; model: string; provider: string }) => ({
+            id: m.id,
+            model: m.model,
+            provider: m.provider,
+            locked: false
+          }));
+        }
+
+        // Update backend info from status
+        if (data.systemHealth) {
+          activeBackend = data.systemHealth.activeBackend || 'auto';
+          resolvedBackend = data.systemHealth.resolvedBackend || null;
+          remoteProvider = data.systemHealth.remoteProvider || null;
+        }
       }
     });
   }
@@ -389,9 +408,21 @@
   interface LocalModelInfo {
     id: string;
     name: string;
-    provider: 'ollama' | 'vllm';
+    provider: 'ollama' | 'vllm' | 'remote';
     locked: boolean;
   }
+
+  type BackendType = 'ollama' | 'vllm' | 'remote' | 'auto';
+  type ResolvedBackendType = 'ollama' | 'vllm' | 'remote' | 'offline';
+  // Note: Claude is NOT a remote provider - Big Brother uses Claude via CLI terminal (different system)
+  type RemoteProviderType = 'runpod' | 'openrouter' | 'openai' | 'server';
+
+  const remoteProviderNames: Record<RemoteProviderType, string> = {
+    runpod: 'RunPod',
+    openrouter: 'OpenRouter',
+    openai: 'OpenAI',
+    server: 'Server',
+  };
 
   let availableModels: AvailableModel[] = [];
   let uniqueModels: AvailableModel[] = [];
@@ -401,7 +432,9 @@
   let statusRefreshInFlight = false;
 
   // NEW: Adaptive widget state
-  let activeBackend: 'ollama' | 'vllm' = 'ollama';
+  let activeBackend: BackendType = 'ollama';
+  let resolvedBackend: ResolvedBackendType | null = null;
+  let remoteProvider: RemoteProviderType | null = null;
   let localModel: LocalModelInfo | null = null;
   let modelCategories: ModelCategories = {
     local: [],
@@ -410,40 +443,11 @@
     bigBrother: []
   };
 
-  // Fetch backend status from public endpoint (works for all users)
-  async function loadBackendStatus() {
-    try {
-      const response = await apiFetch('/api/llm-backend/status');
-      const data = await response.json();
-      if (data.active) {
-        activeBackend = data.active.backend || 'ollama';
-        // Update local model info from backend status
-        if (activeBackend === 'vllm' && data.active.model) {
-          localModel = {
-            id: 'vllm.active',
-            name: data.active.model,
-            provider: 'vllm',
-            locked: true
-          };
-          modelCategories.local = [{
-            id: 'vllm.active',
-            model: data.active.model,
-            provider: 'vllm',
-            locked: true
-          }];
-        }
-      }
-    } catch (error) {
-      console.error('Error loading backend status:', error);
-    }
-  }
+  // Backend status is now handled by unified /api/status endpoint (see loadStatus)
 
   async function loadModelRegistry() {
     if (loadingModelRegistry) return;
     loadingModelRegistry = true;
-
-    // Always fetch backend status first (works for all users)
-    await loadBackendStatus();
 
     try {
       const response = await apiFetch('/api/model-registry');
@@ -692,7 +696,10 @@
 
   <!-- Status Widget -->
   <div class="status-widget">
-    <div class="widget-header">Status</div>
+    <div class="widget-header">
+      <span>Status</span>
+      <SyncStatus compact={true} />
+    </div>
     {#if loading}
       <div class="widget-loading">Loading...</div>
     {:else if identity}
@@ -700,8 +707,16 @@
 
         <!-- Backend Indicator -->
         <div class="backend-indicator">
-          {#if activeBackend === 'vllm'}
+          {#if resolvedBackend === 'remote' || activeBackend === 'remote'}
+            <span class="backend-badge remote">☁️ {remoteProvider ? remoteProviderNames[remoteProvider] : 'Remote'}</span>
+          {:else if resolvedBackend === 'vllm' || activeBackend === 'vllm'}
             <span class="backend-badge vllm">⚡ vLLM</span>
+          {:else if resolvedBackend === 'ollama' || activeBackend === 'ollama'}
+            <span class="backend-badge ollama">🦙 Ollama</span>
+          {:else if resolvedBackend === 'offline'}
+            <span class="backend-badge offline">⚠️ Offline</span>
+          {:else if activeBackend === 'auto'}
+            <span class="backend-badge auto">🔄 Auto</span>
           {:else}
             <span class="backend-badge ollama">🦙 Ollama</span>
           {/if}
@@ -709,7 +724,7 @@
             <span class="local-model-name">
               {localModel.name}
               {#if localModel.locked}
-                <span class="loaded-indicator" title="Currently loaded in vLLM - select for any role">✓</span>
+                <span class="loaded-indicator" title="Currently loaded - select for any role">✓</span>
               {/if}
             </span>
           {/if}
@@ -934,6 +949,22 @@
   }
 
   :global(.dark) .widget-loading {
+    color: rgb(156 163 175);
+  }
+
+  .widget-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: rgb(107 114 128);
+    margin-bottom: 0.5rem;
+  }
+
+  :global(.dark) .widget-header {
     color: rgb(156 163 175);
   }
 
@@ -1995,6 +2026,42 @@
     background: linear-gradient(135deg, rgba(74, 222, 128, 0.2), rgba(134, 239, 172, 0.15));
     color: rgb(134 239 172);
     border-color: rgba(74, 222, 128, 0.3);
+  }
+
+  .backend-badge.remote {
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.15), rgba(192, 132, 252, 0.1));
+    color: rgb(126 34 206);
+    border: 1px solid rgba(168, 85, 247, 0.25);
+  }
+
+  :global(.dark) .backend-badge.remote {
+    background: linear-gradient(135deg, rgba(192, 132, 252, 0.2), rgba(216, 180, 254, 0.15));
+    color: rgb(216 180 254);
+    border-color: rgba(192, 132, 252, 0.35);
+  }
+
+  .backend-badge.offline {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(248, 113, 113, 0.1));
+    color: rgb(185 28 28);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+  }
+
+  :global(.dark) .backend-badge.offline {
+    background: linear-gradient(135deg, rgba(248, 113, 113, 0.2), rgba(252, 165, 165, 0.15));
+    color: rgb(252 165 165);
+    border-color: rgba(248, 113, 113, 0.35);
+  }
+
+  .backend-badge.auto {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(96, 165, 250, 0.1));
+    color: rgb(29 78 216);
+    border: 1px solid rgba(59, 130, 246, 0.25);
+  }
+
+  :global(.dark) .backend-badge.auto {
+    background: linear-gradient(135deg, rgba(96, 165, 250, 0.2), rgba(147, 197, 253, 0.15));
+    color: rgb(147 197 253);
+    border-color: rgba(96, 165, 250, 0.35);
   }
 
   .local-model-name {
