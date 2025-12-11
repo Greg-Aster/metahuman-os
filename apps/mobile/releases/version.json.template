@@ -1,8 +1,0 @@
-{
-  "version": "1.0.0",
-  "versionCode": 1,
-  "releaseDate": "2025-12-04",
-  "releaseNotes": "Initial release of MetaHuman OS mobile app.\n\n- Three-tier compute architecture (offline/server/cloud)\n- Native voice input/output\n- Memory sync with server\n- On-device model support",
-  "minAndroidVersion": 24,
-  "checksum": ""
-}
