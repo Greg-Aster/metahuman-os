@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import OnboardingWizard from './OnboardingWizard.svelte';
   import ProfileSelector from './ProfileSelector.svelte';
-  import { apiFetch, isCapacitorNative, getApiBaseUrl, initServerUrl, getSyncServerUrl, remoteFetch, normalizeUrl } from '../lib/client/api-config';
+  import { apiFetch, getApiBaseUrl, initServerUrl, getSyncServerUrl, remoteFetch, normalizeUrl } from '../lib/client/api-config';
   import { healthStatus, forceHealthCheck } from '../lib/client/server-health';
 
   // Simple localStorage for session (same concept as cookies on web)
@@ -35,7 +35,6 @@
 
   // Server connection state
   let serverConnected = false;
-  let isMobile = false;
 
   // Form fields
   let username = '';
@@ -69,14 +68,9 @@
   $: serverConnected = $healthStatus.connected;
 
   // Check if user is already authenticated
-  // IDENTICAL for web and mobile - just check the API
   async function checkAuth() {
     console.log('[AuthGate] checkAuth() starting');
-    isMobile = isCapacitorNative();
 
-    // Check API auth - SAME code path for web and mobile
-    // Web: cookie sent automatically
-    // Mobile: session ID passed via nodeBridge
     try {
       const res = await apiFetch('/api/auth/me');
       if (res.ok) {
@@ -173,11 +167,8 @@
       // DON'T auto-redirect to sync-prompt - that was confusing for wrong password
       error = data.error || 'Login failed. Check your credentials.';
 
-      // Show sync hint to help users who may need to sync from another device
-      // On mobile: Always show hint (likely setting up new device)
-      // On web: Show hint for any authentication failure (user might need to sync)
-      // The hint is dismissible and clears when user starts typing
-      showSyncHint = isMobile || error.toLowerCase().includes('invalid');
+      // Always show sync hint on login failure - users can sync profiles from any device
+      showSyncHint = true;
     } catch (err) {
       error = 'Login failed. Check your credentials.';
       console.error('Login error:', err);

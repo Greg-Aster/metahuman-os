@@ -17,7 +17,6 @@
  */
 
 import { writable, derived, type Readable, type Writable } from 'svelte/store';
-import { isCapacitorNative } from './api-config';
 import { healthStatus } from './server-health';
 
 // ============================================================================
@@ -112,19 +111,8 @@ export const hasConflicts: Readable<boolean> = derived(
 // ============================================================================
 
 async function loadFromStorage<T>(key: string, defaultValue: T): Promise<T> {
-  if (!isCapacitorNative()) {
-    // Use localStorage for web
-    try {
-      const value = localStorage.getItem(key);
-      return value ? JSON.parse(value) : defaultValue;
-    } catch {
-      return defaultValue;
-    }
-  }
-
   try {
-    const { Preferences } = await import('@capacitor/preferences');
-    const { value } = await Preferences.get({ key });
+    const value = localStorage.getItem(key);
     return value ? JSON.parse(value) : defaultValue;
   } catch {
     return defaultValue;
@@ -132,16 +120,9 @@ async function loadFromStorage<T>(key: string, defaultValue: T): Promise<T> {
 }
 
 async function saveToStorage(key: string, value: any): Promise<void> {
-  const json = JSON.stringify(value);
-
-  if (!isCapacitorNative()) {
-    localStorage.setItem(key, json);
-    return;
-  }
-
   try {
-    const { Preferences } = await import('@capacitor/preferences');
-    await Preferences.set({ key, value: json });
+    const json = JSON.stringify(value);
+    localStorage.setItem(key, json);
   } catch (e) {
     console.error('[memory-sync] Failed to save to storage:', e);
   }

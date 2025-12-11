@@ -117,6 +117,9 @@ rm -rf "$NODEJS_WWW"/*
 
 if [ -d "$TEMP_WWW" ]; then
     cp -r "$TEMP_WWW"/* "$NODEJS_WWW/"
+    # Remove API routes from www - they're handled by Node.js directly, not static files
+    # The _id_ directories cause Android asset copy failures
+    rm -rf "$NODEJS_WWW/pages/api" 2>/dev/null || true
     echo "  Copied $(find "$NODEJS_WWW" -type f | wc -l) files to nodejs-project/www/"
     echo "  Node.js will serve these via HTTP (same as Astro web server)"
 else

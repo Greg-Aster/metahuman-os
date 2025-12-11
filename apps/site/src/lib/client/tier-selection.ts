@@ -15,7 +15,7 @@
 
 import { writable, derived, type Readable, type Writable } from 'svelte/store';
 import { healthStatus } from './server-health';
-import { isCapacitorNative, getApiBaseUrlAsync, getApiBaseUrl } from './api-config';
+import { getApiBaseUrlAsync } from './api-config';
 
 // ============================================================================
 // Types
@@ -214,14 +214,6 @@ async function detectDeviceStatus(): Promise<DeviceStatus> {
     status.networkType = 'none';
   }
 
-  // Capacitor-specific battery detection (optional - may not be installed)
-  // Uses browser Battery API as fallback; @capacitor/device would be added to
-  // the mobile project if more accurate battery info is needed
-  if (isCapacitorNative()) {
-    // Battery info from Browser API is usually sufficient
-    // Native Capacitor Device plugin can be added later for more accuracy
-  }
-
   return status;
 }
 
@@ -236,23 +228,8 @@ async function checkOfflineTierAvailable(): Promise<TierStatus> {
     lastCheck: new Date(),
   };
 
-  // Check if llama.cpp native plugin is available
-  if (isCapacitorNative()) {
-    try {
-      // Check for native LLM plugin
-      const { NativeLLM } = await import('../client/plugins/native-llm');
-      const modelStatus = await NativeLLM.isModelLoaded();
-      status.available = modelStatus.loaded;
-      if (!modelStatus.loaded) {
-        status.error = 'Model not loaded';
-      }
-    } catch (e) {
-      status.error = 'Native LLM plugin not available';
-    }
-  } else {
-    // Web fallback - check for WebLLM or similar
-    status.error = 'Offline mode only available on mobile';
-  }
+  // Offline mode not available in React Native (uses Node.js server instead)
+  status.error = 'Offline mode not available - use server mode';
 
   return status;
 }
@@ -533,34 +510,12 @@ function getAlternatives(
 // ============================================================================
 
 export async function loadTierConfig(): Promise<void> {
-  if (!isCapacitorNative()) return;
-
-  try {
-    const { Preferences } = await import('@capacitor/preferences');
-    const { value } = await Preferences.get({ key: 'tier_config' });
-    if (value) {
-      const config = JSON.parse(value) as TierSelectionConfig;
-      tierConfig.set({ ...DEFAULT_CONFIG, ...config });
-    }
-  } catch {
-    // Use defaults
-  }
+  // Configuration is not persisted in React Native - use defaults
 }
 
 export async function saveTierConfig(config: TierSelectionConfig): Promise<void> {
   tierConfig.set(config);
-
-  if (!isCapacitorNative()) return;
-
-  try {
-    const { Preferences } = await import('@capacitor/preferences');
-    await Preferences.set({
-      key: 'tier_config',
-      value: JSON.stringify(config)
-    });
-  } catch {
-    // Storage failed - config still in memory
-  }
+  // Configuration is not persisted in React Native - kept in memory only
 }
 
 export async function setSelectionMode(mode: SelectionMode, manualTier?: TierType): Promise<void> {

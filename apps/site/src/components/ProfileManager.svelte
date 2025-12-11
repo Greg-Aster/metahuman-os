@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { isCapacitorNative } from '../lib/client/api-config';
   import { healthStatus } from '../lib/client/server-health';
   import {
     getLocalProfiles,

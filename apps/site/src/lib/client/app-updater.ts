@@ -7,7 +7,7 @@
  */
 
 import { writable, derived, type Writable } from 'svelte/store';
-import { apiFetch, getApiBaseUrlAsync, isCapacitorNative } from './api-config';
+import { apiFetch, getApiBaseUrlAsync, isMobileApp, isReactNativeWebView } from './api-config';
 
 // Types for mobile APK updates
 export interface MobileVersionInfo {
@@ -88,14 +88,14 @@ export const isDownloading = isUpdating;
  * Detect current platform
  */
 export function detectPlatform(): 'mobile' | 'server' {
-  return isCapacitorNative() ? 'mobile' : 'server';
+  return isMobileApp() ? 'mobile' : 'server';
 }
 
 /**
- * Get current app info from native plugin (mobile only)
+ * Get current app info from native plugin or React Native bridge
  */
 async function getCurrentAppInfo(): Promise<AppInfo> {
-  if (!isCapacitorNative()) {
+  if (!isMobileApp()) {
     return {
       version: '0.0.0',
       versionCode: 0,
@@ -103,17 +103,29 @@ async function getCurrentAppInfo(): Promise<AppInfo> {
     };
   }
 
-  try {
-    const { NativeUpdater } = await import('./plugins/native-updater');
-    const info = await NativeUpdater.getAppInfo();
-    return info;
-  } catch {
+  // React Native: Get app info from Node.js backend via HTTP
+  if (isReactNativeWebView()) {
+    try {
+      const response = await fetch('http://127.0.0.1:4322/app-info');
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch {
+      // Fall through to defaults
+    }
     return {
       version: '1.0.0',
       versionCode: 1,
       packageName: 'com.metahuman.os',
     };
   }
+
+  // Legacy Capacitor path (no longer used)
+  return {
+    version: '1.0.0',
+    versionCode: 1,
+    packageName: 'com.metahuman.os',
+  };
 }
 
 /**
@@ -239,27 +251,31 @@ async function downloadAndInstallMobile(): Promise<void> {
   updateState.update(s => ({ ...s, updating: true, updateProgress: 0, error: null }));
 
   try {
-    const { NativeUpdater } = await import('./plugins/native-updater');
-
     // Get full download URL
     const baseUrl = await getApiBaseUrlAsync() || window.location.origin;
     const downloadUrl = `${baseUrl}${state.latestMobileVersion.downloadUrl}`;
 
-    // Listen for progress
-    await NativeUpdater.addListener('downloadProgress', (event: { progress: number }) => {
-      updateState.update(s => ({ ...s, updateProgress: event.progress }));
-    });
-
-    const result = await NativeUpdater.downloadAndInstall({
-      url: downloadUrl,
-      version: state.latestMobileVersion.version,
-    });
-
-    if (!result.success) {
-      throw new Error(result.error || 'Download failed');
+    if (isReactNativeWebView()) {
+      // React Native: Send message to native layer to download and install
+      if ((window as any).ReactNativeWebView) {
+        (window as any).ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'download-update',
+          url: downloadUrl,
+          version: state.latestMobileVersion.version,
+        }));
+        // The native layer will handle download/install
+        // We'll receive progress updates via window message events
+        updateState.update(s => ({ ...s, updateProgress: 10 }));
+      } else {
+        // Fallback: Open download URL in browser
+        window.open(downloadUrl, '_blank');
+        updateState.update(s => ({ ...s, updating: false, updateProgress: 100 }));
+      }
+    } else {
+      // Fallback for unknown mobile platforms - just open the URL
+      window.open(downloadUrl, '_blank');
+      updateState.update(s => ({ ...s, updating: false, updateProgress: 100 }));
     }
-
-    updateState.update(s => ({ ...s, updating: false, updateProgress: 100 }));
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : 'Download failed';
     updateState.update(s => ({
@@ -337,7 +353,7 @@ async function updateServer(): Promise<void> {
  * Restart server (web/desktop only)
  */
 export async function restartServer(): Promise<void> {
-  if (isCapacitorNative()) {
+  if (isMobileApp()) {
     throw new Error('Server restart is not available on mobile');
   }
 

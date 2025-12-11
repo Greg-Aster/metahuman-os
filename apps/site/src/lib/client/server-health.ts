@@ -2,7 +2,7 @@
  * Server Health Monitor
  *
  * LOCAL-FIRST ARCHITECTURE:
- * - Mobile: Checks local nodejs-mobile health (not remote server)
+ * - Mobile (React Native): Checks local Node.js server at 127.0.0.1:4322
  * - Web: Checks same-origin server health
  *
  * This monitors the LOCAL system health, not remote server connectivity.
@@ -10,8 +10,7 @@
  */
 
 import { writable, derived, type Readable, type Writable } from 'svelte/store';
-import { isCapacitorNative } from './api-config';
-import { isNodeReady, isNodejsMobileAvailable } from './node-bridge';
+import { isReactNativeWebView } from './api-config';
 
 export interface HealthStatus {
   connected: boolean;
@@ -76,49 +75,21 @@ function calculateQuality(latencyMs: number, connected: boolean): HealthStatus['
  * Perform a single health check
  *
  * LOCAL-FIRST ARCHITECTURE:
- * - Mobile: Check if nodejs-mobile is ready (no remote server calls)
+ * - Mobile (React Native): Check local Node.js server at 127.0.0.1:4322
  * - Web: Check same-origin server health via local fetch
  */
 export async function checkHealth(): Promise<HealthStatus> {
   let status: HealthStatus;
   const start = Date.now();
 
-  // Mobile: Check nodejs-mobile health (local only, never remote)
-  if (isCapacitorNative()) {
-    const nodeAvailable = isNodejsMobileAvailable();
-    const nodeReady = isNodeReady();
+  // Determine health check URL based on platform
+  const healthUrl = isReactNativeWebView()
+    ? 'http://127.0.0.1:4322/api/status'
+    : '/api/boot';
 
-    if (nodeAvailable && nodeReady) {
-      status = {
-        connected: true,
-        latencyMs: 0,  // Local is instant
-        quality: 'excellent',
-        lastCheck: new Date(),
-        consecutiveFailures: 0,
-        serverVersion: 'local',
-      };
-    } else {
-      // Get current consecutive failures
-      let currentFailures = 0;
-      healthStatus.subscribe(s => { currentFailures = s.consecutiveFailures; })();
-
-      status = {
-        connected: false,
-        latencyMs: 0,
-        quality: 'offline',
-        lastCheck: new Date(),
-        consecutiveFailures: currentFailures + 1,
-        error: nodeAvailable ? 'Local runtime starting...' : 'nodejs-mobile not available',
-      };
-    }
-
-    healthStatus.set(status);
-    return status;
-  }
-
-  // Web: Check same-origin server health
+  // Check server health
   try {
-    const response = await fetch('/api/boot', {
+    const response = await fetch(healthUrl, {
       method: 'GET',
       signal: AbortSignal.timeout(5000),
     });

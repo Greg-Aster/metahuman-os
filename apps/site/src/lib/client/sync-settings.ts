@@ -10,7 +10,6 @@
  */
 
 import { getSetting, setSetting } from './local-memory';
-import { isCapacitorNative } from './api-config';
 
 export interface SyncSettings {
   // When to sync
@@ -86,51 +85,33 @@ export type NetworkType = 'wifi' | 'cellular' | 'none' | 'unknown';
 
 /**
  * Get current network connection type
- * Uses Capacitor Network plugin on mobile, navigator.connection on web
+ * Uses navigator.connection API where available
  */
 export async function getNetworkType(): Promise<NetworkType> {
-  // Mobile: Use Capacitor Network plugin
-  if (isCapacitorNative()) {
-    try {
-      const { Network } = await import('@capacitor/network');
-      const status = await Network.getStatus();
-
-      if (!status.connected) {
-        return 'none';
-      }
-
-      // Capacitor returns 'wifi', 'cellular', 'none', or 'unknown'
-      return status.connectionType as NetworkType;
-    } catch (e) {
-      console.warn('[sync-settings] Failed to get network status:', e);
-      return 'unknown';
-    }
+  if (typeof navigator === 'undefined') {
+    return 'unknown';
   }
 
-  // Web: Use navigator.connection if available
-  if (typeof navigator !== 'undefined') {
-    const connection = (navigator as any).connection ||
-                       (navigator as any).mozConnection ||
-                       (navigator as any).webkitConnection;
+  // Use navigator.connection if available
+  const connection = (navigator as any).connection ||
+                     (navigator as any).mozConnection ||
+                     (navigator as any).webkitConnection;
 
-    if (connection) {
-      const type = connection.type || connection.effectiveType;
-      if (type === 'wifi' || type === 'ethernet') {
-        return 'wifi';
-      }
-      if (type === 'cellular' || type === '4g' || type === '3g' || type === '2g') {
-        return 'cellular';
-      }
-    }
-
-    // Fallback: if online, assume wifi (desktop usually is)
-    if (navigator.onLine) {
+  if (connection) {
+    const type = connection.type || connection.effectiveType;
+    if (type === 'wifi' || type === 'ethernet') {
       return 'wifi';
     }
-    return 'none';
+    if (type === 'cellular' || type === '4g' || type === '3g' || type === '2g') {
+      return 'cellular';
+    }
   }
 
-  return 'unknown';
+  // Fallback: if online, assume wifi (desktop usually is)
+  if (navigator.onLine) {
+    return 'wifi';
+  }
+  return 'none';
 }
 
 /**
@@ -180,37 +161,24 @@ export async function canSyncOnLogin(): Promise<boolean> {
 }
 
 /**
- * Listen for network changes (mobile only)
+ * Listen for network changes
  * Returns unsubscribe function
  */
 export async function onNetworkChange(
   callback: (type: NetworkType) => void
 ): Promise<() => void> {
-  if (isCapacitorNative()) {
-    try {
-      const { Network } = await import('@capacitor/network');
-      const handle = await Network.addListener('networkStatusChange', (status) => {
-        callback(status.connected ? status.connectionType as NetworkType : 'none');
-      });
-      return () => handle.remove();
-    } catch (e) {
-      console.warn('[sync-settings] Failed to add network listener:', e);
-    }
+  if (typeof window === 'undefined') {
+    return () => {};
   }
 
-  // Web fallback
-  if (typeof window !== 'undefined') {
-    const handleOnline = () => getNetworkType().then(callback);
-    const handleOffline = () => callback('none');
+  const handleOnline = () => getNetworkType().then(callback);
+  const handleOffline = () => callback('none');
 
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
+  window.addEventListener('online', handleOnline);
+  window.addEventListener('offline', handleOffline);
 
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }
-
-  return () => {};
+  return () => {
+    window.removeEventListener('online', handleOnline);
+    window.removeEventListener('offline', handleOffline);
+  };
 }

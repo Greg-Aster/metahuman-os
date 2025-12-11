@@ -40,15 +40,17 @@ import '../styles/chat-animations.css';
 
     <!-- PERFORMANCE FIX: Bootstrap critical data before component hydration -->
     <!-- This pre-fetches status data so it's ready when components hydrate -->
-    <!-- LOCAL-FIRST: On mobile, skip bootstrap fetch - nodeBridge handles everything locally -->
+    <!-- UNIFIED ARCHITECTURE: Both React Native and web use same fetch API -->
     <script is:inline>
-      // Check for Capacitor (mobile app)
-      const isCapacitor = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
+      // Check for React Native WebView
+      const isReactNative = typeof window !== 'undefined' && 
+        (window.ReactNativeWebView || window.location?.origin?.includes('127.0.0.1:4322'));
 
-      // LOCAL-FIRST ARCHITECTURE:
-      // - Mobile: Skip bootstrap fetch - app is standalone, nodeBridge handles all API calls locally
-      // - Web: Pre-fetch from same-origin server (web IS the server)
-      if (!isCapacitor) {
+      // UNIFIED ARCHITECTURE:
+      // - React Native: Fetch from local Node.js server (127.0.0.1:4322)
+      // - Web: Fetch from same-origin server
+      // Both use identical fetch API, no special handling needed
+      if (!isReactNative) {
         // Web only: fetch critical status data immediately
         fetch('/api/status', { cache: 'no-store', credentials: 'same-origin' })
           .then(res => res.json())

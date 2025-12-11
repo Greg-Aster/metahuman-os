@@ -22,15 +22,6 @@ let cachedServerUrl: string | null = null;
 let cacheInitialized = false;
 
 /**
- * Check if running in Capacitor native app (LEGACY - kept for compatibility)
- */
-export function isCapacitorNative(): boolean {
-  if (typeof window === 'undefined') return false;
-  const cap = (window as any).Capacitor;
-  return cap?.isNativePlatform?.() === true;
-}
-
-/**
  * Check if running in React Native WebView
  * React Native WebView injects window.ReactNativeWebView
  * Also detect by checking if we're loading from localhost:4322 (mobile server)
@@ -45,11 +36,11 @@ export function isReactNativeWebView(): boolean {
 }
 
 /**
- * Check if running in ANY mobile app (Capacitor OR React Native)
+ * Check if running in mobile app (React Native WebView)
  * Use this for mobile-specific features like app updates
  */
 export function isMobileApp(): boolean {
-  return isCapacitorNative() || isReactNativeWebView();
+  return isReactNativeWebView();
 }
 
 /**
@@ -60,27 +51,17 @@ export function isWeb(): boolean {
 }
 
 /**
- * Initialize the server URL cache from Capacitor Preferences
+ * Initialize the server URL cache
  * Called once at app startup
  */
 export async function initServerUrl(): Promise<void> {
-  if (!isCapacitorNative() || cacheInitialized) {
-    cacheInitialized = true;
+  if (cacheInitialized) {
     return;
   }
 
-  try {
-    // Dynamic import to avoid issues in web/SSR context
-    const { Preferences } = await import('@capacitor/preferences');
-    const { value } = await Preferences.get({ key: 'server_url' });
-    cachedServerUrl = value || DEFAULT_SERVERS.local;
-    cacheInitialized = true;
-    console.log('[api-config] Initialized server URL:', cachedServerUrl);
-  } catch (e) {
-    console.warn('[api-config] Failed to load server URL from preferences:', e);
-    cachedServerUrl = DEFAULT_SERVERS.local;
-    cacheInitialized = true;
-  }
+  cachedServerUrl = DEFAULT_SERVERS.local;
+  cacheInitialized = true;
+  console.log('[api-config] Initialized server URL:', cachedServerUrl);
 }
 
 /**
@@ -118,45 +99,20 @@ export async function getApiBaseUrlAsync(): Promise<string> {
 }
 
 /**
- * Get the sync server URL (async version, reads from storage)
+ * Get the sync server URL (async version)
  * Use this for EXPLICIT sync operations ONLY
  */
 export async function getSyncServerUrlAsync(): Promise<string> {
-  if (!isCapacitorNative()) {
-    return DEFAULT_SERVERS.local;  // Web can still sync to server
-  }
-
-  try {
-    const { Preferences } = await import('@capacitor/preferences');
-    const { value } = await Preferences.get({ key: 'server_url' });
-    const url = value || DEFAULT_SERVERS.local;
-    // Update cache
-    cachedServerUrl = url;
-    return url;
-  } catch (e) {
-    return cachedServerUrl || DEFAULT_SERVERS.local;
-  }
+  return cachedServerUrl || DEFAULT_SERVERS.local;
 }
 
 /**
- * Set the server URL (mobile only)
+ * Set the server URL
  * @param url - The server URL to use
  */
 export async function setServerUrl(url: string): Promise<void> {
-  if (!isCapacitorNative()) {
-    console.warn('[api-config] setServerUrl only works in mobile app');
-    return;
-  }
-
-  try {
-    const { Preferences } = await import('@capacitor/preferences');
-    await Preferences.set({ key: 'server_url', value: url });
-    cachedServerUrl = url;
-    console.log('[api-config] Server URL updated:', url);
-  } catch (e) {
-    console.error('[api-config] Failed to save server URL:', e);
-    throw e;
-  }
+  cachedServerUrl = url;
+  console.log('[api-config] Server URL updated:', url);
 }
 
 /**
@@ -239,26 +195,20 @@ export function apiUrl(path: string): string {
 /**
  * Fetch wrapper that automatically uses the correct API base URL
  *
- * LOCAL-FIRST ARCHITECTURE:
- * - Mobile: Routes through nodeBridge for local nodejs-mobile handling
+ * UNIFIED ARCHITECTURE:
+ * - React Native: Standard fetch to local Node.js server (http://127.0.0.1:4322)
  * - Web: Standard fetch to same-origin server
  *
- * This is THE universal API function - same code for both platforms.
- * Mobile handles everything locally, web uses the same-origin server.
+ * Both platforms use the same fetch API - no special handling needed!
  *
  * @param path - API path starting with /api/
  * @param init - Fetch options
  * @returns Fetch response
  */
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  // Mobile: route through nodeBridge for LOCAL handling (nodejs-mobile)
-  // This makes mobile a standalone program, not dependent on remote server
-  if (isCapacitorNative()) {
-    const { nodeBridge } = await import('./node-bridge');
-    return nodeBridge(path, init);
-  }
-
-  // Web: standard fetch with relative paths (same-origin server)
+  // Both React Native and Web use standard fetch
+  // React Native WebView automatically routes to local Node.js server
+  // Web uses relative paths to same-origin server
   const url = apiUrl(path);
   const options: RequestInit = {
     ...init,
@@ -269,26 +219,21 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
 }
 
 /**
- * Create an EventSource for SSE streaming (WEB ONLY)
+ * Create an EventSource for SSE streaming
  *
  * UNIFIED APPROACH:
  * - Web: Uses native EventSource (same-origin, cookies work automatically)
- * - Mobile: Should NOT use this function - use apiFetch with stream=false instead
+ * - React Native: EventSource works with local Node.js server on 127.0.0.1:4322
  *
- * Mobile chat uses apiFetch with stream=false because:
- * 1. CapacitorHttp (used by nodeBridge) doesn't support streaming
- * 2. Native EventSource can't send cookies cross-origin to nodejs-mobile server
- * 3. apiFetch routes through nodeBridge which properly handles cookies
+ * Both platforms can use EventSource because:
+ * - React Native WebView loads from same origin as Node.js server
+ * - Cookies and auth work identically on both platforms
  *
  * @param path - API path with query string
  * @returns EventSource instance
  */
 export function apiEventSource(path: string): EventSource {
-  // Web only - mobile should use apiFetch with stream=false
-  if (isCapacitorNative()) {
-    console.warn('[apiEventSource] Mobile should use apiFetch with stream=false, not EventSource');
-  }
-
+  // Both platforms use standard EventSource
   return new EventSource(path);
 }
 
@@ -331,8 +276,7 @@ export function normalizeUrl(url: string): string {
  * IMPORTANT: This is different from apiFetch() which is for LOCAL API calls.
  * Use this for sync operations to external servers like mh.dndiy.org.
  *
- * On mobile, uses Capacitor's native HTTP to bypass WebView CORS restrictions.
- * On web, uses standard fetch.
+ * Uses standard fetch on both platforms.
  *
  * @param url - Full URL to fetch (will be normalized)
  * @param init - Fetch options
@@ -342,50 +286,7 @@ export async function remoteFetch(url: string, init?: RequestInit): Promise<Resp
   // Normalize URL to ensure proper protocol
   const normalizedUrl = normalizeUrl(url);
 
-  // Mobile: use CapacitorHttp to bypass CORS
-  if (isCapacitorNative()) {
-    try {
-      const { CapacitorHttp } = await import('@capacitor/core');
-      const method = (init?.method || 'GET').toUpperCase();
-
-      // Parse body if present
-      let data: any = undefined;
-      if (init?.body) {
-        try {
-          data = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
-        } catch {
-          data = { _raw: String(init.body) };
-        }
-      }
-
-      console.log('[remoteFetch] URL:', normalizedUrl);
-      console.log('[remoteFetch] Method:', method);
-
-      const response = await CapacitorHttp.request({
-        url: normalizedUrl,
-        method,
-        data,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(init?.headers as Record<string, string> || {}),
-        },
-      });
-
-      console.log('[remoteFetch] Response status:', response.status);
-
-      // Convert to standard Response
-      const body = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
-      return new Response(body, {
-        status: response.status,
-        headers: new Headers(response.headers),
-      });
-    } catch (err) {
-      console.error('[remoteFetch] CapacitorHttp error:', err);
-      throw err;
-    }
-  }
-
-  // Web: standard fetch
+  // Standard fetch for both web and React Native
   return fetch(normalizedUrl, {
     ...init,
     credentials: init?.credentials ?? 'include',

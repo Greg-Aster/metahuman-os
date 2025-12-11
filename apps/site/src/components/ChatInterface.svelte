@@ -16,7 +16,7 @@
   import { healthStatus, isConnected, forceHealthCheck } from '../lib/client/server-health';
   import { getDisplayMessages, appendToBuffer, clearBuffer, type BufferMode, type BufferMessage } from '../lib/client/local-memory';
   import { unifiedChat, type ChatResponse } from '../lib/client/unified-chat';
-  import { apiEventSource, apiFetch, isCapacitorNative } from '../lib/client/api-config';
+  import { apiEventSource, apiFetch, isMobileApp } from '../lib/client/api-config';
 
   // Component state
   let input = '';
@@ -565,8 +565,7 @@
     let connected = get(isConnected);
 
     // On mobile or if connection status is uncertain, do a quick health check
-    const { isCapacitorNative } = await import('../lib/client/api-config');
-    if (isCapacitorNative() || !connected) {
+    if (isMobileApp() || !connected) {
       const healthResult = await forceHealthCheck();
       connected = healthResult.connected;
     }
@@ -654,232 +653,185 @@
       // Force graph pipeline; some runtime toggles can disable it after settings load
       params.set('graph', 'true');
 
-      // UNIFIED APPROACH: Same code path, different transport
-      // - Web: Uses EventSource (SSE streaming, same-origin cookies work)
-      // - Mobile: Uses apiFetch with stream=false (nodeBridge handles cookies)
-      if (isCapacitorNative()) {
-        // MOBILE: Use apiFetch with stream=false for complete JSON response
-        // This uses nodeBridge which properly handles cookies via CapacitorHttp
-        params.set('stream', 'false');
-        console.log('[sendMessage] Mobile: Using apiFetch with stream=false');
+      // Use EventSource for SSE streaming (works for both web and React Native WebView)
+      // CRITICAL: Close any existing EventSource before creating a new one
+      if (chatResponseStream) {
+        console.log('[sendMessage] Closing existing EventSource...');
+        chatResponseStream.close();
+        chatResponseStream = null;
+      }
 
+      chatResponseStream = apiEventSource(`/api/persona_chat?${params.toString()}`);
+      console.log('[sendMessage] Step 6: EventSource created!');
+
+      chatResponseStream.onmessage = (event) => {
+        console.log('[EventSource] onmessage fired, raw event.data:', event.data.substring(0, 200));
         try {
-          thinkingTraceApi.setActive(true);
-          thinkingTraceApi.setStatusLabel('🔄 Processing...');
+          const { type, data } = JSON.parse(event.data);
+          console.log('[EventSource] Parsed type:', type, 'data keys:', Object.keys(data));
 
-          const response = await apiFetch(`/api/persona_chat?${params.toString()}`);
-          const result = await response.json();
+          if (type === 'progress') {
+            // Real-time progress updates from graph execution
+            if (data && data.message) {
+              thinkingTraceApi.setActive(true);
 
-          thinkingTraceApi.stop();
+              // Update the thinking trace with progress messages
+              const progressMsg = data.message;
+              console.log('[Progress Event] step:', data.step, 'message:', progressMsg.substring(0, 100));
 
-          if (!response.ok || result.error) {
-            const errorMessage = result.error || 'Unknown error occurred';
-            messagesApi.pushMessage('system', `⚠️ ${errorMessage}`);
+              if (data.step === 'loading_graph') {
+                thinkingTraceApi.setStatusLabel('📋 Loading workflow...');
+                thinkingTraceApi.setTrace([progressMsg]);
+              } else if (data.step === 'graph_loaded') {
+                thinkingTraceApi.setStatusLabel('⚙️ Executing pipeline...');
+                thinkingTraceApi.setTrace([progressMsg]);
+              } else if (data.step === 'node_executing') {
+                thinkingTraceApi.setStatusLabel('🔄 Processing...');
+                // Add to trace, keep last 10 items
+                thinkingTraceApi.appendTrace(`▸ ${progressMsg}`, 10);
+              } else if (data.step === 'thinking') {
+                // Show actual AI thoughts from scratchpad
+                console.log('[Thinking Event] Appending to trace:', progressMsg.substring(0, 150));
+                console.log('[Thinking Event] Current trace length:', thinkingTraceApi.getTrace().length);
+                console.log('[Thinking Event] reasoningStages.length:', reasoningStages.length);
+                thinkingTraceApi.setStatusLabel('🧠 Thinking...');
+                thinkingTraceApi.appendTrace(progressMsg, 10);
+                console.log('[Thinking Event] New trace length:', thinkingTraceApi.getTrace().length);
+              } else if (data.step === 'node_error') {
+                thinkingTraceApi.setStatusLabel('⚠️ Error detected...');
+                thinkingTraceApi.appendTrace(`✗ ${progressMsg}`, 10);
+              } else if (data.step === 'graph_complete') {
+                // Graph execution completed, waiting for final answer
+                thinkingTraceApi.setStatusLabel('✓ Completed, finalizing...');
+                thinkingTraceApi.appendTrace(progressMsg, 10);
+              } else {
+                // Generic progress update
+                thinkingTraceApi.appendTrace(progressMsg, 10);
+              }
+            }
+          } else if (type === 'cancelled') {
+            // Request was cancelled by user
+            thinkingTraceApi.stop();
+            messagesApi.pushMessage('system', data.message || '⏸️ Request cancelled');
             loading = false;
             reasoningStages = [];
-            return;
-          }
-
-          // Process the response (same as streaming 'answer' event)
-          if (result.response) {
-            messagesApi.pushMessage('assistant', result.response, undefined, { facet: result.facet });
-
-            // Auto-TTS
-            if (ttsEnabled && result.response) {
-              void ttsApi.speakText(result.response);
-            }
-          }
-
-          loading = false;
-          reasoningStages = [];
-        } catch (err) {
-          console.error('[sendMessage] Mobile fetch error:', err);
-          messagesApi.pushMessage('system', `Error: ${(err as Error).message || 'Failed to send message.'}`);
-          thinkingTraceApi.stop();
-          loading = false;
-          reasoningStages = [];
-        }
-      } else {
-        // WEB: Use EventSource for SSE streaming (native cookies work)
-        // CRITICAL: Close any existing EventSource before creating a new one
-        if (chatResponseStream) {
-          console.log('[sendMessage] Closing existing EventSource...');
-          chatResponseStream.close();
-          chatResponseStream = null;
-        }
-
-        chatResponseStream = apiEventSource(`/api/persona_chat?${params.toString()}`);
-        console.log('[sendMessage] Step 6: EventSource created!');
-
-        chatResponseStream.onmessage = (event) => {
-          console.log('[EventSource] onmessage fired, raw event.data:', event.data.substring(0, 200));
-          try {
-            const { type, data } = JSON.parse(event.data);
-            console.log('[EventSource] Parsed type:', type, 'data keys:', Object.keys(data));
-
-            if (type === 'progress') {
-              // Real-time progress updates from graph execution
-              if (data && data.message) {
-                thinkingTraceApi.setActive(true);
-
-                // Update the thinking trace with progress messages
-                const progressMsg = data.message;
-                console.log('[Progress Event] step:', data.step, 'message:', progressMsg.substring(0, 100));
-
-                if (data.step === 'loading_graph') {
-                  thinkingTraceApi.setStatusLabel('📋 Loading workflow...');
-                  thinkingTraceApi.setTrace([progressMsg]);
-                } else if (data.step === 'graph_loaded') {
-                  thinkingTraceApi.setStatusLabel('⚙️ Executing pipeline...');
-                  thinkingTraceApi.setTrace([progressMsg]);
-                } else if (data.step === 'node_executing') {
-                  thinkingTraceApi.setStatusLabel('🔄 Processing...');
-                  // Add to trace, keep last 10 items
-                  thinkingTraceApi.appendTrace(`▸ ${progressMsg}`, 10);
-                } else if (data.step === 'thinking') {
-                  // Show actual AI thoughts from scratchpad
-                  console.log('[Thinking Event] Appending to trace:', progressMsg.substring(0, 150));
-                  console.log('[Thinking Event] Current trace length:', thinkingTraceApi.getTrace().length);
-                  console.log('[Thinking Event] reasoningStages.length:', reasoningStages.length);
-                  thinkingTraceApi.setStatusLabel('🧠 Thinking...');
-                  thinkingTraceApi.appendTrace(progressMsg, 10);
-                  console.log('[Thinking Event] New trace length:', thinkingTraceApi.getTrace().length);
-                } else if (data.step === 'node_error') {
-                  thinkingTraceApi.setStatusLabel('⚠️ Error detected...');
-                  thinkingTraceApi.appendTrace(`✗ ${progressMsg}`, 10);
-                } else if (data.step === 'graph_complete') {
-                  // Graph execution completed, waiting for final answer
-                  thinkingTraceApi.setStatusLabel('✓ Completed, finalizing...');
-                  thinkingTraceApi.appendTrace(progressMsg, 10);
-                } else {
-                  // Generic progress update
-                  thinkingTraceApi.appendTrace(progressMsg, 10);
-                }
-              }
-            } else if (type === 'cancelled') {
-              // Request was cancelled by user
-              thinkingTraceApi.stop();
-              messagesApi.pushMessage('system', data.message || '⏸️ Request cancelled');
-              loading = false;
-              reasoningStages = [];
-              chatResponseStream?.close();
-            } else if (type === 'reasoning') {
-              thinkingTraceApi.stop();
-              if (typeof data === 'string') {
-                reasoningStages = [
-                  {
-                    round: 1,
-                    stage: 'plan',
-                    content: data,
-                    timestamp: Date.now(),
-                  },
-                ];
-              } else if (data && typeof data === 'object') {
-                const stageObj: ReasoningStage = {
-                  round: Number(data.round) > 0 ? Number(data.round) : 1,
-                  stage: String(data.stage || 'plan'),
-                  content: String(data.content || ''),
+            chatResponseStream?.close();
+          } else if (type === 'reasoning') {
+            thinkingTraceApi.stop();
+            if (typeof data === 'string') {
+              reasoningStages = [
+                {
+                  round: 1,
+                  stage: 'plan',
+                  content: data,
                   timestamp: Date.now(),
-                };
-                reasoningStages = [...reasoningStages, stageObj];
-              }
-            } else if (type === 'answer') {
-              thinkingTraceApi.stop();
-              if (reasoningStages.length > 0) {
-                // Only persist reasoning to messages in inner dialogue mode
-                // In conversation mode, reasoning is shown live then disappears
-                if (mode === 'inner') {
-                  reasoningStages.forEach(stage => {
-                    const label = `${messagesApi.formatReasoningLabel(stage)} · ${messagesApi.formatTime(stage.timestamp)}`;
-                    messagesApi.pushMessage('reasoning', stage.content, undefined, { stage, label });
-                  });
-                }
-                reasoningStages = [];
-              }
-              if (!data.duplicate) {
-                messagesApi.pushMessage('assistant', data.response, data?.saved?.assistantRelPath, { facet: data.facet });
-              }
-
-              // Auto-TTS: Speak assistant responses when TTS toggle is enabled
-              console.log('[chat-tts] Auto-TTS check - ttsEnabled:', ttsEnabled, 'hasResponse:', !!data.response, 'responseLength:', data.response?.length || 0);
-              if (ttsEnabled && data.response) {
-                console.log('[chat-tts] Auto-TTS FIRING - speaking response:', data.response.substring(0, 50));
-                void ttsApi.speakText(data.response);
-              } else {
-                console.log('[chat-tts] Auto-TTS SKIPPED - enabled:', ttsEnabled, 'mode:', mode, 'hasResponse:', !!data.response);
-              }
-
-              loading = false;
-              chatResponseStream?.close();
-            } else if (type === 'system_message') {
-              // System status message (e.g., summarization progress)
-              if (data.content) {
-                messagesApi.pushMessage('system', data.content);
-              }
-            } else if (type === 'error') {
-              // Display the actual error message from the server
-              const errorMessage = data.message || 'Unknown error occurred';
-              const suggestion = data.suggestion || '';
-              const isGPUError = data.isGPUError || errorMessage.includes('GPU') || errorMessage.includes('memory');
-
-              console.error('[chat] Server error:', errorMessage);
-
-              // Format user-friendly error message
-              let displayMessage = `⚠️ ${errorMessage}`;
-              if (suggestion) {
-                displayMessage += `\n\n💡 ${suggestion}`;
-              } else if (isGPUError) {
-                displayMessage += '\n\n💡 Try refreshing the page or wait a moment for GPU memory to clear.';
-              }
-
-              messagesApi.pushMessage('system', displayMessage);
-              thinkingTraceApi.stop();
-              loading = false;
-              reasoningStages = [];
-              chatResponseStream?.close();
-              return; // Don't throw, we handled it
+                },
+              ];
+            } else if (data && typeof data === 'object') {
+              const stageObj: ReasoningStage = {
+                round: Number(data.round) > 0 ? Number(data.round) : 1,
+                stage: String(data.stage || 'plan'),
+                content: String(data.content || ''),
+                timestamp: Date.now(),
+              };
+              reasoningStages = [...reasoningStages, stageObj];
             }
-          } catch (err) {
-            console.error('Chat stream error:', err);
-            messagesApi.pushMessage('system', `Error: ${(err as Error).message || 'Failed to process server response.'}`);
+          } else if (type === 'answer') {
+            thinkingTraceApi.stop();
+            if (reasoningStages.length > 0) {
+              // Only persist reasoning to messages in inner dialogue mode
+              // In conversation mode, reasoning is shown live then disappears
+              if (mode === 'inner') {
+                reasoningStages.forEach(stage => {
+                  const label = `${messagesApi.formatReasoningLabel(stage)} · ${messagesApi.formatTime(stage.timestamp)}`;
+                  messagesApi.pushMessage('reasoning', stage.content, undefined, { stage, label });
+                });
+              }
+              reasoningStages = [];
+            }
+            if (!data.duplicate) {
+              messagesApi.pushMessage('assistant', data.response, data?.saved?.assistantRelPath, { facet: data.facet });
+            }
+
+            // Auto-TTS: Speak assistant responses when TTS toggle is enabled
+            console.log('[chat-tts] Auto-TTS check - ttsEnabled:', ttsEnabled, 'hasResponse:', !!data.response, 'responseLength:', data.response?.length || 0);
+            if (ttsEnabled && data.response) {
+              console.log('[chat-tts] Auto-TTS FIRING - speaking response:', data.response.substring(0, 50));
+              void ttsApi.speakText(data.response);
+            } else {
+              console.log('[chat-tts] Auto-TTS SKIPPED - enabled:', ttsEnabled, 'mode:', mode, 'hasResponse:', !!data.response);
+            }
+
+            loading = false;
+            chatResponseStream?.close();
+          } else if (type === 'system_message') {
+            // System status message (e.g., summarization progress)
+            if (data.content) {
+              messagesApi.pushMessage('system', data.content);
+            }
+          } else if (type === 'error') {
+            // Display the actual error message from the server
+            const errorMessage = data.message || 'Unknown error occurred';
+            const suggestion = data.suggestion || '';
+            const isGPUError = data.isGPUError || errorMessage.includes('GPU') || errorMessage.includes('memory');
+
+            console.error('[chat] Server error:', errorMessage);
+
+            // Format user-friendly error message
+            let displayMessage = `⚠️ ${errorMessage}`;
+            if (suggestion) {
+              displayMessage += `\n\n💡 ${suggestion}`;
+            } else if (isGPUError) {
+              displayMessage += '\n\n💡 Try refreshing the page or wait a moment for GPU memory to clear.';
+            }
+
+            messagesApi.pushMessage('system', displayMessage);
             thinkingTraceApi.stop();
             loading = false;
             reasoningStages = [];
             chatResponseStream?.close();
+            return; // Don't throw, we handled it
           }
-        };
-
-        chatResponseStream.onerror = async (err) => {
-          console.error('[EventSource] onerror fired! Error:', err);
-          console.error('[EventSource] ReadyState:', chatResponseStream?.readyState);
-          chatResponseStream?.close();
-
-          // Force a health check to get accurate connection status
-          const healthResult = await forceHealthCheck();
-
-          // If server is offline, fallback to UnifiedChat
-          if (!healthResult.connected) {
-            console.log('[EventSource] Server confirmed offline, falling back to UnifiedChat');
-            // Remove the user message we just added (will be re-added by sendMessageOffline)
-            const currentMessages = get(messages);
-            if (currentMessages.length > 0 && currentMessages[currentMessages.length - 1].role === 'user') {
-              messages.set(currentMessages.slice(0, -1));
-            }
-            // Restore input and try offline
-            input = userMessage;
-            thinkingTraceApi.stop();
-            loading = false;
-            reasoningStages = [];
-            await sendMessageOffline();
-            return;
-          }
-
-          messagesApi.pushMessage('system', 'Error: Connection to the server was lost. Try again or check server status.');
+        } catch (err) {
+          console.error('Chat stream error:', err);
+          messagesApi.pushMessage('system', `Error: ${(err as Error).message || 'Failed to process server response.'}`);
           thinkingTraceApi.stop();
           loading = false;
           reasoningStages = [];
-        };
-      }
+          chatResponseStream?.close();
+        }
+      };
+
+      chatResponseStream.onerror = async (err) => {
+        console.error('[EventSource] onerror fired! Error:', err);
+        console.error('[EventSource] ReadyState:', chatResponseStream?.readyState);
+        chatResponseStream?.close();
+
+        // Force a health check to get accurate connection status
+        const healthResult = await forceHealthCheck();
+
+        // If server is offline, fallback to UnifiedChat
+        if (!healthResult.connected) {
+          console.log('[EventSource] Server confirmed offline, falling back to UnifiedChat');
+          // Remove the user message we just added (will be re-added by sendMessageOffline)
+          const currentMessages = get(messages);
+          if (currentMessages.length > 0 && currentMessages[currentMessages.length - 1].role === 'user') {
+            messages.set(currentMessages.slice(0, -1));
+          }
+          // Restore input and try offline
+          input = userMessage;
+          thinkingTraceApi.stop();
+          loading = false;
+          reasoningStages = [];
+          await sendMessageOffline();
+          return;
+        }
+
+        messagesApi.pushMessage('system', 'Error: Connection to the server was lost. Try again or check server status.');
+        thinkingTraceApi.stop();
+        loading = false;
+        reasoningStages = [];
+      };
 
     } catch (err) {
       console.error('Chat setup error:', err);

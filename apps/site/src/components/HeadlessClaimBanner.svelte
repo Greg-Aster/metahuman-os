@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { apiFetch, isCapacitorNative } from '../lib/client/api-config';
+  import { apiFetch, isMobileApp } from '../lib/client/api-config';
 
   interface RuntimeMode {
     headless: boolean;

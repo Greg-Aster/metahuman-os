@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import {
-    isCapacitorNative,
+    isMobileApp,
     getApiBaseUrl,
     getApiBaseUrlAsync,
     setServerUrl,
@@ -18,7 +18,6 @@
   } from '../lib/client/server-health';
   import TierSelector from './TierSelector.svelte';
   import SyncStatus from './SyncStatus.svelte';
-  import ModelManager from './ModelManager.svelte';
   import UpdateManager from './UpdateManager.svelte';
   import ProfileManager from './ProfileManager.svelte';
 
@@ -60,7 +59,7 @@
   async function loadCurrentServer() {
     loading = true;
     try {
-      isMobile = isCapacitorNative();
+      isMobile = isMobileApp();
       defaultServers = getDefaultServers();
       currentServerUrl = await getApiBaseUrlAsync();
       customServerUrl = currentServerUrl;
@@ -389,15 +388,6 @@
           Keep your memories synchronized between devices. Changes made offline will sync when reconnected.
         </p>
         <SyncStatus />
-      </div>
-
-      <!-- On-Device Models -->
-      <div class="section">
-        <h2>📱 On-Device AI</h2>
-        <p class="section-description">
-          Download and manage local AI models for offline use. Models run directly on your device.
-        </p>
-        <ModelManager />
       </div>
 
       <!-- App Updates -->

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
-  import { isCapacitorNative } from '../lib/client/api-config';
   import { formatFileSize } from '../lib/client/app-update';
   import {
     configureRemoteSyncServer,

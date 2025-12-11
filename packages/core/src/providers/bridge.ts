@@ -110,14 +110,6 @@ export async function callProvider(
   switch (providerName) {
     case 'local':
     case 'ollama': {
-      // On mobile (both React Native and Capacitor), skip local backends and use remote provider
-      // Local Ollama/vLLM servers don't run on mobile devices
-      const isMobile = process.env.METAHUMAN_MOBILE === 'true';
-      if (isMobile) {
-        const backendConfig = loadBackendConfig();
-        return callRemoteProvider(messages, options, backendConfig, onProgress);
-      }
-
       // Use intelligent backend detection for 'local' or 'ollama' provider
       const backendConfig = loadBackendConfig();
       const activeBackend = backendConfig.activeBackend;
@@ -146,12 +138,6 @@ export async function callProvider(
     }
 
     case 'vllm': {
-      // On mobile, redirect vLLM to remote provider
-      const isMobileVllm = process.env.METAHUMAN_MOBILE === 'true';
-      if (isMobileVllm) {
-        const backendConfig = loadBackendConfig();
-        return callRemoteProvider(messages, options, backendConfig, onProgress);
-      }
       // Explicit vLLM call
       const backendConfig = loadBackendConfig();
       return callVLLMProvider(messages, options, backendConfig.vllm.endpoint, onProgress);
