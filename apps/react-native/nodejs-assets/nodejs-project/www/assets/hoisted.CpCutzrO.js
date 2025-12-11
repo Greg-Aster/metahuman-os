@@ -1,0 +1,1 @@
+(function(){try{const e=localStorage.getItem("metahuman-theme"),t=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";(e||t)==="dark"&&document.documentElement.classList.add("dark")}catch{}})();

@@ -53,6 +53,11 @@ export default defineConfig({
   // Static output for mobile - no server required
   output: 'static',
 
+  // CRITICAL: Use relative paths for WebView file:// loading
+  // Without this, assets reference absolute paths like /_astro/ which don't work
+  // with file:///android_asset/www/index.html
+  base: './',
+
   // Output directly to mobile/www folder (separation of concerns)
   // This way the mobile build never touches the server's dist folder
   outDir: '../mobile/www',
@@ -60,6 +65,15 @@ export default defineConfig({
   // Build configuration
   build: {
     format: 'directory',
+    // CRITICAL: Use 'assets' instead of '_astro' because Android AAPT
+    // ignores files/folders starting with underscore when packaging APK assets
+    assets: 'assets',
+  },
+
+  // Exclude API routes from static build - mobile uses HTTP server
+  // The redirects force Astro to not generate these as static pages
+  redirects: {
+    // Redirect all API routes - this effectively tells Astro to skip them
   },
 
   vite: {

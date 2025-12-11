@@ -1,0 +1,145 @@
+{
+  "version": "2.0",
+  "name": "Curator Workflow",
+  "description": "LLM-based memory curation for training data preparation - generates conversational exchanges from raw memories",
+  "cognitiveMode": "agent",
+  "last_modified": "2025-11-24",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "cognitive/uncurated_memory_loader",
+      "pos": [100, 200],
+      "size": [220, 100],
+      "properties": {
+        "limit": 5
+      },
+      "title": "Load Uncurated Memories"
+    },
+    {
+      "id": 2,
+      "type": "cognitive/persona_summary_loader",
+      "pos": [100, 350],
+      "size": [220, 80],
+      "properties": {},
+      "title": "Load Persona Context"
+    },
+    {
+      "id": 4,
+      "type": "cognitive/curator_llm",
+      "pos": [400, 200],
+      "size": [220, 140],
+      "properties": {
+        "temperature": 0.3,
+        "timeout": 300000
+      },
+      "title": "Curate Memories (LLM)"
+    },
+    {
+      "id": 5,
+      "type": "cognitive/curated_memory_saver",
+      "pos": [700, 100],
+      "size": [220, 80],
+      "properties": {},
+      "title": "Save Curated Memories"
+    },
+    {
+      "id": 6,
+      "type": "cognitive/training_pair_generator",
+      "pos": [700, 220],
+      "size": [220, 100],
+      "properties": {},
+      "title": "Generate Training Pairs"
+    },
+    {
+      "id": 7,
+      "type": "cognitive/training_pair_appender",
+      "pos": [1000, 220],
+      "size": [220, 100],
+      "properties": {},
+      "title": "Append to JSONL"
+    },
+    {
+      "id": 8,
+      "type": "cognitive/memory_marker",
+      "pos": [700, 360],
+      "size": [220, 80],
+      "properties": {},
+      "title": "Mark as Curated"
+    },
+    {
+      "id": 9,
+      "type": "cognitive/audit_logger",
+      "pos": [1300, 200],
+      "size": [180, 60],
+      "properties": {
+        "event": "curator_completed"
+      },
+      "title": "Audit Completion"
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Uncurated memories → Curator LLM"
+    },
+    {
+      "id": 2,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "Persona summary → Curator LLM (context)"
+    },
+    {
+      "id": 4,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Curated memories → Save"
+    },
+    {
+      "id": 5,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Curated memories → Training Pair Generator"
+    },
+    {
+      "id": 6,
+      "origin_id": 6,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Training pairs → Append to JSONL"
+    },
+    {
+      "id": 7,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 8,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Curated memories → Mark as Curated"
+    },
+    {
+      "id": 8,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 9,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Append result → Audit Logger"
+    }
+  ]
+}

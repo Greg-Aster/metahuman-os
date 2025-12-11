@@ -61,3 +61,26 @@ export async function handleBoot(req: UnifiedRequest): Promise<UnifiedResponse> 
     },
   });
 }
+
+/**
+ * GET /api/app-info - Mobile app version information
+ *
+ * Returns the current app version for update checking.
+ * On mobile, this reads from the bundled version file.
+ * On web, returns a static version (web always uses latest server code).
+ */
+export async function handleAppInfo(_req: UnifiedRequest): Promise<UnifiedResponse> {
+  // Read version from environment or use defaults
+  // These are set during build time in React Native
+  const version = process.env.APP_VERSION || '1.0.0';
+  const versionCode = parseInt(process.env.APP_VERSION_CODE || '1', 10);
+  const buildDate = process.env.APP_BUILD_DATE || new Date().toISOString();
+
+  return successResponse({
+    version,
+    versionCode,
+    buildDate,
+    platform: process.env.METAHUMAN_MOBILE ? 'mobile' : 'server',
+  });
+}
+

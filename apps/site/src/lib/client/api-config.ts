@@ -22,7 +22,7 @@ let cachedServerUrl: string | null = null;
 let cacheInitialized = false;
 
 /**
- * Check if running in Capacitor native app
+ * Check if running in Capacitor native app (LEGACY - kept for compatibility)
  */
 export function isCapacitorNative(): boolean {
   if (typeof window === 'undefined') return false;
@@ -31,10 +31,32 @@ export function isCapacitorNative(): boolean {
 }
 
 /**
+ * Check if running in React Native WebView
+ * React Native WebView injects window.ReactNativeWebView
+ * Also detect by checking if we're loading from localhost:4322 (mobile server)
+ */
+export function isReactNativeWebView(): boolean {
+  if (typeof window === 'undefined') return false;
+  // React Native WebView injects this global
+  if ((window as any).ReactNativeWebView) return true;
+  // Also check URL - React Native loads from http://127.0.0.1:4322
+  if (window.location?.origin?.includes('127.0.0.1:4322')) return true;
+  return false;
+}
+
+/**
+ * Check if running in ANY mobile app (Capacitor OR React Native)
+ * Use this for mobile-specific features like app updates
+ */
+export function isMobileApp(): boolean {
+  return isCapacitorNative() || isReactNativeWebView();
+}
+
+/**
  * Check if running in web browser (not native)
  */
 export function isWeb(): boolean {
-  return !isCapacitorNative();
+  return !isMobileApp();
 }
 
 /**

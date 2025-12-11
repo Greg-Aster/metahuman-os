@@ -1,0 +1,24 @@
+{
+  "activeBackend": "vllm",
+  "ollama": {
+    "endpoint": "http://localhost:11434",
+    "autoStart": false,
+    "defaultModel": "qwen3:14b"
+  },
+  "vllm": {
+    "endpoint": "http://localhost:8000",
+    "autoStart": false,
+    "model": "Qwen/Qwen3-14B-AWQ",
+    "gpuMemoryUtilization": 0.75,
+    "maxModelLen": 4096,
+    "tensorParallelSize": 1,
+    "dtype": "auto",
+    "quantization": "awq",
+    "enforceEager": true,
+    "autoUtilization": false,
+    "enableThinking": false
+  },
+  "$schema": "https://metahuman.dev/schemas/llm-backend.json",
+  "version": "1.0.0",
+  "description": "LLM backend configuration - controls which local inference engine is used"
+}

@@ -1,0 +1,352 @@
+{
+  "version": "1.0",
+  "name": "Agent Mode",
+  "description": "Heuristic-based routing: simple queries use chat path, action requests use operator pipeline",
+  "cognitiveMode": "agent",
+  "last_modified": "2025-11-18",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "cognitive/user_input",
+      "pos": [50, 200],
+      "size": [180, 60],
+      "properties": {
+        "message": ""
+      },
+      "title": "User Input"
+    },
+    {
+      "id": 2,
+      "type": "cognitive/session_context",
+      "pos": [50, 300],
+      "size": [180, 60],
+      "title": "Session Context"
+    },
+    {
+      "id": 3,
+      "type": "cognitive/system_settings",
+      "pos": [50, 400],
+      "size": [180, 80],
+      "title": "System Settings"
+    },
+    {
+      "id": 4,
+      "type": "cognitive/auth_check",
+      "pos": [280, 320],
+      "size": [180, 60],
+      "title": "Auth Check"
+    },
+    {
+      "id": 5,
+      "type": "cognitive/operator_eligibility",
+      "pos": [520, 260],
+      "size": [200, 80],
+      "title": "Operator Eligibility\n(Intent Detection)"
+    },
+    {
+      "id": 6,
+      "type": "cognitive/context_builder",
+      "pos": [780, 100],
+      "size": [180, 80],
+      "properties": {
+        "searchDepth": "normal",
+        "maxMemories": 8,
+        "maxContextChars": 8000
+      },
+      "title": "Context Builder\n(Operator Path)"
+    },
+    {
+      "id": 7,
+      "type": "cognitive/react_planner",
+      "pos": [1020, 100],
+      "size": [180, 80],
+      "properties": {
+        "model": "default.coder",
+        "temperature": 0.2
+      },
+      "title": "ReAct Planner"
+    },
+    {
+      "id": 8,
+      "type": "cognitive/skill_executor",
+      "pos": [1260, 100],
+      "size": [180, 80],
+      "title": "Skill Executor"
+    },
+    {
+      "id": 9,
+      "type": "cognitive/response_synthesizer",
+      "pos": [1500, 100],
+      "size": [200, 80],
+      "properties": {
+        "model": "persona",
+        "style": "default"
+      },
+      "title": "Response Synthesizer"
+    },
+    {
+      "id": 10,
+      "type": "cognitive/conversation_history",
+      "pos": [780, 380],
+      "size": [200, 80],
+      "properties": {
+        "mode": "conversation",
+        "maxMessages": 20
+      },
+      "title": "Conversation History\n(Chat Path)"
+    },
+    {
+      "id": 11,
+      "type": "cognitive/persona_llm",
+      "pos": [1020, 380],
+      "size": [180, 80],
+      "properties": {
+        "model": "persona",
+        "temperature": 0.8
+      },
+      "title": "Persona LLM"
+    },
+    {
+      "id": 12,
+      "type": "cognitive/memory_capture",
+      "pos": [1760, 200],
+      "size": [180, 100],
+      "title": "Memory Capture"
+    },
+    {
+      "id": 13,
+      "type": "cognitive/stream_writer",
+      "pos": [2000, 240],
+      "size": [180, 60],
+      "title": "Stream Writer"
+    },
+    {
+      "id": 14,
+      "type": "cognitive/cot_stripper",
+      "pos": [1500, 220],
+      "size": [200, 80],
+      "title": "CoT Stripper"
+    },
+    {
+      "id": 15,
+      "type": "cognitive/safety_validator",
+      "pos": [1740, 220],
+      "size": [200, 80],
+      "properties": {
+        "threshold": 0.75
+      },
+      "title": "Safety Validator"
+    },
+    {
+      "id": 16,
+      "type": "cognitive/response_refiner",
+      "pos": [1740, 320],
+      "size": [200, 80],
+      "title": "Response Refiner"
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 2,
+      "type": "string"
+    },
+    {
+      "id": 2,
+      "origin_id": 1,
+      "origin_slot": 1,
+      "target_id": 2,
+      "target_slot": 0,
+      "type": "string"
+    },
+    {
+      "id": 3,
+      "origin_id": 2,
+      "origin_slot": 1,
+      "target_id": 4,
+      "target_slot": 0,
+      "type": "user"
+    },
+    {
+      "id": 4,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 0,
+      "type": "cognitiveMode"
+    },
+    {
+      "id": 5,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 1,
+      "type": "boolean"
+    },
+    {
+      "id": 6,
+      "origin_id": 5,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 1,
+      "type": "boolean",
+      "comment": "If true, use operator path"
+    },
+    {
+      "id": 7,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 0,
+      "type": "string"
+    },
+    {
+      "id": 8,
+      "origin_id": 6,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 1,
+      "type": "context"
+    },
+    {
+      "id": 9,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 0,
+      "type": "string"
+    },
+    {
+      "id": 10,
+      "origin_id": 7,
+      "origin_slot": 1,
+      "target_id": 8,
+      "target_slot": 0,
+      "type": "object"
+    },
+    {
+      "id": 11,
+      "origin_id": 8,
+      "origin_slot": 0,
+      "target_id": 9,
+      "target_slot": 1,
+      "type": "skill_result"
+    },
+    {
+      "id": 12,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 9,
+      "target_slot": 0,
+      "type": "string"
+    },
+    {
+      "id": 13,
+      "origin_id": 9,
+      "origin_slot": 0,
+      "target_id": 14,
+      "target_slot": 0,
+      "type": "string"
+    },
+    {
+      "id": 14,
+      "origin_id": 1,
+      "origin_slot": 1,
+      "target_id": 10,
+      "target_slot": 0,
+      "type": "string"
+    },
+    {
+      "id": 15,
+      "origin_id": 10,
+      "origin_slot": 0,
+      "target_id": 11,
+      "target_slot": 0,
+      "type": "array"
+    },
+    {
+      "id": 16,
+      "origin_id": 11,
+      "origin_slot": 0,
+      "target_id": 14,
+      "target_slot": 0,
+      "type": "llm_response",
+      "comment": "Chat path response"
+    },
+    {
+      "id": 17,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 12,
+      "target_slot": 0,
+      "type": "string"
+    },
+    {
+      "id": 18,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 12,
+      "target_slot": 2,
+      "type": "cognitiveMode"
+    },
+    {
+      "id": 19,
+      "origin_id": 14,
+      "origin_slot": 0,
+      "target_id": 15,
+      "target_slot": 0,
+      "type": "string"
+    },
+    {
+      "id": 20,
+      "origin_id": 15,
+      "origin_slot": 0,
+      "target_id": 16,
+      "target_slot": 0,
+      "type": "string"
+    },
+    {
+      "id": 21,
+      "origin_id": 16,
+      "origin_slot": 0,
+      "target_id": 12,
+      "target_slot": 1,
+      "type": "string"
+    },
+    {
+      "id": 22,
+      "origin_id": 16,
+      "origin_slot": 0,
+      "target_id": 13,
+      "target_slot": 0,
+      "type": "string"
+    },
+    {
+      "id": 23,
+      "origin_id": 15,
+      "origin_slot": 3,
+      "target_id": 16,
+      "target_slot": 1,
+      "type": "object"
+    }
+  ],
+  "config": {},
+  "extra": {},
+  "groups": [
+    {
+      "title": "Operator Path (Actions)",
+      "bounding": [740, 50, 820, 180],
+      "color": "#8A2BE2",
+      "font_size": 14
+    },
+    {
+      "title": "Chat Path (Simple Queries)",
+      "bounding": [740, 320, 540, 180],
+      "color": "#FF1493",
+      "font_size": 14
+    }
+  ]
+}

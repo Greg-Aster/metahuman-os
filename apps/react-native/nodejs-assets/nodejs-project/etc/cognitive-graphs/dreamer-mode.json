@@ -1,0 +1,197 @@
+{
+  "version": "2.0",
+  "name": "Dreamer Agent Workflow",
+  "description": "Generates surreal dreams from weighted lifetime memory sampling, extracts learnings, and saves to procedural memory",
+  "cognitiveMode": "agent",
+  "last_modified": "2025-11-26",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "cognitive/dreamer_memory_curator",
+      "pos": [100, 100],
+      "size": [220, 100],
+      "properties": {
+        "sampleSize": 15,
+        "decayDays": 227
+      },
+      "title": "Curate Memories"
+    },
+    {
+      "id": 2,
+      "type": "cognitive/dreamer_dream_generator",
+      "pos": [400, 100],
+      "size": [220, 120],
+      "properties": {
+        "temperature": 1.0,
+        "role": "persona",
+        "timeout": 300000
+      },
+      "title": "Generate Dream"
+    },
+    {
+      "id": 3,
+      "type": "cognitive/dreamer_dream_saver",
+      "pos": [700, 100],
+      "size": [220, 100],
+      "properties": {
+        "type": "dream"
+      },
+      "title": "Save Dream"
+    },
+    {
+      "id": 4,
+      "type": "cognitive/dreamer_continuation_generator",
+      "pos": [700, 250],
+      "size": [220, 120],
+      "properties": {
+        "temperature": 1.0,
+        "continuationChance": 0.75,
+        "maxContinuations": 4,
+        "delaySeconds": 60,
+        "timeout": 300000
+      },
+      "title": "Continuation Dreams"
+    },
+    {
+      "id": 5,
+      "type": "cognitive/dreamer_learnings_extractor",
+      "pos": [400, 400],
+      "size": [220, 120],
+      "properties": {
+        "temperature": 0.3,
+        "role": "persona",
+        "timeout": 300000
+      },
+      "title": "Extract Learnings"
+    },
+    {
+      "id": 6,
+      "type": "cognitive/dreamer_learnings_writer",
+      "pos": [700, 400],
+      "size": [220, 100],
+      "properties": {},
+      "title": "Write Overnight Learnings"
+    },
+    {
+      "id": 7,
+      "type": "cognitive/audit_logger",
+      "pos": [1000, 100],
+      "size": [180, 60],
+      "properties": {
+        "event": "dream_completed"
+      },
+      "title": "Audit Completion"
+    },
+    {
+      "id": 8,
+      "type": "cognitive/persona_loader",
+      "pos": [200, 0],
+      "size": [180, 60],
+      "title": "Persona Loader"
+    },
+    {
+      "id": 9,
+      "type": "cognitive/persona_formatter",
+      "pos": [350, 0],
+      "size": [200, 80],
+      "properties": {
+        "includePersonality": true,
+        "includeValues": false,
+        "includeGoals": false
+      },
+      "title": "Persona Formatter"
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 2,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Curated memories -> Dream Generator"
+    },
+    {
+      "id": 2,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Generated dream -> Save Dream"
+    },
+    {
+      "id": 3,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Source memories -> Save Dream (for citations)"
+    },
+    {
+      "id": 4,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Initial dream -> Continuation Generator"
+    },
+    {
+      "id": 5,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Curated memories -> Extract Learnings"
+    },
+    {
+      "id": 6,
+      "origin_id": 5,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Extracted learnings -> Write Learnings"
+    },
+    {
+      "id": 7,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Memory citations -> Write Learnings"
+    },
+    {
+      "id": 8,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Save result -> Audit Logger"
+    },
+    {
+      "id": 9,
+      "origin_id": 8,
+      "origin_slot": 0,
+      "target_id": 9,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Persona data -> Persona Formatter"
+    },
+    {
+      "id": 10,
+      "origin_id": 9,
+      "origin_slot": 0,
+      "target_id": 2,
+      "target_slot": 1,
+      "type": "string",
+      "comment": "Formatted persona -> Dream Generator (for persona voice)"
+    }
+  ]
+}

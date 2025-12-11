@@ -160,11 +160,12 @@
         // Profile is complete - proceed with login
         error = `✅ LOGIN SUCCESS! Welcome back, ${data.user.username}. Profile loaded and ready.`;
         console.log('[AuthGate] LOGIN SUCCESS: Profile validation passed, proceeding...');
-        
+
         setTimeout(() => {
           isAuthenticated = true;
           window.location.reload();
         }, 1500);
+        return; // Don't fall through to error handling
       }
 
       // Login failed - show error and determine if user might need to sync
@@ -231,13 +232,65 @@
       }
 
       console.log('[AuthGate] Server auth successful for:', serverData.user.username);
-      
+
       // Capture server session ID for remote API calls
       const serverSessionId = serverData.sessionId;
       console.log('[AuthGate] Server session ID captured:', serverSessionId?.slice(0, 8) + '...');
 
-      // Step 2: Create the user locally (via API) so they exist in local users.json
-      // This makes web and mobile identical - both use users.json
+      // Step 2: Download profile data from remote BEFORE creating local user
+      // This prevents empty profiles if download fails
+      console.log('[AuthGate] Downloading profile data from remote...');
+      error = '📥 SYNCING: Downloading profile data from server...';
+
+      let profileBundle = null;
+      let syncStrategy = 'unknown';
+
+      try {
+        // Try priority export first (essential files only to avoid OOM)
+        console.log('[AuthGate] Attempting priority sync (persona + config only)...');
+        error = '📥 SYNCING: Downloading essential profile data (persona, config, conversations)...';
+
+        console.log('[AuthGate] Calling export-priority with credentials (POST)');
+        console.log('[AuthGate] Full URL:', `${normalizedSyncUrl}/api/profile-sync/export-priority`);
+
+        // Use POST with credentials in body - avoids cross-origin cookie issues
+        const priorityRes = await remoteFetch(`${normalizedSyncUrl}/api/profile-sync/export-priority`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ username, password }),
+        });
+
+        console.log('[AuthGate] Export-priority response:', priorityRes.status);
+
+        if (priorityRes.ok) {
+          profileBundle = await priorityRes.json();
+          syncStrategy = 'priority';
+          error = `📥 SYNCING: Downloaded ${profileBundle.stats?.totalFiles || 0} files from server (${Math.round((profileBundle.stats?.totalSize || 0) / 1024)}KB)`;
+        } else {
+          // Priority export failed - DO NOT create local user
+          const priorityError = await priorityRes.text().catch(() => 'Network error');
+          console.error('[AuthGate] Export-priority failed:', priorityRes.status, priorityError);
+          error = `SYNC FAILED: Cannot download profile from server (${priorityRes.status}). ${priorityError}`;
+          return;
+        }
+      } catch (profileErr) {
+        // Download failed - DO NOT create local user
+        error = `SYNC NETWORK ERROR: Cannot connect to server or download profile. ${profileErr instanceof Error ? profileErr.message : 'Connection failed'}. Check your network and server URL.`;
+        return;
+      }
+
+      // Profile downloaded successfully - NOW create local user
+      if (!profileBundle || !profileBundle.files || profileBundle.files.length === 0) {
+        error = 'SYNC FAILED: No profile data received from server.';
+        return;
+      }
+
+      // Step 3: Create the user locally ONLY after profile downloaded successfully
+      console.log('[AuthGate] Profile downloaded, creating local user...');
+      error = '👤 Creating local user account...';
+
       const createRes = await apiFetch('/api/auth/sync-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -252,107 +305,52 @@
 
       const createData = await createRes.json();
       if (!createData.success) {
-        error = createData.error || 'Failed to create local profile';
+        error = createData.error || 'Failed to create local user account';
         return;
       }
 
-      // Store session now so profile sync requests are authenticated
+      // Store session for authenticated import
       if (createData.sessionId) {
         storeSession(createData.sessionId, username);
       }
 
-      // Step 3: Export profile data from remote and import locally
-      console.log('[AuthGate] Downloading profile data from remote...');
-      
-      // Show progress notification
-      error = '📥 SYNCING: Downloading profile data from server...';
-      
-      let profileBundle = null;
-      let syncStrategy = 'unknown';
-      
-      try {
-        // Try priority export first (essential files only to avoid OOM)
-        console.log('[AuthGate] Attempting priority sync (persona + config only)...');
-        error = '📥 SYNCING: Downloading essential profile data (persona, config, conversations)...';
+      // Step 4: Import profile bundle locally
+      error = '💾 SYNCING: Importing profile files to local storage...';
+      console.log(`[AuthGate] Calling import with ${profileBundle.files?.length || 0} files`);
 
-        const priorityRes = await remoteFetch(`${normalizedSyncUrl}/api/profile-sync/export-priority`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'Cookie': `mh_session=${serverSessionId}`
-          },
-        });
+      const importRes = await apiFetch('/api/profile-sync/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profileBundle),
+      });
 
-        if (priorityRes.ok) {
-          profileBundle = await priorityRes.json();
-          syncStrategy = 'priority';
-          error = `📥 SYNCING: Downloaded ${profileBundle.stats?.totalFiles || 0} files from server (${Math.round((profileBundle.stats?.totalSize || 0) / 1024)}KB)`;
-        } else {
-          // Show UI error for priority export failure
-          const priorityError = await priorityRes.text().catch(() => 'Network error');
-          
-          // Fallback to full export (may cause OOM on large profiles)
-          error = '📥 SYNCING: Priority sync failed, trying full profile download...';
+      console.log(`[AuthGate] Import response status: ${importRes.status}`);
 
-          const fullRes = await remoteFetch(`${normalizedSyncUrl}/api/profile-sync/export`, {
-            method: 'GET',
-            headers: {
-              'Content-Type': 'application/json',
-              'Cookie': `mh_session=${serverSessionId}`
-            },
-          });
-
-          if (fullRes.ok) {
-            profileBundle = await fullRes.json();
-            syncStrategy = 'full';
-            error = `📥 SYNCING: Downloaded complete profile - ${profileBundle.stats?.totalFiles || 0} files (${Math.round((profileBundle.stats?.totalSize || 0) / 1024)}KB)`;
-          } else {
-            const fullError = await fullRes.text().catch(() => 'Network error');
-            // STOP HERE - DO NOT LOG USER IN WITH EMPTY PROFILE
-            error = `SYNC FAILED: Cannot download profile from server. Priority sync (${priorityRes.status}): ${priorityError}. Full sync (${fullRes.status}): ${fullError}. You cannot log in without syncing your profile data.`;
-            return;
-          }
-        }
-
-        // Import profile bundle locally
-        if (profileBundle) {
-          error = '💾 SYNCING: Importing profile files to local storage...';
-          
-          const importRes = await apiFetch('/api/profile-sync/import', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(profileBundle),
-          });
-
-          if (!importRes.ok) {
-            const importError = await importRes.text().catch(() => 'Unknown import error');
-            error = `IMPORT FAILED: Cannot save profile data locally. Error (${importRes.status}): ${importError}. Your profile was not synced.`;
-            return;
-          }
-
-          const importData = await importRes.json();
-          if (!importData.success) {
-            error = `IMPORT FAILED: ${importData.error || 'Failed to save profile files'}. Your profile was not synced.`;
-            return;
-          }
-
-          // SUCCESS - profile actually synced
-          if (!importData.imported || importData.imported === 0) {
-            error = `SYNC INCOMPLETE: No files were imported. Your profile is empty.`;
-            return;
-          }
-          
-          // SHOW SUCCESS MESSAGE
-          error = `✅ SYNC SUCCESS! Imported ${importData.imported} files from ${syncServerUrl}. Profile ready!`;
-          console.log(`[AuthGate] SYNC SUCCESS: ${importData.imported} files imported via ${syncStrategy} sync`);
-        } else {
-          error = 'SYNC FAILED: No profile data received from server. Cannot log you in with empty profile.';
-          return;
-        }
-      } catch (profileErr) {
-        error = `SYNC NETWORK ERROR: Cannot connect to server or download profile. ${profileErr instanceof Error ? profileErr.message : 'Connection failed'}. Check your network and server URL.`;
+      if (!importRes.ok) {
+        const importError = await importRes.text().catch(() => 'Unknown import error');
+        console.error(`[AuthGate] Import failed: ${importRes.status} - ${importError}`);
+        error = `IMPORT FAILED: Cannot save profile data locally. Error (${importRes.status}): ${importError}. Your profile was not synced.`;
         return;
       }
+
+      const importData = await importRes.json();
+      console.log(`[AuthGate] Import result:`, importData);
+
+      if (!importData.success) {
+        console.error(`[AuthGate] Import unsuccessful:`, importData.error);
+        error = `IMPORT FAILED: ${importData.error || 'Failed to save profile files'}. Your profile was not synced.`;
+        return;
+      }
+
+      // SUCCESS - profile actually synced
+      if (!importData.imported || importData.imported === 0) {
+        error = `SYNC INCOMPLETE: No files were imported. Your profile is empty.`;
+        return;
+      }
+
+      // SHOW SUCCESS MESSAGE
+      error = `✅ SYNC SUCCESS! Imported ${importData.imported} files from ${syncServerUrl}. Profile ready!`;
+      console.log(`[AuthGate] SYNC SUCCESS: ${importData.imported} files imported via ${syncStrategy} sync`);
 
       // SUCCESS - Actually synced profile data
       // Give user a moment to see the success message
@@ -361,7 +359,7 @@
         window.location.reload();
       }, 2000);
     } catch (err) {
-      error = `SYNC FAILED: ${err instanceof Error ? err.message : 'Unknown error'}. You cannot log in without syncing your profile.`;
+      error = `SYNC FAILED: ${err instanceof Error ? err.message : 'Unknown error'}`;
     } finally {
       syncLoading = false;
     }

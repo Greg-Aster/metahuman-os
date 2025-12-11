@@ -657,10 +657,12 @@ export class VLLMClient {
       body.chat_template_kwargs = { enable_thinking: options.enableThinking };
     }
 
+    // 2 minute timeout for LLM generation (large models can take time)
     const response = await fetch(`${this.endpoint}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(120000),
     });
 
     if (!response.ok) {
@@ -708,10 +710,12 @@ export class VLLMClient {
       body.chat_template_kwargs = { enable_thinking: options.enableThinking };
     }
 
+    // 5 minute timeout for streaming (longer since stream can take a while)
     const response = await fetch(`${this.endpoint}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(300000),
     });
 
     if (!response.ok) {
@@ -758,6 +762,7 @@ export class VLLMClient {
    * Text embeddings (if model supports)
    */
   async embeddings(text: string, model?: string): Promise<number[]> {
+    // 30 second timeout for embeddings
     const response = await fetch(`${this.endpoint}/v1/embeddings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -765,6 +770,7 @@ export class VLLMClient {
         model: model || this.currentModel || 'default',
         input: text,
       }),
+      signal: AbortSignal.timeout(30000),
     });
 
     if (!response.ok) {
@@ -788,6 +794,7 @@ export class VLLMClient {
       temperature?: number;
     }
   ): Promise<string> {
+    // 2 minute timeout for generation
     const response = await fetch(`${this.endpoint}/v1/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -797,6 +804,7 @@ export class VLLMClient {
         max_tokens: options?.maxTokens ?? 256,
         temperature: options?.temperature ?? 0.7,
       }),
+      signal: AbortSignal.timeout(120000),
     });
 
     if (!response.ok) {

@@ -9,6 +9,12 @@
  *
  * BACKEND-AWARE: Automatically routes to Ollama or vLLM based on etc/llm-backend.json
  * AUTO-START: Automatically starts the configured backend if not running
+ *
+ * UNIFIED CODEBASE:
+ * With React Native migration (Node.js 18), both web and mobile use the same code path.
+ * Feature detection determines if native fetch is available:
+ * - Node.js 18+ (web, React Native): Uses @metahuman/server with native fetch
+ * - Node.js 12 (legacy Capacitor): Falls back to mobile-providers.ts with https module
  */
 
 import { ollama, isRunning as isOllamaRunning } from '../ollama.js';
@@ -18,6 +24,17 @@ import { loadDeploymentConfig } from '../deployment.js';
 import { callMobileProvider } from '../mobile-providers.js';
 import { getUserContext } from '../context.js';
 import { resolveCredentials } from '../llm-config.js';
+
+// Feature detection: Check if native fetch is available (Node.js 18+)
+// This determines whether to use @metahuman/server (native fetch) or mobile-providers.ts (https module)
+const hasNativeFetch = typeof globalThis.fetch === 'function';
+const nodeVersion = parseInt(process.version.slice(1).split('.')[0], 10);
+const isModernNode = nodeVersion >= 18;
+
+// Log once at startup
+if (process.env.METAHUMAN_MOBILE === 'true') {
+  console.log(`[provider-bridge] Mobile runtime - Node.js ${process.version}, native fetch: ${hasNativeFetch}, modern: ${isModernNode}`);
+}
 
 // Track if we've already logged the active backend
 let backendLoggedOnce = false;
@@ -74,12 +91,18 @@ export async function callProvider(
 
   // Route to appropriate handler
   if (isCloudProvider(providerName)) {
-    // On mobile (Node.js 12), use mobile-providers.ts which uses native https
-    // @metahuman/server uses native fetch which doesn't exist in Node.js 12
-    const isMobile = process.env.METAHUMAN_MOBILE === 'true';
-    if (isMobile && providerName === 'runpod_serverless' && config.runpod?.apiKey) {
+    // UNIFIED CODEBASE: Use feature detection instead of platform check
+    // - Node.js 18+ (web, React Native): Use @metahuman/server with native fetch
+    // - Node.js 12 (legacy Capacitor): Use mobile-providers.ts with https module
+    const shouldUseMobileProvider = !hasNativeFetch && !isModernNode;
+
+    if (shouldUseMobileProvider && providerName === 'runpod_serverless' && config.runpod?.apiKey) {
+      // Legacy path: Node.js 12 doesn't have native fetch
+      console.log('[provider-bridge] Using legacy mobile provider (Node.js 12 fallback)');
       return callMobileRunPodProvider(messages, options, config.runpod, onProgress);
     }
+
+    // Unified path: Both web and React Native mobile use @metahuman/server
     return callCloudProvider(providerName, messages, options, config, onProgress);
   }
 
@@ -87,7 +110,8 @@ export async function callProvider(
   switch (providerName) {
     case 'local':
     case 'ollama': {
-      // On mobile, skip local backends entirely and use remote provider
+      // On mobile (both React Native and Capacitor), skip local backends and use remote provider
+      // Local Ollama/vLLM servers don't run on mobile devices
       const isMobile = process.env.METAHUMAN_MOBILE === 'true';
       if (isMobile) {
         const backendConfig = loadBackendConfig();

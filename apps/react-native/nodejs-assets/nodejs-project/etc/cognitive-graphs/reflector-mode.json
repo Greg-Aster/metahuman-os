@@ -1,0 +1,138 @@
+{
+  "version": "2.0",
+  "name": "Reflector Agent Workflow",
+  "description": "Generates reflections from associative memory chains and saves as inner dialogue",
+  "cognitiveMode": "agent",
+  "last_modified": "2025-11-20",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "cognitive/reflector_llm",
+      "pos": [100, 100],
+      "size": [220, 100],
+      "properties": {
+        "role": "persona",
+        "temperature": 0.8,
+        "timeout": 300000
+      },
+      "title": "Generate Reflection"
+    },
+    {
+      "id": 2,
+      "type": "cognitive/inner_dialogue_capture",
+      "pos": [400, 100],
+      "size": [220, 80],
+      "properties": {
+        "tags": ["idle-thought", "self-reflection", "inner"]
+      },
+      "title": "Save Reflection"
+    },
+    {
+      "id": 3,
+      "type": "cognitive/reflector_llm",
+      "pos": [100, 240],
+      "size": [220, 100],
+      "properties": {
+        "role": "summarizer",
+        "temperature": 0.3,
+        "timeout": 300000
+      },
+      "title": "Generate Summary"
+    },
+    {
+      "id": 4,
+      "type": "cognitive/inner_dialogue_capture",
+      "pos": [400, 240],
+      "size": [220, 80],
+      "properties": {
+        "tags": ["idle-thought", "summary", "concise", "inner"]
+      },
+      "title": "Save Summary"
+    },
+    {
+      "id": 5,
+      "type": "cognitive/reflector_llm",
+      "pos": [100, 380],
+      "size": [220, 100],
+      "properties": {
+        "role": "summarizer",
+        "temperature": 0.4,
+        "timeout": 300000
+      },
+      "title": "Generate Extended Summary"
+    },
+    {
+      "id": 6,
+      "type": "cognitive/inner_dialogue_capture",
+      "pos": [400, 380],
+      "size": [220, 80],
+      "properties": {
+        "tags": ["idle-thought", "summary", "extended", "inner"]
+      },
+      "title": "Save Extended Summary"
+    },
+    {
+      "id": 7,
+      "type": "cognitive/audit_logger",
+      "pos": [700, 100],
+      "size": [180, 60],
+      "title": "Audit Reflection"
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 2,
+      "target_slot": 0,
+      "type": "string",
+      "comment": "Reflection → Save Reflection"
+    },
+    {
+      "id": 2,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 0,
+      "type": "string",
+      "comment": "Reflection → Generate Summary"
+    },
+    {
+      "id": 3,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 0,
+      "type": "string",
+      "comment": "Summary → Save Summary"
+    },
+    {
+      "id": 4,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 0,
+      "type": "string",
+      "comment": "Reflection → Generate Extended Summary"
+    },
+    {
+      "id": 5,
+      "origin_id": 5,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 0,
+      "type": "string",
+      "comment": "Extended summary → Save Extended Summary"
+    },
+    {
+      "id": 6,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 0,
+      "type": "string",
+      "comment": "Reflection → Audit Logger"
+    }
+  ]
+}

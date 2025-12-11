@@ -112,6 +112,20 @@ apps/mobile/android/app/src/main/assets/
 apps/mobile/www/
 *mobile-build-backup*
 
+# React Native build artifacts
+apps/react-native/node_modules/
+apps/react-native/android/app/build/
+apps/react-native/android/.gradle/
+apps/react-native/android/app/src/main/assets/*.bundle
+apps/react-native/ios/Pods/
+apps/react-native/ios/build/
+apps/react-native/.bundle/
+apps/react-native/*.jsbundle
+
+# Capacitor (deprecated - archived to archive/capacitor-mobile branch)
+# Ignore if recreated by accidental builds
+apps/mobile/
+
 # ============================================
 # ENVIRONMENT & SECRETS
 # ============================================

@@ -28,14 +28,11 @@ function resolveModelsPath(username: string): string {
     relativePath: 'models.json',
   });
   if (result.success && result.path) {
-    console.log(`[model-registry] Resolved path for ${username}: ${result.path}`);
     return result.path;
   }
   // Fallback to profile path
   const profilePaths = getProfilePaths(username);
-  const fallbackPath = path.join(profilePaths.etc, 'models.json');
-  console.log(`[model-registry] Using fallback path for ${username}: ${fallbackPath}`);
-  return fallbackPath;
+  return path.join(profilePaths.etc, 'models.json');
 }
 
 /**
@@ -52,8 +49,6 @@ function ensureUserRegistry(username: string): void {
     // User already has a registry - do nothing
     return;
   }
-
-  console.log(`[model-registry] Initializing registry for new user: ${username}`);
 
   // Copy from system registry ONE TIME
   const systemPath = path.join(systemPaths.etc, 'models.json');
@@ -90,7 +85,6 @@ function ensureUserRegistry(username: string): void {
       delete userRegistry._WARNING5;
       delete userRegistry._WARNING6;
 
-      console.log(`[model-registry] Initialized from system registry: ${Object.keys(userRegistry.models).length} models`);
     } catch (err) {
       console.error('[model-registry] Failed to read system registry for initialization:', err);
     }
@@ -99,7 +93,6 @@ function ensureUserRegistry(username: string): void {
   // Create directory and write user's registry
   fs.mkdirSync(path.dirname(userPath), { recursive: true });
   fs.writeFileSync(userPath, JSON.stringify(userRegistry, null, 2));
-  console.log(`[model-registry] Created user registry at: ${userPath}`);
 }
 
 /**
@@ -112,9 +105,7 @@ function readModelRegistry(username: string) {
   try {
     const p = resolveModelsPath(username);
     if (fs.existsSync(p)) {
-      const registry = JSON.parse(fs.readFileSync(p, 'utf-8'));
-      console.log(`[model-registry] Read ${Object.keys(registry.models || {}).length} models from ${p}`);
-      return registry;
+      return JSON.parse(fs.readFileSync(p, 'utf-8'));
     }
   } catch (e) {
     console.error('[model-registry] Failed to read registry:', e);
@@ -130,13 +121,10 @@ function readModelRegistry(username: string) {
  */
 async function writeModelRegistry(username: string, registry: any) {
   const p = resolveModelsPath(username);
-  console.log(`[model-registry] Writing to: ${p}`);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, JSON.stringify(registry, null, 2));
-  console.log(`[model-registry] Wrote ${Object.keys(registry.models || {}).length} models`);
   // Invalidate model cache to force reload
   invalidateModelCache();
-  console.log(`[model-registry] Invalidated model cache`);
 }
 
 const ALL_ROLES = ['persona', 'orchestrator', 'coder', 'planner', 'curator', 'summarizer', 'fallback'];
@@ -190,7 +178,6 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     let roleAssignments = { ...defaults };
     if (currentMode && cognitiveModeMappings[currentMode]) {
       roleAssignments = { ...defaults, ...cognitiveModeMappings[currentMode] };
-      console.log(`[model-registry] Using effective assignments for mode '${currentMode}'`);
     }
     const globalSettings = registry.globalSettings || {};
 
@@ -233,8 +220,6 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       remote: availableModels.filter(m => cloudProviderSet.has(m.provider)),
       bigBrother: availableModels.filter(m => bigBrotherProviders.has(m.provider))
     };
-
-    console.log(`[model-registry] Backend: ${activeBackend}, Resolved: ${resolvedBackend}, Local models: ${modelCategories.local.length}, Remote: ${modelCategories.remote.length}`);
 
     await audit({
       category: 'action',
@@ -289,12 +274,9 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
     const registry = readModelRegistry(user.username);
     registry.models = registry.models || {};
 
-    console.log(`[model-registry] Assigning ${modelId} to role ${role} for user ${user.username}`);
-
     // Auto-register runtime-discovered models that aren't in user's registry
     // NO SYSTEM REGISTRY FALLBACK - only dynamic discovery types
     if (!registry.models[modelId]) {
-      console.log(`[model-registry] Model ${modelId} not in registry, checking discovery types...`);
 
       if (modelId.startsWith('vllm.')) {
         // vLLM model - runtime discovery
@@ -308,7 +290,6 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
           options: {},
           metadata: { source: 'vllm-backend', locked: true }
         };
-        console.log(`[model-registry] Auto-registered vLLM model: ${modelId}`);
       } else if (modelId.startsWith('lora.')) {
         // LoRA adapter - runtime discovery
         const adapterName = modelId.replace(/^lora\./, '');
@@ -327,7 +308,6 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
           options: {},
           metadata: { source: 'lora-discovery' }
         };
-        console.log(`[model-registry] Auto-registered LoRA adapter: ${modelId}`);
       } else if (modelId.startsWith('ollama.')) {
         // Ollama model - runtime discovery
         const inferredName = modelId.replace(/^ollama\./, '');
@@ -340,7 +320,6 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
           options: {},
           metadata: { source: 'ollama-discovery' }
         };
-        console.log(`[model-registry] Auto-registered Ollama model: ${modelId}`);
       } else {
         // Unknown model ID - should already be in user's registry
         // User's registry was initialized from system, so cloud models should be there

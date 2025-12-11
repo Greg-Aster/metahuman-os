@@ -19,7 +19,7 @@ import {
 
 // Import handlers (will be populated as we migrate routes)
 // For now, start with a few proof-of-concept routes
-import { handleBoot } from './handlers/system.js';
+import { handleBoot, handleAppInfo } from './handlers/system.js';
 import { handleGetStatus } from './handlers/status.js';
 import { handleCapture, handleListMemories, handleSearchMemories } from './handlers/memories.js';
 import { handleListTasks, handleCreateTask, handleUpdateTask, handleDeleteTask } from './handlers/tasks.js';
@@ -242,6 +242,7 @@ const routes: RouteDefinition[] = [
   // System
   { method: 'GET', pattern: '/api/status', handler: handleGetStatus },
   { method: 'GET', pattern: '/api/boot', handler: handleBoot },
+  { method: 'GET', pattern: '/api/app-info', handler: handleAppInfo },
 
   // Auth
   { method: 'GET', pattern: '/api/auth/me', handler: handleGetMe },
@@ -258,6 +259,7 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/profile-sync/user', handler: handleSyncUser, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/export', handler: handleExportProfile, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/export-priority', handler: handleExportPriorityProfile, requiresAuth: true },
+  { method: 'POST', pattern: '/api/profile-sync/export-priority', handler: handleExportPriorityProfile },  // POST accepts creds in body
   { method: 'POST', pattern: '/api/profile-sync/import', handler: handleImportProfile, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/metadata', handler: handleGetProfileMetadata, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/memories', handler: handleGetProfileMemories, requiresAuth: true },

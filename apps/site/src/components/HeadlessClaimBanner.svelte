@@ -64,7 +64,7 @@
   }
 
   onMount(() => {
-    isMobile = isCapacitorNative();
+    isMobile = isMobileApp();
 
     // Skip loading on mobile - this is a server-only feature
     if (isMobile) return;

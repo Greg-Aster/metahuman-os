@@ -1,12 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { apiFetch, getSyncServerUrl } from '../lib/client/api-config';
-  import {
-    fetchCredentialsFromServer,
-    getLocalCredentials,
-    saveLocalCredentials,
-    type SyncableCredentials,
-  } from '../lib/client/profile-sync';
+  import { apiFetch } from '../lib/client/api-config';
+  import { statusRefreshTrigger } from '../stores/navigation';
 
   // Backend types
   type BackendType = 'ollama' | 'vllm' | 'remote' | 'auto';
@@ -63,9 +58,6 @@
   let status: BackendStatus | null = null;
   let available: AvailableBackends | null = null;
 
-  // Platform detection
-  let isMobile = false;
-
   // vLLM config - these will be populated from server config on load
   let vllmModel = '';
   let vllmGpuUtil = 0.7;
@@ -95,14 +87,8 @@
   let runpodConfig: RunPodConfig | null = null;
   let runpodConfigured = false;
 
-  // Manual credential entry (for mobile)
-  let showManualCredentials = false;
-  let manualRunpodApiKey = '';
-  let manualRunpodGpuType = '';
-  let manualRunpodTemplateId = '';
-  let savingManualCredentials = false;
-  let credentialSource: 'local' | 'server' | 'synced' | 'manual' | 'none' = 'none';
-  let syncingCredentials = false;
+  // Credential tracking
+  let credentialSource: 'local' | 'none' = 'none';
 
   // Embedding config (for semantic memory search)
   let embeddingEnabled = true;
@@ -120,17 +106,10 @@
   let error: string | null = null;
 
   onMount(() => {
-    // Detect mobile platform (Capacitor/nodejs-mobile)
-    isMobile = typeof (window as any).Capacitor !== 'undefined' ||
-               typeof (window as any).nodejs !== 'undefined' ||
-               /Android|webOS|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
     loadStatus();
     loadBigBrotherConfig();
     loadRunPodConfig();
-    if (!isMobile) {
-      loadEmbeddingConfig();
-    }
+    loadEmbeddingConfig();
   });
 
   async function loadStatus() {
@@ -188,42 +167,14 @@
   }
 
   // Load Big Brother config from /api/big-brother-config (uses etc/operator.json)
-  // On mobile, try fetching from sync server
   async function loadBigBrotherConfig() {
     try {
-      // First try local config
       const res = await apiFetch('/api/big-brother-config');
       if (res.ok) {
         const data = await res.json();
         bigBrotherConfig = data.config;
         bigBrotherEnabled = data.config?.enabled ?? false;
         bigBrotherProvider = data.config?.provider || 'claude-code';
-      }
-
-      // If on mobile and got default config, try sync server for actual config
-      if (isMobile && !bigBrotherEnabled) {
-        try {
-          const { getSyncServerUrl } = await import('../lib/client/api-config');
-          const syncUrl = getSyncServerUrl();
-          if (syncUrl) {
-            console.log('[BackendSettings] Trying sync server for Big Brother config:', syncUrl);
-            const syncRes = await fetch(`${syncUrl}/api/big-brother-config`, {
-              credentials: 'include',
-              signal: AbortSignal.timeout(5000),
-            });
-            if (syncRes.ok) {
-              const syncData = await syncRes.json();
-              if (syncData?.config) {
-                bigBrotherConfig = syncData.config;
-                bigBrotherEnabled = syncData.config?.enabled ?? false;
-                bigBrotherProvider = syncData.config?.provider || 'claude-code';
-                console.log('[BackendSettings] Got Big Brother config from sync server');
-              }
-            }
-          }
-        } catch (syncErr) {
-          console.log('[BackendSettings] Sync server not available for Big Brother config');
-        }
       }
     } catch (err) {
       console.error('[BackendSettings] Error loading Big Brother config:', err);
@@ -252,6 +203,8 @@
 
       if (res.ok) {
         await loadBigBrotherConfig();
+        // Trigger status refresh for other components
+        statusRefreshTrigger.update(n => n + 1);
       } else {
         const data = await res.json();
         error = data.error || 'Failed to save Big Brother config';
@@ -269,15 +222,11 @@
     return opt?.label || provider;
   }
 
-  // Load RunPod config using three methods:
-  // 1. Local API (works on desktop, returns defaults on mobile)
-  // 2. Sync server credentials (mobile fetches from desktop)
-  // 3. Locally saved credentials (from previous sync or manual entry)
+  // Load RunPod config from API
   async function loadRunPodConfig() {
     credentialSource = 'none';
 
     try {
-      // Method 1: Try local API first (works on desktop)
       const res = await apiFetch('/api/runpod/config');
       if (res.ok) {
         const config = await res.json();
@@ -285,110 +234,10 @@
           runpodConfig = config;
           runpodConfigured = true;
           credentialSource = 'local';
-          console.log('[BackendSettings] Got RunPod config from local API');
-          return;
         }
       }
     } catch (err) {
-      console.log('[BackendSettings] Local RunPod API not available');
-    }
-
-    // If on mobile and local config is empty, try other methods
-    if (isMobile && !runpodConfigured) {
-      // Method 2: Try fetching from sync server
-      try {
-        const syncedCreds = await fetchCredentialsFromServer();
-        if (syncedCreds?.runpod?.apiKey) {
-          runpodConfig = syncedCreds.runpod;
-          runpodConfigured = true;
-          credentialSource = 'synced';
-          console.log('[BackendSettings] Got RunPod config from sync server');
-          return;
-        }
-      } catch (syncErr) {
-        console.log('[BackendSettings] Sync server not available for credentials');
-      }
-
-      // Method 3: Try locally saved credentials (from previous sync or manual entry)
-      try {
-        const localCreds = await getLocalCredentials();
-        if (localCreds?.runpod?.apiKey) {
-          runpodConfig = localCreds.runpod;
-          runpodConfigured = true;
-          credentialSource = 'manual';
-          console.log('[BackendSettings] Got RunPod config from local storage');
-          return;
-        }
-      } catch (localErr) {
-        console.log('[BackendSettings] No local credentials stored');
-      }
-    }
-  }
-
-  // Sync credentials from desktop server (Method 2)
-  async function syncCredentialsFromServer() {
-    syncingCredentials = true;
-    error = null;
-
-    try {
-      const syncedCreds = await fetchCredentialsFromServer();
-      if (syncedCreds) {
-        // Update RunPod config
-        if (syncedCreds.runpod?.apiKey) {
-          runpodConfig = syncedCreds.runpod;
-          runpodConfigured = true;
-          credentialSource = 'synced';
-        }
-
-        // Update Big Brother config
-        if (syncedCreds.bigBrother) {
-          bigBrotherConfig = syncedCreds.bigBrother as BigBrotherConfig;
-          bigBrotherEnabled = syncedCreds.bigBrother.enabled;
-          bigBrotherProvider = (syncedCreds.bigBrother.provider as BigBrotherProvider) || 'claude-code';
-        }
-
-        console.log('[BackendSettings] Credentials synced from server');
-      } else {
-        error = 'No credentials available from server. Make sure you are logged in on both devices.';
-      }
-    } catch (err) {
-      error = 'Failed to sync credentials from server';
-      console.error('[BackendSettings] Sync error:', err);
-    } finally {
-      syncingCredentials = false;
-    }
-  }
-
-  // Save manual credentials (Method 3)
-  async function saveManualCredentials() {
-    savingManualCredentials = true;
-    error = null;
-
-    try {
-      const credentials: SyncableCredentials = {
-        runpod: {
-          apiKey: manualRunpodApiKey || null,
-          gpuType: manualRunpodGpuType || null,
-          templateId: manualRunpodTemplateId || null,
-        },
-      };
-
-      await saveLocalCredentials(credentials);
-
-      // Update local state
-      if (manualRunpodApiKey) {
-        runpodConfig = credentials.runpod!;
-        runpodConfigured = true;
-        credentialSource = 'manual';
-      }
-
-      showManualCredentials = false;
-      console.log('[BackendSettings] Manual credentials saved');
-    } catch (err) {
-      error = 'Failed to save credentials';
-      console.error('[BackendSettings] Save error:', err);
-    } finally {
-      savingManualCredentials = false;
+      console.error('[BackendSettings] Error loading RunPod config:', err);
     }
   }
 
@@ -433,6 +282,10 @@
       if (res.ok) {
         activeBackend = to;
         await loadStatus();
+
+        // Dispatch event and trigger status refresh for other components
+        window.dispatchEvent(new CustomEvent('backend-changed', { detail: { backend: to } }));
+        statusRefreshTrigger.update(n => n + 1);
       } else {
         const data = await res.json();
         error = data.error || 'Failed to switch backend';
@@ -464,6 +317,8 @@
       if (res.ok) {
         // Reload to confirm what was saved
         await loadStatus();
+        // Trigger status refresh for other components
+        statusRefreshTrigger.update(n => n + 1);
       } else {
         const data = await res.json();
         error = data.error || 'Failed to save remote config';
@@ -764,8 +619,8 @@
         class="mode-btn"
         class:active={activeBackend === 'ollama'}
         on:click={() => switchBackend('ollama')}
-        disabled={switching || isMobile || !available?.ollama.installed}
-        title={isMobile ? 'Not available on mobile' : 'Use Ollama for local inference'}
+        disabled={switching || !available?.ollama.installed}
+        title="Use Ollama for local inference"
       >
         🦙 Ollama
       </button>
@@ -773,8 +628,8 @@
         class="mode-btn"
         class:active={activeBackend === 'vllm'}
         on:click={() => switchBackend('vllm')}
-        disabled={switching || isMobile || !available?.vllm.installed}
-        title={isMobile ? 'Not available on mobile' : 'Use vLLM for high-throughput inference'}
+        disabled={switching || !available?.vllm.installed}
+        title="Use vLLM for high-throughput inference"
       >
         ⚡ vLLM
       </button>
@@ -789,21 +644,13 @@
       </button>
     </div>
 
-    {#if isMobile}
-      <p class="mobile-notice">
-        📱 Mobile mode: Local backends (Ollama/vLLM) are not available. Use Remote or Auto mode.
-      </p>
-    {/if}
-
     <div class="backend-cards">
       <!-- Ollama Card -->
-      <div class="backend-card" class:active={activeBackend === 'ollama'} class:unavailable={isMobile}>
+      <div class="backend-card" class:active={activeBackend === 'ollama'} class:unavailable={!available?.ollama.installed}>
         <div class="backend-header">
           <span class="backend-icon">🦙</span>
           <span class="backend-name">Ollama</span>
-          {#if isMobile}
-            <span class="status-dot unavailable"></span>
-          {:else if available?.ollama.running}
+          {#if available?.ollama.running}
             <span class="status-dot running"></span>
           {:else if available?.ollama.installed}
             <span class="status-dot stopped"></span>
@@ -814,35 +661,26 @@
 
         <div class="backend-info">
           <p class="backend-desc">Local inference with GGUF models</p>
-          {#if isMobile}
+          <div class="backend-detail">
+            <span class="label">Status:</span>
+            <span class="value" style="color: {available?.ollama.running ? '#22c55e' : '#ef4444'}">
+              {available?.ollama.running ? 'Running' : available?.ollama.installed ? 'Stopped' : 'Not Installed'}
+            </span>
+          </div>
+          {#if available?.ollama.model}
             <div class="backend-detail">
-              <span class="label">Status:</span>
-              <span class="value" style="color: #6b7280">Desktop Only</span>
-            </div>
-          {:else}
-            <div class="backend-detail">
-              <span class="label">Status:</span>
-              <span class="value" style="color: {available?.ollama.running ? '#22c55e' : '#ef4444'}">
-                {available?.ollama.running ? 'Running' : available?.ollama.installed ? 'Stopped' : 'Not Installed'}
-              </span>
-            </div>
-            {#if available?.ollama.model}
-              <div class="backend-detail">
-                <span class="label">Model:</span>
-                <span class="value model">{available.ollama.model}</span>
-              </div>
-            {/if}
-            <div class="backend-detail">
-              <span class="label">Endpoint:</span>
-              <span class="value endpoint">{ollamaEndpoint}</span>
+              <span class="label">Model:</span>
+              <span class="value model">{available.ollama.model}</span>
             </div>
           {/if}
+          <div class="backend-detail">
+            <span class="label">Endpoint:</span>
+            <span class="value endpoint">{ollamaEndpoint}</span>
+          </div>
         </div>
 
         <div class="backend-actions">
-          {#if isMobile}
-            <span class="unavailable-badge">Desktop Only</span>
-          {:else if activeBackend === 'ollama'}
+          {#if activeBackend === 'ollama'}
             <span class="active-badge">Active</span>
             {#if available?.ollama.running}
               <button
@@ -874,13 +712,11 @@
       </div>
 
       <!-- vLLM Card -->
-      <div class="backend-card" class:active={activeBackend === 'vllm'} class:unavailable={isMobile}>
+      <div class="backend-card" class:active={activeBackend === 'vllm'} class:unavailable={!available?.vllm.installed}>
         <div class="backend-header">
           <span class="backend-icon">⚡</span>
           <span class="backend-name">vLLM</span>
-          {#if isMobile}
-            <span class="status-dot unavailable"></span>
-          {:else if available?.vllm.running}
+          {#if available?.vllm.running}
             <span class="status-dot running"></span>
           {:else if available?.vllm.installed}
             <span class="status-dot stopped"></span>
@@ -891,35 +727,26 @@
 
         <div class="backend-info">
           <p class="backend-desc">High-throughput with HuggingFace models</p>
-          {#if isMobile}
+          <div class="backend-detail">
+            <span class="label">Status:</span>
+            <span class="value" style="color: {available?.vllm.running ? '#22c55e' : '#ef4444'}">
+              {available?.vllm.running ? 'Running' : available?.vllm.installed ? 'Stopped' : 'Not Installed'}
+            </span>
+          </div>
+          {#if available?.vllm.model}
             <div class="backend-detail">
-              <span class="label">Status:</span>
-              <span class="value" style="color: #6b7280">Desktop Only</span>
-            </div>
-          {:else}
-            <div class="backend-detail">
-              <span class="label">Status:</span>
-              <span class="value" style="color: {available?.vllm.running ? '#22c55e' : '#ef4444'}">
-                {available?.vllm.running ? 'Running' : available?.vllm.installed ? 'Stopped' : 'Not Installed'}
-              </span>
-            </div>
-            {#if available?.vllm.model}
-              <div class="backend-detail">
-                <span class="label">Model:</span>
-                <span class="value model">{available.vllm.model}</span>
-              </div>
-            {/if}
-            <div class="backend-detail">
-              <span class="label">Endpoint:</span>
-              <span class="value endpoint">{vllmEndpoint}</span>
+              <span class="label">Model:</span>
+              <span class="value model">{available.vllm.model}</span>
             </div>
           {/if}
+          <div class="backend-detail">
+            <span class="label">Endpoint:</span>
+            <span class="value endpoint">{vllmEndpoint}</span>
+          </div>
         </div>
 
         <div class="backend-actions">
-          {#if isMobile}
-            <span class="unavailable-badge">Desktop Only</span>
-          {:else if activeBackend === 'vllm'}
+          {#if activeBackend === 'vllm'}
             <span class="active-badge">Active</span>
           {:else}
             <button
@@ -952,7 +779,7 @@
           <div class="backend-detail">
             <span class="label">Big Brother:</span>
             <span class="value" style="color: {bigBrotherEnabled ? '#22c55e' : '#6b7280'}">
-              {bigBrotherEnabled ? `✓ ${getBigBrotherProviderLabel(bigBrotherProvider)}` : isMobile ? 'Desktop only' : 'Disabled'}
+              {bigBrotherEnabled ? `✓ ${getBigBrotherProviderLabel(bigBrotherProvider)}` : 'Disabled'}
             </span>
           </div>
           {#if remoteServerUrl}
@@ -992,21 +819,16 @@
             type="checkbox"
             bind:checked={bigBrotherEnabled}
             on:change={saveBigBrotherConfig}
-            disabled={savingBigBrother || isMobile}
+            disabled={savingBigBrother}
           />
           <span>Enable Big Brother Mode</span>
         </label>
-        {#if isMobile}
-          <span class="config-hint warning">Not available on mobile (requires terminal)</span>
-        {:else}
-          <span class="config-hint">
-            {bigBrotherEnabled ? `${getBigBrotherProviderLabel(bigBrotherProvider)} will handle complex tasks` : 'Disabled - using local models only'}
-          </span>
-        {/if}
+        <span class="config-hint">
+          {bigBrotherEnabled ? `${getBigBrotherProviderLabel(bigBrotherProvider)} will handle complex tasks` : 'Disabled - using local models only'}
+        </span>
       </div>
 
-      {#if !isMobile}
-        <div class="config-row">
+      <div class="config-row">
           <label for="big-brother-provider">CLI Provider</label>
           <select
             id="big-brother-provider"
@@ -1036,7 +858,6 @@
             </div>
           </div>
         {/if}
-      {/if}
 
       {#if savingBigBrother}
         <span class="saving-indicator">Saving...</span>
@@ -1066,11 +887,7 @@
           </span>
         {:else}
           <span class="status-badge stopped">Not Configured</span>
-          {#if isMobile}
-            <span class="config-hint">Sync from desktop or enter manually</span>
-          {:else}
-            <span class="config-hint">Set RUNPOD_API_KEY in .env or etc/runpod.json</span>
-          {/if}
+          <span class="config-hint">Set RUNPOD_API_KEY in .env or etc/runpod.json</span>
         {/if}
       </div>
 
@@ -1095,70 +912,9 @@
         </div>
       {/if}
 
-      <!-- Mobile credential options -->
-      {#if isMobile}
-        <div class="credential-actions">
-          <button
-            class="sync-btn"
-            on:click={syncCredentialsFromServer}
-            disabled={syncingCredentials}
-            title="Fetch credentials from your desktop server"
-          >
-            {syncingCredentials ? '🔄 Syncing...' : '🔄 Sync from Desktop'}
-          </button>
-          <button
-            class="manual-btn"
-            on:click={() => showManualCredentials = !showManualCredentials}
-          >
-            {showManualCredentials ? '✕ Cancel' : '✏️ Enter Manually'}
-          </button>
-        </div>
-
-        {#if showManualCredentials}
-          <div class="manual-entry">
-            <div class="config-row">
-              <label for="manual-runpod-key">RunPod API Key</label>
-              <input
-                id="manual-runpod-key"
-                type="password"
-                bind:value={manualRunpodApiKey}
-                placeholder="rp_xxxxxxxxxxxxxxxx"
-              />
-            </div>
-            <div class="config-row">
-              <label for="manual-runpod-gpu">GPU Type (optional)</label>
-              <input
-                id="manual-runpod-gpu"
-                type="text"
-                bind:value={manualRunpodGpuType}
-                placeholder="NVIDIA RTX A6000"
-              />
-            </div>
-            <div class="config-row">
-              <label for="manual-runpod-template">Template ID (optional)</label>
-              <input
-                id="manual-runpod-template"
-                type="text"
-                bind:value={manualRunpodTemplateId}
-                placeholder="template-id"
-              />
-            </div>
-            <div class="config-actions">
-              <button
-                class="save-btn"
-                on:click={saveManualCredentials}
-                disabled={savingManualCredentials || !manualRunpodApiKey}
-              >
-                {savingManualCredentials ? 'Saving...' : 'Save Credentials'}
-              </button>
-            </div>
-          </div>
-        {/if}
-      {:else}
-        <p class="config-note">
-          Configure via environment: RUNPOD_API_KEY, RUNPOD_GPU_TYPE, RUNPOD_TEMPLATE_ID
-        </p>
-      {/if}
+      <p class="config-note">
+        Configure via environment: RUNPOD_API_KEY, RUNPOD_GPU_TYPE, RUNPOD_TEMPLATE_ID
+      </p>
     </div>
 
     <!-- Remote Server (Desktop Connection) -->
@@ -2145,39 +1901,7 @@
     box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
   }
 
-  /* Mobile notice */
-  .mobile-notice {
-    background: #fef3c7;
-    border: 1px solid #fbbf24;
-    color: #92400e;
-    padding: 0.75rem 1rem;
-    border-radius: 0.5rem;
-    font-size: 0.875rem;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .mobile-notice {
-    background: rgba(251, 191, 36, 0.1);
-    border-color: rgba(251, 191, 36, 0.3);
-    color: #fcd34d;
-  }
-
-  /* Unavailable badge for mobile-only elements */
-  .unavailable-badge {
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: #6b7280;
-    background: #e5e7eb;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-  }
-
-  :global(.dark) .unavailable-badge {
-    background: #374151;
-    color: #9ca3af;
-  }
-
-  /* Dimmed card for unavailable backends on mobile */
+  /* Dimmed card for unavailable backends (not installed) */
   .backend-card.unavailable {
     opacity: 0.6;
     pointer-events: none;
