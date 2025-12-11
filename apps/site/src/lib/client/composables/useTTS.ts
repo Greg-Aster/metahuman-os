@@ -5,7 +5,6 @@
  */
 
 import { writable, get } from 'svelte/store';
-import { NativeVoice, isCapacitorNative } from '../plugins/native-voice';
 import { apiFetch } from '../api-config';
 
 // Types
@@ -665,8 +664,7 @@ export function useTTS() {
   }
 
   /**
-   * Speak text using native device TTS
-   * Uses Capacitor NativeVoice plugin when in Android app, falls back to Web Speech API
+   * Speak text using native device TTS (Web Speech API)
    */
   async function speakTextNative(text: string): Promise<void> {
     const speechText = normalizeTextForSpeech(text);
@@ -679,22 +677,7 @@ export function useTTS() {
     stopActiveAudio();
     stopNativeTTS();
 
-    // Try Capacitor native plugin first (true native Android TTS)
-    if (isCapacitorNative()) {
-      console.log('[useTTS] 🔊 Using Capacitor NativeVoice plugin (true Android TTS)');
-      try {
-        isPlaying.set(true);
-        await NativeVoice.speak({ text: speechText, rate: 1.0, pitch: 1.0 });
-        isPlaying.set(false);
-        return;
-      } catch (e) {
-        console.warn('[useTTS] Capacitor TTS failed, falling back to Web Speech API:', e);
-        isPlaying.set(false);
-        // Fall through to Web Speech API
-      }
-    }
-
-    // Fallback to Web Speech API
+    // Use Web Speech API
     console.log('[useTTS] 🔊 Using Web Speech API');
     return new Promise((resolve, reject) => {
       try {

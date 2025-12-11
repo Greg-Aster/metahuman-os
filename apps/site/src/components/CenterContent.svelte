@@ -1,11 +1,22 @@
 <script lang="ts">
   import { activeView } from '../stores/navigation';
   import type { SvelteComponent } from 'svelte';
-  import { apiFetch, isCapacitorNative } from '../lib/client/api-config';
-  import { onMount } from 'svelte';
-
-  // Mobile platform detection (for showing mobile-only settings)
-  let isMobileApp = false;
+  import { apiFetch, isMobileApp } from '../lib/client/api-config';
+  
+  // Safe wrapper for isMobileApp to prevent runtime errors
+  let isMobileAppSafe = false;
+  
+  // Check if we're in a browser environment and isMobileApp is available
+  $: if (typeof window !== 'undefined' && typeof isMobileApp === 'function') {
+    try {
+      isMobileAppSafe = isMobileApp();
+    } catch (e) {
+      console.error('[CenterContent] Error calling isMobileApp:', e);
+      isMobileAppSafe = false;
+    }
+  } else {
+    isMobileAppSafe = false;
+  }
 
   // PERFORMANCE OPTIMIZATION: Lazy load components
   // Only load ChatInterface eagerly (it's the default view and most common)
@@ -566,11 +577,7 @@ async function loadMemoryContent(relPath: string) {
     return loaded;
   }
 
-  // Detect mobile platform on mount
-  onMount(() => {
-    isMobileApp = isMobileAppCheck();
-  });
-</script>
+  </script>
 
 <div class="center-content">
   {#if $activeView === 'chat'}
@@ -1353,7 +1360,7 @@ async function loadMemoryContent(relPath: string) {
           <button class="tab-button" class:active={systemTab==='security'} on:click={() => systemTab='security'}>Security</button>
           <button class="tab-button" class:active={systemTab==='storage'} on:click={() => systemTab='storage'}>Storage</button>
           <button class="tab-button" class:active={systemTab==='network'} on:click={() => systemTab='network'}>Network</button>
-          {#if isMobileApp}
+          {#if isMobileAppSafe}
             <button class="tab-button" class:active={systemTab==='server'} on:click={() => systemTab='server'}>📡 Server</button>
           {/if}
           <button class="tab-button" class:active={systemTab==='addons'} on:click={() => systemTab='addons'}>Addons</button>

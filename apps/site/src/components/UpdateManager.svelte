@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { isCapacitorNative } from '../lib/client/api-config';
+  import { isMobileApp } from '../lib/client/api-config';
   import {
     updateState,
     checkForUpdates,
@@ -29,7 +29,7 @@
   });
 
   onMount(async () => {
-    isMobile = isCapacitorNative();
+    isMobile = isMobileApp();
     if (isMobile) {
       await initUpdateChecker();
     }

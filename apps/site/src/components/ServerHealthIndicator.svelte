@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onDestroy } from 'svelte';
   import {
     healthStatus,
     startHealthMonitor,
@@ -10,15 +10,12 @@
     getQualityEmoji,
     type HealthStatus
   } from '../lib/client/server-health';
-  import { isCapacitorNative } from '../lib/client/api-config';
-
   export let compact = false;
   export let showLatency = true;
   export let showLabel = true;
 
   let status: HealthStatus;
   let checking = false;
-  let isMobile = false;
 
   const unsubscribe = healthStatus.subscribe(s => {
     status = s;
@@ -29,10 +26,6 @@
     await forceHealthCheck();
     checking = false;
   }
-
-  onMount(() => {
-    isMobile = isMobileApp();
-  });
 
   onDestroy(() => {
     unsubscribe();

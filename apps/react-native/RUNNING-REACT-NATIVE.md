@@ -24,7 +24,7 @@ npm install
 ### 2. Start Metro Bundler (Development Server)
 
 Metro is React Native's JavaScript bundler that provides live reloading:
-
+npm start
 ```bash
 npm start
 ```

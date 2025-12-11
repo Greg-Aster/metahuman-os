@@ -11,7 +11,7 @@
  */
 
 import { writable, get } from 'svelte/store';
-import { isMobileApp, isReactNativeWebView, isCapacitorNative } from './api-config';
+import { isMobileApp, isReactNativeWebView } from './api-config';
 import { apiFetch } from './api-config';
 
 // Bundled version info - this gets baked into the app at build time
@@ -68,7 +68,6 @@ export const hasUpdate = writable(false);
  * Get current app version from mobile backend or bundled version
  *
  * React Native: Fetches from local Node.js server /api/app-info
- * Capacitor: Uses @capacitor/app plugin
  * Web: Returns bundled version
  */
 export async function getCurrentVersion(): Promise<{ version: string; versionCode: number }> {
@@ -87,22 +86,6 @@ export async function getCurrentVersion(): Promise<{ version: string; versionCod
       console.warn('[app-update] Could not get app info from React Native backend:', e);
     }
     return BUNDLED_VERSION;
-  }
-
-  // Capacitor: Use native plugin
-  if (isCapacitorNative()) {
-    try {
-      const module = await import('@capacitor/app' as string);
-      const App = module.App;
-      const info = await App.getInfo();
-      return {
-        version: info.version,
-        versionCode: parseInt(info.build, 10) || BUNDLED_VERSION.versionCode,
-      };
-    } catch (e) {
-      console.warn('[app-update] Could not get app info from Capacitor:', e);
-      return BUNDLED_VERSION;
-    }
   }
 
   // Web: Return bundled version
@@ -198,7 +181,6 @@ export function formatFileSize(bytes: number | null): string {
  * Open the download URL in browser (triggers APK download)
  *
  * React Native: Uses window.open (WebView handles it)
- * Capacitor: Uses @capacitor/browser plugin
  * Web: Uses window.open
  */
 export async function downloadUpdate(): Promise<void> {
@@ -214,18 +196,6 @@ export async function downloadUpdate(): Promise<void> {
   if (isReactNativeWebView()) {
     console.log('[app-update] Opening download URL in React Native:', state.downloadUrl);
     window.open(state.downloadUrl, '_blank');
-    return;
-  }
-
-  // Capacitor: Use native browser plugin
-  if (isCapacitorNative()) {
-    try {
-      const module = await import('@capacitor/browser' as string);
-      const Browser = module.Browser;
-      await Browser.open({ url: state.downloadUrl });
-    } catch (e) {
-      window.open(state.downloadUrl, '_blank');
-    }
     return;
   }
 

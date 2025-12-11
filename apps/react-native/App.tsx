@@ -57,7 +57,10 @@ export default function App() {
     nodejs.start('main.js');
 
     return () => {
-      nodejs.channel.removeListener('message', () => {});
+      // Some versions of nodejs-mobile-react-native might not have removeListener
+      if (typeof nodejs.channel.removeListener === 'function') {
+        nodejs.channel.removeListener('message', () => {});
+      }
     };
   }, []);
 

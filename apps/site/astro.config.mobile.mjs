@@ -71,10 +71,8 @@ export default defineConfig({
   },
 
   // Exclude API routes from static build - mobile uses HTTP server
-  // The redirects force Astro to not generate these as static pages
-  redirects: {
-    // Redirect all API routes - this effectively tells Astro to skip them
-  },
+  // For React Native, we want only UI files, no API routes at all
+  redirects: {},
 
   vite: {
     plugins: [externalizeMetahumanCoreForClient()],

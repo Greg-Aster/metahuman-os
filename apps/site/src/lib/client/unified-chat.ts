@@ -9,9 +9,8 @@
  * All conversations are saved locally first, then synced to server when connected.
  */
 
-import { selectBestTier, selectedTier, type TierType } from './tier-selection';
-import { offlineLLM } from './offline-llm';
-import { saveMemory, getPersona, type LocalMemory } from './local-memory';
+import { selectBestTier, type TierType } from './tier-selection';
+import { saveMemory } from './local-memory';
 import { apiFetch } from './api-config';
 import { healthStatus } from './server-health';
 import { get } from 'svelte/store';
@@ -134,30 +133,15 @@ export class UnifiedChat {
 
   /**
    * Execute on offline tier (on-device llama.cpp)
+   * NOTE: Offline mode not available in React Native - uses Node.js server instead
    */
   private async executeOffline(
-    message: string,
-    options?: ChatOptions
+    _message: string,
+    _options?: ChatOptions
   ): Promise<{ response: string; model: string }> {
-    // Check if offline is available
-    const available = await offlineLLM.isAvailable();
-    if (!available) {
-      throw new Error('No offline model available');
-    }
-
-    // Get persona for context
-    let personaSummary: string | undefined;
-    try {
-      const persona = await getPersona('core');
-      personaSummary = persona?.data?.summary;
-    } catch {
-      // Use default
-    }
-
-    const response = await offlineLLM.chat(message, personaSummary);
-    const model = offlineLLM.getLoadedModel() || 'qwen3-1.7b-q4';
-
-    return { response, model };
+    // Offline mode not available in React Native
+    // The mobile app uses the local Node.js server instead of on-device inference
+    throw new Error('Offline mode not available. Use server mode instead.');
   }
 
   /**

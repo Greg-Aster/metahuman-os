@@ -1,1 +1,0 @@
-import{w as e}from"./index.enr_Xien.js";import"./api-config.BAZ_dc_Y.js";const r={shouldOpen:!1,port:3099,url:"http://localhost:3099"},t=e(r);function i(){t.set({shouldOpen:!0,port:3099,url:"http://localhost:3099"})}function p(){t.update(o=>({...o,shouldOpen:!1}))}export{t as bigBrotherTerminal,p as bigBrotherTerminalOpened,i as openBigBrotherTerminal};
