@@ -2,7 +2,7 @@
  * App Update Checker
  *
  * Checks for app updates from the sync server and provides update UI state.
- * Only runs on mobile (Capacitor) - web version always uses latest server code.
+ * Only runs on mobile (Capacitor or React Native) - web version always uses latest server code.
  *
  * LOCAL-FIRST ARCHITECTURE:
  * - App checks for updates only when user explicitly syncs
@@ -11,12 +11,13 @@
  */
 
 import { writable, get } from 'svelte/store';
-import { isCapacitorNative } from './api-config';
+import { isMobileApp, isReactNativeWebView, isCapacitorNative } from './api-config';
+import { apiFetch } from './api-config';
 
 // Bundled version info - this gets baked into the app at build time
 // In a real build, this would be imported from a generated file
 const BUNDLED_VERSION = {
-  version: '1.0',
+  version: '1.0.0',
   versionCode: 1,
 };
 
@@ -64,26 +65,48 @@ export const updateState = writable<UpdateState>({
 export const hasUpdate = writable(false);
 
 /**
- * Get current app version from Capacitor App plugin or bundled version
+ * Get current app version from mobile backend or bundled version
+ *
+ * React Native: Fetches from local Node.js server /api/app-info
+ * Capacitor: Uses @capacitor/app plugin
+ * Web: Returns bundled version
  */
 export async function getCurrentVersion(): Promise<{ version: string; versionCode: number }> {
-  if (!isCapacitorNative()) {
+  // React Native: Get version from local Node.js server
+  if (isReactNativeWebView()) {
+    try {
+      const response = await apiFetch('/api/app-info');
+      if (response.ok) {
+        const info = await response.json();
+        return {
+          version: info.version || BUNDLED_VERSION.version,
+          versionCode: info.versionCode || BUNDLED_VERSION.versionCode,
+        };
+      }
+    } catch (e) {
+      console.warn('[app-update] Could not get app info from React Native backend:', e);
+    }
     return BUNDLED_VERSION;
   }
 
-  try {
-    // Dynamic import - @capacitor/app only available on mobile
-    const module = await import('@capacitor/app' as string);
-    const App = module.App;
-    const info = await App.getInfo();
-    return {
-      version: info.version,
-      versionCode: parseInt(info.build, 10) || BUNDLED_VERSION.versionCode,
-    };
-  } catch (e) {
-    console.warn('[app-update] Could not get app info from Capacitor:', e);
-    return BUNDLED_VERSION;
+  // Capacitor: Use native plugin
+  if (isCapacitorNative()) {
+    try {
+      const module = await import('@capacitor/app' as string);
+      const App = module.App;
+      const info = await App.getInfo();
+      return {
+        version: info.version,
+        versionCode: parseInt(info.build, 10) || BUNDLED_VERSION.versionCode,
+      };
+    } catch (e) {
+      console.warn('[app-update] Could not get app info from Capacitor:', e);
+      return BUNDLED_VERSION;
+    }
   }
+
+  // Web: Return bundled version
+  return BUNDLED_VERSION;
 }
 
 /**
@@ -93,8 +116,8 @@ export async function getCurrentVersion(): Promise<{ version: string; versionCod
  * @returns Update state with latest version info
  */
 export async function checkForUpdate(serverUrl: string): Promise<UpdateState> {
-  // Only check on mobile
-  if (!isCapacitorNative()) {
+  // Only check on mobile (React Native or Capacitor)
+  if (!isMobileApp()) {
     const state = get(updateState);
     return { ...state, error: 'Updates only available on mobile' };
   }
@@ -173,6 +196,10 @@ export function formatFileSize(bytes: number | null): string {
 
 /**
  * Open the download URL in browser (triggers APK download)
+ *
+ * React Native: Uses window.open (WebView handles it)
+ * Capacitor: Uses @capacitor/browser plugin
+ * Web: Uses window.open
  */
 export async function downloadUpdate(): Promise<void> {
   const state = get(updateState);
@@ -182,19 +209,28 @@ export async function downloadUpdate(): Promise<void> {
     return;
   }
 
+  // React Native: Just use window.open - WebView will handle it
+  // Android WebView opens external URLs in the default browser
+  if (isReactNativeWebView()) {
+    console.log('[app-update] Opening download URL in React Native:', state.downloadUrl);
+    window.open(state.downloadUrl, '_blank');
+    return;
+  }
+
+  // Capacitor: Use native browser plugin
   if (isCapacitorNative()) {
     try {
-      // Dynamic import - @capacitor/browser only available on mobile
       const module = await import('@capacitor/browser' as string);
       const Browser = module.Browser;
       await Browser.open({ url: state.downloadUrl });
     } catch (e) {
-      // Fallback to window.open
       window.open(state.downloadUrl, '_blank');
     }
-  } else {
-    window.open(state.downloadUrl, '_blank');
+    return;
   }
+
+  // Web: Standard window.open
+  window.open(state.downloadUrl, '_blank');
 }
 
 /**

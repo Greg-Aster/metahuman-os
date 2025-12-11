@@ -14,13 +14,131 @@ import { listAvailableRoles, resolveModelForCognitiveMode, loadModelRegistry } f
 import { loadCognitiveMode } from '../../cognitive-mode.js';
 import { getIndexStatus } from '../../vector-index.js';
 import { listAvailableAgents } from '../../agent-monitor.js';
-import { getBackendStatus } from '../../llm-backend.js';
+import { getBackendStatus, detectAvailableBackends } from '../../llm-backend.js';
 import { getRuntimeMode } from '../../runtime-mode.js';
 import { getProfilePaths, systemPaths } from '../../index.js';
-import { loadCuriosityConfig } from '../../config.js';
+import { loadCuriosityConfig, loadOperatorConfig } from '../../config.js';
 import { getMemoryMetrics } from '../../memory-metrics-cache.js';
 import fs from 'node:fs';
 import path from 'node:path';
+
+// ============================================================================
+// Backend Availability Types
+// ============================================================================
+
+interface BackendAvailability {
+  ollama: { available: boolean; running: boolean; active: boolean; model?: string };
+  vllm: { available: boolean; running: boolean; active: boolean; model?: string };
+  runpod: { available: boolean; configured: boolean; active: boolean };
+  bigBrother: { available: boolean; enabled: boolean; provider?: string };
+  remoteServer: { available: boolean; configured: boolean; serverUrl?: string };
+}
+
+/**
+ * Detect RunPod configuration availability
+ * Checks env vars, etc/runpod.json, and .env file
+ */
+function detectRunPodAvailability(): { available: boolean; configured: boolean } {
+  let hasApiKey = false;
+
+  // 1. Check environment variables
+  if (process.env.RUNPOD_API_KEY) {
+    hasApiKey = true;
+  }
+
+  // 2. Check etc/runpod.json
+  if (!hasApiKey) {
+    const configPath = path.join(systemPaths.root, 'etc', 'runpod.json');
+    if (fs.existsSync(configPath)) {
+      try {
+        const fileConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        if (fileConfig.apiKey) {
+          hasApiKey = true;
+        }
+      } catch {
+        // Invalid JSON, ignore
+      }
+    }
+  }
+
+  // 3. Check .env file in root directory
+  if (!hasApiKey) {
+    const envPath = path.join(systemPaths.root, '.env');
+    if (fs.existsSync(envPath)) {
+      try {
+        const envContent = fs.readFileSync(envPath, 'utf-8');
+        const lines = envContent.split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('RUNPOD_API_KEY=')) {
+            const value = trimmed.substring('RUNPOD_API_KEY='.length).trim().replace(/^["']|["']$/g, '');
+            if (value) {
+              hasApiKey = true;
+              break;
+            }
+          }
+        }
+      } catch {
+        // Can't read .env, ignore
+      }
+    }
+  }
+
+  return {
+    available: hasApiKey, // Available if API key is configured
+    configured: hasApiKey,
+  };
+}
+
+/**
+ * Detect Big Brother configuration availability
+ * Big Brother requires terminal access, so it's only "available" on desktop
+ */
+function detectBigBrotherAvailability(): { available: boolean; enabled: boolean; provider?: string } {
+  try {
+    const config = loadOperatorConfig();
+    const bigBrotherConfig = config.bigBrotherMode || { enabled: false, provider: 'claude-code' };
+
+    // Big Brother is available if we're not on mobile (mobile has no terminal)
+    // For now, always mark as available since server-side can't detect mobile
+    // The UI will hide it on mobile if needed
+    return {
+      available: true,
+      enabled: bigBrotherConfig.enabled ?? false,
+      provider: bigBrotherConfig.provider || 'claude-code',
+    };
+  } catch {
+    return {
+      available: true,
+      enabled: false,
+      provider: 'claude-code',
+    };
+  }
+}
+
+/**
+ * Detect Remote Server (Cloudflare tunnel) configuration
+ * Future feature - placeholder for now
+ */
+function detectRemoteServerAvailability(): { available: boolean; configured: boolean; serverUrl?: string } {
+  try {
+    const backendConfig = JSON.parse(
+      fs.readFileSync(path.join(systemPaths.root, 'etc', 'llm-backend.json'), 'utf-8')
+    );
+    const remote = backendConfig.remote || {};
+
+    return {
+      available: remote.provider === 'server' && !!remote.serverUrl,
+      configured: !!remote.serverUrl,
+      serverUrl: remote.serverUrl,
+    };
+  } catch {
+    return {
+      available: false,
+      configured: false,
+    };
+  }
+}
 
 // NOTE: statusCache was REMOVED - it was redundant with model-resolver's registryCache
 // and caused cache invalidation bugs. Model data is already cached by registryCache (1 min TTL).
@@ -44,8 +162,6 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
     } catch {
       // Default to emulation if can't load
     }
-
-    console.log(`[status] Building status for user=${user.username}, cognitiveMode=${cognitiveMode}, isAuth=${isAuthenticated}`);
 
     // Load user-specific data only for authenticated users
     let persona: any;
@@ -182,15 +298,12 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
       registryVersion = registry.version;
 
       const modeMappings = registry.cognitiveModeMappings?.[cognitiveMode];
-      console.log(`[status] cognitiveModeMappings for '${cognitiveMode}':`, JSON.stringify(modeMappings || {}, null, 2));
 
       if (modeMappings) {
         for (const [role, modelId] of Object.entries(modeMappings)) {
           if (role === 'description' || modelId === null) continue;
-          console.log(`[status] Role '${role}' mapped to modelId '${modelId}' in cognitiveModeMappings`);
           try {
             const resolved = resolveModelForCognitiveMode(cognitiveMode, role as any, modelUsername);
-            console.log(`[status] Resolved for role '${role}': id=${resolved.id}, provider=${resolved.provider}, model=${resolved.model}`);
 
             // Only include if the provider is available
             if (availableProviders.has(resolved.provider)) {
@@ -350,9 +463,47 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
 
       // Load cloud models from user's profile models.json
       const cloudUsername = isAuthenticated ? user.username : undefined;
-      console.log(`[status] Loading cloud models for: isAuthenticated=${isAuthenticated}, username=${cloudUsername}`);
       systemHealth.cloudModels = loadCloudModelsFromRegistry(cloudUsername);
-      console.log(`[status] Loaded ${systemHealth.cloudModels.length} cloud models`);
+
+      // Build backend availability for status widget icons
+      const availableBackends = await detectAvailableBackends();
+      const runpodStatus = detectRunPodAvailability();
+      const bigBrotherStatus = detectBigBrotherAvailability();
+      const remoteServerStatus = detectRemoteServerAvailability();
+
+      // Determine which backend is the "active" one
+      const activeBackendType = backendStatus.resolvedBackend;
+      const isRunPodActive = activeBackendType === 'remote' && backendStatus.remoteProvider === 'runpod';
+
+      systemHealth.backendAvailability = {
+        ollama: {
+          available: availableBackends.ollama.installed,
+          running: availableBackends.ollama.running,
+          active: activeBackendType === 'ollama',
+          model: availableBackends.ollama.model,
+        },
+        vllm: {
+          available: availableBackends.vllm.installed,
+          running: availableBackends.vllm.running,
+          active: activeBackendType === 'vllm',
+          model: availableBackends.vllm.model,
+        },
+        runpod: {
+          available: runpodStatus.available,
+          configured: runpodStatus.configured,
+          active: isRunPodActive,
+        },
+        bigBrother: {
+          available: bigBrotherStatus.available,
+          enabled: bigBrotherStatus.enabled,
+          provider: bigBrotherStatus.provider,
+        },
+        remoteServer: {
+          available: remoteServerStatus.available,
+          configured: remoteServerStatus.configured,
+          serverUrl: remoteServerStatus.serverUrl,
+        },
+      } as BackendAvailability;
     } catch {
       systemHealth.llmBackend = 'error';
     }
@@ -513,16 +664,13 @@ function loadCloudModelsFromRegistry(username?: string): Array<{ id: string; mod
 
   // Must have a username to load profile-specific models
   if (!username) {
-    console.log(`[status] loadCloudModelsFromRegistry: No username provided, returning empty`);
     return cloudModels;
   }
 
   try {
     const profilePaths = getProfilePaths(username);
     const modelsPath = path.join(profilePaths.etc, 'models.json');
-    console.log(`[status] loadCloudModelsFromRegistry: Checking ${modelsPath}`);
     if (!fs.existsSync(modelsPath)) {
-      console.log(`[status] No models.json found at ${modelsPath}`);
       return cloudModels;
     }
 

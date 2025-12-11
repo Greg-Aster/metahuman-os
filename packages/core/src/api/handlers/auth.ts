@@ -540,15 +540,30 @@ export async function handleCreateSyncUser(req: UnifiedRequest): Promise<Unified
 
   console.log(`[auth-handler] User ${username} synced, session: ${session.id.slice(0, 8)}...`);
 
-  return successResponse({
-    success: true,
-    sessionId: session.id,
-    user: {
-      id: user.id,
-      username: user.username,
-      role: user.role,
+  // Return response WITH cookie set (important for browser-based mobile apps)
+  return {
+    status: 200,
+    data: {
+      success: true,
+      sessionId: session.id,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+      },
     },
-  });
+    cookies: [{
+      action: 'set' as const,
+      name: 'mh_session',
+      value: session.id,
+      options: {
+        httpOnly: true,
+        sameSite: 'lax' as const,
+        path: '/',
+        maxAge: 60 * 60 * 24 * 7, // 7 days
+      },
+    }],
+  };
 }
 
 /**

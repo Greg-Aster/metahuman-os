@@ -568,7 +568,7 @@ async function loadMemoryContent(relPath: string) {
 
   // Detect mobile platform on mount
   onMount(() => {
-    isMobileApp = isCapacitorNative();
+    isMobileApp = isMobileAppCheck();
   });
 </script>
 

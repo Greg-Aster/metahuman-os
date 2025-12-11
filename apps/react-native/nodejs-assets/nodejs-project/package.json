@@ -1,0 +1,19 @@
+{
+  "name": "metahuman-mobile-backend",
+  "version": "1.0.0",
+  "description": "MetaHuman Mobile Node.js backend (React Native)",
+  "main": "main.js",
+  "scripts": {
+    "build": "echo 'Build handled by parent project'"
+  },
+  "dependencies": {
+    "rn-bridge": "*"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "notes": {
+    "node-version": "Node.js 18 via nodejs-mobile-react-native - native fetch, AbortController, crypto.randomUUID",
+    "architecture": "HTTP server on localhost:4322 - same as Capacitor but without polyfills"
+  }
+}

@@ -31,7 +31,7 @@
   }
 
   onMount(() => {
-    isMobile = isCapacitorNative();
+    isMobile = isMobileApp();
   });
 
   onDestroy(() => {

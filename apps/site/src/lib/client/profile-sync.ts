@@ -920,11 +920,20 @@ export async function syncFromRemoteServer(
 
     const normalizedServerUrl = normalizeUrl(creds.serverUrl);
     const endpoint = opts.priorityOnly ? '/api/profile-sync/export-priority' : '/api/profile-sync/export';
-    const profileResponse = await remoteFetch(`${normalizedServerUrl}${endpoint}`, {
-      method: 'GET',
-      headers: { 'Cookie': cookie },
-      credentials: 'include',
-    });
+
+    // Use POST with credentials in body for priority export (avoids cross-origin cookie issues)
+    // GET with cookie for full export (legacy support)
+    const profileResponse = opts.priorityOnly
+      ? await remoteFetch(`${normalizedServerUrl}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: creds.username, password: creds.password }),
+        })
+      : await remoteFetch(`${normalizedServerUrl}${endpoint}`, {
+          method: 'GET',
+          headers: { 'Cookie': cookie },
+          credentials: 'include',
+        });
 
     if (!profileResponse.ok) {
       const text = await profileResponse.text();
@@ -935,18 +944,49 @@ export async function syncFromRemoteServer(
     const profileBundle = await profileResponse.json();
     result.profileFiles = profileBundle.files?.length || 0;
 
-    // Phase 3: Import profile files via LOCAL API (writes to filesystem)
-    // This is the unified approach - same code works on web and mobile
-    // The local API handler writes files to the profile directory on disk
+    // Phase 3: Create/authenticate local user BEFORE importing profile
+    // This is required because /api/profile-sync/import needs authentication
+    // We create the user locally with the same credentials as the remote server
     onProgress?.({
       phase: 'importing',
-      message: 'Importing profile files...',
+      message: 'Setting up local user...',
       current: 0,
       total: result.profileFiles
     });
 
     try {
-      // POST the entire bundle to LOCAL /api/profile-sync/import
+      // First, create/authenticate the user locally
+      // This creates a local session so subsequent API calls work
+      const syncUserResponse = await apiFetch('/api/auth/sync-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: creds.username,
+          password: creds.password,
+          displayName: creds.username,
+          role: 'owner', // First user gets owner role
+        }),
+      });
+
+      if (!syncUserResponse.ok) {
+        const errorText = await syncUserResponse.text();
+        console.error('[profile-sync] Failed to create local user:', syncUserResponse.status, errorText);
+        // Don't fail completely - user might already exist with different password
+        // Just log and continue
+        console.log('[profile-sync] Continuing despite sync-user error...');
+      } else {
+        const syncUserResult = await syncUserResponse.json();
+        console.log('[profile-sync] Local user created/authenticated:', syncUserResult);
+      }
+
+      onProgress?.({
+        phase: 'importing',
+        message: 'Importing profile files...',
+        current: 0,
+        total: result.profileFiles
+      });
+
+      // Now POST the entire bundle to LOCAL /api/profile-sync/import
       // This writes files to the filesystem (NOT IndexedDB)
       const importResponse = await apiFetch('/api/profile-sync/import', {
         method: 'POST',

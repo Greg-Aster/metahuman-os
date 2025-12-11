@@ -177,8 +177,6 @@ export function loadModelRegistry(forceFresh = false, username?: string): ModelR
 }
 
 function resolveRegistryPath(username?: string): string {
-  console.log(`[model-resolver] resolveRegistryPath called with username=${username}`);
-
   // Username is REQUIRED - no fallback to system config
   if (!username) {
     throw new Error(`Username is required to load model registry. System fallback is disabled.`);
@@ -188,22 +186,16 @@ function resolveRegistryPath(username?: string): string {
   try {
     const profilePaths = getProfilePaths(username);
     const modelsPath = path.join(profilePaths.etc, 'models.json');
-    console.log(`[model-resolver] Resolved models.json path: ${modelsPath}`);
 
     if (fs.existsSync(modelsPath)) {
       return modelsPath;
     } else {
-      const errorMsg = `[model-resolver] ERROR: User models.json not found!\n` +
-        `  Expected location: ${modelsPath}\n` +
-        `  The user '${username}' needs a models.json config file.`;
-      console.error(errorMsg);
       throw new Error(`User models.json not found at ${modelsPath}`);
     }
   } catch (err) {
     if (err instanceof Error && err.message.includes('models.json not found')) {
       throw err;
     }
-    console.error(`[model-resolver] Failed to resolve path for ${username}:`, err);
     throw new Error(`Failed to resolve user models.json path for '${username}': ${err}`);
   }
 }

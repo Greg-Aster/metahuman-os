@@ -1,16 +1,31 @@
 /**
  * UUID v4 generation utility
- * Provides a polyfill for crypto.randomUUID() which is not available in Node.js 12
- * (nodejs-mobile uses Node.js v12.19.0)
+ *
+ * Uses native crypto.randomUUID() when available (Node.js 14.17+, 16.7+, 18+)
+ * Falls back to manual generation for older Node.js versions (e.g., nodejs-mobile-cordova on Node 12)
+ *
+ * React Native migration note:
+ * nodejs-mobile-react-native uses Node.js 18, which has native randomUUID()
+ * The fallback is only needed for legacy Capacitor builds
  */
 
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID as cryptoRandomUUID } from 'crypto';
+
+// Check if native randomUUID is available
+const hasNativeRandomUUID = typeof cryptoRandomUUID === 'function';
 
 /**
  * Generate a UUID v4 string
- * Compatible with Node.js 12+ (uses randomBytes instead of randomUUID)
+ * Uses native crypto.randomUUID() when available (Node.js 18+)
+ * Falls back to manual generation for Node.js 12 compatibility
  */
 export function generateUUID(): string {
+  // Use native implementation when available (Node.js 14.17+, 16.7+, 18+)
+  if (hasNativeRandomUUID) {
+    return cryptoRandomUUID();
+  }
+
+  // Fallback for Node.js 12 (legacy Capacitor mobile)
   const bytes = randomBytes(16);
 
   // Set version (4) and variant (8, 9, a, or b) bits per RFC 4122

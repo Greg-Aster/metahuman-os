@@ -84,7 +84,6 @@ export function saveModelRegistry(registry: ModelRegistry): void {
   };
 
   fs.writeFileSync(REGISTRY_PATH, JSON.stringify(fullRegistry, null, 2));
-  console.log(`[model-registry] Registry updated: ${REGISTRY_PATH}`);
 }
 
 /**
@@ -118,7 +117,6 @@ export function registerTrainingRun(entry: Omit<ModelRegistryEntry, 'version'>):
   const registry = loadTrainingRegistry();
 
   if (!entry.training_success) {
-    console.log('[model-registry] Training failed, not updating registry');
     return;
   }
 
@@ -136,9 +134,6 @@ export function registerTrainingRun(entry: Omit<ModelRegistryEntry, 'version'>):
   if (registry.versioning.auto_update_base) {
     registry.current_base_model = entry.output_model_path;
     registry.model_type = 'local';
-
-    console.log(`[model-registry] Updated base model to: ${entry.output_model_path}`);
-    console.log(`[model-registry] Next fine-tune will use version ${version} as base`);
   }
 
   saveModelRegistry(registry);
@@ -153,7 +148,6 @@ export function resetToOriginalBase(): void {
   registry.model_type = 'huggingface';
 
   saveModelRegistry(registry);
-  console.log(`[model-registry] Reset to original base: ${registry.original_base_model}`);
 }
 
 /**

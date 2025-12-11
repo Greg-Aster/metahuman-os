@@ -269,7 +269,9 @@ function status(): void {
 function startServices(options: { restart?: boolean; force?: boolean } = {}): void {
   const restart = options.restart !== undefined ? options.restart : true;
   const force = options.force ?? false;
-  ensureInitialized();
+  // NOTE: Don't call ensureInitialized() here - the web server should start
+  // regardless of whether any user's profile is available. Users will see
+  // the AuthGate login screen if not authenticated.
 
   // Always start headless-watcher (it manages other agents based on mode)
   const alwaysStart = ['headless-watcher'];

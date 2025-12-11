@@ -233,10 +233,12 @@ export class OllamaClient {
       requestBody.keep_alive = options.keep_alive;
     }
 
+    // 2 minute timeout for LLM chat (large models can take time)
     const response = await fetch(`${this.endpoint}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(120000),
     });
 
     if (!response.ok) {
@@ -269,6 +271,7 @@ export class OllamaClient {
     prompt: string,
     options?: { temperature?: number }
   ): Promise<OllamaGenerateResponse> {
+    // 2 minute timeout for generation
     const response = await fetch(`${this.endpoint}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -280,6 +283,7 @@ export class OllamaClient {
           temperature: options?.temperature || 0.7,
         },
       }),
+      signal: AbortSignal.timeout(120000),
     });
 
     if (!response.ok) {
@@ -307,10 +311,12 @@ export class OllamaClient {
       body.options = { num_gpu: options.num_gpu };
     }
 
+    // 30 second timeout for embeddings
     const response = await fetch(`${this.endpoint}/api/embeddings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30000),
     });
 
     if (!response.ok) {

@@ -1,0 +1,87 @@
+{
+  "name": "Organizer Agent",
+  "description": "Processes unprocessed episodic memories and enriches them with tags and entities using LLM analysis",
+  "version": "1.0.0",
+  "category": "agent",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "memory_loader",
+      "properties": {
+        "limit": 10,
+        "onlyUnprocessed": true
+      },
+      "position": [100, 100]
+    },
+    {
+      "id": 2,
+      "type": "for_each",
+      "properties": {
+        "itemName": "memory"
+      },
+      "position": [400, 100]
+    },
+    {
+      "id": 3,
+      "type": "llm_enricher",
+      "properties": {
+        "promptTemplate": "Analyze this memory and extract relevant tags and entities.\n\nMemory: {content}\n\nReturn a JSON object with:\n- tags: array of relevant keyword tags (3-7 tags)\n- entities: array of entities mentioned (people, places, things)\n\nFormat: {\"tags\": [...], \"entities\": [...]}"
+      },
+      "position": [700, 100]
+    },
+    {
+      "id": 4,
+      "type": "memory_saver",
+      "properties": {
+        "updateOnly": true
+      },
+      "position": [1000, 100]
+    },
+    {
+      "id": 5,
+      "type": "audit_logger",
+      "properties": {
+        "category": "agent",
+        "event": "organizer_memory_processed"
+      },
+      "position": [1300, 100]
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 2,
+      "target_slot": 0
+    },
+    {
+      "id": 2,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 0
+    },
+    {
+      "id": 3,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 0
+    },
+    {
+      "id": 4,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 0
+    }
+  ],
+  "metadata": {
+    "author": "MetaHuman Core Team",
+    "created": "2025-11-19",
+    "tags": ["agent", "memory", "enrichment", "organizer"],
+    "executionMode": "scheduled",
+    "scheduledInterval": 300000
+  }
+}

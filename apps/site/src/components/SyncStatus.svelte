@@ -14,7 +14,7 @@
     type SyncableMemory,
     type ConflictResolution,
   } from '../lib/client/memory-sync';
-  import { isCapacitorNative } from '../lib/client/api-config';
+  import { isMobileApp } from '../lib/client/api-config';
   import {
     checkForUpdate,
     downloadUpdate,
@@ -78,7 +78,7 @@
   const unsubHasUpdate = hasUpdate.subscribe(u => updateAvailable = u);
 
   onMount(async () => {
-    isMobile = isCapacitorNative();
+    isMobile = isMobileApp();
     await initMemorySync();
     await loadRemoteConfig();
   });

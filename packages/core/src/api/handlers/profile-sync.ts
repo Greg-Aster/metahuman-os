@@ -225,20 +225,49 @@ function collectPriorityFiles(
 }
 
 /**
- * GET /api/profile-sync/export-priority - Export essential profile files for initial sync
- * 
+ * GET/POST /api/profile-sync/export-priority - Export essential profile files for initial sync
+ *
  * Returns a minimal bundle with only persona, config, and conversation buffer.
  * This avoids OOM crashes on mobile by excluding large memory/training data.
+ *
+ * Supports two auth methods:
+ * 1. Cookie-based (GET): Uses mh_session cookie (same-origin requests)
+ * 2. Credentials in body (POST): For cross-origin mobile sync where cookies don't work
  */
 export async function handleExportPriorityProfile(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user } = req;
+  let authenticatedUsername: string | null = null;
 
-  if (!user.isAuthenticated) {
+  // Method 1: Try cookie-based auth (works for same-origin)
+  if (req.user.isAuthenticated) {
+    authenticatedUsername = req.user.username;
+  }
+  // Method 2: Try credentials in body (for cross-origin mobile sync)
+  else if (req.method === 'POST' && req.body) {
+    const { username, password } = req.body as { username?: string; password?: string };
+    if (username && password) {
+      // Validate credentials directly
+      const { verifyUserPassword } = await import('../../users.js');
+      if (verifyUserPassword(username, password)) {
+        authenticatedUsername = username;
+        console.log(`[profile-sync] Authenticated via POST credentials: ${username}`);
+      } else {
+        return {
+          status: 401,
+          error: 'Invalid credentials',
+        };
+      }
+    }
+  }
+
+  if (!authenticatedUsername) {
     return {
       status: 401,
-      error: 'Authentication required',
+      error: 'Authentication required. Use cookie auth (GET) or pass credentials in body (POST).',
     };
   }
+
+  // Use the authenticated username for the rest of the handler
+  const user = { username: authenticatedUsername, isAuthenticated: true };
 
   // DEBUG: Force load users.ts to ensure profile storage config is registered
   try {

@@ -1,0 +1,293 @@
+{
+  "version": "2.0",
+  "name": "Desire Plan Reviewer",
+  "description": "LLM self-review of generated plans for alignment and safety",
+  "cognitiveMode": "agent",
+  "last_modified": "2025-12-03",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "agency/desire_loader",
+      "pos": [100, 200],
+      "size": [200, 80],
+      "properties": {},
+      "title": "Load Desire (with Plan)"
+    },
+    {
+      "id": 2,
+      "type": "persona/persona_loader",
+      "pos": [100, 50],
+      "size": [180, 60],
+      "properties": {},
+      "title": "Load Persona"
+    },
+    {
+      "id": 3,
+      "type": "cognitive/persona_formatter",
+      "pos": [320, 50],
+      "size": [200, 80],
+      "properties": {
+        "includeValues": true,
+        "includeGoals": true,
+        "includePersonality": false
+      },
+      "title": "Format Persona (Values)"
+    },
+    {
+      "id": 4,
+      "type": "cognitive/policy_loader",
+      "pos": [100, 350],
+      "size": [200, 80],
+      "properties": {
+        "include": ["decision-rules", "hard-rules"]
+      },
+      "title": "Load Decision Rules"
+    },
+    {
+      "id": 5,
+      "type": "agency/desire_alignment_reviewer",
+      "pos": [400, 150],
+      "size": [220, 120],
+      "properties": {
+        "temperature": 0.2
+      },
+      "title": "Alignment Review"
+    },
+    {
+      "id": 6,
+      "type": "agency/desire_safety_reviewer",
+      "pos": [400, 300],
+      "size": [220, 120],
+      "properties": {
+        "temperature": 0.1
+      },
+      "title": "Safety Review"
+    },
+    {
+      "id": 7,
+      "type": "agency/desire_verdict",
+      "pos": [700, 200],
+      "size": [200, 120],
+      "properties": {},
+      "title": "Synthesize Verdict"
+    },
+    {
+      "id": 8,
+      "type": "control-flow/conditional_router",
+      "pos": [950, 200],
+      "size": [180, 100],
+      "properties": {
+        "conditions": [
+          { "field": "verdict", "equals": "reject", "output": 0 },
+          { "field": "autoApprove", "equals": true, "output": 1 },
+          { "default": 2 }
+        ]
+      },
+      "title": "Route Decision"
+    },
+    {
+      "id": 9,
+      "type": "agency/desire_updater",
+      "pos": [1200, 80],
+      "size": [200, 80],
+      "properties": {
+        "newStatus": "rejected"
+      },
+      "title": "Mark Rejected"
+    },
+    {
+      "id": 10,
+      "type": "agency/desire_updater",
+      "pos": [1200, 200],
+      "size": [200, 80],
+      "properties": {
+        "newStatus": "approved"
+      },
+      "title": "Auto-Approve"
+    },
+    {
+      "id": 11,
+      "type": "agency/approval_queue",
+      "pos": [1200, 320],
+      "size": [200, 80],
+      "properties": {},
+      "title": "Queue for Approval"
+    },
+    {
+      "id": 12,
+      "type": "cognitive/audit_logger",
+      "pos": [1450, 200],
+      "size": [180, 60],
+      "properties": {
+        "category": "agency",
+        "event": "desire_reviewed"
+      },
+      "title": "Audit Log"
+    },
+    {
+      "id": 13,
+      "type": "cognitive/inner_dialogue_saver",
+      "pos": [1450, 300],
+      "size": [200, 80],
+      "properties": {
+        "tags": ["agency", "review", "inner"]
+      },
+      "title": "Log to Inner Dialogue"
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Persona → Formatter"
+    },
+    {
+      "id": 2,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Alignment Review"
+    },
+    {
+      "id": 3,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 2,
+      "type": "string",
+      "comment": "Persona Values → Alignment Review"
+    },
+    {
+      "id": 4,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Safety Review"
+    },
+    {
+      "id": 5,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 2,
+      "type": "string",
+      "comment": "Decision Rules → Safety Review"
+    },
+    {
+      "id": 6,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Verdict"
+    },
+    {
+      "id": 7,
+      "origin_id": 5,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 2,
+      "type": "object",
+      "comment": "Alignment Review → Verdict"
+    },
+    {
+      "id": 8,
+      "origin_id": 6,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 3,
+      "type": "object",
+      "comment": "Safety Review → Verdict"
+    },
+    {
+      "id": 9,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 8,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Verdict → Router"
+    },
+    {
+      "id": 10,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 9,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Reject Updater (for desire object)"
+    },
+    {
+      "id": 11,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 10,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Auto-Approve Updater (for desire object)"
+    },
+    {
+      "id": 12,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 11,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Approval Queue (for desire object)"
+    },
+    {
+      "id": 15,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 9,
+      "target_slot": 2,
+      "type": "object",
+      "comment": "Review → Reject Updater (for review info)"
+    },
+    {
+      "id": 16,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 10,
+      "target_slot": 2,
+      "type": "object",
+      "comment": "Review → Auto-Approve Updater (for review info)"
+    },
+    {
+      "id": 17,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 11,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Review → Approval Queue (for review info)"
+    },
+    {
+      "id": 13,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 12,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Verdict → Audit"
+    },
+    {
+      "id": 14,
+      "origin_id": 7,
+      "origin_slot": 0,
+      "target_id": 13,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Verdict → Inner Dialogue"
+    }
+  ]
+}

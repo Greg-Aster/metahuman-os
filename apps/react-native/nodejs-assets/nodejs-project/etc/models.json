@@ -1,0 +1,501 @@
+{
+  "$schema": "https://metahuman.dev/schemas/models.json",
+  "version": "1.0.0",
+  "_WARNING": "═══════════════════════════════════════════════════════════════════════════════",
+  "_WARNING2": "██ SYSTEM DEFAULT FILE - DO NOT USE FOR INDIVIDUAL USERS                     ██",
+  "_WARNING3": "██                                                                           ██",
+  "_WARNING4": "██ User configs are resolved via: getProfilePaths(username) / storageClient ██",
+  "_WARNING5": "██ This file is ONLY used to INITIALIZE NEW USER profiles (one-time copy)   ██",
+  "_WARNING6": "██ NEVER fall back to this file for existing users at runtime               ██",
+  "_WARNING7": "██                                                                           ██",
+  "_WARNING8": "██ Code that reads this file for users INSTEAD of their profile is BROKEN   ██",
+  "_WARNING9": "═══════════════════════════════════════════════════════════════════════════════",
+  "description": "SYSTEM DEFAULT - Used ONLY for new user initialization. See profile-based models.json",
+  "globalSettings": {
+    "includePersonaSummary": false,
+    "useAdapter": false,
+    "activeAdapter": {
+      "modelName": "greggles-2025-11-25",
+      "activatedAt": "2025-11-25T20:35:05.136Z",
+      "adapterPath": "/home/greggles/metahuman/profiles/greggles/out/adapters/2025-11-25/2025-11-25-193635-d7e4e1/adapter.gguf",
+      "dataset": "2025-11-25-193635-d7e4e1",
+      "date": "2025-11-25",
+      "modelfilePath": "/home/greggles/metahuman/profiles/greggles/out/adapters/2025-11-25/2025-11-25-193635-d7e4e1/Modelfile",
+      "status": "ready_for_ollama_load",
+      "activatedBy": "full-cycle",
+      "isDualAdapter": false,
+      "runLabel": "2025-11-25-193635-d7e4e1",
+      "trainingMethod": "remote",
+      "ggufAdapterPath": "/home/greggles/metahuman/profiles/greggles/out/adapters/2025-11-25/2025-11-25-193635-d7e4e1/adapter.gguf",
+      "baseModel": "unsloth/Qwen3-14B"
+    }
+  },
+  "defaults": {
+    "orchestrator": "default.orchestrator",
+    "persona": "default.persona",
+    "curator": "default.curator",
+    "coder": "default.coder",
+    "planner": "default.planner",
+    "summarizer": "default.summarizer",
+    "psychotherapist": "default.psychotherapist",
+    "fallback": "default.fallback"
+  },
+  "models": {
+    "default.orchestrator": {
+      "provider": "ollama",
+      "model": "qwen3:14b",
+      "adapters": [],
+      "roles": [
+        "orchestrator",
+        "router",
+        "planner",
+        "persona",
+        "curator",
+        "psychotherapist",
+        "summarizer"
+      ],
+      "description": "Capable orchestrator using same model as persona for better intent routing",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.1,
+        "topP": 0.9,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "high",
+        "alwaysLoaded": true,
+        "estimatedLatency": "fast",
+        "sizeGB": 9.3,
+        "purpose": "Executive function - intelligent intent routing and tool selection"
+      }
+    },
+    "default.persona": {
+      "provider": "ollama",
+      "model": "qwen3:14b",
+      "adapters": [],
+      "roles": [
+        "persona",
+        "conversation",
+        "introspection"
+      ],
+      "description": "Default persona model for conversational responses",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.8,
+        "topP": 0.95,
+        "repeatPenalty": 1.4
+      },
+      "metadata": {
+        "priority": "high",
+        "alwaysLoaded": true,
+        "estimatedLatency": "fast",
+        "sizeGB": 9.3
+      }
+    },
+    "default.curator": {
+      "provider": "ollama",
+      "model": "qwen3:14b",
+      "adapters": [],
+      "roles": [
+        "curator",
+        "summarizer",
+        "memory-prep"
+      ],
+      "description": "Mid-size curator model for memory curation and training data preparation",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.3,
+        "topP": 0.9,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "medium",
+        "alwaysLoaded": false,
+        "estimatedLatency": "fast",
+        "sizeGB": 9.3,
+        "purpose": "Memory curation - clean data extraction and training prep"
+      }
+    },
+    "default.coder": {
+      "provider": "ollama",
+      "model": "qwen3-coder:30b",
+      "adapters": [],
+      "roles": [
+        "coder",
+        "code-generation",
+        "code-review",
+        "orchestrator",
+        "persona",
+        "curator",
+        "psychotherapist"
+      ],
+      "description": "Specialized model for code generation, review, and refactoring",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.2,
+        "topP": 0.95,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "medium",
+        "alwaysLoaded": false,
+        "estimatedLatency": "fast",
+        "sizeGB": 9.3,
+        "purpose": "Code specialist - generation, review, debugging, refactoring",
+        "specialization": "code"
+      }
+    },
+    "default.planner": {
+      "provider": "ollama",
+      "model": "qwen3-coder:30b",
+      "adapters": [],
+      "roles": [
+        "planner",
+        "strategist",
+        "task-breakdown"
+      ],
+      "description": "Strategic planning and task decomposition specialist",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.4,
+        "topP": 0.9,
+        "repeatPenalty": 1.2
+      },
+      "metadata": {
+        "priority": "medium",
+        "alwaysLoaded": false,
+        "estimatedLatency": "fast",
+        "sizeGB": 9.3,
+        "purpose": "Planning specialist - strategic thinking, task breakdown, roadmap creation",
+        "specialization": "planning"
+      }
+    },
+    "default.summarizer": {
+      "provider": "ollama",
+      "model": "qwen3:14b",
+      "adapters": [],
+      "roles": [
+        "summarizer",
+        "digest",
+        "condensation"
+      ],
+      "description": "Document and conversation summarization specialist",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.3,
+        "topP": 0.9,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "medium",
+        "alwaysLoaded": false,
+        "estimatedLatency": "fast",
+        "sizeGB": 9.3,
+        "purpose": "Summarization specialist - condensing documents, extracting key points",
+        "specialization": "summarization"
+      }
+    },
+    "default.fallback": {
+      "provider": "ollama",
+      "model": "qwen3:14b",
+      "adapters": [],
+      "roles": [
+        "fallback",
+        "general"
+      ],
+      "description": "Fallback model when primary models unavailable",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.7,
+        "topP": 0.9
+      },
+      "metadata": {
+        "priority": "low",
+        "alwaysLoaded": true,
+        "estimatedLatency": "fast",
+        "sizeGB": 9.3
+      }
+    },
+    "default.psychotherapist": {
+      "provider": "ollama",
+      "model": "qwen3:14b",
+      "adapters": [],
+      "roles": [
+        "psychotherapist",
+        "interviewer",
+        "analyzer"
+      ],
+      "description": "Specialized interviewer for persona analysis using motivational interviewing techniques",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "medium",
+        "alwaysLoaded": false,
+        "estimatedLatency": "medium",
+        "sizeGB": 9.3,
+        "purpose": "Persona generation and psychological analysis"
+      }
+    },
+    "ollama.qwen3:30b": {
+      "provider": "ollama",
+      "model": "qwen3:30b",
+      "roles": [
+        "psychotherapist",
+        "orchestrator",
+        "persona",
+        "curator"
+      ],
+      "adapters": [],
+      "description": "Imported from Ollama tag qwen3:30b",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.7,
+        "topP": 0.95,
+        "repeatPenalty": 1.5
+      },
+      "metadata": {
+        "source": "ollama-discovery"
+      }
+    },
+    "ollama.gpt-oss:latest": {
+      "provider": "ollama",
+      "model": "gpt-oss:latest",
+      "roles": [
+        "orchestrator",
+        "persona"
+      ],
+      "adapters": [],
+      "description": "Imported from Ollama tag gpt-oss:latest",
+      "options": {},
+      "metadata": {
+        "source": "ollama-discovery"
+      }
+    },
+    "ollama.qwen3:0.6b": {
+      "provider": "ollama",
+      "model": "qwen3:0.6b",
+      "roles": [
+        "orchestrator"
+      ],
+      "adapters": [],
+      "description": "Imported from Ollama tag qwen3:0.6b",
+      "options": {},
+      "metadata": {
+        "source": "ollama-discovery"
+      }
+    },
+    "ollama.greggles-finetune-q6k-2025-11-22:latest": {
+      "provider": "ollama",
+      "model": "greggles-finetune-q6k-2025-11-22:latest",
+      "roles": [
+        "orchestrator",
+        "persona",
+        "planner",
+        "summarizer"
+      ],
+      "adapters": [],
+      "description": "Imported from Ollama tag greggles-finetune-q6k-2025-11-22:latest",
+      "options": {},
+      "metadata": {
+        "source": "ollama-discovery"
+      }
+    },
+    "ollama.greggles-2025-11-22:latest": {
+      "provider": "ollama",
+      "model": "greggles-2025-11-22:latest",
+      "roles": [
+        "persona",
+        "orchestrator"
+      ],
+      "adapters": [],
+      "description": "Imported from Ollama tag greggles-2025-11-22:latest",
+      "options": {},
+      "metadata": {
+        "source": "ollama-discovery"
+      }
+    },
+    "ollama.greggles-2025-11-25-193635-d7e4e1:latest": {
+      "provider": "ollama",
+      "model": "greggles-2025-11-25-193635-d7e4e1:latest",
+      "roles": [
+        "orchestrator",
+        "persona",
+        "planner",
+        "summarizer"
+      ],
+      "adapters": [],
+      "description": "Imported from Ollama tag greggles-2025-11-25-193635-d7e4e1:latest",
+      "options": {},
+      "metadata": {
+        "source": "ollama-discovery"
+      }
+    },
+    "cloud.qwen3-coder-30b": {
+      "provider": "runpod_serverless",
+      "model": "Qwen3-Coder-30B-A3B-Instruct-AWQ",
+      "adapters": [],
+      "roles": [
+        "coder",
+        "orchestrator",
+        "persona",
+        "planner",
+        "curator",
+        "psychotherapist"
+      ],
+      "description": "Cloud-hosted Qwen3 Coder 30B via RunPod Serverless - high-performance coding and reasoning",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.7,
+        "topP": 0.95,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "high",
+        "alwaysLoaded": false,
+        "estimatedLatency": "medium",
+        "source": "runpod-serverless",
+        "endpointTier": "default",
+        "coldStartWarning": "First request may take 30-60s if GPU is cold",
+        "purpose": "Cloud GPU inference for high-capability tasks"
+      }
+    },
+    "cloud.qwen3-14b": {
+      "provider": "runpod_serverless",
+      "model": "Qwen3-14B-Instruct",
+      "adapters": [],
+      "roles": [
+        "orchestrator",
+        "persona",
+        "summarizer",
+        "fallback"
+      ],
+      "description": "Cloud-hosted Qwen3 14B via RunPod Serverless - balanced performance model",
+      "options": {
+        "contextWindow": 8192,
+        "temperature": 0.7,
+        "topP": 0.95,
+        "repeatPenalty": 1.1
+      },
+      "metadata": {
+        "priority": "medium",
+        "alwaysLoaded": false,
+        "estimatedLatency": "fast",
+        "source": "runpod-serverless",
+        "endpointTier": "14b",
+        "coldStartWarning": "First request may take 20-30s if GPU is cold",
+        "purpose": "Cloud GPU inference for general tasks"
+      }
+    },
+    "big-brother.claude": {
+      "provider": "claude-code",
+      "model": "claude-sonnet-4",
+      "adapters": [],
+      "roles": [
+        "orchestrator",
+        "planner",
+        "coder"
+      ],
+      "description": "Claude Code escalation for complex tasks - use when local models are stuck",
+      "options": {
+        "contextWindow": 200000,
+        "temperature": 0.7,
+        "timeout": 300000
+      },
+      "metadata": {
+        "priority": "low",
+        "alwaysLoaded": false,
+        "estimatedLatency": "slow",
+        "source": "big-brother",
+        "purpose": "Escalation path for operator when local models fail repeatedly",
+        "autoEscalate": true,
+        "escalationThreshold": 3
+      }
+    }
+  },
+  "roleHierarchy": {
+    "orchestrator": [
+      "default.orchestrator",
+      "default.fallback"
+    ],
+    "persona": [
+      "default.persona",
+      "persona.with-lora",
+      "default.fallback"
+    ],
+    "curator": [
+      "default.curator",
+      "default.fallback"
+    ],
+    "coder": [
+      "default.coder",
+      "default.fallback"
+    ],
+    "planner": [
+      "default.planner",
+      "default.fallback"
+    ],
+    "summarizer": [
+      "default.summarizer",
+      "default.curator",
+      "default.fallback"
+    ],
+    "psychotherapist": [
+      "default.psychotherapist",
+      "default.persona",
+      "default.fallback"
+    ],
+    "fallback": [
+      "default.fallback"
+    ]
+  },
+  "cognitiveModeMappings": {
+    "dual": {
+      "orchestrator": "default.orchestrator",
+      "persona": "default.orchestrator",
+      "planner": "default.orchestrator",
+      "coder": "default.coder",
+      "curator": "default.coder",
+      "summarizer": "default.orchestrator",
+      "psychotherapist": "default.coder"
+    },
+    "agent": {
+      "orchestrator": "default.orchestrator",
+      "persona": "default.persona",
+      "coder": "default.coder",
+      "planner": "default.planner",
+      "curator": "default.coder",
+      "summarizer": "default.summarizer",
+      "psychotherapist": "default.psychotherapist"
+    },
+    "emulation": {
+      "orchestrator": "default.orchestrator",
+      "persona": "default.orchestrator"
+    }
+  },
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434",
+      "timeout": 120000,
+      "retries": 2
+    },
+    "openai": {
+      "baseUrl": "https://api.openai.com/v1",
+      "timeout": 60000,
+      "retries": 3
+    },
+    "runpod_serverless": {
+      "baseUrl": "https://api.runpod.ai/v2",
+      "timeout": 120000,
+      "retries": 2
+    },
+    "claude-code": {
+      "baseUrl": "local",
+      "timeout": 300000,
+      "retries": 1
+    }
+  }
+}

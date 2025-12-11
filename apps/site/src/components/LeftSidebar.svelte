@@ -154,6 +154,11 @@
           activeBackend = data.systemHealth.activeBackend || 'auto';
           resolvedBackend = data.systemHealth.resolvedBackend || null;
           remoteProvider = data.systemHealth.remoteProvider || null;
+
+          // Extract backend availability for multi-icon display
+          if (data.systemHealth.backendAvailability) {
+            backendAvailability = data.systemHealth.backendAvailability;
+          }
         }
       }
     });
@@ -443,6 +448,52 @@
     bigBrother: []
   };
 
+  // Backend availability for multi-icon status display
+  interface BackendAvailability {
+    ollama: { available: boolean; running: boolean; active: boolean; model?: string };
+    vllm: { available: boolean; running: boolean; active: boolean; model?: string };
+    runpod: { available: boolean; configured: boolean; active: boolean };
+    bigBrother: { available: boolean; enabled: boolean; provider?: string };
+    remoteServer: { available: boolean; configured: boolean; serverUrl?: string };
+  }
+  let backendAvailability: BackendAvailability = {
+    ollama: { available: false, running: false, active: false },
+    vllm: { available: false, running: false, active: false },
+    runpod: { available: false, configured: false, active: false },
+    bigBrother: { available: false, enabled: false },
+    remoteServer: { available: false, configured: false }
+  };
+
+  // Tooltip generators for backend icons
+  function getOllamaTooltip(): string {
+    const ba = backendAvailability.ollama;
+    if (!ba.available) return 'Ollama: Not installed';
+    if (ba.running) return `Ollama: Running${ba.model ? ` (${ba.model})` : ''}${ba.active ? ' [ACTIVE]' : ''}`;
+    return 'Ollama: Installed but not running';
+  }
+  function getVllmTooltip(): string {
+    const ba = backendAvailability.vllm;
+    if (!ba.available) return 'vLLM: Not installed';
+    if (ba.running) return `vLLM: Running${ba.model ? ` (${ba.model})` : ''}${ba.active ? ' [ACTIVE]' : ''}`;
+    return 'vLLM: Installed but not running';
+  }
+  function getRunPodTooltip(): string {
+    const ba = backendAvailability.runpod;
+    if (!ba.available) return 'RunPod: Not configured';
+    return `RunPod: Configured${ba.active ? ' [ACTIVE]' : ''}`;
+  }
+  function getBigBrotherTooltip(): string {
+    const ba = backendAvailability.bigBrother;
+    if (!ba.available) return 'Big Brother: Not available';
+    if (ba.enabled) return `Big Brother: Enabled (${ba.provider || 'claude-code'})`;
+    return 'Big Brother: Disabled';
+  }
+  function getRemoteServerTooltip(): string {
+    const ba = backendAvailability.remoteServer;
+    if (!ba.available) return 'Remote Server: Not configured';
+    return `Remote Server: ${ba.serverUrl || 'Configured'}`;
+  }
+
   // Backend status is now handled by unified /api/status endpoint (see loadStatus)
 
   async function loadModelRegistry() {
@@ -715,31 +766,76 @@
     {:else if identity}
       <div class="status-info">
 
-        <!-- Backend Indicator -->
-        <div class="backend-indicator">
-          {#if resolvedBackend === 'remote' || activeBackend === 'remote'}
-            <span class="backend-badge remote">☁️ Remote</span>
-          {:else if resolvedBackend === 'vllm' || activeBackend === 'vllm'}
-            <span class="backend-badge vllm">⚡ vLLM</span>
-          {:else if resolvedBackend === 'ollama' || activeBackend === 'ollama'}
-            <span class="backend-badge ollama">🦙 Ollama</span>
-          {:else if resolvedBackend === 'offline'}
-            <span class="backend-badge offline">⚠️ Offline</span>
-          {:else if activeBackend === 'auto'}
-            <span class="backend-badge auto">🔄 Auto</span>
-          {:else}
-            <span class="backend-badge ollama">🦙 Ollama</span>
+        <!-- Backend Status Icons - Shows all available backends -->
+        <div class="backend-icons">
+          <!-- Ollama -->
+          {#if backendAvailability.ollama.available}
+            <span
+              class="backend-icon"
+              class:running={backendAvailability.ollama.running}
+              class:active={backendAvailability.ollama.active}
+              class:available={backendAvailability.ollama.available && !backendAvailability.ollama.running}
+              title={getOllamaTooltip()}
+            >🦙</span>
           {/if}
-          {#if localModel && (resolvedBackend === 'vllm' || activeBackend === 'vllm')}
-            <!-- vLLM only: Show the locked model name since vLLM runs ONE model at a time -->
+
+          <!-- vLLM -->
+          {#if backendAvailability.vllm.available}
+            <span
+              class="backend-icon"
+              class:running={backendAvailability.vllm.running}
+              class:active={backendAvailability.vllm.active}
+              class:available={backendAvailability.vllm.available && !backendAvailability.vllm.running}
+              title={getVllmTooltip()}
+            >⚡</span>
+          {/if}
+
+          <!-- RunPod -->
+          {#if backendAvailability.runpod.available}
+            <span
+              class="backend-icon cloud"
+              class:configured={backendAvailability.runpod.configured}
+              class:active={backendAvailability.runpod.active}
+              title={getRunPodTooltip()}
+            >☁️</span>
+          {/if}
+
+          <!-- Big Brother (only show if available - requires terminal) -->
+          {#if backendAvailability.bigBrother.available}
+            <span
+              class="backend-icon bigbrother"
+              class:enabled={backendAvailability.bigBrother.enabled}
+              class:disabled={!backendAvailability.bigBrother.enabled}
+              title={getBigBrotherTooltip()}
+            >🤖</span>
+          {/if}
+
+          <!-- Remote Server (future: Cloudflare tunnel) -->
+          {#if backendAvailability.remoteServer.available}
+            <span
+              class="backend-icon remote-server"
+              class:configured={backendAvailability.remoteServer.configured}
+              title={getRemoteServerTooltip()}
+            >🌐</span>
+          {/if}
+
+          <!-- Fallback when no backends available -->
+          {#if !backendAvailability.ollama.available && !backendAvailability.vllm.available && !backendAvailability.runpod.available}
+            <span class="backend-icon offline" title="No backends configured">❌</span>
+          {/if}
+        </div>
+
+        <!-- vLLM Model Name (when vLLM is active) -->
+        {#if localModel && backendAvailability.vllm.active}
+          <div class="vllm-model-info">
             <span class="local-model-name">
               {localModel.name}
               {#if localModel.locked}
-                <span class="loaded-indicator" title="Currently loaded - select for any role">✓</span>
+                <span class="loaded-indicator" title="Currently loaded">✓</span>
               {/if}
             </span>
-          {/if}
-        </div>
+          </div>
+        {/if}
 
         {#if hasModelRegistry}
           <!-- Multi-model registry view with interactive switching -->
@@ -2021,93 +2117,114 @@
   }
 
   /* ============================================
-     Backend Indicator & Adaptive Widget Styles
+     Backend Icons - Multi-icon Status Display
      ============================================ */
 
-  .backend-indicator {
+  .backend-icons {
     display: flex;
+    gap: 4px;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.4rem 0.5rem;
+    padding: 0.3rem 0.4rem;
     background: rgba(0, 0, 0, 0.03);
     border-radius: 0.5rem;
     margin-bottom: 0.5rem;
   }
 
-  :global(.dark) .backend-indicator {
+  :global(.dark) .backend-icons {
     background: rgba(255, 255, 255, 0.05);
   }
 
-  .backend-badge {
-    display: inline-flex;
+  .backend-icon {
+    display: flex;
     align-items: center;
-    gap: 0.25rem;
-    padding: 0.15rem 0.4rem;
-    border-radius: 0.375rem;
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 4px;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    cursor: default;
+    border: 2px solid transparent;
   }
 
-  .backend-badge.vllm {
-    background: linear-gradient(135deg, rgba(234, 179, 8, 0.2), rgba(250, 204, 21, 0.15));
-    color: rgb(161 98 7);
-    border: 1px solid rgba(234, 179, 8, 0.3);
+  /* Running state - bright with green glow */
+  .backend-icon.running {
+    background: rgba(34, 197, 94, 0.15);
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
   }
 
-  .backend-badge.ollama {
-    background: linear-gradient(135deg, rgba(34, 197, 94, 0.15), rgba(74, 222, 128, 0.1));
-    color: rgb(21 128 61);
-    border: 1px solid rgba(34, 197, 94, 0.25);
+  :global(.dark) .backend-icon.running {
+    background: rgba(74, 222, 128, 0.2);
+    box-shadow: 0 0 8px rgba(74, 222, 128, 0.3);
   }
 
-  :global(.dark) .backend-badge.vllm {
-    background: linear-gradient(135deg, rgba(250, 204, 21, 0.2), rgba(253, 224, 71, 0.15));
-    color: rgb(253 224 71);
-    border-color: rgba(250, 204, 21, 0.35);
+  /* Active indicator - purple ring */
+  .backend-icon.active {
+    border-color: #8b5cf6;
+    box-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
   }
 
-  :global(.dark) .backend-badge.ollama {
-    background: linear-gradient(135deg, rgba(74, 222, 128, 0.2), rgba(134, 239, 172, 0.15));
-    color: rgb(134 239 172);
-    border-color: rgba(74, 222, 128, 0.3);
+  :global(.dark) .backend-icon.active {
+    border-color: #a78bfa;
+    box-shadow: 0 0 10px rgba(167, 139, 250, 0.4);
   }
 
-  .backend-badge.remote {
-    background: linear-gradient(135deg, rgba(168, 85, 247, 0.15), rgba(192, 132, 252, 0.1));
-    color: rgb(126 34 206);
-    border: 1px solid rgba(168, 85, 247, 0.25);
+  /* Available but not running - dimmed */
+  .backend-icon.available:not(.running) {
+    opacity: 0.5;
+    filter: grayscale(30%);
   }
 
-  :global(.dark) .backend-badge.remote {
-    background: linear-gradient(135deg, rgba(192, 132, 252, 0.2), rgba(216, 180, 254, 0.15));
-    color: rgb(216 180 254);
-    border-color: rgba(192, 132, 252, 0.35);
+  /* Configured remote service */
+  .backend-icon.cloud.configured {
+    background: rgba(168, 85, 247, 0.12);
   }
 
-  .backend-badge.offline {
-    background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(248, 113, 113, 0.1));
-    color: rgb(185 28 28);
-    border: 1px solid rgba(239, 68, 68, 0.25);
+  :global(.dark) .backend-icon.cloud.configured {
+    background: rgba(192, 132, 252, 0.15);
   }
 
-  :global(.dark) .backend-badge.offline {
-    background: linear-gradient(135deg, rgba(248, 113, 113, 0.2), rgba(252, 165, 165, 0.15));
-    color: rgb(252 165 165);
-    border-color: rgba(248, 113, 113, 0.35);
+  /* Big Brother enabled */
+  .backend-icon.bigbrother.enabled {
+    background: rgba(59, 130, 246, 0.15);
+    box-shadow: 0 0 6px rgba(59, 130, 246, 0.3);
   }
 
-  .backend-badge.auto {
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(96, 165, 250, 0.1));
-    color: rgb(29 78 216);
-    border: 1px solid rgba(59, 130, 246, 0.25);
+  :global(.dark) .backend-icon.bigbrother.enabled {
+    background: rgba(96, 165, 250, 0.2);
+    box-shadow: 0 0 8px rgba(96, 165, 250, 0.25);
   }
 
-  :global(.dark) .backend-badge.auto {
-    background: linear-gradient(135deg, rgba(96, 165, 250, 0.2), rgba(147, 197, 253, 0.15));
-    color: rgb(147 197 253);
-    border-color: rgba(96, 165, 250, 0.35);
+  /* Big Brother disabled - dimmed */
+  .backend-icon.bigbrother.disabled {
+    opacity: 0.4;
+    filter: grayscale(50%);
+  }
+
+  /* Remote server configured */
+  .backend-icon.remote-server.configured {
+    background: rgba(6, 182, 212, 0.15);
+  }
+
+  :global(.dark) .backend-icon.remote-server.configured {
+    background: rgba(34, 211, 238, 0.2);
+  }
+
+  /* Offline/error state */
+  .backend-icon.offline {
+    opacity: 0.4;
+    filter: grayscale(100%);
+  }
+
+  /* Hover effect */
+  .backend-icon:hover {
+    transform: scale(1.1);
+  }
+
+  /* vLLM model info row */
+  .vllm-model-info {
+    padding: 0.2rem 0.4rem;
+    margin-bottom: 0.3rem;
   }
 
   .local-model-name {

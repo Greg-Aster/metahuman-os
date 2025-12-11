@@ -1,0 +1,208 @@
+<!DOCTYPE html><html lang="en" class="scroll-smooth"> <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="MetaHuman Dashboard"><title>MetaHuman</title><link rel="stylesheet" href="/./assets/guide.St8gsWha.css">
+<link rel="stylesheet" href="/./assets/guide.Go2oEByj.css"><script type="module" src="/./assets/hoisted.CZ89YcvN.js"></script></head> <body class="container-page flex flex-col"> <header class="border-b border-gray-200/60 dark:border-white/10 backdrop-blur sticky top-0"> <div class="page-max flex items-center justify-between py-4"> <a href="/" class="font-semibold text-lg">🧠 MetaHuman OS</a> <nav class="flex items-center gap-3"> <button class="btn" aria-label="Toggle theme" onclick="
+  (function(){
+    const c = document.documentElement.classList;
+    const dark = c.toggle('dark');
+    try { localStorage.setItem('metahuman-theme', dark ? 'dark' : 'light'); } catch {}
+  })();
+"> <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"> <path class="dark:hidden" d="M12 4V2M12 22v-2M5 5 3.586 3.586M20.414 20.414 19 19M4 12H2m20 0h-2M5 19l-1.414 1.414M20.414 3.586 19 5M12 6a6 6 0 100 12 6 6 0 000-12z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path> <path class="hidden dark:block" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" fill="currentColor"></path> </svg> <span class="hidden sm:inline">Theme</span> </button>  </nav> </div> </header> <main class="page-max flex-grow min-h-0"> <h1 id="metahuman-os--user-guide">MetaHuman OS — User Guide</h1>
+<p>This guide explains what’s in the repo, how to use it day‑to‑day, and where to extend it.</p>
+<h2 id="what-this-is">What This Is</h2>
+<ul>
+<li>A local‑first digital persona (“MetaHuman”) that plans, remembers, and acts with consent.</li>
+<li>Stores memory primarily as JSON using schemas in <code>memory/schema.json</code> (transparent and machine‑readable).</li>
+<li>Provides three entry points:
+<ul>
+<li>CLI (<code>mh</code>) via <code>packages/cli</code> for daily operations.</li>
+<li>Astro Dashboard (<code>apps/site</code>) for a local UI with dark mode.</li>
+<li>Auditor (<code>bin/audit</code>) to track structural changes and risks.</li>
+</ul>
+</li>
+</ul>
+<h2 id="daily-workflow">Daily Workflow</h2>
+<ul>
+<li>Initialize once: <code>mh init</code></li>
+<li>Status: <code>mh status</code> (identity summary, active tasks)</li>
+<li>Capture an event/observation: <code>mh capture "Met with Sarah about ML project"</code></li>
+<li>Search memory: <code>mh remember "Sarah"</code></li>
+<li>Tasks:
+<ul>
+<li>List: <code>mh task</code></li>
+<li>Add: <code>mh task add "Draft weekly brief"</code></li>
+<li>Start: <code>mh task start &#x3C;task-id></code></li>
+<li>Done: <code>mh task done &#x3C;task-id></code></li>
+<li>Task files are JSON under <code>memory/tasks/active/</code> and move to <code>completed/</code> when done.</li>
+</ul>
+</li>
+</ul>
+<h2 id="understanding-and-building-memory">Understanding and Building Memory</h2>
+<p>The memory system is the core of the persona. It’s designed like a human brain, with different lobes for different kinds of information, all stored transparently in the <code>memory/</code> directory.</p>
+<h3 id="types-of-memory">Types of Memory</h3>
+<ul>
+<li><strong>Episodic Memory (<code>memory/episodic/</code>):</strong> This is the most important one for day-to-day use. It’s a timeline of events, observations, thoughts, and conversations. Every time you <code>capture</code> something, it goes here. Think of it as the AI’s journal or diary.</li>
+<li><strong>Task Memory (<code>memory/tasks/</code>):</strong> This is where the AI’s to-do list lives. When you use the <code>mh task add</code> command, you are creating a task memory.</li>
+<li><strong>Semantic Memory (<code>memory/semantic/</code>):</strong> This is for storing structured facts and knowledge, like a personal encyclopedia. For example, “Project X’s deadline is December 15th.” (This is a more advanced feature).</li>
+</ul>
+<p>All these memories are stored as simple, human-readable JSON files. This is intentional, so you can always see and even edit what the AI knows.</p>
+<h3 id="how-to-give-the-ai-new-memories">How to Give the AI New Memories</h3>
+<p>The primary way you add a new memory is with the <strong><code>capture</code></strong> command. This is designed for recording observations, thoughts, or events as they happen.</p>
+<p><strong>To add a new memory, use this command in the terminal:</strong></p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="bash"><code><span class="line"><span style="color:#B392F0">mh</span><span style="color:#9ECBFF"> capture</span><span style="color:#9ECBFF"> "I had a productive meeting with the design team today and we decided on the new color palette."</span></span>
+<span class="line"></span></code></pre>
+<p>This creates a new JSON file in the <code>memory/episodic/</code> directory containing your text and a timestamp. This new memory is now part of the AI’s “short-term memory.”</p>
+<p>This is the first step. Later, you can run the <code>mh agent run organizer</code> command. The organizer agent will find this new, unprocessed memory and use the AI model (<code>phi3:mini</code>) to analyze it, automatically adding tags and entities to make the memory “smarter” and easier to find later.</p>
+<h2 id="cli-commands-mh">CLI Commands (mh)</h2>
+<ul>
+<li><code>mh init</code> — Initialize directory structure and persona schema files</li>
+<li><code>mh status</code> — Show system status and identity summary</li>
+<li><code>mh capture "text"</code> — Capture an observation/event</li>
+<li><code>mh remember &#x3C;query></code> — Search across memory</li>
+<li><code>mh task [list]</code> — List active tasks</li>
+<li><code>mh task add "title"</code> — Create a new task</li>
+<li><code>mh task start &#x3C;id></code> — Mark a task as in progress</li>
+<li><code>mh task done &#x3C;id></code> — Mark a task complete</li>
+<li><code>mh trust [level]</code> — Show or set trust level (<code>observe|suggest|supervised_auto|bounded_auto</code>)</li>
+<li><code>mh agent run &#x3C;name></code> — Run a background agent</li>
+<li><code>mh help</code> — Command reference</li>
+</ul>
+<p>Tip: Set <code>EDITOR</code> (e.g., <code>export EDITOR=code -w</code>) so <code>mh</code> opens files where you can edit and return.</p>
+<h2 id="autonomous-agents">Autonomous Agents</h2>
+<p>MetaHuman OS uses autonomous agents to perform background processing and analysis, simulating a continuous thought process. These agents can organize memories, generate insights, and prepare reports without direct supervision.</p>
+<h3 id="the-organizer-agent">The Organizer Agent</h3>
+<p>The primary agent available now is the <code>organizer</code>. Its main job is to scan your memories (observations, notes, etc.) and use a local AI model (via Ollama) to automatically extract key tags and entities. This enriches your memory data, making it more searchable and interconnected.</p>
+<p>There are two ways to run the organizer agent:</p>
+<p><strong>1. From the Command Line (CLI):</strong></p>
+<p>To trigger the agent manually from your terminal, use the <code>agent run</code> command:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="bash"><code><span class="line"><span style="color:#B392F0">mh</span><span style="color:#9ECBFF"> agent</span><span style="color:#9ECBFF"> run</span><span style="color:#9ECBFF"> organizer</span></span>
+<span class="line"></span></code></pre>
+<p>You will see the agent’s progress logged directly in your terminal.</p>
+<p><strong>2. From the Web Interface:</strong></p>
+<p>For easier access, you can run the agent from the web UI.</p>
+<ol>
+<li>Open the web interface at <a href="http://localhost:4321">http://localhost:4321</a></li>
+<li>Click the <strong>Tasks</strong> menu item in the left sidebar</li>
+<li>Click the <strong>“Run Organizer Agent”</strong> button at the top of the page</li>
+<li>A confirmation message will appear, and the agent will begin processing in the background</li>
+<li>Monitor progress in the <strong>Agent Monitor</strong> tab in the right sidebar (Developer Tools)</li>
+</ol>
+<h2 id="memory-formats-json">Memory Formats (JSON)</h2>
+<ul>
+<li>Tasks: <code>memory/tasks/active/task-YYYYMMDD-HHMMSS.json</code>
+{
+“id”: “task-20251019-143000”,
+“title”: “Example task”,
+“status”: “todo”,
+“priority”: “P2”,
+“tags”: [“planning”],
+“created”: “2025-10-19T14:30:00Z”,
+“updated”: “2025-10-19T14:30:00Z”
+}</li>
+<li>Events: <code>memory/episodic/YYYY/evt-YYYYMMDDHHMMSS*.json</code>
+{
+“id”: “evt-20251019-143000”,
+“timestamp”: “2025-10-19T14:30:00Z”,
+“content”: “Met with Sarah about ML project”,
+“type”: “observation”,
+“tags”: [“meeting”]
+}
+Schema reference: <code>memory/schema.json</code>.</li>
+</ul>
+<h2 id="web-interface-appssite">Web Interface (apps/site)</h2>
+<ul>
+<li>Install and run: <code>cd apps/site &#x26;&#x26; pnpm install &#x26;&#x26; pnpm dev</code>. Open <a href="http://localhost:4321">http://localhost:4321</a></li>
+<li><strong>New ChatGPT-style interface</strong> with three main areas:
+<ul>
+<li><strong>Left Sidebar (Features)</strong>: Navigation menu with Chat, Dashboard, Tasks, Memory, Persona, and Terminal</li>
+<li><strong>Center Panel</strong>: Primary chat interface or selected feature view</li>
+<li><strong>Right Sidebar (Dev Tools)</strong>: Live audit stream, agent monitor, and settings</li>
+</ul>
+</li>
+<li><strong>Key Features</strong>:
+<ul>
+<li>💬 <strong>Chat</strong>: Conversation interface with your digital personality extension (conversation or inner dialogue mode)</li>
+<li>📊 <strong>Dashboard</strong>: System status, active tasks, core values, and current goals</li>
+<li>✓ <strong>Tasks</strong>: Create, manage, and track tasks with status filtering</li>
+<li>🧩 <strong>Memory</strong>: Browse episodic events and observations</li>
+<li>🎭 <strong>Persona</strong>: View and manage identity settings</li>
+<li>⌨️ <strong>Terminal</strong>: Embedded CLI interface for running commands</li>
+<li>📋 <strong>Audit Stream</strong>: Real-time log of all system operations</li>
+<li>🤖 <strong>Agent Monitor</strong>: View agent statistics and trigger agent runs</li>
+</ul>
+</li>
+<li><strong>UI Features</strong>:
+<ul>
+<li>Collapsible sidebars (preferences saved to browser localStorage)</li>
+<li>Full dark mode support with theme toggle</li>
+<li>Mobile responsive design</li>
+<li>Real-time updates via Server-Sent Events</li>
+<li>Keyboard shortcuts (Enter to send messages, Shift+Enter for newlines)</li>
+</ul>
+</li>
+</ul>
+<h2 id="typescript-cli-packagescli">TypeScript CLI (packages/cli)</h2>
+<ul>
+<li>Install and run: <code>cd packages/cli &#x26;&#x26; pnpm install &#x26;&#x26; pnpm dev</code> (or <code>npx tsx src/mh.ts --help</code>)</li>
+<li>Commands mirror Bash CLI with extras planned (frontmatter parsing, indexing, weekly aggregation).</li>
+</ul>
+<h2 id="auditor-binaudit">Auditor (bin/audit)</h2>
+<ul>
+<li>Purpose: Track structural changes, flag risks, and keep the project aligned.</li>
+<li>Commands:
+<ul>
+<li><code>bin/audit snapshot</code> — Create/update baseline checksums</li>
+<li><code>bin/audit diff</code> — Show added/removed/modified since baseline</li>
+<li><code>bin/audit check</code> — Run policy checks (structure, size, network refs, secrets)</li>
+<li><code>bin/audit all</code> — Diff + check; writes a report to <code>logs/audit/</code></li>
+</ul>
+</li>
+<li>Notes: In restricted environments, writing may fail; generate reports manually if needed.</li>
+</ul>
+<h2 id="configuration-etcconfig">Configuration (etc/config)</h2>
+<ul>
+<li><code>METAHUMAN_NAME</code> — Persona display name</li>
+<li><code>MH_ID</code> — Unique identifier (slug)</li>
+<li><code>MH_AUTONOMY_MODE</code> — <code>observe|suggest|approve|limited-auto</code></li>
+<li><code>MH_TIMEZONE</code> — Defaults to system <code>TZ</code> or UTC</li>
+<li><code>NTFY_TOPIC</code> — Optional for <code>mh nudge</code></li>
+</ul>
+<h2 id="safety--consent">Safety &#x26; Consent</h2>
+<ul>
+<li>Default: observe/suggest (no external actions without explicit approval).</li>
+<li>Skills must be allowlisted and support dry‑run where feasible.</li>
+<li>Logs live under <code>logs/</code>; progress summaries under <code>out/progress/</code>.</li>
+</ul>
+<h2 id="common-recipes">Common Recipes</h2>
+<ul>
+<li>Add a task and include in today’s plan:
+<ul>
+<li><code>bin/mh memory add task "Draft proposal" &#x26;&#x26; bin/mh plan</code></li>
+</ul>
+</li>
+<li>Search across memory and journals:
+<ul>
+<li><code>bin/mh memory search "proposal"</code></li>
+</ul>
+</li>
+<li>Weekly close‑out:
+<ul>
+<li><code>bin/mh weekly</code> then review and promote next week’s big rocks.</li>
+</ul>
+</li>
+<li>Update persona tone/goals:
+<ul>
+<li><code>bin/mh persona</code> and edit <code>persona/profile.md</code>.</li>
+</ul>
+</li>
+</ul>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<ul>
+<li>Astro build errors with CSS in frontmatter: keep CSS imports in <code>&#x3C;head></code> via <code>Astro.resolve</code>.</li>
+<li>Sandbox write failures: run the CLI outside restricted sandboxes or write files manually.</li>
+<li>Task list empty: add at least one <code>.md</code> file under <code>memory/tasks/YYYY/</code> with <code>status: todo</code>.</li>
+</ul>
+<h2 id="next-extensions">Next Extensions</h2>
+<ul>
+<li>TS CLI: add frontmatter parser and task queries by status/due/priority.</li>
+<li>Astro: render Markdown/MDX for persona and task detail pages; add filters.</li>
+<li>Skills: define manifest + runner with approval logs.</li>
+</ul> </main> <footer class="page-max muted py-8 text-center text-sm"> <p>MetaHuman OS • Autonomous • Local-first • Transparent</p> </footer> </body></html>

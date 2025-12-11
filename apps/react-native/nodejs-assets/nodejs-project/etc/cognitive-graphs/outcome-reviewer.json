@@ -1,0 +1,216 @@
+{
+  "version": "2.0",
+  "name": "Outcome Reviewer",
+  "description": "Reviews execution outcomes and routes to appropriate next action based on verdict",
+  "cognitiveMode": "agent",
+  "last_modified": "2025-12-04",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "agency/desire_loader",
+      "pos": [100, 180],
+      "size": [200, 80],
+      "properties": {
+        "statusFilter": ["executing", "completed", "failed"]
+      },
+      "title": "Load Executed Desire"
+    },
+    {
+      "id": 2,
+      "type": "agency/outcome_reviewer",
+      "pos": [380, 180],
+      "size": [220, 100],
+      "properties": {
+        "temperature": 0.3,
+        "evaluateGoalAchievement": true
+      },
+      "title": "Review Outcome"
+    },
+    {
+      "id": 3,
+      "type": "agency/verdict_router",
+      "pos": [680, 180],
+      "size": [180, 120],
+      "properties": {
+        "routes": {
+          "completed": 0,
+          "continue": 0,
+          "retry": 1,
+          "escalate": 2,
+          "abandon": 0
+        }
+      },
+      "title": "Route by Verdict"
+    },
+    {
+      "id": 4,
+      "type": "agency/desire_updater",
+      "pos": [950, 80],
+      "size": [200, 80],
+      "properties": {
+        "statusFromVerdict": true,
+        "updateOutcomeReview": true,
+        "updateMetrics": true
+      },
+      "title": "Update Final Status"
+    },
+    {
+      "id": 5,
+      "type": "agency/desire_updater",
+      "pos": [950, 200],
+      "size": [200, 80],
+      "properties": {
+        "newStatus": "planning",
+        "incrementPlanIteration": true,
+        "preserveExecutionHistory": true
+      },
+      "title": "Loop Back to Planner"
+    },
+    {
+      "id": 6,
+      "type": "agency/approval_queue",
+      "pos": [950, 320],
+      "size": [200, 80],
+      "properties": {
+        "reason": "escalation",
+        "notifyUser": true
+      },
+      "title": "Escalate to User"
+    },
+    {
+      "id": 7,
+      "type": "cognitive/scratchpad_writer",
+      "pos": [380, 330],
+      "size": [200, 80],
+      "properties": {
+        "eventType": "outcome_verdict",
+        "includeVerdict": true,
+        "includeLessonsLearned": true
+      },
+      "title": "Record Outcome to Scratchpad"
+    },
+    {
+      "id": 8,
+      "type": "cognitive/inner_dialogue_logger",
+      "pos": [1200, 200],
+      "size": [200, 80],
+      "properties": {
+        "source": "outcome-reviewer",
+        "includeReasoning": true
+      },
+      "title": "Log Inner Dialogue"
+    },
+    {
+      "id": 9,
+      "type": "cognitive/audit_logger",
+      "pos": [1200, 80],
+      "size": [180, 60],
+      "properties": {
+        "category": "agency",
+        "event": "outcome_reviewed"
+      },
+      "title": "Audit Log"
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 2,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Desire → Outcome Reviewer"
+    },
+    {
+      "id": 2,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 3,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Outcome Review → Verdict Router"
+    },
+    {
+      "id": 3,
+      "origin_id": 3,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Route 0 (completed/continue/abandon) → Final Status Updater"
+    },
+    {
+      "id": 4,
+      "origin_id": 3,
+      "origin_slot": 1,
+      "target_id": 5,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Route 1 (retry) → Loop Back to Planner"
+    },
+    {
+      "id": 5,
+      "origin_id": 3,
+      "origin_slot": 2,
+      "target_id": 6,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Route 2 (escalate) → Approval Queue"
+    },
+    {
+      "id": 6,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 4,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Desire → Final Updater (for object)"
+    },
+    {
+      "id": 7,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 5,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Desire → Loop Back Updater (for object)"
+    },
+    {
+      "id": 8,
+      "origin_id": 1,
+      "origin_slot": 0,
+      "target_id": 6,
+      "target_slot": 1,
+      "type": "object",
+      "comment": "Desire → Escalate Queue (for object)"
+    },
+    {
+      "id": 9,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 7,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Outcome Review → Scratchpad"
+    },
+    {
+      "id": 10,
+      "origin_id": 2,
+      "origin_slot": 0,
+      "target_id": 8,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Outcome Review → Inner Dialogue"
+    },
+    {
+      "id": 11,
+      "origin_id": 4,
+      "origin_slot": 0,
+      "target_id": 9,
+      "target_slot": 0,
+      "type": "object",
+      "comment": "Updated Desire → Audit"
+    }
+  ]
+}
