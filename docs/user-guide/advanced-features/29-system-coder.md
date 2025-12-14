@@ -9,7 +9,7 @@ The **System Coder** is an autonomous agent that monitors, maintains, and fixes 
 The System Coder serves as an automated code health monitor that:
 
 - **Captures errors** from web console and terminal
-- **Generates fix proposals** via Big Brother (Claude CLI)
+- **Generates fix proposals** via Big Brother (supports Claude, Gemini, Codex, Qwen)
 - **Tracks technical debt** and maintenance needs
 - **Verifies documentation** matches actual implementation
 - **Suggests refactoring** opportunities
@@ -54,7 +54,7 @@ Health thresholds are configurable in `etc/system-coder.json`.
 When you request a fix for an error:
 
 1. Agent analyzes the error and related files
-2. Escalates to Big Brother (Claude CLI) for fix generation
+2. Escalates to Big Brother (configurable LLM provider) for fix generation
 3. Proposes changes with explanation
 4. Stages fix for your review
 5. You approve/reject via the dashboard
@@ -87,7 +87,7 @@ View all captured errors:
 
 Review staged fix proposals:
 - View proposed changes (diff view)
-- Read Claude's explanation
+- Read the AI's explanation
 - Run test commands to verify
 - Approve, reject, or request revision
 
@@ -164,7 +164,7 @@ Configuration file: `etc/system-coder.json`
 | `maintenance.intervalHours` | Hours between maintenance runs | `24` |
 | `maintenance.scope` | Directories to include in maintenance | Core dirs |
 | `fixes.autoApproveRisk` | Risk levels that can auto-apply | `["none", "low"]` |
-| `bigBrother.useForFixes` | Use Claude CLI for fix generation | `true` |
+| `bigBrother.useForFixes` | Use LLM provider for fix generation | `true` |
 
 ---
 
@@ -232,7 +232,7 @@ The System Coder uses these documents for guidance:
 | `docs/CODER-AGENT-PLAYBOOK.md` | Design intent, maintenance tasks, checklists |
 | `docs/SYSTEM-INIT.md` | Technical architecture reference |
 | `docs/user-guide/` | Source of truth for feature specifications |
-| `CLAUDE.md` | Codebase conventions and patterns |
+| `CODEBASE.md` | Codebase conventions and patterns |
 
 ---
 
@@ -257,7 +257,7 @@ The System Coder uses these documents for guidance:
 ### Fixes Not Generating
 
 1. Ensure Big Brother is enabled in `etc/operator.json`
-2. Check Claude CLI is installed: `claude --version`
+2. Check your configured LLM provider CLI is installed and configured
 3. Verify `etc/system-coder.json` → `bigBrother.useForFixes`
 
 ### Health Status Stuck on Red
@@ -274,4 +274,4 @@ The System Coder uses these documents for guidance:
 - [Autonomous Agents](08-autonomous-agents.md) - Overview of all agents
 - [Security & Trust Model](../operations/10-security-trust.md) - Approval patterns
 - [Configuration Files](../core-features/14-configuration-files.md) - Config reference
-- [Big Brother Mode](24-agency-system.md#big-brother-integration) - Claude CLI escalation
+- [Big Brother Mode](24-agency-system.md#big-brother-integration) - LLM model escalation

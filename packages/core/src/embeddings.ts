@@ -2,8 +2,9 @@ import { ollama } from './ollama.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { systemPaths } from './path-builder.js'
+import { embedWithLocalService, isLocalModelServiceRunning } from './providers/local-models.js'
 
-export type EmbeddingProvider = 'ollama' | 'mock'
+export type EmbeddingProvider = 'ollama' | 'mock' | 'local-models'
 
 export interface EmbeddingConfig {
   enabled: boolean
@@ -13,6 +14,11 @@ export interface EmbeddingConfig {
   description?: string
   /** Force CPU-only inference via num_gpu=0 (leaves GPU free for vLLM) */
   cpuOnly?: boolean
+  /** Local model service configuration */
+  localModels?: {
+    endpoint: string
+    model?: string
+  }
 }
 
 const CONFIG_PATH = path.join(systemPaths.etc, 'embeddings.json')
@@ -64,8 +70,30 @@ export async function preloadEmbeddingModel(): Promise<void> {
     return
   }
 
-  if (config.provider !== 'ollama') {
-    console.log('[embeddings] Preload only supported for Ollama provider')
+  if (config.provider !== 'ollama' && config.provider !== 'local-models') {
+    console.log('[embeddings] Preload only supported for Ollama and local-models providers')
+    return
+  }
+
+  // Local model service preload
+  if (config.provider === 'local-models') {
+    const endpoint = config.localModels?.endpoint || 'http://127.0.0.1:4324'
+    const model = config.localModels?.model || config.model
+
+    try {
+      const isRunning = await isLocalModelServiceRunning(endpoint)
+      if (!isRunning) {
+        console.log('[embeddings] Local model service not running, skipping preload')
+        return
+      }
+
+      console.log(`[embeddings] Preloading local model "${model}"...`)
+      // Trigger model load by making a test embedding request
+      await embedWithLocalService('warmup', { model, endpoint })
+      console.log(`[embeddings] ✓ Local model "${model}" preloaded and ready`)
+    } catch (error) {
+      console.error('[embeddings] Failed to preload local model:', error)
+    }
     return
   }
 
@@ -95,6 +123,27 @@ export async function embedText(
   }
 
   const provider = opts.provider || config.provider
+
+  // Local model service provider (Transformers.js)
+  if (provider === 'local-models') {
+    const model = opts.model || config.localModels?.model || config.model
+    const endpoint = config.localModels?.endpoint || 'http://127.0.0.1:4324'
+
+    try {
+      // Check if service is running
+      const isRunning = await isLocalModelServiceRunning(endpoint)
+      if (!isRunning) {
+        console.warn('[embeddings] Local model service not running, falling back to mock')
+        // Fall through to mock provider
+      } else {
+        return await embedWithLocalService(text, { model, endpoint })
+      }
+    } catch (error) {
+      console.error('[embeddings] Local model service error:', error)
+      // Fall through to mock provider
+    }
+  }
+
   if (provider === 'ollama') {
     const model = opts.model || config.model
     const originalText = typeof text === 'string' ? text : JSON.stringify(text)

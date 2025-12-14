@@ -2,10 +2,11 @@
  * Big Brother Mode - CLI LLM Escalation
  *
  * When the operator gets stuck or encounters repeated failures, escalate to
- * a CLI LLM (like Claude Code) for guidance and suggestions.
+ * a more capable LLM provider (Claude, Gemini, Codex, Qwen, etc.) for guidance.
  *
  * This provides a safety net when the local operator cannot resolve issues
  * independently, allowing for human-level problem solving intervention.
+ * The provider is configurable via etc/operator.json.
  */
 
 import { spawn } from 'child_process';

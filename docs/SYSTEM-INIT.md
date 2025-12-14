@@ -117,7 +117,7 @@ metahuman/
 │   │       ├── api/             # Unified API handlers
 │   │       ├── system-coder/    # Error capture
 │   │       ├── audit.ts         # Audit logging
-│   │       ├── big-brother.ts   # Claude CLI escalation
+│   │       ├── big-brother.ts   # LLM model escalation
 │   │       ├── cognitive-mode.ts
 │   │       ├── config.ts        # Configuration types
 │   │       ├── identity.ts      # Persona management
@@ -254,7 +254,7 @@ Configuration: `etc/operator.json`
 
 ### Big Brother Mode
 
-Escalates stuck operator states to Claude CLI for guidance.
+Escalates stuck operator states to a more capable LLM provider for guidance (supports Claude, Gemini, Codex, Qwen).
 
 ```typescript
 import { escalateToBigBrother } from '@metahuman/core';

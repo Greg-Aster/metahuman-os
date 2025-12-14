@@ -14,7 +14,7 @@ The Agency System enables your MetaHuman to:
 2. **Build strength** through reinforcement when related inputs are detected
 3. **Generate plans** with specific execution steps
 4. **Self-review** plans for safety and alignment
-5. **Execute** plans via the Big Brother Claude CLI integration
+5. **Execute** plans via the Big Brother LLM escalation (supports Claude, Gemini, Codex, Qwen)
 6. **Verify outcomes** with independent verification before marking complete
 
 Think of it as giving your MetaHuman the ability to have goals and pursue them autonomously, within the boundaries you set.
@@ -219,17 +219,20 @@ After planning, an LLM self-review evaluates:
 
 ## Execution Phase
 
-Approved plans are executed via the **Big Brother Claude CLI integration**:
+Approved plans are executed via the **Big Brother LLM escalation** (configurable provider):
 
 ```bash
+# Example with Claude CLI (default)
 claude --print --dangerously-skip-permissions "<plan goal>"
+
+# Other providers can be configured in etc/operator.json
 ```
 
 ### Execution Modes
 
 The system supports two execution backends:
 
-1. **Big Brother Mode** (recommended): Uses Claude CLI directly for powerful, multi-step execution
+1. **Big Brother Mode** (recommended): Uses configured LLM provider for powerful, multi-step execution
 2. **Operator Mode**: Falls back to local skill execution via the operator API
 
 ### Big Brother Configuration
@@ -255,7 +258,7 @@ After execution, an **independent verification** checks if the outcome actually 
 
 1. **Analyze claimed outcome** - What does the plan say was achieved?
 2. **Build verification prompt** - What should we check?
-3. **Execute verification** - Use Claude CLI or operator to verify
+3. **Execute verification** - Use LLM provider or operator to verify
 4. **Assess results** - LLM evaluates verification evidence
 
 ### Outcome Verdicts
@@ -525,7 +528,7 @@ The agency system respects MetaHuman's progressive trust model:
 ### Plans Failing
 
 1. Check Big Brother mode is configured: `etc/operator.json`
-2. Verify Claude CLI is available: `claude --version`
+2. Verify your configured LLM provider CLI is available and authenticated
 3. Review execution logs in the scratchpad
 
 ### Outcome Review Failing

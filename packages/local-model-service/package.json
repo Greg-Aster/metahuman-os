@@ -1,0 +1,27 @@
+{
+  "name": "@metahuman/local-model-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./model-manager": "./dist/model-manager.js",
+    "./config": "./dist/config.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.0.0",
+    "fastify": "^4.28.0",
+    "@fastify/cors": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.0",
+    "tsx": "^4.20.6"
+  }
+}

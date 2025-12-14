@@ -104,7 +104,7 @@ Essential documentation for understanding and using MetaHuman OS:
     - Desire lifecycle (nascent → completed)
     - Strength and reinforcement system
     - Planning, self-review, and execution
-    - Big Brother Claude CLI integration
+    - Big Brother LLM escalation (multi-provider support)
     - Outcome verification
 
 ---
