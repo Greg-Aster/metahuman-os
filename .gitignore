@@ -186,14 +186,15 @@ credentials/
 secrets/
 
 # ============================================
-# AGENTS
+# AI TOOL CONFIGURATIONS (Local settings, not tracked)
 # ============================================
 AGENTS.md
 CLAUDE.md
 GEMINI.md
-.qwen/
+.ai-config/
 .Claude/
 .Gemini/
+.qwen/
 
 # ============================================
 # AI MODELS & LARGE FILES
