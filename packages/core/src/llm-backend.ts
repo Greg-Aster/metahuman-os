@@ -15,6 +15,7 @@ import { ROOT } from './path-builder.js';
 import { audit } from './audit.js';
 import { ollama, isRunning as isOllamaRunning, stopOllamaService, startOllamaService } from './ollama.js';
 import { vllm, isVLLMRunning } from './vllm.js';
+import { isLocalModelServiceRunning, getLocalModelStatus } from './providers/local-models.js';
 
 /**
  * Get the Python executable path for vLLM venv
@@ -43,13 +44,14 @@ function getVLLMPython(): string {
 /**
  * Backend types:
  * - 'ollama' | 'vllm': Local LLM backends (require GPU)
+ * - 'local-models': Lightweight local models via Transformers.js (CPU-friendly, mobile-compatible)
  * - 'remote': Cloud provider (RunPod, Claude, OpenRouter, OpenAI)
  * - 'auto': Intelligent selection - prefer local if available, fallback to remote
  */
-export type BackendType = 'ollama' | 'vllm' | 'remote' | 'auto';
+export type BackendType = 'ollama' | 'vllm' | 'local-models' | 'remote' | 'auto';
 
 /** Local backend type (for when using 'auto' or 'remote' with local fallback) */
-export type LocalBackendType = 'ollama' | 'vllm';
+export type LocalBackendType = 'ollama' | 'vllm' | 'local-models';
 
 /** Remote provider types supported */
 export type RemoteProviderType = 'claude' | 'runpod' | 'openrouter' | 'openai' | 'server';
@@ -84,13 +86,32 @@ export interface RemoteBackendConfig {
   serverUrl?: string;
   /** Default model for remote provider */
   model?: string;
-  /** Saved credentials for remote server authentication */
+  /** Saved credentials for remote server authentication (session-based, secure) */
   credentials?: {
     username?: string;
-    /** Session ID from remote server login (mh_session cookie value) - preferred */
+    /** Session ID from remote server login (mh_session cookie value) */
     sessionId?: string;
-    /** Legacy: Base64 encoded username:password for Basic auth */
-    token?: string;
+  };
+}
+
+export interface LocalModelsBackendConfig {
+  /** Whether local-models backend is enabled */
+  enabled: boolean;
+  /** Service endpoint URL */
+  endpoint: string;
+  /** Auto-start the service on boot */
+  autoStart: boolean;
+  /** Only download models when connected to WiFi */
+  downloadOnWifiOnly: boolean;
+  /** Embedding model configuration */
+  embeddings: {
+    model: string;
+    preloadAtStartup: boolean;
+  };
+  /** Small LLM model configuration */
+  llm: {
+    model: string;
+    preloadAtStartup: boolean;
   };
 }
 
@@ -102,13 +123,15 @@ export interface BackendConfig {
   vllm: VLLMBackendConfig;
   /** Remote/cloud provider configuration */
   remote?: RemoteBackendConfig;
+  /** Local models (Transformers.js) configuration */
+  localModels?: LocalModelsBackendConfig;
 }
 
 export interface BackendStatus {
   /** Configured backend type */
   backend: BackendType;
   /** Actual active backend (resolved from 'auto') */
-  resolvedBackend: 'ollama' | 'vllm' | 'remote' | 'offline';
+  resolvedBackend: 'ollama' | 'vllm' | 'local-models' | 'remote' | 'offline';
   /** Remote provider if using remote */
   remoteProvider?: RemoteProviderType;
   running: boolean;
@@ -122,6 +145,7 @@ export interface BackendStatus {
 export interface AvailableBackends {
   ollama: { installed: boolean; running: boolean; model?: string };
   vllm: { installed: boolean; running: boolean; model?: string };
+  localModels: { installed: boolean; running: boolean; embeddingModel?: string; llmModel?: string };
   remote: { configured: boolean; provider?: RemoteProviderType; hasCredentials: boolean };
 }
 
@@ -164,6 +188,20 @@ export function loadBackendConfig(forceFresh = false): BackendConfig {
       enforceEager: true, // Disable CUDA graphs to save GPU memory (recommended for 16GB GPUs)
       autoUtilization: false, // Set true to auto-detect optimal GPU allocation
     },
+    localModels: {
+      enabled: true,
+      endpoint: 'http://127.0.0.1:4324',
+      autoStart: false,
+      downloadOnWifiOnly: true,
+      embeddings: {
+        model: 'qwen3-embedding-0.6b',
+        preloadAtStartup: true,
+      },
+      llm: {
+        model: 'qwen3-1.7b',
+        preloadAtStartup: false,
+      },
+    },
   };
 
   try {
@@ -176,6 +214,7 @@ export function loadBackendConfig(forceFresh = false): BackendConfig {
         ...parsed,
         ollama: { ...defaultConfig.ollama, ...parsed.ollama },
         vllm: { ...defaultConfig.vllm, ...parsed.vllm },
+        localModels: { ...defaultConfig.localModels, ...parsed.localModels },
       };
     } else {
       cachedConfig = defaultConfig;
@@ -205,6 +244,9 @@ export function saveBackendConfig(updates: Partial<BackendConfig>): void {
   }
   if (updates.remote) {
     newConfig.remote = { ...config.remote, ...updates.remote };
+  }
+  if (updates.localModels) {
+    newConfig.localModels = { ...config.localModels, ...updates.localModels };
   }
 
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(newConfig, null, 2));
@@ -274,7 +316,32 @@ export async function getBackendStatus(): Promise<BackendStatus> {
     };
   }
 
-  // vLLM
+  if (backend === 'local-models') {
+    const localModelsConfig = config.localModels;
+    const endpoint = localModelsConfig?.endpoint || 'http://127.0.0.1:4324';
+    const running = await isLocalModelServiceRunning(endpoint);
+    let model: string | undefined;
+
+    if (running) {
+      try {
+        const status = await getLocalModelStatus(endpoint);
+        // Report the LLM model if loaded, otherwise the embedding model
+        model = status?.generator?.model || status?.embedder?.model || undefined;
+      } catch { }
+    }
+
+    return {
+      backend: 'local-models',
+      resolvedBackend: running ? 'local-models' : 'offline',
+      running,
+      model,
+      endpoint,
+      health: running ? 'healthy' : 'offline',
+      reason: running ? undefined : 'Local model service is not running. Enable auto-start in Settings.',
+    };
+  }
+
+  // vLLM (default if not ollama, remote, auto, or local-models)
   const running = await isVLLMRunning();
   let model: string | undefined;
 
@@ -407,9 +474,12 @@ async function resolveAutoBackend(config: BackendConfig): Promise<BackendStatus>
 export async function detectAvailableBackends(): Promise<AvailableBackends> {
   const config = loadBackendConfig();
 
-  const [ollamaRunning, vllmRunning] = await Promise.all([
+  const localModelsEndpoint = config.localModels?.endpoint || 'http://127.0.0.1:4324';
+
+  const [ollamaRunning, vllmRunning, localModelsRunning] = await Promise.all([
     isOllamaRunning(),
     isVLLMRunning(),
+    isLocalModelServiceRunning(localModelsEndpoint),
   ]);
 
   // Check if Ollama is installed (by checking if it's running or if ollama command exists)
@@ -437,9 +507,14 @@ export async function detectAvailableBackends(): Promise<AvailableBackends> {
     }
   }
 
+  // Local models is always "installed" (it's a Node.js service)
+  const localModelsInstalled = true;
+
   // Get loaded models if running
   let ollamaModel: string | undefined;
   let vllmModel: string | undefined;
+  let localModelsEmbedding: string | undefined;
+  let localModelsLLM: string | undefined;
 
   if (ollamaRunning) {
     try {
@@ -452,6 +527,14 @@ export async function detectAvailableBackends(): Promise<AvailableBackends> {
     vllmModel = await vllm.getLoadedModel() || undefined;
   }
 
+  if (localModelsRunning) {
+    try {
+      const status = await getLocalModelStatus(localModelsEndpoint);
+      localModelsEmbedding = status?.embedder?.model || undefined;
+      localModelsLLM = status?.generator?.model || undefined;
+    } catch { }
+  }
+
   // Check remote configuration
   const remoteConfigured = !!config.remote?.provider;
   // TODO: Check if credentials exist for the remote provider
@@ -460,6 +543,7 @@ export async function detectAvailableBackends(): Promise<AvailableBackends> {
   return {
     ollama: { installed: ollamaInstalled, running: ollamaRunning, model: ollamaModel },
     vllm: { installed: vllmInstalled, running: vllmRunning, model: vllmModel },
+    localModels: { installed: localModelsInstalled, running: localModelsRunning, embeddingModel: localModelsEmbedding, llmModel: localModelsLLM },
     remote: { configured: remoteConfigured, provider: config.remote?.provider, hasCredentials },
   };
 }

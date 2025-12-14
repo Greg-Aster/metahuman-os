@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { getUserOrAnonymous, getProfilePaths } from '@metahuman/core';
+import { getAuthenticatedUser, AuthRequiredError, getProfilePaths } from '@metahuman/core';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -91,7 +91,19 @@ function splitIntoSentences(text: string): string[] {
   return merged;
 }
 export const POST: APIRoute = async ({ request, cookies }) => {
-  const user = getUserOrAnonymous(cookies);
+  // Authenticate user - returns 401 if not authenticated
+  let user;
+  try {
+    user = getAuthenticatedUser(cookies);
+  } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      return new Response(JSON.stringify({ error: 'Authentication required', redirect: '/auth' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw error;
+  }
 
   try {
     const { text, provider, voice, speed, pitchShift, langCode } = await request.json();
@@ -117,14 +129,9 @@ export const POST: APIRoute = async ({ request, cookies }) => {
         normalize: false,
       };
 
-      // Check if this is a guest with selected profile (anonymous but using guest profile)
-      const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
-
-      // Load user voice config to get custom voicepack path
-      // Allow both authenticated users AND guests with profile
-      if (user.role !== 'anonymous' || isGuestWithProfile) {
-        const profilePaths = getProfilePaths(user.username);
-        const voiceConfigPath = profilePaths.voiceConfig;
+      // All users are authenticated - load voice config
+      const profilePaths = getProfilePaths(user.username);
+      const voiceConfigPath = profilePaths.voiceConfig;
 
         if (fs.existsSync(voiceConfigPath)) {
           try {
@@ -143,7 +150,6 @@ export const POST: APIRoute = async ({ request, cookies }) => {
             console.warn('[TTS Stream] Failed to load user voice config:', e);
           }
         }
-      }
 
       // Proxy to Kokoro server streaming endpoint
       const kokoroServerUrl = process.env.KOKORO_SERVER_URL || 'http://127.0.0.1:9882';
@@ -203,9 +209,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       speed: speed,
     };
 
-    // Also check for guest with profile for RVC
-    const isGuestForRvc = user.role === 'anonymous' && user.id === 'guest';
-    if (selectedProvider === 'rvc' && (user.role !== 'anonymous' || isGuestForRvc)) {
+    // Load RVC config for authenticated user
+    if (selectedProvider === 'rvc') {
       const profilePaths = getProfilePaths(user.username);
       const voiceConfigPath = profilePaths.voiceConfig;
 
@@ -249,7 +254,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
             voice: rvcConfig.voice,
             speakingRate: rvcConfig.speed,
             pitchShift: rvcConfig.pitchShift,
-            username: (user.role !== 'anonymous' || isGuestForRvc) ? user.username : undefined,
+            username: user.username,
             signal: request.signal,
           });
 

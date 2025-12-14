@@ -398,12 +398,21 @@ Configures the audio transcription engine (`whisper.cpp`), including the model, 
 ```
 
 ### `profiles/<username>/etc/voice.json` - Voice & TTS/STT Configuration
-Defines text-to-speech and speech-to-text configuration for the profile. Supports multiple TTS providers: **Piper** (local neural TTS) and **GPT-SoVITS** (few-shot voice cloning).
+Defines text-to-speech and speech-to-text configuration for the profile. Supports multiple TTS providers: **Kokoro** (default neural TTS), **GPT-SoVITS** (few-shot cloning), **Applio RVC** (trained voice conversion), and **Piper** (lightweight fallback).
 
 #### TTS Provider Configuration
 
 **Provider Selection:**
-- `tts.provider` – Active provider: `"piper"` (default) or `"gpt-sovits"`
+- `tts.provider` – Active provider (`"kokoro"` default). Valid values: `"kokoro"`, `"gpt-sovits"`, `"rvc"`, `"piper"`.
+
+**Kokoro Settings** (`tts.kokoro`):
+- `langCode` – Kokoro language code (`"a"` for English bundle)
+- `voice` – Built-in Kokoro voice ID (e.g., `af_heart`, `af_sky`)
+- `speed` – Speech rate multiplier
+- `device` – `"cpu"` or `"cuda"` for inference
+- `autoFallbackToPiper` – Use Piper when Kokoro server is offline
+- `useCustomVoicepack` / `customVoicepackPath` – Optional StyleTTS2 voice packs
+- `server.useServer` / `server.autoStart` / `server.url` / `server.port` – Enable the bundled FastAPI server and let `./bin/start-voice-server` manage it
 
 **Piper Settings** (`tts.piper`):
 - `binary` – Path to Piper executable (auto-normalized to `<repo>/bin/piper/piper`)
@@ -420,6 +429,14 @@ Defines text-to-speech and speech-to-text configuration for the profile. Support
 - `timeout` – Request timeout in milliseconds (default: 30000)
 - `autoFallbackToPiper` – Auto-switch to Piper if SoVITS unavailable (default: `true`)
 
+- **RVC Settings** (`tts.rvc`):
+  - `referenceAudioDir` / `modelsDir` – Profile-specific dataset + trained model output directories
+  - `speakerId` – Active RVC speaker/model
+  - `pitchShift`, `speed`, `outputFormat`, `protect`, `indexRate`, `volumeEnvelope`, `f0Method` – Applio runtime tuning knobs
+  - `device` – `"cuda"` recommended for inference
+  - `autoFallbackToPiper` – Use Piper when the RVC server is offline
+  - `pauseOllamaDuringInference` – Temporarily pause LLM workloads to free VRAM
+
 **Shared Settings:**
 - `cache.directory` – Audio cache location (`profiles/<username>/out/voice-cache`)
 - `cache.enabled` – Enable caching to avoid regenerating identical audio
@@ -430,6 +447,7 @@ Defines text-to-speech and speech-to-text configuration for the profile. Support
 - `device` – Processing device (`"cpu"` or `"cuda"`)
 - `computeType` – Precision mode (`"int8"`, `"fp16"`, `"fp32"`)
 - `language` – Target language code (e.g., `"en"`)
+- `server.useServer` / `server.autoStart` / `server.url` / `server.port` – Control the optional long-running Whisper server that `./bin/start-voice-server` manages
 
 **Voice Training** (`training`):
 - Controls per-user voice cloning thresholds and quality filters
@@ -450,7 +468,7 @@ Defines text-to-speech and speech-to-text configuration for the profile. Support
 
 #### Switching Providers
 
-Change providers via the Web UI (Settings → Voice) or by editing `tts.provider` in `voice.json`. The system will automatically route TTS requests to the selected provider.
+Change providers via the Web UI (Settings → Voice) or by editing `tts.provider` in `voice.json`. The system will automatically route TTS requests to the selected provider, and `./bin/start-voice-server` will launch whichever backing services that profile requires.
 
 ### `profiles/<username>/etc/agents.json` - Agent Scheduler Configuration
 Controls the centralized agent scheduler system. This file defines all autonomous agents, their trigger types, and scheduling parameters.

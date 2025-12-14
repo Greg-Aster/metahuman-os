@@ -614,7 +614,7 @@ Headless mode changes are fully audited:
 Always set up the Cloudflare tunnel before using headless mode:
 
 ```bash
-# See: docs/user-guide/17-cloudflare-tunnel-setup.md
+# See: configuration-admin/deployment.md
 
 # 1. Install cloudflared
 # 2. Configure tunnel

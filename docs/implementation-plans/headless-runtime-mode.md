@@ -10,7 +10,7 @@ Allow MetaHuman to expose the UI through the Cloudflare tunnel without running t
 
 ## Current Architecture Notes
 - Tunnel management lives in `packages/core/src/cloudflare-tunnel.ts` and stores its config in `etc/cloudflare.json`.
-- The Network tab (`apps/site/src/components/NetworkSettings.svelte`) drives `/api/cloudflare/*`.
+- The Network tab (`apps/site/src/components/NetworkServerSettings.svelte`) drives `/api/cloudflare/*`.
 - Runtime/agent orchestration happens inside CLI commands (`packages/cli/src/commands/*`) and the long-running agents under `brain/agents/*`.
 - UI state is derived from `statusStore`, `currentMode`, etc. inside `apps/site/src/stores/*`.
 
@@ -39,7 +39,7 @@ Allow MetaHuman to expose the UI through the Cloudflare tunnel without running t
 3. Wire owner-only authentication using the existing guards (e.g., `isOwner` store / session middleware).
 
 ### 3. Network Tab UX
-1. In `NetworkSettings.svelte`:
+1. In `NetworkServerSettings.svelte`:
    - Fetch `/api/runtime/mode` alongside tunnel status.
    - Add a “Headless Mode” toggle with copy like: “Keep tunnel + server online but park local agents until a remote session is active.”
    - When the toggle is enabled, call `POST /api/runtime/mode { headless: true }` before `startTunnel()`.

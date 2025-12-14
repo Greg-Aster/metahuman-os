@@ -99,8 +99,8 @@
       case 'SecuritySettings':
         module = await import('./SecuritySettings.svelte');
         break;
-      case 'NetworkSettings':
-        module = await import('./NetworkSettings.svelte');
+      case 'NetworkServerSettings':
+        module = await import('./NetworkServerSettings.svelte');
         break;
       case 'ChatSettings':
         module = await import('./ChatSettings.svelte');
@@ -122,9 +122,6 @@
         break;
       case 'ProfileLocation':
         module = await import('./ProfileLocation.svelte');
-        break;
-      case 'ServerSettings':
-        module = await import('./ServerSettings.svelte');
         break;
       case 'TerminalManager':
         module = await import('./TerminalManager.svelte');
@@ -187,7 +184,7 @@ let personaTab: 'editor' | 'memory' | 'generator' = 'editor'
 let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'wizard' | 'datasets' | 'manage' | 'system' | 'monitor' | 'adapters' = 'wizard'
-let systemTab: 'chat' | 'lifeline' | 'settings' | 'security' | 'network' | 'storage' | 'addons' | 'scheduler' | 'server' = 'settings'
+let systemTab: 'chat' | 'lifeline' | 'settings' | 'security' | 'network' | 'storage' | 'addons' | 'scheduler' = 'settings'
 let dashboardTab: 'overview' | 'tasks' | 'approvals' = 'overview'
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
 
@@ -553,7 +550,7 @@ async function loadMemoryContent(relPath: string) {
         void loadComponent('SystemSettings');
         void loadComponent('SecuritySettings');
         void loadComponent('ProfileLocation');
-        void loadComponent('NetworkSettings');
+        void loadComponent('NetworkServerSettings');
         void loadComponent('AddonsManager');
         void loadComponent('Lifeline');
         void loadComponent('SchedulerSettings');
@@ -1359,10 +1356,7 @@ async function loadMemoryContent(relPath: string) {
           <button class="tab-button" class:active={systemTab==='backend'} on:click={() => systemTab='backend'}>Backend</button>
           <button class="tab-button" class:active={systemTab==='security'} on:click={() => systemTab='security'}>Security</button>
           <button class="tab-button" class:active={systemTab==='storage'} on:click={() => systemTab='storage'}>Storage</button>
-          <button class="tab-button" class:active={systemTab==='network'} on:click={() => systemTab='network'}>Network</button>
-          {#if isMobileAppSafe}
-            <button class="tab-button" class:active={systemTab==='server'} on:click={() => systemTab='server'}>📡 Server</button>
-          {/if}
+          <button class="tab-button" class:active={systemTab==='network'} on:click={() => systemTab='network'}>🌐 Network</button>
           <button class="tab-button" class:active={systemTab==='addons'} on:click={() => systemTab='addons'}>Addons</button>
           <button class="tab-button" class:active={systemTab==='scheduler'} on:click={() => systemTab='scheduler'}>Scheduler</button>
           <button class="tab-button" class:active={systemTab==='lifeline'} on:click={() => systemTab='lifeline'}>Lifeline</button>
@@ -1398,7 +1392,7 @@ async function loadMemoryContent(relPath: string) {
             <svelte:component this={Component} />
           {/await}
         {:else if systemTab === 'network'}
-          {#await loadComponent('NetworkSettings')}
+          {#await loadComponent('NetworkServerSettings')}
             <div class="loading-placeholder">Loading network settings...</div>
           {:then Component}
             <svelte:component this={Component} />
@@ -1418,12 +1412,6 @@ async function loadMemoryContent(relPath: string) {
         {:else if systemTab === 'scheduler'}
           {#await loadComponent('SchedulerSettings')}
             <div class="loading-placeholder">Loading scheduler settings...</div>
-          {:then Component}
-            <svelte:component this={Component} />
-          {/await}
-        {:else if systemTab === 'server'}
-          {#await loadComponent('ServerSettings')}
-            <div class="loading-placeholder">Loading server settings...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}

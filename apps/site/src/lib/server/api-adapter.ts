@@ -8,41 +8,36 @@
 import type { APIRoute, APIContext, AstroCookies } from 'astro';
 import { routeRequest } from '@metahuman/core/api';
 import type { UnifiedRequest, UnifiedResponse, UnifiedUser, CookieOperation } from '@metahuman/core/api';
-import { getAuthenticatedUser, getUserOrAnonymous } from '@metahuman/core';
+import { getAuthenticatedUser, AuthRequiredError } from '@metahuman/core';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
 
 /**
  * Resolve user from Astro cookies
+ *
+ * All users must be authenticated - no anonymous access allowed.
+ * Returns unauthenticated marker if auth fails (handlers should reject with 401).
  */
-function resolveUser(cookies: AstroCookies, requiresAuth: boolean): UnifiedUser {
-  if (requiresAuth) {
-    try {
-      const user = getAuthenticatedUser(cookies);
+function resolveUser(cookies: AstroCookies): UnifiedUser {
+  try {
+    const user = getAuthenticatedUser(cookies);
+    return {
+      userId: user.id,
+      username: user.username,
+      role: user.role as 'owner' | 'standard' | 'guest',
+      isAuthenticated: true,
+    };
+  } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      // Auth failed - return unauthenticated user (handlers will reject)
       return {
-        userId: user.id,
-        username: user.username,
-        role: user.role as 'owner' | 'guest' | 'anonymous',
-        isAuthenticated: true,
-      };
-    } catch {
-      // Auth required but failed - return anonymous (handler will reject)
-      return {
-        userId: 'anonymous',
-        username: 'anonymous',
-        role: 'anonymous',
+        userId: 'unauthenticated',
+        username: 'unauthenticated',
+        role: 'guest', // Use guest as fallback role - handlers check isAuthenticated
         isAuthenticated: false,
       };
     }
+    throw error;
   }
-
-  // Public endpoint - allow anonymous
-  const user = getUserOrAnonymous(cookies);
-  return {
-    userId: user.id || 'anonymous',
-    username: user.username || 'anonymous',
-    role: (user.role as 'owner' | 'guest' | 'anonymous') || 'anonymous',
-    isAuthenticated: user.role !== 'anonymous',
-  };
 }
 
 /**
@@ -86,10 +81,9 @@ function parseHeaders(headers: Headers): Record<string, string> {
  * Convert Astro context to UnifiedRequest
  */
 async function toUnifiedRequest(
-  context: APIContext,
-  requiresAuth: boolean
+  context: APIContext
 ): Promise<UnifiedRequest> {
-  const user = resolveUser(context.cookies, requiresAuth);
+  const user = resolveUser(context.cookies);
 
   // Parse body for POST/PUT/PATCH/DELETE
   let body: any = undefined;
@@ -209,24 +203,24 @@ function toAstroResponse(
  * Create an Astro API route handler from the unified router
  *
  * This is the main factory function for migrating Astro routes to unified handlers.
+ * All routes require authentication - no anonymous access allowed.
  *
- * @param requiresAuth - Whether the route requires authentication (default: false)
  * @returns Astro APIRoute handler
  *
  * @example
  * // apps/site/src/pages/api/capture.ts
  * import { createAstroHandler } from '../../lib/server/api-adapter';
- * export const POST = createAstroHandler(true); // requiresAuth = true
+ * export const POST = createAstroHandler();
  *
  * @example
  * // apps/site/src/pages/api/status.ts
  * import { createAstroHandler } from '../../lib/server/api-adapter';
- * export const GET = createAstroHandler(); // public endpoint
+ * export const GET = createAstroHandler();
  */
-export function createAstroHandler(requiresAuth = false): APIRoute {
+export function createAstroHandler(): APIRoute {
   return async (context: APIContext): Promise<Response> => {
     try {
-      const req = await toUnifiedRequest(context, requiresAuth);
+      const req = await toUnifiedRequest(context);
       const res = await routeRequest(req);
       return toAstroResponse(res, context.cookies);
     } catch (error) {
@@ -247,6 +241,7 @@ export function createAstroHandler(requiresAuth = false): APIRoute {
  *
  * This can be used to route ALL API requests through the unified layer.
  * Useful for [...path].ts catch-all routes.
+ * All routes require authentication - no anonymous access allowed.
  *
  * @example
  * // apps/site/src/pages/api/[...path].ts
@@ -256,8 +251,7 @@ export function createAstroHandler(requiresAuth = false): APIRoute {
 export function createCatchAllHandler(): APIRoute {
   return async (context: APIContext): Promise<Response> => {
     try {
-      // Start with public access - the router will enforce auth requirements
-      const req = await toUnifiedRequest(context, false);
+      const req = await toUnifiedRequest(context);
       const res = await routeRequest(req);
       return toAstroResponse(res, context.cookies);
     } catch (error) {
@@ -275,18 +269,19 @@ export function createCatchAllHandler(): APIRoute {
 
 /**
  * Helper to create handlers for all HTTP methods
+ * All routes require authentication - no anonymous access allowed.
  *
  * @example
  * // apps/site/src/pages/api/tasks.ts
  * import { createAstroHandlers } from '../../lib/server/api-adapter';
- * export const { GET, POST } = createAstroHandlers({ GET: false, POST: true });
+ * export const { GET, POST } = createAstroHandlers(['GET', 'POST']);
  */
 export function createAstroHandlers(
-  methods: Partial<Record<'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH', boolean>>
+  methods: ('GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH')[]
 ): Record<string, APIRoute> {
   const handlers: Record<string, APIRoute> = {};
-  for (const [method, requiresAuth] of Object.entries(methods)) {
-    handlers[method] = createAstroHandler(requiresAuth ?? false);
+  for (const method of methods) {
+    handlers[method] = createAstroHandler();
   }
   return handlers;
 }

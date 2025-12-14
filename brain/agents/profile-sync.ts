@@ -435,8 +435,9 @@ function saveSyncState(state: any): void {
 
 /**
  * Sync profile for a single user
+ * Exported for use by mobile-agents.ts (in-process execution)
  */
-async function syncUserProfile(
+export async function syncUserProfile(
   username: string,
   options: SyncOptions,
   onProgress?: (progress: SyncProgress) => void

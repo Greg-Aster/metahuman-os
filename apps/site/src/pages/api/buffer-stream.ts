@@ -18,7 +18,7 @@ import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { getUserOrAnonymous, getProfilePaths, getBufferNotificationPath } from '@metahuman/core';
+import { getAuthenticatedUser, AuthRequiredError, getProfilePaths, getBufferNotificationPath } from '@metahuman/core';
 
 export const GET: APIRoute = ({ request, cookies }) => {
   // Get mode from query params
@@ -32,29 +32,29 @@ export const GET: APIRoute = ({ request, cookies }) => {
     });
   }
 
-  // Get user for profile path resolution
-  // Guest users (anonymous with selected profile) have id/username = 'guest'
-  const user = getUserOrAnonymous(cookies);
-  const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
-
-  // Block pure anonymous users (no selected profile)
-  if (user.role === 'anonymous' && !isGuestWithProfile) {
-    // Return SSE error event instead of JSON so EventSource can handle it
-    // This prevents silent failures when auth cookie is missing/invalid
-    const errorStream = new ReadableStream({
-      start(controller) {
-        controller.enqueue(`data: ${JSON.stringify({ type: 'error', error: 'Not authenticated. Please refresh the page and log in.' })}\n\n`);
-        controller.close();
-      },
-    });
-    return new Response(errorStream, {
-      status: 200, // Must be 200 for EventSource to receive the message
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      },
-    });
+  // Authenticate user - returns SSE error if not authenticated
+  let user;
+  try {
+    user = getAuthenticatedUser(cookies);
+  } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      // Return SSE error event instead of JSON so EventSource can handle it
+      const errorStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(`data: ${JSON.stringify({ type: 'error', error: 'Not authenticated. Please refresh the page and log in.' })}\n\n`);
+          controller.close();
+        },
+      });
+      return new Response(errorStream, {
+        status: 200, // Must be 200 for EventSource to receive the message
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        },
+      });
+    }
+    throw error;
   }
 
   const username = user.username;
@@ -64,7 +64,7 @@ export const GET: APIRoute = ({ request, cookies }) => {
   let bufferPath: string;
   let notifyPath: string;
 
-  if (isGuestWithProfile) {
+  if (user.role === 'guest') {
     // Get session ID for unique temp directory
     const sessionCookie = cookies.get('mh_session');
     const sessionId = sessionCookie?.value?.substring(0, 16) || 'default';

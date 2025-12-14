@@ -1,6 +1,6 @@
-# Core Concepts
+# System Architecture
 
-Understanding the architecture and philosophy behind MetaHuman OS.
+A deep dive into the architecture and philosophy behind MetaHuman OS for power users.
 
 ---
 

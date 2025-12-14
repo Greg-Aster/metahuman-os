@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
   import { statusRefreshTrigger } from '../stores/navigation';
+  import LocalModelsSettings from './LocalModelsSettings.svelte';
 
   // Backend types (local LLM backends only - remote server is parallel, not a backend choice)
   type BackendType = 'ollama' | 'vllm' | 'auto';
@@ -1159,6 +1160,11 @@
         <span class="saving-indicator">Saving...</span>
       {/if}
     </div>
+
+    <!-- Local Models (Transformers.js - for mobile/offline) -->
+    <div class="local-models-section">
+      <LocalModelsSettings />
+    </div>
   {/if}
 </div>
 
@@ -2264,5 +2270,19 @@
 
   :global(.dark) .result-note.warning {
     color: #fbbf24;
+  }
+
+  /* Local Models Section */
+  .local-models-section {
+    background: #fdf4ff;
+    border: 1px solid #e879f9;
+    border-radius: 0.75rem;
+    padding: 1rem;
+    margin-top: 1.5rem;
+  }
+
+  :global(.dark) .local-models-section {
+    background: rgba(232, 121, 249, 0.1);
+    border-color: rgba(232, 121, 249, 0.3);
   }
 </style>

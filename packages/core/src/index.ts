@@ -241,15 +241,14 @@ export * from './persona/cleanup';
 export type {
   Cookies,
   AuthenticatedUser,
-  AnonymousUser,
   User as AuthUser,
 } from './auth.js';
 export {
   getAuthenticatedUser,
-  getUserOrAnonymous,
   getUserPaths,
   hasPermission,
   requirePermission,
+  AuthRequiredError,
 } from './auth.js';
 
 export * from './context';  // DEPRECATED - will be removed

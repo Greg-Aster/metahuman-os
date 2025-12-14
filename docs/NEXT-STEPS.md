@@ -213,7 +213,7 @@ interface ServerProfile {
 ### UI
 
 - Dropdown in header for quick switching
-- Full management in ServerSettings
+- Full management in NetworkServerSettings
 - Auto-reconnect to last working server
 
 ### Estimated Effort: 4-6 hours

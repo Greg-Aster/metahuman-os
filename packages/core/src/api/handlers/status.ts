@@ -119,9 +119,13 @@ function detectBigBrotherAvailability(): { available: boolean; enabled: boolean;
 
 /**
  * Detect Remote Server (Cloudflare tunnel) configuration
- * Future feature - placeholder for now
  */
-function detectRemoteServerAvailability(): { available: boolean; configured: boolean; serverUrl?: string } {
+function detectRemoteServerAvailability(): {
+  available: boolean;
+  configured: boolean;
+  serverUrl?: string;
+  sessionId?: string;
+} {
   try {
     const backendConfig = JSON.parse(
       fs.readFileSync(path.join(systemPaths.root, 'etc', 'llm-backend.json'), 'utf-8')
@@ -132,6 +136,7 @@ function detectRemoteServerAvailability(): { available: boolean; configured: boo
       available: remote.provider === 'server' && !!remote.serverUrl,
       configured: !!remote.serverUrl,
       serverUrl: remote.serverUrl,
+      sessionId: remote.credentials?.sessionId,  // Session cookie auth (secure)
     };
   } catch {
     return {
@@ -472,7 +477,11 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
       let remoteServerModels: Array<{ id: string; model: string; provider: string }> = [];
       if (remoteServerStatus.configured && remoteServerStatus.serverUrl) {
         try {
-          const result = await fetchRemoteModels(remoteServerStatus.serverUrl);
+          // Pass sessionId if available (session cookie auth - secure)
+          const result = await fetchRemoteModels(
+            remoteServerStatus.serverUrl,
+            remoteServerStatus.sessionId ? { sessionId: remoteServerStatus.sessionId } : undefined
+          );
           if (result.success && result.models) {
             // Transform to match cloudModels format with 'remote-server' provider
             remoteServerModels = result.models.map(m => ({

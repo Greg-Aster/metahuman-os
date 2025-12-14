@@ -52,9 +52,10 @@ The MetaHuman OS mobile app now has a complete three-tier architecture framework
   - Compact color-coded status dot
   - Click to force refresh
 
-- [ServerSettings.svelte](../apps/site/src/components/ServerSettings.svelte)
-  - Full server configuration UI (mobile-only)
-  - Server selection, test connection, tier info
+- [NetworkServerSettings.svelte](../apps/site/src/components/NetworkServerSettings.svelte)
+  - Consolidated network & server configuration UI
+  - Connection status, server selection, WiFi broadcast, Cloudflare tunnel, headless mode
+  - All features visible on all platforms (greyed out if not applicable)
 
 ---
 
@@ -150,7 +151,7 @@ The MetaHuman OS mobile app now has a complete three-tier architecture framework
 ```
 apps/site/src/
 ├── components/           ← Shared Svelte (web + mobile)
-│   ├── ServerSettings.svelte    ← Mobile-only sections gated
+│   ├── NetworkServerSettings.svelte  ← Consolidated network/server settings
 │   ├── TierSelector.svelte
 │   ├── SyncStatus.svelte
 │   └── ModelManager.svelte
@@ -202,29 +203,37 @@ onMount(() => {
 
 ## UI Integration
 
-### ServerSettings.svelte Structure
+### NetworkServerSettings.svelte Structure
 
 ```svelte
-<div class="server-settings">
-  <!-- Connection Status -->
-  <ServerHealthIndicator />
+<div class="settings-container">
+  <!-- Connection Status (always shown) -->
+  <ConnectionStatus />
 
-  <!-- Server Selection -->
-  <select> Home / Cloud / Custom </select>
+  <!-- Local Server Info (desktop only, greyed on mobile) -->
+  <LocalServerInfo />
 
-  <!-- Compute Tier (mobile only) -->
+  <!-- WiFi Broadcasting (mobile only, greyed on desktop) -->
+  <WifiBroadcast />
+
+  <!-- Server Selection (mobile only, greyed on desktop) -->
+  <ServerSelection />
+
+  <!-- Cloudflare Tunnel (always shown, works on both) -->
+  <CloudflareTunnel />
+
+  <!-- Headless Mode (always shown) -->
+  <HeadlessMode />
+
+  <!-- Mobile-only sections -->
   {#if isMobile}
     <TierSelector />
-  {/if}
-
-  <!-- Memory Sync (mobile only) -->
-  {#if isMobile}
     <SyncStatus />
-  {/if}
-
-  <!-- On-Device AI (mobile only) -->
-  {#if isMobile}
-    <ModelManager />
+    <UpdateManager />
+    <ProfileManager />
+  {:else}
+    <!-- Desktop shows info about mobile features -->
+    <MobileFeaturesInfo />
   {/if}
 </div>
 ```

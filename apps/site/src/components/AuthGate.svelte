@@ -33,6 +33,7 @@
   let loading = false;
   let showProfileSelector = false;
   let guestSessionError = '';
+  let successMessage = '';
 
   // Server connection state
   let serverConnected = false;
@@ -184,10 +185,11 @@
             .catch(err => {
               console.warn('[AuthGate] Profile-sync agent trigger failed:', err);
             });
-          error = `✅ LOGIN SUCCESS! Welcome back, ${data.user.username}. Syncing profile in background...`;
+          successMessage = `LOGIN SUCCESS! Welcome back, ${data.user.username}. Syncing profile in background...`;
         } else {
-          error = `✅ LOGIN SUCCESS! Welcome back, ${data.user.username}. Profile loaded and ready.`;
+          successMessage = `LOGIN SUCCESS! Welcome back, ${data.user.username}. Profile loaded and ready.`;
         }
+        error = ''; // Clear any previous errors
 
         console.log('[AuthGate] Proceeding to app...');
 
@@ -376,7 +378,8 @@
       }
 
       // SHOW SUCCESS MESSAGE
-      error = `✅ SYNC SUCCESS! Imported ${importData.imported} files from ${syncServerUrl}. Profile ready!`;
+      successMessage = `SYNC SUCCESS! Imported ${importData.imported} files from ${syncServerUrl}. Profile ready!`;
+      error = ''; // Clear any previous errors
       console.log(`[AuthGate] SYNC SUCCESS: ${importData.imported} files imported via ${syncStrategy} sync`);
 
       // SUCCESS - Actually synced profile data
@@ -811,7 +814,7 @@
                 id="login-username"
                 type="text"
                 bind:value={username}
-                on:input={() => { showSyncHint = false; error = ''; }}
+                on:input={() => { showSyncHint = false; error = ''; successMessage = ''; }}
                 required
                 disabled={loading}
                 autocomplete="username"
@@ -824,7 +827,7 @@
                 id="login-password"
                 type="password"
                 bind:value={password}
-                on:input={() => { showSyncHint = false; error = ''; }}
+                on:input={() => { showSyncHint = false; error = ''; successMessage = ''; }}
                 required
                 disabled={loading}
                 autocomplete="current-password"
@@ -833,6 +836,10 @@
 
             {#if error}
               <div class="error-message">{error}</div>
+            {/if}
+
+            {#if successMessage}
+              <div class="success-message">✅ {successMessage}</div>
             {/if}
 
             {#if showSyncHint}
@@ -1105,6 +1112,10 @@
 
           {#if error}
             <div class="error-message">{error}</div>
+          {/if}
+
+          {#if successMessage}
+            <div class="success-message">✅ {successMessage}</div>
           {/if}
 
           <div class="offline-options">
@@ -1749,6 +1760,22 @@
     color: #ef4444;
     font-size: 0.875rem;
     margin-bottom: 1rem;
+  }
+
+  .success-message {
+    padding: 0.75rem 1rem;
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    border-radius: 8px;
+    color: #22c55e;
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+  }
+
+  :global(html:not(.dark)) .success-message {
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(34, 197, 94, 0.4);
+    color: #16a34a;
   }
 
   .form-footer {

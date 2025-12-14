@@ -62,6 +62,7 @@
     "./encryption": "./src/encryption.ts",
     "./deployment": "./src/deployment.ts",
     "./providers": "./src/providers/index.ts",
+    "./local-model-service": "./src/local-model-service-manager.ts",
     "./cognitive-layers": "./src/cognitive-layers/index.ts",
     "./api": "./src/api/index.ts",
     "./api/handlers/profile-sync": "./src/api/handlers/profile-sync.ts",

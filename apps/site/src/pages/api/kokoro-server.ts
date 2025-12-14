@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getUserOrAnonymous, getProfilePaths } from '@metahuman/core';
+import { getAuthenticatedUser, AuthRequiredError, getProfilePaths } from '@metahuman/core';
 
 const rootPath = path.resolve(process.cwd(), '../..');
 const KOKORO_DIR = path.join(rootPath, 'external', 'kokoro');
@@ -34,6 +34,20 @@ export const GET: APIRoute = async () => {
  * Start or stop Kokoro server
  */
 export const POST: APIRoute = async ({ request, cookies }) => {
+  // Authenticate user - returns 401 if not authenticated
+  let user;
+  try {
+    user = getAuthenticatedUser(cookies);
+  } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      return new Response(JSON.stringify({ error: 'Authentication required', redirect: '/auth' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw error;
+  }
+
   try {
     const { action, port, lang, device } = await request.json();
 
@@ -41,19 +55,14 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       // If device not explicitly provided, try to read from user's voice.json
       let effectiveDevice = device;
       if (!effectiveDevice) {
-        const user = getUserOrAnonymous(cookies);
-        const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
-
-        if (user.role !== 'anonymous' || isGuestWithProfile) {
-          try {
-            const profilePaths = getProfilePaths(user.username);
-            if (fs.existsSync(profilePaths.voiceConfig)) {
-              const voiceConfig = JSON.parse(fs.readFileSync(profilePaths.voiceConfig, 'utf-8'));
-              effectiveDevice = voiceConfig.tts?.kokoro?.device;
-            }
-          } catch (e) {
-            console.warn('[kokoro-server] Failed to read voice config for device setting:', e);
+        try {
+          const profilePaths = getProfilePaths(user.username);
+          if (fs.existsSync(profilePaths.voiceConfig)) {
+            const voiceConfig = JSON.parse(fs.readFileSync(profilePaths.voiceConfig, 'utf-8'));
+            effectiveDevice = voiceConfig.tts?.kokoro?.device;
           }
+        } catch (e) {
+          console.warn('[kokoro-server] Failed to read voice config for device setting:', e);
         }
 
         // Default to cuda if still not set

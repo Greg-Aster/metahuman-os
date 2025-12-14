@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { getUserOrAnonymous, systemPaths, storageClient } from '@metahuman/core';
+import { getAuthenticatedUser, AuthRequiredError, systemPaths, storageClient, getProfilePaths } from '@metahuman/core';
 import { startSovitsServer, stopSovitsServer } from '../../lib/server/sovits-server';
 import { stopServer } from '@metahuman/core/tts/server-manager';
 import fs from 'node:fs';
@@ -454,32 +454,34 @@ function ensureVoiceConfig(
  * POST: Update voice settings
  */
 const getHandler: APIRoute = async ({ cookies }) => {
+  // Authenticate user - returns 401 if not authenticated
+  let user;
   try {
-    // Get user (never throws, returns anonymous if not authenticated)
-    const user = getUserOrAnonymous(cookies);
+    user = getAuthenticatedUser(cookies);
+  } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      return new Response(JSON.stringify({ error: 'Authentication required', redirect: '/auth' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw error;
+  }
 
-    // Check if this is a guest with selected profile (anonymous but using guest profile)
-    const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
-
-    // Use storage router to get correct profile path based on user's storage config
+  try {
+    // Get profile root from storage router (handles external storage)
     let voiceConfigPath: string;
     let profileRoot: string;
 
-    if (user.role !== 'anonymous' || isGuestWithProfile) {
-      // Get profile root from storage router (handles external storage)
-      const storageResult = storageClient.getProfileRoot(user.username);
-      if (storageResult.success && storageResult.profileRoot) {
-        profileRoot = storageResult.profileRoot;
-        voiceConfigPath = path.join(profileRoot, 'etc', 'voice.json');
-      } else {
-        // Fallback to system defaults if storage resolution fails
-        profileRoot = systemPaths.root;
-        voiceConfigPath = path.join(systemPaths.etc, 'voice.json');
-      }
+    const storageResult = storageClient.getProfileRoot(user.username);
+    if (storageResult.success && storageResult.profileRoot) {
+      profileRoot = storageResult.profileRoot;
+      voiceConfigPath = path.join(profileRoot, 'etc', 'voice.json');
     } else {
-      // Anonymous users get system defaults
-      profileRoot = systemPaths.root;
-      voiceConfigPath = path.join(systemPaths.etc, 'voice.json');
+      // Fallback to default profile paths
+      const profilePaths = getProfilePaths(user.username);
+      profileRoot = profilePaths.root;
+      voiceConfigPath = path.join(profilePaths.etc, 'voice.json');
     }
 
     const voicesDir = systemPaths.voiceModels;
@@ -536,7 +538,7 @@ const getHandler: APIRoute = async ({ cookies }) => {
         // PID file exists and process is running, but health check failed
         // Server is likely still starting up (loading model)
         whisperServerStatus = 'loading';
-      } else if (config.stt.whisper.server.autoStart && (user.role !== 'anonymous' || isGuestWithProfile)) {
+      } else if (config.stt.whisper.server.autoStart) {
         // No server running and no PID file - safe to start
         whisperServerStatus = 'starting';
         console.log('[voice-settings] Auto-starting Whisper server...');
@@ -649,15 +651,21 @@ const getHandler: APIRoute = async ({ cookies }) => {
 };
 
 const postHandler: APIRoute = async ({ request, cookies }) => {
+  // Authenticate user - returns 401 if not authenticated
+  let user;
   try {
-    // Explicit auth check - throws 401 if not authenticated
-    const user = getUserOrAnonymous(cookies);
-    if (user.role === 'anonymous') {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
+    user = getAuthenticatedUser(cookies);
+  } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      return new Response(JSON.stringify({ error: 'Authentication required', redirect: '/auth' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
+    throw error;
+  }
+
+  try {
 
     const body = await request.json();
     const { provider, piper, sovits, rvc, kokoro, stt } = body;

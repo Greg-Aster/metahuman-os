@@ -18,6 +18,20 @@
     "autoUtilization": false,
     "enableThinking": true
   },
+  "localModels": {
+    "enabled": true,
+    "endpoint": "http://127.0.0.1:4324",
+    "autoStart": false,
+    "downloadOnWifiOnly": true,
+    "embeddings": {
+      "model": "qwen3-embedding-0.6b",
+      "preloadAtStartup": true
+    },
+    "llm": {
+      "model": "qwen3-1.7b",
+      "preloadAtStartup": false
+    }
+  },
   "$schema": "https://metahuman.dev/schemas/llm-backend.json",
   "version": "1.0.0",
   "description": "LLM backend configuration - controls which local inference engine is used",

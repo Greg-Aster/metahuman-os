@@ -102,21 +102,6 @@ export function getAuthenticatedUser(auth: AuthInput): AuthenticatedUser {
 }
 
 /**
- * @deprecated Use getAuthenticatedUser() instead - anonymous access is not allowed
- *
- * This function previously returned an anonymous user when auth failed.
- * Now it throws AuthRequiredError because ALL access requires authentication.
- * Even guests must go through the auth gate to get a session cookie.
- *
- * MIGRATION: Replace calls to getUserOrAnonymous() with getAuthenticatedUser()
- * and handle AuthRequiredError by redirecting to the auth gate.
- */
-export function getUserOrAnonymous(auth: AuthInput): User {
-  console.warn('[auth] DEPRECATED: getUserOrAnonymous() called - use getAuthenticatedUser() instead');
-  return getAuthenticatedUser(auth);
-}
-
-/**
  * Get profile paths for a user
  *
  * Returns profile paths for the authenticated user.

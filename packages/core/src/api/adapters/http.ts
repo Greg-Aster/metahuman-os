@@ -11,7 +11,7 @@
 import { routeRequest } from '../router.js';
 import type { UnifiedRequest, UnifiedResponse, UnifiedUser } from '../types.js';
 import { validateSession } from '../../sessions.js';
-import { getUser, authenticateUser } from '../../users.js';
+import { getUser } from '../../users.js';
 import { withUserContext } from '../../context.js';
 
 /**
@@ -28,44 +28,6 @@ export function parseCookies(cookieHeader: string | null | undefined): Record<st
     });
   }
   return cookies;
-}
-
-/**
- * Parse Basic Auth header and authenticate user
- * Returns UnifiedUser if authentication succeeds, null otherwise
- */
-export function resolveUserFromBasicAuth(authHeader: string | undefined): UnifiedUser | null {
-  if (!authHeader || !authHeader.startsWith('Basic ')) {
-    return null;
-  }
-
-  try {
-    const base64Credentials = authHeader.slice(6); // Remove 'Basic '
-    const credentials = Buffer.from(base64Credentials, 'base64').toString('utf-8');
-    const [username, password] = credentials.split(':');
-
-    if (!username || !password) {
-      return null;
-    }
-
-    // Authenticate using the users system (bcrypt password verification)
-    const authenticatedUser = authenticateUser(username, password);
-    if (!authenticatedUser) {
-      console.log('[http-adapter] Basic auth failed for user:', username);
-      return null;
-    }
-
-    console.log('[http-adapter] Basic auth succeeded for user:', username);
-    return {
-      userId: authenticatedUser.id,
-      username: authenticatedUser.username,
-      role: authenticatedUser.role as 'owner' | 'standard' | 'guest',
-      isAuthenticated: true,
-    };
-  } catch (error) {
-    console.error('[http-adapter] Basic auth parsing error:', error);
-    return null;
-  }
 }
 
 /**
@@ -115,11 +77,14 @@ export class HttpAuthRequiredError extends Error {
  * Build UnifiedRequest from HTTP request components
  * Used by both Astro and mobile HTTP server
  *
- * Authentication priority:
- * 1. Session cookie (mh_session) - for web UI
- * 2. Basic Auth header - for API clients and remote server proxying
+ * Authentication: Session cookie (mh_session) ONLY
+ * - No Basic Auth (passwords in headers = security risk)
+ * - Login via /api/auth/login to get session cookie
+ * - Remote server: connect flow logs in and saves sessionId
  *
- * NO ANONYMOUS USERS - throws HttpAuthRequiredError if no valid auth found
+ * If no valid session, creates unauthenticated user (isAuthenticated: false).
+ * The router will check route.requiresAuth and reject with 401 if needed.
+ * This allows auth routes (login, guest, etc.) to work without prior auth.
  */
 export function buildUnifiedRequest(params: {
   path: string;
@@ -133,19 +98,19 @@ export function buildUnifiedRequest(params: {
   const cookies = parseCookies(params.cookieHeader);
   const sessionToken = cookies['mh_session'];
 
-  // Try session cookie first (primary auth for web UI)
+  // Session cookie is the ONLY authentication method (no Basic Auth - security risk)
   let user = resolveUserFromCookie(sessionToken);
 
-  // If no session, try Basic Auth header (for API clients / remote server)
-  if (!user && params.headers) {
-    // Check both lowercase and original case (headers can vary)
-    const authHeader = params.headers['authorization'] || params.headers['Authorization'];
-    user = resolveUserFromBasicAuth(authHeader);
-  }
-
-  // NO ANONYMOUS ACCESS - if still no user, auth is required
+  // If no valid session, create unauthenticated user object
+  // Router will check route.requiresAuth and reject if needed
+  // This allows auth routes (login, guest, etc.) to work without prior authentication
   if (!user) {
-    throw new HttpAuthRequiredError('No valid session or credentials - redirect to auth gate');
+    user = {
+      userId: 'unauthenticated',
+      username: 'unauthenticated',
+      role: 'guest' as const,
+      isAuthenticated: false,
+    };
   }
 
   return {

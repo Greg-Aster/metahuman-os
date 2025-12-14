@@ -116,10 +116,14 @@ export async function checkRemoteServerHealth(serverUrl: string): Promise<{
 
 /**
  * Fetch available models from a remote server
+ *
+ * Auth options (mutually exclusive):
+ * - sessionId: Use existing session cookie (preferred, secure)
+ * - credentials: Use username/password for initial login/test only
  */
 export async function fetchRemoteModels(
   serverUrl: string,
-  credentials?: { username: string; password: string }
+  auth?: { sessionId: string } | { username: string; password: string }
 ): Promise<{
   success: boolean;
   models?: Array<{ id: string; model: string; provider: string; roles?: string[] }>;
@@ -128,15 +132,19 @@ export async function fetchRemoteModels(
   try {
     const baseUrl = serverUrl.replace(/\/$/, '');
 
-    // Build headers with optional auth
+    // Build headers with auth - session cookie preferred
     const headers: Record<string, string> = {
       'Accept': 'application/json',
     };
 
-    if (credentials) {
-      // Basic auth or session cookie would go here
-      // For now, we'll use the login flow to get a session
-      headers['Authorization'] = `Basic ${btoa(`${credentials.username}:${credentials.password}`)}`;
+    if (auth) {
+      if ('sessionId' in auth) {
+        // Session cookie - secure, preferred method
+        headers['Cookie'] = `mh_session=${auth.sessionId}`;
+      } else if ('username' in auth && 'password' in auth) {
+        // Username/password - only for initial connect/test (gets converted to session)
+        headers['Authorization'] = `Basic ${btoa(`${auth.username}:${auth.password}`)}`;
+      }
     }
 
     const controller = new AbortController();
@@ -313,9 +321,9 @@ export async function handleRemoteServerModels(req: UnifiedRequest): Promise<Uni
   try {
     const { query, user } = req;
 
-    // Get server URL and credentials from config
+    // Get server URL from query or config
     let serverUrl = query?.serverUrl;
-    let credentials: { username: string; password: string } | undefined;
+    let auth: { sessionId: string } | undefined;
 
     const available = await ensureBackendFunctions();
     if (available) {
@@ -324,17 +332,9 @@ export async function handleRemoteServerModels(req: UnifiedRequest): Promise<Uni
         serverUrl = config.remote?.serverUrl;
       }
 
-      // Load saved credentials if available
-      if (config.remote?.credentials?.token) {
-        try {
-          const decoded = Buffer.from(config.remote.credentials.token, 'base64').toString('utf-8');
-          const [username, password] = decoded.split(':');
-          if (username && password) {
-            credentials = { username, password };
-          }
-        } catch {
-          // Invalid token format, ignore
-        }
+      // Load saved sessionId from user credentials (secure - no password stored)
+      if (user.isAuthenticated && config.remote?.credentials?.sessionId) {
+        auth = { sessionId: config.remote.credentials.sessionId };
       }
     }
 
@@ -342,7 +342,7 @@ export async function handleRemoteServerModels(req: UnifiedRequest): Promise<Uni
       return errorResponse('No remote server URL configured', 400);
     }
 
-    const result = await fetchRemoteModels(serverUrl, credentials);
+    const result = await fetchRemoteModels(serverUrl, auth);
 
     if (!result.success) {
       return errorResponse(result.error || 'Failed to fetch models', 502);
@@ -539,8 +539,8 @@ export async function handleRemoteServerConnect(req: UnifiedRequest): Promise<Un
       }
     }
 
-    // Fetch models from the server using the new session
-    const modelsResult = await fetchRemoteModels(serverUrl, { username: remoteUsername, password: remotePassword });
+    // Fetch models from the server using the new session (not password!)
+    const modelsResult = await fetchRemoteModels(serverUrl, sessionId ? { sessionId } : undefined);
 
     return successResponse({
       success: true,

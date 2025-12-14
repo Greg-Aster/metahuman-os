@@ -240,6 +240,22 @@ import {
   handleRemoteServerConnect,
   handleRemoteServerDisconnect,
 } from './handlers/remote-server.js';
+import {
+  handleGetLocalModelsStatus,
+  handleGetLocalModelsConfig,
+  handleSetLocalModelsConfig,
+  handleGetLocalModelsAvailable,
+  handleDownloadLocalModel,
+  handleLoadLocalModel,
+  handleUnloadLocalModel,
+  handleStartLocalModels,
+  handleStopLocalModels,
+} from './handlers/local-models.js';
+import {
+  handleListUserGuide,
+  handleGetUserGuideChapter,
+  handleSearchUserGuide,
+} from './handlers/user-guide.js';
 // Note: Some complex routes (persona generator, kokoro-training, etc.) kept in Astro files
 
 // ============================================================================
@@ -739,6 +755,22 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/remote-server/test', handler: handleRemoteServerTest },
   { method: 'POST', pattern: '/api/remote-server/connect', handler: handleRemoteServerConnect, requiresAuth: true },
   { method: 'DELETE', pattern: '/api/remote-server/disconnect', handler: handleRemoteServerDisconnect, requiresAuth: true },
+
+  // Local Models (Transformers.js service for mobile/offline embeddings & LLM)
+  { method: 'GET', pattern: '/api/local-models/status', handler: handleGetLocalModelsStatus },
+  { method: 'GET', pattern: '/api/local-models/config', handler: handleGetLocalModelsConfig },
+  { method: 'PUT', pattern: '/api/local-models/config', handler: handleSetLocalModelsConfig, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/local-models/models', handler: handleGetLocalModelsAvailable },
+  { method: 'POST', pattern: '/api/local-models/download', handler: handleDownloadLocalModel, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/local-models/load', handler: handleLoadLocalModel, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/local-models/unload', handler: handleUnloadLocalModel, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/local-models/start', handler: handleStartLocalModels, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/local-models/stop', handler: handleStopLocalModels, requiresAuth: true, guard: 'owner' },
+
+  // User Guide (unified for web and mobile)
+  { method: 'GET', pattern: '/api/user-guide', handler: handleListUserGuide },
+  { method: 'GET', pattern: '/api/user-guide/search', handler: handleSearchUserGuide },
+  { method: 'GET', pattern: /^\/api\/user-guide\/([^\/]+)$/, handler: handleGetUserGuideChapter },
 ];
 
 // ============================================================================

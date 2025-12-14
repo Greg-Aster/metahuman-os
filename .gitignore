@@ -168,7 +168,9 @@ Thumbs.db
 # RUNTIME & TEMPORARY FILES
 # ============================================
 /metahuman-runs/
-/docs/archive/
+/docs/archive/*
+!/docs/archive/user-guide-legacy/
+!/docs/archive/user-guide-legacy/**
 /docs/run_logs/
 *.pid
 *.lock

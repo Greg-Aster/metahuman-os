@@ -496,6 +496,64 @@ function startHttpServer() {
 // Start HTTP server
 startHttpServer();
 
+// ============================================================================
+// LOCAL MODEL SERVICE AUTO-START
+// If localModels.autoStart is true in llm-backend.json, start the service
+// ============================================================================
+async function checkLocalModelsAutoStart() {
+  try {
+    const llmBackendPath = path.join(dataDir, 'etc', 'llm-backend.json');
+    if (!fs.existsSync(llmBackendPath)) {
+      console.log('[Node.js] No llm-backend.json found, skipping local models auto-start');
+      return;
+    }
+
+    const config = JSON.parse(fs.readFileSync(llmBackendPath, 'utf-8'));
+    const localModels = config.localModels;
+
+    if (!localModels?.enabled || !localModels?.autoStart) {
+      console.log('[Node.js] Local models auto-start disabled');
+      return;
+    }
+
+    console.log('[Node.js] Local models auto-start enabled, attempting to start service...');
+
+    // Try to load the local model service manager from bundled handlers
+    try {
+      const handlers = require('./dist/handlers.js');
+      if (handlers.startLocalModelService) {
+        const modelsDir = path.join(dataDir, 'models');
+        // Ensure models directory exists
+        if (!fs.existsSync(modelsDir)) {
+          fs.mkdirSync(modelsDir, { recursive: true });
+        }
+
+        const success = await handlers.startLocalModelService({
+          modelsDir,
+          preloadEmbeddings: localModels.embeddings?.preloadAtStartup ?? true,
+          preloadLLM: localModels.llm?.preloadAtStartup ?? false,
+        });
+
+        if (success) {
+          console.log('[Node.js] Local model service started successfully');
+        } else {
+          console.log('[Node.js] Local model service failed to start (will retry on demand)');
+        }
+      } else {
+        console.log('[Node.js] startLocalModelService not available in bundled handlers');
+      }
+    } catch (e) {
+      console.log('[Node.js] Local model service not available:', e.message);
+      console.log('[Node.js] Service can be started manually via Settings → Backend');
+    }
+  } catch (error) {
+    console.error('[Node.js] Error checking local models config:', error.message);
+  }
+}
+
+// Check local models auto-start after a short delay (let HTTP server stabilize)
+setTimeout(checkLocalModelsAutoStart, 2000);
+
 // Stub handlers (fallback when bundled handlers fail to load)
 async function handleRequestStub(request) {
   const { id, path, method, body } = request;

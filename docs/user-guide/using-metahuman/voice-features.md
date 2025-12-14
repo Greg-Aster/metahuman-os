@@ -16,7 +16,7 @@ The voice system provides:
 
 MetaHuman OS supports three TTS providers, each optimized for different use cases:
 
-### 1. Kokoro TTS (Fast Neural Voices)
+### 1. Kokoro TTS (Fast Neural Voices · Default)
 
 **Best For**: Quick setup with natural-sounding voices, no training required
 
@@ -133,17 +133,22 @@ MetaHuman uses OpenAI Whisper for local speech recognition:
 - Runs entirely locally
 - Real-time voice input
 
-**Starting Whisper:**
+**Starting Whisper and Voice Services:**
 ```bash
-# Start the Whisper server
-./bin/mh whisper serve start
+# Launch the correct TTS/STT services for the active profile
+./bin/start-voice-server
 
-# Stop the server
-./bin/mh whisper serve stop
-
-# Check status
-./bin/mh whisper serve status
+# Stop any server that start-voice-server launched (Kokoro, RVC, SoVITS, Whisper)
+./bin/stop-voice-server
 ```
+
+`start-voice-server` inspects `profiles/<user>/etc/voice.json` to determine which providers to launch:
+
+- Starts Kokoro automatically when `tts.provider` is `kokoro`
+- Boots Applio RVC or GPT-SoVITS servers when selected
+- Starts Whisper STT if `stt.whisper.server.useServer` and `autoStart` are `true`
+
+Leave `autoStart` enabled (default) to have the script start Whisper whenever you bring MetaHuman online; disable it if you prefer to run Whisper manually.
 
 **Configuration** (`profiles/<user>/etc/voice.json`):
 ```json
@@ -151,8 +156,16 @@ MetaHuman uses OpenAI Whisper for local speech recognition:
   "stt": {
     "provider": "whisper",
     "whisper": {
-      "model": "base",
-      "serverUrl": "http://127.0.0.1:9000"
+      "model": "base.en",
+      "device": "cpu",
+      "computeType": "int8",
+      "language": "en",
+      "server": {
+        "useServer": true,
+        "url": "http://127.0.0.1:9883",
+        "autoStart": true,
+        "port": 9883
+      }
     }
   }
 }

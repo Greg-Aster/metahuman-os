@@ -30,7 +30,7 @@ Add a first-class "Delete Profile" action to the MetaHuman UI so owners can safe
   - Response: `{ success: true }` or error message.
 
 ### 2. Frontend UI
-- Suggested location: `System` tab (`apps/site/src/components/NetworkSettings.svelte` sibling) or `Security` tab component.
+- Suggested location: `System` tab (`apps/site/src/components/NetworkServerSettings.svelte` sibling) or `Security` tab component.
 - Create a new component `ProfileDangerZone.svelte`:
   - Show a table/list of existing profiles (call `/api/profiles/list` or reuse store).
   - Each row gets a "Delete" button (disabled for `owner` or currently logged-in profile if needed).

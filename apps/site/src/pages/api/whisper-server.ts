@@ -2,24 +2,28 @@ import type { APIRoute } from 'astro';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { getUserOrAnonymous, systemPaths, storageClient } from '@metahuman/core';
+import { getAuthenticatedUser, AuthRequiredError, systemPaths, storageClient } from '@metahuman/core';
 
 /**
  * GET: Check Whisper server status
  * POST: Start/stop Whisper server
  */
 const getHandler: APIRoute = async ({ cookies }) => {
+  // Authenticate user - returns 401 if not authenticated
+  let user;
   try {
-    const user = getUserOrAnonymous(cookies);
-    const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
-
-    // Block pure anonymous (no selected profile)
-    if (user.role === 'anonymous' && !isGuestWithProfile) {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
+    user = getAuthenticatedUser(cookies);
+  } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      return new Response(JSON.stringify({ error: 'Authentication required', redirect: '/auth' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
+    throw error;
+  }
+
+  try {
 
     // Use storage router to get correct profile path
     const storageResult = storageClient.getProfileRoot(user.username);
@@ -77,17 +81,21 @@ const getHandler: APIRoute = async ({ cookies }) => {
 };
 
 const postHandler: APIRoute = async ({ request, cookies }) => {
+  // Authenticate user - returns 401 if not authenticated
+  let user;
   try {
-    const user = getUserOrAnonymous(cookies);
-    const isGuestWithProfile = user.role === 'anonymous' && user.id === 'guest';
-
-    // Block pure anonymous (no selected profile)
-    if (user.role === 'anonymous' && !isGuestWithProfile) {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required', success: false }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      );
+    user = getAuthenticatedUser(cookies);
+  } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      return new Response(JSON.stringify({ error: 'Authentication required', redirect: '/auth' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
+    throw error;
+  }
+
+  try {
 
     const body = await request.json();
     const { action } = body;

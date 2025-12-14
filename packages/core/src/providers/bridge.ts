@@ -20,6 +20,7 @@
 import { ollama, isRunning as isOllamaRunning } from '../ollama.js';
 import { vllm, isVLLMRunning } from '../vllm.js';
 import { loadBackendConfig, getBackendStatus } from '../llm-backend.js';
+import { generateWithLocalService, isLocalModelServiceRunning } from './local-models.js';
 import { loadDeploymentConfig } from '../deployment.js';
 import { callMobileProvider } from '../mobile-providers.js';
 import { getUserContext } from '../context.js';
@@ -171,6 +172,33 @@ export async function callProvider(
 
     case 'mock':
       return callMockProvider(messages, options);
+
+    case 'local-models': {
+      // Local model service (Transformers.js) - for mobile/offline use
+      const backendConfig = loadBackendConfig();
+      const localModelsConfig = backendConfig.localModels;
+      const endpoint = localModelsConfig?.endpoint || 'http://127.0.0.1:4324';
+
+      // Check if service is running
+      const isRunning = await isLocalModelServiceRunning(endpoint);
+      if (!isRunning) {
+        onProgress?.({
+          phase: 'failed',
+          message: 'Local model service not running. Start it from Settings → Backend.',
+        });
+        throw new Error('Local model service not running. Start it from Settings → Backend.');
+      }
+
+      return generateWithLocalService(
+        messages,
+        {
+          ...options,
+          endpoint,
+          model: options.model || localModelsConfig?.llm?.model || 'qwen3-1.7b',
+        },
+        onProgress
+      );
+    }
 
     default:
       throw new Error(`Unknown provider: ${providerName}`);
@@ -741,6 +769,12 @@ export async function isProviderAvailable(providerName: ProviderType): Promise<b
 
     case 'vllm':
       return vllm.isRunning();
+
+    case 'local-models': {
+      const backendConfig = loadBackendConfig();
+      const endpoint = backendConfig.localModels?.endpoint || 'http://127.0.0.1:4324';
+      return isLocalModelServiceRunning(endpoint);
+    }
 
     case 'mock':
       return true;

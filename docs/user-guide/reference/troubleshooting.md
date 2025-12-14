@@ -1,4 +1,52 @@
-## Troubleshooting
+# Troubleshooting
+
+Common issues and solutions for MetaHuman OS.
+
+---
+
+## Installation Issues
+
+### Ollama Not Found or Not Running
+
+```bash
+# Check if Ollama is running
+curl http://localhost:11434
+
+# Start Ollama manually
+ollama serve &
+
+# Or check status via CLI
+./bin/mh ollama status
+```
+
+### Permission Errors
+
+```bash
+# Make bin/mh executable
+chmod +x bin/mh
+
+# Fix directory permissions
+sudo chown -R $USER:$USER .
+```
+
+### Port Conflicts
+
+The default port is 4321. If it's in use:
+
+```bash
+cd apps/site
+pnpm dev --port 4322
+```
+
+### pnpm Not Found
+
+```bash
+npm install -g pnpm
+```
+
+---
+
+## Runtime Issues
 
 ### Slow Boot / UI Takes Long to Load
 
