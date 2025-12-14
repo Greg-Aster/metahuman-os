@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { apiFetch } from '../lib/client/api-config';
+  import { apiFetch, isReactNativeWebView } from '../lib/client/api-config';
+
+  interface NetworkInfo {
+    wifiBroadcastEnabled: boolean;
+    port: number;
+    addresses: Array<{ interface: string; address: string; url: string }>;
+    localUrl: string;
+    networkUrls: string[];
+  }
 
   interface TunnelStatus {
     installed: boolean;
@@ -19,6 +27,8 @@
 
   let tunnelStatus: TunnelStatus | null = null;
   let runtimeMode: RuntimeMode | null = null;
+  let networkInfo: NetworkInfo | null = null;
+  let isMobile = false;
   let loading = true;
   let error: string | null = null;
   let successMessage: string | null = null;
@@ -143,14 +153,61 @@
     }
   }
 
+  // WiFi Broadcast (Mobile only)
+  async function loadNetworkInfo() {
+    if (!isMobile) return;
+    try {
+      const res = await apiFetch('/api/network-info');
+      if (res.ok) {
+        networkInfo = await res.json();
+      }
+    } catch (err) {
+      console.warn('Failed to load network info:', err);
+    }
+  }
+
+  async function toggleWifiBroadcast(enable: boolean) {
+    error = null;
+    successMessage = null;
+    loading = true;
+
+    try {
+      const res = await apiFetch('/api/network-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wifiBroadcastEnabled: enable }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        successMessage = data.message || (enable ? 'WiFi broadcast enabled!' : 'WiFi broadcast disabled!');
+        await loadNetworkInfo();
+      } else {
+        const data = await res.json();
+        error = data.error || 'Failed to toggle WiFi broadcast';
+      }
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to toggle WiFi broadcast';
+    } finally {
+      loading = false;
+    }
+  }
+
   onMount(() => {
+    // Detect mobile environment
+    isMobile = isReactNativeWebView();
     loadTunnelStatus();
     loadRuntimeMode();
+    if (isMobile) {
+      loadNetworkInfo();
+    }
     const tunnelInterval = setInterval(loadTunnelStatus, 10000); // Refresh every 10s
     const runtimeInterval = setInterval(loadRuntimeMode, 10000); // Refresh every 10s
+    const networkInterval = isMobile ? setInterval(loadNetworkInfo, 10000) : null;
     return () => {
       clearInterval(tunnelInterval);
       clearInterval(runtimeInterval);
+      if (networkInterval) clearInterval(networkInterval);
     };
   });
 </script>
@@ -163,6 +220,59 @@
       📖 Setup Guide
     </a>
   </div>
+
+  <!-- WiFi Broadcast Section (Mobile Only) -->
+  {#if isMobile}
+    <div class="tunnel-section">
+      <h2>📡 Local WiFi Broadcasting</h2>
+
+      <div class="status-box" class:status-running={networkInfo?.wifiBroadcastEnabled}>
+        <div class="status-indicator">
+          <span class="status-dot" class:dot-running={networkInfo?.wifiBroadcastEnabled} class:dot-stopped={!networkInfo?.wifiBroadcastEnabled}></span>
+          <strong>{networkInfo?.wifiBroadcastEnabled ? '✅ Broadcasting' : '⭕ Local Only'}</strong>
+        </div>
+
+        {#if networkInfo?.wifiBroadcastEnabled && networkInfo?.networkUrls?.length}
+          <div class="hostname">
+            <strong>Access from other devices:</strong>
+            {#each networkInfo.networkUrls as url}
+              <div style="margin-top: 0.5rem;">
+                <a href={url} target="_blank" rel="noopener noreferrer">{url}</a>
+              </div>
+            {/each}
+          </div>
+        {/if}
+
+        <div class="tunnel-controls">
+          <label class="toggle-label">
+            <input
+              type="checkbox"
+              checked={networkInfo?.wifiBroadcastEnabled || false}
+              on:change={(e) => toggleWifiBroadcast(e.currentTarget.checked)}
+              disabled={loading}
+            />
+            <span>Enable WiFi Broadcast</span>
+          </label>
+
+          {#if networkInfo?.wifiBroadcastEnabled}
+            <div class="info-banner" style="background: #d1fae5; border-color: #a7f3d0;">
+              <p><strong>⚠️ Restart Required:</strong> Changes take effect after restarting the app.</p>
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <div class="info-box">
+        <h3>ℹ️ How It Works</h3>
+        <ul>
+          <li><strong>Local Only:</strong> Server only accessible from this device (127.0.0.1)</li>
+          <li><strong>WiFi Broadcast:</strong> Server accessible from any device on the same WiFi network</li>
+          <li><strong>Use Case:</strong> Access MetaHuman from your laptop while the phone runs the server</li>
+          <li><strong>Security:</strong> Only devices on your local network can connect</li>
+        </ul>
+      </div>
+    </div>
+  {/if}
 
   {#if loading && !tunnelStatus}
     <div class="loading">Loading tunnel status...</div>

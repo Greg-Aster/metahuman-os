@@ -1,7 +1,11 @@
 {
   "$schema": "https://metahuman.dev/schemas/cognitive-layers.json",
   "version": "1.0.0",
-  "description": "Cognitive layer configuration for MetaHuman OS multi-layer architecture",
+  "_TEMPLATE_WARNING": "══════════════════════════════════════════════════════════════════════════",
+  "_TEMPLATE_WARNING2": "██ THIS IS A SYSTEM TEMPLATE - DO NOT USE DIRECTLY FOR INDIVIDUAL USERS ██",
+  "_TEMPLATE_WARNING3": "██ This file is COPIED to user profiles, then the user's copy is used   ██",
+  "_TEMPLATE_WARNING4": "══════════════════════════════════════════════════════════════════════════",
+  "description": "Cognitive layer configuration for MetaHuman OS multi-layer architecture - SYSTEM TEMPLATE",
 
   "dual": {
     "description": "Full cognitive depth for dual consciousness mode - all layers active with maximum capabilities",

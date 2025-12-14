@@ -19,21 +19,8 @@ export async function handleGetTrainingConfig(req: UnifiedRequest): Promise<Unif
   try {
     const { user } = req;
 
-    // Anonymous users get system-wide config
-    if (!user.isAuthenticated || user.role === 'anonymous') {
-      const systemConfigPath = path.join(systemPaths.etc, 'training.json');
-
-      if (!fs.existsSync(systemConfigPath)) {
-        return notFoundResponse('Training configuration not found');
-      }
-
-      const content = fs.readFileSync(systemConfigPath, 'utf-8');
-      const config = JSON.parse(content);
-
-      return successResponse(config);
-    }
-
-    // Authenticated users get their profile-specific config
+    // All users are authenticated (no anonymous access)
+    // Get their profile-specific config
     const profilePaths = getProfilePaths(user.username);
     const userConfigPath = path.join(profilePaths.etc, 'training.json');
 

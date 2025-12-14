@@ -88,7 +88,7 @@ function getContextualCognitiveMode(explicitMode: string | undefined): string | 
   }
 
   const ctx = getUserContext();
-  if (!ctx || (ctx.role === 'anonymous' && !ctx.activeProfile)) {
+  if (!ctx) {
     return null;
   }
 

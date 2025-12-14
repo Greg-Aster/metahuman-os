@@ -31,6 +31,26 @@ console.log('[Node.js] Has native fetch:', typeof fetch !== 'undefined');
 console.log('[Node.js] Has native AbortController:', typeof AbortController !== 'undefined');
 console.log('[Node.js] Has native crypto.randomUUID:', typeof randomUUID === 'function');
 
+// Load .env file from bundled assets (contains version info)
+const bundledEnvPath = path.join(__dirname, '.env');
+if (fs.existsSync(bundledEnvPath)) {
+  try {
+    const envContent = fs.readFileSync(bundledEnvPath, 'utf-8');
+    for (const line of envContent.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith('#')) {
+        const [key, ...valueParts] = trimmed.split('=');
+        if (key && valueParts.length > 0) {
+          process.env[key.trim()] = valueParts.join('=').trim();
+        }
+      }
+    }
+    console.log('[Node.js] Loaded bundled .env (APP_VERSION=' + process.env.APP_VERSION + ')');
+  } catch (e) {
+    console.warn('[Node.js] Failed to load .env:', e.message);
+  }
+}
+
 // Set up environment for the handlers
 process.env.METAHUMAN_MOBILE = 'true';
 process.env.METAHUMAN_DATA_DIR = dataDir;
@@ -155,6 +175,67 @@ try {
 const HTTP_PORT = 4322;
 let httpServer = null;
 
+// WiFi broadcast mode - allows other devices on the network to connect
+let wifiBroadcastEnabled = false;
+let localNetworkInfo = null;
+
+// Load WiFi broadcast setting from config
+function loadWifiBroadcastSetting() {
+  try {
+    const configPath = path.join(dataDir, 'etc', 'network.json');
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      wifiBroadcastEnabled = config.wifiBroadcastEnabled === true;
+      console.log('[Node.js] WiFi broadcast mode:', wifiBroadcastEnabled ? 'ENABLED' : 'disabled');
+    }
+  } catch (e) {
+    console.warn('[Node.js] Failed to load network config:', e.message);
+  }
+}
+
+// Save WiFi broadcast setting
+function saveWifiBroadcastSetting(enabled) {
+  try {
+    const configPath = path.join(dataDir, 'etc', 'network.json');
+    const etcDir = path.join(dataDir, 'etc');
+    if (!fs.existsSync(etcDir)) {
+      fs.mkdirSync(etcDir, { recursive: true });
+    }
+    fs.writeFileSync(configPath, JSON.stringify({ wifiBroadcastEnabled: enabled }, null, 2));
+    wifiBroadcastEnabled = enabled;
+    console.log('[Node.js] WiFi broadcast setting saved:', enabled);
+    return true;
+  } catch (e) {
+    console.error('[Node.js] Failed to save network config:', e.message);
+    return false;
+  }
+}
+
+// Get local IP addresses for network display
+function getLocalNetworkAddresses() {
+  const os = require('os');
+  const interfaces = os.networkInterfaces();
+  const addresses = [];
+
+  for (const [name, netInterfaces] of Object.entries(interfaces)) {
+    if (!netInterfaces) continue;
+    for (const iface of netInterfaces) {
+      // Skip internal (loopback) and non-IPv4 addresses
+      if (iface.internal || iface.family !== 'IPv4') continue;
+      addresses.push({
+        interface: name,
+        address: iface.address,
+        url: `http://${iface.address}:${HTTP_PORT}`,
+      });
+    }
+  }
+
+  return addresses;
+}
+
+// Load setting on startup
+loadWifiBroadcastSetting();
+
 // Static files directory - bundled UI assets
 const STATIC_DIR = path.join(__dirname, 'www');
 
@@ -249,6 +330,44 @@ function startHttpServer() {
       const body = await parseBody(req);
       console.log('[API]', req.method, pathname);
 
+      // Handle network-related endpoints directly (before unified adapter)
+      if (pathname === '/api/network-info') {
+        const addresses = getLocalNetworkAddresses();
+        localNetworkInfo = {
+          wifiBroadcastEnabled,
+          port: HTTP_PORT,
+          addresses,
+          localUrl: `http://127.0.0.1:${HTTP_PORT}`,
+          networkUrls: wifiBroadcastEnabled ? addresses.map(a => a.url) : [],
+        };
+        res.setHeader('Content-Type', 'application/json');
+        res.writeHead(200);
+        res.end(JSON.stringify(localNetworkInfo));
+        return;
+      }
+
+      if (pathname === '/api/network-settings' && req.method === 'GET') {
+        res.setHeader('Content-Type', 'application/json');
+        res.writeHead(200);
+        res.end(JSON.stringify({ wifiBroadcastEnabled }));
+        return;
+      }
+
+      if (pathname === '/api/network-settings' && req.method === 'POST') {
+        const enabled = body && body.wifiBroadcastEnabled === true;
+        const saved = saveWifiBroadcastSetting(enabled);
+        res.setHeader('Content-Type', 'application/json');
+        res.writeHead(saved ? 200 : 500);
+        res.end(JSON.stringify({
+          success: saved,
+          wifiBroadcastEnabled: enabled,
+          message: saved
+            ? (enabled ? 'WiFi broadcast enabled. Restart app to apply.' : 'WiFi broadcast disabled. Restart app to apply.')
+            : 'Failed to save setting',
+        }));
+        return;
+      }
+
       try {
         if (handlersLoaded && handleHttpRequest) {
           // Use unified HTTP adapter - SAME CODE AS WEB
@@ -342,11 +461,30 @@ function startHttpServer() {
     res.end('Not Found');
   });
 
-  httpServer.listen(HTTP_PORT, '127.0.0.1', () => {
-    console.log(`[Node.js] HTTP server listening on http://127.0.0.1:${HTTP_PORT}`);
+  // Determine bind address based on WiFi broadcast setting
+  const bindAddress = wifiBroadcastEnabled ? '0.0.0.0' : '127.0.0.1';
+
+  httpServer.listen(HTTP_PORT, bindAddress, () => {
+    console.log(`[Node.js] HTTP server listening on http://${bindAddress}:${HTTP_PORT}`);
     console.log('[Node.js] Serving: Static UI + API routes (unified architecture)');
+
+    if (wifiBroadcastEnabled) {
+      const addresses = getLocalNetworkAddresses();
+      console.log('[Node.js] WiFi broadcast ENABLED - accessible on local network:');
+      for (const addr of addresses) {
+        console.log(`[Node.js]   ${addr.interface}: ${addr.url}`);
+      }
+    } else {
+      console.log('[Node.js] WiFi broadcast disabled - local only');
+    }
+
     // Notify React Native that HTTP server is ready
-    rn_bridge.channel.send({ type: 'http-ready', port: HTTP_PORT });
+    rn_bridge.channel.send({
+      type: 'http-ready',
+      port: HTTP_PORT,
+      wifiBroadcastEnabled,
+      networkAddresses: wifiBroadcastEnabled ? getLocalNetworkAddresses() : [],
+    });
   });
 
   httpServer.on('error', (err) => {

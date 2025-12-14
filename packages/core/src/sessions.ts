@@ -13,11 +13,19 @@ import { audit } from './audit.js';
 
 /**
  * Session object
+ *
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║  NO ANONYMOUS SESSIONS - ALL USERS MUST AUTHENTICATE                      ║
+ * ╠═══════════════════════════════════════════════════════════════════════════╣
+ * ║  owner    - Full access, 24-hour sessions                                 ║
+ * ║  standard - Read/write access, 24-hour sessions                           ║
+ * ║  guest    - Read-only access, 1-hour sessions (passwordless auth gate)    ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
  */
 export interface Session {
   id: string; // Session token (UUID)
   userId: string; // User ID
-  role: 'owner' | 'standard' | 'guest' | 'anonymous';
+  role: 'owner' | 'standard' | 'guest';
   createdAt: string;
   expiresAt: string;
   lastActivity: string;
@@ -48,7 +56,6 @@ function getSessionsFilePath(): string {
 // Session expiration times
 const OWNER_SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hours
 const GUEST_SESSION_DURATION = 60 * 60 * 1000; // 1 hour
-const ANONYMOUS_SESSION_DURATION = 30 * 60 * 1000; // 30 minutes
 
 /**
  * Load sessions from file
@@ -90,7 +97,7 @@ function saveSessions(store: SessionStore): void {
  */
 export function createSession(
   userId: string,
-  role: 'owner' | 'standard' | 'guest' | 'anonymous',
+  role: 'owner' | 'standard' | 'guest',
   metadata?: { userAgent?: string; ip?: string }
 ): Session {
   const store = loadSessions();
@@ -104,9 +111,6 @@ export function createSession(
       break;
     case 'guest':
       duration = GUEST_SESSION_DURATION;
-      break;
-    case 'anonymous':
-      duration = ANONYMOUS_SESSION_DURATION;
       break;
   }
 
@@ -305,7 +309,6 @@ export function getSessionStats(): {
     owner: 0,
     standard: 0,
     guest: 0,
-    anonymous: 0,
   };
 
   sessions.forEach((s) => {
@@ -367,9 +370,6 @@ export function refreshSession(sessionId: string): Session | null {
     case 'guest':
       duration = GUEST_SESSION_DURATION;
       break;
-    case 'anonymous':
-      duration = ANONYMOUS_SESSION_DURATION;
-      break;
   }
 
   session.expiresAt = new Date(now.getTime() + duration).toISOString();
@@ -400,11 +400,11 @@ export function getLoggedInUsers(): Array<{ userId: string; username: string; ro
   const now = new Date();
   const activeUsers = new Map<string, { userId: string; username: string; role: string }>();
 
-  // Find all active, non-expired, non-anonymous sessions
+  // Find all active, non-expired sessions (no anonymous sessions exist)
   for (const session of store.sessions) {
     const expiresAt = new Date(session.expiresAt);
 
-    if (expiresAt > now && session.role !== 'anonymous') {
+    if (expiresAt > now) {
       // Use userId as key to deduplicate (same user can have multiple sessions)
       if (!activeUsers.has(session.userId)) {
         // Get username from user database

@@ -19,6 +19,7 @@ import { getRuntimeMode } from '../../runtime-mode.js';
 import { getProfilePaths, systemPaths } from '../../index.js';
 import { loadCuriosityConfig, loadOperatorConfig } from '../../config.js';
 import { getMemoryMetrics } from '../../memory-metrics-cache.js';
+import { fetchRemoteModels } from './remote-server.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -292,6 +293,7 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
     availableProviders.add('huggingface');
     availableProviders.add('claude-code');
     availableProviders.add('anthropic');
+    availableProviders.add('remote-server');
 
     try {
       const registry = loadModelRegistry(false, modelUsername);
@@ -463,13 +465,36 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
 
       // Load cloud models from user's profile models.json
       const cloudUsername = isAuthenticated ? user.username : undefined;
-      systemHealth.cloudModels = loadCloudModelsFromRegistry(cloudUsername);
+      const registryModels = loadCloudModelsFromRegistry(cloudUsername);
+
+      // Also fetch remote server models if configured
+      const remoteServerStatus = detectRemoteServerAvailability();
+      let remoteServerModels: Array<{ id: string; model: string; provider: string }> = [];
+      if (remoteServerStatus.configured && remoteServerStatus.serverUrl) {
+        try {
+          const result = await fetchRemoteModels(remoteServerStatus.serverUrl);
+          if (result.success && result.models) {
+            // Transform to match cloudModels format with 'remote-server' provider
+            remoteServerModels = result.models.map(m => ({
+              id: `remote-server:${m.id}`,
+              model: m.model,
+              provider: 'remote-server'
+            }));
+          }
+        } catch (err) {
+          // Ignore remote server errors - just don't include models
+          console.error('[status] Failed to fetch remote server models:', err);
+        }
+      }
+
+      // Combine registry models and remote server models
+      systemHealth.cloudModels = [...registryModels, ...remoteServerModels];
 
       // Build backend availability for status widget icons
       const availableBackends = await detectAvailableBackends();
       const runpodStatus = detectRunPodAvailability();
       const bigBrotherStatus = detectBigBrotherAvailability();
-      const remoteServerStatus = detectRemoteServerAvailability();
+      // remoteServerStatus already defined above for fetching models
 
       // Determine which backend is the "active" one
       const activeBackendType = backendStatus.resolvedBackend;

@@ -22,10 +22,7 @@ export async function handleGetSimpleBuffer(req: UnifiedRequest): Promise<Unifie
   const user = req.user;
   const isGuestWithProfile = user.role === 'guest';
 
-  // Pure anonymous (no selected profile) get empty buffer
-  if (user.role === 'anonymous') {
-    return successResponse({ messages: [], mode, lastUpdated: null });
-  }
+  // All users are now authenticated (no anonymous access)
 
   // Determine buffer path based on user type
   let bufferPath: string;

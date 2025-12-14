@@ -258,18 +258,17 @@ async function main() {
   const lockHandle = acquireLock('train-of-thought');
 
   try {
-    // Get all users
+    // Get all users (all users are authenticated - no anonymous users)
     const users = listUsers();
-    const loggedInUsers = users.filter(u => u.role !== 'anonymous');
 
-    if (loggedInUsers.length === 0) {
-      console.log('[train-of-thought] No logged-in users found');
+    if (users.length === 0) {
+      console.log('[train-of-thought] No users found');
       return;
     }
 
-    console.log(`[train-of-thought] Processing ${loggedInUsers.length} user(s)...`);
+    console.log(`[train-of-thought] Processing ${users.length} user(s)...`);
 
-    for (const user of loggedInUsers) {
+    for (const user of users) {
       await withUserContext(
         { userId: user.id, username: user.username, role: user.role },
         async () => {

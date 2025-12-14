@@ -4,6 +4,7 @@
   import ProfileSelector from './ProfileSelector.svelte';
   import { apiFetch, getApiBaseUrl, initServerUrl, getSyncServerUrl, remoteFetch, normalizeUrl } from '../lib/client/api-config';
   import { healthStatus, forceHealthCheck } from '../lib/client/server-health';
+  import { canSyncOnLogin } from '../lib/client/sync-settings';
 
   // Simple localStorage for session (same concept as cookies on web)
   // NO IndexedDB complexity - just store the session ID
@@ -152,8 +153,43 @@
         }
 
         // Profile is complete - proceed with login
-        error = `✅ LOGIN SUCCESS! Welcome back, ${data.user.username}. Profile loaded and ready.`;
-        console.log('[AuthGate] LOGIN SUCCESS: Profile validation passed, proceeding...');
+        console.log('[AuthGate] LOGIN SUCCESS: Profile validation passed');
+
+        // Check if auto-sync on login is enabled - trigger profile-sync agent in background
+        // Uses profile-sync to sync: persona, conversation buffer, and memories
+        // Flags:
+        //   --pull-only: Only download, don't push to server
+        //   --full: Ignore lastMemorySyncAt, do complete memory sync
+        //   --skip-config: Don't overwrite device-specific configs (models.json, etc.)
+        const shouldSync = await canSyncOnLogin();
+        if (shouldSync) {
+          console.log('[AuthGate] Auto-sync on login enabled, triggering profile-sync agent...');
+          // Fire-and-forget: agent runs in background while app loads
+          apiFetch('/api/agents/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agent: 'profile-sync',
+              args: ['--pull-only', '--full', '--skip-config']
+            }),
+          })
+            .then(async (res) => {
+              if (res.ok) {
+                const result = await res.json();
+                console.log(`[AuthGate] Profile-sync agent started (PID: ${result.pid})`);
+              } else {
+                console.log('[AuthGate] Profile-sync agent failed to start:', await res.text());
+              }
+            })
+            .catch(err => {
+              console.warn('[AuthGate] Profile-sync agent trigger failed:', err);
+            });
+          error = `✅ LOGIN SUCCESS! Welcome back, ${data.user.username}. Syncing profile in background...`;
+        } else {
+          error = `✅ LOGIN SUCCESS! Welcome back, ${data.user.username}. Profile loaded and ready.`;
+        }
+
+        console.log('[AuthGate] Proceeding to app...');
 
         setTimeout(() => {
           isAuthenticated = true;

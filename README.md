@@ -126,9 +126,9 @@ export PATH="$PATH:$(pwd)/bin"
 MetaHuman OS ships with a pre-configured demo persona to get you started:
 
 **First-Time Setup:**
-1. Copy the default users file:
+1. Copy the template users file:
    ```bash
-   cp persona/users.json.default persona/users.json
+   cp persona/users.json.template persona/users.json
    ```
 2. Start the web UI: `cd apps/site && pnpm dev`
 3. Navigate to http://localhost:4321

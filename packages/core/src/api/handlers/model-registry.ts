@@ -206,7 +206,7 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     }
 
     // Model categories - only show local models if the server is actually running
-    const cloudProviderSet = new Set(['runpod_serverless', 'huggingface', 'openai', 'openrouter']);
+    const cloudProviderSet = new Set(['runpod_serverless', 'huggingface', 'openai', 'openrouter', 'remote-server']);
     const bigBrotherProviders = new Set(['claude-code', 'anthropic']);
 
     const modelCategories = {
@@ -319,6 +319,26 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
           description: `Ollama model ${inferredName}`,
           options: {},
           metadata: { source: 'ollama-discovery' }
+        };
+      } else if (modelId.startsWith('remote-server:')) {
+        // Remote server model - runtime discovery from connected remote server
+        // ID format: remote-server:remote-ollama-modelname or remote-server:remote-vllm-modelname
+        const remoteId = modelId.replace(/^remote-server:/, '');
+        // Extract model name: remote-ollama-qwen3:14b -> qwen3:14b
+        const modelName = remoteId.replace(/^remote-(ollama|vllm)-/, '');
+        const remoteProvider = remoteId.startsWith('remote-ollama') ? 'remote-ollama' : 'remote-vllm';
+
+        registry.models[modelId] = {
+          provider: 'remote-server',
+          model: modelName,
+          roles: [role],
+          adapters: [],
+          description: `Remote server model (${remoteProvider}): ${modelName}`,
+          options: {},
+          metadata: {
+            source: 'remote-server-discovery',
+            remoteProvider
+          }
         };
       } else {
         // Unknown model ID - should already be in user's registry

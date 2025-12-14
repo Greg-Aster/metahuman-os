@@ -66,11 +66,32 @@ const NativeSpeechRecognition: ISpeechRecognitionConstructor | null = typeof win
   ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) as ISpeechRecognitionConstructor
   : null;
 
+/**
+ * Detect if running inside React Native WebView
+ * React Native injects window.ReactNativeWebView when running in a WebView
+ */
+function isRunningInReactNativeWebView(): boolean {
+  return typeof window !== 'undefined' && !!(window as any).ReactNativeWebView;
+}
+
+/**
+ * Send message to React Native app (when running in WebView)
+ */
+function postToReactNative(message: object): void {
+  if (isRunningInReactNativeWebView()) {
+    (window as any).ReactNativeWebView.postMessage(JSON.stringify(message));
+  }
+}
 
 /**
  * Check if native speech recognition is available
+ * On mobile (React Native), we use the device's native speech recognition
  */
 function isNativeSpeechAvailable(): boolean {
+  // If in React Native WebView, we have native speech via the bridge
+  if (isRunningInReactNativeWebView()) {
+    return true;
+  }
   return !!NativeSpeechRecognition;
 }
 
@@ -260,10 +281,166 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   let speechRecognition: ISpeechRecognition | null = null;
   let useNativeSTT = false; // Always use Whisper for consistent behavior across all devices
 
+  // Mobile (React Native) speech recognition state
+  let isMobileDevice = isRunningInReactNativeWebView();
+  let mobileSpeechActive = false;
+  let mobileMessageHandler: ((event: MessageEvent) => void) | null = null;
+
+  /**
+   * Set up message listener for React Native bridge communication
+   * Called once when the composable is initialized
+   */
+  function setupMobileMessageListener(): void {
+    if (!isMobileDevice || mobileMessageHandler) return;
+
+    console.log('[useMicrophone] Setting up mobile speech recognition bridge');
+
+    mobileMessageHandler = (event: MessageEvent) => {
+      try {
+        // Messages from React Native come as strings
+        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+
+        if (!data || !data.type) return;
+
+        switch (data.type) {
+          case 'speech-start':
+            console.log('[useMicrophone] Mobile: speech started');
+            isRecording.set(true);
+            isNativeMode.set(true);
+            mobileSpeechActive = true;
+            signalMicActivity();
+            break;
+
+          case 'speech-end':
+            console.log('[useMicrophone] Mobile: speech ended');
+            mobileSpeechActive = false;
+            // Don't set isRecording to false yet - wait for final result
+            break;
+
+          case 'speech-result':
+            const transcript = data.transcript || '';
+            const isFinal = data.isFinal !== false;
+
+            if (isFinal) {
+              console.log('[useMicrophone] Mobile: final transcript:', transcript);
+              isRecording.set(false);
+              isNativeMode.set(false);
+              mobileSpeechActive = false;
+              interimTranscript.set('');
+
+              if (transcript.trim()) {
+                // Mark that we got a transcript (affects cooldown duration)
+                conversationGotTranscript = true;
+
+                // In conversation mode, handle restart after sending
+                if (conversationModeActive) {
+                  onTranscript(transcript.trim());
+                  scheduleConversationRestart();
+                } else {
+                  onTranscript(transcript.trim());
+                }
+              }
+            } else {
+              // Interim result - show real-time preview
+              console.log('[useMicrophone] Mobile: interim transcript:', transcript);
+              interimTranscript.set(transcript);
+            }
+            break;
+
+          case 'speech-error':
+            const errorMsg = data.error || 'Speech recognition error';
+            console.error('[useMicrophone] Mobile: speech error:', errorMsg);
+            isRecording.set(false);
+            isNativeMode.set(false);
+            mobileSpeechActive = false;
+            interimTranscript.set('');
+
+            // Show user-friendly error message
+            if (errorMsg.includes('permission')) {
+              onSystemMessage('🎤 Microphone permission denied. Please allow microphone access.');
+            } else {
+              onSystemMessage(`⚠️ Speech recognition error: ${errorMsg}`);
+            }
+            break;
+
+          case 'speech-available':
+            console.log('[useMicrophone] Mobile: speech available:', data.available, 'platform:', data.platform);
+            break;
+        }
+      } catch (e) {
+        // Ignore non-JSON messages or parsing errors
+      }
+    };
+
+    // Listen for messages from React Native
+    window.addEventListener('message', mobileMessageHandler);
+    // Also listen on document for some WebView implementations
+    document.addEventListener('message', mobileMessageHandler as EventListener);
+  }
+
+  /**
+   * Clean up mobile message listener
+   */
+  function cleanupMobileMessageListener(): void {
+    if (mobileMessageHandler) {
+      window.removeEventListener('message', mobileMessageHandler);
+      document.removeEventListener('message', mobileMessageHandler as EventListener);
+      mobileMessageHandler = null;
+    }
+  }
+
+  /**
+   * Start speech recognition on mobile (via React Native bridge)
+   */
+  function startMobileSpeech(): void {
+    if (!isMobileDevice) return;
+
+    console.log('[useMicrophone] Starting mobile speech recognition...');
+    postToReactNative({ type: 'speech-start' });
+  }
+
+  /**
+   * Stop speech recognition on mobile (via React Native bridge)
+   */
+  function stopMobileSpeech(): void {
+    if (!isMobileDevice) return;
+
+    console.log('[useMicrophone] Stopping mobile speech recognition...');
+    postToReactNative({ type: 'speech-stop' });
+    mobileSpeechActive = false;
+  }
+
+  /**
+   * Cancel speech recognition on mobile (discard results)
+   */
+  function cancelMobileSpeech(): void {
+    if (!isMobileDevice) return;
+
+    console.log('[useMicrophone] Cancelling mobile speech recognition...');
+    postToReactNative({ type: 'speech-cancel' });
+    mobileSpeechActive = false;
+    isRecording.set(false);
+    isNativeMode.set(false);
+    interimTranscript.set('');
+  }
+
+  // Initialize mobile listener on module load
+  if (typeof window !== 'undefined') {
+    // Defer setup slightly to ensure React Native bridge is ready
+    setTimeout(() => {
+      isMobileDevice = isRunningInReactNativeWebView();
+      if (isMobileDevice) {
+        setupMobileMessageListener();
+        console.log('[useMicrophone] Mobile device detected - using native speech recognition');
+      }
+    }, 100);
+  }
+
   /**
    * Get the current STT backend being used
    */
   function getSTTBackend(): STTBackend {
+    if (isMobileDevice) return 'native';
     return useNativeSTT ? 'native' : 'whisper';
   }
 
@@ -787,11 +964,25 @@ export function useMicrophone(options: UseMicrophoneOptions) {
 
   /**
    * Start conversation mode (triggered by long-press or right-click)
-   * Uses VAD to detect voice, then starts speech recognition with silence monitoring
+   * On mobile: Uses native device speech recognition directly
+   * On desktop: Uses VAD to detect voice, then starts browser speech recognition
    * Falls back to continuous mode (Whisper) if native speech recognition isn't available
    */
   function startConversationMode(): void {
-    // Check for secure context first
+    // On mobile, use native speech recognition directly (no VAD needed)
+    if (isMobileDevice) {
+      console.log('[useMicrophone] Mobile: starting conversation mode with native speech');
+      enterConversationMode();
+      // Vibrate for feedback
+      if (navigator.vibrate) {
+        navigator.vibrate(100);
+      }
+      // Start mobile speech recognition directly
+      startMobileSpeech();
+      return;
+    }
+
+    // Check for secure context first (desktop)
     if (typeof window !== 'undefined' && !window.isSecureContext) {
       onSystemMessage('🔒 Microphone requires HTTPS');
       return;
@@ -826,19 +1017,37 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     exitConversationMode();
     stopConversationVAD();
     stopConversationSilenceMonitor();
-    stopNativeSpeech();
+
+    // Stop speech recognition (mobile or browser)
+    if (isMobileDevice) {
+      stopMobileSpeech();
+    } else {
+      stopNativeSpeech();
+    }
     // Silent stop - icon change is enough
   }
 
   /**
    * Toggle conversation mode on/off (for long-press or right-click)
-   * Always uses continuous mode (Whisper) for consistent behavior across all devices
+   * On mobile: Uses native device speech recognition
+   * On desktop: Uses continuous mode (Whisper) for consistent behavior
    */
   function toggleConversationMode(): void {
-    // Always use continuous mode (Whisper) - same pipeline as single-tap
+    // On mobile, use native speech recognition
+    if (isMobileDevice) {
+      if (get(isConversationMode) || mobileSpeechActive) {
+        console.log('[useMicrophone] Mobile: stopping conversation mode');
+        stopConversationMode();
+      } else {
+        console.log('[useMicrophone] Mobile: starting conversation mode');
+        startConversationMode();
+      }
+      return;
+    }
+
+    // On desktop, use continuous mode (Whisper) - same pipeline as single-tap
     // This ensures consistent, working behavior on all devices
-    // Native speech recognition is unreliable on mobile
-    console.log('[useMicrophone] Long-press/right-click: using Whisper continuous mode');
+    console.log('[useMicrophone] Desktop long-press/right-click: using Whisper continuous mode');
     toggleContinuousMode();
   }
 
@@ -1084,7 +1293,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   }
 
   /**
-   * Start microphone - routes to appropriate backend (native or Whisper)
+   * Start microphone - routes to appropriate backend (mobile native, browser native, or Whisper)
    * @param forceContinuous - Force continuous mode (used by long-press)
    */
   async function startMic(forceContinuous: boolean = false): Promise<void> {
@@ -1092,8 +1301,15 @@ export function useMicrophone(options: UseMicrophoneOptions) {
 
     const continuous = forceContinuous || get(isContinuousMode);
 
+    // On mobile (React Native), always use the native bridge
+    if (isMobileDevice) {
+      console.log('[useMicrophone] Using mobile native speech recognition');
+      startMobileSpeech();
+      return;
+    }
+
     if (useNativeSTT) {
-      console.log('[useMicrophone] Using native speech recognition');
+      console.log('[useMicrophone] Using browser native speech recognition');
       startNativeSpeech(continuous);
     } else {
       console.log('[useMicrophone] Using Whisper backend');
@@ -1102,10 +1318,16 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   }
 
   /**
-   * Stop microphone - handles both native and Whisper modes
+   * Stop microphone - handles mobile, browser native, and Whisper modes
    */
   function stopMic(): void {
-    // Check if we're in native mode
+    // Check if we're on mobile
+    if (isMobileDevice && mobileSpeechActive) {
+      stopMobileSpeech();
+      return;
+    }
+
+    // Check if we're in browser native mode
     if (speechRecognition) {
       stopNativeSpeech();
       return;
@@ -1466,12 +1688,18 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     // Clean up conversation silence monitor
     stopConversationSilenceMonitor();
 
-    // Clean up native speech recognition
+    // Clean up native speech recognition (browser)
     if (speechRecognition) {
       try {
         speechRecognition.abort();
       } catch {}
       speechRecognition = null;
+    }
+
+    // Clean up mobile speech recognition
+    if (isMobileDevice) {
+      cancelMobileSpeech();
+      cleanupMobileMessageListener();
     }
 
     // Clean up Whisper resources
@@ -1645,5 +1873,6 @@ export function useMicrophone(options: UseMicrophoneOptions) {
 
     // Utilities
     isNativeSpeechAvailable,
+    isMobileDevice: () => isMobileDevice, // Check if running in React Native WebView
   };
 }

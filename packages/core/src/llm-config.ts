@@ -60,8 +60,8 @@ function resolveUserConfigPath(username: string, filename: string): string {
  * File: profiles/<username>/etc/llm-credentials.json
  */
 export interface UserCredentials {
-  /** User's preferred cloud provider when offline */
-  offlineProvider?: 'runpod' | 'claude' | 'openrouter' | 'openai';
+  /** User's preferred provider (any configured provider name) */
+  offlineProvider?: string;
 
   /** Provider API keys */
   runpod?: {
@@ -77,6 +77,15 @@ export interface UserCredentials {
   openai?: {
     apiKey: string;
     endpoint?: string;
+  };
+  /** Remote MetaHuman server (via Cloudflare tunnel, etc.) */
+  server?: {
+    /** Server URL (e.g., https://mh.example.com) */
+    serverUrl: string;
+    /** Session ID from remote server login (mh_session cookie value) */
+    sessionId: string;
+    /** Username for display purposes */
+    username?: string;
   };
 
   /** Whether to fall back to system defaults if user has no keys */
@@ -246,34 +255,56 @@ export function loadUsagePolicy(): UsagePolicy {
 
 /**
  * Load user's credentials
- * Checks both llm-credentials.json (new format) and runpod.json (legacy/sync format)
+ * Checks llm-credentials.json (unified), runpod.json (legacy), and remote-server.json
  */
 export function loadUserCredentials(username: string): UserCredentials | null {
   try {
+    let creds: UserCredentials = {};
+
     // First try the new unified credentials file
     const credPath = resolveUserConfigPath(username, 'llm-credentials.json');
     if (fs.existsSync(credPath)) {
-      return JSON.parse(fs.readFileSync(credPath, 'utf-8'));
+      creds = JSON.parse(fs.readFileSync(credPath, 'utf-8'));
     }
 
-    // Fallback: check profile's runpod.json (used by mobile sync and credentials-sync)
-    const runpodPath = resolveUserConfigPath(username, 'runpod.json');
-    if (fs.existsSync(runpodPath)) {
-      const runpodConfig = JSON.parse(fs.readFileSync(runpodPath, 'utf-8'));
-      if (runpodConfig.apiKey) {
-        // Convert runpod.json format to UserCredentials format
-        // Prefer endpointId over templateId (templateId is just metadata)
-        return {
-          offlineProvider: 'runpod',
-          runpod: {
+    // Merge in runpod.json if it exists and creds doesn't have runpod
+    if (!creds.runpod) {
+      const runpodPath = resolveUserConfigPath(username, 'runpod.json');
+      if (fs.existsSync(runpodPath)) {
+        const runpodConfig = JSON.parse(fs.readFileSync(runpodPath, 'utf-8'));
+        if (runpodConfig.apiKey) {
+          creds.runpod = {
             apiKey: runpodConfig.apiKey,
             endpointId: runpodConfig.endpointId || runpodConfig.templateId,
-          },
-        };
+          };
+          if (!creds.offlineProvider) {
+            creds.offlineProvider = 'runpod';
+          }
+        }
       }
     }
 
-    return null;
+    // Merge in remote-server.json if it exists and creds doesn't have server
+    if (!creds.server) {
+      const serverPath = resolveUserConfigPath(username, 'remote-server.json');
+      if (fs.existsSync(serverPath)) {
+        const serverConfig = JSON.parse(fs.readFileSync(serverPath, 'utf-8'));
+        if (serverConfig.serverUrl && serverConfig.sessionId) {
+          creds.server = {
+            serverUrl: serverConfig.serverUrl,
+            sessionId: serverConfig.sessionId,
+            username: serverConfig.username,
+          };
+        }
+      }
+    }
+
+    // Return null if no credentials found at all
+    if (Object.keys(creds).length === 0) {
+      return null;
+    }
+
+    return creds;
   } catch (e) {
     console.warn(`[llm-config] Failed to load credentials for ${username}:`, e);
     return null;
@@ -288,6 +319,53 @@ export function saveUserCredentials(username: string, creds: UserCredentials): v
 
   fs.mkdirSync(path.dirname(credPath), { recursive: true });
   fs.writeFileSync(credPath, JSON.stringify(creds, null, 2), 'utf-8');
+}
+
+/**
+ * Save remote-server credentials for a user
+ * Writes to remote-server.json in the user's profile config directory
+ *
+ * @param username - Local username (profile owner)
+ * @param serverUrl - Remote server URL
+ * @param sessionId - Session ID from remote server login (mh_session cookie value)
+ * @param remoteUsername - Username on the remote server (for display)
+ */
+export function saveRemoteServerCredentials(
+  username: string,
+  serverUrl: string,
+  sessionId: string,
+  remoteUsername?: string
+): void {
+  const serverPath = resolveUserConfigPath(username, 'remote-server.json');
+
+  const config = {
+    serverUrl,
+    sessionId,
+    username: remoteUsername,
+    savedAt: new Date().toISOString(),
+  };
+
+  fs.mkdirSync(path.dirname(serverPath), { recursive: true });
+  fs.writeFileSync(serverPath, JSON.stringify(config, null, 2), 'utf-8');
+  console.log(`[llm-config] Saved remote-server session for ${username} to ${serverPath}`);
+}
+
+/**
+ * Delete remote-server credentials for a user
+ */
+export function deleteRemoteServerCredentials(username: string): boolean {
+  const serverPath = resolveUserConfigPath(username, 'remote-server.json');
+  try {
+    if (fs.existsSync(serverPath)) {
+      fs.unlinkSync(serverPath);
+      console.log(`[llm-config] Deleted remote-server credentials for ${username}`);
+      return true;
+    }
+    return false;
+  } catch (e) {
+    console.warn(`[llm-config] Failed to delete remote-server credentials:`, e);
+    return false;
+  }
 }
 
 /**
@@ -376,7 +454,21 @@ export function resolveCredentials(
 
   // Try each provider
   for (const provider of providerOrder) {
-    // Try user credentials first
+    // Special handling for 'server' (remote-server) provider - different credential structure
+    if (provider === 'server' || provider === 'remote-server') {
+      const serverCreds = userCreds?.server;
+      if (serverCreds?.serverUrl && serverCreds?.sessionId) {
+        return {
+          provider: 'server',
+          apiKey: serverCreds.sessionId,  // sessionId for mh_session cookie
+          endpoint: serverCreds.serverUrl,
+          source: 'user',
+        };
+      }
+      continue; // No system fallback for remote-server (it's user-specific)
+    }
+
+    // Try user credentials first (standard providers)
     const userProvider = userCreds?.[provider as keyof UserCredentials] as { apiKey?: string; endpointId?: string } | undefined;
     if (userProvider?.apiKey) {
       return {

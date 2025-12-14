@@ -28,7 +28,6 @@ import {
   savePersona,
   getAllPersona,
   saveMemory,
-  getRecentMemories,
   getUnsyncedMemories,
   markMemoriesSynced,
   importMemories,
@@ -468,7 +467,17 @@ export async function exportProfile(): Promise<ProfileData> {
     persona[item.key] = item.data;
   }
 
-  const memories = await getRecentMemories(10000); // Get all recent
+  // Get memories via unified API (works for both web and mobile)
+  let memories: any[] = [];
+  try {
+    const memResponse = await apiFetch('/api/memories?limit=10000');
+    if (memResponse.ok) {
+      const memData = await memResponse.json();
+      memories = memData.memories || [];
+    }
+  } catch (err) {
+    console.warn('[profile-sync] Could not get memories via API:', err);
+  }
   const tasks = await getActiveTasks();
 
   return {
@@ -876,7 +885,7 @@ export async function configureRemoteSyncServer(
  *   - includeMemories: Download memories (default: true)
  *   - includeCredentials: Download credentials (default: true)
  *   - priorityOnly: Use priority export (persona/config only) (default: true)
- *   - memoryDays: Only sync memories from last N days (default: 7, 0 = all)
+ *   - memoryDays: Only sync memories from last N days (default: 0 = all)
  */
 export async function syncFromRemoteServer(
   onProgress?: (progress: RemoteSyncProgress) => void,
@@ -891,7 +900,7 @@ export async function syncFromRemoteServer(
     includeMemories: true,
     includeCredentials: true,
     priorityOnly: true,
-    memoryDays: 7, // Default to last 7 days
+    memoryDays: 0, // Default to ALL memories (0 = no limit)
     ...options,
   };
 
@@ -1010,12 +1019,14 @@ export async function syncFromRemoteServer(
         current: result.profileFiles,
         total: result.profileFiles,
       });
+      console.log('[profile-sync] === PHASE 3 COMPLETE ===');
     } catch (err) {
       console.error('[profile-sync] Import error:', err);
       onProgress?.({ phase: 'error', message: 'Import failed', error: (err as Error).message });
       return { success: false, error: (err as Error).message };
     }
 
+    console.log('[profile-sync] === PHASE 4: CREDENTIALS ===');
     // Phase 4: Fetch credentials (if requested)
     if (opts.includeCredentials) {
       onProgress?.({ phase: 'fetching-credentials', message: 'Syncing credentials...' });
@@ -1031,9 +1042,9 @@ export async function syncFromRemoteServer(
 
     // Phase 5: Fetch memories (if requested)
     // Downloads from remote server, then POSTs to LOCAL API to write to filesystem
+    console.log('[profile-sync] === PHASE 5: MEMORIES ===');
+    console.log('[profile-sync] includeMemories:', opts.includeMemories);
     if (opts.includeMemories) {
-      // Build memory URL with date filter
-      const daysParam = opts.memoryDays > 0 ? `&days=${opts.memoryDays}` : '';
       const daysLabel = opts.memoryDays > 0 ? ` (last ${opts.memoryDays} days)` : '';
       onProgress?.({ phase: 'importing', message: `Checking local memories...` });
 
@@ -1050,29 +1061,40 @@ export async function syncFromRemoteServer(
         console.warn('[profile-sync] Could not get local memory IDs:', err);
       }
 
-      // Build exclude parameter (chunked to avoid URL length limits)
-      const excludeParam = localMemoryIds.length > 0
-        ? `&exclude=${localMemoryIds.slice(0, 500).join(',')}`  // Limit to 500 IDs per request
-        : '';
-
       onProgress?.({ phase: 'importing', message: `Syncing memories${daysLabel}...` });
 
       let offset = 0;
       let totalMemories = 0;
       let hasMore = true;
 
+      console.log('[profile-sync] Starting memory sync loop...');
+      console.log('[profile-sync] Remote URL:', `${normalizedServerUrl}/api/profile-sync/memories`);
+
       while (hasMore) {
+        console.log(`[profile-sync] Fetching memories batch, offset=${offset}`);
+
+        // Use POST with credentials (cross-origin cookies don't work reliably)
         const memResponse = await remoteFetch(
-          `${normalizedServerUrl}/api/profile-sync/memories?offset=${offset}&limit=100${daysParam}${excludeParam}`,
+          `${normalizedServerUrl}/api/profile-sync/memories`,
           {
-            method: 'GET',
-            headers: { 'Cookie': cookie },
-            credentials: 'include',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username: creds.username,
+              password: creds.password,
+              offset,
+              limit: 100,
+              days: opts.memoryDays > 0 ? opts.memoryDays : undefined,
+              exclude: localMemoryIds.slice(0, 500).join(','),
+            }),
           }
         );
 
+        console.log('[profile-sync] Memory response status:', memResponse.status);
+
         if (!memResponse.ok) {
-          console.warn('[profile-sync] Memory fetch failed:', memResponse.status);
+          const errorText = await memResponse.text().catch(() => '');
+          console.error('[profile-sync] Memory fetch FAILED:', memResponse.status, errorText);
           break;
         }
 
@@ -1199,9 +1221,18 @@ export async function checkRemoteSyncStatus(): Promise<SyncComparison> {
     throw new Error('No sync server configured');
   }
 
-  // Get local memory count
-  const localMemories = await getRecentMemories(100000); // Get all
-  const localCount = localMemories.length;
+  // Get local memory count via unified API (works for both web and mobile)
+  // NOTE: This uses the local API, not the remote server
+  let localCount = 0;
+  try {
+    const localMemResponse = await apiFetch('/api/memories?idsOnly=true');
+    if (localMemResponse.ok) {
+      const localData = await localMemResponse.json();
+      localCount = localData.count || (localData.ids?.length ?? 0);
+    }
+  } catch (err) {
+    console.warn('[profile-sync] Could not get local memory count via API:', err);
+  }
   const lastSync = creds.lastSyncAt || null;
 
   // Authenticate with remote server

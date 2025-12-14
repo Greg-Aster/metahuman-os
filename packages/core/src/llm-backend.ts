@@ -84,6 +84,14 @@ export interface RemoteBackendConfig {
   serverUrl?: string;
   /** Default model for remote provider */
   model?: string;
+  /** Saved credentials for remote server authentication */
+  credentials?: {
+    username?: string;
+    /** Session ID from remote server login (mh_session cookie value) - preferred */
+    sessionId?: string;
+    /** Legacy: Base64 encoded username:password for Basic auth */
+    token?: string;
+  };
 }
 
 export interface BackendConfig {

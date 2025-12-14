@@ -49,7 +49,7 @@ const GLOBAL_SETTINGS_PATH = path.join(systemPaths.root, 'etc', 'chat-settings.j
  */
 function getUserSettingsPath(): string | null {
   const ctx = getUserContext();
-  if (!ctx || ctx.role === 'anonymous') {
+  if (!ctx) {
     return null;
   }
 

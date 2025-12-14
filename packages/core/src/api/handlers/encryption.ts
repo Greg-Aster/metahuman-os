@@ -21,20 +21,9 @@ export async function handleGetEncryption(req: UnifiedRequest): Promise<UnifiedR
     // Get available encryption capabilities
     const capabilities = getEncryptionCapabilities();
 
-    // If anonymous, just return capabilities
-    if (req.user.role === 'anonymous') {
-      return {
-        status: 200,
-        data: {
-          capabilities,
-          status: null,
-          message: 'Login required to view encryption status',
-        },
-      };
-    }
-
+    // All users are now authenticated (no anonymous access)
     // Get user's encryption status
-    const status = await getEncryptionStatus(req.user.id);
+    const status = await getEncryptionStatus(req.user.userId);
 
     return {
       status: 200,

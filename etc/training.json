@@ -1,4 +1,8 @@
 {
+  "_TEMPLATE_WARNING": "══════════════════════════════════════════════════════════════════════════",
+  "_TEMPLATE_WARNING2": "██ THIS IS A SYSTEM TEMPLATE - DO NOT USE DIRECTLY FOR INDIVIDUAL USERS ██",
+  "_TEMPLATE_WARNING3": "██ This file is COPIED to user profiles, then the user's copy is used   ██",
+  "_TEMPLATE_WARNING4": "══════════════════════════════════════════════════════════════════════════",
   "base_model": "unsloth/Qwen3-14B",
   "num_train_epochs": 3,
   "max_samples": 3000,

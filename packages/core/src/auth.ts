@@ -24,32 +24,44 @@ function getSessionId(auth: AuthInput): string | undefined {
   return auth.get('mh_session')?.value; // Cookie interface (web)
 }
 
+/**
+ * Authenticated user - all valid users in the system
+ *
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║  NO ANONYMOUS USERS - ALL ACCESS REQUIRES AUTHENTICATION                  ║
+ * ╠═══════════════════════════════════════════════════════════════════════════╣
+ * ║  owner    - Full system access, can manage other users                    ║
+ * ║  standard - Read/write access to their own profile                        ║
+ * ║  guest    - Read-only access (authenticated via auth gate, no password)   ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
+ */
 export interface AuthenticatedUser {
   id: string;
   username: string;
   role: 'owner' | 'standard' | 'guest';
 }
 
-export interface AnonymousUser {
-  id: 'anonymous' | 'guest';
-  username: 'anonymous' | 'guest';
-  role: 'anonymous';
-  metadata?: {
-    sourceProfile?: string;
-  };
-}
+// User is ALWAYS authenticated - no anonymous access allowed
+export type User = AuthenticatedUser;
 
-export type User = AuthenticatedUser | AnonymousUser;
+/**
+ * Custom error class for auth failures - indicates redirect to auth gate needed
+ */
+export class AuthRequiredError extends Error {
+  constructor(message: string = 'Authentication required') {
+    super(message);
+    this.name = 'AuthRequiredError';
+  }
+}
 
 /**
  * Get authenticated user from session
  *
  * UNIVERSAL - works for both web (cookies) and mobile (session token string)
  *
- * Throws error if:
- * - No session
- * - Invalid session
- * - Session is anonymous
+ * Throws AuthRequiredError if:
+ * - No session (redirect to auth gate)
+ * - Invalid/expired session (redirect to auth gate)
  * - User not found in database
  *
  * @example
@@ -65,17 +77,13 @@ export function getAuthenticatedUser(auth: AuthInput): AuthenticatedUser {
   const sessionId = getSessionId(auth);
 
   if (!sessionId) {
-    throw new Error('UNAUTHORIZED: No session');
+    throw new AuthRequiredError('No session - redirect to auth gate');
   }
 
   const session = validateSession(sessionId);
 
   if (!session) {
-    throw new Error('UNAUTHORIZED: Invalid session');
-  }
-
-  if (session.role === 'anonymous') {
-    throw new Error('UNAUTHORIZED: Anonymous session not allowed');
+    throw new AuthRequiredError('Invalid or expired session - redirect to auth gate');
   }
 
   // Get CURRENT user from database (not cached in session)
@@ -83,7 +91,7 @@ export function getAuthenticatedUser(auth: AuthInput): AuthenticatedUser {
   const user = getUser(session.userId);
 
   if (!user) {
-    throw new Error('UNAUTHORIZED: User not found');
+    throw new AuthRequiredError('User not found - redirect to auth gate');
   }
 
   return {
@@ -94,75 +102,43 @@ export function getAuthenticatedUser(auth: AuthInput): AuthenticatedUser {
 }
 
 /**
- * Get user or return anonymous user
+ * @deprecated Use getAuthenticatedUser() instead - anonymous access is not allowed
  *
- * UNIVERSAL - works for both web (cookies) and mobile (session token string)
+ * This function previously returned an anonymous user when auth failed.
+ * Now it throws AuthRequiredError because ALL access requires authentication.
+ * Even guests must go through the auth gate to get a session cookie.
  *
- * Never throws - returns anonymous user if auth fails.
- * Use this for public endpoints that degrade gracefully for anonymous users.
- *
- * @example
- * ```typescript
- * // Web (Astro cookies)
- * const user = getUserOrAnonymous(cookies);
- *
- * // Mobile (session token string)
- * const user = getUserOrAnonymous(sessionToken);
- * ```
+ * MIGRATION: Replace calls to getUserOrAnonymous() with getAuthenticatedUser()
+ * and handle AuthRequiredError by redirecting to the auth gate.
  */
 export function getUserOrAnonymous(auth: AuthInput): User {
-  try {
-    return getAuthenticatedUser(auth);
-  } catch (error) {
-    // Check if this is an anonymous session with a selected guest profile
-    const sessionId = getSessionId(auth);
-    if (sessionId) {
-      const session = validateSession(sessionId);
-      if (session?.role === 'anonymous' && session.metadata?.activeProfile === 'guest') {
-        return {
-          id: 'guest',
-          username: 'guest',
-          role: 'anonymous' as const,
-          metadata: {
-            sourceProfile: session.metadata.sourceProfile,
-          },
-        } as User;
-      }
-    }
-    return {
-      id: 'anonymous',
-      username: 'anonymous',
-      role: 'anonymous',
-    };
-  }
+  console.warn('[auth] DEPRECATED: getUserOrAnonymous() called - use getAuthenticatedUser() instead');
+  return getAuthenticatedUser(auth);
 }
 
 /**
  * Get profile paths for a user
  *
- * Safe wrapper around getProfilePaths that handles anonymous users.
- * Returns null for anonymous users instead of throwing.
+ * Returns profile paths for the authenticated user.
+ * Since all users are now authenticated, this always succeeds.
  *
  * @example
  * ```typescript
- * const user = getUserOrAnonymous(cookies);
+ * const user = getAuthenticatedUser(cookies);
  * const paths = getUserPaths(user);
- *
- * if (!paths) {
- *   return new Response('Unauthorized', { status: 401 });
- * }
  * ```
  */
 export function getUserPaths(user: User) {
-  if (user.role === 'anonymous') {
-    return null;
-  }
-
   return getProfilePaths(user.username);
 }
 
 /**
  * Check if user has permission for an operation
+ *
+ * Permission levels by role:
+ * - guest: read only
+ * - standard: read + write
+ * - owner: read + write + admin
  *
  * @example
  * ```typescript
@@ -177,10 +153,6 @@ export function hasPermission(
   user: User,
   permission: 'read' | 'write' | 'admin'
 ): boolean {
-  if (user.role === 'anonymous') {
-    return permission === 'read'; // Anonymous can only read
-  }
-
   if (user.role === 'guest') {
     return permission === 'read'; // Guests can only read
   }

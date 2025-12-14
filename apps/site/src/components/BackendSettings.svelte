@@ -3,10 +3,8 @@
   import { apiFetch } from '../lib/client/api-config';
   import { statusRefreshTrigger } from '../stores/navigation';
 
-  // Backend types
-  type BackendType = 'ollama' | 'vllm' | 'remote' | 'auto';
-  // Note: Claude is NOT a remote provider - Big Brother uses Claude via CLI terminal
-  type RemoteProviderType = 'runpod' | 'openrouter' | 'openai' | 'server';
+  // Backend types (local LLM backends only - remote server is parallel, not a backend choice)
+  type BackendType = 'ollama' | 'vllm' | 'auto';
 
   // Backend status
   interface BackendStatus {
@@ -15,14 +13,12 @@
     model?: string;
     endpoint: string;
     health: 'healthy' | 'starting' | 'degraded' | 'offline';
-    resolvedBackend?: 'ollama' | 'vllm' | 'remote' | 'offline';
-    remoteProvider?: RemoteProviderType;
+    resolvedBackend?: 'ollama' | 'vllm' | 'offline';
   }
 
   interface AvailableBackends {
     ollama: { installed: boolean; running: boolean; model?: string };
     vllm: { installed: boolean; running: boolean; model?: string };
-    remote: { configured: boolean; provider?: RemoteProviderType; hasCredentials: boolean };
   }
 
   // Big Brother config (CLI LLM escalation)
@@ -47,13 +43,6 @@
     autoApplySuggestions: boolean;
   }
 
-  // RunPod config
-  interface RunPodConfig {
-    apiKey: string | null;
-    templateId: string | null;
-    gpuType: string | null;
-  }
-
   let activeBackend: BackendType = 'ollama';
   let status: BackendStatus | null = null;
   let available: AvailableBackends | null = null;
@@ -71,11 +60,9 @@
   let ollamaEndpoint = 'http://localhost:11434';
   let ollamaModel = 'qwen3:14b';
 
-  // Remote provider config (from llm-backend.json)
-  let remoteProvider: RemoteProviderType = 'runpod';
+  // Remote server connection
   let remoteServerUrl = '';
-  let remoteModel = '';
-  let resolvedBackend: 'ollama' | 'vllm' | 'remote' | 'offline' | null = null;
+  let resolvedBackend: 'ollama' | 'vllm' | 'offline' | null = null;
 
   // Big Brother config (CLI LLM - from operator.json)
   let bigBrotherConfig: BigBrotherConfig | null = null;
@@ -83,18 +70,28 @@
   let bigBrotherProvider: BigBrotherProvider = 'claude-code';
   let savingBigBrother = false;
 
-  // RunPod config (from env/runpod.json)
-  let runpodConfig: RunPodConfig | null = null;
-  let runpodConfigured = false;
-
-  // Credential tracking
-  let credentialSource: 'local' | 'none' = 'none';
 
   // Embedding config (for semantic memory search)
   let embeddingEnabled = true;
   let embeddingModel = 'nomic-embed-text';
   let embeddingCpuOnly = true;
   let embeddingSaving = false;
+
+  // Remote server test state
+  let testingRemoteServer = false;
+  let remoteServerTestResult: {
+    success: boolean;
+    latencyMs?: number;
+    serverVersion?: string;
+    models?: Array<{ id: string; model: string; provider: string }>;
+    error?: string;
+    needsAuth?: boolean;
+  } | null = null;
+
+  // Remote server credentials
+  let remoteServerUsername = '';
+  let remoteServerPassword = '';
+  let remoteServerSaveCredentials = true;
 
   // UI state
   let loading = true;
@@ -108,7 +105,6 @@
   onMount(() => {
     loadStatus();
     loadBigBrotherConfig();
-    loadRunPodConfig();
     loadEmbeddingConfig();
   });
 
@@ -135,11 +131,9 @@
         ollamaEndpoint = data.config.ollama?.endpoint || 'http://localhost:11434';
         ollamaModel = data.config.ollama?.defaultModel || 'qwen3:14b';
 
-        // Remote provider config
-        if (data.config.remote) {
-          remoteProvider = data.config.remote.provider || 'runpod';
-          remoteServerUrl = data.config.remote.serverUrl || '';
-          remoteModel = data.config.remote.model || '';
+        // Remote server URL
+        if (data.config.remote?.serverUrl) {
+          remoteServerUrl = data.config.remote.serverUrl;
         }
 
         error = null;
@@ -222,25 +216,6 @@
     return opt?.label || provider;
   }
 
-  // Load RunPod config from API
-  async function loadRunPodConfig() {
-    credentialSource = 'none';
-
-    try {
-      const res = await apiFetch('/api/runpod/config');
-      if (res.ok) {
-        const config = await res.json();
-        if (config?.apiKey) {
-          runpodConfig = config;
-          runpodConfigured = true;
-          credentialSource = 'local';
-        }
-      }
-    } catch (err) {
-      console.error('[BackendSettings] Error loading RunPod config:', err);
-    }
-  }
-
   async function saveEmbeddingConfig() {
     embeddingSaving = true;
     try {
@@ -297,34 +272,124 @@
     }
   }
 
-  async function saveRemoteConfig() {
+  async function testRemoteServerConnection() {
+    if (!remoteServerUrl) {
+      remoteServerTestResult = {
+        success: false,
+        error: 'Please enter a server URL',
+      };
+      return;
+    }
+
+    testingRemoteServer = true;
+    remoteServerTestResult = null;
+    error = null;
+
+    try {
+      const payload: Record<string, any> = { serverUrl: remoteServerUrl };
+
+      // Include credentials if provided
+      if (remoteServerUsername && remoteServerPassword) {
+        payload.username = remoteServerUsername;
+        payload.password = remoteServerPassword;
+      }
+
+      const res = await apiFetch('/api/remote-server/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        remoteServerTestResult = data;
+      } else {
+        remoteServerTestResult = {
+          success: false,
+          error: data.error || 'Test failed',
+        };
+      }
+    } catch (err) {
+      remoteServerTestResult = {
+        success: false,
+        error: 'Failed to test connection',
+      };
+    } finally {
+      testingRemoteServer = false;
+    }
+  }
+
+  async function connectToRemoteServer() {
+    if (!remoteServerUrl) {
+      error = 'Please enter a server URL';
+      return;
+    }
+
     savingRemoteConfig = true;
     error = null;
 
     try {
-      const res = await apiFetch('/api/llm-backend/config', {
-        method: 'PUT',
+      const payload: Record<string, any> = { serverUrl: remoteServerUrl };
+
+      // Include credentials if provided
+      if (remoteServerUsername && remoteServerPassword) {
+        payload.username = remoteServerUsername;
+        payload.password = remoteServerPassword;
+        payload.saveCredentials = remoteServerSaveCredentials;
+      }
+
+      const res = await apiFetch('/api/remote-server/connect', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          remote: {
-            provider: remoteProvider,
-            serverUrl: remoteServerUrl,
-            model: remoteModel,
-          },
-        }),
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        remoteServerTestResult = {
+          success: true,
+          latencyMs: data.latencyMs,
+          serverVersion: data.serverVersion,
+          models: data.models,
+        };
+        // Refresh status to show new configuration
+        await loadStatus();
+        statusRefreshTrigger.update(n => n + 1);
+      } else {
+        remoteServerTestResult = {
+          success: false,
+          error: data.error || 'Connection failed',
+        };
+      }
+    } catch (err) {
+      error = 'Failed to connect to server';
+    } finally {
+      savingRemoteConfig = false;
+    }
+  }
+
+  async function disconnectRemoteServer() {
+    savingRemoteConfig = true;
+    error = null;
+
+    try {
+      const res = await apiFetch('/api/remote-server/disconnect', {
+        method: 'DELETE',
       });
 
       if (res.ok) {
-        // Reload to confirm what was saved
+        remoteServerUrl = '';
+        remoteServerTestResult = null;
         await loadStatus();
-        // Trigger status refresh for other components
         statusRefreshTrigger.update(n => n + 1);
       } else {
         const data = await res.json();
-        error = data.error || 'Failed to save remote config';
+        error = data.error || 'Failed to disconnect';
       }
     } catch (err) {
-      error = 'Failed to save remote config';
+      error = 'Failed to disconnect';
     } finally {
       savingRemoteConfig = false;
     }
@@ -514,7 +579,6 @@
     switch (backend) {
       case 'ollama': return '🦙';
       case 'vllm': return '⚡';
-      case 'remote': return '☁️';
       case 'auto': return '🔄';
       default: return '❓';
     }
@@ -524,32 +588,150 @@
     switch (backend) {
       case 'ollama': return 'Ollama';
       case 'vllm': return 'vLLM';
-      case 'remote': return 'Remote';
       case 'auto': return 'Auto';
       default: return 'Unknown';
     }
   }
 
-  function getProviderLabel(provider: RemoteProviderType): string {
-    const labels: Record<RemoteProviderType, string> = {
-      runpod: 'RunPod Serverless',
-      openrouter: 'OpenRouter',
-      openai: 'OpenAI',
-      server: 'Desktop Server',
-    };
-    return labels[provider] || provider;
-  }
 </script>
 
 <div class="backend-settings">
   <h3>LLM Backend</h3>
   <p class="description">
-    Choose your inference backend: local (Ollama/vLLM) or remote (RunPod, OpenRouter, Desktop Server). Auto mode picks the best available.
+    Configure local backends (Ollama/vLLM) and connect to remote servers.
   </p>
 
   {#if error}
     <div class="error-banner">{error}</div>
   {/if}
+
+  <!-- Remote Server Connection (runs in parallel with local backends) -->
+  <div class="remote-server-section">
+    <h4>🌐 Remote Server Connection</h4>
+    <p class="config-desc">
+      Connect to a remote MetaHuman server to use its LLM. Remote models appear in dropdowns
+      alongside local models. This runs in parallel - doesn't compete for local VRAM.
+    </p>
+
+    <div class="config-row">
+      <label for="remote-server">Server URL</label>
+      <input
+        id="remote-server"
+        type="text"
+        bind:value={remoteServerUrl}
+        placeholder="https://your-tunnel.trycloudflare.com"
+        disabled={savingRemoteConfig || testingRemoteServer}
+      />
+    </div>
+
+    <div class="config-row credentials-row">
+      <div class="credential-field">
+        <label for="remote-username">Username</label>
+        <input
+          id="remote-username"
+          type="text"
+          bind:value={remoteServerUsername}
+          placeholder="Your MetaHuman username"
+          disabled={savingRemoteConfig || testingRemoteServer}
+        />
+      </div>
+      <div class="credential-field">
+        <label for="remote-password">Password</label>
+        <input
+          id="remote-password"
+          type="password"
+          bind:value={remoteServerPassword}
+          placeholder="Your password"
+          disabled={savingRemoteConfig || testingRemoteServer}
+        />
+      </div>
+    </div>
+
+    <div class="config-row checkbox-row">
+      <label class="checkbox-label">
+        <input type="checkbox" bind:checked={remoteServerSaveCredentials} />
+        <span>Save credentials for auto-connect</span>
+      </label>
+    </div>
+
+    <div class="config-actions remote-actions">
+      <button
+        class="test-btn"
+        on:click={testRemoteServerConnection}
+        disabled={savingRemoteConfig || testingRemoteServer || !remoteServerUrl}
+      >
+        {testingRemoteServer ? '🔄 Testing...' : '🔍 Test Connection'}
+      </button>
+      <button
+        class="save-btn"
+        on:click={connectToRemoteServer}
+        disabled={savingRemoteConfig || testingRemoteServer || !remoteServerUrl}
+      >
+        {savingRemoteConfig ? 'Connecting...' : '🔗 Connect & Save'}
+      </button>
+      {#if remoteServerUrl && remoteServerTestResult?.success}
+        <button
+          class="disconnect-btn"
+          on:click={disconnectRemoteServer}
+          disabled={savingRemoteConfig}
+        >
+          ❌ Disconnect
+        </button>
+      {/if}
+    </div>
+
+    <!-- Test Results -->
+    {#if remoteServerTestResult}
+      <div class="test-result" class:success={remoteServerTestResult.success} class:error={!remoteServerTestResult.success}>
+        {#if remoteServerTestResult.success}
+          <div class="result-header">
+            <span class="status-icon">✅</span>
+            <span class="status-text">Connected successfully</span>
+            {#if remoteServerTestResult.latencyMs}
+              <span class="latency">({remoteServerTestResult.latencyMs}ms)</span>
+            {/if}
+          </div>
+          {#if remoteServerTestResult.serverVersion}
+            <div class="result-detail">
+              <span class="detail-label">Server Version:</span>
+              <span class="detail-value">{remoteServerTestResult.serverVersion}</span>
+            </div>
+          {/if}
+          {#if remoteServerTestResult.models && remoteServerTestResult.models.length > 0}
+            <div class="result-detail">
+              <span class="detail-label">Available Models:</span>
+              <div class="models-list">
+                {#each remoteServerTestResult.models as model}
+                  <span class="model-badge">{model.model}</span>
+                {/each}
+              </div>
+            </div>
+          {/if}
+          {#if remoteServerTestResult.needsAuth}
+            <div class="result-note warning">
+              ⚠️ Authentication required - provide username and password
+            </div>
+          {/if}
+        {:else}
+          <div class="result-header">
+            <span class="status-icon">❌</span>
+            <span class="status-text">Connection failed</span>
+          </div>
+          <div class="result-error">
+            {remoteServerTestResult.error || 'Unknown error'}
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <p class="config-note">
+      On your desktop, start a Cloudflare Tunnel from Settings → Network to get a public URL.
+    </p>
+  </div>
+
+  <hr class="section-divider" />
+
+  <h4>Local LLM Backends</h4>
 
   {#if loading}
     <div class="loading">Loading backend status...</div>
@@ -584,12 +766,6 @@
           {:else}
             <span class="status-badge stopped">Stopped</span>
             <span class="status-hint">Configure and start below</span>
-          {/if}
-        {:else if activeBackend === 'remote'}
-          <span class="status-badge running">Active</span>
-          <span class="model-badge">{getProviderLabel(remoteProvider)}</span>
-          {#if remoteModel}
-            <span class="model-note">{remoteModel}</span>
           {/if}
         {:else if activeBackend === 'auto'}
           {#if resolvedBackend === 'offline'}
@@ -632,15 +808,6 @@
         title="Use vLLM for high-throughput inference"
       >
         ⚡ vLLM
-      </button>
-      <button
-        class="mode-btn"
-        class:active={activeBackend === 'remote'}
-        on:click={() => switchBackend('remote')}
-        disabled={switching}
-        title="Use remote cloud providers"
-      >
-        ☁️ Remote
       </button>
     </div>
 
@@ -760,50 +927,6 @@
         </div>
       </div>
 
-      <!-- Remote Provider Card -->
-      <div class="backend-card" class:active={activeBackend === 'remote'}>
-        <div class="backend-header">
-          <span class="backend-icon">☁️</span>
-          <span class="backend-name">Remote</span>
-          <span class="status-dot" class:running={runpodConfigured || bigBrotherEnabled} class:stopped={!runpodConfigured && !bigBrotherEnabled}></span>
-        </div>
-
-        <div class="backend-info">
-          <p class="backend-desc">Cloud GPU or Desktop Server</p>
-          <div class="backend-detail">
-            <span class="label">RunPod:</span>
-            <span class="value" style="color: {runpodConfigured ? '#22c55e' : '#6b7280'}">
-              {runpodConfigured ? '✓ Configured' : 'Not configured'}
-            </span>
-          </div>
-          <div class="backend-detail">
-            <span class="label">Big Brother:</span>
-            <span class="value" style="color: {bigBrotherEnabled ? '#22c55e' : '#6b7280'}">
-              {bigBrotherEnabled ? `✓ ${getBigBrotherProviderLabel(bigBrotherProvider)}` : 'Disabled'}
-            </span>
-          </div>
-          {#if remoteServerUrl}
-            <div class="backend-detail">
-              <span class="label">Server:</span>
-              <span class="value endpoint">{remoteServerUrl}</span>
-            </div>
-          {/if}
-        </div>
-
-        <div class="backend-actions">
-          {#if activeBackend === 'remote'}
-            <span class="active-badge">Active</span>
-          {:else}
-            <button
-              class="switch-btn"
-              on:click={() => switchBackend('remote')}
-              disabled={switching}
-            >
-              {switching ? 'Switching...' : 'Switch to Remote'}
-            </button>
-          {/if}
-        </div>
-      </div>
     </div>
 
     <!-- Big Brother Mode (CLI LLM Escalation) -->
@@ -862,87 +985,6 @@
       {#if savingBigBrother}
         <span class="saving-indicator">Saving...</span>
       {/if}
-    </div>
-
-    <!-- RunPod Cloud GPU -->
-    <div class="remote-config runpod-config">
-      <h4>☁️ RunPod Cloud GPU</h4>
-      <p class="config-desc">
-        Serverless GPU inference for high-performance models. Works on all devices.
-      </p>
-
-      <div class="config-status">
-        {#if runpodConfigured}
-          <span class="status-badge running">✓ Configured</span>
-          <span class="config-hint">
-            {#if credentialSource === 'local'}
-              From local config
-            {:else if credentialSource === 'synced'}
-              Synced from desktop
-            {:else if credentialSource === 'manual'}
-              Manually entered
-            {:else}
-              API key detected
-            {/if}
-          </span>
-        {:else}
-          <span class="status-badge stopped">Not Configured</span>
-          <span class="config-hint">Set RUNPOD_API_KEY in .env or etc/runpod.json</span>
-        {/if}
-      </div>
-
-      {#if runpodConfig && runpodConfigured}
-        <div class="config-details">
-          <div class="config-detail">
-            <span class="detail-label">API Key:</span>
-            <span class="detail-value masked">{runpodConfig.apiKey?.slice(0, 8)}...****</span>
-          </div>
-          {#if runpodConfig.gpuType}
-            <div class="config-detail">
-              <span class="detail-label">GPU Type:</span>
-              <span class="detail-value">{runpodConfig.gpuType}</span>
-            </div>
-          {/if}
-          {#if runpodConfig.templateId}
-            <div class="config-detail">
-              <span class="detail-label">Template:</span>
-              <span class="detail-value">{runpodConfig.templateId}</span>
-            </div>
-          {/if}
-        </div>
-      {/if}
-
-      <p class="config-note">
-        Configure via environment: RUNPOD_API_KEY, RUNPOD_GPU_TYPE, RUNPOD_TEMPLATE_ID
-      </p>
-    </div>
-
-    <!-- Remote Server (Desktop Connection) -->
-    <div class="remote-config server-config">
-      <h4>🖥️ Connect to Desktop Server</h4>
-      <p class="config-desc">
-        Connect mobile app to your desktop MetaHuman server via Cloudflare Tunnel.
-      </p>
-
-      <div class="config-row">
-        <label for="remote-server">Server URL</label>
-        <input
-          id="remote-server"
-          type="text"
-          bind:value={remoteServerUrl}
-          placeholder="https://your-tunnel.trycloudflare.com"
-        />
-      </div>
-
-      <div class="config-actions">
-        <button
-          class="save-btn"
-          on:click={saveRemoteConfig}
-          disabled={savingRemoteConfig}
-        >
-          {savingRemoteConfig ? 'Saving...' : 'Save Server URL'}
-        </button>
-      </div>
     </div>
 
     <!-- vLLM Configuration -->
@@ -1993,142 +2035,234 @@
     color: #93c5fd;
   }
 
-  /* RunPod config specific styling */
-  .runpod-config {
-    background: #f0fdf4;
-    border-color: #86efac;
+  /* Remote Server Section */
+  .remote-server-section {
+    background: rgba(59, 130, 246, 0.05);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
   }
 
-  :global(.dark) .runpod-config {
-    background: rgba(34, 197, 94, 0.1);
-    border-color: rgba(34, 197, 94, 0.3);
+  :global(.dark) .remote-server-section {
+    background: rgba(59, 130, 246, 0.1);
+    border-color: rgba(59, 130, 246, 0.3);
   }
 
-  .runpod-config h4 {
-    color: #166534;
+  .remote-server-section h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1rem;
+    color: #1e40af;
   }
 
-  :global(.dark) .runpod-config h4 {
-    color: #86efac;
+  :global(.dark) .remote-server-section h4 {
+    color: #60a5fa;
   }
 
-  .runpod-config .config-desc {
-    color: #15803d;
+  .section-divider {
+    border: none;
+    border-top: 1px solid #e5e7eb;
+    margin: 1.5rem 0;
   }
 
-  :global(.dark) .runpod-config .config-desc {
-    color: #86efac;
+  :global(.dark) .section-divider {
+    border-color: #374151;
   }
 
-  /* Server config styling */
-  .server-config {
-    background: #f5f5f5;
-    border-color: #d1d5db;
+  /* Remote Server Styles */
+  .credentials-row {
+    display: flex;
+    gap: 1rem;
   }
 
-  :global(.dark) .server-config {
-    background: rgba(107, 114, 128, 0.1);
-    border-color: rgba(107, 114, 128, 0.3);
+  .credential-field {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
   }
 
-  .server-config h4 {
-    color: #374151;
-  }
-
-  :global(.dark) .server-config h4 {
-    color: #d1d5db;
-  }
-
-  .server-config .config-desc {
+  .credential-field label {
+    font-size: 0.875rem;
     color: #4b5563;
   }
 
-  :global(.dark) .server-config .config-desc {
+  :global(.dark) .credential-field label {
     color: #9ca3af;
   }
 
-  /* Credential actions (sync/manual buttons) */
-  .credential-actions {
-    display: flex;
-    gap: 0.75rem;
-    margin-top: 1rem;
+  .credential-field input {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    background: white;
+    color: #111827;
+  }
+
+  :global(.dark) .credential-field input {
+    background: #374151;
+    border-color: #4b5563;
+    color: #f3f4f6;
+  }
+
+  .credential-field input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  }
+
+  .remote-actions {
     flex-wrap: wrap;
   }
 
-  .sync-btn, .manual-btn {
+  .test-btn {
     padding: 0.5rem 1rem;
     border-radius: 0.375rem;
     font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s;
-    border: 1px solid transparent;
-  }
-
-  .sync-btn {
+    transition: background 0.2s;
     background: #3b82f6;
     color: white;
-    border-color: #2563eb;
+    border: none;
   }
 
-  .sync-btn:hover:not(:disabled) {
+  .test-btn:hover:not(:disabled) {
     background: #2563eb;
   }
 
-  .sync-btn:disabled {
-    opacity: 0.6;
+  .test-btn:disabled {
+    opacity: 0.5;
     cursor: not-allowed;
   }
 
-  .manual-btn {
-    background: #f3f4f6;
-    color: #374151;
-    border-color: #d1d5db;
+  .disconnect-btn {
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+    background: #f97316;
+    color: white;
+    border: none;
   }
 
-  :global(.dark) .manual-btn {
-    background: #374151;
-    color: #e5e7eb;
-    border-color: #4b5563;
+  .disconnect-btn:hover:not(:disabled) {
+    background: #ea580c;
   }
 
-  .manual-btn:hover {
-    background: #e5e7eb;
+  .disconnect-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
-  :global(.dark) .manual-btn:hover {
-    background: #4b5563;
-  }
-
-  /* Manual credential entry form */
-  .manual-entry {
+  .test-result {
     margin-top: 1rem;
-    padding: 1rem;
-    background: rgba(0, 0, 0, 0.03);
+    padding: 0.75rem 1rem;
     border-radius: 0.5rem;
-    border: 1px dashed #d1d5db;
+    font-size: 0.875rem;
   }
 
-  :global(.dark) .manual-entry {
-    background: rgba(255, 255, 255, 0.03);
-    border-color: #4b5563;
+  .test-result.success {
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.3);
   }
 
-  .manual-entry .config-row {
-    margin-bottom: 0.75rem;
+  .test-result.error {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
   }
 
-  .manual-entry .config-row:last-of-type {
-    margin-bottom: 0;
+  :global(.dark) .test-result.success {
+    background: rgba(34, 197, 94, 0.15);
+    border-color: rgba(34, 197, 94, 0.4);
   }
 
-  .manual-entry .config-actions {
-    margin-top: 1rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid #e5e7eb;
+  :global(.dark) .test-result.error {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.4);
   }
 
-  :global(.dark) .manual-entry .config-actions {
-    border-color: #374151;
+  .result-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 500;
+  }
+
+  .test-result.success .result-header {
+    color: #16a34a;
+  }
+
+  .test-result.error .result-header {
+    color: #dc2626;
+  }
+
+  :global(.dark) .test-result.success .result-header {
+    color: #4ade80;
+  }
+
+  :global(.dark) .test-result.error .result-header {
+    color: #f87171;
+  }
+
+  .latency {
+    font-size: 0.75rem;
+    opacity: 0.7;
+  }
+
+  .result-detail {
+    margin-top: 0.5rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .result-detail .detail-label {
+    font-weight: 500;
+    color: #6b7280;
+    flex-shrink: 0;
+  }
+
+  :global(.dark) .result-detail .detail-label {
+    color: #9ca3af;
+  }
+
+  .result-detail .detail-value {
+    color: #374151;
+  }
+
+  :global(.dark) .result-detail .detail-value {
+    color: #e5e7eb;
+  }
+
+  .models-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+
+  .result-error {
+    margin-top: 0.5rem;
+    color: #dc2626;
+  }
+
+  :global(.dark) .result-error {
+    color: #f87171;
+  }
+
+  .result-note {
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+  }
+
+  .result-note.warning {
+    color: #d97706;
+  }
+
+  :global(.dark) .result-note.warning {
+    color: #fbbf24;
   }
 </style>

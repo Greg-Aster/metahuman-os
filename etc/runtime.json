@@ -1,4 +1,8 @@
 {
+  "_TEMPLATE_WARNING": "══════════════════════════════════════════════════════════════════════════",
+  "_TEMPLATE_WARNING2": "██ THIS IS A SYSTEM TEMPLATE - DO NOT USE DIRECTLY FOR INDIVIDUAL USERS ██",
+  "_TEMPLATE_WARNING3": "██ This file is COPIED to user profiles, then the user's copy is used   ██",
+  "_TEMPLATE_WARNING4": "══════════════════════════════════════════════════════════════════════════",
   "headless": false,
   "lastChangedBy": "local",
   "changedAt": "2025-11-21T06:13:48.579Z",

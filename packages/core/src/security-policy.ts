@@ -11,12 +11,15 @@ import { getUserContext } from './context.js';
 /**
  * User role types for access control
  *
- * - owner: Full system access (legacy role, maps to admin)
- * - standard: Full access to own profile, read-only docs
- * - guest: Read-only access to docs and shared content
- * - anonymous: Unauthenticated users (read-only, emulation mode only)
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║  NO ANONYMOUS USERS - ALL ACCESS REQUIRES AUTHENTICATION                  ║
+ * ╠═══════════════════════════════════════════════════════════════════════════╣
+ * ║  owner    - Full system access, can manage other users                    ║
+ * ║  standard - Read/write access to their own profile                        ║
+ * ║  guest    - Read-only access (authenticated via auth gate, no password)   ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
  */
-export type UserRole = 'owner' | 'standard' | 'guest' | 'anonymous';
+export type UserRole = 'owner' | 'standard' | 'guest';
 
 /**
  * Check if a user has administrator privileges
@@ -138,25 +141,26 @@ function computeSecurityPolicy(
   mode: CognitiveModeId,
   session: SessionInfo | null
 ): SecurityPolicy {
-  const role = session?.role ?? 'anonymous';
+  // All users must be authenticated - no anonymous access
+  // If session is null, it means system operation or error case
+  const role = session?.role ?? 'guest'; // Default to most restrictive role
   const username = session?.username;
   const isAdmin = session?.isAdmin ?? false;
 
   // Determine permissions based on mode + role + admin status
   const policy: SecurityPolicy = {
-    // Memory reads: authenticated users only (not anonymous or guest)
-    // Guests should only chat, not access personal data
-    canReadMemory: role !== 'anonymous' && role !== 'guest',
+    // Memory reads: owner and standard users only (guests are read-only chat)
+    canReadMemory: role === 'owner' || role === 'standard',
 
-    // Memory writes: any authenticated user (not anonymous or guest)
+    // Memory writes: owner and standard users only
     // NOTE: Changed to save memories in ALL modes (dual, agent, emulation) when logged in
     // The cognitiveMode is saved in metadata for LoRA training differentiation
-    canWriteMemory: role !== 'anonymous' && role !== 'guest',
+    canWriteMemory: role === 'owner' || role === 'standard',
 
-    // Operator: dual or agent mode AND authenticated user (owner or standard, not guest/anonymous, not emulation)
+    // Operator: dual or agent mode AND owner/standard user (not guest, not emulation)
     canUseOperator: canUseOperator(mode) && (role === 'owner' || role === 'standard'),
 
-    // Mode changes: authenticated users (not guests or anonymous)
+    // Mode changes: owner and standard users only
     // Users should be able to control their own cognitive mode
     canChangeMode: role === 'owner' || role === 'standard',
 
@@ -176,24 +180,24 @@ function computeSecurityPolicy(
     // Access all profiles: administrators only
     canAccessAllProfiles: isAdmin,
 
-    // Edit own profile: any authenticated user (not anonymous or guest)
-    canEditOwnProfile: role !== 'anonymous' && role !== 'guest',
+    // Edit own profile: owner and standard users only (guests are read-only)
+    canEditOwnProfile: role === 'owner' || role === 'standard',
 
     // Path-based permissions (new tier system)
     // Docs: everyone can read, only admins can write
-    canReadDocs: true, // All users (including anonymous) can read docs
+    canReadDocs: true, // All authenticated users can read docs
     canWriteDocs: isAdmin,
 
     // Profile access: function-based checks
     canReadProfile: (targetUsername: string) => {
       if (isAdmin) return true; // Admins can read all profiles
-      if (role === 'anonymous' || role === 'guest') return false; // Guests/anonymous cannot read profiles
+      if (role === 'guest') return false; // Guests cannot read profiles
       return targetUsername === username; // Standard users can read own profile
     },
 
     canWriteProfile: (targetUsername: string) => {
       if (isAdmin) return true; // Admins can write all profiles
-      if (role === 'anonymous' || role === 'guest') return false; // Guests/anonymous cannot write
+      if (role === 'guest') return false; // Guests cannot write
       if (role === 'standard') return targetUsername === username; // Standard users can write own profile
       return targetUsername === username; // Owners can write own profile
     },
@@ -212,12 +216,7 @@ function computeSecurityPolicy(
     requireWrite() {
       if (!this.canWriteMemory) {
         throw new SecurityError('Write operations not allowed', {
-          reason:
-            role === 'anonymous'
-              ? 'anonymous_user'
-              : role === 'guest'
-              ? 'guest_user'
-              : 'unknown',
+          reason: role === 'guest' ? 'guest_user' : 'unknown',
           currentMode: mode,
           role,
         });
@@ -359,7 +358,7 @@ function computeSecurityPolicy(
           role,
           username,
           targetUsername,
-          required: role === 'anonymous' ? 'authentication' : 'profile ownership or admin',
+          required: role === 'guest' ? 'owner or standard role' : 'profile ownership or admin',
         });
       }
     },
@@ -371,7 +370,7 @@ function computeSecurityPolicy(
           role,
           username,
           targetUsername,
-          required: role === 'anonymous' ? 'authentication' : role === 'guest' ? 'standard user role' : 'profile ownership or admin',
+          required: role === 'guest' ? 'standard user role' : 'profile ownership or admin',
         });
       }
     },
@@ -384,29 +383,24 @@ function computeSecurityPolicy(
  * Extract session info from request context
  *
  * Reads session cookie from Astro context and validates it.
- * Returns SessionInfo with role and user ID, or null for anonymous.
+ * Returns SessionInfo with role and user ID, or null if no valid session.
+ * NO ANONYMOUS ACCESS - null means authentication required.
  */
 function extractSession(context?: any): SessionInfo | null {
   // Try to get session cookie from Astro context
   const sessionCookie = context?.cookies?.get('mh_session');
 
   if (!sessionCookie) {
-    // No cookie = anonymous user
-    return {
-      role: 'anonymous',
-      id: undefined,
-    };
+    // No cookie = authentication required
+    return null;
   }
 
   // Validate session
   const session = validateSession(sessionCookie.value);
 
   if (!session) {
-    // Invalid/expired session = anonymous
-    return {
-      role: 'anonymous',
-      id: undefined,
-    };
+    // Invalid/expired session = authentication required
+    return null;
   }
 
   // Get user details
@@ -456,7 +450,7 @@ export function getSecurityPolicy(context?: any): SecurityPolicy {
   // This allows skills executed from graph nodes to access authenticated user info
   let session: SessionInfo | null = null;
   const userContext = getUserContext();
-  if (userContext && userContext.role !== 'anonymous') {
+  if (userContext) {
     session = {
       role: userContext.role,
       id: userContext.userId,
@@ -476,17 +470,16 @@ export function getSecurityPolicy(context?: any): SecurityPolicy {
     const cogModeConfig = loadCognitiveMode();
     mode = cogModeConfig.currentMode;
   } catch (error) {
-    // If no user context (e.g., anonymous or system bootstrap), fall back safely
-    if (!session || session.role === 'anonymous') {
+    // If no user context (e.g., system bootstrap), fall back safely to emulation
+    if (!session) {
       mode = 'emulation';
     } else {
       throw error;
     }
   }
 
-  // SECURITY: Override to emulation mode for anonymous users
-  // Anonymous users should never have access to dual or agent modes
-  if (session?.role === 'anonymous') {
+  // SECURITY: Guests get emulation mode only (read-only access)
+  if (session?.role === 'guest') {
     mode = 'emulation';
   }
 

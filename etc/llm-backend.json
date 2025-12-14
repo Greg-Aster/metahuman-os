@@ -16,9 +16,14 @@
     "quantization": "awq",
     "enforceEager": true,
     "autoUtilization": false,
-    "enableThinking": false
+    "enableThinking": true
   },
   "$schema": "https://metahuman.dev/schemas/llm-backend.json",
   "version": "1.0.0",
-  "description": "LLM backend configuration - controls which local inference engine is used"
+  "description": "LLM backend configuration - controls which local inference engine is used",
+  "remote": {
+    "provider": "runpod",
+    "serverUrl": "https://mh.dndiy.org",
+    "model": ""
+  }
 }

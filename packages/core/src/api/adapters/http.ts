@@ -11,7 +11,7 @@
 import { routeRequest } from '../router.js';
 import type { UnifiedRequest, UnifiedResponse, UnifiedUser } from '../types.js';
 import { validateSession } from '../../sessions.js';
-import { getUser } from '../../users.js';
+import { getUser, authenticateUser } from '../../users.js';
 import { withUserContext } from '../../context.js';
 
 /**
@@ -31,38 +31,95 @@ export function parseCookies(cookieHeader: string | null | undefined): Record<st
 }
 
 /**
- * Resolve user from session cookie - SAME LOGIC FOR WEB AND MOBILE
+ * Parse Basic Auth header and authenticate user
+ * Returns UnifiedUser if authentication succeeds, null otherwise
  */
-export function resolveUserFromCookie(sessionToken: string | undefined): UnifiedUser {
+export function resolveUserFromBasicAuth(authHeader: string | undefined): UnifiedUser | null {
+  if (!authHeader || !authHeader.startsWith('Basic ')) {
+    return null;
+  }
+
+  try {
+    const base64Credentials = authHeader.slice(6); // Remove 'Basic '
+    const credentials = Buffer.from(base64Credentials, 'base64').toString('utf-8');
+    const [username, password] = credentials.split(':');
+
+    if (!username || !password) {
+      return null;
+    }
+
+    // Authenticate using the users system (bcrypt password verification)
+    const authenticatedUser = authenticateUser(username, password);
+    if (!authenticatedUser) {
+      console.log('[http-adapter] Basic auth failed for user:', username);
+      return null;
+    }
+
+    console.log('[http-adapter] Basic auth succeeded for user:', username);
+    return {
+      userId: authenticatedUser.id,
+      username: authenticatedUser.username,
+      role: authenticatedUser.role as 'owner' | 'standard' | 'guest',
+      isAuthenticated: true,
+    };
+  } catch (error) {
+    console.error('[http-adapter] Basic auth parsing error:', error);
+    return null;
+  }
+}
+
+/**
+ * Resolve user from session cookie - SAME LOGIC FOR WEB AND MOBILE
+ *
+ * Returns null if no valid session - caller must handle auth gate redirect
+ * NO ANONYMOUS USERS - all access requires authentication
+ */
+export function resolveUserFromCookie(sessionToken: string | undefined): UnifiedUser | null {
   if (!sessionToken) {
-    return { userId: 'anonymous', username: 'anonymous', role: 'anonymous', isAuthenticated: false };
+    return null;
   }
 
   try {
     const session = validateSession(sessionToken);
-    if (!session || session.role === 'anonymous') {
-      return { userId: 'anonymous', username: 'anonymous', role: 'anonymous', isAuthenticated: false };
+    if (!session) {
+      return null;
     }
 
     const user = getUser(session.userId);
     if (!user) {
-      return { userId: 'anonymous', username: 'anonymous', role: 'anonymous', isAuthenticated: false };
+      return null;
     }
 
     return {
       userId: user.id,
       username: user.username,
-      role: user.role as 'owner' | 'guest' | 'anonymous',
+      role: user.role as 'owner' | 'standard' | 'guest',
       isAuthenticated: true,
     };
   } catch {
-    return { userId: 'anonymous', username: 'anonymous', role: 'anonymous', isAuthenticated: false };
+    return null;
+  }
+}
+
+/**
+ * Auth required error - indicates user must be redirected to auth gate
+ */
+export class HttpAuthRequiredError extends Error {
+  constructor(message: string = 'Authentication required - redirect to auth gate') {
+    super(message);
+    this.name = 'HttpAuthRequiredError';
   }
 }
 
 /**
  * Build UnifiedRequest from HTTP request components
  * Used by both Astro and mobile HTTP server
+ *
+ * Authentication priority:
+ * 1. Session cookie (mh_session) - for web UI
+ * 2. Basic Auth header - for API clients and remote server proxying
+ *
+ * NO ANONYMOUS USERS - throws HttpAuthRequiredError if no valid auth found
  */
 export function buildUnifiedRequest(params: {
   path: string;
@@ -75,7 +132,21 @@ export function buildUnifiedRequest(params: {
 }): UnifiedRequest {
   const cookies = parseCookies(params.cookieHeader);
   const sessionToken = cookies['mh_session'];
-  const user = resolveUserFromCookie(sessionToken);
+
+  // Try session cookie first (primary auth for web UI)
+  let user = resolveUserFromCookie(sessionToken);
+
+  // If no session, try Basic Auth header (for API clients / remote server)
+  if (!user && params.headers) {
+    // Check both lowercase and original case (headers can vary)
+    const authHeader = params.headers['authorization'] || params.headers['Authorization'];
+    user = resolveUserFromBasicAuth(authHeader);
+  }
+
+  // NO ANONYMOUS ACCESS - if still no user, auth is required
+  if (!user) {
+    throw new HttpAuthRequiredError('No valid session or credentials - redirect to auth gate');
+  }
 
   return {
     path: params.path.split('?')[0], // Remove query string from path
@@ -139,6 +210,8 @@ export interface HttpResponse {
  * Returns response data and cookies to set
  *
  * SAME FUNCTION FOR WEB AND MOBILE
+ *
+ * If user is not authenticated, returns 401 with redirect hint to auth gate
  */
 export async function handleHttpRequest(params: {
   path: string;
@@ -149,8 +222,29 @@ export async function handleHttpRequest(params: {
   headers?: Record<string, string>;
   cookieHeader?: string | null;
 }): Promise<HttpResponse> {
-  // Build unified request
-  const request = buildUnifiedRequest(params);
+  // Build unified request - may throw HttpAuthRequiredError
+  let request: UnifiedRequest;
+  try {
+    request = buildUnifiedRequest(params);
+  } catch (error) {
+    if (error instanceof HttpAuthRequiredError) {
+      // Return 401 with redirect hint - caller should redirect to auth gate
+      return {
+        status: 401,
+        body: JSON.stringify({
+          error: 'Authentication required',
+          redirect: '/auth',
+          message: 'Please login to continue',
+        }),
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Auth-Required': 'true',
+        },
+        cookies: [],
+      };
+    }
+    throw error;
+  }
 
   // Route to handler WITH user context set
   // This ensures getUserContext() works in downstream code (e.g., bridge.ts, model-router.ts)

@@ -140,6 +140,7 @@
         loading = false;
 
         // Populate cloud models from unified status endpoint (works on mobile too)
+        // This now includes remote-server models from the status endpoint
         if (data.systemHealth?.cloudModels && data.systemHealth.cloudModels.length > 0) {
           modelCategories.remote = data.systemHealth.cloudModels.map((m: { id: string; model: string; provider: string }) => ({
             id: m.id,
@@ -147,6 +148,8 @@
             provider: m.provider,
             locked: false
           }));
+        } else {
+          modelCategories.remote = [];
         }
 
         // Update backend info from status
@@ -156,12 +159,45 @@
           remoteProvider = data.systemHealth.remoteProvider || null;
 
           // Extract backend availability for multi-icon display
+          // IMPORTANT: Preserve remoteServer.connected which is set by checkRemoteServerConnection()
           if (data.systemHealth.backendAvailability) {
-            backendAvailability = data.systemHealth.backendAvailability;
+            const wasConnected = backendAvailability.remoteServer?.connected || false;
+            backendAvailability = {
+              ...data.systemHealth.backendAvailability,
+              remoteServer: {
+                ...data.systemHealth.backendAvailability.remoteServer,
+                connected: wasConnected  // Preserve connection state
+              }
+            };
+
+            // If remote server is configured, check its connection status
+            if (backendAvailability.remoteServer.configured && backendAvailability.remoteServer.serverUrl) {
+              checkRemoteServerConnection();
+            }
           }
         }
       }
     });
+  }
+
+  // Check remote server connection and fetch available models
+  async function checkRemoteServerConnection() {
+    const serverUrl = backendAvailability.remoteServer.serverUrl;
+    if (!serverUrl) return;
+
+    try {
+      const res = await apiFetch('/api/remote-server/health');
+      const data = await res.json();
+
+      if (res.ok && data.healthy) {
+        backendAvailability.remoteServer.connected = true;
+        // Models are now fetched via /api/status cloudModels - no need to fetch separately
+      } else {
+        backendAvailability.remoteServer.connected = false;
+      }
+    } catch (e) {
+      backendAvailability.remoteServer.connected = false;
+    }
   }
 
   
@@ -454,15 +490,16 @@
     vllm: { available: boolean; running: boolean; active: boolean; model?: string };
     runpod: { available: boolean; configured: boolean; active: boolean };
     bigBrother: { available: boolean; enabled: boolean; provider?: string };
-    remoteServer: { available: boolean; configured: boolean; serverUrl?: string };
+    remoteServer: { available: boolean; configured: boolean; serverUrl?: string; connected?: boolean };
   }
   let backendAvailability: BackendAvailability = {
     ollama: { available: false, running: false, active: false },
     vllm: { available: false, running: false, active: false },
     runpod: { available: false, configured: false, active: false },
     bigBrother: { available: false, enabled: false },
-    remoteServer: { available: false, configured: false }
+    remoteServer: { available: false, configured: false, connected: false }
   };
+
 
   // Tooltip generators for backend icons
   function getOllamaTooltip(): string {
@@ -490,8 +527,15 @@
   }
   function getRemoteServerTooltip(): string {
     const ba = backendAvailability.remoteServer;
-    if (!ba.available) return 'Remote Server: Not configured';
-    return `Remote Server: ${ba.serverUrl || 'Configured'}`;
+    if (!ba.configured) return 'Remote Server: Not configured - Configure in Settings → Backend';
+    if (ba.connected) {
+      const remoteModels = modelCategories.remote.filter(m => m.provider === 'remote-server');
+      const modelInfo = remoteModels.length > 0
+        ? ` (${remoteModels.map(m => m.model).join(', ')})`
+        : '';
+      return `Remote Server: Connected${modelInfo}\n${ba.serverUrl}`;
+    }
+    return `Remote Server: Configured (testing connection...)\n${ba.serverUrl}`;
   }
 
   // Backend status is now handled by unified /api/status endpoint (see loadStatus)
@@ -621,6 +665,17 @@
         // This preloads it into Ollama memory to avoid cold-start on first use
         warmupModel(role).catch(err => {
           console.warn(`Failed to warm up model for role ${role}:`, err);
+          // Show user-visible error notification
+          const errorMsg = (err as Error).message || 'Unknown error';
+          alert(`Model warmup failed for ${role}:\n\n${errorMsg}\n\nThe model assignment was saved but may not work until the backend is available.`);
+          // Update local state to show error
+          modelRoles = {
+            ...modelRoles,
+            [role]: {
+              ...modelRoles[role],
+              error: errorMsg
+            }
+          };
         });
 
         // Refresh status to show updated model assignments
@@ -810,11 +865,12 @@
             >🤖</span>
           {/if}
 
-          <!-- Remote Server (future: Cloudflare tunnel) -->
-          {#if backendAvailability.remoteServer.available}
+          <!-- Remote Server (Cloudflare tunnel to desktop) -->
+          {#if backendAvailability.remoteServer.configured}
             <span
               class="backend-icon remote-server"
               class:configured={backendAvailability.remoteServer.configured}
+              class:connected={backendAvailability.remoteServer.connected}
               title={getRemoteServerTooltip()}
             >🌐</span>
           {/if}
@@ -938,9 +994,9 @@
                           >
                             <span class="model-name">
                               {model.model}
-                              <span class="cloud-indicator">☁️</span>
+                              <span class="cloud-indicator">{model.provider === 'remote-server' ? '🌐' : '☁️'}</span>
                             </span>
-                            <span class="provider-badge cloud">{model.provider === 'runpod_serverless' ? 'RunPod' : model.provider}</span>
+                            <span class="provider-badge cloud">{model.provider === 'runpod_serverless' ? 'RunPod' : model.provider === 'remote-server' ? '🌐 Remote' : model.provider}</span>
                           </button>
                         {/each}
                       </div>
@@ -2201,13 +2257,26 @@
     filter: grayscale(50%);
   }
 
-  /* Remote server configured */
+  /* Remote server configured but not connected */
   .backend-icon.remote-server.configured {
     background: rgba(6, 182, 212, 0.15);
+    opacity: 0.6;
   }
 
   :global(.dark) .backend-icon.remote-server.configured {
     background: rgba(34, 211, 238, 0.2);
+  }
+
+  /* Remote server connected - bright with glow */
+  .backend-icon.remote-server.connected {
+    background: rgba(6, 182, 212, 0.25);
+    opacity: 1;
+    box-shadow: 0 0 8px rgba(6, 182, 212, 0.5);
+  }
+
+  :global(.dark) .backend-icon.remote-server.connected {
+    background: rgba(34, 211, 238, 0.3);
+    box-shadow: 0 0 10px rgba(34, 211, 238, 0.4);
   }
 
   /* Offline/error state */

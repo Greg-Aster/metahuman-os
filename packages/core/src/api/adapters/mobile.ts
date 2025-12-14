@@ -33,53 +33,40 @@ export interface MobileResponse {
 }
 
 /**
+ * Auth required error - indicates user must be redirected to auth gate
+ */
+export class MobileAuthRequiredError extends Error {
+  constructor(message: string = 'Authentication required - redirect to auth gate') {
+    super(message);
+    this.name = 'MobileAuthRequiredError';
+  }
+}
+
+/**
  * Resolve user from session token
+ *
+ * NO ANONYMOUS USERS - throws MobileAuthRequiredError if no valid session
  */
 function resolveUser(sessionToken?: string): UnifiedUser {
   if (!sessionToken) {
-    return {
-      userId: 'anonymous',
-      username: 'anonymous',
-      role: 'anonymous',
-      isAuthenticated: false,
-    };
+    throw new MobileAuthRequiredError('No session token provided');
   }
 
   const session = validateSession(sessionToken);
   if (!session) {
-    return {
-      userId: 'anonymous',
-      username: 'anonymous',
-      role: 'anonymous',
-      isAuthenticated: false,
-    };
-  }
-
-  // Handle anonymous sessions
-  if (session.role === 'anonymous') {
-    return {
-      userId: session.userId,
-      username: 'anonymous',
-      role: 'anonymous',
-      isAuthenticated: false,
-    };
+    throw new MobileAuthRequiredError('Invalid or expired session');
   }
 
   // Get authenticated user
   const user = getUser(session.userId);
   if (!user) {
-    return {
-      userId: 'anonymous',
-      username: 'anonymous',
-      role: 'anonymous',
-      isAuthenticated: false,
-    };
+    throw new MobileAuthRequiredError('User not found');
   }
 
   return {
     userId: user.id,
     username: user.username,
-    role: user.role as 'owner' | 'guest' | 'anonymous',
+    role: user.role as 'owner' | 'standard' | 'guest',
     isAuthenticated: true,
   };
 }
@@ -107,10 +94,28 @@ function parseQueryFromPath(path: string): Record<string, string> {
  * This is the main entry point for nodejs-mobile.
  * It converts the mobile message format to UnifiedRequest,
  * routes to the handler, and converts back to MobileResponse.
+ *
+ * If user is not authenticated, returns 401 with redirect hint.
  */
 export async function handleMobileRequest(msg: MobileRequest): Promise<MobileResponse> {
-  // Resolve user from session token
-  const user = resolveUser(msg.sessionToken);
+  // Resolve user from session token - may throw MobileAuthRequiredError
+  let user: UnifiedUser;
+  try {
+    user = resolveUser(msg.sessionToken);
+  } catch (error) {
+    if (error instanceof MobileAuthRequiredError) {
+      return {
+        id: msg.id,
+        status: 401,
+        error: 'Authentication required',
+        data: {
+          redirect: '/auth',
+          message: 'Please login to continue',
+        },
+      };
+    }
+    throw error;
+  }
 
   // Convert to unified request
   const unifiedReq: UnifiedRequest = {

@@ -429,6 +429,30 @@ export class VLLMClient {
           detached: true,
         });
 
+        // Handle spawn errors (e.g., python not found - ENOENT)
+        this.serverProcess.on('error', (error: NodeJS.ErrnoException) => {
+          console.error('[vllm] Failed to spawn process:', error.message);
+          logStream.write(`\n=== Spawn error: ${error.message} ===\n`);
+          logStream.end();
+          this.serverProcess = null;
+          this.currentModel = null;
+
+          // Resolve with error instead of crashing
+          if (error.code === 'ENOENT') {
+            resolve({
+              pid: 0,
+              success: false,
+              error: `Python not found: ${pythonPath}. vLLM requires Python with vLLM installed. This is expected on mobile devices.`,
+            });
+          } else {
+            resolve({
+              pid: 0,
+              success: false,
+              error: `Failed to start vLLM: ${error.message}`,
+            });
+          }
+        });
+
         this.currentModel = config.model;
 
         // Save PID for later management

@@ -17,10 +17,7 @@ export async function handleGetChatHistory(req: UnifiedRequest): Promise<Unified
 
     const isGuestWithProfile = user.role === 'guest';
 
-    // Pure anonymous (no selected profile) get empty
-    if (user.role === 'anonymous') {
-      return successResponse({ messages: [] });
-    }
+    // All users are now authenticated (no anonymous access)
 
     // Determine buffer path based on user type
     let bufferPath: string;

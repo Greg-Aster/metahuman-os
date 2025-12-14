@@ -1,7 +1,11 @@
 {
   "$schema": "https://metahuman.dev/schemas/agents.json",
   "version": "1.0.0",
-  "description": "Central agent scheduler configuration",
+  "_TEMPLATE_WARNING": "══════════════════════════════════════════════════════════════════════════",
+  "_TEMPLATE_WARNING2": "██ THIS IS A SYSTEM TEMPLATE - DO NOT USE DIRECTLY FOR INDIVIDUAL USERS ██",
+  "_TEMPLATE_WARNING3": "██ This file is COPIED to user profiles, then the user's copy is used   ██",
+  "_TEMPLATE_WARNING4": "══════════════════════════════════════════════════════════════════════════",
+  "description": "Central agent scheduler configuration - SYSTEM TEMPLATE",
   "globalSettings": {
     "pauseAll": false,
     "quietHours": {
@@ -170,6 +174,43 @@
       "autoRestart": true,
       "maxRetries": 2,
       "comment": "Agency: Reviews completed/failed desires to determine next action (complete, retry, continue, escalate, abandon). Handles recurring/achievable/aspirational desire types differently. Runs every 10 minutes."
+    },
+    "profile-sync": {
+      "id": "profile-sync",
+      "enabled": true,
+      "type": "manual",
+      "priority": "high",
+      "agentPath": "profile-sync.ts",
+      "usesLLM": false,
+      "runOnBoot": false,
+      "autoRestart": false,
+      "maxRetries": 2,
+      "comment": "Full profile synchronization with remote server. Handles: authentication, profile bundle download (persona/config), credentials sync, memory sync. Fully replaces client-side syncFromRemoteServer. Supports --pull-only, --memories-only, --profile-only, --days=N, --user=<username> flags."
+    },
+    "memory-sync": {
+      "id": "memory-sync",
+      "enabled": true,
+      "type": "manual",
+      "priority": "normal",
+      "agentPath": "memory-sync.ts",
+      "usesLLM": false,
+      "runOnBoot": false,
+      "autoRestart": false,
+      "maxRetries": 2,
+      "comment": "Syncs memories with remote server. Triggered manually via UI, on login (pull-only), or can be scheduled. Supports --pull-only, --push-only, and --user=<username> flags."
+    },
+    "update-check": {
+      "id": "update-check",
+      "enabled": true,
+      "type": "interval",
+      "priority": "low",
+      "agentPath": "update-check.ts",
+      "usesLLM": false,
+      "interval": 86400,
+      "runOnBoot": true,
+      "autoRestart": false,
+      "maxRetries": 1,
+      "comment": "Checks for software updates daily. Desktop: git fetch/compare. Mobile: checks server for new APK. Saves state to logs/run/update-state.json for UI."
     }
   }
 }

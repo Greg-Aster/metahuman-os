@@ -11,7 +11,7 @@ import { getProfilePaths } from './path-builder.js';
 import { loadBackendConfig, type BackendType } from './llm-backend.js';
 
 export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'fallback';
-export type ModelProvider = 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm';
+export type ModelProvider = 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm' | 'remote-server';
 
 export interface ModelDefinition {
   provider: ModelProvider;
@@ -92,8 +92,8 @@ function getActiveBackend(): BackendType {
 function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry): ResolvedModel {
   const activeBackend = getActiveBackend();
 
-  // Cloud providers (runpod_serverless, etc.) are NEVER overridden - user's choice is respected
-  if (resolved.provider === 'runpod_serverless' || resolved.provider === 'huggingface') {
+  // Cloud providers and remote-server are NEVER overridden - user's choice is respected
+  if (resolved.provider === 'runpod_serverless' || resolved.provider === 'huggingface' || resolved.provider === 'remote-server') {
     return resolved;
   }
 

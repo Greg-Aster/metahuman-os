@@ -32,14 +32,7 @@ async function ensureModules(): Promise<boolean> {
  */
 export async function handleGetPersonaIcon(req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
-    // Check authentication - anonymous users don't have persona icons
-    if (req.user.role === 'anonymous') {
-      return {
-        status: 404,
-        error: 'No icon available for anonymous users',
-      };
-    }
-
+    // All users are authenticated (no anonymous access - handled by HTTP adapter)
     const available = await ensureModules();
     if (!available || !loadPersonaCore || !storageClient) {
       return {

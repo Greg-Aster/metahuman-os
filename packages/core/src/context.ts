@@ -8,13 +8,24 @@
 import { AsyncLocalStorage } from 'async_hooks';
 import { getProfilePaths, systemPaths } from './path-builder.js';
 
+/**
+ * User context for authenticated users
+ *
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║  NO ANONYMOUS USERS - ALL ACCESS REQUIRES AUTHENTICATION                  ║
+ * ╠═══════════════════════════════════════════════════════════════════════════╣
+ * ║  owner    - Full system access, can manage other users                    ║
+ * ║  standard - Read/write access to their own profile                        ║
+ * ║  guest    - Read-only access (authenticated via auth gate, no password)   ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
+ */
 export interface UserContext {
   userId: string;
   username: string;
-  role: 'owner' | 'standard' | 'guest' | 'anonymous';
-  profilePaths?: ReturnType<typeof getProfilePaths>; // Undefined for anonymous users
+  role: 'owner' | 'standard' | 'guest';
+  profilePaths: ReturnType<typeof getProfilePaths>; // All authenticated users have profile paths
   systemPaths: typeof systemPaths;
-  activeProfile?: string; // Selected profile for guest users
+  activeProfile?: string; // Selected profile for guest users viewing another profile
 }
 
 const contextStorage = new AsyncLocalStorage<UserContext | undefined>();
@@ -45,30 +56,21 @@ export function withUserContext<T>(
   user: { userId: string; username: string; role: string; activeProfile?: string },
   fn: () => T | Promise<T>
 ): Promise<T> {
-  // Anonymous users don't have profile paths - they only get system paths
-  let profilePaths: ReturnType<typeof getProfilePaths> | undefined;
-
-  if (user.role !== 'anonymous') {
-    // Safety check: ensure username is defined before accessing profile paths
-    if (!user.username) {
-      throw new Error(`Invalid user context: username is undefined for user ${user.userId} with role ${user.role}`);
-    }
-
-    // For guests with an active profile, use that profile's paths
-    // Otherwise use the user's own username
-    const profileUser =
-      user.activeProfile && user.role !== 'owner' ? user.activeProfile : user.username;
-    profilePaths = getProfilePaths(profileUser);
-  } else if (user.activeProfile) {
-    // Anonymous users (guests) with an active profile use that profile's paths
-    // This allows guests to view/interact with public profiles
-    profilePaths = getProfilePaths(user.activeProfile);
+  // Safety check: ensure username is defined (all users must be authenticated)
+  if (!user.username) {
+    throw new Error(`Invalid user context: username is undefined for user ${user.userId} with role ${user.role}`);
   }
+
+  // For guests with an active profile, use that profile's paths
+  // Otherwise use the user's own username
+  const profileUser =
+    user.activeProfile && user.role !== 'owner' ? user.activeProfile : user.username;
+  const profilePaths = getProfilePaths(profileUser);
 
   const context: UserContext = {
     userId: user.userId,
     username: user.username,
-    role: user.role as 'owner' | 'standard' | 'guest' | 'anonymous',
+    role: user.role as 'owner' | 'standard' | 'guest',
     profilePaths,
     systemPaths,
     activeProfile: user.activeProfile,
@@ -97,10 +99,10 @@ export function withUserContext<T>(
 export function setUserContext(
   userId: string,
   username: string,
-  role: 'owner' | 'standard' | 'guest' | 'anonymous'
+  role: 'owner' | 'standard' | 'guest'
 ): void {
-  // Anonymous users don't have profile paths
-  const profilePaths = role !== 'anonymous' ? getProfilePaths(username) : undefined;
+  // All authenticated users have profile paths
+  const profilePaths = getProfilePaths(username);
 
   const context: UserContext = {
     userId,

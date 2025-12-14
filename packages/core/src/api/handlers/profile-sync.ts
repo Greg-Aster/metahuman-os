@@ -493,23 +493,54 @@ export async function handleGetProfileMetadata(req: UnifiedRequest): Promise<Uni
 }
 
 /**
- * GET /api/profile-sync/memories - Get paginated memories for sync
+ * GET/POST /api/profile-sync/memories - Get paginated memories for sync
  *
  * Query params:
  *   - offset: Starting index (default 0)
  *   - limit: Max memories per page (default 100)
  *   - days: Only include memories from the last N days (default: all)
  *   - since: Only include memories after this ISO date (alternative to days)
+ *
+ * Supports two auth methods:
+ * 1. Cookie-based (GET): Uses mh_session cookie (same-origin requests)
+ * 2. Credentials in body (POST): For cross-origin mobile sync where cookies don't work
  */
 export async function handleGetProfileMemories(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user, query } = req;
+  console.log('[profile-sync] ====== MEMORIES ENDPOINT CALLED ======');
+  console.log('[profile-sync] Method:', req.method);
 
-  if (!user.isAuthenticated) {
+  let authenticatedUsername: string | null = null;
+
+  // Method 1: Try cookie-based auth (works for same-origin)
+  if (req.user.isAuthenticated) {
+    authenticatedUsername = req.user.username;
+    console.log('[profile-sync] Memories: Authenticated via cookie:', authenticatedUsername);
+  }
+  // Method 2: Try credentials in body (for cross-origin mobile sync)
+  else if (req.method === 'POST' && req.body) {
+    const { username, password } = req.body as { username?: string; password?: string };
+    if (username && password) {
+      const { verifyUserPassword } = await import('../../users.js');
+      if (verifyUserPassword(username, password)) {
+        authenticatedUsername = username;
+        console.log(`[profile-sync] Memories: Authenticated via POST credentials: ${username}`);
+      } else {
+        return { status: 401, error: 'Invalid credentials' };
+      }
+    }
+  }
+
+  if (!authenticatedUsername) {
     return {
       status: 401,
-      error: 'Authentication required',
+      error: 'Authentication required. Use cookie auth (GET) or pass credentials in body (POST).',
     };
   }
+
+  // For POST requests, get query params from body
+  const query = req.method === 'POST' && req.body
+    ? { ...req.query, ...req.body }
+    : req.query;
 
   const offset = parseInt(query?.offset || '0', 10);
   const limit = parseInt(query?.limit || '100', 10);
@@ -527,7 +558,7 @@ export async function handleGetProfileMemories(req: UnifiedRequest): Promise<Uni
     cutoffDate = sinceParam;
   }
 
-  const profilePaths = getProfilePaths(user.username);
+  const profilePaths = getProfilePaths(authenticatedUsername);
   const episodicDir = path.join(profilePaths.episodic);
 
   const memories: any[] = [];
@@ -612,6 +643,17 @@ export async function handleGetProfileMemories(req: UnifiedRequest): Promise<Uni
     try {
       const content = fs.readFileSync(fileInfo.path, 'utf-8');
       const memory = JSON.parse(content);
+
+      // Ensure required fields exist for sync push
+      // id: derive from filename if not present (format: YYYY-MM-DD-<uuid>.json)
+      if (!memory.id) {
+        memory.id = fileInfo.filename.replace('.json', '');
+      }
+      // type: default to 'observation' if not present
+      if (!memory.type) {
+        memory.type = 'observation';
+      }
+
       memories.push(memory);
     } catch (err) {
       console.warn(`[profile-sync] Failed to read memory file ${fileInfo.path}:`, err);
@@ -714,11 +756,20 @@ export async function handleGetProfileChanges(req: UnifiedRequest): Promise<Unif
         for (const file of files) {
           const filePath = path.join(yearDir, file);
           const stat = fs.statSync(filePath);
-          
+
           if (stat.mtime > since) {
             try {
               const content = fs.readFileSync(filePath, 'utf-8');
               const memory = JSON.parse(content);
+
+              // Ensure required fields exist for sync push
+              if (!memory.id) {
+                memory.id = file.replace('.json', '');
+              }
+              if (!memory.type) {
+                memory.type = 'observation';
+              }
+
               changes.memories.push(memory);
             } catch (err) {
               console.warn(`[profile-sync] Failed to read changed memory ${file}:`, err);

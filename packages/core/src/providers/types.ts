@@ -67,13 +67,20 @@ export interface ProviderConfig {
  * Local providers: ollama, vllm, mock (handled by core bridge)
  * Cloud providers: runpod_serverless, huggingface (handled by @metahuman/server)
  */
-export type ProviderType = 'ollama' | 'vllm' | 'mock' | 'runpod_serverless' | 'huggingface' | 'openai' | 'local';
+export type ProviderType = 'ollama' | 'vllm' | 'mock' | 'runpod_serverless' | 'huggingface' | 'openai' | 'local' | 'remote-server';
 
 /**
  * Check if a provider is a cloud provider (requires server package)
  */
 export function isCloudProvider(provider: ProviderType): boolean {
   return provider === 'runpod_serverless' || provider === 'huggingface';
+}
+
+/**
+ * Check if a provider is a remote server provider (proxies to another MetaHuman server)
+ */
+export function isRemoteServerProvider(provider: ProviderType): boolean {
+  return provider === 'remote-server';
 }
 
 /**

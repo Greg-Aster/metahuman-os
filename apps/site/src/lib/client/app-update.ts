@@ -129,6 +129,12 @@ export async function checkForUpdate(serverUrl: string): Promise<UpdateState> {
     // Compare versions
     const updateAvailable = latest.versionCode > current.versionCode;
 
+    // Build absolute download URL - server returns relative path like /downloads/metahuman-os.apk
+    let downloadUrl = latest.downloadUrl || '/downloads/metahuman-os.apk';
+    if (downloadUrl.startsWith('/')) {
+      downloadUrl = `${baseUrl}${downloadUrl}`;
+    }
+
     const newState: UpdateState = {
       currentVersion: current.version,
       currentVersionCode: current.versionCode,
@@ -136,7 +142,7 @@ export async function checkForUpdate(serverUrl: string): Promise<UpdateState> {
       latestVersionCode: latest.versionCode,
       updateAvailable,
       releaseNotes: latest.releaseNotes || null,
-      downloadUrl: latest.downloadUrl || `${baseUrl}/downloads/metahuman-os.apk`,
+      downloadUrl,
       fileSize: latest.fileSize || null,
       lastChecked: new Date().toISOString(),
       isChecking: false,
@@ -180,27 +186,73 @@ export function formatFileSize(bytes: number | null): string {
 /**
  * Open the download URL in browser (triggers APK download)
  *
- * React Native: Uses window.open (WebView handles it)
+ * React Native: Sends message to native layer to open URL in system browser
  * Web: Uses window.open
+ *
+ * @returns Promise that resolves with success status and optional error message
  */
-export async function downloadUpdate(): Promise<void> {
+export async function downloadUpdate(): Promise<{ success: boolean; error?: string }> {
   const state = get(updateState);
 
   if (!state.downloadUrl) {
     console.error('[app-update] No download URL available');
-    return;
+    return { success: false, error: 'No download URL available' };
   }
 
-  // React Native: Just use window.open - WebView will handle it
-  // Android WebView opens external URLs in the default browser
-  if (isReactNativeWebView()) {
-    console.log('[app-update] Opening download URL in React Native:', state.downloadUrl);
-    window.open(state.downloadUrl, '_blank');
-    return;
+  console.log('[app-update] Downloading update from:', state.downloadUrl);
+
+  // React Native: Send message to native layer to open in system browser
+  // WebView's window.open doesn't work reliably for downloads
+  if (isReactNativeWebView() && (window as any).ReactNativeWebView) {
+    console.log('[app-update] Sending download request to React Native');
+
+    // Create a promise that resolves when we get feedback from native
+    return new Promise((resolve) => {
+      // Set up one-time listener for the response
+      const handleMessage = (event: MessageEvent) => {
+        try {
+          const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+          if (data?.type === 'url-opened' && data.url === state.downloadUrl) {
+            window.removeEventListener('message', handleMessage);
+            document.removeEventListener('message', handleMessage as EventListener);
+
+            if (data.success) {
+              console.log('[app-update] URL opened successfully by native layer');
+              resolve({ success: true });
+            } else {
+              console.error('[app-update] Native layer failed to open URL:', data.error);
+              resolve({ success: false, error: data.error || 'Failed to open download URL' });
+            }
+          }
+        } catch {
+          // Ignore non-JSON messages
+        }
+      };
+
+      // Listen for response from React Native
+      window.addEventListener('message', handleMessage);
+      document.addEventListener('message', handleMessage as EventListener);
+
+      // Send the request to React Native
+      (window as any).ReactNativeWebView.postMessage(JSON.stringify({
+        type: 'open-url',
+        url: state.downloadUrl,
+      }));
+
+      // Timeout after 5 seconds if no response
+      setTimeout(() => {
+        window.removeEventListener('message', handleMessage);
+        document.removeEventListener('message', handleMessage as EventListener);
+        // If we timed out, assume it worked (browser opened but no feedback)
+        console.log('[app-update] No feedback from native layer, assuming success');
+        resolve({ success: true });
+      }, 5000);
+    });
   }
 
-  // Web: Standard window.open
+  // Fallback: Use window.open for both RN (without bridge) and web
   window.open(state.downloadUrl, '_blank');
+  return { success: true };
 }
 
 /**

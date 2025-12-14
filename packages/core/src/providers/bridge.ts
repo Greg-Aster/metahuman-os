@@ -46,6 +46,7 @@ import {
   type ProviderConfig,
   type ProviderType,
   isCloudProvider,
+  isRemoteServerProvider,
 } from './types.js';
 
 // Re-export types for convenience
@@ -90,6 +91,31 @@ export async function callProvider(
   };
 
   // Route to appropriate handler
+  if (isRemoteServerProvider(providerName)) {
+    // Remote server provider - proxy LLM requests to a connected MetaHuman server
+    // Load credentials from USER PROFILE (not system config) - consistent with other providers
+    const serverCreds = username ? resolveCredentials(username, 'server') : null;
+
+    if (!serverCreds || serverCreds.provider !== 'server') {
+      console.error('[provider-bridge] No remote-server credentials found for user:', username);
+      throw new Error('Remote server not configured. Go to Settings → Backend → Remote Server to connect.');
+    }
+
+    console.log('[provider-bridge] Remote server routing - serverUrl:', serverCreds.endpoint);
+    console.log('[provider-bridge] Remote server routing - has credentials:', !!serverCreds.apiKey);
+
+    // Build config in the format callRemoteServerProvider expects
+    const remoteConfig = {
+      remote: {
+        serverUrl: serverCreds.endpoint,
+        credentials: {
+          token: serverCreds.apiKey,
+        },
+      },
+    };
+    return callRemoteServerProvider(messages, options, remoteConfig as any, onProgress);
+  }
+
   if (isCloudProvider(providerName)) {
     // UNIFIED CODEBASE: Use feature detection instead of platform check
     // - Node.js 18+ (web, React Native): Use @metahuman/server with native fetch
@@ -201,6 +227,98 @@ async function callRemoteProvider(
   onProgress?.({ phase: 'completed', message: 'Remote response received' });
 
   return response;
+}
+
+/**
+ * Call a remote MetaHuman server provider
+ * Proxies LLM requests to a connected remote server (e.g., desktop via Cloudflare tunnel)
+ */
+async function callRemoteServerProvider(
+  messages: ProviderMessage[],
+  options: ProviderOptions,
+  backendConfig: any,
+  onProgress?: ProviderProgressCallback
+): Promise<ProviderResponse> {
+  const remoteConfig = backendConfig.remote;
+  if (!remoteConfig?.serverUrl) {
+    throw new Error('No remote server URL configured. Configure in Settings → Backend → Remote Server.');
+  }
+
+  const serverUrl = remoteConfig.serverUrl.replace(/\/$/, '');
+  const model = options.model || 'default';
+
+  console.log('[callRemoteServerProvider] serverUrl:', serverUrl);
+  console.log('[callRemoteServerProvider] remoteConfig:', JSON.stringify(remoteConfig, null, 2));
+  console.log('[callRemoteServerProvider] has credentials:', !!remoteConfig.credentials);
+  console.log('[callRemoteServerProvider] has sessionId:', !!remoteConfig.credentials?.sessionId);
+
+  onProgress?.({ phase: 'loading', message: `Connecting to remote server...` });
+
+  // Build headers with session cookie for authentication
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
+
+  // Use session cookie - obtained via /api/auth/login on connect
+  if (remoteConfig.credentials?.sessionId) {
+    headers['Cookie'] = `mh_session=${remoteConfig.credentials.sessionId}`;
+    console.log('[callRemoteServerProvider] Added session cookie');
+  } else {
+    console.log('[callRemoteServerProvider] NO session - reconnect to remote server required');
+  }
+
+  onProgress?.({ phase: 'running', message: `Generating with remote server (${model})...` });
+
+  try {
+    // Proxy to the remote server's LLM chat endpoint
+    // This routes to whatever backend is active on the remote server (Ollama or vLLM)
+    const llmUrl = `${serverUrl}/api/llm/chat`;
+
+    const response = await fetch(llmUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        messages: messages.map(m => ({
+          role: m.role,
+          content: m.content,
+        })),
+        options: {
+          temperature: options.temperature,
+          num_predict: options.maxTokens,
+          top_p: options.topP,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Remote server error (${response.status}): ${errorText}`);
+    }
+
+    const data = await response.json();
+
+    onProgress?.({ phase: 'completed', message: `Remote server response received` });
+
+    // Handle response from /api/llm/chat endpoint
+    // Format: { message: { role, content }, model, done, provider, usage }
+    const content = data.message?.content || data.choices?.[0]?.message?.content || data.content || '';
+
+    return {
+      content,
+      model: data.model || model,
+      provider: 'remote-server',
+      usage: data.usage ? {
+        promptTokens: data.usage.promptTokens || data.usage.prompt_tokens || 0,
+        completionTokens: data.usage.completionTokens || data.usage.completion_tokens || 0,
+        totalTokens: data.usage.totalTokens || data.usage.total_tokens || 0,
+      } : undefined,
+    };
+  } catch (error) {
+    onProgress?.({ phase: 'failed', message: `Remote server failed: ${(error as Error).message}` });
+    throw error;
+  }
 }
 
 // Models that can coexist in VRAM with chat models (small utility models)

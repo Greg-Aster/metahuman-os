@@ -228,27 +228,30 @@ export async function handleListUsers(_req: UnifiedRequest): Promise<UnifiedResp
 
 /**
  * GET /api/auth/me - Get current user
+ *
+ * Returns current authenticated user info.
+ * If not authenticated, returns 401 (handled by HTTP adapter).
  */
 export async function handleGetMe(req: UnifiedRequest): Promise<UnifiedResponse> {
   const { user } = req;
 
+  // User is always authenticated at this point (HTTP adapter handles auth)
+  // But check just in case
   if (!user.isAuthenticated) {
-    return successResponse({
-      success: true,
-      user: null,
-      role: 'anonymous',
-    });
+    return {
+      status: 401,
+      error: 'Authentication required',
+    };
   }
 
   // Get full user details
   const fullUser = getUser(user.userId);
 
   if (!fullUser) {
-    return successResponse({
-      success: true,
-      user: null,
-      role: 'anonymous',
-    });
+    return {
+      status: 404,
+      error: 'User not found',
+    };
   }
 
   return successResponse({
@@ -567,20 +570,36 @@ export async function handleCreateSyncUser(req: UnifiedRequest): Promise<Unified
 }
 
 /**
- * POST /api/auth/guest - Create anonymous guest session
+ * POST /api/auth/guest - Create guest session via auth gate
  *
- * Creates a temporary session for guest browsing.
+ * Creates a temporary guest session for read-only access.
+ * Guests must go through the auth gate (no password required).
+ * Guest sessions last 1 hour.
+ *
+ * NO ANONYMOUS ACCESS - this creates a proper "guest" role session.
  * IDENTICAL for web and mobile.
  */
 export async function handleGuest(_req: UnifiedRequest): Promise<UnifiedResponse> {
-  // Create anonymous session (30 min expiry via session system)
-  const session = createSession('anonymous', 'anonymous');
+  // Get or create the guest user
+  let guestUser = getUserByUsername('guest');
+
+  if (!guestUser) {
+    // Create guest user with no password (can't login with credentials)
+    // Guest role has read-only access
+    guestUser = createUser('guest', '', 'guest', {
+      displayName: 'Guest',
+    });
+    console.log('[auth-handler] Created system guest user');
+  }
+
+  // Create guest session (1 hour expiry via session system)
+  const session = createSession(guestUser.id, 'guest');
 
   audit({
     level: 'info',
     category: 'security',
     event: 'guest_session_created',
-    actor: 'anonymous',
+    actor: guestUser.id,
     details: { sessionId: session.id },
   });
 
@@ -590,8 +609,13 @@ export async function handleGuest(_req: UnifiedRequest): Promise<UnifiedResponse
       success: true,
       session: {
         id: session.id,
-        role: 'anonymous',
+        role: 'guest',
         expiresAt: session.expiresAt,
+      },
+      user: {
+        id: guestUser.id,
+        username: guestUser.username,
+        role: 'guest',
       },
     },
     cookies: [{
@@ -602,7 +626,7 @@ export async function handleGuest(_req: UnifiedRequest): Promise<UnifiedResponse
         httpOnly: true,
         sameSite: 'lax' as const,
         path: '/',
-        maxAge: 30 * 60, // 30 minutes
+        maxAge: 60 * 60, // 1 hour (matches GUEST_SESSION_DURATION)
       },
     }],
   };

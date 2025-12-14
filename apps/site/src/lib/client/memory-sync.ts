@@ -319,6 +319,13 @@ async function pushToServer(item: SyncQueueItem): Promise<{ success: boolean; er
     });
 
     if (!response.ok) {
+      // 409 Conflict means memory already exists on server - treat as success
+      // This happens when mobile syncs memories that were already synced down
+      if (response.status === 409) {
+        console.log(`[memory-sync] Memory ${item.id} already exists on server (409), treating as synced`);
+        return { success: true };
+      }
+
       const error = await response.text();
       return { success: false, error: `Server returned ${response.status}: ${error}` };
     }
@@ -678,6 +685,118 @@ export function stopBackgroundSync(): void {
 
 export async function forceSync(): Promise<SyncResult> {
   return performSync();
+}
+
+/**
+ * Perform pull-only sync (no push)
+ * Used for sync-on-login to get latest memories from server without pushing local changes
+ *
+ * @returns SyncResult with only pulled count (pushed will always be 0)
+ */
+export async function performPullOnlySync(): Promise<SyncResult> {
+  // Check if already syncing
+  let state: SyncState = { lastSyncTimestamp: null, pendingCount: 0, conflictCount: 0, isSyncing: false };
+  syncState.subscribe(s => state = s)();
+
+  if (state.isSyncing) {
+    return { success: false, pushed: 0, pulled: 0, conflicts: 0, errors: ['Sync already in progress'] };
+  }
+
+  // Check connectivity
+  let isConnected = false;
+  healthStatus.subscribe(h => isConnected = h.connected)();
+
+  if (!isConnected) {
+    return { success: false, pushed: 0, pulled: 0, conflicts: 0, errors: ['Server not connected'] };
+  }
+
+  syncState.update(s => ({ ...s, isSyncing: true }));
+
+  const result: SyncResult = {
+    success: true,
+    pushed: 0,
+    pulled: 0,
+    conflicts: 0,
+    errors: [],
+  };
+
+  try {
+    // Pull server changes only (no push phase)
+    const pullResult = await pullFromServer(state.lastSyncTimestamp);
+
+    if (pullResult.error) {
+      result.errors.push(`Failed to pull: ${pullResult.error}`);
+    } else {
+      let memories: Map<string, SyncableMemory> = new Map();
+      localMemories.subscribe(m => memories = m)();
+
+      for (const serverMemory of pullResult.memories) {
+        const localMemory = memories.get(serverMemory.id);
+
+        if (localMemory) {
+          // Check for conflict
+          if (detectConflict(localMemory, serverMemory)) {
+            const resolved = await resolveConflicts(localMemory, serverMemory, 'server-wins');
+            memories.set(serverMemory.id, resolved);
+
+            if (resolved.syncStatus === 'conflict') {
+              result.conflicts++;
+            }
+          } else {
+            // No conflict, apply server version
+            memories.set(serverMemory.id, {
+              ...serverMemory,
+              syncStatus: 'synced',
+              localModifiedAt: serverMemory.timestamp,
+              serverModifiedAt: serverMemory.timestamp,
+            });
+          }
+        } else {
+          // New memory from server
+          memories.set(serverMemory.id, {
+            ...serverMemory,
+            syncStatus: 'synced',
+            localModifiedAt: serverMemory.timestamp,
+            serverModifiedAt: serverMemory.timestamp,
+          });
+        }
+
+        result.pulled++;
+      }
+
+      localMemories.set(memories);
+      await saveToStorage(STORAGE_KEY_LOCAL_MEMORIES, Array.from(memories.entries()));
+    }
+
+    // Update sync state
+    const now = new Date().toISOString();
+    syncState.update(s => ({
+      ...s,
+      lastSyncTimestamp: now,
+      lastSuccessfulSync: result.errors.length === 0 ? now : s.lastSuccessfulSync,
+      conflictCount: result.conflicts,
+      isSyncing: false,
+    }));
+
+    await saveToStorage(STORAGE_KEY_STATE, {
+      lastSyncTimestamp: now,
+      lastSuccessfulSync: result.errors.length === 0 ? now : state.lastSuccessfulSync,
+    });
+
+    result.success = result.errors.length === 0;
+    console.log(`[memory-sync] Pull-only sync complete: pulled ${result.pulled} memories`);
+  } catch (e) {
+    result.success = false;
+    result.errors.push(e instanceof Error ? e.message : 'Unknown sync error');
+
+    syncState.update(s => ({
+      ...s,
+      isSyncing: false,
+      lastSyncError: result.errors.join('; '),
+    }));
+  }
+
+  return result;
 }
 
 // ============================================================================

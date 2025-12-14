@@ -6,6 +6,20 @@
  *
  * These functions automatically use the current user context to resolve
  * the correct config file path.
+ *
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║  IMPORTANT: NO SILENT DEFAULTS POLICY                                     ║
+ * ╠═══════════════════════════════════════════════════════════════════════════╣
+ * ║  This system NEVER uses default values silently.                          ║
+ * ║                                                                           ║
+ * ║  If a config file is missing from a user's profile:                       ║
+ * ║  1. Copy from system template (etc/<file>.template or etc/<file>)         ║
+ * ║  2. OR generate default and SAVE to user's profile                        ║
+ * ║  3. THEN load from user's profile                                         ║
+ * ║                                                                           ║
+ * ║  The getDefault*() functions are ONLY for generating initial templates.   ║
+ * ║  They should NEVER be returned directly to callers.                       ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
  */
 
 import * as fs from 'node:fs';
@@ -38,15 +52,80 @@ function resolveEtcPath(username?: string): string {
 }
 
 /**
+ * Get the system-level etc/ directory path (for templates)
+ */
+function getSystemEtcPath(): string {
+  return path.join(ROOT, 'etc');
+}
+
+/**
+ * Ensure a user config file exists by copying from system template if missing.
+ *
+ * This function implements the NO SILENT DEFAULTS policy:
+ * - If user config exists: do nothing
+ * - If user config missing: copy from system etc/ (template) OR generate default
+ * - Always ensures user has their own copy
+ *
+ * @param filename - Config filename (e.g., 'runtime.json')
+ * @param defaultGenerator - Function to generate default config if no template exists
+ * @param username - Optional username for user-specific config
+ * @returns true if config was created, false if already existed
+ */
+function ensureUserConfig<T>(filename: string, defaultGenerator: () => T, username?: string): boolean {
+  const userEtcPath = resolveEtcPath(username);
+  const userConfigPath = path.join(userEtcPath, filename);
+
+  // If user already has the config, nothing to do
+  if (fs.existsSync(userConfigPath)) {
+    return false;
+  }
+
+  // Ensure user's etc/ directory exists
+  if (!fs.existsSync(userEtcPath)) {
+    fs.mkdirSync(userEtcPath, { recursive: true });
+  }
+
+  // Try to copy from system template first (check both .template and regular name)
+  const systemEtcPath = getSystemEtcPath();
+  const templatePath = path.join(systemEtcPath, `${filename}.template`);
+  const systemConfigPath = path.join(systemEtcPath, filename);
+
+  if (fs.existsSync(templatePath)) {
+    // Copy from .template file
+    fs.copyFileSync(templatePath, userConfigPath);
+    console.log(`[config] ✓ Created ${filename} from template for user profile`);
+    return true;
+  } else if (fs.existsSync(systemConfigPath)) {
+    // Copy from system config (using it as template)
+    fs.copyFileSync(systemConfigPath, userConfigPath);
+    console.log(`[config] ✓ Created ${filename} from system config for user profile`);
+    return true;
+  } else {
+    // No template exists - generate default and save to user profile
+    const defaultConfig = defaultGenerator();
+    const json = JSON.stringify(defaultConfig, null, 2);
+    fs.writeFileSync(userConfigPath, json, 'utf8');
+    console.log(`[config] ✓ Generated default ${filename} for user profile`);
+    return true;
+  }
+}
+
+/**
  * Load user-specific config file
  *
  * Automatically resolves to the correct user's etc/ directory based on
  * username or falls back to system etc/.
  *
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║  NO SILENT DEFAULTS: If config is missing, it will be created from        ║
+ * ║  template or generated default BEFORE loading. The defaultValue param     ║
+ * ║  is used as a generator fallback, NOT returned directly.                  ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
+ *
  * @param filename - Config filename (e.g., 'models.json', 'training.json')
- * @param defaultValue - Default value if file doesn't exist
+ * @param defaultValue - Default value used to GENERATE config if template missing (NOT returned directly)
  * @param username - Optional username to load config for (falls back to system if not provided)
- * @returns Parsed JSON config or default value
+ * @returns Parsed JSON config from user's profile
  *
  * @example
  * ```typescript
@@ -54,6 +133,7 @@ function resolveEtcPath(username?: string): string {
  * const config = loadUserConfig('models.json', {});
  *
  * // With username - loads from profiles/alice/etc/models.json
+ * // If missing, copies from etc/models.json or generates default
  * const config = loadUserConfig('models.json', {}, 'alice');
  * ```
  */
@@ -61,17 +141,20 @@ export function loadUserConfig<T = any>(filename: string, defaultValue: T, usern
   const etcPath = resolveEtcPath(username);
   const configPath = path.join(etcPath, filename);
 
-  if (!fs.existsSync(configPath)) {
-    console.log(`[config] Config file not found: ${configPath} - using default value`);
-    return defaultValue;
-  }
+  // Ensure config exists (copies from template or generates if missing)
+  // This implements the NO SILENT DEFAULTS policy
+  ensureUserConfig(filename, () => defaultValue, username);
 
+  // Now load from user's profile (which is guaranteed to exist)
   try {
     const raw = fs.readFileSync(configPath, 'utf8');
     console.log(`[config] ✓ Loaded config from: ${configPath}`);
     return JSON.parse(raw) as T;
   } catch (error) {
-    console.warn(`[config] Failed to load ${filename}:`, error);
+    // This should rarely happen now, but handle gracefully
+    console.error(`[config] ✗ CRITICAL: Failed to load ${filename} after ensuring it exists:`, error);
+    console.error(`[config] ✗ This indicates a serious configuration issue. Check file permissions.`);
+    // Last resort: return the default (but this is now an error condition)
     return defaultValue;
   }
 }
@@ -182,6 +265,13 @@ export function loadOperatorConfig(): OperatorConfig {
 
 /**
  * Get default operator configuration
+ *
+ * ⚠️  WARNING: TEMPLATE GENERATOR ONLY ⚠️
+ * This function is ONLY for generating initial templates.
+ * Do NOT return this directly to callers - always save to user profile first.
+ * See ensureUserConfig() for proper usage.
+ *
+ * @internal Use loadOperatorConfig() instead for runtime config access
  */
 export function getDefaultOperatorConfig(): OperatorConfig {
   return {
@@ -325,6 +415,16 @@ export function saveCuriosityConfig(config: CuriosityConfig, username?: string):
   curiosityConfigCache.set(getCuriosityCacheKey(username), config);
 }
 
+/**
+ * Get default curiosity configuration
+ *
+ * ⚠️  WARNING: TEMPLATE GENERATOR ONLY ⚠️
+ * This function is ONLY for generating initial templates.
+ * Do NOT return this directly to callers - always save to user profile first.
+ * See ensureUserConfig() for proper usage.
+ *
+ * @internal Use loadCuriosityConfig() instead for runtime config access
+ */
 export function getDefaultCuriosityConfig(): CuriosityConfig {
   return {
     maxOpenQuestions: 1,

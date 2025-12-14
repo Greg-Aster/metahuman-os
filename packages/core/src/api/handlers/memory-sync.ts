@@ -39,10 +39,7 @@ export async function handleMemorySyncPull(req: UnifiedRequest): Promise<Unified
   try {
     await ensureAudit();
 
-    if (req.user.role === 'anonymous') {
-      return { status: 401, error: 'Authentication required' };
-    }
-
+    // All users are authenticated (no anonymous access - handled by HTTP adapter)
     const profilePaths = getProfilePaths(req.user.username);
     const { query } = req;
     const since = query?.since;
@@ -141,10 +138,7 @@ export async function handleMemorySyncPushCreate(req: UnifiedRequest): Promise<U
   try {
     await ensureAudit();
 
-    if (req.user.role === 'anonymous') {
-      return { status: 401, error: 'Authentication required' };
-    }
-
+    // All users are authenticated (no anonymous access - handled by HTTP adapter)
     const profilePaths = getProfilePaths(req.user.username);
     const { memory } = req.body || {};
 
@@ -251,10 +245,7 @@ export async function handleMemorySyncPushUpdate(req: UnifiedRequest): Promise<U
   try {
     await ensureAudit();
 
-    if (req.user.role === 'anonymous') {
-      return { status: 401, error: 'Authentication required' };
-    }
-
+    // All users are authenticated (no anonymous access - handled by HTTP adapter)
     const profilePaths = getProfilePaths(req.user.username);
     const { memory } = req.body || {};
 

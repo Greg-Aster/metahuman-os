@@ -1076,7 +1076,7 @@ export async function buildContextPackage(
 
   // Phase 4: Track privacy filtering for audit
   const auditCtx = getUserContext();
-  const privacyFiltered = auditCtx && (auditCtx.role === 'guest' || auditCtx.role === 'anonymous');
+  const privacyFiltered = auditCtx && auditCtx.role === 'guest';
   const effectiveMemoryLimit = auditCtx ? getMaxMemoriesForRole(auditCtx.role) : maxMemories;
 
   audit({

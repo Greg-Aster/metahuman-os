@@ -200,6 +200,7 @@ import { handleGetLlmBackendStatus } from './handlers/llm-backend-status.js';
 import { handleSwitchLlmBackend } from './handlers/llm-backend-switch.js';
 import { handleOllamaControl } from './handlers/llm-backend-ollama.js';
 import { handleVllmControl } from './handlers/llm-backend-vllm.js';
+import { handleLlmChat } from './handlers/llm-proxy.js';
 import { handleGetModels, handleSetModels } from './handlers/models.js';
 import { handleGetFineTuneModels } from './handlers/fine-tune-models.js';
 import { handleGetDriftReport } from './handlers/drift-report.js';
@@ -232,6 +233,13 @@ import { handleFileOperation, handleFileOperationsStatus } from './handlers/file
 import { handleGetModelRegistry, handleAssignModelRole, handleUpdateModelSettings } from './handlers/model-registry.js';
 import { handlePersonaChat, handleClearPersonaChat, handleCancelPersonaChat } from './handlers/persona-chat.js';
 import { handleGetServerUpdate, handlePostServerUpdate, handleRestartServer } from './handlers/server-update.js';
+import {
+  handleRemoteServerHealth,
+  handleRemoteServerModels,
+  handleRemoteServerTest,
+  handleRemoteServerConnect,
+  handleRemoteServerDisconnect,
+} from './handlers/remote-server.js';
 // Note: Some complex routes (persona generator, kokoro-training, etc.) kept in Astro files
 
 // ============================================================================
@@ -263,6 +271,7 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/profile-sync/import', handler: handleImportProfile, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/metadata', handler: handleGetProfileMetadata, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/memories', handler: handleGetProfileMemories, requiresAuth: true },
+  { method: 'POST', pattern: '/api/profile-sync/memories', handler: handleGetProfileMemories },  // POST with credentials in body (cross-origin mobile)
   { method: 'GET', pattern: '/api/profile-sync/tasks', handler: handleGetProfileTasks, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/changes', handler: handleGetProfileChanges, requiresAuth: true },
 
@@ -598,6 +607,9 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/llm-backend/ollama', handler: handleOllamaControl, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/llm-backend/vllm', handler: handleVllmControl, requiresAuth: true, guard: 'owner' },
 
+  // LLM Proxy - allows remote clients to use this server's LLM (Ollama or vLLM)
+  { method: 'POST', pattern: '/api/llm/chat', handler: handleLlmChat, requiresAuth: true },
+
   // Models
   { method: 'GET', pattern: '/api/models', handler: handleGetModels, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/models', handler: handleSetModels, requiresAuth: true, guard: 'owner' },
@@ -720,6 +732,13 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/server-update', handler: handleGetServerUpdate, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/server-update', handler: handlePostServerUpdate, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/server-update/restart', handler: handleRestartServer, requiresAuth: true, guard: 'owner' },
+
+  // Remote Server (connect to desktop LLM from mobile/laptop)
+  { method: 'GET', pattern: '/api/remote-server/health', handler: handleRemoteServerHealth },
+  { method: 'GET', pattern: '/api/remote-server/models', handler: handleRemoteServerModels },
+  { method: 'POST', pattern: '/api/remote-server/test', handler: handleRemoteServerTest },
+  { method: 'POST', pattern: '/api/remote-server/connect', handler: handleRemoteServerConnect, requiresAuth: true },
+  { method: 'DELETE', pattern: '/api/remote-server/disconnect', handler: handleRemoteServerDisconnect, requiresAuth: true },
 ];
 
 // ============================================================================

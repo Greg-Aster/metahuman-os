@@ -1,17 +1,114 @@
 <script lang="ts">
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
-  import { formatFileSize } from '../lib/client/app-update';
+  import { formatFileSize, updateState, downloadUpdate } from '../lib/client/app-update';
   import {
     configureRemoteSyncServer,
     testRemoteServerConnection,
     getRemoteSyncConfig,
     clearRemoteSyncConfig,
-    syncFromRemoteServer,
+    // syncFromRemoteServer - REMOVED: Now handled by profile-sync agent
     checkRemoteSyncStatus,
     type RemoteSyncProgress,
     type SyncComparison,
     type RemoteSyncResult,
   } from '../lib/client/profile-sync';
+  import {
+    getSyncSettings,
+    updateSyncSettings,
+    type SyncSettings,
+  } from '../lib/client/sync-settings';
+  import { apiFetch } from '../lib/client/api-config';
+
+  /**
+   * Trigger an agent via the agents API
+   */
+  async function triggerAgent(agentName: string, args: string[] = []): Promise<{ success: boolean; pid?: number; error?: string }> {
+    try {
+      const res = await apiFetch('/api/agents/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent: agentName, args }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return { success: true, pid: data.pid };
+      } else {
+        const error = await res.text();
+        return { success: false, error };
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'Network error' };
+    }
+  }
+
+  /**
+   * Read update state from agent's output file
+   */
+  async function readUpdateState(): Promise<any | null> {
+    try {
+      const res = await apiFetch('/api/update-state');
+      if (res.ok) {
+        return await res.json();
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Read profile-sync state from agent's output file
+   */
+  async function readProfileSyncState(): Promise<any | null> {
+    try {
+      const res = await apiFetch('/api/profile-sync-state');
+      if (res.ok) {
+        return await res.json();
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Wait for profile-sync agent to complete by polling state file
+   */
+  async function waitForProfileSync(maxWaitMs: number = 120000): Promise<any> {
+    const startTime = Date.now();
+    const pollInterval = 1000; // Poll every second
+
+    while (Date.now() - startTime < maxWaitMs) {
+      const state = await readProfileSyncState();
+
+      if (state) {
+        // Update progress UI
+        if (state.phase && state.message) {
+          remoteSyncPhase = state.phase === 'complete' ? 'complete'
+            : state.phase === 'error' ? 'error'
+            : 'downloading';
+          remoteSyncMessage = state.message;
+
+          if (state.current !== undefined && state.total !== undefined) {
+            syncProgress = {
+              current: state.current,
+              total: state.total,
+              category: state.message,
+            };
+          }
+        }
+
+        // Check if completed or errored
+        if (state.phase === 'complete' || state.phase === 'error') {
+          return state;
+        }
+      }
+
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+
+    return { phase: 'error', message: 'Sync timed out' };
+  }
 
   const dispatch = createEventDispatcher();
 
@@ -34,6 +131,11 @@
   let remoteSyncPhase: RemoteSyncProgress['phase'] | null = null;
   let remoteSyncMessage = '';
 
+  // Sync settings state
+  let syncSettingsData: SyncSettings | null = null;
+  let showSyncSettings = false;
+  let isSavingSettings = false;
+
   // Sync status comparison
   let isCheckingStatus = false;
   let syncComparison: SyncComparison | null = null;
@@ -42,6 +144,22 @@
   // Sync completion state
   let showSyncComplete = false;
   let syncResult: RemoteSyncResult | null = null;
+
+  // Update result tracking
+  interface UpdateResult {
+    checked: boolean;
+    available: boolean;
+    version: string | null;
+    downloadStarted: boolean;
+    error: string | null;
+  }
+  let updateResult: UpdateResult = {
+    checked: false,
+    available: false,
+    version: null,
+    downloadStarted: false,
+    error: null,
+  };
 
   // Memory date range options
   interface DateRangeOption {
@@ -75,21 +193,21 @@
       id: 'persona',
       label: 'Persona Files',
       description: 'Core identity, personality traits, relationships, and decision rules',
-      enabled: true,
+      enabled: false,  // Disabled by default - memories only
       estimatedSize: '~50 KB',
     },
     {
       id: 'config',
       label: 'Configuration',
       description: 'Settings, preferences, model registry, and runtime config',
-      enabled: true,
+      enabled: false,  // Disabled by default - memories only
       estimatedSize: '~25 KB',
     },
     {
       id: 'memories',
       label: 'Memories',
       description: 'Episodic memories, conversations, and inner dialogue',
-      enabled: true,
+      enabled: true,   // Enabled by default - primary sync content
       estimatedSize: 'Variable',
     },
     {
@@ -241,10 +359,32 @@
     }
   });
 
-  // Load server config on mount
+  // Load server config and sync settings on mount
   onMount(async () => {
     await loadServerConfig();
+    await loadSyncSettings();
   });
+
+  async function loadSyncSettings() {
+    try {
+      syncSettingsData = await getSyncSettings();
+    } catch (err) {
+      console.error('Failed to load sync settings:', err);
+    }
+  }
+
+  async function handleSaveSyncSettings() {
+    if (!syncSettingsData) return;
+    isSavingSettings = true;
+    try {
+      await updateSyncSettings(syncSettingsData);
+      showSyncSettings = false;
+    } catch (err) {
+      console.error('Failed to save sync settings:', err);
+    } finally {
+      isSavingSettings = false;
+    }
+  }
 
   async function loadServerConfig() {
     try {
@@ -350,41 +490,182 @@
   async function handleRemoteSync() {
     isSyncing = true;
     remoteSyncPhase = 'authenticating';
-    remoteSyncMessage = 'Connecting to remote server...';
+    remoteSyncMessage = 'Starting sync via profile-sync agent...';
     syncResult = null;
 
+    // Reset update result
+    updateResult = {
+      checked: false,
+      available: false,
+      version: null,
+      downloadStarted: false,
+      error: null,
+    };
+
+    // Read checkbox selections to honor user's choices
+    const wantPersona = syncOptions.find(o => o.id === 'persona')?.enabled ?? false;
+    const wantConfig = syncOptions.find(o => o.id === 'config')?.enabled ?? false;
+    const wantMemories = syncOptions.find(o => o.id === 'memories')?.enabled ?? false;
+    const wantUpdate = syncOptions.find(o => o.id === 'update')?.enabled ?? false;
+
+    // Check if ONLY update is selected (no profile sync needed)
+    const onlyUpdateSelected = wantUpdate && !wantPersona && !wantConfig && !wantMemories;
+
+    console.log('[SyncManager] Options:', { wantPersona, wantConfig, wantMemories, wantUpdate, onlyUpdateSelected });
+    console.log('[SyncManager] Using profile-sync agent for ALL sync operations');
+
+    const errors: string[] = [];
+
     try {
-      const result = await syncFromRemoteServer(
-        (progress) => {
-          remoteSyncPhase = progress.phase;
-          remoteSyncMessage = progress.message;
-          if (progress.current !== undefined && progress.total !== undefined) {
-            syncProgress = {
-              current: progress.current,
-              total: progress.total,
-              category: progress.message,
+      // === CASE 1: Only update selected ===
+      if (onlyUpdateSelected) {
+        remoteSyncMessage = 'Triggering update-check agent...';
+        remoteSyncPhase = 'downloading';
+
+        console.log('[SyncManager] Triggering update-check agent');
+        const agentResult = await triggerAgent('update-check', serverUrl ? [`--server=${serverUrl}`] : []);
+
+        if (agentResult.success) {
+          remoteSyncMessage = `Update agent started (PID: ${agentResult.pid}). Waiting for result...`;
+          console.log('[SyncManager] Update agent started:', agentResult.pid);
+
+          // Wait a bit for agent to complete, then check result
+          await new Promise(resolve => setTimeout(resolve, 3000));
+
+          const state = await readUpdateState();
+          updateResult.checked = true;
+
+          if (state?.updateAvailable) {
+            updateResult.available = true;
+            updateResult.version = state.latestVersion;
+            remoteSyncMessage = `Update ${state.latestVersion} found! Starting download...`;
+
+            // Download the update
+            const downloadResult = await downloadUpdate();
+            if (downloadResult.success) {
+              updateResult.downloadStarted = true;
+              remoteSyncMessage = 'Download started - check your browser/downloads';
+            } else {
+              updateResult.error = downloadResult.error || 'Download failed';
+              remoteSyncMessage = updateResult.error;
+            }
+          } else {
+            updateResult.available = false;
+            updateResult.version = state?.currentVersion || 'unknown';
+            remoteSyncMessage = `Already up to date (v${updateResult.version})`;
+          }
+        } else {
+          updateResult.error = agentResult.error || 'Failed to start update agent';
+          errors.push(updateResult.error);
+        }
+
+        syncResult = {
+          success: errors.length === 0,
+          error: errors.join('; ') || undefined,
+        };
+        remoteSyncPhase = errors.length === 0 ? 'complete' : 'error';
+        showSyncComplete = true;
+
+      // === CASE 2: Profile/Memory sync via profile-sync agent ===
+      } else {
+        // Build agent args based on selections
+        const agentArgs: string[] = ['--pull-only'];
+
+        if (wantMemories && !wantPersona && !wantConfig) {
+          agentArgs.push('--memories-only');
+        } else if ((wantPersona || wantConfig) && !wantMemories) {
+          agentArgs.push('--profile-only');
+        }
+
+        // Add memory days filter if set
+        if (memoryDays > 0) {
+          agentArgs.push(`--days=${memoryDays}`);
+        }
+
+        remoteSyncMessage = 'Triggering profile-sync agent...';
+        remoteSyncPhase = 'downloading';
+
+        console.log('[SyncManager] Triggering profile-sync agent with args:', agentArgs);
+        const agentResult = await triggerAgent('profile-sync', agentArgs);
+
+        if (agentResult.success) {
+          remoteSyncMessage = `Profile sync agent started (PID: ${agentResult.pid}). Syncing...`;
+          console.log('[SyncManager] Profile sync agent started:', agentResult.pid);
+
+          // Wait for agent completion by polling state file
+          const finalState = await waitForProfileSync(120000); // 2 minute max wait
+
+          if (finalState.phase === 'complete') {
+            // Check for app updates if requested
+            if (wantUpdate) {
+              remoteSyncMessage = 'Checking for app updates...';
+              console.log('[SyncManager] Triggering update-check agent');
+
+              const updateAgentResult = await triggerAgent('update-check', serverUrl ? [`--server=${serverUrl}`] : []);
+              if (updateAgentResult.success) {
+                await new Promise(resolve => setTimeout(resolve, 3000));
+
+                const state = await readUpdateState();
+                updateResult.checked = true;
+
+                if (state?.updateAvailable) {
+                  updateResult.available = true;
+                  updateResult.version = state.latestVersion;
+                  remoteSyncMessage = `Update ${state.latestVersion} found! Starting download...`;
+
+                  const downloadResult = await downloadUpdate();
+                  if (downloadResult.success) {
+                    updateResult.downloadStarted = true;
+                  } else {
+                    updateResult.error = downloadResult.error || 'Download failed';
+                  }
+                } else {
+                  updateResult.available = false;
+                  updateResult.version = state?.currentVersion;
+                }
+              }
+            }
+
+            // Build success message
+            const successParts: string[] = [];
+            if (finalState.profileFiles > 0) successParts.push(`${finalState.profileFiles} profile files`);
+            if (finalState.memoriesImported > 0) successParts.push(`${finalState.memoriesImported} memories`);
+            if (finalState.credentialsSynced) successParts.push('credentials');
+            if (updateResult.checked) successParts.push('update checked');
+
+            remoteSyncPhase = 'complete';
+            remoteSyncMessage = `Sync complete! ${successParts.join(', ')}.`;
+
+            syncResult = {
+              success: true,
+              profileFiles: finalState.profileFiles || 0,
+              memoriesImported: finalState.memoriesImported || 0,
+              credentialsSynced: finalState.credentialsSynced || false,
+            };
+          } else {
+            // Error or timeout
+            errors.push(finalState.message || 'Sync failed');
+            remoteSyncPhase = 'error';
+            remoteSyncMessage = finalState.message || 'Sync failed';
+
+            syncResult = {
+              success: false,
+              error: finalState.message || finalState.error || 'Sync failed',
             };
           }
-        },
-        {
-          includeMemories: true,
-          includeCredentials: true,
-          priorityOnly: true,
-          memoryDays: memoryDays, // Pass the date range filter
+        } else {
+          errors.push(agentResult.error || 'Failed to start profile-sync agent');
+          remoteSyncPhase = 'error';
+          remoteSyncMessage = agentResult.error || 'Failed to start profile-sync agent';
+
+          syncResult = {
+            success: false,
+            error: agentResult.error || 'Failed to start profile-sync agent',
+          };
         }
-      );
 
-      syncResult = result;
-
-      if (result.success) {
-        remoteSyncPhase = 'complete';
-        remoteSyncMessage = `Sync complete! ${result.memoriesImported || 0} memories imported.`;
-        await loadServerConfig(); // Refresh last sync time
-        // Show completion dialog
+        await loadServerConfig();
         showSyncComplete = true;
-      } else {
-        remoteSyncPhase = 'error';
-        remoteSyncMessage = result.error || 'Sync failed';
       }
     } catch (err) {
       remoteSyncPhase = 'error';
@@ -393,7 +674,6 @@
     } finally {
       isSyncing = false;
       syncProgress = null;
-      // Clear sync comparison after sync completes
       syncComparison = null;
     }
   }
@@ -402,6 +682,14 @@
     showSyncComplete = false;
     syncResult = null;
     remoteSyncPhase = null;
+    // Reset update result
+    updateResult = {
+      checked: false,
+      available: false,
+      version: null,
+      downloadStarted: false,
+      error: null,
+    };
   }
 
   function toggleOption(id: string) {
@@ -416,11 +704,6 @@
 
   function selectNone() {
     syncOptions = syncOptions.map(opt => ({ ...opt, enabled: false }));
-  }
-
-  function handleStartSync() {
-    const selectedOptions = syncOptions.filter(opt => opt.enabled).map(opt => opt.id);
-    dispatch('sync', { options: selectedOptions });
   }
 
   function handleClose() {
@@ -576,6 +859,114 @@
           {/if}
         </div>
 
+        <!-- Sync Settings Section -->
+        <div class="sync-settings-section">
+          <div class="sync-settings-header" on:click={() => showSyncSettings = !showSyncSettings}>
+            <div class="settings-status">
+              <span class="settings-icon">⚙️</span>
+              <div class="settings-info">
+                <span class="settings-title">Sync Behavior Settings</span>
+                <span class="settings-hint">Auto-sync, WiFi-only, and defaults</span>
+              </div>
+            </div>
+            <span class="expand-icon">{showSyncSettings ? '▼' : '▶'}</span>
+          </div>
+
+          {#if showSyncSettings && syncSettingsData}
+            <div class="sync-settings-form">
+              <div class="settings-group">
+                <h4>Automatic Sync</h4>
+
+                <label class="setting-toggle">
+                  <input
+                    type="checkbox"
+                    bind:checked={syncSettingsData.syncOnLogin}
+                    disabled={isSavingSettings}
+                  />
+                  <span class="toggle-label">
+                    <strong>Sync on login</strong>
+                    <small>Pull latest memories when logging in</small>
+                  </span>
+                </label>
+
+                <label class="setting-toggle">
+                  <input
+                    type="checkbox"
+                    bind:checked={syncSettingsData.syncOnWifiOnly}
+                    disabled={isSavingSettings}
+                  />
+                  <span class="toggle-label">
+                    <strong>WiFi only</strong>
+                    <small>Don't sync on cellular data</small>
+                  </span>
+                </label>
+
+                <label class="setting-toggle">
+                  <input
+                    type="checkbox"
+                    bind:checked={syncSettingsData.manualSyncOnly}
+                    disabled={isSavingSettings}
+                  />
+                  <span class="toggle-label">
+                    <strong>Manual sync only</strong>
+                    <small>Disable all automatic syncing</small>
+                  </span>
+                </label>
+              </div>
+
+              <div class="settings-group">
+                <h4>Default Sync Content</h4>
+
+                <label class="setting-toggle">
+                  <input
+                    type="checkbox"
+                    bind:checked={syncSettingsData.syncPersona}
+                    disabled={isSavingSettings}
+                  />
+                  <span class="toggle-label">
+                    <strong>Sync persona</strong>
+                    <small>Identity, personality, relationships</small>
+                  </span>
+                </label>
+
+                <label class="setting-toggle">
+                  <input
+                    type="checkbox"
+                    bind:checked={syncSettingsData.syncSettings}
+                    disabled={isSavingSettings}
+                  />
+                  <span class="toggle-label">
+                    <strong>Sync settings</strong>
+                    <small>App preferences and configuration</small>
+                  </span>
+                </label>
+
+                <label class="setting-toggle">
+                  <input
+                    type="checkbox"
+                    bind:checked={syncSettingsData.syncConversationBuffer}
+                    disabled={isSavingSettings}
+                  />
+                  <span class="toggle-label">
+                    <strong>Sync conversation buffer</strong>
+                    <small>Recent chat history (can be large)</small>
+                  </span>
+                </label>
+              </div>
+
+              <div class="settings-actions">
+                <button
+                  class="config-btn save"
+                  on:click={handleSaveSyncSettings}
+                  disabled={isSavingSettings}
+                >
+                  {isSavingSettings ? 'Saving...' : 'Save Settings'}
+                </button>
+              </div>
+            </div>
+          {/if}
+        </div>
+
         {#if isServerConfigured}
           <!-- Remote Sync Section -->
           <div class="remote-sync-section">
@@ -605,14 +996,6 @@
                 {:else}
                   <span class="btn-icon">📊</span> Check Status
                 {/if}
-              </button>
-              <button
-                class="remote-sync-btn"
-                on:click={handleRemoteSync}
-                disabled={isSyncing || isCheckingStatus}
-              >
-                <span class="btn-icon">☁️</span>
-                Sync Now
               </button>
             </div>
 
@@ -711,11 +1094,11 @@
         <div class="action-section">
           <button
             class="sync-btn primary"
-            on:click={handleStartSync}
-            disabled={!syncOptions.some(opt => opt.enabled)}
+            on:click={handleRemoteSync}
+            disabled={!syncOptions.some(opt => opt.enabled) || !isServerConfigured}
           >
             <span class="btn-icon">⟳</span>
-            Start Sync
+            {isServerConfigured ? 'Start Sync' : 'Configure Server First'}
           </button>
           <button class="sync-btn secondary" on:click={handleClose}>
             Cancel
@@ -765,7 +1148,38 @@
               <span class="stat-label">credentials synced</span>
             </div>
           {/if}
-          {#if !syncResult.profileFiles && !syncResult.memoriesImported && !syncResult.credentialsSynced}
+
+          <!-- Update result feedback -->
+          {#if updateResult.checked}
+            {#if updateResult.downloadStarted}
+              <div class="stat-item update-downloading">
+                <span class="stat-icon">⬇️</span>
+                <span class="stat-value">{updateResult.version}</span>
+                <span class="stat-label">download started!</span>
+              </div>
+            {:else if updateResult.available}
+              <div class="stat-item update-available">
+                <span class="stat-icon">🆕</span>
+                <span class="stat-value">{updateResult.version}</span>
+                <span class="stat-label">app update available!</span>
+              </div>
+            {:else if !updateResult.error}
+              <div class="stat-item">
+                <span class="stat-icon">✅</span>
+                <span class="stat-value">v{updateResult.version || 'current'}</span>
+                <span class="stat-label">app is up to date</span>
+              </div>
+            {/if}
+
+            {#if updateResult.error}
+              <div class="stat-item update-error">
+                <span class="stat-icon">⚠️</span>
+                <span class="stat-label">{updateResult.error}</span>
+              </div>
+            {/if}
+          {/if}
+
+          {#if !syncResult.profileFiles && !syncResult.memoriesImported && !syncResult.credentialsSynced && !updateResult.checked}
             <div class="stat-item">
               <span class="stat-icon">📡</span>
               <span class="stat-label">Connection verified - no new data to sync</span>
@@ -774,8 +1188,20 @@
         </div>
 
         <p class="complete-message">
-          Your local device is now up to date with your server.
+          {#if updateResult.downloadStarted}
+            APK download started. Check your browser or system downloads to install.
+          {:else if updateResult.available && $updateState.downloadUrl}
+            Update available! Click below to download.
+          {:else}
+            Your local device is now up to date with your server.
+          {/if}
         </p>
+
+        {#if updateResult.available && !updateResult.downloadStarted && $updateState.downloadUrl}
+          <button class="update-btn" on:click={() => downloadUpdate()}>
+            ⬇ Download Update ({updateResult.version})
+          </button>
+        {/if}
       {:else}
         <div class="error-details">
           <span class="error-message">{syncResult.error || 'An unknown error occurred'}</span>
@@ -1396,6 +1822,115 @@
     background: rgba(255, 107, 107, 0.2);
   }
 
+  /* Sync Settings Section */
+  .sync-settings-section {
+    border-bottom: 1px solid rgba(0, 255, 136, 0.15);
+  }
+
+  .sync-settings-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .sync-settings-header:hover {
+    background: rgba(0, 255, 136, 0.05);
+  }
+
+  .settings-status {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .settings-icon {
+    font-size: 1.25rem;
+    margin-top: 0.125rem;
+  }
+
+  .settings-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .settings-title {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #ffffff;
+  }
+
+  .settings-hint {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .sync-settings-form {
+    padding: 0 1.25rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .settings-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .settings-group h4 {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #00ff88;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 0;
+    padding-bottom: 0.375rem;
+    border-bottom: 1px solid rgba(0, 255, 136, 0.2);
+  }
+
+  .setting-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    cursor: pointer;
+  }
+
+  .setting-toggle input[type="checkbox"] {
+    margin-top: 0.25rem;
+    accent-color: #00ff88;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+  }
+
+  .toggle-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .toggle-label strong {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .toggle-label small {
+    font-size: 0.6875rem;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .settings-actions {
+    display: flex;
+    gap: 0.5rem;
+    padding-top: 0.5rem;
+  }
+
   /* Remote Sync Section */
   .remote-sync-section {
     padding: 1rem 1.25rem;
@@ -1761,5 +2296,64 @@
 
   .complete-btn:hover {
     box-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
+  }
+
+  .stat-item.update-available {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(234, 88, 12, 0.2) 100%);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    border-radius: 0.5rem;
+    padding: 0.5rem;
+    animation: pulse-update 2s infinite;
+  }
+
+  .stat-item.update-downloading {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(37, 99, 235, 0.2) 100%);
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    border-radius: 0.5rem;
+    padding: 0.5rem;
+  }
+
+  .stat-item.update-downloading .stat-icon {
+    animation: bounce-download 1s infinite;
+  }
+
+  @keyframes bounce-download {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(3px); }
+  }
+
+  .stat-item.update-error {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.2) 100%);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    border-radius: 0.5rem;
+    padding: 0.5rem;
+  }
+
+  .stat-item.update-error .stat-label {
+    color: #fca5a5;
+  }
+
+  @keyframes pulse-update {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.8; }
+  }
+
+  .update-btn {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    margin-top: 0.75rem;
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    border: none;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .update-btn:hover {
+    box-shadow: 0 0 20px rgba(245, 158, 11, 0.4);
+    transform: translateY(-1px);
   }
 </style>

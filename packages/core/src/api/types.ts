@@ -10,11 +10,22 @@
 
 /**
  * User context resolved by the adapter before calling handlers
+ *
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║  ROLE DEFINITIONS - NO ANONYMOUS USERS                                    ║
+ * ╠═══════════════════════════════════════════════════════════════════════════╣
+ * ║  owner    - Full system access, can manage other users                    ║
+ * ║  standard - Read/write access to their own profile                        ║
+ * ║  guest    - Read-only access (authenticated via auth gate, no password)   ║
+ * ║                                                                           ║
+ * ║  ALL users must be authenticated. There is NO anonymous access.           ║
+ * ║  Unauthenticated requests should be redirected to the auth gate.          ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
  */
 export interface UnifiedUser {
   userId: string;
   username: string;
-  role: 'owner' | 'guest' | 'anonymous';
+  role: 'owner' | 'standard' | 'guest';
   isAuthenticated: boolean;
 }
 

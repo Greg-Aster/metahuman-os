@@ -39,6 +39,13 @@ export async function handleGetGpuInfo(req: UnifiedRequest): Promise<UnifiedResp
     hasS3Configured: false,
   };
 
+  // Skip hardware checks on mobile - no GPU/Python available
+  const isMobile = process.env.METAHUMAN_MOBILE === 'true';
+  if (isMobile) {
+    // Mobile devices don't have local GPU or Python for training
+    return successResponse(info);
+  }
+
   // 1. Check for NVIDIA GPU
   try {
     const { stdout } = await execAsync('nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits');
