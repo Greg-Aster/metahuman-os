@@ -64,6 +64,27 @@ const ALLOWED_AGENTS = [
   'desire-generator',
 ];
 
+/**
+ * Resolve agent path - supports both new-style directory agents and legacy single-file agents
+ * New style: brain/agents/<name>/cli.ts
+ * Legacy: brain/agents/<name>.ts
+ */
+function resolveAgentPath(agentName: string): string | null {
+  // New-style agent directory with cli.ts
+  const newStylePath = path.join(systemPaths.brain, 'agents', agentName, 'cli.ts');
+  if (fs.existsSync(newStylePath)) {
+    return newStylePath;
+  }
+
+  // Legacy single-file agent
+  const legacyPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
+  if (fs.existsSync(legacyPath)) {
+    return legacyPath;
+  }
+
+  return null;
+}
+
 function runAgent(agentName: string, args: string[], actor: string): RunAgentResponse {
   try {
     // Validate agent name
@@ -77,8 +98,8 @@ function runAgent(agentName: string, args: string[], actor: string): RunAgentRes
       return { success: false, agent: agentName, error: 'Agent is already running', alreadyRunning: true };
     }
 
-    const agentPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
-    if (!fs.existsSync(agentPath)) {
+    const agentPath = resolveAgentPath(agentName);
+    if (!agentPath) {
       return { success: false, agent: agentName, error: 'Agent file not found' };
     }
 

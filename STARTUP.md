@@ -139,3 +139,4 @@ cd apps/mobile/android/app/build/outputs/apk/debug && python3 -m http.server 888
 - **Server/24-7?** → `./bin/start-pm2`
 - **Build mobile APK?** → `cd apps/mobile && pnpm build:mobile`
 
+ifhehe

@@ -6,6 +6,23 @@ Install MetaHuman OS on your Linux server.
 
 ---
 
+## Prerequisites
+
+### Required
+- **Node.js 18+** — JavaScript runtime
+- **pnpm** — Package manager (`npm install -g pnpm`)
+- **Git** — Version control
+
+### Required for AI Features
+- **Ollama** OR **vLLM** — Local LLM backend (choose one)
+- At least 8GB RAM (16GB+ recommended for larger models)
+
+### Optional (for Training & Voice)
+- **Python 3.10+** — Only needed for LoRA training or audio transcription
+- **NVIDIA GPU** — Required for local training (or use RunPod cloud)
+
+---
+
 ## 1. Clone the Repository
 
 ```bash
@@ -15,92 +32,94 @@ cd metahuman-os
 
 ---
 
-## 2. Install Dependencies
+## 2. Install an LLM Backend
+
+MetaHuman needs an LLM backend for AI capabilities. Install **Ollama** (recommended for most users):
 
 ```bash
-pnpm install
-```
-
-This installs all Node.js packages across the monorepo. If you don't have pnpm:
-
-```bash
-npm install -g pnpm
-```
-
----
-
-## 3. Initialize the System
-
-```bash
-./bin/mh init
-```
-
-This creates the directory structure:
-- `profiles/` — User profile directories
-- `logs/` — Audit trails and agent logs
-- `etc/` — System configuration files
-
----
-
-## 4. Install an LLM Backend
-
-MetaHuman needs an LLM backend for AI capabilities. Choose one:
-
-### Option A: Ollama (Recommended for Most Users)
-
-Ollama is simpler to set up and works well for models up to ~14B parameters.
-
-```bash
-# Install Ollama
 curl -fsSL https://ollama.com/install.sh | sh
-
-# Start the Ollama service
-ollama serve
 ```
 
-Verify it's running:
-```bash
-./bin/mh ollama status
-```
+Ollama runs as a background service and auto-starts on boot.
 
-### Option B: vLLM (For Large Models / High Performance)
-
-vLLM offers better performance for large models (30B+) and high-throughput scenarios. Requires NVIDIA GPU with CUDA.
-
-```bash
-# Create Python virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install vLLM
-pip install vllm
-
-# Start vLLM server (example with Qwen model)
-vllm serve Qwen/Qwen2.5-7B-Instruct --port 8000
-```
-
-Configure MetaHuman to use vLLM:
-```bash
-# Edit etc/llm-backend.json and set "active": "vllm"
-```
-
-### Option C: Remote LLM (No Local Backend)
-
-If you're connecting to a remote server that already has an LLM backend, you can skip this step entirely. Configure the remote server URL in Settings after login.
+> **Alternative backends:** For large models (30B+) or high-throughput scenarios, see [LLM Backend Configuration](../configuration-admin/llm-backend.md) for vLLM setup.
+>
+> **Remote users:** If connecting to a remote server that already has an LLM backend, skip this step.
 
 ---
 
-## 5. Start the Web UI
+## 3. Start MetaHuman OS
+
+The startup script handles everything automatically:
+- Installs Node.js dependencies (`pnpm install`)
+- Sets up Python environment (if Python 3 is available)
+- Initializes the system (creates directories, config files)
+- Starts all services and agents
+
+### Option A: Simple Start (Recommended)
 
 ```bash
-cd apps/site
-pnpm dev
+./start.sh
 ```
 
-The server starts at http://localhost:4321
+First run takes a few minutes to install dependencies and build the application.
+
+### Option B: PM2 (Production)
+
+For production deployments with auto-restart and monitoring:
+
+```bash
+./bin/start-pm2
+```
+
+PM2 provides:
+- Auto-restart on crash
+- Centralized logging (`pm2 logs`)
+- Monitoring dashboard (`pm2 monit`)
+- Zero-downtime reloads (`pm2 reload all`)
+
+To enable auto-start on system boot:
+```bash
+pm2 startup
+pm2 save
+```
+
+### Option C: Development Mode
+
+For development with hot-reload:
+
+```bash
+pnpm install  # Required for dev mode
+cd apps/site && pnpm dev
+```
+
+---
+
+## 4. Verify Installation
+
+After starting, verify everything is working:
+
+```bash
+# Check web server is running
+curl http://localhost:4321
+
+# Check Ollama connection (if using Ollama)
+./bin/mh ollama status
+
+# Check system status
+./bin/mh status
+```
+
+The web interface should be accessible at **http://localhost:4321**
+
+---
+
+## Troubleshooting
+
+Having issues? See [Troubleshooting](../reference/troubleshooting.md) for common problems and solutions.
 
 ---
 
 ## Next Steps
 
-Installation complete! Continue to [Setup & Login](03-setup-and-login.md) to create your account and configure your first model.
+Installation complete! Continue to [Setup & Login](03-setup-and-login.md) to create your account and download a model.

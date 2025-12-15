@@ -1,0 +1,27 @@
+{
+  "name": "@metahuman/agent-runtime",
+  "version": "0.1.0",
+  "description": "Universal agent runtime for MetaHuman OS - works on web and mobile",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@metahuman/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  },
+  "files": [
+    "dist"
+  ]
+}

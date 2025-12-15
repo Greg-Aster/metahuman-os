@@ -14,6 +14,9 @@ import { storageClient } from './storage-client.js';
 import { audit } from './audit.js';
 import { recordSystemActivity, readSystemActivityTimestamp, readLastActiveUsername } from './system-activity.js';
 
+// Agent runtime for new modular agents
+import type { AgentRuntime } from '@metahuman/agent-runtime';
+
 // ============================================================================
 // Type Definitions
 // ============================================================================
@@ -118,6 +121,10 @@ export class AgentScheduler extends EventEmitter {
   private queuePaused: boolean = false;
   private queueResumeTimer?: NodeJS.Timeout;
 
+  // Agent Runtime (for new modular agents)
+  private runtime: AgentRuntime | null = null;
+  private runtimeInitialized: boolean = false;
+
   /**
    * Get config file path (lazy evaluation to allow user context resolution)
    */
@@ -143,6 +150,39 @@ export class AgentScheduler extends EventEmitter {
       AgentScheduler.instance = new AgentScheduler();
     }
     return AgentScheduler.instance;
+  }
+
+  /**
+   * Initialize agent runtime (lazy, on first use)
+   * Loads all modular agents from brain/agents/
+   */
+  private async initializeRuntime(): Promise<void> {
+    if (this.runtimeInitialized) return;
+
+    try {
+      // Dynamically import to avoid circular deps and allow lazy loading
+      const { getRuntime, loadAgents } = await import('@metahuman/agent-runtime');
+
+      // Load all modular agents from brain/agents/
+      const agentsDir = systemPaths.agents;
+      const loadedCount = await loadAgents(agentsDir);
+      console.log(`[AgentScheduler] Loaded ${loadedCount} modular agents from runtime`);
+
+      // Get runtime instance
+      this.runtime = getRuntime(ROOT);
+      this.runtimeInitialized = true;
+
+      audit({
+        level: 'info',
+        category: 'system',
+        event: 'agent_runtime_initialized',
+        actor: 'agent_scheduler',
+        details: { agentsLoaded: loadedCount },
+      });
+    } catch (error) {
+      console.warn('[AgentScheduler] Failed to initialize agent runtime, using legacy mode:', (error as Error).message);
+      this.runtimeInitialized = true; // Mark as initialized even on failure to avoid retries
+    }
   }
 
   // ==========================================================================
@@ -721,12 +761,41 @@ export class AgentScheduler extends EventEmitter {
 
   /**
    * Run an agent file
+   * Tries runtime first (for modular agents), falls back to legacy tsx spawn
    */
   private async runAgentFile(config: AgentConfig): Promise<void> {
     if (!config.agentPath) return;
 
     // Get username from last activity or from persisted state
     const username = this.lastActiveUsername || readLastActiveUsername();
+
+    // Derive agent ID from path (e.g., 'reflector.ts' -> 'reflector', 'profile-sync/cli.ts' -> 'profile-sync')
+    const agentId = config.agentPath.replace(/\/(cli|index|core)\.ts$/, '').replace(/\.ts$/, '');
+
+    // Try runtime first for modular agents
+    await this.initializeRuntime();
+    if (this.runtime && this.runtime.hasAgent(agentId)) {
+      console.log(`[AgentScheduler] Running agent '${agentId}' via runtime`);
+
+      const result = await this.runtime.run(
+        agentId,
+        {
+          userId: username || 'system',
+          dataDir: ROOT,
+        },
+        {
+          args: username ? ['--username', username] : [],
+        }
+      );
+
+      if (!result.result.success) {
+        throw new Error(result.result.error || `Agent '${agentId}' failed`);
+      }
+      return;
+    }
+
+    // Fall back to legacy tsx spawn for non-modular agents
+    console.log(`[AgentScheduler] Running agent '${config.agentPath}' via legacy spawn`);
 
     return new Promise((resolve, reject) => {
       const agentFullPath = path.join(systemPaths.agents, config.agentPath!);

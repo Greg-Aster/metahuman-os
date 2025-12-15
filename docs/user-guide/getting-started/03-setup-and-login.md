@@ -2,7 +2,7 @@
 
 Create your account and configure MetaHuman OS for first use.
 
-> **Note:** If you installed MetaHuman locally, make sure the web UI is running (`cd apps/site && pnpm dev`).
+> **Note:** If you installed MetaHuman locally, make sure the server is running (`./start.sh`).
 
 ---
 

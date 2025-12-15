@@ -41,111 +41,30 @@ import {
   type MobileAgentRegistration,
 } from './mobile-scheduler.js';
 
-// Import from brain agents (unified codebase - same agents as server)
-import { generateUserReflection } from '../../../../brain/agents/reflector.js';
-import { generateUserDreams } from '../../../../brain/agents/dreamer.js';
-import { generateUserQuestion } from '../../../../brain/agents/curiosity-service.js';
-import { generateInnerQuestion } from '../../../../brain/agents/inner-curiosity.js';
-import { runDigest as brainRunDigest } from '../../../../brain/agents/digest.js';
+// All agents now use the new modular structure (core.ts + cli.ts + index.ts)
+import { syncUserProfile } from '../../../../brain/agents/profile-sync/core.js';
+import { processUserMemories as organizerProcessUserMemories } from '../../../../brain/agents/organizer/core.js';
+import { generateUserReflection } from '../../../../brain/agents/reflector/core.js';
+import { generateUserDreams } from '../../../../brain/agents/dreamer/core.js';
+import { ingestUserFiles } from '../../../../brain/agents/ingestor/core.js';
+import { generateUserQuestion } from '../../../../brain/agents/curiosity-service/core.js';
+import { generateInnerQuestion } from '../../../../brain/agents/inner-curiosity/core.js';
+import { generateUserDigest } from '../../../../brain/agents/digest/core.js';
 
-// Agency system agents
-import { generateDesiresForUser } from '../../../../brain/agents/desire-generator.js';
-import { processPlanningDesires, loadPlannerConfig } from '../../../../brain/agents/desire-planner.js';
-import { processApprovedDesires } from '../../../../brain/agents/desire-executor.js';
-import { processDesires as processDesireOutcomes } from '../../../../brain/agents/desire-outcome-reviewer.js';
+// Agency system agents (new modular structure)
+import { generateDesiresForUser } from '../../../../brain/agents/desire-generator/core.js';
+import { processPlanningDesires } from '../../../../brain/agents/desire-planner/core.js';
+import { processApprovedDesires } from '../../../../brain/agents/desire-executor/core.js';
+import { processDesires as processDesireOutcomes } from '../../../../brain/agents/desire-outcome-reviewer/core.js';
 
 // ============================================================================
-// Organizer Agent (Mobile Version - keeps original implementation)
+// Organizer Agent (uses new modular structure)
 // ============================================================================
 
-interface AnalysisResult {
-  tags: string[];
-  entities: string[];
-}
-
 /**
- * Analyze memory content using LLM
- */
-async function analyzeMemoryContent(content: string): Promise<AnalysisResult> {
-  const messages: RouterMessage[] = [
-    {
-      role: 'system',
-      content: 'You are an expert text analysis agent. Extract key tags and named entities from text. Respond with ONLY valid JSON: {"tags": ["tag1", "tag2"], "entities": ["entity1", "entity2"]}',
-    },
-    {
-      role: 'user',
-      content: `Analyze this text and extract tags (topics, themes, categories) and entities (people, places, tools, concepts):\n\n${content}`,
-    },
-  ];
-
-  try {
-    const response = await callLLM({
-      role: 'curator',
-      messages,
-      options: { temperature: 0.3 },
-      keepAlive: '0', // Unload immediately for background agent
-    });
-
-    const result = JSON.parse(response.content) as AnalysisResult;
-    return result;
-  } catch (error) {
-    console.error('[mobile-organizer] Analysis failed:', error);
-    return { tags: [], entities: [] };
-  }
-}
-
-/**
- * Find unprocessed memories in a directory
- */
-function findUnprocessedMemories(episodicDir: string, limit: number = 5): string[] {
-  const unprocessed: string[] = [];
-
-  if (!fs.existsSync(episodicDir)) {
-    return unprocessed;
-  }
-
-  // Walk year directories
-  const years = fs.readdirSync(episodicDir)
-    .filter(f => /^\d{4}$/.test(f))
-    .sort((a, b) => parseInt(b) - parseInt(a)); // Most recent first
-
-  for (const year of years) {
-    if (unprocessed.length >= limit) break;
-
-    const yearDir = path.join(episodicDir, year);
-    const files = fs.readdirSync(yearDir)
-      .filter(f => f.endsWith('.json'))
-      .sort((a, b) => b.localeCompare(a)); // Most recent first
-
-    for (const file of files) {
-      if (unprocessed.length >= limit) break;
-
-      try {
-        const filePath = path.join(yearDir, file);
-        const content = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-
-        // Skip if already processed
-        if (content.metadata?.processed) continue;
-
-        // Skip system types
-        if (['tool_invocation', 'file_read', 'file_write'].includes(content.type)) continue;
-
-        unprocessed.push(filePath);
-      } catch {
-        // Skip invalid files
-      }
-    }
-  }
-
-  return unprocessed;
-}
-
-/**
- * Mobile Organizer Agent
+ * Organizer wrapper - uses brain/agents/organizer/core.ts
  */
 async function runOrganizer(context: MobileAgentContext): Promise<void> {
-  console.log('[mobile-organizer] Starting...');
-
   if (!context.username) {
     console.log('[mobile-organizer] No username, skipping');
     return;
@@ -154,64 +73,25 @@ async function runOrganizer(context: MobileAgentContext): Promise<void> {
   await withUserContext(
     { userId: context.username, username: context.username, role: 'owner' },
     async () => {
-      const result = storageClient.resolvePath({
-        category: 'memory',
-        subcategory: 'episodic',
-      });
-
-      if (!result.success || !result.path) {
-        console.log('[mobile-organizer] Cannot resolve episodic path');
-        return;
+      try {
+        // Use the unified organizer with a limit for mobile
+        const processed = await organizerProcessUserMemories(context.username!, { limit: 3 });
+        console.log(`[mobile-organizer] Complete: ${processed} memories processed`);
+      } catch (error) {
+        console.error('[mobile-organizer] Error:', (error as Error).message);
       }
-
-      const episodicDir = result.path;
-      const unprocessed = findUnprocessedMemories(episodicDir, 3);
-
-      console.log(`[mobile-organizer] Found ${unprocessed.length} unprocessed memories`);
-
-      for (const filePath of unprocessed) {
-        try {
-          const memory = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-          console.log(`[mobile-organizer] Processing: ${memory.id}`);
-
-          const analysis = await analyzeMemoryContent(memory.content);
-
-          memory.tags = [...new Set([...(memory.tags || []), ...analysis.tags])];
-          memory.entities = [...new Set([...(memory.entities || []), ...analysis.entities])];
-          memory.metadata = {
-            ...memory.metadata,
-            processed: true,
-            processedAt: new Date().toISOString(),
-            processedBy: 'mobile-organizer',
-          };
-
-          fs.writeFileSync(filePath, JSON.stringify(memory, null, 2));
-
-          auditAction({
-            skill: 'mobile-organizer:process',
-            inputs: { memoryId: memory.id },
-            success: true,
-            output: { tags: analysis.tags.length, entities: analysis.entities.length },
-          });
-
-          console.log(`[mobile-organizer] Processed: ${memory.id}`);
-        } catch (error) {
-          console.error(`[mobile-organizer] Failed to process ${filePath}:`, error);
-        }
-      }
-
-      console.log('[mobile-organizer] Complete');
     }
   );
 }
 
 // ============================================================================
-// Ingestor Agent (Mobile Version - keeps original implementation)
+// Ingestor Agent (uses new modular structure)
 // ============================================================================
 
+/**
+ * Ingestor wrapper - uses brain/agents/ingestor/core.ts
+ */
 async function runIngestor(context: MobileAgentContext): Promise<void> {
-  console.log('[mobile-ingestor] Starting...');
-
   if (!context.username) {
     console.log('[mobile-ingestor] No username, skipping');
     return;
@@ -220,71 +100,13 @@ async function runIngestor(context: MobileAgentContext): Promise<void> {
   await withUserContext(
     { userId: context.username, username: context.username, role: 'owner' },
     async () => {
-      const result = storageClient.resolvePath({
-        category: 'memory',
-        subcategory: 'inbox',
-      });
-
-      if (!result.success || !result.path) {
-        console.log('[mobile-ingestor] Cannot resolve inbox path');
-        return;
+      try {
+        // Use the unified ingestor with a limit for mobile
+        const processed = await ingestUserFiles(context.username!, { limit: 5 });
+        console.log(`[mobile-ingestor] Complete: ${processed} files processed`);
+      } catch (error) {
+        console.error('[mobile-ingestor] Error:', (error as Error).message);
       }
-
-      const inboxDir = result.path;
-
-      if (!fs.existsSync(inboxDir)) {
-        console.log('[mobile-ingestor] Inbox directory does not exist');
-        return;
-      }
-
-      const files = fs.readdirSync(inboxDir).filter(f => {
-        const ext = path.extname(f).toLowerCase();
-        return ['.txt', '.md', '.json'].includes(ext);
-      });
-
-      console.log(`[mobile-ingestor] Found ${files.length} files in inbox`);
-
-      for (const file of files.slice(0, 5)) {
-        const filePath = path.join(inboxDir, file);
-
-        try {
-          const content = fs.readFileSync(filePath, 'utf-8');
-          const ext = path.extname(file).toLowerCase();
-
-          let eventContent = content;
-          let eventType = 'observation';
-
-          if (ext === '.json') {
-            try {
-              const parsed = JSON.parse(content);
-              eventContent = parsed.content || JSON.stringify(parsed);
-              eventType = parsed.type || 'observation';
-            } catch {
-              eventContent = content;
-            }
-          }
-
-          const eventId = captureEvent(eventContent, {
-            type: eventType,
-            tags: ['ingested', 'mobile'],
-            metadata: {
-              source: 'inbox',
-              originalFile: file,
-              ingestedBy: 'mobile-ingestor',
-            },
-          });
-
-          const archiveDir = path.join(inboxDir, '_archive');
-          fs.mkdirSync(archiveDir, { recursive: true });
-          fs.renameSync(filePath, path.join(archiveDir, file));
-
-          console.log(`[mobile-ingestor] Ingested: ${file} → ${eventId}`);
-        } catch (error) {
-          console.error(`[mobile-ingestor] Failed to ingest ${file}:`, error);
-        }
-      }
-
-      console.log('[mobile-ingestor] Complete');
     }
   );
 }
@@ -382,7 +204,7 @@ async function runInnerCuriosityWrapper(context: MobileAgentContext): Promise<vo
 }
 
 /**
- * Digest wrapper - uses brain/agents/digest.ts
+ * Digest wrapper - uses brain/agents/digest/core.ts
  */
 async function runDigestWrapper(context: MobileAgentContext): Promise<void> {
   if (!context.username) {
@@ -394,8 +216,8 @@ async function runDigestWrapper(context: MobileAgentContext): Promise<void> {
     { userId: context.username, username: context.username, role: 'owner' },
     async () => {
       try {
-        await brainRunDigest();
-        console.log('[mobile-digest] Complete');
+        const digest = await generateUserDigest(context.username!);
+        console.log(`[mobile-digest] Complete: ${digest?.themes?.length || 0} themes analyzed`);
       } catch (error) {
         console.error('[mobile-digest] Error:', (error as Error).message);
       }
@@ -434,7 +256,7 @@ async function runDesireGeneratorWrapper(context: MobileAgentContext): Promise<v
 }
 
 /**
- * Desire Planner wrapper - uses brain/agents/desire-planner.ts
+ * Desire Planner wrapper - uses brain/agents/desire-planner/core.ts
  */
 async function runDesirePlannerWrapper(context: MobileAgentContext): Promise<void> {
   if (!context.username) {
@@ -446,8 +268,7 @@ async function runDesirePlannerWrapper(context: MobileAgentContext): Promise<voi
     { userId: context.username, username: context.username, role: 'owner' },
     async () => {
       try {
-        const config = await loadPlannerConfig();
-        const result = await processPlanningDesires(context.username!, config);
+        const result = await processPlanningDesires(context.username!);
         console.log(`[mobile-desire-planner] Complete: ${result.planned} planned, ${result.approved} approved`);
       } catch (error) {
         console.error('[mobile-desire-planner] Error:', (error as Error).message);
@@ -501,6 +322,38 @@ async function runDesireReviewerWrapper(context: MobileAgentContext): Promise<vo
 }
 
 // ============================================================================
+// Sync Agents (new modular structure)
+// ============================================================================
+
+/**
+ * Profile Sync wrapper - uses brain/agents/profile-sync/core.ts
+ */
+async function runProfileSyncWrapper(context: MobileAgentContext): Promise<void> {
+  if (!context.username) {
+    console.log('[mobile-profile-sync] No username, skipping');
+    return;
+  }
+
+  await withUserContext(
+    { userId: context.username, username: context.username, role: 'owner' },
+    async () => {
+      try {
+        // Default options for mobile sync: pull-only, skip device-specific configs
+        const result = await syncUserProfile(context.username!, {
+          pullOnly: true,
+          skipConfig: true,
+        });
+        console.log(
+          `[mobile-profile-sync] Complete: ${result.profileFiles} files, ${result.memoriesImported} memories`
+        );
+      } catch (error) {
+        console.error('[mobile-profile-sync] Error:', (error as Error).message);
+      }
+    }
+  );
+}
+
+// ============================================================================
 // Agent Registration
 // ============================================================================
 
@@ -509,6 +362,15 @@ async function runDesireReviewerWrapper(context: MobileAgentContext): Promise<vo
  */
 export function registerMobileAgents(): void {
   const agents: MobileAgentRegistration[] = [
+    // Sync agents (high priority, run on login)
+    {
+      id: 'profile-sync',
+      name: 'Profile Sync',
+      run: runProfileSyncWrapper,
+      usesLLM: false,
+      priority: 'high',
+      intervalSeconds: 1800, // Every 30 minutes
+    },
     // Original agents
     {
       id: 'organizer',
@@ -636,6 +498,8 @@ export {
   runCuriosityWrapper as runCuriosity,
   runInnerCuriosityWrapper as runInnerCuriosity,
   runDigestWrapper as runDigest,
+  // Sync agents
+  runProfileSyncWrapper as runProfileSync,
   // Agency system
   runDesireGeneratorWrapper as runDesireGenerator,
   runDesirePlannerWrapper as runDesirePlanner,
