@@ -480,15 +480,9 @@
       if (data.success) {
         isAuthenticated = true;
         registeredUsername = username;
-        // Store recovery codes
-        if (data.recoveryCodes && Array.isArray(data.recoveryCodes)) {
-          generatedRecoveryCodes = data.recoveryCodes;
-          // Show recovery codes first
-          view = 'recovery-codes';
-        } else {
-          // Fallback to post-register if no codes
-          view = 'post-register';
-        }
+        // Recovery codes are stored server-side and can be found in Settings > Security
+        // Skip directly to post-register options
+        view = 'post-register';
       } else {
         error = data.error || 'Registration failed';
       }

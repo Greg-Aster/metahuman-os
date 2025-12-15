@@ -188,3 +188,33 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
     durationMs: Date.now() - startTime,
   };
 }
+
+// ─────────────────────────────────────────────────────────────
+// CLI Entry Point (for direct execution)
+// ─────────────────────────────────────────────────────────────
+
+async function main(): Promise<void> {
+  console.log('[night-pipeline] Starting nightly pipeline check...');
+
+  const result = await runCycle();
+
+  if (!result.success) {
+    console.error('[night-pipeline] Failed:', result.errors);
+    process.exit(1);
+  }
+
+  if (result.skipped) {
+    console.log(`[night-pipeline] Skipped: ${result.skipReason}`);
+  } else {
+    console.log('[night-pipeline] Nightly pipeline completed');
+  }
+}
+
+// Only run if executed directly (not imported)
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+  main().catch((error) => {
+    console.error('[night-pipeline] Fatal error:', error);
+    process.exit(1);
+  });
+}

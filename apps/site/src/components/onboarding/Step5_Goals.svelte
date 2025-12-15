@@ -75,13 +75,11 @@
       };
 
       // Save goals to persona/core.json
-      const personaResponse = await apiFetch('/api/persona', {
+      const personaResponse = await apiFetch('/api/persona-core', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          updates: {
-            goals: groupedGoals,
-          },
+          goals: groupedGoals,
         }),
       });
 

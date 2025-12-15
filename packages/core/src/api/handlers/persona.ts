@@ -172,6 +172,39 @@ export async function handleUpdatePersonaCore(req: UnifiedRequest): Promise<Unif
       }
     }
 
+    // Update goals section
+    if (body.goals) {
+      persona.goals = persona.goals || {};
+      const goalsPayload = body.goals;
+
+      // Handle shortTerm goals (array of strings or objects)
+      if (goalsPayload.shortTerm !== undefined) {
+        persona.goals.shortTerm = Array.isArray(goalsPayload.shortTerm)
+          ? goalsPayload.shortTerm.map((g: string | { goal: string }) =>
+              typeof g === 'string' ? { goal: g, status: 'active' } : g
+            )
+          : [];
+      }
+
+      // Handle midTerm goals
+      if (goalsPayload.midTerm !== undefined) {
+        persona.goals.midTerm = Array.isArray(goalsPayload.midTerm)
+          ? goalsPayload.midTerm.map((g: string | { goal: string }) =>
+              typeof g === 'string' ? { goal: g, status: 'planning' } : g
+            )
+          : [];
+      }
+
+      // Handle longTerm goals
+      if (goalsPayload.longTerm !== undefined) {
+        persona.goals.longTerm = Array.isArray(goalsPayload.longTerm)
+          ? goalsPayload.longTerm.map((g: string | { goal: string }) =>
+              typeof g === 'string' ? { goal: g, status: 'aspirational' } : g
+            )
+          : [];
+      }
+    }
+
     persona.lastUpdated = new Date().toISOString();
 
     // Save updated persona

@@ -23,7 +23,7 @@ import {
   executeGraph,
   validateCognitiveGraph,
   audit,
-  listAllUsers,
+  listUsers,
   systemPaths,
   type CognitiveGraph,
 } from '@metahuman/core';
@@ -126,7 +126,7 @@ export async function runCycle(options: CuratorOptions = {}): Promise<CuratorRes
     } else if (options.singleUser) {
       users = ['default'];
     } else {
-      users = listAllUsers();
+      users = listUsers().map(u => u.username);
     }
 
     for (const username of users) {

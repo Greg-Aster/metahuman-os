@@ -32,18 +32,16 @@
 
     try {
       // Save identity information to persona/core.json
-      const response = await apiFetch('/api/persona', {
+      const response = await apiFetch('/api/persona-core', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          updates: {
-            identity: {
-              displayName: displayName.trim(),
-              pronouns: pronouns.trim() || undefined,
-              location: location.trim() || undefined,
-              timezone: timezone || undefined,
-              bio: bio.trim() || undefined,
-            },
+          identity: {
+            name: displayName.trim(),
+            pronouns: pronouns.trim() || undefined,
+            location: location.trim() || undefined,
+            timezone: timezone || undefined,
+            bio: bio.trim() || undefined,
           },
         }),
       });
@@ -163,8 +161,8 @@
     <div class="form-info">
       <div class="info-icon">💡</div>
       <div class="info-text">
-        <strong>Privacy Note:</strong> All information stays on your local machine.
-        You can edit this anytime in System Settings → Persona Editor.
+        <strong>Privacy Note:</strong> Your information is stored on the machine where you set up your account.
+        You can edit this anytime in System Settings → Persona Editor. <a href="/user-guide#accounts-security" target="_blank">Learn about account types</a>
       </div>
     </div>
   </form>
@@ -373,6 +371,23 @@
 
   :global(.dark) .info-text strong {
     color: #93c5fd;
+  }
+
+  .info-text a {
+    color: #1e40af;
+    text-decoration: underline;
+  }
+
+  .info-text a:hover {
+    color: #1e3a8a;
+  }
+
+  :global(.dark) .info-text a {
+    color: #93c5fd;
+  }
+
+  :global(.dark) .info-text a:hover {
+    color: #bfdbfe;
   }
 
   .step-actions {

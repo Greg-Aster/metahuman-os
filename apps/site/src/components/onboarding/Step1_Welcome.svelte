@@ -23,8 +23,8 @@
     <div class="privacy-banner">
       <div class="privacy-icon">🔒</div>
       <div class="privacy-text">
-        <strong>100% Local & Private</strong>
-        <p>All your data stays on your machine. No cloud uploads, no external APIs.</p>
+        <strong>Your Data, Your Control</strong>
+        <p>Your information is stored on the machine where you set up your account. <a href="/user-guide#accounts-security" target="_blank">Learn about account types</a></p>
       </div>
     </div>
 
@@ -44,21 +44,13 @@
         <div class="preview-step">
           <div class="step-number">2</div>
           <div class="step-info">
-            <strong>Identity</strong>
-            <span>Basic information about yourself</span>
-          </div>
-        </div>
-
-        <div class="preview-step">
-          <div class="step-number">3</div>
-          <div class="step-info">
             <strong>Personality</strong>
             <span>Communication style and traits</span>
           </div>
         </div>
 
         <div class="preview-step">
-          <div class="step-number">4</div>
+          <div class="step-number">3</div>
           <div class="step-info">
             <strong>Context Import</strong>
             <span>Upload documents, journals, or notes</span>
@@ -66,7 +58,7 @@
         </div>
 
         <div class="preview-step">
-          <div class="step-number">5</div>
+          <div class="step-number">4</div>
           <div class="step-info">
             <strong>Goals</strong>
             <span>What you want to achieve</span>
@@ -74,7 +66,7 @@
         </div>
 
         <div class="preview-step">
-          <div class="step-number">6</div>
+          <div class="step-number">5</div>
           <div class="step-info">
             <strong>Review & Complete</strong>
             <span>Finalize your setup</span>
@@ -258,6 +250,24 @@
   }
 
   :global(.dark) .privacy-text p {
+    color: #a7f3d0;
+  }
+
+  .privacy-text a {
+    color: #065f46;
+    text-decoration: underline;
+    font-weight: 500;
+  }
+
+  .privacy-text a:hover {
+    color: #047857;
+  }
+
+  :global(.dark) .privacy-text a {
+    color: #6ee7b7;
+  }
+
+  :global(.dark) .privacy-text a:hover {
     color: #a7f3d0;
   }
 

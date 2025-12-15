@@ -30,7 +30,7 @@ import {
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 
 // Train of Thought integration
-import { executeTrainOfThoughtForUser } from '../train-of-thought.js';
+import { executeTrainOfThoughtForUser } from '../train-of-thought/core.js';
 
 // ============================================================================
 // Configuration
@@ -570,4 +570,59 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
       duration: Date.now() - startTime,
     };
   }
+}
+
+// ============================================================================
+// CLI Entry Point (for direct execution)
+// ============================================================================
+
+import { acquireLock, isLocked, initGlobalLogger } from '@metahuman/core';
+
+const LOCK_NAME = 'agent-reflector';
+
+async function main(): Promise<void> {
+  initGlobalLogger('reflector');
+
+  // Single-instance guard
+  if (isLocked(LOCK_NAME)) {
+    console.log('[reflector] Another instance is already running. Exiting.');
+    return;
+  }
+
+  let lock: { release: () => void } | null = null;
+  try {
+    lock = acquireLock(LOCK_NAME);
+  } catch {
+    console.log('[reflector] Failed to acquire lock. Exiting.');
+    return;
+  }
+
+  console.log('[reflector] Waking up to ponder...');
+
+  try {
+    // Check for train-of-thought flag in env
+    const useTrainOfThought = process.env.REFLECTOR_USE_TRAIN_OF_THOUGHT === 'true';
+
+    const result = await runCycle({ useTrainOfThought });
+
+    if (!result.success) {
+      console.error('[reflector] Errors:', result.errors);
+      process.exit(1);
+    }
+
+    console.log(`[reflector] Cycle finished. Generated ${result.reflectionsGenerated} reflections.`);
+  } finally {
+    if (lock) {
+      lock.release();
+    }
+  }
+}
+
+// Only run if executed directly (not imported)
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+  main().catch((error) => {
+    console.error('[reflector] Fatal error:', error);
+    process.exit(1);
+  });
 }

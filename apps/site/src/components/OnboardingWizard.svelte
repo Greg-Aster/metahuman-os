@@ -2,11 +2,10 @@
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
   import Step1Welcome from './onboarding/Step1_Welcome.svelte';
-  import Step2Identity from './onboarding/Step2_Identity.svelte';
-  import Step3PersonalityChoice from './onboarding/Step3_PersonalityChoice.svelte';
-  import Step4Context from './onboarding/Step4_Context.svelte';
-  import Step5Goals from './onboarding/Step5_Goals.svelte';
-  import Step6Complete from './onboarding/Step6_Complete.svelte';
+  import Step2PersonalityChoice from './onboarding/Step3_PersonalityChoice.svelte';
+  import Step3Context from './onboarding/Step4_Context.svelte';
+  import Step4Goals from './onboarding/Step5_Goals.svelte';
+  import Step5Complete from './onboarding/Step6_Complete.svelte';
 
   export let onComplete: () => void;
 
@@ -20,14 +19,12 @@
     currentStep: number;
     stepsCompleted: {
       welcome: boolean;
-      identity: boolean;
       personality: boolean;
       context: boolean;
       goals: boolean;
       review: boolean;
     };
     dataCollected: {
-      identityQuestions: number;
       personalityQuestions: number;
       filesIngested: number;
       tasksCreated: number;
@@ -76,7 +73,7 @@
 
   // Navigate to next step
   async function nextStep() {
-    if (currentStep < 6) {
+    if (currentStep < 5) {
       currentStep++;
       await updateState({ currentStep });
     }
@@ -151,7 +148,7 @@
     loadState();
   });
 
-  $: progressPercent = ((currentStep - 1) / 5) * 100;
+  $: progressPercent = ((currentStep - 1) / 4) * 100;
 </script>
 
 <div class="onboarding-backdrop">
@@ -162,7 +159,7 @@
     </div>
 
     <div class="progress-text">
-      Step {currentStep} of 6
+      Step {currentStep} of 5
     </div>
 
     <!-- Step Content -->
@@ -170,30 +167,24 @@
       {#if currentStep === 1}
         <Step1Welcome onNext={() => handleStepComplete('welcome')} onSkip={() => showSkipModal = true} />
       {:else if currentStep === 2}
-        <Step2Identity
-          onNext={() => handleStepComplete('identity')}
-          onBack={prevStep}
-          onSkip={() => showSkipModal = true}
-        />
-      {:else if currentStep === 3}
-        <Step3PersonalityChoice
+        <Step2PersonalityChoice
           onNext={() => handleStepComplete('personality')}
           onBack={prevStep}
         />
-      {:else if currentStep === 4}
-        <Step4Context
+      {:else if currentStep === 3}
+        <Step3Context
           onNext={() => handleStepComplete('context')}
           onBack={prevStep}
           onSkip={() => showSkipModal = true}
         />
-      {:else if currentStep === 5}
-        <Step5Goals
+      {:else if currentStep === 4}
+        <Step4Goals
           onNext={() => handleStepComplete('goals')}
           onBack={prevStep}
           onSkip={() => showSkipModal = true}
         />
-      {:else if currentStep === 6}
-        <Step6Complete
+      {:else if currentStep === 5}
+        <Step5Complete
           state={state}
           onComplete={completeOnboarding}
           onBack={prevStep}

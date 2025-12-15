@@ -13,34 +13,115 @@ Open your MetaHuman server in a browser:
 - **Remote server:** Use the URL provided by your server admin
 - **Mobile app:** The app connects automatically or prompts for server URL
 
+You'll see the welcome screen with three options:
+- **Login** — Sign in to an existing account
+- **Create Account** — Set up a new account
+- **Continue as Guest** — Read-only access to view a profile
+
 ---
 
 ## Create Your Account
 
-1. Click **Create Account** on the login screen
-2. Choose a username and password
-3. The first account automatically becomes the **owner** with full privileges
+1. Click **Create Account** on the welcome screen
+2. Fill in your details:
+   - **Username** (required) — Letters, numbers, underscore, and hyphen only
+   - **Display Name** (optional) — How the system refers to you
+   - **Email** (optional) — For future features
+   - **Password** (required) — Minimum 6 characters
+   - **Confirm Password** (required)
+3. Check the required agreements:
+   - ✅ Terms of Service
+   - ✅ Ethical Use Policy (no impersonation without consent, no malicious AI)
+4. Click **Create Account**
 
-Additional users can be created later as guests or standard users.
+> **First User = Owner:** The first account created automatically becomes the system **owner** with full administrative privileges. See [Accounts & Security](../configuration-admin/accounts-security.md) for details on account types.
 
 ---
 
-## Initial Persona Setup
+## Setup Wizard (Optional)
 
-On first login, you'll configure your persona:
+After registration, you'll choose between:
 
-- **Core Identity**: Name, traits, and personality characteristics
-- **Communication Style**: How the system should speak (formal, casual, technical)
-- **Goals & Values**: What matters to you
-- **Daily Routines**: Your typical schedule and habits
+### Option 1: Setup Wizard (Recommended)
 
-You can skip this and configure later via **Settings > Persona**.
+A 6-step guided process (10-15 minutes):
+
+1. **Welcome** — Overview of what you'll set up
+2. **Identity** — Your name, traits, and core identity
+3. **Personality** — Communication style and characteristics
+4. **Context** — Import documents, journals, or files for memory
+5. **Goals** — Set up tasks and objectives
+6. **Complete** — Review and finish
+
+The wizard helps MetaHuman understand you better for more accurate emulation.
+
+### Option 2: Skip and Explore
+
+Jump directly into the app. You can add data later through:
+- **Chat Interface** — Conversations are automatically saved
+- **Memory Capture** — CLI: `./bin/mh capture "text"`
+- **File Ingestion** — Drop files in `memory/inbox/` or use the Upload tab
+- **Persona Editor** — Settings → Persona to edit directly
+
+---
+
+## Logging In
+
+For returning users:
+
+1. Click **Login** on the welcome screen
+2. Enter your username and password
+3. Click **Sign In**
+
+### Sync from Server (Multi-Device)
+
+If you created your account on another device and get a "User not found" error:
+
+1. Click **Sync from Server** (or the link below the login form)
+2. Enter the **Server URL** of your existing account (e.g., `https://mh.example.com`)
+3. Enter your username and password
+4. Click **Sync Profile**
+
+This downloads your persona, config, conversation buffer, and recent memories to the current device. For more details on multi-device sync, see [Accounts & Security](../configuration-admin/accounts-security.md).
+
+### Forgot Password?
+
+1. Click **Forgot password?** on the login screen
+2. Enter your username
+3. Enter one of your recovery codes
+4. Set a new password
+
+> **Finding Recovery Codes:** Your recovery codes are available in **Settings → Security** after logging in. Each code can only be used once.
+
+---
+
+## Guest Access
+
+To browse a profile without logging in:
+
+1. Click **Continue as Guest** on the welcome screen
+2. Select a profile to view from the profile selector
+3. Browse memories, chat history, and settings in **read-only mode**
+
+Guest sessions:
+- Last 1 hour
+- Cannot create memories or modify data
+- Cannot access owner-only settings
+- Useful for demonstrations or showing your digital twin to others
 
 ---
 
 ## Download a Model (Local Installs Only)
 
-If you installed a local LLM backend, you need to download at least one model:
+If you installed a local LLM backend, you need to download at least one model.
+
+### Required: Embedding Model
+
+For semantic memory search, you need an embedding model:
+
+```bash
+./bin/mh ollama pull nomic-embed-text
+```
 
 ### For Ollama Users
 
@@ -119,12 +200,13 @@ Open the **Agent Monitor** (right sidebar) to see autonomous agents:
 
 ## What's Happening Behind the Scenes
 
-When you interact with MetaHuman:
+When you interact with MetaHuman, several autonomous agents work in the background:
 
-1. **Memory Captured**: Conversations and observations are stored as structured JSON
-2. **Automatic Enrichment**: The organizer agent extracts tags and entities
-3. **Reflection**: The system generates internal thoughts about your activities
-4. **Training Data**: Curator prepares conversations for future LoRA adapter training
+1. **Memory Captured**: Conversations and observations are stored as structured JSON files
+2. **Automatic Enrichment**: The **Organizer** agent extracts tags, entities, and metadata
+3. **Inner Dialogue**: The **Reflector** agent generates internal thoughts and connections
+4. **Memory Indexing**: Vector embeddings enable semantic search across your memories
+5. **Training Preparation**: The **Curator** prepares data for future LoRA adapter training
 
 ---
 
@@ -171,6 +253,7 @@ nvidia-smi
 
 Now that you're set up, explore:
 
-- [Chat Interface](../using-metahuman/chat-interface.md) - Learn conversation modes and features
-- [Persona Generator](../training-personalization/persona-generator.md) - Create a detailed personality profile
-- [Voice Training](../training-personalization/voice-training.md) - Clone your voice
+- [Chat Interface](../using-metahuman/chat-interface.md) — Learn conversation modes and features
+- [Accounts & Security](../configuration-admin/accounts-security.md) — Multi-device sync, encryption, and security tips
+- [Persona Generator](../training-personalization/persona-generator.md) — Create a detailed personality profile
+- [Voice Training](../training-personalization/voice-training.md) — Clone your voice
