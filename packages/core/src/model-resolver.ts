@@ -10,8 +10,8 @@ import path from 'node:path';
 import { getProfilePaths } from './path-builder.js';
 import { loadBackendConfig, type BackendType } from './llm-backend.js';
 
-export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'fallback';
-export type ModelProvider = 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm' | 'remote-server';
+export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'fallback' | 'embedder';
+export type ModelProvider = 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm' | 'remote-server' | 'local-models';
 
 export interface ModelDefinition {
   provider: ModelProvider;
@@ -94,6 +94,12 @@ function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry):
 
   // Cloud providers and remote-server are NEVER overridden - user's choice is respected
   if (resolved.provider === 'runpod_serverless' || resolved.provider === 'huggingface' || resolved.provider === 'remote-server') {
+    return resolved;
+  }
+
+  // local-models (llama.cpp) runs on CPU - it can run in parallel with GPU backends
+  // Never override local-models requests since they don't conflict with vLLM/Ollama
+  if (resolved.provider === 'local-models') {
     return resolved;
   }
 

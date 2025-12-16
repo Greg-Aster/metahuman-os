@@ -137,6 +137,7 @@ What should I do next?`,
     const response = await callLLM({
       role: 'orchestrator',
       messages,
+      userId: username,
       cognitiveMode: context.cognitiveMode,
       options: {
         maxTokens: 1024,

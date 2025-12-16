@@ -66,12 +66,8 @@ export function useMessages(options: UseMessagesOptions) {
     const trimmed = (content || '').trim();
     if (!trimmed) return;
 
-    // Prevent near-duplicate inserts by checking the last few items for same role+content
-    if (role !== 'reasoning') {
-      const currentMessages = get(messages);
-      const back = currentMessages.slice(-3);
-      if (back.some(m => m.role === role && (m.content || '').trim() === trimmed)) return;
-    }
+    // NOTE: Duplicate detection removed to expose upstream issues
+    // If you see duplicates, debug the source rather than hiding them here
 
     const newMessage: ChatMessage = {
       role,

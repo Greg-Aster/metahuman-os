@@ -2,64 +2,115 @@
  * Local Model Service Configuration
  *
  * Manages configuration for the local embedding and LLM service.
+ * Uses GGUF format models via node-llama-cpp for maximum compatibility.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 
-// Embedding model definitions
+// Embedding model definitions (GGUF format)
 export interface EmbeddingModelConfig {
-  hfId: string;
+  filename: string;
+  hfRepo: string;
   dimensions: number;
   size: string;
   description?: string;
 }
 
-// LLM model definitions
+// LLM model definitions (GGUF format)
 export interface LLMModelConfig {
-  hfId: string;
+  filename: string;
+  hfRepo: string;
   size: string;
+  contextLength: number;
   description?: string;
 }
 
-// Available embedding models
+/**
+ * Available embedding models (GGUF format for llama.cpp)
+ *
+ * These are text embedding models that can generate vector representations.
+ * All models use mean pooling and L2 normalization.
+ *
+ * NOTE: Only models released within the last 6 months (2024-2025) are included.
+ */
 export const EMBEDDING_MODELS: Record<string, EmbeddingModelConfig> = {
+  // Qwen3 Embedding 0.6B - September 2024
+  // Actual Qwen3 embedding model with MRL (Matryoshka Representation Learning) support
   'qwen3-embedding-0.6b': {
-    hfId: 'Qwen/Qwen3-Embedding-0.6B',
+    filename: 'Qwen3-Embedding-0.6B-q4_k_m.gguf',
+    hfRepo: 'Mungert/Qwen3-Embedding-0.6B-GGUF',
     dimensions: 1024,
-    size: '560MB',
-    description: 'State-of-the-art embedding model, #1 on MTEB multilingual leaderboard'
+    size: '~395MB',
+    description: 'Qwen3 Embedding 0.6B (Q4_K_M), 1024-dim, MRL support (32-1024), Sep 2024'
   },
-  'qwen3-embedding-4b': {
-    hfId: 'Qwen/Qwen3-Embedding-4B',
+  // MixedBread mxbai-embed-large-v1 - Most downloaded GGUF embedding model
+  // Premium quality, top MTEB scores
+  'mxbai-embed-large-v1': {
+    filename: 'mxbai-embed-large-v1-q4_k_m.gguf',
+    hfRepo: 'mixedbread-ai/mxbai-embed-large-v1',
     dimensions: 1024,
-    size: '2.5GB',
-    description: 'Premium quality embedding model for servers'
+    size: '~340MB',
+    description: 'MixedBread 1024-dim, top MTEB scores (Q4_K_M), most popular'
   },
-  'all-MiniLM-L6-v2': {
-    hfId: 'Xenova/all-MiniLM-L6-v2',
+  // Nomic embed v1.5 - Good general-purpose option
+  'nomic-embed-text-v1.5': {
+    filename: 'nomic-embed-text-v1.5.Q4_K_M.gguf',
+    hfRepo: 'nomic-ai/nomic-embed-text-v1.5-GGUF',
+    dimensions: 768,
+    size: '~140MB',
+    description: 'Nomic embed v1.5 (Q4_K_M), 768-dim, 8192 tokens context'
+  },
+  // Lightweight option for mobile/constrained environments
+  'all-minilm-l6-v2': {
+    filename: 'all-MiniLM-L6-v2-Q4_K_M.gguf',
+    hfRepo: 'leliuga/all-MiniLM-L6-v2-GGUF',
     dimensions: 384,
-    size: '23MB',
-    description: 'Lightweight fallback for low-memory devices'
+    size: '~23MB',
+    description: 'Ultra-lightweight 384-dim, fast inference'
   }
 };
 
-// Available LLM models
+/**
+ * Available LLM models (GGUF format for llama.cpp)
+ *
+ * These are text generation models for chat/completion.
+ */
 export const LLM_MODELS: Record<string, LLMModelConfig> = {
   'qwen3-1.7b': {
-    hfId: 'Xenova/Qwen2.5-1.5B-Instruct',
-    size: '1.2GB',
-    description: 'Good quality small LLM, balanced performance'
+    filename: 'Qwen3-1.7B-Q4_K_M.gguf',
+    hfRepo: 'unsloth/Qwen3-1.7B-GGUF',
+    size: '~1.2GB',
+    contextLength: 32768,
+    description: 'Qwen3 1.7B (Q4_K_M), latest Qwen generation, excellent for mobile'
   },
-  'qwen2-0.5b': {
-    hfId: 'Xenova/Qwen2-0.5B-Instruct',
-    size: '400MB',
-    description: 'Ultra-light LLM for budget devices'
+  'qwen2.5-1.5b': {
+    filename: 'qwen2.5-1.5b-instruct-q4_k_m.gguf',
+    hfRepo: 'Qwen/Qwen2.5-1.5B-Instruct-GGUF',
+    size: '~1GB',
+    contextLength: 32768,
+    description: 'Qwen 2.5 1.5B Instruct (Q4_K_M), excellent quality'
   },
-  'tinyllama': {
-    hfId: 'Xenova/TinyLlama-1.1B-Chat-v1.0',
-    size: '600MB',
-    description: 'Fast and lightweight chat model'
+  'qwen2.5-0.5b': {
+    filename: 'qwen2.5-0.5b-instruct-q4_k_m.gguf',
+    hfRepo: 'Qwen/Qwen2.5-0.5B-Instruct-GGUF',
+    size: '~400MB',
+    contextLength: 32768,
+    description: 'Qwen 2.5 0.5B Instruct (Q4_K_M), ultra-light'
+  },
+  'llama-3.2-1b': {
+    filename: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+    hfRepo: 'bartowski/Llama-3.2-1B-Instruct-GGUF',
+    size: '~750MB',
+    contextLength: 131072,
+    description: 'Llama 3.2 1B Instruct, huge context window'
+  },
+  'tinyllama-1.1b': {
+    filename: 'tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf',
+    hfRepo: 'TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF',
+    size: '~670MB',
+    contextLength: 2048,
+    description: 'TinyLlama 1.1B Chat, fast and efficient'
   }
 };
 
@@ -82,6 +133,12 @@ export interface LocalModelServiceConfig {
   };
 
   modelsDir: string;
+
+  // llama.cpp specific options
+  llama: {
+    gpuLayers: number;  // Number of layers to offload to GPU (0 = CPU only)
+    threads: number;    // Number of CPU threads (0 = auto)
+  };
 }
 
 // Default configuration
@@ -93,7 +150,7 @@ export const DEFAULT_CONFIG: LocalModelServiceConfig = {
   downloadOnWifiOnly: true,
 
   embeddings: {
-    model: 'qwen3-embedding-0.6b',
+    model: 'qwen3-embedding-0.6b',  // Qwen3 Embedding 0.6B, 1024-dim, Sep 2024
     preloadAtStartup: true
   },
 
@@ -102,7 +159,12 @@ export const DEFAULT_CONFIG: LocalModelServiceConfig = {
     preloadAtStartup: false
   },
 
-  modelsDir: ''  // Set at runtime based on profile
+  modelsDir: '',  // Set at runtime based on profile
+
+  llama: {
+    gpuLayers: 0,  // CPU only by default (safe for all devices)
+    threads: 0     // Auto-detect
+  }
 };
 
 // Config file path
@@ -112,8 +174,8 @@ let cachedConfig: LocalModelServiceConfig | null = null;
 /**
  * Set the configuration file path
  */
-export function setConfigPath(path: string): void {
-  configPath = path;
+export function setConfigPath(filePath: string): void {
+  configPath = filePath;
   cachedConfig = null;
 }
 
@@ -127,13 +189,15 @@ export function loadConfig(): LocalModelServiceConfig {
     try {
       const fileContent = fs.readFileSync(configPath, 'utf-8');
       const fileConfig = JSON.parse(fileContent);
-      cachedConfig = { ...DEFAULT_CONFIG, ...fileConfig };
-      return cachedConfig;
+      const merged: LocalModelServiceConfig = { ...DEFAULT_CONFIG, ...fileConfig };
+      cachedConfig = merged;
+      return merged;
     } catch (error) {
       console.error('[local-models] Failed to load config:', error);
     }
   }
 
+  cachedConfig = DEFAULT_CONFIG;
   return DEFAULT_CONFIG;
 }
 
@@ -155,6 +219,28 @@ export function saveConfig(config: Partial<LocalModelServiceConfig>): void {
 }
 
 /**
+ * Get the full path to a model file
+ */
+export function getModelPath(modelsDir: string, filename: string): string {
+  return path.join(modelsDir, filename);
+}
+
+/**
+ * Get the HuggingFace download URL for a model
+ */
+export function getModelDownloadUrl(hfRepo: string, filename: string): string {
+  return `https://huggingface.co/${hfRepo}/resolve/main/${filename}`;
+}
+
+/**
+ * Check if a model file exists locally
+ */
+export function isModelDownloaded(modelsDir: string, filename: string): boolean {
+  const modelPath = getModelPath(modelsDir, filename);
+  return fs.existsSync(modelPath);
+}
+
+/**
  * Get list of available models with download status
  */
 export function getAvailableModels(modelsDir: string): {
@@ -165,21 +251,12 @@ export function getAvailableModels(modelsDir: string): {
     embeddings: Object.entries(EMBEDDING_MODELS).map(([id, config]) => ({
       id,
       config,
-      downloaded: isModelDownloaded(modelsDir, config.hfId)
+      downloaded: isModelDownloaded(modelsDir, config.filename)
     })),
     llm: Object.entries(LLM_MODELS).map(([id, config]) => ({
       id,
       config,
-      downloaded: isModelDownloaded(modelsDir, config.hfId)
+      downloaded: isModelDownloaded(modelsDir, config.filename)
     }))
   };
-}
-
-/**
- * Check if a model is downloaded
- */
-function isModelDownloaded(modelsDir: string, hfId: string): boolean {
-  // Transformers.js stores models in a specific directory structure
-  const modelPath = path.join(modelsDir, 'models--' + hfId.replace('/', '--'));
-  return fs.existsSync(modelPath);
 }

@@ -66,7 +66,6 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     { name: 'responseLength', type: 'string', description: 'Expected response length: brief/medium/detailed' },
     { name: 'isFollowUp', type: 'boolean', description: 'Whether this is a follow-up to previous message' },
     { name: 'emotionalTone', type: 'string', description: 'Detected emotional context' },
-    { name: 'instructions', type: 'string', description: 'Instructions for persona' },
   ],
   description: 'Enhanced intent analysis with action detection and conversation awareness',
 
@@ -96,7 +95,6 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
         responseLength: 'brief',
         isFollowUp: false,
         emotionalTone: 'neutral',
-        instructions: 'Respond naturally to the greeting.',
         conversationDepth: conversationLength,
         error: 'No user message provided',
       };
@@ -112,53 +110,24 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
       : '';
 
     try {
-      const systemPrompt = `You are the Intent Orchestrator for a personal AI system. Analyze the user's message WITH CONVERSATION CONTEXT to determine routing and response style.
+      const systemPrompt = `You are the Intent Orchestrator. Analyze the user's message and determine routing.
 
-## OUTPUT FORMAT (JSON only)
+Output JSON:
 {
-  "needsMemory": boolean,
-  "memoryTier": "hot" | "warm" | "cold" | "facts" | "all",
-  "memoryQuery": "optimized search query",
-  "needsAction": boolean,
-  "actionType": "none" | "file_read" | "file_write" | "file_list" | "task_create" | "task_update" | "task_list" | "web_search" | "memory_search" | "code_execute" | "complex_task" | "setting_change" | "persona_update",
-  "actionParams": { },
-  "complexity": 0.0-1.0,
-  "responseStyle": "verbose" | "concise" | "conversational" | "technical" | "empathetic",
-  "responseLength": "brief" | "medium" | "detailed",
-  "isFollowUp": boolean,
-  "emotionalTone": "neutral" | "curious" | "frustrated" | "excited" | "concerned" | "casual",
-  "instructions": "specific guidance for persona"
+  "needsMemory": boolean,        // Should we search episodic memory?
+  "memoryTier": string,          // hot|warm|cold|facts|all - memory recency
+  "memoryQuery": string,         // Semantic search keywords
+  "needsAction": boolean,        // Does this require an action/skill?
+  "actionType": string,          // none|file_read|file_write|task_create|task_update|task_list|web_search|code_execute|complex_task
+  "actionParams": object,        // Parameters for the action
+  "complexity": number,          // 0.0-1.0 task complexity
+  "responseStyle": string,       // verbose|concise|conversational|technical|empathetic
+  "responseLength": string,      // brief|medium|detailed
+  "isFollowUp": boolean,         // Is this continuing a conversation?
+  "emotionalTone": string        // Detected emotional context
 }
 
-## MEMORY TIERS
-- "hot": Last 14 days (recent events, current projects)
-- "warm": 2 weeks to 3 months (medium-term context)
-- "cold": 3+ months (long-term history)
-- "facts": Timeless identity info (possessions, relationships, preferences)
-- "all": When timeframe is unclear
-
-## ACTION DETECTION (needsAction = true triggers Big Brother)
-- File operations: "read", "show me the file", "what's in", "create file", "write to", "list files", "ls"
-- Task operations: "create task", "add todo", "mark done", "complete task", "list tasks", "my todos"
-- Web search: "search for", "look up", "find online", "google", "what is" (for factual queries)
-- Complex tasks (complexity > 0.7): Multi-step requests, code generation, research, analysis
-
-## RESPONSE LENGTH RULES (CRITICAL)
-- In ACTIVE CONVERSATION (${conversationLength} messages): Use "medium" or "detailed", NEVER "brief"
-- Quick exchanges or simple questions: "brief" (1-2 sentences)
-- Explanations or discussions: "medium" (paragraph)
-- Deep topics or complex answers: "detailed" (multiple paragraphs)
-- Follow-up questions: Match the depth of the conversation
-
-## CONVERSATION CONTEXT
-${recentMessages ? `Recent exchange:\n${recentMessages}` : 'NEW CONVERSATION (no prior context)'}
-Current conversation depth: ${conversationLength} messages
-
-## RESPONSE STYLE MATCHING
-- If user is casual → "conversational"
-- If user asks technical question → "technical"
-- If user seems upset → "empathetic"
-- If in flowing conversation → match user's energy and length`;
+${recentMessages ? `Recent conversation:\n${recentMessages}` : ''}`;
 
       const messages = [
         { role: 'system' as const, content: systemPrompt },
@@ -204,7 +173,6 @@ Current conversation depth: ${conversationLength} messages
           responseLength,
           isFollowUp: parsed.isFollowUp ?? (conversationLength > 0),
           emotionalTone: parsed.emotionalTone || 'neutral',
-          instructions: parsed.instructions || 'Respond naturally',
           conversationDepth: conversationLength,
           raw: response.content,
         };
@@ -233,7 +201,6 @@ Current conversation depth: ${conversationLength} messages
           responseLength: isInConversation ? 'medium' : (responseLengthMatch?.[1] || 'brief'),
           isFollowUp: conversationLength > 0,
           emotionalTone: 'neutral',
-          instructions: 'Respond naturally',
           conversationDepth: conversationLength,
           raw: response.content,
         };
@@ -252,7 +219,6 @@ Current conversation depth: ${conversationLength} messages
         responseLength: isInConversation ? 'medium' : 'brief',
         isFollowUp: conversationLength > 0,
         emotionalTone: 'neutral',
-        instructions: 'Respond naturally to the user',
         conversationDepth: conversationLength,
         error: (error as Error).message,
       };

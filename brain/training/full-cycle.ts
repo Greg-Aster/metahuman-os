@@ -62,11 +62,38 @@ function cleanupAfterSuccessfulMerge(runRoot: string, workLocal?: string) {
 /**
  * ROBUSTNESS: Clean up any stuck training processes before starting
  * Prevents resource conflicts and hung processes from blocking new training runs
+ *
+ * NOTE: We need to exclude our entire process tree (tsx -> node), not just process.pid,
+ * because tsx runs as a wrapper and ps aux may return different PIDs
  */
 function cleanupStuckProcesses(username: string) {
   console.log('[full-cycle] Checking for stuck training processes...');
 
   try {
+    // Get our process tree PIDs (current PID and parent PID)
+    const currentPid = process.pid.toString();
+    const parentPid = process.ppid?.toString() || '';
+
+    // Build set of PIDs to exclude (our entire process group)
+    const processTreePids = new Set([currentPid, parentPid]);
+
+    try {
+      // Get all PIDs in our process group
+      const pgid = execSync(`ps -o pgid= -p ${currentPid}`, { encoding: 'utf-8' }).trim();
+      if (pgid) {
+        const groupPids = execSync(`ps -o pid= -g ${pgid}`, { encoding: 'utf-8' })
+          .trim()
+          .split('\n')
+          .map(p => p.trim())
+          .filter(Boolean);
+        groupPids.forEach(pid => processTreePids.add(pid));
+      }
+    } catch {
+      // Fallback to just current and parent PID
+    }
+
+    console.log(`[full-cycle] Current process tree PIDs to exclude: ${Array.from(processTreePids).join(', ')}`);
+
     // Find all full-cycle and dataset-builder processes for this user
     const psOutput = execSync(
       `ps aux | grep -E "full-cycle.ts|ai-dataset-builder.ts|adapter-builder.ts" | grep "${username}" | grep -v grep | awk '{print $2}'`,
@@ -75,10 +102,9 @@ function cleanupStuckProcesses(username: string) {
 
     if (psOutput) {
       const pids = psOutput.split('\n').filter(Boolean);
-      const currentPid = process.pid.toString();
 
-      // Filter out our own PID
-      const stuckPids = pids.filter(pid => pid !== currentPid);
+      // Filter out our entire process tree
+      const stuckPids = pids.filter(pid => !processTreePids.has(pid));
 
       if (stuckPids.length > 0) {
         console.log(`[full-cycle] Found ${stuckPids.length} stuck process(es): ${stuckPids.join(', ')}`);
@@ -133,9 +159,20 @@ function cleanupStuckProcesses(username: string) {
 
 async function runAgent(agentName: string, args: string[] = [], username?: string): Promise<number> {
   return new Promise((resolve, reject) => {
-    const agentPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
-    if (!fs.existsSync(agentPath)) {
+    // Check multiple paths after agent refactor:
+    // 1. brain/agents/{name}/cli.ts (new directory structure)
+    // 2. brain/training/{name}.ts (training scripts)
+    // 3. brain/agents/{name}.ts (legacy flat structure)
+    const possiblePaths = [
+      path.join(systemPaths.brain, 'agents', agentName, 'cli.ts'),
+      path.join(systemPaths.brain, 'training', `${agentName}.ts`),
+      path.join(systemPaths.brain, 'agents', `${agentName}.ts`),
+    ];
+
+    const agentPath = possiblePaths.find(p => fs.existsSync(p));
+    if (!agentPath) {
       console.error(`[full-cycle] Agent not found: ${agentName}`);
+      console.error(`[full-cycle] Checked paths: ${possiblePaths.join(', ')}`);
       return resolve(1);
     }
 

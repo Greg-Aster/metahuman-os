@@ -749,9 +749,7 @@
               }
               reasoningStages = [];
             }
-            if (!data.duplicate) {
-              messagesApi.pushMessage('assistant', data.response, data?.saved?.assistantRelPath, { facet: data.facet });
-            }
+            messagesApi.pushMessage('assistant', data.response, data?.saved?.assistantRelPath, { facet: data.facet });
 
             // Auto-TTS: Speak assistant responses when TTS toggle is enabled
             console.log('[chat-tts] Auto-TTS check - ttsEnabled:', ttsEnabled, 'hasResponse:', !!data.response, 'responseLength:', data.response?.length || 0);

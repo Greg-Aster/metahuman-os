@@ -11,10 +11,12 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
   const includeGoals = properties?.includeGoals ?? true;
   const includePersonality = properties?.includePersonality ?? true;
 
+  // Null persona means inactive/LoRA-only mode - return empty string (no error)
   if (!persona) {
     return {
       formatted: '',
-      error: 'No persona provided',
+      sectionCount: 0,
+      inactive: true,
     };
   }
 
@@ -95,8 +97,9 @@ export const PersonaFormatterNode: NodeDefinition = defineNode({
     { name: 'persona', type: 'object', description: 'Persona object to format' },
   ],
   outputs: [
-    { name: 'formatted', type: 'string', description: 'Formatted persona text' },
+    { name: 'formatted', type: 'string', description: 'Formatted persona text (empty if inactive)' },
     { name: 'sectionCount', type: 'number', description: 'Number of sections' },
+    { name: 'inactive', type: 'boolean', description: 'True if persona is inactive (LoRA-only mode)' },
   ],
   properties: {
     includeValues: true,

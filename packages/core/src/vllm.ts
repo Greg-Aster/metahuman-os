@@ -67,6 +67,10 @@ export interface VLLMConfig {
   autoUtilization?: boolean;
   /** Enable thinking mode for Qwen3 models (default: true, set false to disable <think> tags) */
   enableThinking?: boolean;
+  /** LoRA adapters to load at startup (format: { name: string, path: string }[]) */
+  loraModules?: Array<{ name: string; path: string }>;
+  /** Maximum LoRA rank (default: 64) */
+  maxLoraRank?: number;
 }
 
 export interface VLLMModel {
@@ -404,6 +408,17 @@ export class VLLMClient {
       console.log('[vllm] Thinking mode will be disabled in API requests');
     }
 
+    // LoRA adapters - load multiple adapters at startup
+    // vLLM routes requests to correct adapter based on model parameter
+    if (config.loraModules && config.loraModules.length > 0) {
+      // --enable-lora is REQUIRED for vLLM to support LoRA at all
+      args.push('--enable-lora');
+      // Each LoRA module must be a separate argument (vLLM argparse splits on '=')
+      args.push('--lora-modules', ...config.loraModules.map(l => `${l.name}=${l.path}`));
+      args.push('--max-lora-rank', String(config.maxLoraRank ?? 64));
+      console.log(`[vllm] Loading ${config.loraModules.length} LoRA adapter(s): ${config.loraModules.map(l => l.name).join(', ')}`);
+    }
+
     // Spawn vLLM server process
     return new Promise((resolve) => {
       try {
@@ -623,6 +638,27 @@ export class VLLMClient {
 
       const data = await response.json() as { data: VLLMModel[] };
       return data.data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get list of loaded LoRA adapters
+   *
+   * vLLM returns the base model plus all loaded LoRAs in /v1/models.
+   * We filter out the base model to get just the LoRA names.
+   */
+  async getLoadedLoras(): Promise<string[]> {
+    try {
+      const models = await this.listModels();
+      // The base model is typically the first entry, LoRAs are additional entries
+      // LoRA names are the ones we specified in --lora-modules
+      if (models.length <= 1) {
+        return [];  // Only base model, no LoRAs
+      }
+      // Skip the first (base model) and return the rest as LoRA names
+      return models.slice(1).map(m => m.id);
     } catch {
       return [];
     }
@@ -893,4 +929,11 @@ export async function calculateOptimalVLLMUtilization(): Promise<{
   recommendation: string;
 }> {
   return vllm.calculateOptimalUtilization();
+}
+
+/**
+ * Get list of currently loaded LoRA adapters from vLLM
+ */
+export async function getVLLMLoadedLoras(): Promise<string[]> {
+  return vllm.getLoadedLoras();
 }

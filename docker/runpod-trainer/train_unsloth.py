@@ -130,6 +130,7 @@ def main():
     parser.add_argument('--data', help='Path to training data JSONL file')
     parser.add_argument('--config', help='Path to config JSON file')
     parser.add_argument('--output', help='Output directory for adapter')
+    parser.add_argument('--skip-gguf', action='store_true', help='Skip GGUF conversion (for vLLM safetensors output)')
     args = parser.parse_args()
 
     start_time = time.time()
@@ -392,88 +393,98 @@ def main():
     tokenizer.save_pretrained(output_dir)
     log_progress("SAVE_ADAPTER", "✅ Adapter saved", 100)
 
-    # Step 7: Merge and convert to GGUF
-    log_progress("GGUF_MERGE", "🔄 Merging adapter with base model...")
-    log_progress("GGUF_MERGE", "Converting to GGUF Q4_K_M format (this may take 5-10 minutes)")
+    # Step 7: Merge and convert to GGUF (skip for vLLM safetensors training)
+    # Check both command-line flag and config file
+    skip_gguf = args.skip_gguf
+    if not skip_gguf and cfg.get('gguf_conversion', {}).get('enabled') == False:
+        skip_gguf = True
+        log_progress("GGUF_MERGE", "GGUF conversion disabled via config (gguf_conversion.enabled=false)")
 
-    # Use appropriate temp directory based on execution mode
-    if args.output:
-        merged_dir = os.path.join(os.path.dirname(output_dir), "merged_gguf_output")
+    if skip_gguf:
+        log_progress("GGUF_MERGE", "⏭️  Skipping GGUF conversion (vLLM safetensors mode)")
+        log_progress("GGUF_MERGE", "📁 Safetensors adapter ready for vLLM at: " + output_dir)
     else:
-        merged_dir = "/workspace/merged_gguf_output"
-    os.makedirs(merged_dir, exist_ok=True)
+        log_progress("GGUF_MERGE", "🔄 Merging adapter with base model...")
+        log_progress("GGUF_MERGE", "Converting to GGUF Q4_K_M format (this may take 5-10 minutes)")
 
-    merge_start = time.time()
-
-    ensure_packages([
-        ("gguf", None),
-        ("protobuf", "google.protobuf"),
-        ("sentencepiece", None),
-        ("mistral_common", None),
-    ])
-
-    model.save_pretrained_gguf(
-        merged_dir,
-        tokenizer,
-        quantization_method="q4_k_m"
-    )
-    merge_time = time.time() - merge_start
-
-    # Search for GGUF files in multiple locations
-    gguf_files = []
-    search_locations = [merged_dir]
-
-    # Also search current working directory (where llama.cpp may put files)
-    cwd = os.getcwd()
-    if cwd not in search_locations:
-        search_locations.append(cwd)
-
-    # Also search /workspace if it exists and isn't already covered
-    if os.path.exists('/workspace') and '/workspace' not in search_locations:
-        search_locations.append('/workspace')
-
-    log_progress("GGUF_MERGE", f"Searching for GGUF in: {search_locations}")
-
-    # Search each location recursively
-    for search_dir in search_locations:
-        if not os.path.exists(search_dir):
-            continue
-        for root, dirs, files in os.walk(search_dir):
-            for f in files:
-                if f.endswith('.gguf'):
-                    full_path = os.path.join(root, f)
-                    if full_path not in gguf_files:  # Avoid duplicates
-                        gguf_files.append(full_path)
-                        log_progress("GGUF_MERGE", f"Found GGUF: {full_path} ({os.path.getsize(full_path) / (1024**3):.2f} GB)")
-
-    log_progress("GGUF_MERGE", f"Found {len(gguf_files)} GGUF file(s): {[os.path.basename(f) for f in gguf_files]}")
-
-    if gguf_files:
-        # Use the first GGUF file found
-        source_gguf = gguf_files[0]
-
-        # Set final GGUF path based on execution mode
+        # Use appropriate temp directory based on execution mode
         if args.output:
-            final_gguf = os.path.join(os.path.dirname(output_dir), "adapter.gguf")
+            merged_dir = os.path.join(os.path.dirname(output_dir), "merged_gguf_output")
         else:
-            final_gguf = "/workspace/final_merged_model.gguf"
+            merged_dir = "/workspace/merged_gguf_output"
+        os.makedirs(merged_dir, exist_ok=True)
 
-        # Copy instead of rename in case source is in subdirectory
-        import shutil
-        shutil.copy2(source_gguf, final_gguf)
+        merge_start = time.time()
 
-        size_bytes = os.path.getsize(final_gguf)
-        size_gb = size_bytes / (1024 ** 3)
-        log_progress("GGUF_MERGE", f"✅ GGUF created in {merge_time/60:.1f} minutes ({size_gb:.2f} GB)", 100)
-        log_progress("GGUF_MERGE", f"📁 Source: {os.path.basename(source_gguf)} → {os.path.basename(final_gguf)}")
-    else:
-        log_progress("GGUF_MERGE", "⚠️  Warning: No GGUF file generated")
-        # List all files in merged_dir for debugging
-        all_files = []
-        for root, dirs, files in os.walk(merged_dir):
-            for f in files:
-                all_files.append(os.path.relpath(os.path.join(root, f), merged_dir))
-        log_progress("GGUF_MERGE", f"Files in {merged_dir}: {all_files[:10]}")
+        ensure_packages([
+            ("gguf", None),
+            ("protobuf", "google.protobuf"),
+            ("sentencepiece", None),
+            ("mistral_common", None),
+        ])
+
+        model.save_pretrained_gguf(
+            merged_dir,
+            tokenizer,
+            quantization_method="q4_k_m"
+        )
+        merge_time = time.time() - merge_start
+
+        # Search for GGUF files in multiple locations
+        gguf_files = []
+        search_locations = [merged_dir]
+
+        # Also search current working directory (where llama.cpp may put files)
+        cwd = os.getcwd()
+        if cwd not in search_locations:
+            search_locations.append(cwd)
+
+        # Also search /workspace if it exists and isn't already covered
+        if os.path.exists('/workspace') and '/workspace' not in search_locations:
+            search_locations.append('/workspace')
+
+        log_progress("GGUF_MERGE", f"Searching for GGUF in: {search_locations}")
+
+        # Search each location recursively
+        for search_dir in search_locations:
+            if not os.path.exists(search_dir):
+                continue
+            for root, dirs, files in os.walk(search_dir):
+                for f in files:
+                    if f.endswith('.gguf'):
+                        full_path = os.path.join(root, f)
+                        if full_path not in gguf_files:  # Avoid duplicates
+                            gguf_files.append(full_path)
+                            log_progress("GGUF_MERGE", f"Found GGUF: {full_path} ({os.path.getsize(full_path) / (1024**3):.2f} GB)")
+
+        log_progress("GGUF_MERGE", f"Found {len(gguf_files)} GGUF file(s): {[os.path.basename(f) for f in gguf_files]}")
+
+        if gguf_files:
+            # Use the first GGUF file found
+            source_gguf = gguf_files[0]
+
+            # Set final GGUF path based on execution mode
+            if args.output:
+                final_gguf = os.path.join(os.path.dirname(output_dir), "adapter.gguf")
+            else:
+                final_gguf = "/workspace/final_merged_model.gguf"
+
+            # Copy instead of rename in case source is in subdirectory
+            import shutil
+            shutil.copy2(source_gguf, final_gguf)
+
+            size_bytes = os.path.getsize(final_gguf)
+            size_gb = size_bytes / (1024 ** 3)
+            log_progress("GGUF_MERGE", f"✅ GGUF created in {merge_time/60:.1f} minutes ({size_gb:.2f} GB)", 100)
+            log_progress("GGUF_MERGE", f"📁 Source: {os.path.basename(source_gguf)} → {os.path.basename(final_gguf)}")
+        else:
+            log_progress("GGUF_MERGE", "⚠️  Warning: No GGUF file generated")
+            # List all files in merged_dir for debugging
+            all_files = []
+            for root, dirs, files in os.walk(merged_dir):
+                for f in files:
+                    all_files.append(os.path.relpath(os.path.join(root, f), merged_dir))
+            log_progress("GGUF_MERGE", f"Files in {merged_dir}: {all_files[:10]}")
 
     # Final summary
     total_time = time.time() - start_time

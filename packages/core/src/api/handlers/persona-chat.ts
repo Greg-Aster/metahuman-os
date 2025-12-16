@@ -25,6 +25,7 @@ import {
 } from '../../index.js';
 import { loadCognitiveMode, canWriteMemory as modeAllowsMemoryWrites } from '../../cognitive-mode.js';
 import { loadChatSettings } from '../../chat-settings.js';
+import { scheduler } from '../../agent-scheduler.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -55,8 +56,6 @@ interface GraphPipelineParams {
 // ============================================================================
 
 const histories: Map<string, ConversationMessage[]> = new Map();
-const lastUserTurn: Record<Mode, { text: string; ts: number } | null> = { inner: null, conversation: null };
-const lastAssistantReplies: Record<Mode, string[]> = { inner: [], conversation: [] };
 const bufferMeta: Record<Mode, { lastSummarizedIndex: number | null }> = {
   inner: { lastSummarizedIndex: null },
   conversation: { lastSummarizedIndex: null }
@@ -123,6 +122,13 @@ function buildSystemPrompt(mode: Mode, includePersonaSummary = true): string {
   if (includePersonaSummary) {
     try {
       const persona = loadPersonaWithFacet();
+
+      // Inactive persona: no system prompt, rely entirely on LoRA
+      if (persona === null) {
+        console.log('[persona-chat] Persona inactive - LoRA-only mode, no system prompt');
+        return '';
+      }
+
       const personaCache = getPersonaContext();
 
       const communicationStyle = persona.personality?.communicationStyle ?? {};
@@ -151,6 +157,7 @@ You are having a ${mode}.
   }
 
   if (!systemPrompt) {
+    // Only add fallback prompt if persona wasn't explicitly set to inactive
     systemPrompt = mode === 'inner'
       ? 'You are having an internal dialogue with yourself.'
       : 'You are having a conversation.';
@@ -162,7 +169,10 @@ function initializeChat(mode: Mode, sessionId: string, includePersonaSummary = t
   const systemPrompt = buildSystemPrompt(mode, includePersonaSummary);
   const history = getHistory(mode, sessionId);
   history.length = 0;
-  history.push({ role: 'system', content: systemPrompt });
+  // Only add system prompt if not empty (inactive persona = LoRA-only mode)
+  if (systemPrompt) {
+    history.push({ role: 'system', content: systemPrompt });
+  }
   bufferMeta[mode].lastSummarizedIndex = null;
 }
 
@@ -331,7 +341,6 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     // Update history
     pushMessage(mode, { role: 'user', content: message }, sessionId);
     pushMessage(mode, { role: 'assistant', content: responseText, meta: { graphPipeline: true } }, sessionId);
-    lastAssistantReplies[mode].push(responseText);
 
     // Send final answer
     const facet = getActiveFacet();
@@ -387,6 +396,11 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
 
   console.log(`[persona-chat] mode=${mode}, cognitiveMode=${cognitiveMode}, user=${user.username}`);
 
+  // Record user activity for agent scheduler (so agents know which user to run for)
+  if (isAuthenticated && user.username) {
+    scheduler.recordActivity(user.username);
+  }
+
   // Initialize chat if needed
   const history = getHistory(mode, sessionId);
   if (newSession || history.length === 0) {
@@ -400,15 +414,7 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     return badRequestResponse('Message is required');
   }
 
-  // Debounce duplicate messages
-  const nowTs = Date.now();
-  const lastU = lastUserTurn[mode];
   const trimmedMessage = message.trim();
-  if (lastU && lastU.text === trimmedMessage && (nowTs - lastU.ts) < 1500) {
-    const lastA = lastAssistantReplies[mode][lastAssistantReplies[mode].length - 1] || '';
-    return { status: 200, data: { response: lastA, duplicate: true } };
-  }
-  lastUserTurn[mode] = { text: trimmedMessage, ts: nowTs };
 
   const conversationHistorySnapshot = getConversationHistorySnapshot(mode, sessionId);
 

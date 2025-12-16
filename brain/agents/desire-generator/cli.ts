@@ -12,24 +12,11 @@
  *   --single-user      Process only the default user
  */
 
-import { initGlobalLogger, acquireLock, releaseLock, isLocked, audit } from '@metahuman/core';
+import { initGlobalLogger, audit } from '@metahuman/core';
 import { runCycle, type DesireGeneratorOptions } from './core.js';
-
-const LOCK_NAME = 'agent-desire-generator';
 
 async function main() {
   initGlobalLogger('desire-generator');
-
-  // Acquire lock
-  if (isLocked(LOCK_NAME)) {
-    console.log('[desire-generator] Another instance is already running. Exiting.');
-    process.exit(0);
-  }
-
-  if (!acquireLock(LOCK_NAME)) {
-    console.log('[desire-generator] Failed to acquire lock. Exiting.');
-    process.exit(0);
-  }
 
   // Parse arguments
   const args = process.argv.slice(2);
@@ -55,7 +42,6 @@ async function main() {
       console.error('[desire-generator] Errors:', result.errors);
     }
 
-    releaseLock(LOCK_NAME);
     process.exit(result.success ? 0 : 1);
   } catch (error) {
     console.error('[desire-generator] Fatal error:', error);
@@ -63,12 +49,11 @@ async function main() {
     audit({
       category: 'system',
       level: 'error',
-      message: `Desire generator CLI error: ${(error as Error).message}`,
+      event: `Desire generator CLI error: ${(error as Error).message}`,
       actor: 'desire-generator',
-      metadata: { error: (error as Error).stack },
+      details: { error: (error as Error).stack },
     });
 
-    releaseLock(LOCK_NAME);
     process.exit(1);
   }
 }

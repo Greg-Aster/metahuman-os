@@ -52,11 +52,13 @@ export const ModelRouterNode: NodeDefinition = defineNode({
   execute: async (inputs, context, properties) => {
     const messages = inputs[0] || [];
     const role = inputs[1] || properties?.role || 'persona';
+    const username = context.userId || context.username;
 
     try {
       const response = await callLLM({
         role,
         messages,
+        userId: username,
         cognitiveMode: context.cognitiveMode,
         options: {
           maxTokens: properties?.maxTokens || 2048,

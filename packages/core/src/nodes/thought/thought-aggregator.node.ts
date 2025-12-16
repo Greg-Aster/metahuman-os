@@ -13,6 +13,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const thoughts = input0.thoughts || input0.scratchpad?.thoughts || context.scratchpad?.thoughts || [];
   const summaryStyle = properties?.summaryStyle || 'narrative';
   const maxLength = properties?.maxLength || 200;
+  const username = context.userId || context.username;
 
   if (thoughts.length === 0) {
     return {
@@ -52,6 +53,7 @@ SUMMARY: [1-sentence summary]`;
     const response = await callLLM({
       role: 'persona',
       messages,
+      userId: username,
       cognitiveMode: context.cognitiveMode,
       options: {
         maxTokens: 800,

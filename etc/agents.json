@@ -211,6 +211,19 @@
       "autoRestart": false,
       "maxRetries": 1,
       "comment": "Checks for software updates daily. Desktop: git fetch/compare. Mobile: checks server for new APK. Saves state to logs/run/update-state.json for UI."
+    },
+    "auto-indexer": {
+      "id": "auto-indexer",
+      "enabled": true,
+      "type": "time-of-day",
+      "priority": "low",
+      "agentPath": "auto-indexer.ts",
+      "usesLLM": false,
+      "schedule": "03:00",
+      "runOnBoot": false,
+      "autoRestart": false,
+      "maxRetries": 1,
+      "comment": "Nightly vector index rebuild using Qwen3 embeddings. Runs on CPU via local-model-service (parallel to GPU backends). Skips rebuild if index is < 24 hours old."
     }
   }
 }

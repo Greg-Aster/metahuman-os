@@ -40,12 +40,13 @@ Be conservative with safety. When in doubt, flag concerns.
 
 Respond with valid JSON matching the schema.`;
 
-const execute: NodeExecutor = async (inputs, _context, properties) => {
+const execute: NodeExecutor = async (inputs, context, properties) => {
   // Inputs come via slot positions from graph links:
   // slot 0: {desire, found} from desire_loader
   // slot 2: formatted decision rules string from policy_loader
   const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | undefined;
   const slot2 = inputs[2] as string | { formatted?: string } | undefined;
+  const username = context.userId || context.username;
 
   // Extract desire and plan (plan is embedded in desire)
   const desire = slot0?.desire || (inputs.desire as Desire | undefined);
@@ -117,6 +118,7 @@ Respond with JSON:
     const response = await callLLM({
       role: 'orchestrator',
       messages,
+      userId: username,
       options: {
         temperature,
         responseFormat: 'json',

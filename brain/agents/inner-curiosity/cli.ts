@@ -11,24 +11,11 @@
  *   --single-user  Process only the default user
  */
 
-import { initGlobalLogger, acquireLock, releaseLock, isLocked, audit } from '@metahuman/core';
+import { initGlobalLogger, audit } from '@metahuman/core';
 import { runCycle, type InnerCuriosityOptions } from './core.js';
-
-const LOCK_NAME = 'agent-inner-curiosity';
 
 async function main() {
   initGlobalLogger('inner-curiosity');
-
-  // Acquire lock
-  if (isLocked(LOCK_NAME)) {
-    console.log('[inner-curiosity] Another instance is already running. Exiting.');
-    process.exit(0);
-  }
-
-  if (!acquireLock(LOCK_NAME)) {
-    console.log('[inner-curiosity] Failed to acquire lock. Exiting.');
-    process.exit(0);
-  }
 
   // Parse arguments
   const args = process.argv.slice(2);
@@ -47,7 +34,6 @@ async function main() {
       console.error('[inner-curiosity] Errors:', result.errors);
     }
 
-    releaseLock(LOCK_NAME);
     process.exit(result.success ? 0 : 1);
   } catch (error) {
     console.error('[inner-curiosity] Fatal error:', error);
@@ -55,12 +41,11 @@ async function main() {
     audit({
       category: 'system',
       level: 'error',
-      message: `Inner curiosity CLI error: ${(error as Error).message}`,
+      event: `Inner curiosity CLI error: ${(error as Error).message}`,
       actor: 'inner-curiosity',
-      metadata: { error: (error as Error).stack },
+      details: { error: (error as Error).stack },
     });
 
-    releaseLock(LOCK_NAME);
     process.exit(1);
   }
 }

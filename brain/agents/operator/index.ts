@@ -35,10 +35,10 @@ export type {
 
 export { DEFAULT_REACT_CONFIG } from './types.js';
 
-// Re-export implementations from monolithic file (for backward compatibility)
+// Re-export implementations from services (for backward compatibility)
 // These will be migrated to modular files incrementally
 export {
   runOperatorWithFeatureFlag,
   runReActLoop,
   runTask,
-} from '../operator-react.js';
+} from '../../services/operator-react.js';

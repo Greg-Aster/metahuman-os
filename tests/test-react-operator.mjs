@@ -7,7 +7,7 @@
  * - NOT: hallucinate filenames like "01-intro.md", "02-setup.md"
  */
 
-import { runReActLoop } from '../brain/agents/operator-react.ts';
+import { runReActLoop } from '../brain/agents/operator/index.js';
 import { initializeSkills } from '../brain/skills/index.ts';
 
 console.log('=== ReAct Operator Test ===\n');

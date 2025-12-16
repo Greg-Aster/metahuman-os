@@ -319,9 +319,10 @@ export function setTrustLevel(level: string): void {
 
 /**
  * Load persona with facet support
+ * Returns null if persona is set to inactive (relies on LoRA only)
  * Falls back to core.json if facets not configured or facet file missing
  */
-export function loadPersonaWithFacet(): PersonaCore {
+export function loadPersonaWithFacet(): PersonaCore | null {
   try {
     // Resolve persona directory via storage router
     const personaResult = storageClient.resolvePath({
@@ -349,6 +350,14 @@ export function loadPersonaWithFacet(): PersonaCore {
     }
 
     const facetInfo = facetsConfig.facets[activeFacet];
+
+    // INACTIVE FACET: Return null to rely entirely on LoRA
+    // No system prompt persona context will be added
+    if (activeFacet === 'inactive' || !facetInfo?.personaFile) {
+      console.log('[identity] Persona inactive - relying on LoRA only');
+      return null;
+    }
+
     const facetFilePath = path.join(personaDir, facetInfo.personaFile);
 
     // If facet file doesn't exist, fall back to core

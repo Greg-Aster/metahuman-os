@@ -86,6 +86,13 @@ const agentScriptOverrides: Record<string, string> = {
   curiosity: 'curiosity-service.ts',
 };
 
+// Map service names to their locations in brain/services/
+const serviceOverrides: Record<string, string> = {
+  'scheduler-service': 'services/scheduler-service.ts',
+  'headless-watcher': 'services/headless-watcher.ts',
+  'sleep-service': 'services/sleep-service.ts',
+};
+
 function ensureInitialized(): void {
   const profilePaths = getCliPaths();
   const required = [
@@ -317,8 +324,23 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
   }
 
   const spawnAgent = (agentName: string) => {
-    const scriptName = agentScriptOverrides[agentName] ?? `${agentName}.ts`;
-    const agentPath = `${systemPaths.brain}/agents/${scriptName}`;
+    // Resolve agent/service path based on type
+    let agentPath: string;
+
+    if (serviceOverrides[agentName]) {
+      // Services in brain/services/
+      agentPath = `${systemPaths.brain}/${serviceOverrides[agentName]}`;
+    } else {
+      // Check for modular agent (brain/agents/<name>/cli.ts) first
+      const modularPath = `${systemPaths.brain}/agents/${agentName}/cli.ts`;
+      const legacyPath = `${systemPaths.brain}/agents/${agentScriptOverrides[agentName] ?? `${agentName}.ts`}`;
+
+      if (fs.existsSync(modularPath)) {
+        agentPath = modularPath;
+      } else {
+        agentPath = legacyPath;
+      }
+    }
 
     if (!fs.existsSync(agentPath)) {
       console.warn(`Skipping ${agentName}: not found at ${agentPath}`);
@@ -333,7 +355,7 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
 
     console.log(`• Starting ${agentName}...`);
     // Use bootstrap wrapper to establish user context for agents
-    const bootstrapPath = `${systemPaths.brain}/agents/_bootstrap.ts`;
+    const bootstrapPath = `${systemPaths.brain}/scripts/_bootstrap.ts`;
     const child = spawn('tsx', [bootstrapPath, agentName], {
       detached: true,
       stdio: 'ignore',

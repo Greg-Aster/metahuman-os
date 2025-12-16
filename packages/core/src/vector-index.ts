@@ -44,9 +44,10 @@ export interface VectorIndexItem {
 
 export interface VectorIndexMeta {
   model: string
-  provider: 'ollama' | 'mock'
+  provider: string  // 'local-models', 'ollama', etc.
   createdAt: string
   items: number
+  dimensions?: number
 }
 
 export interface VectorIndexFile {
@@ -54,10 +55,14 @@ export interface VectorIndexFile {
   data: VectorIndexItem[]
 }
 
-export function indexFilePath(model = 'nomic-embed-text'): string {
+// Default model name for index filename (used when model unknown)
+const DEFAULT_INDEX_MODEL = 'nomic-embed-text-v1.5'
+
+export function indexFilePath(model?: string): string {
   const { indexDir } = resolveMemoryPaths();
   fs.mkdirSync(indexDir, { recursive: true })
-  const safe = model.replace(/[^a-z0-9_.-]/gi, '_')
+  const modelName = model || DEFAULT_INDEX_MODEL
+  const safe = modelName.replace(/[^a-z0-9_.-]/gi, '_')
   return path.join(indexDir, `embeddings-${safe}.json`)
 }
 
@@ -103,24 +108,45 @@ function walkFiles(dir: string, filter: (p: string) => boolean): string[] {
   return out
 }
 
+/**
+ * Build the memory index using embeddings from the model router.
+ *
+ * The model router automatically resolves the 'embedder' role from
+ * the user's profile models.json, routing to local-models (llama.cpp)
+ * or other configured providers.
+ *
+ * @param options.force - Force rebuild even if index exists
+ * @param options.include - Which memory types to include
+ */
 export async function buildMemoryIndex(options: {
-  provider?: 'ollama' | 'mock'
-  model?: string
+  force?: boolean
   include?: { episodic?: boolean; tasks?: boolean; curated?: boolean; functions?: boolean }
 } = {}): Promise<string> {
-  const provider = options.provider || 'ollama'
-  const model = options.model || 'nomic-embed-text'
   const includeEpisodic = options.include?.episodic !== false
   const includeTasks = options.include?.tasks !== false
   const includeCurated = options.include?.curated !== false
   const includeFunctions = options.include?.functions !== false
 
   const items: VectorIndexItem[] = []
+  let dimensions = 0
+  let firstVector: number[] | null = null
 
   const memPaths = resolveMemoryPaths();
 
+  // Helper to get embedding and track dimensions
+  const getEmbedding = async (text: string): Promise<number[]> => {
+    const vector = await embedText(text)
+    if (!firstVector) {
+      firstVector = vector
+      dimensions = vector.length
+    }
+    return vector
+  }
+
   if (includeEpisodic) {
     const files = walkFiles(memPaths.episodic, p => p.endsWith('.json'))
+    console.log(`[vector-index] Processing ${files.length} episodic memories...`)
+    let processed = 0
     for (const f of files) {
       try {
         const obj = readJSON<any>(f)
@@ -131,10 +157,15 @@ export async function buildMemoryIndex(options: {
         const text = [String(obj.content), tags ? `Tags: ${tags}` : '', entities ? ` Entities: ${entities}` : '']
           .filter(Boolean)
           .join(' ')
-        const vector = await embedText(text, { provider, model })
+        const vector = await getEmbedding(text)
         items.push({ id: obj.id, path: f, type: 'episodic', timestamp: obj.timestamp, text, vector })
+        processed++
+        if (processed % 50 === 0) {
+          console.log(`[vector-index]   ...processed ${processed}/${files.length} episodic`)
+        }
       } catch {}
     }
+    console.log(`[vector-index] ✓ Indexed ${processed} episodic memories`)
   }
 
   if (includeTasks) {
@@ -144,16 +175,20 @@ export async function buildMemoryIndex(options: {
       ...walkFiles(active, p => p.endsWith('.json')),
       ...walkFiles(completed, p => p.endsWith('.json')),
     ]
+    console.log(`[vector-index] Processing ${files.length} tasks...`)
+    let processed = 0
     for (const f of files) {
       try {
         const obj = readJSON<any>(f)
         if (!obj || !obj.id || !obj.title) continue
         const tags = Array.isArray(obj.tags) ? obj.tags.join(' ') : ''
         const text = [obj.title, obj.description || '', tags ? `Tags: ${tags}` : ''].join(' ').trim()
-        const vector = await embedText(text, { provider, model })
+        const vector = await getEmbedding(text)
         items.push({ id: obj.id, path: f, type: 'task', timestamp: obj.updated || obj.created, text, vector })
+        processed++
       } catch {}
     }
+    console.log(`[vector-index] ✓ Indexed ${processed} tasks`)
   }
 
   if (includeFunctions) {
@@ -164,6 +199,8 @@ export async function buildMemoryIndex(options: {
         ...walkFiles(verified, p => p.endsWith('.json')),
         ...walkFiles(drafts, p => p.endsWith('.json')),
       ]
+      console.log(`[vector-index] Processing ${files.length} functions...`)
+      let processed = 0
       for (const f of files) {
         try {
           const obj = readJSON<any>(f)
@@ -181,7 +218,7 @@ export async function buildMemoryIndex(options: {
             skillsUsed ? `Skills: ${skillsUsed}` : '',
             examples,
           ].join(' ').trim()
-          const vector = await embedText(text, { provider, model })
+          const vector = await getEmbedding(text)
           items.push({
             id: obj.id,
             path: f,
@@ -190,14 +227,18 @@ export async function buildMemoryIndex(options: {
             text,
             vector,
           })
+          processed++
         } catch {}
       }
+      console.log(`[vector-index] ✓ Indexed ${processed} functions`)
     } catch {}
   }
 
   if (includeCurated) {
     const curatedRoot = path.join(memPaths.semantic, 'curated')
     const files = walkFiles(curatedRoot, p => p.endsWith('.meta.json'))
+    console.log(`[vector-index] Processing ${files.length} curated items...`)
+    let processed = 0
     for (const f of files) {
       try {
         const base = f.replace(/\.meta\.json$/, '')
@@ -208,11 +249,18 @@ export async function buildMemoryIndex(options: {
         const abstract = meta.abstract || ''
         const tags = Array.isArray(meta.tags) ? meta.tags.join(' ') : ''
         const text = [title, abstract, highlights.length ? `Highlights: ${highlights.join(' ')}` : '', tags ? `Tags: ${tags}` : ''].join(' ').trim()
-        const vector = await embedText(text, { provider, model })
+        const vector = await getEmbedding(text)
         items.push({ id: `cur-${path.basename(base)}`, path: f, type: 'episodic', timestamp: meta?.timestamp, text, vector })
+        processed++
       } catch {}
     }
+    console.log(`[vector-index] ✓ Indexed ${processed} curated items`)
   }
+
+  // Determine model/provider from first embedding (set by model router)
+  // The model router uses user profile to resolve 'embedder' role
+  const model = DEFAULT_INDEX_MODEL  // From user profile via model router
+  const provider = 'local-models'    // Default provider for embeddings
 
   const out: VectorIndexFile = {
     meta: {
@@ -220,6 +268,7 @@ export async function buildMemoryIndex(options: {
       provider,
       createdAt: new Date().toISOString(),
       items: items.length,
+      dimensions,
     },
     data: items,
   }
@@ -230,10 +279,12 @@ export async function buildMemoryIndex(options: {
   // Clear cache so next query loads fresh index
   clearIndexCache()
 
+  console.log(`[vector-index] ✓ Index saved: ${items.length} items, ${dimensions} dimensions`)
+
   return dest
 }
 
-export function loadIndex(model = 'nomic-embed-text'): VectorIndexFile | null {
+export function loadIndex(model?: string): VectorIndexFile | null {
   const p = indexFilePath(model)
 
   // Check cache validity
@@ -276,24 +327,20 @@ export function loadIndex(model = 'nomic-embed-text'): VectorIndexFile | null {
 
 export async function queryIndex(
   query: string,
-  options: { model?: string; provider?: 'ollama' | 'mock'; topK?: number } = {}
+  options: { model?: string; topK?: number } = {}
 ): Promise<Array<{ item: VectorIndexItem; score: number }>> {
   const totalStart = Date.now()
-  const modelParam = options.model || 'nomic-embed-text'
   const topK = options.topK ?? 10
 
   // Step 1: Load index (cached after first call)
   const loadStart = Date.now()
-  const idx = loadIndex(modelParam)
+  const idx = loadIndex(options.model)
   const loadTime = Date.now() - loadStart
   if (!idx) throw new Error('No index found. Run: mh index build')
 
-  const model = options.model || idx.meta.model
-  const provider = options.provider || idx.meta.provider
-
-  // Step 2: Generate embedding for query
+  // Step 2: Generate embedding for query using model router
   const embedStart = Date.now()
-  const qvec = await embedText(query, { provider, model })
+  const qvec = await embedText(query)
   const embedTime = Date.now() - embedStart
 
   // Step 3: Compute similarity scores
@@ -308,10 +355,17 @@ export async function queryIndex(
   return scored.slice(0, topK)
 }
 
-export function getIndexStatus(model = 'nomic-embed-text') {
+export function getIndexStatus(model?: string) {
   const idx = loadIndex(model)
   if (!idx) return { exists: false }
-  return { exists: true, model: idx.meta.model, provider: idx.meta.provider, items: idx.meta.items, createdAt: idx.meta.createdAt }
+  return {
+    exists: true,
+    model: idx.meta.model,
+    provider: idx.meta.provider,
+    items: idx.meta.items,
+    dimensions: idx.meta.dimensions,
+    createdAt: idx.meta.createdAt
+  }
 }
 
 export function buildRagContext(results: Array<{ item: VectorIndexItem; score: number }>, maxChars = 2000): string {
@@ -331,6 +385,7 @@ export function buildRagContext(results: Array<{ item: VectorIndexItem; score: n
 
 /**
  * Append a single episodic event to an existing index (if present).
+ * Uses the model router to generate embeddings.
  * Returns true if appended, false if index not present or failed.
  */
 export async function appendEventToIndex(event: {
@@ -340,27 +395,27 @@ export async function appendEventToIndex(event: {
   tags?: string[]
   entities?: string[]
   path?: string
-}, options: { model?: string; provider?: 'ollama' | 'mock' } = {}): Promise<boolean> {
-  const modelParam = options.model || 'nomic-embed-text'
-  const idx = loadIndex(modelParam)
+}, options: { model?: string } = {}): Promise<boolean> {
+  const idx = loadIndex(options.model)
   if (!idx) return false
-
-  const model = options.model || idx.meta.model
-  const provider = options.provider || idx.meta.provider
 
   const tags = Array.isArray(event.tags) ? event.tags.join(' ') : ''
   const entities = Array.isArray(event.entities) ? event.entities.join(' ') : ''
   const text = [String(event.content), tags ? `Tags: ${tags}` : '', entities ? ` Entities: ${entities}` : '']
     .filter(Boolean)
     .join(' ')
-  const vector = await embedText(text, { provider, model })
+
+  // Use model router for embeddings
+  const vector = await embedText(text)
   idx.data.push({ id: event.id, path: event.path || '', type: 'episodic', timestamp: event.timestamp, text, vector })
   idx.meta.items = idx.data.length
-  fs.writeFileSync(indexFilePath(model), JSON.stringify(idx, null, 2))
+
+  const indexPath = indexFilePath(options.model)
+  fs.writeFileSync(indexPath, JSON.stringify(idx, null, 2))
 
   // Update cache in place (avoid full reload for single append)
-  if (indexCache && indexCache.path === indexFilePath(model)) {
-    const stats = fs.statSync(indexFilePath(model))
+  if (indexCache && indexCache.path === indexPath) {
+    const stats = fs.statSync(indexPath)
     indexCache.mtimeMs = stats.mtimeMs
     // idx is already the cached index, so it's updated in place
   }

@@ -7,7 +7,7 @@
  * Run: npx tsx tests/test-reasoning-ui-integration.mjs
  */
 
-import { runOperatorWithFeatureFlag } from '../brain/agents/operator-react.ts';
+import { runOperatorWithFeatureFlag } from '../brain/agents/operator/index.js';
 import { readFile, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 

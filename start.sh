@@ -458,6 +458,9 @@ fi
 # Auto-start terminal server
 "$REPO_ROOT/bin/start-terminal" 2>/dev/null || true
 
+# Auto-start local model service (llama.cpp for unified embeddings on web + mobile)
+"$REPO_ROOT/bin/start-local-models" 2>/dev/null || true
+
 print_status "Services started"
 echo
 

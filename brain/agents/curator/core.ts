@@ -23,7 +23,7 @@ import {
   executeGraph,
   validateCognitiveGraph,
   audit,
-  listUsers,
+  getLoggedInUsers,
   systemPaths,
   type CognitiveGraph,
 } from '@metahuman/core';
@@ -126,7 +126,7 @@ export async function runCycle(options: CuratorOptions = {}): Promise<CuratorRes
     } else if (options.singleUser) {
       users = ['default'];
     } else {
-      users = listUsers().map(u => u.username);
+      users = getLoggedInUsers().map(u => u.username);
     }
 
     for (const username of users) {
@@ -192,16 +192,20 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
     }
   }
 
+  // Don't treat 'system' as a valid username - it's a placeholder from scheduler
+  const effectiveUserId = ctx.userId !== 'system' ? ctx.userId : undefined;
+
   const options: CuratorOptions = {
     singleUser: args.includes('--single-user') || opts.singleUser === true,
-    username: username || ctx.userId,
+    username: username || effectiveUserId,
   };
 
   // If context has a specific user, process only that user
-  if (ctx.userId && !options.username) {
-    options.username = ctx.userId;
+  if (effectiveUserId && !options.username) {
+    options.username = effectiveUserId;
   }
 
+  // Only process single user if we have a real username
   if (options.username) {
     try {
       const stats = await runCuratorForUser(options.username);

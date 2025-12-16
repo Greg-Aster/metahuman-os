@@ -36,12 +36,31 @@
     };
   }
 
+  interface LocalModelsInfo {
+    running: boolean;
+    endpoint: string;
+    embedder: {
+      model: string | null;
+      loaded: boolean;
+      dimensions?: number;
+    };
+    generator: {
+      model: string | null;
+      loaded: boolean;
+    };
+  }
+
+  // Prop to control polling - only poll when visible
+  export let isVisible = true;
+
   let servers: ServerInfo[] = [];
   let astroServers: AstroServer[] = [];
   let llmBackend: LLMBackendInfo | null = null;
+  let localModels: LocalModelsInfo | null = null;
   let loading = true;
   let actionInProgress: string | null = null;
-  let refreshInterval: ReturnType<typeof setInterval>;
+  let refreshInterval: ReturnType<typeof setInterval> | null = null;
+  let isPageVisible = true;
 
   const serverConfigs = [
     { name: 'whisper', displayName: 'Whisper STT', endpoint: '/api/whisper-server', port: 9883 },
@@ -76,6 +95,32 @@
       }
     } catch (error) {
       console.error('Failed to fetch LLM backend status:', error);
+    }
+
+    // Fetch local-models (llama.cpp) status
+    try {
+      const localModelsResponse = await apiFetch('/api/local-models/status');
+      if (localModelsResponse.ok) {
+        const data = await localModelsResponse.json();
+        // API returns loadedModels.embedder/generator when running, config values when not
+        const loaded = data.loadedModels;
+        localModels = {
+          running: data.running,
+          endpoint: data.endpoint || 'http://127.0.0.1:4324',
+          embedder: {
+            model: loaded?.embedder?.model || data.config?.embeddings?.model || null,
+            loaded: loaded?.embedder?.loaded || false,
+            dimensions: loaded?.embedder?.dimensions,
+          },
+          generator: {
+            model: loaded?.generator?.model || data.config?.llm?.model || null,
+            loaded: loaded?.generator?.loaded || false,
+          },
+        };
+      }
+    } catch (error) {
+      console.error('Failed to fetch local-models status:', error);
+      localModels = null;
     }
 
     for (const config of serverConfigs) {
@@ -135,6 +180,30 @@
 
   function isBackendActive(backend: 'ollama' | 'vllm'): boolean {
     return llmBackend?.activeBackend === backend;
+  }
+
+  async function controlLocalModels(action: 'start' | 'stop') {
+    actionInProgress = `localModels-${action}`;
+
+    try {
+      const response = await apiFetch(`/api/local-models/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        alert(`Failed to ${action} local-models: ${data.error || 'Unknown error'}`);
+      } else {
+        // Wait a moment then refresh
+        setTimeout(fetchServerStatus, 2000);
+      }
+    } catch (error) {
+      alert(`Error ${action}ing local-models: ${(error as Error).message}`);
+    } finally {
+      actionInProgress = null;
+    }
   }
 
   async function controlLLMBackend(backend: 'ollama' | 'vllm', action: 'start' | 'stop' | 'restart') {
@@ -241,13 +310,46 @@
     }
   }
 
+  // Start/stop polling based on visibility
+  function startPolling() {
+    if (!refreshInterval) {
+      fetchServerStatus();
+      refreshInterval = setInterval(fetchServerStatus, 10000);
+    }
+  }
+
+  function stopPolling() {
+    if (refreshInterval) {
+      clearInterval(refreshInterval);
+      refreshInterval = null;
+    }
+  }
+
+  // React to visibility changes
+  $: if (isVisible && isPageVisible) {
+    startPolling();
+  } else {
+    stopPolling();
+  }
+
+  // Page Visibility API - pause when browser tab is hidden
+  function handleVisibilityChange() {
+    isPageVisible = !document.hidden;
+  }
+
   onMount(() => {
-    fetchServerStatus();
-    refreshInterval = setInterval(fetchServerStatus, 10000); // Refresh every 10 seconds
+    // Listen for tab visibility changes
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Initial fetch only if visible
+    if (isVisible && isPageVisible) {
+      startPolling();
+    }
   });
 
   onDestroy(() => {
-    if (refreshInterval) clearInterval(refreshInterval);
+    stopPolling();
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
   });
 </script>
 
@@ -374,6 +476,62 @@
             </div>
           {:else}
             <div class="not-installed-msg">Not installed - requires Python vLLM package</div>
+          {/if}
+        </div>
+
+        <!-- Local Models (llama.cpp) -->
+        <div class="server-card llama-card" class:running={localModels?.running}>
+          <div class="server-header">
+            <div class="server-info">
+              <span class="status-icon">
+                {#if localModels?.running}
+                  {#if localModels.embedder.loaded}🟢{:else}🟡{/if}
+                {:else}🔴{/if}
+              </span>
+              <div class="server-details">
+                <div class="server-name">
+                  llama.cpp
+                  <span class="semantic-badge">Semantic Search</span>
+                </div>
+                <div class="server-meta">
+                  {localModels?.endpoint || 'http://127.0.0.1:4324'}
+                  {#if localModels?.running && localModels.embedder.loaded}
+                    • {localModels.embedder.model}
+                  {/if}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="server-actions">
+            {#if localModels?.running}
+              <button
+                class="action-btn stop"
+                on:click={() => controlLocalModels('stop')}
+                disabled={actionInProgress !== null}
+              >
+                {actionInProgress === 'localModels-stop' ? '...' : 'Stop'}
+              </button>
+            {:else}
+              <button
+                class="action-btn start"
+                on:click={() => controlLocalModels('start')}
+                disabled={actionInProgress !== null}
+              >
+                {actionInProgress === 'localModels-start' ? '...' : 'Start'}
+              </button>
+            {/if}
+          </div>
+          {#if localModels?.running}
+            <div class="server-details-extra">
+              {#if localModels.embedder.loaded}
+                <span class="detail-badge embedder">🔍 Embeddings: {localModels.embedder.model}</span>
+              {:else}
+                <span class="detail-badge loading">Embeddings: Loading...</span>
+              {/if}
+              {#if localModels.generator.loaded}
+                <span class="detail-badge generator">💬 LLM: {localModels.generator.model}</span>
+              {/if}
+            </div>
           {/if}
         </div>
       {/if}
@@ -829,5 +987,72 @@
   :global(.dark) .active-badge {
     background: rgba(74, 222, 128, 0.2);
     color: rgb(74 222 128);
+  }
+
+  /* llama.cpp card styles */
+  .llama-card {
+    border-color: rgba(249, 115, 22, 0.2);
+  }
+
+  :global(.dark) .llama-card {
+    border-color: rgba(251, 146, 60, 0.2);
+  }
+
+  .llama-card.running {
+    border-width: 2px;
+    border-color: rgba(249, 115, 22, 0.4);
+    background: rgba(249, 115, 22, 0.02);
+  }
+
+  :global(.dark) .llama-card.running {
+    border-color: rgba(251, 146, 60, 0.4);
+    background: rgba(251, 146, 60, 0.03);
+  }
+
+  .semantic-badge {
+    display: inline-block;
+    padding: 0.125rem 0.375rem;
+    margin-left: 0.5rem;
+    background: rgba(249, 115, 22, 0.15);
+    color: rgb(249 115 22);
+    border-radius: 0.25rem;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+
+  :global(.dark) .semantic-badge {
+    background: rgba(251, 146, 60, 0.2);
+    color: rgb(251 146 60);
+  }
+
+  .detail-badge.embedder {
+    background: rgba(59, 130, 246, 0.1);
+    color: rgb(59 130 246);
+  }
+
+  :global(.dark) .detail-badge.embedder {
+    background: rgba(96, 165, 250, 0.15);
+    color: rgb(96 165 250);
+  }
+
+  .detail-badge.generator {
+    background: rgba(16, 185, 129, 0.1);
+    color: rgb(16 185 129);
+  }
+
+  :global(.dark) .detail-badge.generator {
+    background: rgba(52, 211, 153, 0.15);
+    color: rgb(52 211 153);
+  }
+
+  .detail-badge.loading {
+    background: rgba(234, 179, 8, 0.1);
+    color: rgb(234 179 8);
+  }
+
+  :global(.dark) .detail-badge.loading {
+    background: rgba(250, 204, 21, 0.15);
+    color: rgb(250 204 21);
   }
 </style>

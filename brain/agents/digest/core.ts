@@ -27,7 +27,7 @@ import {
   addCatchphrase,
   updateFrequentFact,
   getProfilePaths,
-  listUsers,
+  getLoggedInUsers,
   withUserContext,
 } from '@metahuman/core';
 
@@ -305,7 +305,7 @@ export async function runCycle(options: DigestOptions = {}): Promise<DigestResul
 
   try {
     // Get users to process
-    const users = options.singleUser ? ['default'] : listUsers().map(u => u.username);
+    const users = options.singleUser ? ['default'] : getLoggedInUsers().map(u => u.username);
 
     auditAction({
       event: 'digest_started',

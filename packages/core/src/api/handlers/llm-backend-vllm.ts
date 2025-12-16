@@ -3,6 +3,10 @@
  *
  * POST control vLLM server (start, stop, restart, cleanup, gpu_check).
  * Works for both web (Astro) and mobile (nodejs-mobile).
+ *
+ * LoRA Support:
+ * - On start/restart, reads user's LoRA config from their models.json
+ * - Discovers valid adapters and passes them to vLLM via --lora-modules flag
  */
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
@@ -13,6 +17,9 @@ let vllm: any;
 let loadBackendConfig: any;
 let cleanupVLLMProcesses: any;
 let checkVLLMGPUMemory: any;
+let getProfilePaths: any;
+let getAdaptersToLoad: any;
+let getVllmLoraConfig: any;
 
 async function ensureVllmFunctions(): Promise<boolean> {
   try {
@@ -21,6 +28,9 @@ async function ensureVllmFunctions(): Promise<boolean> {
     loadBackendConfig = core.loadBackendConfig;
     cleanupVLLMProcesses = core.cleanupVLLMProcesses;
     checkVLLMGPUMemory = core.checkVLLMGPUMemory;
+    getProfilePaths = core.getProfilePaths;
+    getAdaptersToLoad = core.getAdaptersToLoad;
+    getVllmLoraConfig = core.getVllmLoraConfig;
     return !!(vllm && loadBackendConfig);
   } catch {
     return false;
@@ -57,6 +67,21 @@ export async function handleVllmControl(req: UnifiedRequest): Promise<UnifiedRes
       }
 
       case 'start': {
+        // Get LoRA adapters to load (if user is authenticated)
+        let loraModules: Array<{ name: string; path: string }> = [];
+        let maxLoraRank = 64;
+
+        if (user.username && getProfilePaths && getAdaptersToLoad && getVllmLoraConfig) {
+          try {
+            const profilePaths = getProfilePaths(user.username);
+            loraModules = await getAdaptersToLoad(profilePaths.out, profilePaths.etc);
+            const loraConfig = getVllmLoraConfig(profilePaths.etc);
+            maxLoraRank = loraConfig.maxLoraRank || 64;
+          } catch (error) {
+            console.warn('[llm-backend-vllm] Failed to load LoRA config:', error);
+          }
+        }
+
         const result = await vllm.startServer({
           endpoint: config.vllm.endpoint,
           model: body?.model || config.vllm.model,
@@ -68,6 +93,8 @@ export async function handleVllmControl(req: UnifiedRequest): Promise<UnifiedRes
           enforceEager: config.vllm.enforceEager,
           autoUtilization: config.vllm.autoUtilization,
           enableThinking: config.vllm.enableThinking,
+          loraModules,
+          maxLoraRank,
         });
 
         if (!result.success) {
@@ -76,6 +103,7 @@ export async function handleVllmControl(req: UnifiedRequest): Promise<UnifiedRes
         return successResponse({
           success: true,
           pid: result.pid,
+          loadedLoras: loraModules.map(l => l.name),
         });
       }
 
@@ -86,6 +114,22 @@ export async function handleVllmControl(req: UnifiedRequest): Promise<UnifiedRes
 
       case 'restart': {
         await vllm.stopServer();
+
+        // Get LoRA adapters to load (if user is authenticated)
+        let loraModules: Array<{ name: string; path: string }> = [];
+        let maxLoraRank = 64;
+
+        if (user.username && getProfilePaths && getAdaptersToLoad && getVllmLoraConfig) {
+          try {
+            const profilePaths = getProfilePaths(user.username);
+            loraModules = await getAdaptersToLoad(profilePaths.out, profilePaths.etc);
+            const loraConfig = getVllmLoraConfig(profilePaths.etc);
+            maxLoraRank = loraConfig.maxLoraRank || 64;
+          } catch (error) {
+            console.warn('[llm-backend-vllm] Failed to load LoRA config:', error);
+          }
+        }
+
         const result = await vllm.startServer({
           endpoint: config.vllm.endpoint,
           model: body?.model || config.vllm.model,
@@ -97,6 +141,8 @@ export async function handleVllmControl(req: UnifiedRequest): Promise<UnifiedRes
           enforceEager: config.vllm.enforceEager,
           autoUtilization: config.vllm.autoUtilization,
           enableThinking: config.vllm.enableThinking,
+          loraModules,
+          maxLoraRank,
         });
 
         if (!result.success) {
@@ -105,6 +151,7 @@ export async function handleVllmControl(req: UnifiedRequest): Promise<UnifiedRes
         return successResponse({
           success: true,
           pid: result.pid,
+          loadedLoras: loraModules.map(l => l.name),
         });
       }
 

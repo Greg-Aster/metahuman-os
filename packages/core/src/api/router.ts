@@ -200,6 +200,7 @@ import { handleGetLlmBackendStatus } from './handlers/llm-backend-status.js';
 import { handleSwitchLlmBackend } from './handlers/llm-backend-switch.js';
 import { handleOllamaControl } from './handlers/llm-backend-ollama.js';
 import { handleVllmControl } from './handlers/llm-backend-vllm.js';
+import { handleGetVllmLoras, handleUpdateVllmLoras } from './handlers/vllm-loras.js';
 import { handleLlmChat } from './handlers/llm-proxy.js';
 import { handleGetModels, handleSetModels } from './handlers/models.js';
 import { handleGetFineTuneModels } from './handlers/fine-tune-models.js';
@@ -622,6 +623,10 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/llm-backend/switch', handler: handleSwitchLlmBackend, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/llm-backend/ollama', handler: handleOllamaControl, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/llm-backend/vllm', handler: handleVllmControl, requiresAuth: true, guard: 'owner' },
+
+  // vLLM LoRA adapters
+  { method: 'GET', pattern: '/api/vllm/loras', handler: handleGetVllmLoras, requiresAuth: true },
+  { method: 'PUT', pattern: '/api/vllm/loras', handler: handleUpdateVllmLoras, requiresAuth: true, guard: 'owner' },
 
   // LLM Proxy - allows remote clients to use this server's LLM (Ollama or vLLM)
   { method: 'POST', pattern: '/api/llm/chat', handler: handleLlmChat, requiresAuth: true },

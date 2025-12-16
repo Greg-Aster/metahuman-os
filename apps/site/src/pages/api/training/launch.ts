@@ -6,6 +6,7 @@ import { systemPaths, getAuthenticatedUser, audit } from '@metahuman/core'
 
 interface LaunchRequest {
   method: 'local-lora' | 'remote-lora' | 'fine-tune'
+  trainingTarget?: 'ollama' | 'vllm' | 'both'
   runpodConfig?: {
     apiKey: string
     templateId: string
@@ -24,6 +25,7 @@ interface LaunchRequest {
     gradient_accumulation_steps: number
     max_seq_length: number
     quantization: string
+    skipGguf?: boolean // Skip GGUF conversion for vLLM-only training
   }
   advancedSettings?: {
     enableS3Upload: boolean
@@ -52,7 +54,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     const user = getAuthenticatedUser(cookies)
 
     const body: LaunchRequest = await request.json()
-    const { method, runpodConfig, trainingConfig, advancedSettings } = body
+    const { method, trainingTarget = 'ollama', runpodConfig, trainingConfig, advancedSettings } = body
 
     // Validate method
     if (!['local-lora', 'remote-lora', 'fine-tune'].includes(method)) {
@@ -73,7 +75,8 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     }
 
     const agentFileName = agentMap[method]
-    const agentPath = path.join(systemPaths.brain, 'agents', agentFileName)
+    // Training agents moved to brain/training/ during refactor
+    const agentPath = path.join(systemPaths.brain, 'training', agentFileName)
 
     // Verify agent file exists
     if (!fs.existsSync(agentPath)) {
@@ -89,11 +92,15 @@ export const POST: APIRoute = async ({ cookies, request }) => {
     // Save training config to etc/training.json with GGUF conversion settings
     const trainingConfigPath = path.join(systemPaths.root, 'etc', 'training.json')
 
+    // Determine if GGUF conversion should be enabled based on training target
+    const shouldConvertToGguf = trainingTarget !== 'vllm' && !trainingConfig.skipGguf
+
     // Build config with GGUF conversion settings for the training script
     const fullConfig = {
       ...trainingConfig,
+      trainingTarget, // Include target for downstream processing
       gguf_conversion: {
-        enabled: true,
+        enabled: shouldConvertToGguf,
         quantization_type: trainingConfig.quantization || 'Q4_K_M',
       }
     }
@@ -253,6 +260,7 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       details: {
         agent: agentName,
         method,
+        trainingTarget,
         pid: child.pid,
         username: user.username,
         config: trainingConfig,

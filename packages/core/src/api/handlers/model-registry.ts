@@ -11,7 +11,7 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import { getProfilePaths, systemPaths, audit, loadBackendConfig, storageClient, getBackendStatus } from '../../index.js';
+import { getProfilePaths, systemPaths, audit, loadBackendConfig, storageClient, getBackendStatus, discoverVllmLoraAdapters, getVllmLoraConfig, enableVllmLoraAdapter, getVLLMLoadedLoras } from '../../index.js';
 import { invalidateModelCache } from '../../model-resolver.js';
 // NOTE: invalidateStatusCache was removed - statusCache no longer exists (was redundant)
 import fs from 'node:fs';
@@ -209,6 +209,40 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     const cloudProviderSet = new Set(['runpod_serverless', 'huggingface', 'openai', 'openrouter', 'remote-server']);
     const bigBrotherProviders = new Set(['claude-code', 'anthropic']);
 
+    // Discover vLLM LoRA adapters for the user
+    let vllmLoras: Array<{
+      id: string;
+      name: string;
+      path: string;
+      createdAt: string;
+      loaded: boolean;
+      valid: boolean;
+    }> = [];
+
+    if (isVLLMRunning) {
+      try {
+        const profilePaths = getProfilePaths(user.username);
+        const adapters = await discoverVllmLoraAdapters(profilePaths.out);
+
+        // Get currently loaded LoRAs
+        let loadedLoras: string[] = [];
+        try {
+          loadedLoras = await getVLLMLoadedLoras();
+        } catch { /* vLLM might not be running */ }
+
+        vllmLoras = adapters.map(a => ({
+          id: `vllm-lora.${a.name}`,
+          name: a.name,
+          path: a.path,
+          createdAt: a.createdAt,
+          loaded: loadedLoras.includes(a.name),
+          valid: a.valid,
+        }));
+      } catch (error) {
+        console.warn('[model-registry] Failed to discover vLLM LoRAs:', error);
+      }
+    }
+
     const modelCategories = {
       // Local models: vLLM shows the locked model, Ollama shows all ollama models IF running
       local: isVLLMRunning
@@ -216,7 +250,7 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
         : isOllamaRunning
           ? availableModels.filter(m => m.provider === 'ollama')
           : [], // No local models if no local server running
-      lora: [],
+      lora: vllmLoras,  // vLLM LoRA adapters
       remote: availableModels.filter(m => cloudProviderSet.has(m.provider)),
       bigBrother: availableModels.filter(m => bigBrotherProviders.has(m.provider))
     };
@@ -289,6 +323,20 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
           description: `vLLM backend model`,
           options: {},
           metadata: { source: 'vllm-backend', locked: true }
+        };
+      } else if (modelId.startsWith('vllm-lora.')) {
+        // vLLM LoRA adapter - runtime discovery
+        const adapterName = modelId.replace(/^vllm-lora\./, '');
+        const backendConfig = loadBackendConfig();
+        registry.models[modelId] = {
+          provider: 'vllm',  // Use vllm provider, LoRA name is the model
+          model: adapterName,  // vLLM routes to LoRA based on model name
+          baseModel: backendConfig.vllm?.model,
+          roles: [role],
+          adapters: [],
+          description: `vLLM LoRA adapter: ${adapterName}`,
+          options: {},
+          metadata: { source: 'vllm-lora-discovery', isLora: true }
         };
       } else if (modelId.startsWith('lora.')) {
         // LoRA adapter - runtime discovery
@@ -369,23 +417,47 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
 
     await writeModelRegistry(user.username, registry);
 
+    // Handle vLLM LoRA - enable adapter and check if restart needed
+    let needsRestart = false;
+    if (modelId.startsWith('vllm-lora.')) {
+      const loraName = modelId.replace('vllm-lora.', '');
+      const profilePaths = getProfilePaths(user.username);
+
+      // Enable the adapter in user's LoRA config
+      const wasAdded = enableVllmLoraAdapter(profilePaths.etc, loraName, user.username);
+
+      // Check if LoRA is currently loaded in vLLM
+      if (wasAdded) {
+        try {
+          const loadedLoras = await getVLLMLoadedLoras();
+          needsRestart = !loadedLoras.includes(loraName);
+        } catch {
+          // vLLM might not be running - restart will be needed when it starts
+          needsRestart = true;
+        }
+      }
+    }
+
     await audit({
       category: 'data_change',
       level: 'info',
+      event: 'model_role_updated',
       action: 'model_role_updated',
       actor: user.username,
-      context: {
-        userId: user.id,
+      userId: user.userId,
+      metadata: {
         role,
         modelId,
         cognitiveMode: cognitiveMode || 'default',
-        profilePath: resolveModelsPath(user.username)
+        profilePath: resolveModelsPath(user.username),
+        needsRestart
       }
     });
 
     return successResponse({
       success: true,
       message: `Role ${role} assigned to model ${modelId}`,
+      needsRestart,
       registry: {
         availableModels: Object.keys(registry.models || {}),
         roleAssignments: registry.defaults,

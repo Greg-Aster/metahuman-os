@@ -61,7 +61,7 @@ Analyze the execution results and determine:
 
 Respond with valid JSON matching the schema.`;
 
-async function runOutcomeReview(desire: Desire, execution?: DesireExecution): Promise<OutcomeReviewOutput> {
+async function runOutcomeReview(desire: Desire, execution?: DesireExecution, username?: string): Promise<OutcomeReviewOutput> {
   const plan = desire.plan;
   const exec = execution || desire.execution;
 
@@ -108,6 +108,7 @@ Respond with JSON:
     const response = await callLLM({
       role: 'persona',
       messages,
+      userId: username,
       options: { temperature: 0.3, responseFormat: 'json' },
     });
 
@@ -163,6 +164,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   // slot 1: execution results from desire_executor (optional, may be on desire)
   const slot0 = inputs[0] as { desire?: Desire; execution?: DesireExecution } | undefined;
   const slot1 = inputs[1] as { execution?: DesireExecution } | undefined;
+  const username = context.userId || context.username;
 
   const desire = slot0?.desire;
   const execution = slot1?.execution || slot0?.execution || desire?.execution;
@@ -188,7 +190,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   console.log(`[outcome-reviewer] 🔍 Reviewing outcome for: ${desire.title}`);
 
   try {
-    const reviewResult = await runOutcomeReview(desire, execution);
+    const reviewResult = await runOutcomeReview(desire, execution, username);
 
     const outcomeReview: DesireOutcomeReview = {
       id: `outcome-${desire.id}-${Date.now()}`,

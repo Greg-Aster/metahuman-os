@@ -53,6 +53,7 @@ export interface AgentLog {
 
 /**
  * Get list of available agents
+ * Supports both legacy single-file agents (*.ts) and modular agents (directories with index.ts)
  */
 export function listAvailableAgents(): string[] {
   const agentsDir = systemPaths.agents;
@@ -61,9 +62,24 @@ export function listAvailableAgents(): string[] {
     return [];
   }
 
-  return fs.readdirSync(agentsDir)
-    .filter(f => f.endsWith('.ts'))
-    .map(f => f.replace('.ts', ''));
+  const agents: string[] = [];
+  const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    if (entry.isFile() && entry.name.endsWith('.ts')) {
+      // Legacy single-file agent (e.g., reflector.ts)
+      agents.push(entry.name.replace('.ts', ''));
+    } else if (entry.isDirectory()) {
+      // Check for modular agent (directory with index.ts)
+      const indexPath = path.join(agentsDir, entry.name, 'index.ts');
+      if (fs.existsSync(indexPath)) {
+        agents.push(entry.name);
+      }
+    }
+  }
+
+  // Remove duplicates (if both legacy file and directory exist)
+  return [...new Set(agents)];
 }
 
 /**

@@ -14,7 +14,8 @@
     "coder": "default.coder",
     "planner": "default.planner",
     "summarizer": "default.summarizer",
-    "fallback": "default.fallback"
+    "fallback": "default.fallback",
+    "embedder": "default.embedder"
   },
   "models": {
     "default.orchestrator": {
@@ -289,6 +290,26 @@
         "coldStartWarning": "First request may take 20-30s if GPU is cold",
         "purpose": "Cloud GPU inference for general tasks"
       }
+    },
+    "default.embedder": {
+      "provider": "local-models",
+      "model": "nomic-embed-text-v1.5",
+      "adapters": [],
+      "roles": [
+        "embedder"
+      ],
+      "description": "Local embedding model via llama.cpp - CPU-only, runs in parallel with GPU backends",
+      "options": {
+        "dimensions": 768,
+        "maxTokens": 8192
+      },
+      "metadata": {
+        "priority": "high",
+        "alwaysLoaded": true,
+        "estimatedLatency": "fast",
+        "sizeGB": 0.14,
+        "purpose": "Semantic embeddings for memory search and vector indexing"
+      }
     }
   },
   "roleHierarchy": {
@@ -320,6 +341,9 @@
     ],
     "fallback": [
       "default.fallback"
+    ],
+    "embedder": [
+      "default.embedder"
     ]
   },
   "cognitiveModeMappings": {

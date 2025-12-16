@@ -8,7 +8,7 @@
  * 4. Changes appear in approval queue
  */
 
-import { runOperatorWithFeatureFlag } from '../brain/agents/operator-react';
+import { runOperatorWithFeatureFlag } from '../brain/agents/operator/index.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { systemPaths } from '../packages/core/src/index';

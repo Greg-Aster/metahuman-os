@@ -23,7 +23,7 @@ import {
   resetDayCounter,
   runNightlyPipeline,
   type SleepConfig,
-} from '../sleep-service.js';
+} from '../../services/sleep-service.js';
 
 // ─────────────────────────────────────────────────────────────
 // Types

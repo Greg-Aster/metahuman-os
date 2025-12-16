@@ -472,6 +472,11 @@
   let loadingModelRegistry = false;
   let statusRefreshInFlight = false;
 
+  // vLLM LoRA restart modal state
+  let showRestartModal = false;
+  let pendingLoraName = '';
+  let restartInProgress = false;
+
   // NEW: Adaptive widget state
   let activeBackend: BackendType = 'ollama';
   let resolvedBackend: ResolvedBackendType | null = null;
@@ -491,13 +496,15 @@
     runpod: { available: boolean; configured: boolean; active: boolean };
     bigBrother: { available: boolean; enabled: boolean; provider?: string };
     remoteServer: { available: boolean; configured: boolean; serverUrl?: string; connected?: boolean };
+    localModels: { available: boolean; running: boolean; embeddingModel?: string | null; llmModel?: string | null };
   }
   let backendAvailability: BackendAvailability = {
     ollama: { available: false, running: false, active: false },
     vllm: { available: false, running: false, active: false },
     runpod: { available: false, configured: false, active: false },
     bigBrother: { available: false, enabled: false },
-    remoteServer: { available: false, configured: false, connected: false }
+    remoteServer: { available: false, configured: false, connected: false },
+    localModels: { available: false, running: false, embeddingModel: null, llmModel: null }
   };
 
 
@@ -536,6 +543,17 @@
       return `Remote Server: Connected${modelInfo}\n${ba.serverUrl}`;
     }
     return `Remote Server: Configured (testing connection...)\n${ba.serverUrl}`;
+  }
+  function getLocalModelsTooltip(): string {
+    const ba = backendAvailability.localModels;
+    if (!ba.available) return 'Semantic Search: Not configured';
+    if (ba.running) {
+      const parts = ['Semantic Search: Running'];
+      if (ba.embeddingModel) parts.push(`Embeddings: ${ba.embeddingModel}`);
+      if (ba.llmModel) parts.push(`LLM: ${ba.llmModel}`);
+      return parts.join('\n');
+    }
+    return `Semantic Search: Configured but not running${ba.embeddingModel ? `\nModel: ${ba.embeddingModel}` : ''}`;
   }
 
   // Backend status is now handled by unified /api/status endpoint (see loadStatus)
@@ -661,22 +679,28 @@
         void refreshStatus('model assignment');
         void loadModelRegistry();
 
-        // Warm up the model in the background (non-blocking)
-        // This preloads it into Ollama memory to avoid cold-start on first use
-        warmupModel(role).catch(err => {
-          console.warn(`Failed to warm up model for role ${role}:`, err);
-          // Show user-visible error notification
-          const errorMsg = (err as Error).message || 'Unknown error';
-          alert(`Model warmup failed for ${role}:\n\n${errorMsg}\n\nThe model assignment was saved but may not work until the backend is available.`);
-          // Update local state to show error
-          modelRoles = {
-            ...modelRoles,
-            [role]: {
-              ...modelRoles[role],
-              error: errorMsg
-            }
-          };
-        });
+        // Check if vLLM restart is needed (for LoRA adapters)
+        if (result.needsRestart && modelId.startsWith('vllm-lora.')) {
+          pendingLoraName = modelId.replace('vllm-lora.', '');
+          showRestartModal = true;
+        } else {
+          // Warm up the model in the background (non-blocking)
+          // This preloads it into Ollama memory to avoid cold-start on first use
+          warmupModel(role).catch(err => {
+            console.warn(`Failed to warm up model for role ${role}:`, err);
+            // Show user-visible error notification
+            const errorMsg = (err as Error).message || 'Unknown error';
+            alert(`Model warmup failed for ${role}:\n\n${errorMsg}\n\nThe model assignment was saved but may not work until the backend is available.`);
+            // Update local state to show error
+            modelRoles = {
+              ...modelRoles,
+              [role]: {
+                ...modelRoles[role],
+                error: errorMsg
+              }
+            };
+          });
+        }
 
         // Refresh status to show updated model assignments
         setTimeout(() => {
@@ -710,6 +734,41 @@
       console.error(`[warmup] Error warming up ${role}:`, error);
       throw error;
     }
+  }
+
+  // Restart vLLM to load new LoRA adapters
+  async function restartVllmForLora() {
+    restartInProgress = true;
+    try {
+      const response = await apiFetch('/api/llm-backend/vllm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'restart' }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        console.log('[vLLM] Restart successful, loaded LoRAs:', result.loadedLoras);
+        showRestartModal = false;
+        pendingLoraName = '';
+        // Refresh status to show updated LoRA state
+        void refreshStatus('vllm restart');
+        void loadModelRegistry();
+      } else {
+        alert('Failed to restart vLLM: ' + (result.error || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('[vLLM] Restart error:', error);
+      alert('Failed to restart vLLM: ' + (error as Error).message);
+    } finally {
+      restartInProgress = false;
+    }
+  }
+
+  function dismissRestartModal() {
+    showRestartModal = false;
+    pendingLoraName = '';
   }
 
   function toggleModelDropdown(role: string) {
@@ -875,6 +934,16 @@
             >🌐</span>
           {/if}
 
+          <!-- Local Models / Semantic Search (Transformers.js) -->
+          {#if backendAvailability.localModels.available}
+            <span
+              class="backend-icon local-models"
+              class:running={backendAvailability.localModels.running}
+              class:available={backendAvailability.localModels.available && !backendAvailability.localModels.running}
+              title={getLocalModelsTooltip()}
+            >🔍</span>
+          {/if}
+
           <!-- Fallback when no backends available -->
           {#if !backendAvailability.ollama.available && !backendAvailability.vllm.available && !backendAvailability.runpod.available}
             <span class="backend-icon offline" title="No backends configured">❌</span>
@@ -958,22 +1027,32 @@
                       </div>
                     {/if}
 
-                    <!-- Category: LoRA Adapters -->
+                    <!-- Category: LoRA Adapters (vLLM) -->
                     {#if modelCategories.lora.length > 0}
                       <div class="dropdown-category">
-                        <span class="category-label">🎯 LoRA Adapters</span>
+                        <span class="category-label">⚡ vLLM LoRAs</span>
                         {#each modelCategories.lora as adapter}
+                          {@const isCurrentlySelected = roleAssignments[role] === adapter.id}
                           <button
                             class="dropdown-item"
+                            class:selected={isCurrentlySelected}
+                            class:lora-loaded={adapter.loaded}
                             on:click|stopPropagation={() => assignModelToRole(role, adapter.id)}
                           >
                             <span class="model-name">
                               {adapter.name}
+                              {#if adapter.loaded}
+                                <span class="vllm-badge">loaded</span>
+                              {:else}
+                                <span class="restart-badge">⟳ restart</span>
+                              {/if}
                               {#if adapter.isDualAdapter}
                                 <span class="dual-badge">dual</span>
                               {/if}
                             </span>
-                            {#if adapter.date}
+                            {#if adapter.createdAt}
+                              <span class="model-desc">{adapter.createdAt}</span>
+                            {:else if adapter.date}
                               <span class="model-desc">{adapter.date}</span>
                             {/if}
                           </button>
@@ -1103,6 +1182,41 @@
     </div>
   </div>
 </div>
+
+<!-- vLLM LoRA Restart Modal -->
+{#if showRestartModal}
+  <div class="modal-overlay" on:click={dismissRestartModal} on:keydown={(e) => e.key === 'Escape' && dismissRestartModal()} role="dialog" aria-modal="true" tabindex="-1">
+    <div class="modal-content" on:click|stopPropagation role="document">
+      <h3 class="modal-title">⚡ Server Restart Required</h3>
+      <p class="modal-text">
+        The LoRA adapter <strong>{pendingLoraName}</strong> is not currently loaded in vLLM.
+      </p>
+      <p class="modal-text">
+        To use this adapter, vLLM needs to restart and load it. This will briefly interrupt model availability.
+      </p>
+      <div class="modal-actions">
+        <button
+          class="modal-btn secondary"
+          on:click={dismissRestartModal}
+          disabled={restartInProgress}
+        >
+          Later
+        </button>
+        <button
+          class="modal-btn primary"
+          on:click={restartVllmForLora}
+          disabled={restartInProgress}
+        >
+          {#if restartInProgress}
+            Restarting...
+          {:else}
+            Restart Now
+          {/if}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   /* Container - unique to LeftSidebar */
@@ -2279,6 +2393,26 @@
     box-shadow: 0 0 10px rgba(34, 211, 238, 0.4);
   }
 
+  /* Local Models / Semantic Search - amber/orange for embeddings */
+  .backend-icon.local-models.available:not(.running) {
+    background: rgba(251, 146, 60, 0.15);
+    opacity: 0.5;
+  }
+
+  :global(.dark) .backend-icon.local-models.available:not(.running) {
+    background: rgba(251, 146, 60, 0.2);
+  }
+
+  .backend-icon.local-models.running {
+    background: rgba(251, 146, 60, 0.25);
+    box-shadow: 0 0 8px rgba(251, 146, 60, 0.5);
+  }
+
+  :global(.dark) .backend-icon.local-models.running {
+    background: rgba(251, 146, 60, 0.3);
+    box-shadow: 0 0 10px rgba(251, 146, 60, 0.4);
+  }
+
   /* Offline/error state */
   .backend-icon.offline {
     opacity: 0.4;
@@ -2432,6 +2566,34 @@
     color: rgb(253 224 71);
   }
 
+  /* Restart badge for LoRAs not yet loaded */
+  .restart-badge {
+    display: inline-block;
+    padding: 0.05rem 0.25rem;
+    border-radius: 0.2rem;
+    font-size: 0.6rem;
+    font-weight: 600;
+    background: rgba(147, 51, 234, 0.2);
+    color: rgb(107 33 168);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    margin-left: 0.25rem;
+  }
+
+  :global(.dark) .restart-badge {
+    background: rgba(147, 51, 234, 0.3);
+    color: rgb(192 132 252);
+  }
+
+  /* LoRA loaded highlight */
+  .dropdown-item.lora-loaded {
+    border-left: 2px solid rgb(250 204 21);
+  }
+
+  :global(.dark) .dropdown-item.lora-loaded {
+    border-left: 2px solid rgb(234 179 8);
+  }
+
   .dropdown-item:disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -2439,6 +2601,122 @@
 
   .dropdown-item:disabled:hover {
     background: transparent;
+  }
+
+  /* vLLM LoRA Restart Modal */
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal-content {
+    background: white;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    max-width: 400px;
+    width: 90%;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  }
+
+  :global(.dark) .modal-content {
+    background: rgb(31 41 55);
+    color: rgb(229 231 235);
+  }
+
+  .modal-title {
+    margin: 0 0 1rem 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: rgb(17 24 39);
+  }
+
+  :global(.dark) .modal-title {
+    color: rgb(243 244 246);
+  }
+
+  .modal-text {
+    margin: 0 0 0.75rem 0;
+    font-size: 0.875rem;
+    color: rgb(75 85 99);
+    line-height: 1.5;
+  }
+
+  :global(.dark) .modal-text {
+    color: rgb(156 163 175);
+  }
+
+  .modal-text strong {
+    color: rgb(17 24 39);
+    font-weight: 600;
+  }
+
+  :global(.dark) .modal-text strong {
+    color: rgb(243 244 246);
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+    justify-content: flex-end;
+  }
+
+  .modal-btn {
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.15s, opacity 0.15s;
+    border: none;
+  }
+
+  .modal-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .modal-btn.secondary {
+    background: rgb(229 231 235);
+    color: rgb(55 65 81);
+  }
+
+  .modal-btn.secondary:hover:not(:disabled) {
+    background: rgb(209 213 219);
+  }
+
+  :global(.dark) .modal-btn.secondary {
+    background: rgb(55 65 81);
+    color: rgb(209 213 219);
+  }
+
+  :global(.dark) .modal-btn.secondary:hover:not(:disabled) {
+    background: rgb(75 85 99);
+  }
+
+  .modal-btn.primary {
+    background: rgb(147 51 234);
+    color: white;
+  }
+
+  .modal-btn.primary:hover:not(:disabled) {
+    background: rgb(126 34 206);
+  }
+
+  :global(.dark) .modal-btn.primary {
+    background: rgb(147 51 234);
+  }
+
+  :global(.dark) .modal-btn.primary:hover:not(:disabled) {
+    background: rgb(168 85 247);
   }
 
 </style>

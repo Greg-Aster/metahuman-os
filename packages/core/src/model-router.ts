@@ -5,12 +5,14 @@
  * Handles provider dispatching, adapter loading, audit logging, and error handling.
  */
 
-import { resolveModel, resolveModelForCognitiveMode, type ModelRole, type ResolvedModel, loadModelRegistry } from './model-resolver.js';
+import { resolveModel, resolveModelForCognitiveMode, type ModelRole, type ResolvedModel } from './model-resolver.js';
 import { audit } from './audit.js';
 import { loadCognitiveMode } from './cognitive-mode.js';
 import { getUserContext } from './context.js';
 import { callProvider, type ProviderType, type ProviderProgressEvent } from './providers/bridge.js';
 import { ollama } from './ollama.js';
+import { embedWithLocalService, isLocalModelServiceRunning } from './providers/local-models.js';
+import { loadBackendConfig } from './llm-backend.js';
 
 // Re-export ModelRole for convenience
 export type { ModelRole } from './model-resolver.js';
@@ -113,8 +115,9 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
   const effectiveCognitiveMode = getContextualCognitiveMode(callOptions.cognitiveMode);
 
   // Get username from context for user-specific model config (profiles/{username}/etc/models.json)
+  // Fallback to callOptions.userId for node executors that pass context explicitly
   const ctx = getUserContext();
-  const username = ctx?.username;
+  const username = ctx?.username || callOptions.userId;
 
   // Resolve the model for this role (using user-specific models.json if available)
   const resolved = effectiveCognitiveMode
@@ -305,11 +308,12 @@ export async function callLLMJSON<T = any>(
 /**
  * Helper: Check if a model is available for a role
  */
-export async function isModelAvailable(role: ModelRole): Promise<boolean> {
+export async function isModelAvailable(role: ModelRole, userId?: string): Promise<boolean> {
   try {
     // Get username from context for user-specific model config
+    // Fallback to userId parameter for explicit context passing
     const ctx = getUserContext();
-    const username = ctx?.username;
+    const username = ctx?.username || userId;
 
     const resolved = resolveModel(role, undefined, username);
 
@@ -321,6 +325,157 @@ export async function isModelAvailable(role: ModelRole): Promise<boolean> {
 
     // For other providers, assume available if resolved
     return true;
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================================
+// Embedding Support
+// ============================================================================
+
+export interface EmbeddingCallOptions {
+  /** Text to embed */
+  text: string;
+  /** User ID for context tracking */
+  userId?: string;
+  /** Override model options */
+  overrides?: Partial<ResolvedModel>;
+}
+
+export interface EmbeddingResponse {
+  /** The embedding vector */
+  embeddings: number[];
+  /** Model used for embedding */
+  model: string;
+  /** Model ID from registry */
+  modelId: string;
+  /** Provider used */
+  provider: string;
+  /** Vector dimensions */
+  dimensions: number;
+  /** Latency in ms */
+  latencyMs?: number;
+}
+
+/**
+ * Generate embeddings using role-based routing
+ *
+ * Routes to the configured embedder model (local-models/llama.cpp by default).
+ * The local-models backend runs on CPU and can operate in parallel with GPU backends.
+ */
+export async function callEmbeddings(options: EmbeddingCallOptions): Promise<EmbeddingResponse> {
+  const startTime = Date.now();
+
+  // Get username from context for user-specific model config
+  const ctx = getUserContext();
+  const username = ctx?.username || options.userId;
+
+  // Resolve the embedder model
+  const resolved = resolveModel('embedder', options.overrides, username);
+
+  try {
+    let embeddings: number[];
+    let dimensions: number;
+
+    if (resolved.provider === 'local-models') {
+      // Get endpoint from llm-backend config
+      const backendConfig = loadBackendConfig();
+      const endpoint = backendConfig.localModels?.endpoint || 'http://127.0.0.1:4324';
+
+      // Check if service is running
+      const isRunning = await isLocalModelServiceRunning(endpoint);
+      if (!isRunning) {
+        throw new Error(`Local model service not running at ${endpoint}. Start with: ./bin/start-local-models`);
+      }
+
+      // Generate embeddings via llama.cpp service
+      embeddings = await embedWithLocalService(options.text, {
+        model: resolved.model,
+        endpoint,
+      });
+
+      dimensions = resolved.options?.dimensions || embeddings.length;
+    } else if (resolved.provider === 'ollama') {
+      // Fallback to Ollama embeddings if configured
+      const result = await ollama.embeddings(resolved.model, options.text);
+      embeddings = result.embedding;
+      dimensions = embeddings.length;
+    } else {
+      throw new Error(`Unsupported embedding provider: ${resolved.provider}`);
+    }
+
+    const latencyMs = Date.now() - startTime;
+
+    // Audit the embedding call
+    audit({
+      level: 'info',
+      category: 'system',
+      event: 'embedding_call',
+      actor: 'model_router',
+      details: {
+        modelId: resolved.id,
+        provider: resolved.provider,
+        model: resolved.model,
+        textLength: options.text.length,
+        dimensions,
+        latencyMs,
+      },
+    });
+
+    return {
+      embeddings,
+      model: resolved.model,
+      modelId: resolved.id,
+      provider: resolved.provider,
+      dimensions,
+      latencyMs,
+    };
+
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+
+    // Audit the error
+    audit({
+      level: 'error',
+      category: 'system',
+      event: 'embedding_call_error',
+      actor: 'model_router',
+      details: {
+        modelId: resolved.id,
+        provider: resolved.provider,
+        model: resolved.model,
+        error: (error as Error).message,
+        latencyMs,
+      },
+    });
+
+    throw error;
+  }
+}
+
+/**
+ * Check if the embedding service is available
+ */
+export async function isEmbeddingServiceAvailable(userId?: string): Promise<boolean> {
+  try {
+    const ctx = getUserContext();
+    const username = ctx?.username || userId;
+
+    const resolved = resolveModel('embedder', undefined, username);
+
+    if (resolved.provider === 'local-models') {
+      const backendConfig = loadBackendConfig();
+      const endpoint = backendConfig.localModels?.endpoint || 'http://127.0.0.1:4324';
+      return await isLocalModelServiceRunning(endpoint);
+    }
+
+    if (resolved.provider === 'ollama') {
+      const models = await ollama.listModels();
+      return models.some(m => m.name === resolved.model || m.name.startsWith(resolved.model + ':'));
+    }
+
+    return false;
   } catch {
     return false;
   }

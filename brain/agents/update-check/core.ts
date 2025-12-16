@@ -1,37 +1,24 @@
-#!/usr/bin/env node
 /**
- * Update Check Agent — Background check for software updates
+ * Update Check Agent — Core Logic
  *
- * For desktop/server deployments:
- * - Checks git remote for new commits
- * - Reports available updates
- *
- * For mobile:
- * - Checks remote server for new APK version
- * - Notifies user of available updates
- *
- * Triggered by:
- * - Manual trigger via UI
- * - Scheduled interval (e.g., daily)
- * - Login event
+ * For desktop/server: Checks git remote for new commits
+ * For mobile: Checks remote server for new APK version
  */
 
+import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 import fs from 'node:fs';
 import path from 'node:path';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import {
-  audit,
-  auditAction,
-  acquireLock,
-  isLocked,
-  initGlobalLogger,
-  systemPaths,
-} from '@metahuman/core';
+import { audit, auditAction, systemPaths } from '@metahuman/core';
 
 const execAsync = promisify(exec);
 
-interface UpdateInfo {
+// ─────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────
+
+export interface UpdateInfo {
   updateAvailable: boolean;
   currentVersion: string;
   latestVersion: string | null;
@@ -42,7 +29,7 @@ interface UpdateInfo {
   checkedAt: string;
 }
 
-interface MobileUpdateInfo {
+export interface MobileUpdateInfo {
   updateAvailable: boolean;
   currentVersion: string;
   currentVersionCode: number;
@@ -53,9 +40,16 @@ interface MobileUpdateInfo {
   checkedAt: string;
 }
 
-/**
- * Run a git command in the project root
- */
+export interface UpdateCheckOptions {
+  mobile?: boolean;
+  serverUrl?: string;
+  versionCode?: number;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Helper Functions
+// ─────────────────────────────────────────────────────────────
+
 async function runGitCommand(command: string): Promise<string> {
   try {
     const { stdout } = await execAsync(`git ${command}`, {
@@ -68,9 +62,6 @@ async function runGitCommand(command: string): Promise<string> {
   }
 }
 
-/**
- * Get package version from package.json
- */
 function getPackageVersion(): string {
   try {
     const packagePath = path.join(systemPaths.root, 'package.json');
@@ -84,13 +75,16 @@ function getPackageVersion(): string {
   return '0.0.0';
 }
 
+// ─────────────────────────────────────────────────────────────
+// Core Update Check Logic
+// ─────────────────────────────────────────────────────────────
+
 /**
  * Check for server/desktop updates via git
  */
-async function checkGitUpdates(): Promise<UpdateInfo> {
+export async function checkGitUpdates(): Promise<UpdateInfo> {
   const checkedAt = new Date().toISOString();
 
-  // Check if this is a git repository
   const gitDir = path.join(systemPaths.root, '.git');
   if (!fs.existsSync(gitDir)) {
     return {
@@ -106,35 +100,26 @@ async function checkGitUpdates(): Promise<UpdateInfo> {
   }
 
   try {
-    // Get current state
     const currentCommit = await runGitCommand('rev-parse HEAD');
     const currentBranch = await runGitCommand('rev-parse --abbrev-ref HEAD');
-
-    // Check for local changes
     const status = await runGitCommand('status --porcelain');
     const hasChanges = status.length > 0;
 
-    // Fetch from remote
     let remoteCommit: string | null = null;
     let behind = 0;
-    let ahead = 0;
 
     try {
       await runGitCommand('fetch --quiet');
-
       const remoteBranch = `origin/${currentBranch}`;
       remoteCommit = await runGitCommand(`rev-parse ${remoteBranch}`);
 
-      // Count commits ahead/behind
       const aheadBehind = await runGitCommand(`rev-list --left-right --count HEAD...${remoteBranch}`);
-      const [aheadStr, behindStr] = aheadBehind.split(/\s+/);
-      ahead = parseInt(aheadStr, 10) || 0;
+      const [, behindStr] = aheadBehind.split(/\s+/);
       behind = parseInt(behindStr, 10) || 0;
     } catch {
       // No remote tracking or fetch failed
     }
 
-    // Get commit summaries for pending updates
     const changesSummary: string[] = [];
     if (behind > 0) {
       try {
@@ -150,9 +135,7 @@ async function checkGitUpdates(): Promise<UpdateInfo> {
     return {
       updateAvailable: behind > 0,
       currentVersion: `${getPackageVersion()} (${currentCommit.substring(0, 7)})`,
-      latestVersion: remoteCommit
-        ? `${remoteCommit.substring(0, 7)}`
-        : null,
+      latestVersion: remoteCommit ? `${remoteCommit.substring(0, 7)}` : null,
       commitsBehind: behind,
       changesSummary,
       canUpdate: !hasChanges && behind > 0,
@@ -180,7 +163,7 @@ async function checkGitUpdates(): Promise<UpdateInfo> {
 /**
  * Check for mobile app updates from a remote server
  */
-async function checkMobileUpdates(serverUrl: string, currentVersionCode: number): Promise<MobileUpdateInfo> {
+export async function checkMobileUpdates(serverUrl: string, currentVersionCode: number): Promise<MobileUpdateInfo> {
   const checkedAt = new Date().toISOString();
   const baseUrl = serverUrl.replace(/\/$/, '');
 
@@ -197,7 +180,6 @@ async function checkMobileUpdates(serverUrl: string, currentVersionCode: number)
     const latest = await response.json();
     const updateAvailable = latest.versionCode > currentVersionCode;
 
-    // Build absolute download URL
     let downloadUrl = latest.downloadUrl || '/downloads/metahuman-os.apk';
     if (downloadUrl.startsWith('/')) {
       downloadUrl = `${baseUrl}${downloadUrl}`;
@@ -213,7 +195,7 @@ async function checkMobileUpdates(serverUrl: string, currentVersionCode: number)
       downloadUrl,
       checkedAt,
     };
-  } catch (error) {
+  } catch {
     return {
       updateAvailable: false,
       currentVersion: '1.0.0',
@@ -230,72 +212,65 @@ async function checkMobileUpdates(serverUrl: string, currentVersionCode: number)
 /**
  * Save update state to file for UI to read
  */
-function saveUpdateState(state: UpdateInfo | MobileUpdateInfo): void {
+export function saveUpdateState(state: UpdateInfo | MobileUpdateInfo): void {
   const statePath = path.join(systemPaths.root, 'logs', 'run', 'update-state.json');
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
   fs.writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8');
 }
 
 /**
- * Main agent entry point
+ * Run update check
  */
-async function main() {
-  initGlobalLogger('update-check');
+export async function runUpdateCheck(options: UpdateCheckOptions = {}): Promise<UpdateInfo | MobileUpdateInfo> {
+  let result: UpdateInfo | MobileUpdateInfo;
 
-  // Parse command line args
-  const args = process.argv.slice(2);
-  const isMobile = args.includes('--mobile');
-  const serverUrl = args.find(a => a.startsWith('--server='))?.split('=')[1];
-  const versionCode = parseInt(args.find(a => a.startsWith('--version-code='))?.split('=')[1] || '1', 10);
-
-  // Single-instance guard
-  let lock;
-  try {
-    if (isLocked('agent-update-check')) {
-      console.log('[update-check] Another instance is already running. Exiting.');
-      return;
-    }
-    lock = acquireLock('agent-update-check');
-  } catch {
-    console.log('[update-check] Failed to acquire lock. Exiting.');
-    return;
+  if (options.mobile && options.serverUrl) {
+    result = await checkMobileUpdates(options.serverUrl, options.versionCode || 1);
+    console.log(`[update-check] Mobile update check: ${result.updateAvailable ? 'UPDATE AVAILABLE' : 'up to date'}`);
+  } else {
+    result = await checkGitUpdates();
+    console.log(`[update-check] Git update check: ${(result as UpdateInfo).commitsBehind} commits behind`);
   }
 
+  saveUpdateState(result);
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Agent Runtime Entry Point
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Agent runtime entry point for mobile/runtime execution
+ */
+export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
+  const startTime = Date.now();
+  const args = input.args || [];
+  const opts = input.options || {};
+
+  const options: UpdateCheckOptions = {
+    mobile: args.includes('--mobile') || opts.mobile === true,
+    serverUrl: args.find(a => a.startsWith('--server='))?.split('=')[1] || opts.serverUrl as string,
+    versionCode: parseInt(args.find(a => a.startsWith('--version-code='))?.split('=')[1] || '1', 10),
+  };
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'agent_cycle_started',
+    details: { agent: 'update-check', mode: options.mobile ? 'mobile' : 'git' },
+    actor: 'agent',
+  });
+
   try {
-    console.log('[update-check] Checking for updates...');
+    const result = await runUpdateCheck(options);
 
-    // Audit cycle start
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'agent_cycle_started',
-      details: { agent: 'update-check', mode: isMobile ? 'mobile' : 'git' },
-      actor: 'agent',
-    });
-
-    let result: UpdateInfo | MobileUpdateInfo;
-
-    if (isMobile && serverUrl) {
-      // Mobile: check remote server for APK updates
-      result = await checkMobileUpdates(serverUrl, versionCode);
-      console.log(`[update-check] Mobile update check: ${result.updateAvailable ? 'UPDATE AVAILABLE' : 'up to date'}`);
-    } else {
-      // Desktop/server: check git for updates
-      result = await checkGitUpdates();
-      console.log(`[update-check] Git update check: ${(result as UpdateInfo).commitsBehind} commits behind`);
-    }
-
-    // Save state for UI
-    saveUpdateState(result);
-
-    // Log result
     if (result.updateAvailable) {
       console.log(`[update-check] Update available: ${result.currentVersion} -> ${result.latestVersion}`);
     } else {
       console.log(`[update-check] Current version ${result.currentVersion} is up to date`);
     }
 
-    // Audit completion
     audit({
       level: 'info',
       category: 'action',
@@ -311,7 +286,7 @@ async function main() {
 
     auditAction({
       skill: 'update-check',
-      inputs: { mode: isMobile ? 'mobile' : 'git' },
+      inputs: { mode: options.mobile ? 'mobile' : 'git' },
       success: true,
       output: {
         updateAvailable: result.updateAvailable,
@@ -320,8 +295,12 @@ async function main() {
       },
     });
 
+    return {
+      success: true,
+      data: result,
+      durationMs: Date.now() - startTime,
+    };
   } catch (error) {
-    console.error('[update-check] Error during check:', (error as Error).message);
     audit({
       level: 'error',
       category: 'action',
@@ -329,12 +308,11 @@ async function main() {
       details: { agent: 'update-check', error: (error as Error).message },
       actor: 'agent',
     });
-  } finally {
-    lock.release();
+
+    return {
+      success: false,
+      error: (error as Error).message,
+      durationMs: Date.now() - startTime,
+    };
   }
 }
-
-main().catch(err => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});

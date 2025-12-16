@@ -6,7 +6,7 @@
 import type { APIRoute } from 'astro';
 // DISABLED: Skills system not in use
 // import { initializeSkills } from '@brain/skills/index.js';
-import { runOperatorWithFeatureFlag } from '@brain/agents/operator-react.js';
+import { runOperatorWithFeatureFlag } from '@brain/agents/operator/index.js';
 import { loadTrustLevel, getAvailableSkills, listSkills } from '@metahuman/core/skills';
 import { audit } from '@metahuman/core/audit';
 import { requireOperatorMode } from '../../middleware/cognitiveModeGuard';

@@ -6,7 +6,7 @@
  * instead of throwing exceptions.
  */
 
-import { runOperatorWithFeatureFlag } from '../brain/agents/operator-react';
+import { runOperatorWithFeatureFlag } from '../brain/agents/operator/index.js';
 
 async function testGracefulFailure() {
   console.log('🧪 Testing graceful failure handling...\n');

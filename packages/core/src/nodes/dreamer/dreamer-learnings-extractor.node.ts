@@ -72,15 +72,37 @@ Respond with JSON:
     const response = await callLLM({
       role,
       messages,
-      options: { temperature },
+      userId: username,
+      options: { temperature, format: 'json' },
     });
 
-    const parsed = JSON.parse(response.content) as {
+    // Try to parse JSON, with fallback to extract JSON from response
+    let parsed: {
       preferences: string[];
       heuristics: string[];
       styleNotes: string[];
       avoidances: string[];
     };
+
+    try {
+      parsed = JSON.parse(response.content);
+    } catch {
+      // Try to extract JSON from response (LLM sometimes adds text around JSON)
+      const jsonMatch = response.content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsed = JSON.parse(jsonMatch[0]);
+      } else {
+        console.warn('[DreamerLearningsExtractor] Could not extract JSON from response:', response.content.substring(0, 200));
+        return {
+          preferences: [],
+          heuristics: [],
+          styleNotes: [],
+          avoidances: [],
+          error: 'Invalid JSON response from LLM',
+          username,
+        };
+      }
+    }
 
     return {
       preferences: parsed.preferences || [],

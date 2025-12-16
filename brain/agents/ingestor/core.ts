@@ -19,7 +19,7 @@ import {
   audit,
   auditAction,
   captureEvent,
-  listUsers,
+  getLoggedInUsers,
   withUserContext,
 } from '@metahuman/core';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
@@ -230,16 +230,16 @@ export async function runCycle(options: IngestorOptions = {}): Promise<IngestorR
       actor: 'agent',
     });
 
-    // Get all users
-    const users = listUsers();
-    console.log(`[ingestor] Found ${users.length} users to process`);
+    // Get all logged-in users
+    const users = getLoggedInUsers();
+    console.log(`[ingestor] Found ${users.length} logged-in users to process`);
     result.userCount = users.length;
 
     // Process each user with isolated context
     for (const user of users) {
       try {
         const processed = await withUserContext(
-          { userId: user.id, username: user.username, role: user.role },
+          { userId: user.userId, username: user.username, role: user.role },
           async () => {
             return await ingestUserFiles(user.username, options);
           }

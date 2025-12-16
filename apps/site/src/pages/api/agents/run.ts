@@ -51,17 +51,33 @@ function resolveTsx(): string {
 
 // Allowed agents that can be triggered via API
 const ALLOWED_AGENTS = [
+  // Sync & maintenance
   'profile-sync',
   'memory-sync',
   'update-check',
+  // Memory processing
   'organizer',
-  'reflector',
   'curator',
+  'ingestor',
+  'summarizer',
+  'digest',
+  // Cognitive agents
+  'reflector',
+  'dreamer',
+  'train-of-thought',
+  'psychoanalyzer',
+  // Curiosity system
   'curiosity-service',
   'curiosity-researcher',
   'inner-curiosity',
-  'psychoanalyzer',
+  // Agency system
   'desire-generator',
+  'desire-planner',
+  'desire-executor',
+  'desire-outcome-reviewer',
+  // Media processing
+  'audio-organizer',
+  'transcriber',
 ];
 
 /**
@@ -85,7 +101,7 @@ function resolveAgentPath(agentName: string): string | null {
   return null;
 }
 
-function runAgent(agentName: string, args: string[], actor: string): RunAgentResponse {
+function runAgent(agentName: string, args: string[], actor: string, triggerUsername?: string): RunAgentResponse {
   try {
     // Validate agent name
     if (!ALLOWED_AGENTS.includes(agentName)) {
@@ -103,19 +119,27 @@ function runAgent(agentName: string, args: string[], actor: string): RunAgentRes
       return { success: false, agent: agentName, error: 'Agent file not found' };
     }
 
+    // Build environment with username for user-specific agents
+    const env: Record<string, string> = {
+      ...process.env as Record<string, string>,
+      NODE_PATH: [
+        path.join(ROOT, 'node_modules'),
+        path.join(ROOT, 'packages/cli/node_modules'),
+        path.join(ROOT, 'apps/site/node_modules'),
+      ].join(':'),
+    };
+
+    // Pass username to agent (same as scheduler does)
+    if (triggerUsername) {
+      env.MH_TRIGGER_USERNAME = triggerUsername;
+    }
+
     const runner = resolveTsx();
     const child = spawn(runner, [agentPath, ...args], {
-      stdio: 'ignore',
+      stdio: 'inherit',  // Show output in server logs for debugging
       cwd: ROOT,
       detached: true,
-      env: {
-        ...process.env,
-        NODE_PATH: [
-          path.join(ROOT, 'node_modules'),
-          path.join(ROOT, 'packages/cli/node_modules'),
-          path.join(ROOT, 'apps/site/node_modules'),
-        ].join(':'),
-      },
+      env,
     });
 
     const pid = child.pid;
@@ -157,7 +181,7 @@ function runAgent(agentName: string, args: string[], actor: string): RunAgentRes
 const handler: APIRoute = async (context) => {
   try {
     const policy = getSecurityPolicy(context);
-    if (policy.role === 'anonymous') {
+    if (!policy.username) {
       return new Response(
         JSON.stringify({ success: false, error: 'Authentication required' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }
@@ -174,8 +198,9 @@ const handler: APIRoute = async (context) => {
       );
     }
 
-    const actor = policy.username ?? 'web_ui';
-    const result = runAgent(agent, args, actor);
+    const actor = policy.username;
+    // Pass username to agent so it knows which user to process
+    const result = runAgent(agent, args, actor, policy.username);
 
     const status = result.success ? 200 : (result.alreadyRunning ? 409 : 400);
 

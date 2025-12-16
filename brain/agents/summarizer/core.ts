@@ -1,20 +1,14 @@
 /**
- * Conversation Summarizer Agent
+ * Conversation Summarizer Agent — Core Logic
  *
- * Phase 3: Memory Continuity - Summarizes conversation sessions into concise overviews
- *
- * Features:
+ * Summarizes conversation sessions into concise overviews.
  * - Analyzes conversations by session ID
  * - Generates summaries of key topics, decisions, and outcomes
  * - Stores summaries as episodic events
  * - Mode-aware behavior (dual/agent get summaries, emulation uses ephemeral)
- * - Can be triggered manually or automatically on buffer overflow
- *
- * Usage:
- *   tsx brain/agents/summarizer.ts --session conv-1699358400-x7k2p9q1
- *   tsx brain/agents/summarizer.ts --auto (summarize all unsummarized sessions)
  */
 
+import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 import {
   callLLM,
   type RouterMessage,
@@ -22,10 +16,7 @@ import {
   listEpisodicFiles,
   audit,
   loadPersonaCore,
-  acquireLock,
-  type LockHandle,
-  initGlobalLogger,
-  listUsers,
+  getLoggedInUsers,
   withUserContext,
   getUserContext,
   loadCognitiveMode,
@@ -34,9 +25,13 @@ import {
   clearSummaryMarker,
   isSummarizing,
   getConversationBufferPath,
-} from '../../packages/core/src/index';
-import { canWriteMemory } from '../../packages/core/src/cognitive-mode.js';
+} from '@metahuman/core';
+import { canWriteMemory } from '@metahuman/core/cognitive-mode';
 import fs from 'node:fs/promises';
+
+// ─────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────
 
 interface ConversationEvent {
   id: string;
@@ -54,7 +49,7 @@ interface ConversationEvent {
   };
 }
 
-interface ConversationSummary {
+export interface ConversationSummary {
   sessionId: string;
   startTime: string;
   endTime: string;
@@ -67,7 +62,18 @@ interface ConversationSummary {
   mode: string;
 }
 
+export interface SummarizerOptions {
+  sessionId?: string;
+  auto?: boolean;
+  username?: string;
+  bufferMode?: 'conversation' | 'inner';
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+// ─────────────────────────────────────────────────────────────
+// Helper Functions
+// ─────────────────────────────────────────────────────────────
 
 async function loadRecentEvents(lookbackDays: number, userId?: string): Promise<ConversationEvent[]> {
   const cutoff = Date.now() - lookbackDays * DAY_MS;
@@ -91,9 +97,6 @@ async function loadRecentEvents(lookbackDays: number, userId?: string): Promise<
   return events;
 }
 
-/**
- * Get all events for a specific conversation session
- */
 async function getConversationEvents(sessionId: string, userId?: string): Promise<ConversationEvent[]> {
   try {
     const events = await loadRecentEvents(7, userId);
@@ -107,9 +110,6 @@ async function getConversationEvents(sessionId: string, userId?: string): Promis
   }
 }
 
-/**
- * Check if a session already has a saved summary event
- */
 async function hasExistingSummary(sessionId: string, userId?: string): Promise<boolean> {
   try {
     const events = await loadRecentEvents(7, userId);
@@ -124,9 +124,6 @@ async function hasExistingSummary(sessionId: string, userId?: string): Promise<b
   }
 }
 
-/**
- * Get all unsummarized conversation sessions
- */
 async function getUnsummarizedSessions(userId?: string): Promise<string[]> {
   const sessionIds = new Set<string>();
   const summarizedSessions = new Set<string>();
@@ -151,29 +148,30 @@ async function getUnsummarizedSessions(userId?: string): Promise<string[]> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// Core Summary Logic
+// ─────────────────────────────────────────────────────────────
+
 /**
  * Generate a summary of a conversation using LLM
  */
-async function generateSummary(events: ConversationEvent[]): Promise<ConversationSummary> {
+export async function generateSummary(events: ConversationEvent[]): Promise<ConversationSummary> {
   if (events.length === 0) {
     throw new Error('No events to summarize');
   }
 
-  // Extract metadata
   const sessionId = events[0].metadata?.conversationId || events[0].metadata?.sessionId || 'unknown';
   const startTime = events[0].timestamp;
   const endTime = events[events.length - 1].timestamp;
   const messageCount = events.filter(e => e.type === 'conversation').length;
   const mode = events[0].metadata?.cognitiveMode || 'unknown';
 
-  // Extract tools used
   const toolsUsed = [...new Set(
     events
       .filter(e => e.type === 'tool_invocation' && e.metadata?.toolName)
       .map(e => e.metadata!.toolName!)
   )];
 
-  // Build conversation transcript for LLM
   const transcript = events
     .filter(e => e.type === 'conversation' || e.type === 'inner_dialogue')
     .map(e => {
@@ -182,16 +180,13 @@ async function generateSummary(events: ConversationEvent[]): Promise<Conversatio
     })
     .join('\n\n');
 
-  // Limit transcript length (max ~4000 chars for summary)
   const maxLength = 4000;
   const truncatedTranscript = transcript.length > maxLength
     ? transcript.substring(0, maxLength) + '\n\n[...conversation continues...]'
     : transcript;
 
-  // Persona context
   const persona = await loadPersonaCore();
 
-  // Generate summary using LLM
   const messages: RouterMessage[] = [
     {
       role: 'system',
@@ -234,7 +229,7 @@ Respond in JSON format:
       role: 'persona',
       messages,
       options: {
-        temperature: 0.3, // Lower temperature for consistent summaries
+        temperature: 0.3,
         response_format: { type: 'json_object' }
       }
     });
@@ -256,7 +251,6 @@ Respond in JSON format:
   } catch (error) {
     console.error('[summarizer] LLM generation failed:', error);
 
-    // Fallback summary
     return {
       sessionId,
       startTime,
@@ -272,21 +266,16 @@ Respond in JSON format:
   }
 }
 
-/**
- * Save conversation summary as episodic event
- */
 async function saveSummary(summary: ConversationSummary): Promise<string> {
   const ctx = getUserContext();
   const cognitiveConfig = loadCognitiveMode();
   const cognitiveMode = cognitiveConfig.currentMode;
 
-  // Check if we can write memory
   if (!ctx || !canWriteMemory(cognitiveMode)) {
     console.warn('[summarizer] Cannot write summary in current mode:', cognitiveMode);
     return '';
   }
 
-  // Format summary content
   const content = `Conversation Summary: ${summary.summary}`;
 
   const filepath = captureEvent(content, {
@@ -381,32 +370,28 @@ async function updateConversationBufferSummary(
 }
 
 /**
- * Main summarization function
+ * Summarize a specific session
  */
-async function summarizeSession(
+export async function summarizeSession(
   sessionId: string,
-  options: { bufferMode?: 'conversation' | 'inner'; username?: string; profilePaths?: any } = {}
+  options: { bufferMode?: 'conversation' | 'inner'; username?: string } = {}
 ): Promise<ConversationSummary | null> {
-  // Support explicit username (new pattern) or fall back to getUserContext (legacy CLI usage)
   const ctx = options.username ? undefined : getUserContext();
   const userId = ctx?.userId;
   const username = options.username || ctx?.username || 'anonymous';
 
   console.log(`[summarizer] Analyzing session: ${sessionId}`);
 
-  // C3: Skip if currently being summarized (backpressure)
   if (await isSummarizing(username, sessionId)) {
-    console.log(`[summarizer] Session already being summarized (concurrent call detected): ${sessionId}`);
+    console.log(`[summarizer] Session already being summarized: ${sessionId}`);
     return null;
   }
 
-  // Skip if summary already exists
   if (await hasExistingSummary(sessionId, userId)) {
     console.log(`[summarizer] Session already summarized: ${sessionId}`);
     return null;
   }
 
-  // Get all events for this session
   const events = await getConversationEvents(sessionId, userId);
 
   if (events.length === 0) {
@@ -417,29 +402,22 @@ async function summarizeSession(
   console.log(`[summarizer] Found ${events.length} events in session`);
 
   try {
-    // C2: Mark as summarizing BEFORE LLM call
     await markSummarizing(username, sessionId);
 
-    // Generate summary (LLM call happens here)
     const summary = await generateSummary(events);
-
-    // Save summary (mode-aware)
     const filepath = await saveSummary(summary);
 
-    // C2: Mark as completed after successful save
     await markSummaryCompleted(username, sessionId);
-
     await updateConversationBufferSummary(summary, options.bufferMode || 'conversation');
 
     if (filepath) {
       console.log(`[summarizer] Summary saved: ${filepath}`);
     } else {
-      console.log(`[summarizer] Summary generated but not saved (read-only mode or no user context)`);
+      console.log(`[summarizer] Summary generated but not saved (read-only mode)`);
     }
 
     return summary;
   } catch (error) {
-    // Clear marker on error
     await clearSummaryMarker(username, sessionId);
     throw error;
   }
@@ -448,7 +426,7 @@ async function summarizeSession(
 /**
  * Auto-summarize all unsummarized sessions
  */
-async function autoSummarize(): Promise<void> {
+export async function autoSummarize(): Promise<{ summarized: number; errors: string[] }> {
   const ctx = getUserContext();
   const userId = ctx?.userId;
 
@@ -458,80 +436,86 @@ async function autoSummarize(): Promise<void> {
 
   if (sessions.length === 0) {
     console.log('[summarizer] No unsummarized sessions found');
-    return;
+    return { summarized: 0, errors: [] };
   }
 
   console.log(`[summarizer] Found ${sessions.length} unsummarized sessions`);
 
+  let summarized = 0;
+  const errors: string[] = [];
+
   for (const sessionId of sessions) {
     try {
       await summarizeSession(sessionId);
-      // Small delay between summaries to avoid rate limiting
+      summarized++;
       await new Promise(resolve => setTimeout(resolve, 1000));
     } catch (error) {
       console.error(`[summarizer] Failed to summarize session ${sessionId}:`, error);
+      errors.push(`${sessionId}: ${(error as Error).message}`);
     }
   }
 
   console.log('[summarizer] Auto-summarization complete');
+  return { summarized, errors };
 }
 
+// ─────────────────────────────────────────────────────────────
+// Agent Runtime Entry Point
+// ─────────────────────────────────────────────────────────────
+
 /**
- * CLI entry point
+ * Agent runtime entry point for mobile/runtime execution
  */
-async function main() {
-  initGlobalLogger();
+export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
+  const startTime = Date.now();
+  const args = input.args || [];
+  const opts = input.options || {};
 
-  const args = process.argv.slice(2);
   const sessionArg = args.find(a => a.startsWith('--session='));
-  const autoMode = args.includes('--auto');
-  const userArg = args.find(a => a.startsWith('--user='));
-
-  // Multi-user support
-  let targetUserId: string | undefined;
-  if (userArg) {
-    targetUserId = userArg.split('=')[1];
-  }
-
-  // If no user specified, run for all users
-  const users = await listUsers();
-  const userIds = targetUserId ? [targetUserId] : users.map(u => u.userId);
-
-  if (userIds.length === 0) {
-    console.log('[summarizer] No users found');
-    return;
-  }
-
-  // Single-instance lock
-  let lock: LockHandle;
-  try {
-    lock = acquireLock('summarizer');
-    console.log('[summarizer] Lock acquired');
-  } catch (error) {
-    console.error('[summarizer] Another instance is already running');
-    process.exit(1);
-  }
+  const sessionId = sessionArg?.split('=')[1] || opts.sessionId as string;
+  const autoMode = args.includes('--auto') || opts.auto === true;
+  const username = args.find(a => a.startsWith('--user='))?.split('=')[1] || opts.username as string;
 
   try {
-    for (const userId of userIds) {
-      console.log(`[summarizer] Processing user: ${userId}`);
+    if (sessionId) {
+      const summary = await withUserContext(
+        { userId: username || ctx.userId, username: username || ctx.userId, role: 'owner' },
+        async () => summarizeSession(sessionId, { username })
+      );
 
-      await withUserContext(userId, async () => {
-        if (sessionArg) {
-          // Summarize specific session
-          const sessionId = sessionArg.split('=')[1];
-          await summarizeSession(sessionId);
-        } else if (autoMode) {
-          // Auto-summarize all unsummarized sessions
-          await autoSummarize();
-        } else {
-          console.error('[summarizer] Usage: tsx brain/agents/summarizer.ts --session=<id> OR --auto');
-          console.error('[summarizer] Optional: --user=<userId>');
-        }
-      });
+      return {
+        success: !!summary,
+        data: summary,
+        durationMs: Date.now() - startTime,
+      };
+    } else if (autoMode) {
+      const users = getLoggedInUsers();
+      let totalSummarized = 0;
+      const allErrors: string[] = [];
+
+      for (const user of users) {
+        const result = await withUserContext(
+          { userId: user.userId, username: user.username, role: user.role },
+          async () => autoSummarize()
+        );
+        totalSummarized += result.summarized;
+        allErrors.push(...result.errors);
+      }
+
+      return {
+        success: allErrors.length === 0,
+        data: { summarized: totalSummarized, errors: allErrors },
+        errors: allErrors.length > 0 ? allErrors : undefined,
+        durationMs: Date.now() - startTime,
+      };
+    } else {
+      return {
+        success: false,
+        error: 'Usage: --session=<id> OR --auto',
+        durationMs: Date.now() - startTime,
+      };
     }
   } catch (error) {
-    console.error('[summarizer] Error:', error);
     audit({
       level: 'error',
       category: 'system',
@@ -539,16 +523,11 @@ async function main() {
       actor: 'summarizer',
       details: { error: (error as Error).message }
     });
-  } finally {
-    lock.release();
-    console.log('[summarizer] Lock released');
+
+    return {
+      success: false,
+      error: (error as Error).message,
+      durationMs: Date.now() - startTime,
+    };
   }
-}
-
-// Export for testing/programmatic use
-export { summarizeSession, autoSummarize, getConversationEvents, generateSummary };
-
-// Run if called directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main();
 }

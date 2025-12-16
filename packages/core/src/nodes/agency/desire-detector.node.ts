@@ -137,6 +137,7 @@ Analyze whether this input contains a desire that should become an autonomous go
     const response = await callLLM({
       role: 'orchestrator',
       messages,
+      userId: username,
       options: {
         temperature: 0.2,
         responseFormat: 'json',

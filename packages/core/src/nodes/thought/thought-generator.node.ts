@@ -10,6 +10,7 @@ import { audit } from '../../audit.js';
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   const input0 = inputs[0] || {};
+  const username = context.userId || context.username;
 
   // Get memory context - could be from scratchpad (loop) or direct seed
   const memoryContext = input0?.seedMemory || input0?.text || inputs[1]?.text ||
@@ -58,6 +59,7 @@ KEYWORDS: [comma-separated keywords]`;
     const response = await callLLM({
       role: 'persona',
       messages,
+      userId: username,
       cognitiveMode: context.cognitiveMode,
       options: {
         maxTokens: 512,

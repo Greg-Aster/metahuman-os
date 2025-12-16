@@ -37,6 +37,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const memories: (EpisodicMemory & { path: string })[] = memoriesInput?.memories || [];
   const personaSummary = inputs[1] as string;
   const temperature = properties?.temperature || 0.3;
+  const username = context.userId || context.username;
 
   if (!memories || memories.length === 0) {
     return {
@@ -83,6 +84,7 @@ Respond with JSON:
       const response = await callLLM({
         role: 'curator',
         messages,
+        userId: username,
         cognitiveMode: context.cognitiveMode || 'dual',
         options: { temperature },
         keepAlive: 0, // Unload model immediately - background agent shouldn't hog VRAM

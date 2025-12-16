@@ -46,10 +46,20 @@ const TSX_PATH = path.join(systemPaths.root, 'node_modules', '.bin', 'tsx');
  */
 async function runAgent(agentName: string, args: string[]): Promise<number> {
   return new Promise((resolve, reject) => {
-    const agentPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
+    // Check multiple paths after agent refactor:
+    // 1. brain/agents/{name}/cli.ts (new directory structure)
+    // 2. brain/training/{name}.ts (training scripts)
+    // 3. brain/agents/{name}.ts (legacy flat structure)
+    const possiblePaths = [
+      path.join(systemPaths.brain, 'agents', agentName, 'cli.ts'),
+      path.join(systemPaths.brain, 'training', `${agentName}.ts`),
+      path.join(systemPaths.brain, 'agents', `${agentName}.ts`),
+    ];
 
-    if (!fs.existsSync(agentPath)) {
+    const agentPath = possiblePaths.find(p => fs.existsSync(p));
+    if (!agentPath) {
       console.error(`[fine-tune-cycle] Agent not found: ${agentName}`);
+      console.error(`[fine-tune-cycle] Checked paths: ${possiblePaths.join(', ')}`);
       return resolve(1);
     }
 

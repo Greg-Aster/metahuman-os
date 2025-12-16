@@ -1,261 +1,242 @@
-import { ollama } from './ollama.js'
-import fs from 'node:fs'
-import path from 'node:path'
-import { systemPaths } from './path-builder.js'
-import { embedWithLocalService, isLocalModelServiceRunning } from './providers/local-models.js'
+/**
+ * Embeddings Module
+ *
+ * Unified embedding system routed through the Model Router.
+ * Uses llama.cpp via local-model-service as the default backend.
+ *
+ * Architecture:
+ * - Model Router resolves 'embedder' role from user profile's models.json
+ * - Default provider is 'local-models' (llama.cpp on CPU)
+ * - Can run in parallel with GPU backends (vLLM, Ollama)
+ * - Works on both desktop and mobile (React Native)
+ *
+ * Configuration comes from user profiles:
+ * - profiles/{username}/etc/models.json → embedder model config
+ * - llm-backend.json → localModels.endpoint for service location
+ *
+ * NOTE: This module does NOT use global etc/embeddings.json.
+ * All configuration must come from user profile or be passed explicitly.
+ */
 
-export type EmbeddingProvider = 'ollama' | 'mock' | 'local-models'
+import { embedWithLocalService, isLocalModelServiceRunning, loadLocalModel } from './providers/local-models.js'
+import { callEmbeddings, isEmbeddingServiceAvailable as checkEmbeddingAvailable } from './model-router.js'
+import { getUserContext } from './context.js'
+import { loadBackendConfig } from './llm-backend.js'
+import { getLoggedInUsers } from './sessions.js'
 
-export interface EmbeddingConfig {
-  enabled: boolean
-  model: string
-  provider: EmbeddingProvider
-  preloadAtStartup: boolean
-  description?: string
-  /** Force CPU-only inference via num_gpu=0 (leaves GPU free for vLLM) */
-  cpuOnly?: boolean
-  /** Local model service configuration */
-  localModels?: {
-    endpoint: string
-    model?: string
-  }
-}
-
-const CONFIG_PATH = path.join(systemPaths.etc, 'embeddings.json')
-
-let configCache: EmbeddingConfig | null = null
+export type EmbeddingProvider = 'local-models'
 
 /**
- * Load embedding configuration from etc/embeddings.json
+ * Embedding configuration type (for API compatibility)
+ */
+export interface EmbeddingConfig {
+  enabled: boolean;
+  model: string;
+  provider: EmbeddingProvider;
+  preloadAtStartup: boolean;
+  cpuOnly: boolean;
+}
+
+/**
+ * Load embedding configuration from llm-backend.json
+ * Provides compatibility with embeddings-control API
  */
 export function loadEmbeddingConfig(): EmbeddingConfig {
-  if (configCache) return configCache
+  const backendConfig = loadBackendConfig();
+  const localModels = backendConfig.localModels as Record<string, unknown> | undefined;
 
-  if (!fs.existsSync(CONFIG_PATH)) {
-    // Default config if file doesn't exist
-    const defaultConfig: EmbeddingConfig = {
-      enabled: true,
-      model: 'nomic-embed-text',
-      provider: 'ollama',
-      preloadAtStartup: true,
-      cpuOnly: true, // Default to CPU to avoid GPU conflicts with vLLM
-    }
-    fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true })
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(defaultConfig, null, 2))
-    configCache = defaultConfig
-    return defaultConfig
-  }
-
-  const raw = fs.readFileSync(CONFIG_PATH, 'utf-8')
-  configCache = JSON.parse(raw) as EmbeddingConfig
-  return configCache
+  return {
+    enabled: (localModels?.enabled as boolean) ?? true,
+    model: DEFAULTS.model,
+    provider: 'local-models',
+    preloadAtStartup: (localModels?.preloadEmbeddings as boolean) ?? true,
+    cpuOnly: (localModels?.cpuOnly as boolean) ?? true,
+  };
 }
 
 /**
- * Save embedding configuration
+ * Save embedding configuration (stub - config comes from llm-backend.json)
+ * This is a no-op since config is managed via llm-backend
  */
-export function saveEmbeddingConfig(config: EmbeddingConfig): void {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2))
-  configCache = config
+export function saveEmbeddingConfig(_config: Partial<EmbeddingConfig>): void {
+  console.log('[embeddings] saveEmbeddingConfig: Config is managed via llm-backend.json');
+  // Config is managed via llm-backend.json, not a separate embeddings.json
+  // This function exists for API compatibility
+}
+
+/**
+ * Error thrown when embedding service is unavailable
+ */
+export class EmbeddingServiceError extends Error {
+  constructor(message: string, public readonly cause?: Error) {
+    super(message);
+    this.name = 'EmbeddingServiceError';
+  }
+}
+
+/**
+ * Default embedding settings (used when no user context and no explicit options)
+ */
+const DEFAULTS = {
+  model: 'qwen3-embedding-0.6b',
+  endpoint: 'http://127.0.0.1:4324',
+  maxTextLength: 32000,  // qwen3-embedding supports 32K context
+} as const;
+
+/**
+ * Check if embedding service is available
+ * Re-exported from model-router for convenience
+ */
+export async function isEmbeddingServiceAvailable(userId?: string): Promise<boolean> {
+  return checkEmbeddingAvailable(userId);
 }
 
 /**
  * Preload the embedding model to keep it in memory
+ *
+ * @param userId - Optional user ID to get model config from profile
  */
-export async function preloadEmbeddingModel(): Promise<void> {
-  const config = loadEmbeddingConfig()
+export async function preloadEmbeddingModel(_userId?: string): Promise<void> {
+  const backendConfig = loadBackendConfig();
+  const endpoint = backendConfig.localModels?.endpoint || DEFAULTS.endpoint;
 
-  if (!config.enabled || !config.preloadAtStartup) {
-    console.log('[embeddings] Preload disabled in config')
-    return
-  }
-
-  if (config.provider !== 'ollama' && config.provider !== 'local-models') {
-    console.log('[embeddings] Preload only supported for Ollama and local-models providers')
-    return
-  }
-
-  // Local model service preload
-  if (config.provider === 'local-models') {
-    const endpoint = config.localModels?.endpoint || 'http://127.0.0.1:4324'
-    const model = config.localModels?.model || config.model
-
-    try {
-      const isRunning = await isLocalModelServiceRunning(endpoint)
-      if (!isRunning) {
-        console.log('[embeddings] Local model service not running, skipping preload')
-        return
-      }
-
-      console.log(`[embeddings] Preloading local model "${model}"...`)
-      // Trigger model load by making a test embedding request
-      await embedWithLocalService('warmup', { model, endpoint })
-      console.log(`[embeddings] ✓ Local model "${model}" preloaded and ready`)
-    } catch (error) {
-      console.error('[embeddings] Failed to preload local model:', error)
-    }
-    return
-  }
+  // TODO: If _userId provided, could look up their profile model config
+  // For now use default since preload is typically called at startup
+  const model = DEFAULTS.model;
 
   try {
-    const cpuOnly = config.cpuOnly ?? false
-    const device = cpuOnly ? 'CPU' : 'GPU'
-    console.log(`[embeddings] Preloading model "${config.model}" on ${device}...`)
-    await ensureEmbeddingModelAvailable(config.model)
+    const isRunning = await isLocalModelServiceRunning(endpoint);
+    if (!isRunning) {
+      console.log('[embeddings] Local model service not running at', endpoint);
+      console.log('[embeddings] Start it with: ./bin/start-local-models');
+      return;
+    }
 
-    // Run a dummy embedding to load the model into memory
-    await ollama.embeddings(config.model, 'warmup', cpuOnly ? { num_gpu: 0 } : undefined)
-    console.log(`[embeddings] ✓ Model "${config.model}" preloaded on ${device} and ready`)
+    console.log(`[embeddings] Preloading model "${model}" via llama.cpp...`);
+
+    // Request model load
+    await loadLocalModel('embeddings', model, endpoint);
+
+    // Warm up with a test embedding
+    await embedWithLocalService('warmup', { model, endpoint });
+    console.log(`[embeddings] ✓ Model "${model}" preloaded and ready`);
   } catch (error) {
-    console.error(`[embeddings] Failed to preload model:`, error)
+    console.error('[embeddings] Failed to preload model:', error);
   }
-}
-
-export async function embedText(
-  text: string,
-  opts: { provider?: EmbeddingProvider; model?: string; maxRetries?: number } = {}
-): Promise<number[]> {
-  const config = loadEmbeddingConfig()
-
-  // If embeddings are disabled, use mock provider
-  if (!config.enabled) {
-    opts.provider = 'mock'
-  }
-
-  const provider = opts.provider || config.provider
-
-  // Local model service provider (Transformers.js)
-  if (provider === 'local-models') {
-    const model = opts.model || config.localModels?.model || config.model
-    const endpoint = config.localModels?.endpoint || 'http://127.0.0.1:4324'
-
-    try {
-      // Check if service is running
-      const isRunning = await isLocalModelServiceRunning(endpoint)
-      if (!isRunning) {
-        console.warn('[embeddings] Local model service not running, falling back to mock')
-        // Fall through to mock provider
-      } else {
-        return await embedWithLocalService(text, { model, endpoint })
-      }
-    } catch (error) {
-      console.error('[embeddings] Local model service error:', error)
-      // Fall through to mock provider
-    }
-  }
-
-  if (provider === 'ollama') {
-    const model = opts.model || config.model
-    const originalText = typeof text === 'string' ? text : JSON.stringify(text)
-    const maxRetries = opts.maxRetries ?? 3
-
-    // Conservative truncation limits to minimize retry overhead
-    // nomic-embed-text has 8192 token limit
-    // Estimate: 1 token ≈ 2 characters (conservative for mixed content with code/punctuation)
-    const truncationLimits = [
-      { chars: 12000, label: '12k' },  // ~6k tokens - conservative first try
-      { chars: 6000, label: '6k' },    // ~3k tokens - safe fallback
-      { chars: 3000, label: '3k' },    // ~1.5k tokens - minimal
-    ]
-
-    await ensureEmbeddingModelAvailable(model)
-
-    // Try with progressive truncation
-    for (let attempt = 0; attempt < Math.min(maxRetries, truncationLimits.length); attempt++) {
-      const limit = truncationLimits[attempt]
-      let prompt = originalText
-
-      if (originalText.length > limit.chars) {
-        console.warn(`[embeddings] Text too long (${originalText.length} chars), truncating to ${limit.label}`);
-        // Smart truncation: keep beginning (more important context) + indicator
-        prompt = originalText.substring(0, limit.chars) + '... [truncated]';
-      }
-
-      try {
-        // Pass cpuOnly option from config (num_gpu: 0 forces CPU inference)
-        const cpuOnly = config.cpuOnly ?? false
-        const res = await ollama.embeddings(model, prompt, cpuOnly ? { num_gpu: 0 } : undefined)
-
-        // Log if we had to truncate
-        if (attempt > 0) {
-          console.warn(`[embeddings] ✓ Succeeded with ${limit.label} truncation (attempt ${attempt + 1})`);
-        }
-
-        return res.embedding
-      } catch (error: any) {
-        const isContextError = error?.message?.includes('context length') ||
-                               error?.message?.includes('input length exceeds');
-
-        if (isContextError && attempt < maxRetries - 1) {
-          console.warn(`[embeddings] Context overflow at ${limit.label}, retrying with smaller limit...`);
-          continue; // Try next truncation level
-        }
-
-        // Not a context error, or out of retries
-        if (attempt === truncationLimits.length - 1 && isContextError) {
-          // Exhausted all truncation levels - throw special error
-          const exhaustedError = new Error(
-            `Failed to generate embedding: text exceeds context limit even at minimum truncation (${truncationLimits[truncationLimits.length - 1].label})`
-          );
-          (exhaustedError as any).code = 'TRUNCATION_EXHAUSTED';
-          throw exhaustedError;
-        }
-        throw error;
-      }
-    }
-
-    // Should never reach here due to throw above, but TypeScript needs it
-    throw new Error('Failed to generate embedding after all retry attempts');
-  }
-
-  // Mock embedding (hash trick) for environments without Ollama
-  const dim = 256
-  const vec = new Array(dim).fill(0)
-  for (let i = 0; i < text.length; i++) {
-    const ch = text.charCodeAt(i)
-    const idx = (ch + i) % dim
-    vec[idx] += 1
-  }
-  const norm = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1
-  return vec.map(v => v / norm)
 }
 
 /**
- * Ensure the requested embedding model is available locally.
- * If missing, automatically pull it once, then mark it verified.
+ * Generate embedding vector for text
+ *
+ * Routes through the Model Router when user context is available.
+ * Falls back to direct local-model-service calls for system operations.
+ *
+ * @param text - Text to generate embedding for
+ * @param opts - Options including userId for profile-based model resolution
+ * @throws EmbeddingServiceError if embedding service is unavailable
  */
-const verifiedEmbeddingModels = new Set<string>()
+export async function embedText(
+  text: string,
+  opts: { model?: string; userId?: string } = {}
+): Promise<number[]> {
+  // Ensure text is a string
+  const originalText = typeof text === 'string' ? text : JSON.stringify(text);
 
-async function ensureEmbeddingModelAvailable(model: string) {
-  if (verifiedEmbeddingModels.has(model)) return
-
-  // Check installed models (handle both "model:tag" and "model" formats)
-  const models = await ollama.listModels().catch(() => [])
-  const modelBase = model.split(':')[0] // Strip tag if present
-  const found = models.some(m => {
-    const mBase = (m.model || m.name || '').split(':')[0]
-    return mBase === modelBase
-  })
-
-  if (!found) {
-    console.info(`[embeddings] Pulling missing embedding model "${model}" from Ollama...`)
-    await ollama.pullModel(model)
-    console.info(`[embeddings] ✓ Model "${model}" installed`)
+  // Truncate if too long
+  const maxTextLength = DEFAULTS.maxTextLength;
+  let truncatedText = originalText;
+  if (originalText.length > maxTextLength) {
+    console.warn(`[embeddings] Text too long (${originalText.length} chars), truncating to ${maxTextLength}`);
+    truncatedText = originalText.substring(0, maxTextLength) + '... [truncated]';
   }
 
-  verifiedEmbeddingModels.add(model)
+  // Try to get user context for profile-based model resolution
+  const ctx = getUserContext();
+  let username = ctx?.username || opts.userId;
+
+  // If no user context, try to get from logged-in users
+  if (!username) {
+    const loggedInUsers = getLoggedInUsers();
+    if (loggedInUsers.length > 0) {
+      username = loggedInUsers[0].username;
+    }
+  }
+
+  // Route through Model Router if we have user context
+  if (username) {
+    try {
+      const response = await callEmbeddings({
+        text: truncatedText,
+        userId: username,
+      });
+      return response.embeddings;
+    } catch (error) {
+      console.error('[embeddings] Model router error:', error);
+      // Fall through to direct service call as last resort
+    }
+  }
+
+  // Direct service call (no user context or router failed)
+  // This is a fallback for system operations without user context
+  const model = opts.model || DEFAULTS.model;
+  const backendConfig = loadBackendConfig();
+  const endpoint = backendConfig.localModels?.endpoint || DEFAULTS.endpoint;
+
+  try {
+    const isRunning = await isLocalModelServiceRunning(endpoint);
+    if (!isRunning) {
+      throw new EmbeddingServiceError(
+        `Embedding service not running at ${endpoint}. Start with: ./bin/start-local-models`,
+      );
+    }
+
+    return await embedWithLocalService(truncatedText, { model, endpoint });
+  } catch (error) {
+    if (error instanceof EmbeddingServiceError) {
+      throw error;
+    }
+    throw new EmbeddingServiceError(
+      `Embedding service error: ${(error as Error).message}. Ensure local-model-service is running.`,
+      error as Error
+    );
+  }
 }
 
+/**
+ * Calculate cosine similarity between two embedding vectors
+ */
 export function cosineSimilarity(a: number[], b: number[]): number {
-  const n = Math.min(a.length, b.length)
-  let dot = 0
-  let na = 0
-  let nb = 0
+  const n = Math.min(a.length, b.length);
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+
   for (let i = 0; i < n; i++) {
-    dot += a[i] * b[i]
-    na += a[i] * a[i]
-    nb += b[i] * b[i]
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
   }
-  const denom = Math.sqrt(na) * Math.sqrt(nb) || 1
-  return dot / denom
+
+  const denom = Math.sqrt(na) * Math.sqrt(nb) || 1;
+  return dot / denom;
+}
+
+/**
+ * Get embedding dimensions for a model
+ */
+export function getEmbeddingDimensions(model?: string): number {
+  const modelName = model || DEFAULTS.model;
+
+  // Known dimensions by model (local-models uses hyphen format)
+  const dimensions: Record<string, number> = {
+    'qwen3-embedding-0.6b': 1024,   // Qwen3 Embedding 0.6B - MTEB #1 per param
+    'qwen3-embedding-4b': 1024,     // Qwen3 Embedding 4B
+    'qwen3-embedding-8b': 1024,     // Qwen3 Embedding 8B - MTEB #1 overall
+    'nomic-embed-text-v1.5': 768,
+    'nomic-embed-text-v2-moe': 768,
+    'mxbai-embed-large-v1': 1024,
+    'all-minilm-l6-v2': 384,
+  };
+
+  return dimensions[modelName] || 1024;
 }

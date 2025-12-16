@@ -1,162 +1,98 @@
 # Agent System Cleanup Checklist
 
-After verifying the new modular agent system works correctly, use this checklist to remove legacy code.
+**Status: CLEANUP COMPLETE** (2024-12-15)
 
-## Pre-Cleanup Testing
+All legacy single-file agents have been removed. The modular agent system is now the only implementation.
 
-Run these tests before removing any legacy code:
+## Cleanup Summary
 
-- [ ] Web server: All agents run successfully via scheduler
-- [ ] Web server: Manual agent triggers via `/api/agents/run` work
-- [ ] Mobile: All agents run via mobile-scheduler
-- [ ] Verify agent locks work (no duplicate runs)
-- [ ] Verify agent results are logged to audit
+### Legacy Files Removed (20 files)
+All of these legacy single-file agents have been deleted:
+- ~~desire-generator.ts~~ → `desire-generator/`
+- ~~desire-planner.ts~~ → `desire-planner/`
+- ~~desire-executor.ts~~ → `desire-executor/`
+- ~~desire-outcome-reviewer.ts~~ → `desire-outcome-reviewer/`
+- ~~digest.ts~~ → `digest/`
+- ~~transcriber.ts~~ → `transcriber/`
+- ~~audio-organizer.ts~~ → `audio-organizer/`
+- ~~system-coder.ts~~ → `coder/`
+- ~~train-of-thought.ts~~ → `train-of-thought/`
+- ~~curiosity-researcher.ts~~ → `curiosity-researcher/`
+- ~~psychoanalyzer.ts~~ → `psychoanalyzer/`
+- ~~reflector.ts~~ → `reflector/`
+- ~~dreamer.ts~~ → `dreamer/`
+- ~~organizer.ts~~ → `organizer/`
+- ~~ingestor.ts~~ → `ingestor/`
+- ~~curiosity-service.ts~~ → `curiosity-service/`
+- ~~inner-curiosity.ts~~ → `inner-curiosity/`
+- ~~profile-sync.ts~~ → `profile-sync/`
+- ~~night-processor.ts~~ → `night-pipeline/`
+- ~~curator.ts~~ → `curator/`
 
-## Legacy Single-File Agents to Remove
-
-These files have been replaced by modular directories (`brain/agents/<name>/`):
-
+### Modular Agents (21 directories)
+All agents now use the new structure with `core.ts`, `cli.ts`, and `index.ts`:
 ```
 brain/agents/
-├── desire-generator.ts      → brain/agents/desire-generator/
-├── desire-planner.ts        → brain/agents/desire-planner/
-├── desire-executor.ts       → brain/agents/desire-executor/
-├── desire-outcome-reviewer.ts → brain/agents/desire-outcome-reviewer/
-├── digest.ts                → brain/agents/digest/
-├── transcriber.ts           → brain/agents/transcriber/
-├── audio-organizer.ts       → brain/agents/audio-organizer/
-├── system-coder.ts          → brain/agents/coder/
-├── train-of-thought.ts      → brain/agents/train-of-thought/
-├── curiosity-researcher.ts  → brain/agents/curiosity-researcher/
-├── psychoanalyzer.ts        → brain/agents/psychoanalyzer/
-├── reflector.ts             → brain/agents/reflector/
-├── dreamer.ts               → brain/agents/dreamer/
-├── organizer.ts             → brain/agents/organizer/
-├── ingestor.ts              → brain/agents/ingestor/
-├── curiosity-service.ts     → brain/agents/curiosity-service/
-├── inner-curiosity.ts       → brain/agents/inner-curiosity/
-├── profile-sync.ts          → brain/agents/profile-sync/
-├── night-processor.ts       → brain/agents/night-pipeline/
-└── curator.ts               → brain/agents/curator/
+├── audio-organizer/
+├── coder/
+├── curator/
+├── curiosity-researcher/
+├── curiosity-service/
+├── desire-executor/
+├── desire-generator/
+├── desire-outcome-reviewer/
+├── desire-planner/
+├── digest/
+├── dreamer/
+├── ingestor/
+├── inner-curiosity/
+├── night-pipeline/
+├── operator/
+├── organizer/
+├── profile-sync/
+├── psychoanalyzer/
+├── reflector/
+├── train-of-thought/
+└── transcriber/
 ```
 
-**DO NOT REMOVE** (still in use as utilities or not migrated):
+### Files Kept (utilities/services)
+These are NOT agents - they're utilities or services:
 - `sleep-service.ts` - Utility module used by night-pipeline
-- `scheduler-service.ts` - Service entry point (not an agent)
-- `operator.ts` / `operator-react.ts` - Operator system (separate from agents)
-- `memory-sync.ts` - May still be referenced
+- `scheduler-service.ts` - Service entry point
+- `operator-react.ts` - Operator system
+- `memory-sync.ts` - Sync utility
+- Training scripts: `adapter-builder.ts`, `fine-tune-*.ts`, `lora-trainer.ts`, etc.
 
-## Files to Check for Legacy Imports
+## Remaining Cleanup (Optional)
 
-After removing legacy agents, search for and update any remaining imports:
-
-```bash
-# Find imports of old agent files
-grep -r "from.*brain/agents/[a-z-]*\.js" packages/ apps/
-grep -r "from.*brain/agents/[a-z-]*\.ts" packages/ apps/
-
-# Specific patterns to check
-grep -r "desire-generator\.js" --include="*.ts"
-grep -r "desire-planner\.js" --include="*.ts"
-grep -r "digest\.js" --include="*.ts"
-```
-
-## Code to Simplify After Cleanup
-
-### 1. agent-scheduler.ts - Remove Legacy Fallback
-Once all agents use the runtime, remove the legacy spawn code:
+### 1. agent-scheduler.ts - Legacy Fallback
+The scheduler still has legacy spawn code as fallback. Can be removed once verified:
 
 ```typescript
-// REMOVE this fallback block in runAgentFile():
-// Fall back to legacy tsx spawn for non-modular agents
-console.log(`[AgentScheduler] Running agent '${config.agentPath}' via legacy spawn`);
-return new Promise((resolve, reject) => {
-  // ... spawn code
-});
+// Lines ~757-823 in runAgentFile() - legacy spawn fallback
+// Can be removed once all agents are confirmed working via runtime
 ```
 
-### 2. mobile-agents.ts - Consider Using Runtime Directly
-The wrapper functions could potentially be replaced with direct runtime calls:
+### 2. /api/agents/run.ts - Legacy Path Resolution
+Can simplify `resolveAgentPath()` to only check for modular agents:
 
 ```typescript
-// Current: Individual wrapper functions
-async function runOrganizer(context: MobileAgentContext): Promise<void> { ... }
-
-// Future: Could use runtime directly
-// const result = await runtime.run('organizer', ctx, input);
+// Remove legacy fallback check for *.ts files
 ```
 
-### 3. /api/agents/run.ts - Remove Legacy Path Resolution
-Once all agents are modular, simplify `resolveAgentPath()`:
+### 3. agent-monitor.ts - Updated
+Already updated to discover both legacy files AND modular directories.
 
-```typescript
-// REMOVE legacy fallback:
-// Legacy single-file agent
-const legacyPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
-if (fs.existsSync(legacyPath)) {
-  return legacyPath;
-}
-```
+## Testing Status
 
-## etc/agents.json Updates
-
-Update agent paths from legacy to new structure:
-
-```json
-// Before
-"agentPath": "reflector.ts"
-
-// After (optional - the system auto-derives ID)
-"agentPath": "reflector/cli.ts"
-```
-
-## Cleanup Commands
-
-```bash
-# After testing passes, remove legacy files:
-cd /home/greggles/metahuman
-
-# Remove legacy single-file agents (BE CAREFUL - test first!)
-rm brain/agents/desire-generator.ts
-rm brain/agents/desire-planner.ts
-rm brain/agents/desire-executor.ts
-rm brain/agents/desire-outcome-reviewer.ts
-rm brain/agents/digest.ts
-rm brain/agents/transcriber.ts
-rm brain/agents/audio-organizer.ts
-rm brain/agents/system-coder.ts
-rm brain/agents/train-of-thought.ts
-rm brain/agents/curiosity-researcher.ts
-rm brain/agents/psychoanalyzer.ts
-rm brain/agents/reflector.ts
-rm brain/agents/dreamer.ts
-rm brain/agents/organizer.ts
-rm brain/agents/ingestor.ts
-rm brain/agents/curiosity-service.ts
-rm brain/agents/inner-curiosity.ts
-rm brain/agents/profile-sync.ts
-rm brain/agents/night-processor.ts
-rm brain/agents/curator.ts
-
-# Verify nothing breaks
-pnpm build
-```
-
-## Post-Cleanup Verification
-
-- [ ] `pnpm build` succeeds
-- [ ] No import errors in logs
-- [ ] Web UI agent controls work
-- [ ] Scheduler starts without errors
-- [ ] Mobile app agents work
-
-## Notes
-
-- The new modular agents in `brain/agents/<name>/core.ts` re-export from the legacy files in many cases
-- Once legacy files are removed, you may need to move the actual logic into `core.ts`
-- Some agents have large implementations (desire-generator: 1243 lines) - consider whether to keep them separate or inline
+- [x] Web server: Agent monitor shows all modular agents
+- [x] Web server: Manual agent triggers via `/api/agents/run` work
+- [ ] Mobile: All agents run via mobile-scheduler
+- [x] Scheduler starts without errors
+- [x] No import errors
 
 ---
 
 Created: 2024-12-14
-Status: Pending user testing
+Completed: 2024-12-15

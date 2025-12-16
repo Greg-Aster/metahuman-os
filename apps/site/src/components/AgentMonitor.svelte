@@ -60,12 +60,15 @@
 
   async function runAgent(agentName: string) {
     try {
-      const res = await apiFetch('/api/agent', {
+      const res = await apiFetch('/api/agents/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentName }),
+        body: JSON.stringify({ agent: agentName }),
       });
-      if (!res.ok) throw new Error('Failed to run agent');
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to run agent');
+      }
     } catch (err) {
       console.error('Error running agent:', err);
     }

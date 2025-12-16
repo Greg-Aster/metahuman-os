@@ -23,7 +23,7 @@ import {
   type RouterMessage,
   storageClient,
   audit,
-  listUsers,
+  getLoggedInUsers,
   withUserContext,
   loadCuriosityConfig,
   loadTrustLevel,
@@ -252,29 +252,20 @@ export async function processUserResearch(username: string): Promise<number> {
 }
 
 /**
- * Find the most recently active user (based on lastLogin)
+ * Find a logged-in user to process (returns first logged-in user or null)
  */
 export function getMostRecentlyActiveUser(): { userId: string; username: string; role: string } | null {
-  const users = listUsers();
+  const users = getLoggedInUsers();
   if (users.length === 0) return null;
 
-  // Filter users with lastLogin, sort by most recent
-  const usersWithLogin = users
-    .filter(u => u.lastLogin)
-    .sort((a, b) => new Date(b.lastLogin!).getTime() - new Date(a.lastLogin!).getTime());
-
-  if (usersWithLogin.length === 0) {
-    // If no users have logged in yet, use the owner
-    const owner = users.find(u => u.role === 'owner');
-    if (owner) {
-      return { userId: owner.id, username: owner.username, role: owner.role };
-    }
-    // Fallback to first user
-    return { userId: users[0].id, username: users[0].username, role: users[0].role };
+  // Prefer owner if logged in
+  const owner = users.find(u => u.role === 'owner');
+  if (owner) {
+    return owner;
   }
 
-  const mostRecent = usersWithLogin[0];
-  return { userId: mostRecent.id, username: mostRecent.username, role: mostRecent.role };
+  // Return first logged-in user
+  return users[0];
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -9,19 +9,19 @@
     "endpoint": "http://localhost:8000",
     "autoStart": false,
     "model": "Qwen/Qwen3-14B-AWQ",
-    "gpuMemoryUtilization": 0.75,
+    "gpuMemoryUtilization": 0.85,
     "maxModelLen": 4096,
     "tensorParallelSize": 1,
     "dtype": "auto",
     "quantization": "awq",
     "enforceEager": true,
     "autoUtilization": false,
-    "enableThinking": true
+    "enableThinking": false
   },
   "localModels": {
     "enabled": true,
     "endpoint": "http://127.0.0.1:4324",
-    "autoStart": false,
+    "autoStart": true,
     "downloadOnWifiOnly": true,
     "embeddings": {
       "model": "qwen3-embedding-0.6b",

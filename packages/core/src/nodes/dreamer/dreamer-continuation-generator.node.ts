@@ -63,6 +63,7 @@ Do not summarize; let one dream bleed into another. No length limits.`.trim();
       const response = await callLLM({
         role: 'persona',
         messages,
+        userId: username,
         options: { temperature },
       });
 

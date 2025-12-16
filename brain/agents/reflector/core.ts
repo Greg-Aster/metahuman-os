@@ -20,7 +20,7 @@ import {
   ROOT,
   audit,
   listActiveTasks,
-  listUsers,
+  getLoggedInUsers,
   withUserContext,
   executeGraph,
   validateCognitiveGraph,
@@ -462,14 +462,14 @@ export async function runCycle(options: ReflectorOptions = {}): Promise<Reflecto
   }
 
   try {
-    const users = listUsers();
-    console.log(`[reflector] Found ${users.length} users to process`);
+    const users = getLoggedInUsers();
+    console.log(`[reflector] Found ${users.length} logged-in users to process`);
     result.userCount = users.length;
 
     for (const user of users) {
       try {
         const success = await withUserContext(
-          { userId: user.id, username: user.username, role: user.role },
+          { userId: user.userId, username: user.username, role: user.role },
           async () => generateUserReflection(user.username, options)
         );
 

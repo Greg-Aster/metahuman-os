@@ -5,6 +5,7 @@
   // Wizard state machine
   type WizardStep = 1 | 2 | 3 | 4 | 5;
   type TrainingMethod = 'local-lora' | 'remote-lora' | 'fine-tune' | null;
+  type TrainingTarget = 'ollama' | 'vllm' | 'both';
 
   interface SystemCapabilities {
     hasLocalGPU: boolean;
@@ -50,10 +51,32 @@
     gradient_accumulation_steps: number;
     max_seq_length: number;
     quantization: string; // GGUF quantization level
+    skipGguf: boolean; // Skip GGUF conversion for vLLM-only training
   }
 
-  // Training config presets
-  const loraConfigPreset: TrainingConfig = {
+  // Base model options organized by target compatibility
+  interface BaseModelOption {
+    value: string;
+    label: string;
+    targets: TrainingTarget[];
+    description: string;
+  }
+
+  const baseModelOptions: BaseModelOption[] = [
+    // Ollama-compatible models (unsloth format, converts to GGUF)
+    { value: 'unsloth/Qwen3-14B', label: 'Qwen3-14B (Ollama)', targets: ['ollama'], description: 'Standard 14B model for Ollama GGUF' },
+    { value: 'unsloth/Qwen3-8B', label: 'Qwen3-8B (Ollama)', targets: ['ollama'], description: 'Faster 8B model for Ollama GGUF' },
+    { value: 'unsloth/Qwen3-Coder-30B-A3B-Instruct', label: 'Qwen3-Coder-30B (Ollama)', targets: ['ollama'], description: 'Large coder model for Ollama' },
+    // vLLM-compatible models (train on full precision, use with AWQ in vLLM)
+    // NOTE: Train on Qwen/Qwen3-14B, load with Qwen/Qwen3-14B-AWQ - LoRA is architecture-compatible
+    { value: 'Qwen/Qwen3-14B', label: 'Qwen3-14B (vLLM)', targets: ['vllm'], description: 'Train for vLLM (use with AWQ base)' },
+    { value: 'Qwen/Qwen3-8B', label: 'Qwen3-8B (vLLM)', targets: ['vllm'], description: 'Faster 8B for vLLM' },
+    // Models that work with both targets
+    { value: 'Qwen/Qwen2.5-14B-Instruct', label: 'Qwen2.5-14B-Instruct', targets: ['ollama', 'vllm', 'both'], description: 'Works with both Ollama and vLLM' },
+  ];
+
+  // Training config presets for Ollama (GGUF output)
+  const loraConfigPresetOllama: TrainingConfig = {
     base_model: 'unsloth/Qwen3-14B',
     num_train_epochs: 3,
     max_samples: 3000,
@@ -65,8 +88,29 @@
     per_device_train_batch_size: 1,
     gradient_accumulation_steps: 16,
     max_seq_length: 2048,
-    quantization: 'Q4_K_M' // Balanced quality/speed
+    quantization: 'Q4_K_M', // Balanced quality/speed
+    skipGguf: false
   };
+
+  // Training config presets for vLLM (safetensors output)
+  const loraConfigPresetVllm: TrainingConfig = {
+    base_model: 'Qwen/Qwen3-14B',
+    num_train_epochs: 3,
+    max_samples: 3000,
+    monthly_training: true,
+    days_recent: 30,
+    old_samples: 3000,
+    lora_rank: 8,
+    learning_rate: 0.0002, // 2e-4 (higher for LoRA)
+    per_device_train_batch_size: 1,
+    gradient_accumulation_steps: 16,
+    max_seq_length: 2048,
+    quantization: 'Q4_K_M', // Not used for vLLM
+    skipGguf: true // Skip GGUF conversion - vLLM uses safetensors
+  };
+
+  // Legacy presets for backwards compatibility
+  const loraConfigPreset = loraConfigPresetOllama;
 
   const fineTuneConfigPreset: TrainingConfig = {
     base_model: 'unsloth/Qwen3-30B-Instruct',
@@ -80,12 +124,14 @@
     per_device_train_batch_size: 4,
     gradient_accumulation_steps: 8,
     max_seq_length: 2048,
-    quantization: 'Q4_K_M' // Balanced quality/speed
+    quantization: 'Q4_K_M', // Balanced quality/speed
+    skipGguf: false
   };
 
   // State
   let currentStep: WizardStep = 1;
   let selectedMethod: TrainingMethod = null;
+  let trainingTarget: TrainingTarget = 'ollama'; // Default to Ollama for backward compatibility
   let systemCapabilities: SystemCapabilities = {
     hasLocalGPU: false,
     gpuModel: null,
@@ -164,15 +210,28 @@
     }
   })();
 
-  // Auto-switch config preset when method changes
+  // Auto-switch config preset when method or target changes
   $: if (selectedMethod) {
     if (selectedMethod === 'fine-tune') {
       trainingConfig = { ...fineTuneConfigPreset };
     } else {
       // Both local-lora and remote-lora use LoRA config
-      trainingConfig = { ...loraConfigPreset };
+      // Use vLLM preset for vLLM target, Ollama preset otherwise
+      if (trainingTarget === 'vllm') {
+        trainingConfig = { ...loraConfigPresetVllm };
+      } else {
+        trainingConfig = { ...loraConfigPresetOllama };
+      }
     }
   }
+
+  // Computed: filter base model options based on selected target
+  $: filteredBaseModels = baseModelOptions.filter(opt =>
+    opt.targets.includes(trainingTarget) || opt.targets.includes('both')
+  );
+
+  // Debug log for filtering
+  $: console.log('[TrainingWizard] trainingTarget:', trainingTarget, 'filteredModels:', filteredBaseModels.map(m => m.label));
 
   // Check if current method uses LoRA
   $: usesLoRA = selectedMethod === 'local-lora' || selectedMethod === 'remote-lora';
@@ -271,9 +330,7 @@
 
   function selectMethod(method: TrainingMethod) {
     selectedMethod = method;
-
-    // Auto-advance if method is selected
-    setTimeout(() => nextStep(), 300);
+    // User must click Continue to proceed - no auto-advance
   }
 
   // Load dataset stats
@@ -526,7 +583,11 @@
       // Build the launch request payload
       const payload: any = {
         method: selectedMethod,
-        trainingConfig: trainingConfig,
+        trainingTarget: trainingTarget,
+        trainingConfig: {
+          ...trainingConfig,
+          skipGguf: trainingTarget === 'vllm' // Skip GGUF for vLLM-only training
+        },
         advancedSettings: {
           enableS3Upload: enableS3Upload && hasS3Configured, // Only enable if S3 is configured
           enablePreprocessing: enablePreprocessing
@@ -660,8 +721,62 @@
       <!-- Step 1: Method Selection -->
       <div class="method-selection">
         <p class="step-description">
-          Select a training method based on your hardware and goals. The wizard will guide you through the rest.
+          Select your training target and method based on your hardware and goals.
         </p>
+
+        <!-- Training Target Selection (First) -->
+        <div class="target-selection">
+          <h4>Training Target</h4>
+          <p class="target-description">Choose where you'll use the trained model:</p>
+
+          <div class="target-cards">
+            <button
+              class="target-card"
+              class:selected={trainingTarget === 'ollama'}
+              on:click={() => trainingTarget = 'ollama'}
+            >
+              <div class="target-icon">🦙</div>
+              <div class="target-info">
+                <h5>Ollama</h5>
+                <span class="target-detail">GGUF format • Local inference</span>
+              </div>
+            </button>
+
+            <button
+              class="target-card"
+              class:selected={trainingTarget === 'vllm'}
+              on:click={() => trainingTarget = 'vllm'}
+            >
+              <div class="target-icon">⚡</div>
+              <div class="target-info">
+                <h5>vLLM</h5>
+                <span class="target-detail">Safetensors format • High throughput</span>
+              </div>
+            </button>
+
+            <button
+              class="target-card"
+              class:selected={trainingTarget === 'both'}
+              on:click={() => trainingTarget = 'both'}
+            >
+              <div class="target-icon">🔄</div>
+              <div class="target-info">
+                <h5>Both</h5>
+                <span class="target-detail">Safetensors + GGUF conversion</span>
+              </div>
+            </button>
+          </div>
+
+          {#if trainingTarget === 'vllm'}
+            <div class="target-note">
+              <span class="note-icon">ℹ️</span>
+              <span>vLLM training produces safetensors adapters. Make sure your vLLM server uses a compatible base model (e.g., Qwen/Qwen3-14B-AWQ).</span>
+            </div>
+          {/if}
+        </div>
+
+        <!-- Training Method Selection (Second) -->
+        <h4 class="method-header">Choose Training Method</h4>
 
         <div class="method-cards">
           <!-- Local LoRA Training -->
@@ -950,10 +1065,19 @@
           <div class="form-group">
             <label for="baseModel">Base Model</label>
             <select id="baseModel" bind:value={trainingConfig.base_model}>
-              <option value="unsloth/Qwen3-14B">Qwen3-14B (Recommended)</option>
-              <option value="unsloth/Qwen3-Coder-30B-A3B-Instruct">Qwen3-Coder-30B</option>
-              <option value="unsloth/Qwen3-8B">Qwen3-8B (Faster)</option>
+              {#each filteredBaseModels as model}
+                <option value={model.value}>{model.label}</option>
+              {/each}
             </select>
+            <small>
+              {#if trainingTarget === 'vllm'}
+                Models compatible with vLLM LoRA loading
+              {:else if trainingTarget === 'ollama'}
+                Models that convert to GGUF format for Ollama
+              {:else}
+                Models that work with both Ollama and vLLM
+              {/if}
+            </small>
           </div>
 
           <div class="form-group">
@@ -1042,18 +1166,29 @@
                 <small>Longer context = more VRAM required</small>
               </div>
 
-              <div class="form-group">
-                <label for="quantization">GGUF Quantization</label>
-                <select id="quantization" bind:value={trainingConfig.quantization}>
-                  <option value="Q4_K_M">Q4_K_M (Balanced - 8GB, Recommended)</option>
-                  <option value="Q4_K_S">Q4_K_S (Smallest - 7GB)</option>
-                  <option value="Q5_K_M">Q5_K_M (Higher Quality - 10GB)</option>
-                  <option value="Q5_K_S">Q5_K_S (Medium - 9GB)</option>
-                  <option value="Q6_K">Q6_K (Very High Quality - 11GB)</option>
-                  <option value="Q8_0">Q8_0 (Highest Quality - 14GB)</option>
-                </select>
-                <small>Higher quantization = better quality but larger file size</small>
-              </div>
+              {#if trainingTarget !== 'vllm'}
+                <div class="form-group">
+                  <label for="quantization">GGUF Quantization</label>
+                  <select id="quantization" bind:value={trainingConfig.quantization}>
+                    <option value="Q4_K_M">Q4_K_M (Balanced - 8GB, Recommended)</option>
+                    <option value="Q4_K_S">Q4_K_S (Smallest - 7GB)</option>
+                    <option value="Q5_K_M">Q5_K_M (Higher Quality - 10GB)</option>
+                    <option value="Q5_K_S">Q5_K_S (Medium - 9GB)</option>
+                    <option value="Q6_K">Q6_K (Very High Quality - 11GB)</option>
+                    <option value="Q8_0">Q8_0 (Highest Quality - 14GB)</option>
+                  </select>
+                  <small>Higher quantization = better quality but larger file size</small>
+                </div>
+              {:else}
+                <div class="form-group">
+                  <label>Output Format</label>
+                  <div class="info-box">
+                    <span class="info-icon">⚡</span>
+                    <span>vLLM target: Safetensors format (no GGUF conversion)</span>
+                  </div>
+                  <small>LoRA adapters will be saved in safetensors format for direct use with vLLM</small>
+                </div>
+              {/if}
 
               <!-- Pipeline Settings -->
               <div class="form-group toggle-group" style="grid-column: 1 / -1;">
@@ -1122,6 +1257,16 @@
                   {#if selectedMethod === 'local-lora'}Local LoRA Training
                   {:else if selectedMethod === 'remote-lora'}Remote LoRA Training
                   {:else}Full Fine-Tuning
+                  {/if}
+                </span>
+              </div>
+
+              <div class="summary-item">
+                <span class="summary-label">Target:</span>
+                <span class="summary-value">
+                  {#if trainingTarget === 'ollama'}🦙 Ollama (GGUF)
+                  {:else if trainingTarget === 'vllm'}⚡ vLLM (Safetensors)
+                  {:else}🔄 Both (GGUF + Safetensors)
                   {/if}
                 </span>
               </div>
@@ -2494,5 +2639,110 @@
     font-size: 0.8125rem;
     color: var(--text-secondary, #888);
     margin: 0 0 0.5rem 0;
+  }
+
+  /* Training Target Selection */
+  .target-selection {
+    margin-bottom: 2rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border-color, #333);
+  }
+
+  .target-selection h4 {
+    font-size: 1.125rem;
+    margin: 0 0 0.5rem 0;
+    text-align: center;
+  }
+
+  /* Method header (shown below target selection) */
+  .method-header {
+    font-size: 1.125rem;
+    margin: 0 0 1rem 0;
+    text-align: center;
+  }
+
+  .target-description {
+    font-size: 0.875rem;
+    color: var(--text-secondary, #888);
+    text-align: center;
+    margin-bottom: 1.5rem;
+  }
+
+  .target-cards {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .target-card {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem 1.5rem;
+    background: var(--bg-secondary, #1a1a1a);
+    border: 2px solid var(--border-color, #333);
+    border-radius: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 160px;
+  }
+
+  .target-card:hover {
+    border-color: var(--primary-color, #00a67e);
+  }
+
+  .target-card.selected {
+    border-color: var(--primary-color, #00a67e);
+    background: rgba(0, 166, 126, 0.1);
+  }
+
+  .target-icon {
+    font-size: 1.5rem;
+  }
+
+  .target-info h5 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--text-primary, #fff);
+  }
+
+  .target-detail {
+    font-size: 0.75rem;
+    color: var(--text-secondary, #888);
+  }
+
+  .target-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: rgba(33, 150, 243, 0.1);
+    border: 1px solid rgba(33, 150, 243, 0.3);
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--text-secondary, #888);
+  }
+
+  .note-icon {
+    flex-shrink: 0;
+  }
+
+  /* Info box for vLLM output format */
+  .info-box {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: rgba(0, 166, 126, 0.1);
+    border: 1px solid rgba(0, 166, 126, 0.3);
+    border-radius: 0.5rem;
+    color: var(--primary-color, #00a67e);
+    font-weight: 500;
+  }
+
+  .info-box .info-icon {
+    font-size: 1.25rem;
   }
 </style>

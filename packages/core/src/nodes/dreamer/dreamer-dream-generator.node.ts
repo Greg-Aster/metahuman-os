@@ -57,6 +57,7 @@ Start the dream directly, without any preamble. Let it be as long or short as it
     const response = await callLLM({
       role,
       messages,
+      userId: username,
       options: { temperature },
     });
 

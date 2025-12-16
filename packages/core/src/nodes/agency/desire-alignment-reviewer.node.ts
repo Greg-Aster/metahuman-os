@@ -26,12 +26,13 @@ Be thoughtful and honest. If there are concerns, raise them. If the plan aligns 
 
 Respond with valid JSON matching the schema.`;
 
-const execute: NodeExecutor = async (inputs, _context, properties) => {
+const execute: NodeExecutor = async (inputs, context, properties) => {
   // Inputs come via slot positions from graph links:
   // slot 0: {desire, found} from desire_loader
   // slot 2: formatted persona values string from persona_formatter
   const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | undefined;
   const slot2 = inputs[2] as string | { formatted?: string } | undefined;
+  const username = context.userId || context.username;
 
   // Extract desire and plan (plan is embedded in desire)
   const desire = slot0?.desire || (inputs.desire as Desire | undefined);
@@ -103,6 +104,7 @@ Respond with JSON:
     const response = await callLLM({
       role: 'persona',
       messages,
+      userId: username,
       options: {
         temperature,
         responseFormat: 'json',

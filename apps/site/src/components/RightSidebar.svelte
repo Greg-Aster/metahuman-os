@@ -286,7 +286,7 @@
       </div>
     {:else if activeTab === 'servers'}
       <div class="servers-container">
-        <ServerStatus />
+        <ServerStatus isVisible={activeTab === 'servers'} />
       </div>
     {/if}
   </div>

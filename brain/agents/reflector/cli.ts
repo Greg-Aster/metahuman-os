@@ -14,19 +14,11 @@
  *   --single-user       Process only the default user
  */
 
-import { initGlobalLogger, acquireLock, releaseLock, audit } from '@metahuman/core';
+import { initGlobalLogger, audit } from '@metahuman/core';
 import { runCycle, type ReflectorOptions } from './core.js';
-
-const LOCK_NAME = 'agent-reflector';
 
 async function main() {
   initGlobalLogger('reflector');
-
-  // Acquire lock
-  if (!acquireLock(LOCK_NAME)) {
-    console.log('[reflector] Another instance is already running. Exiting.');
-    process.exit(0);
-  }
 
   // Parse arguments
   const args = process.argv.slice(2);
@@ -52,7 +44,6 @@ async function main() {
       console.error('[reflector] Errors:', result.errors);
     }
 
-    releaseLock(LOCK_NAME);
     process.exit(result.success ? 0 : 1);
   } catch (error) {
     console.error('[reflector] Fatal error:', error);
@@ -60,12 +51,11 @@ async function main() {
     audit({
       category: 'system',
       level: 'error',
-      message: `Reflector CLI error: ${(error as Error).message}`,
+      event: `Reflector CLI error: ${(error as Error).message}`,
       actor: 'reflector',
-      metadata: { error: (error as Error).stack },
+      details: { error: (error as Error).stack },
     });
 
-    releaseLock(LOCK_NAME);
     process.exit(1);
   }
 }

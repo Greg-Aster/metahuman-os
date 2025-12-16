@@ -18,9 +18,7 @@
  */
 
 import {
-  acquireLock,
-  isLocked,
-  listUsers,
+  getLoggedInUsers,
   withUserContext,
   initGlobalLogger,
 } from '@metahuman/core';
@@ -54,19 +52,6 @@ async function main() {
     fullSync,
     skipConfig,
   };
-
-  // Single-instance guard
-  let lock;
-  try {
-    if (isLocked('agent-profile-sync')) {
-      console.log('[profile-sync] Another instance is already running. Exiting.');
-      return;
-    }
-    lock = acquireLock('agent-profile-sync');
-  } catch {
-    console.log('[profile-sync] Failed to acquire lock. Exiting.');
-    return;
-  }
 
   try {
     printHeader('PROFILE SYNC AGENT');
@@ -106,14 +91,14 @@ async function main() {
       totalCredentials = result.credentialsSynced ? 1 : 0;
       allErrors.push(...result.errors);
     } else {
-      // Sync all users
-      const users = listUsers();
-      console.log(`[profile-sync] Found ${users.length} users to sync`);
+      // Sync all logged-in users
+      const users = getLoggedInUsers();
+      console.log(`[profile-sync] Found ${users.length} logged-in users to sync`);
 
       for (const user of users) {
         try {
           const result = await withUserContext(
-            { userId: user.id, username: user.username, role: user.role },
+            { userId: user.userId, username: user.username, role: user.role },
             async () => syncUserProfile(user.username, options, onProgress)
           );
 
@@ -165,8 +150,6 @@ async function main() {
       error: (error as Error).message,
       completedAt: new Date().toISOString(),
     });
-  } finally {
-    lock.release();
   }
 }
 

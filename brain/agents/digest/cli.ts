@@ -12,24 +12,11 @@
  *   --days=N       Number of days to analyze (default: 14)
  */
 
-import { initGlobalLogger, acquireLock, releaseLock, isLocked, audit } from '@metahuman/core';
+import { initGlobalLogger, audit } from '@metahuman/core';
 import { runCycle, type DigestOptions } from './core.js';
-
-const LOCK_NAME = 'agent-digest';
 
 async function main() {
   initGlobalLogger('digest');
-
-  // Acquire lock
-  if (isLocked(LOCK_NAME)) {
-    console.log('[digest] Another instance is already running. Exiting.');
-    process.exit(0);
-  }
-
-  if (!acquireLock(LOCK_NAME)) {
-    console.log('[digest] Failed to acquire lock. Exiting.');
-    process.exit(0);
-  }
 
   // Parse arguments
   const args = process.argv.slice(2);
@@ -54,7 +41,6 @@ async function main() {
       console.error('[digest] Errors:', result.errors);
     }
 
-    releaseLock(LOCK_NAME);
     process.exit(result.success ? 0 : 1);
   } catch (error) {
     console.error('[digest] Fatal error:', error);
@@ -62,12 +48,11 @@ async function main() {
     audit({
       category: 'system',
       level: 'error',
-      message: `Digest CLI error: ${(error as Error).message}`,
+      event: `Digest CLI error: ${(error as Error).message}`,
       actor: 'digest',
-      metadata: { error: (error as Error).stack },
+      details: { error: (error as Error).stack },
     });
 
-    releaseLock(LOCK_NAME);
     process.exit(1);
   }
 }

@@ -9,6 +9,7 @@ import { callLLM } from '../../model-router.js';
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   const memory = inputs[0];
+  const username = context.userId || context.username;
   const promptTemplate = properties?.promptTemplate || `Analyze this memory and extract relevant tags and entities.
 
 Memory: {content}
@@ -41,6 +42,7 @@ Format: {"tags": [...], "entities": [...]}`;
           content: prompt,
         },
       ],
+      userId: username,
       cognitiveMode: context.cognitiveMode || 'dual',
       options: {
         maxTokens: 512,

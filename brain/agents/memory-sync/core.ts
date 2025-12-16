@@ -1,37 +1,33 @@
-#!/usr/bin/env node
 /**
- * Memory Sync Agent — Background sync of memories with remote server
+ * Memory Sync Agent — Core Logic
  *
- * Runs as a background agent to:
+ * Background sync of memories with remote server.
  * - Pull new memories from remote server
  * - Push local memories to remote server
  * - Handle conflicts gracefully (local-first - local wins)
- *
- * Triggered by:
- * - Manual trigger via UI
- * - Login event (pull-only)
- * - Scheduled interval
  */
 
+import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
   audit,
   auditAction,
-  acquireLock,
-  isLocked,
-  listUsers,
+  getLoggedInUsers,
   withUserContext,
-  initGlobalLogger,
   getProfilePaths,
 } from '@metahuman/core';
 import { loadUserCredentials } from '@metahuman/core/llm-config';
+
+// ─────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────
 
 interface SyncConfig {
   serverUrl: string;
   sessionId: string;
   username?: string;
-  lastMemorySyncAt?: string;  // For incremental sync
+  lastMemorySyncAt?: string;
 }
 
 interface MemoryFile {
@@ -41,16 +37,24 @@ interface MemoryFile {
   timestamp: string;
 }
 
-interface SyncResult {
+export interface SyncResult {
   pulled: number;
   pushed: number;
   conflicts: number;
   errors: string[];
 }
 
-/**
- * Load sync configuration from user's profile
- */
+export interface MemorySyncOptions {
+  pullOnly?: boolean;
+  pushOnly?: boolean;
+  days?: number;
+  username?: string;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Helper Functions
+// ─────────────────────────────────────────────────────────────
+
 function loadSyncConfig(username: string): SyncConfig | null {
   const creds = loadUserCredentials(username);
 
@@ -58,7 +62,6 @@ function loadSyncConfig(username: string): SyncConfig | null {
     return null;
   }
 
-  // Also load lastMemorySyncAt from sync-server.json for incremental sync
   let lastMemorySyncAt: string | undefined;
   try {
     const profilePaths = getProfilePaths(username);
@@ -79,9 +82,6 @@ function loadSyncConfig(username: string): SyncConfig | null {
   };
 }
 
-/**
- * Get local memories from user's profile
- */
 function getLocalMemories(username: string): MemoryFile[] {
   const profilePaths = getProfilePaths(username);
   const episodicDir = profilePaths.episodic;
@@ -91,7 +91,6 @@ function getLocalMemories(username: string): MemoryFile[] {
     return memories;
   }
 
-  // Walk year directories
   const years = fs.readdirSync(episodicDir, { withFileTypes: true })
     .filter(d => d.isDirectory())
     .map(d => d.name);
@@ -123,9 +122,6 @@ function getLocalMemories(username: string): MemoryFile[] {
   return memories;
 }
 
-/**
- * Save a memory to local storage
- */
 function saveMemoryLocal(username: string, memory: any): string {
   const profilePaths = getProfilePaths(username);
   const id = memory.id || `${new Date().toISOString().slice(0, 10)}-${Date.now()}`;
@@ -140,13 +136,6 @@ function saveMemoryLocal(username: string, memory: any): string {
   return filePath;
 }
 
-/**
- * Fetch memories from remote server
- *
- * Uses timestamp-based incremental sync:
- * - If `since` is provided, only fetches memories created after that timestamp
- * - This is MUCH faster than sending exclusion lists
- */
 async function pullMemoriesFromServer(
   config: SyncConfig,
   localMemoryIds: Set<string>,
@@ -157,20 +146,14 @@ async function pullMemoriesFromServer(
   const { days = 30, limit = 100, since } = options;
 
   try {
-    // Build query params - prefer timestamp-based sync
     const params = new URLSearchParams({
       limit: limit.toString(),
     });
 
     if (since) {
-      // Use timestamp-based sync - skip ALL memories before this time
       params.set('since', since);
     } else {
-      // Fall back to days-based filter
       params.set('days', days.toString());
-
-      // Only send exclusion list if no timestamp (first sync)
-      // Limit to 100 IDs to keep request small
       if (localMemoryIds.size > 0) {
         const recentIds = Array.from(localMemoryIds).slice(0, 100);
         params.set('exclude', recentIds.join(','));
@@ -193,7 +176,6 @@ async function pullMemoriesFromServer(
     }
 
     const data = await response.json();
-
     return {
       memories: data.memories || [],
       hasMore: data.hasMore || false,
@@ -207,9 +189,6 @@ async function pullMemoriesFromServer(
   }
 }
 
-/**
- * Push memories to remote server
- */
 async function pushMemoriesToServer(
   config: SyncConfig,
   memories: MemoryFile[]
@@ -230,10 +209,7 @@ async function pushMemoriesToServer(
         body: JSON.stringify(memory.content),
       });
 
-      if (response.ok) {
-        pushed++;
-      } else if (response.status === 409) {
-        // Conflict - memory already exists, treat as success
+      if (response.ok || response.status === 409) {
         pushed++;
       } else {
         errors.push(`Failed to push ${memory.id}: ${response.status}`);
@@ -246,9 +222,6 @@ async function pushMemoriesToServer(
   return { pushed, errors };
 }
 
-/**
- * Update the lastMemorySyncAt timestamp
- */
 function updateMemorySyncTimestamp(username: string, timestamp: string): void {
   try {
     const profilePaths = getProfilePaths(username);
@@ -267,101 +240,77 @@ function updateMemorySyncTimestamp(username: string, timestamp: string): void {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// Core Sync Logic
+// ─────────────────────────────────────────────────────────────
+
 /**
  * Sync memories for a single user
  */
-async function syncUserMemories(
+export async function syncUserMemories(
   username: string,
   options: { pullOnly?: boolean; pushOnly?: boolean; days?: number } = {}
 ): Promise<SyncResult> {
   const result: SyncResult = { pulled: 0, pushed: 0, conflicts: 0, errors: [] };
 
-  // Load sync config
   const config = loadSyncConfig(username);
   if (!config) {
     result.errors.push('No remote server configured');
-    printStatus('⚠️', `No remote server configured for ${username}`);
+    console.log(`[memory-sync] No remote server configured for ${username}`);
     return result;
   }
 
-  console.log(`\n  👤 User: ${username}`);
-  printStatus('🌐', `Server: ${config.serverUrl}`);
+  console.log(`[memory-sync] Syncing user: ${username}`);
+  console.log(`[memory-sync] Server: ${config.serverUrl}`);
 
-  // Get local memories (only needed if no timestamp for incremental sync)
   const lastMemorySync = config.lastMemorySyncAt;
   let localMemories: MemoryFile[] = [];
   let localMemoryIds = new Set<string>();
 
   if (!lastMemorySync) {
-    // First sync - need to get local IDs to avoid duplicates
     localMemories = getLocalMemories(username);
     localMemoryIds = new Set(localMemories.map(m => m.id));
-    printStatus('📊', `First sync - ${localMemories.length} local memories to check`);
+    console.log(`[memory-sync] First sync - ${localMemories.length} local memories`);
   } else {
-    printStatus('⚡', `Incremental sync (since ${new Date(lastMemorySync).toLocaleDateString()})`);
-    // Still need local memories for push
+    console.log(`[memory-sync] Incremental sync (since ${new Date(lastMemorySync).toLocaleDateString()})`);
     localMemories = getLocalMemories(username);
   }
 
-  // Track sync start time for next incremental sync
   const syncStartTime = new Date().toISOString();
 
-  // Pull from server (unless pushOnly)
+  // Pull from server
   if (!options.pushOnly) {
-    if (lastMemorySync) {
-      printStatus('↓', 'Pulling new memories since last sync...');
-    } else {
-      printStatus('↓', `Pulling from server (last ${options.days || 30} days)...`);
-    }
-
+    console.log('[memory-sync] Pulling from server...');
     const pullResult = await pullMemoriesFromServer(config, localMemoryIds, {
       days: options.days || 30,
       limit: 500,
-      since: lastMemorySync,  // Use timestamp if available
+      since: lastMemorySync,
     });
 
     if (pullResult.error) {
       result.errors.push(`Pull failed: ${pullResult.error}`);
-      printStatus('❌', `Pull failed: ${pullResult.error}`);
+      console.log(`[memory-sync] Pull failed: ${pullResult.error}`);
     } else {
-      if (pullResult.memories.length === 0) {
-        printStatus('○', 'No new memories on server');
-      } else {
-        // Save new memories locally
-        for (const memory of pullResult.memories) {
-          const memId = memory.id;
-
-          // Skip if we already have it (shouldn't happen with incremental sync)
-          if (localMemoryIds.has(memId)) {
-            result.conflicts++;
-            continue;
-          }
-
-          try {
-            saveMemoryLocal(username, memory);
-            result.pulled++;
-          } catch (e) {
-            result.errors.push(`Failed to save ${memId}: ${(e as Error).message}`);
-          }
+      for (const memory of pullResult.memories) {
+        const memId = memory.id;
+        if (localMemoryIds.has(memId)) {
+          result.conflicts++;
+          continue;
         }
-
-        printStatus('✓', `Pulled ${result.pulled} new memories`);
-        if (result.conflicts > 0) {
-          printStatus('○', `Skipped ${result.conflicts} existing memories`);
+        try {
+          saveMemoryLocal(username, memory);
+          result.pulled++;
+        } catch (e) {
+          result.errors.push(`Failed to save ${memId}: ${(e as Error).message}`);
         }
       }
-
-      // Update sync timestamp on successful pull
+      console.log(`[memory-sync] Pulled ${result.pulled} memories`);
       updateMemorySyncTimestamp(username, syncStartTime);
     }
-  } else {
-    printStatus('○', 'Skipping pull (--push-only)');
   }
 
-  // Push to server (unless pullOnly)
+  // Push to server
   if (!options.pullOnly) {
-    // Find memories to push (local memories not yet on server)
-    // For now, we push all local memories created in the last 7 days
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
@@ -371,161 +320,123 @@ async function syncUserMemories(
     });
 
     if (memoriesToPush.length > 0) {
-      printStatus('↑', `Pushing ${memoriesToPush.length} recent memories...`);
+      console.log(`[memory-sync] Pushing ${memoriesToPush.length} recent memories...`);
       const pushResult = await pushMemoriesToServer(config, memoriesToPush);
       result.pushed = pushResult.pushed;
       result.errors.push(...pushResult.errors);
-
-      printStatus('✓', `Pushed ${result.pushed} memories`);
-    } else {
-      printStatus('○', 'No recent memories to push');
+      console.log(`[memory-sync] Pushed ${result.pushed} memories`);
     }
-  } else {
-    printStatus('○', 'Skipping push (--pull-only)');
   }
 
   return result;
 }
 
 /**
- * Print a formatted header
+ * Run memory sync for all users or a specific user
  */
-function printHeader(text: string): void {
-  const line = '═'.repeat(50);
-  console.log(`\n${line}`);
-  console.log(`  ${text}`);
-  console.log(`${line}`);
-}
+export async function runMemorySync(options: MemorySyncOptions = {}): Promise<{
+  totalPulled: number;
+  totalPushed: number;
+  totalConflicts: number;
+  errors: string[];
+}> {
+  let totalPulled = 0;
+  let totalPushed = 0;
+  let totalConflicts = 0;
+  const allErrors: string[] = [];
 
-/**
- * Print a status line
- */
-function printStatus(icon: string, text: string): void {
-  console.log(`  ${icon} ${text}`);
-}
+  if (options.username) {
+    const result = await withUserContext(
+      { userId: options.username, username: options.username, role: 'owner' },
+      async () => syncUserMemories(options.username!, options)
+    );
+    totalPulled = result.pulled;
+    totalPushed = result.pushed;
+    totalConflicts = result.conflicts;
+    allErrors.push(...result.errors);
+  } else {
+    const users = getLoggedInUsers();
+    console.log(`[memory-sync] Found ${users.length} logged-in users to sync`);
 
-/**
- * Main agent entry point
- */
-async function main() {
-  initGlobalLogger('memory-sync');
+    for (const user of users) {
+      try {
+        const result = await withUserContext(
+          { userId: user.userId, username: user.username, role: user.role },
+          async () => syncUserMemories(user.username, options)
+        );
 
-  // Parse command line args
-  const args = process.argv.slice(2);
-  const pullOnly = args.includes('--pull-only');
-  const pushOnly = args.includes('--push-only');
-  const singleUser = args.find(a => a.startsWith('--user='))?.split('=')[1];
-
-  // Single-instance guard
-  let lock;
-  try {
-    if (isLocked('agent-memory-sync')) {
-      console.log('[memory-sync] ⚠️  Another instance is already running. Exiting.');
-      return;
+        totalPulled += result.pulled;
+        totalPushed += result.pushed;
+        totalConflicts += result.conflicts;
+        allErrors.push(...result.errors);
+      } catch (e) {
+        console.error(`[memory-sync] Failed to sync ${user.username}:`, e);
+        allErrors.push(`User ${user.username}: ${(e as Error).message}`);
+      }
     }
-    lock = acquireLock('agent-memory-sync');
-  } catch {
-    console.log('[memory-sync] ⚠️  Failed to acquire lock. Exiting.');
-    return;
   }
 
+  return { totalPulled, totalPushed, totalConflicts, errors: allErrors };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Agent Runtime Entry Point
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Agent runtime entry point for mobile/runtime execution
+ */
+export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
+  const startTime = Date.now();
+  const args = input.args || [];
+  const opts = input.options || {};
+
+  const options: MemorySyncOptions = {
+    pullOnly: args.includes('--pull-only') || opts.pullOnly === true,
+    pushOnly: args.includes('--push-only') || opts.pushOnly === true,
+    username: args.find(a => a.startsWith('--user='))?.split('=')[1] || opts.username as string,
+  };
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'agent_cycle_started',
+    details: { agent: 'memory-sync', ...options },
+    actor: 'agent',
+  });
+
   try {
-    printHeader('MEMORY SYNC AGENT');
-    console.log(`  Started: ${new Date().toISOString()}`);
-    console.log(`  Mode: ${pullOnly ? 'pull-only' : pushOnly ? 'push-only' : 'full sync'}`);
-    if (singleUser) console.log(`  User: ${singleUser}`);
+    const result = await runMemorySync(options);
 
-    // Audit cycle start
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'agent_cycle_started',
-      details: { agent: 'memory-sync', pullOnly, pushOnly, singleUser },
-      actor: 'agent',
-    });
-
-    let totalPulled = 0;
-    let totalPushed = 0;
-    let totalConflicts = 0;
-    const allErrors: string[] = [];
-
-    if (singleUser) {
-      // Sync single user
-      const result = await withUserContext(
-        { userId: singleUser, username: singleUser, role: 'owner' },
-        async () => syncUserMemories(singleUser, { pullOnly, pushOnly })
-      );
-      totalPulled = result.pulled;
-      totalPushed = result.pushed;
-      totalConflicts = result.conflicts;
-      allErrors.push(...result.errors);
-    } else {
-      // Sync all users
-      const users = listUsers();
-      console.log(`[memory-sync] Found ${users.length} users to sync`);
-
-      for (const user of users) {
-        try {
-          const result = await withUserContext(
-            { userId: user.id, username: user.username, role: user.role },
-            async () => syncUserMemories(user.username, { pullOnly, pushOnly })
-          );
-
-          totalPulled += result.pulled;
-          totalPushed += result.pushed;
-          totalConflicts += result.conflicts;
-          allErrors.push(...result.errors);
-        } catch (e) {
-          console.error(`[memory-sync] Failed to sync ${user.username}:`, e);
-          allErrors.push(`User ${user.username}: ${(e as Error).message}`);
-        }
-      }
-    }
-
-    // Print final summary
-    printHeader('SYNC COMPLETE');
-    printStatus('↓', `Pulled: ${totalPulled} memories`);
-    printStatus('↑', `Pushed: ${totalPushed} memories`);
-    if (totalConflicts > 0) {
-      printStatus('⚡', `Conflicts: ${totalConflicts} (skipped)`);
-    }
-    console.log(`  ⏱️  Finished: ${new Date().toISOString()}`);
-
-    if (allErrors.length > 0) {
-      console.log(`\n  ⚠️  Errors (${allErrors.length}):`);
-      for (const err of allErrors) {
-        console.log(`     - ${err}`);
-      }
-    } else {
-      console.log(`\n  ✓ No errors`);
-    }
-    console.log('');
-
-    // Audit completion
     audit({
       level: 'info',
       category: 'action',
       event: 'agent_cycle_completed',
       details: {
         agent: 'memory-sync',
-        pulled: totalPulled,
-        pushed: totalPushed,
-        conflicts: totalConflicts,
-        errors: allErrors.length,
+        pulled: result.totalPulled,
+        pushed: result.totalPushed,
+        conflicts: result.totalConflicts,
+        errors: result.errors.length,
       },
       actor: 'agent',
     });
 
     auditAction({
       skill: 'memory-sync',
-      inputs: { pullOnly, pushOnly },
-      success: allErrors.length === 0,
-      output: { pulled: totalPulled, pushed: totalPushed, conflicts: totalConflicts },
-      error: allErrors.length > 0 ? allErrors.join('; ') : undefined,
+      inputs: options,
+      success: result.errors.length === 0,
+      output: result,
+      error: result.errors.length > 0 ? result.errors.join('; ') : undefined,
     });
 
+    return {
+      success: result.errors.length === 0,
+      data: result,
+      errors: result.errors.length > 0 ? result.errors : undefined,
+      durationMs: Date.now() - startTime,
+    };
   } catch (error) {
-    console.error('[memory-sync] Error during sync:', (error as Error).message);
     audit({
       level: 'error',
       category: 'action',
@@ -533,12 +444,11 @@ async function main() {
       details: { agent: 'memory-sync', error: (error as Error).message },
       actor: 'agent',
     });
-  } finally {
-    lock.release();
+
+    return {
+      success: false,
+      error: (error as Error).message,
+      durationMs: Date.now() - startTime,
+    };
   }
 }
-
-main().catch(err => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});

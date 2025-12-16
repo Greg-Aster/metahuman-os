@@ -24,6 +24,7 @@ export * from './audit';
 export * from './llm';
 export * from './ollama';
 export * from './vllm';
+export * from './vllm-lora';
 export * from './llm-backend';
 export * from './model-resolver';
 export * from './model-router';

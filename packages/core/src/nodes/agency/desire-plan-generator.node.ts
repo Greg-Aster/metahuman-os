@@ -66,7 +66,7 @@ function determineRequiredTrust(risk: string): TrustLevel {
   }
 }
 
-const execute: NodeExecutor = async (inputs, _context, properties) => {
+const execute: NodeExecutor = async (inputs, context, properties) => {
   // Inputs come via slot positions from graph links:
   // slot 0: {desire, found} from desire_loader
   // slot 1: {catalog, toolCount, entries} from tool_catalog_builder
@@ -76,6 +76,7 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
   const slot1 = inputs[1] as { catalog?: string } | undefined;
   const slot2 = inputs[2] as { formatted?: string } | undefined;
   const slot3 = inputs[3] as { memories?: unknown[] } | undefined;
+  const username = context.userId || context.username;
 
   const desire = slot0?.desire;
   const toolCatalog = slot1?.catalog || '';
@@ -177,6 +178,7 @@ Output as JSON:
     const response = await callLLM({
       role: 'orchestrator',
       messages,
+      userId: username,
       options: {
         temperature,
         responseFormat: 'json',

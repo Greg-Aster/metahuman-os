@@ -1,8 +1,9 @@
 /**
  * Local Model Service
  *
- * HTTP server for local embedding and LLM inference using Transformers.js
- * Provides Ollama-compatible API endpoints.
+ * HTTP server for local embedding and LLM inference using node-llama-cpp (llama.cpp).
+ * Provides unified semantic search for web and mobile (monorepo architecture).
+ * Uses GGUF format models downloaded from HuggingFace.
  */
 
 import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';

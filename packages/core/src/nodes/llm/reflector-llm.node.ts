@@ -62,6 +62,7 @@ export const ReflectorLLMNode: NodeDefinition = defineNode({
     let systemPrompt = properties?.systemPrompt || '';
     const role = properties?.role || 'persona';
     const temperature = properties?.temperature || 0.7;
+    const username = context.userId || context.username;
 
     if (userPrompt && userPrompt.trim().length > 0 && role === 'summarizer') {
       const reflection = userPrompt;
@@ -98,6 +99,7 @@ export const ReflectorLLMNode: NodeDefinition = defineNode({
       const response = await callLLM({
         role,
         messages,
+        userId: username,
         cognitiveMode: context.cognitiveMode,
         options: {
           maxTokens: properties?.maxTokens || 2048,

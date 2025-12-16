@@ -19,7 +19,7 @@ import {
   storageClient,
   systemPaths,
   ROOT,
-  listUsers,
+  getLoggedInUsers,
   withUserContext,
   audit,
 } from '@metahuman/core';
@@ -372,7 +372,7 @@ export async function runCycle(options: PsychoanalyzerOptions = {}): Promise<Psy
     } else if (options.singleUser) {
       users = ['default'];
     } else {
-      users = listUsers().map(u => u.username);
+      users = getLoggedInUsers().map(u => u.username);
     }
 
     for (const username of users) {

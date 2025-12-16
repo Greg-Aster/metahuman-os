@@ -22,7 +22,7 @@ import path from 'node:path';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 import {
   audit,
-  listUsers,
+  getLoggedInUsers,
   withUserContext,
   executeGraph,
   validateCognitiveGraph,
@@ -293,7 +293,7 @@ export async function runCycle(options: TrainOfThoughtOptions = {}): Promise<Tra
     } else if (options.singleUser) {
       users = ['default'];
     } else {
-      const allUsers = listUsers();
+      const allUsers = getLoggedInUsers();
       users = allUsers.map(u => u.username);
     }
 

@@ -15,7 +15,7 @@ import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-run
 import {
   ROOT,
   audit,
-  listUsers,
+  getLoggedInUsers,
   withUserContext,
   getProfilePaths,
   listErrors,
@@ -413,7 +413,7 @@ export async function runCycle(options: CoderOptions = {}): Promise<CoderResult>
   } else if (options.singleUser) {
     users = [{ userId: 'default', username: 'default', role: 'owner' }];
   } else {
-    users = await listUsers();
+    users = getLoggedInUsers();
   }
 
   for (const user of users) {

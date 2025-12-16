@@ -1,9 +1,5 @@
 {
-  "_TEMPLATE_WARNING": "══════════════════════════════════════════════════════════════════════════",
-  "_TEMPLATE_WARNING2": "██ THIS IS A SYSTEM TEMPLATE - DO NOT USE DIRECTLY FOR INDIVIDUAL USERS ██",
-  "_TEMPLATE_WARNING3": "██ This file is COPIED to user profiles, then the user's copy is used   ██",
-  "_TEMPLATE_WARNING4": "══════════════════════════════════════════════════════════════════════════",
-  "base_model": "unsloth/Qwen3-14B",
+  "base_model": "Qwen/Qwen3-14B",
   "num_train_epochs": 3,
   "max_samples": 3000,
   "monthly_training": true,
@@ -15,8 +11,10 @@
   "gradient_accumulation_steps": 16,
   "max_seq_length": 2048,
   "quantization": "Q4_K_M",
+  "skipGguf": true,
+  "trainingTarget": "vllm",
   "gguf_conversion": {
-    "enabled": true,
+    "enabled": false,
     "quantization_type": "Q4_K_M"
   }
 }

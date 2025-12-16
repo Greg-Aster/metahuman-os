@@ -23,7 +23,7 @@ import {
   audit,
   recordSystemActivity,
   scheduler,
-  listUsers,
+  getLoggedInUsers,
   withUserContext,
   executeGraph,
   validateCognitiveGraph,
@@ -307,10 +307,10 @@ export async function runCycle(options: DreamerOptions = {}): Promise<DreamerRes
       actor: 'dreamer',
     });
 
-    // Get all users (or targeted user if manual trigger)
-    const allUsers = listUsers();
+    // Get all logged-in users (or targeted user if manual trigger)
+    const allUsers = getLoggedInUsers();
     const users = manualTriggerProfile
-      ? allUsers.filter(u => u.username === manualTriggerProfile || u.id === manualTriggerProfile)
+      ? allUsers.filter(u => u.username === manualTriggerProfile || u.userId === manualTriggerProfile)
       : allUsers;
 
     if (manualTriggerProfile && users.length === 0) {
@@ -319,14 +319,14 @@ export async function runCycle(options: DreamerOptions = {}): Promise<DreamerRes
       return result;
     }
 
-    console.log(`[dreamer] Found ${users.length} users to process`);
+    console.log(`[dreamer] Found ${users.length} logged-in users to process`);
     result.userCount = users.length;
 
     // Process each user with isolated context
     for (const user of users) {
       try {
         const stats = await withUserContext(
-          { userId: user.id, username: user.username, role: user.role },
+          { userId: user.userId, username: user.username, role: user.role },
           async () => generateUserDreams(user.username, {
             forceRun: !!manualTriggerProfile || options.forceRun,
             config: globalConfig,

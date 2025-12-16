@@ -53,6 +53,7 @@ What are you genuinely curious about? Ask one natural question.
     const response = await callLLM({
       role: 'persona',
       messages,
+      userId: username,
       options: { temperature }
     });
 
@@ -72,10 +73,14 @@ What are you genuinely curious about? Ask one natural question.
       memoriesConsidered: memories.length
     };
   } catch (error) {
-    console.error('[CuriosityQuestionGenerator] Error:', error);
+    // Ensure error is properly serialized (some errors are empty objects)
+    const errMsg = error instanceof Error
+      ? error.message
+      : (typeof error === 'object' ? JSON.stringify(error) : String(error));
+    console.error('[CuriosityQuestionGenerator] Error:', errMsg);
     return {
       question: '',
-      error: (error as Error).message,
+      error: errMsg || 'Unknown error',
       username
     };
   }

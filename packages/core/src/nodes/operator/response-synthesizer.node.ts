@@ -19,7 +19,8 @@ async function applyPersonaVoice(
   conversationHistory: any[],
   cognitiveMode: string,
   metadata: Record<string, any> = {},
-  emitProgress?: (event: any) => void
+  emitProgress?: (event: any) => void,
+  userId?: string
 ): Promise<{ response: string; personaSynthesized: boolean }> {
   const personaPrompt = personaInput?.formatted || personaInput;
 
@@ -57,6 +58,7 @@ You are responding based on information that was gathered or generated. Your tas
     const response = await callLLM({
       role: 'persona',
       messages,
+      userId,
       cognitiveMode,
       options: {
         maxTokens: 2048,
@@ -77,6 +79,9 @@ You are responding based on information that was gathered or generated. Your tas
 const execute: NodeExecutor = async (inputs, context) => {
   console.log(`[ResponseSynthesizer] ========== RESPONSE SYNTHESIZER ==========`);
   console.log(`[ResponseSynthesizer] Received ${inputs.length} inputs`);
+
+  // Extract username for LLM calls
+  const username = context.userId || context.username;
 
   // Store persona input for later synthesis (inputs[4])
   const personaInput = inputs[4];
@@ -105,7 +110,7 @@ const execute: NodeExecutor = async (inputs, context) => {
   let loopResult = inputs[0] || inputs.loopResult || {};
 
   // Check if this is orchestrator guidance (from ConditionalReroute fallback)
-  if (loopResult.needsMemory !== undefined && loopResult.responseStyle && loopResult.instructions) {
+  if (loopResult.needsMemory !== undefined && loopResult.responseStyle) {
     console.log(`[ResponseSynthesizer] ✅ Detected orchestrator guidance format`);
 
     const userMessageInput = inputs[1] || inputs.userMessage || context.userMessage || {};
@@ -116,7 +121,25 @@ const execute: NodeExecutor = async (inputs, context) => {
     const personaSummary = getIdentitySummary();
     const contextData = inputs[2] || {};
     const conversationHistory = contextData.context?.conversationHistory || context.conversationHistory || [];
-    const systemPrompt = `${personaSummary}\n\nInstructions: ${loopResult.instructions}`;
+
+    // Extract memories from context and format them for the prompt
+    const memories = contextData.context?.memories || context.contextPackage?.memories || [];
+    let memoryContext = '';
+    if (memories.length > 0) {
+      // Include full memory content - the LoRA should learn to use these naturally
+      const memoryTexts = memories.slice(0, 5).map((m: any) => {
+        const text = m.content || m.item?.text || m.text || '';
+        return text;  // Full text, no truncation
+      }).filter((t: string) => t.length > 0);
+      if (memoryTexts.length > 0) {
+        memoryContext = `\n\n## Memories\n${memoryTexts.map((t: string, i: number) => `${i + 1}. ${t}`).join('\n\n')}`;
+        console.log(`[ResponseSynthesizer] Including ${memoryTexts.length} memories in context`);
+      }
+    }
+
+    // Persona receives identity + memories only - NO orchestrator instructions
+    // The LoRA should be trained to naturally use memories in responses
+    const systemPrompt = `${personaSummary}${memoryContext}`;
 
     let temperature = 0.7;
     if (loopResult.responseStyle === 'verbose') {
@@ -138,13 +161,20 @@ const execute: NodeExecutor = async (inputs, context) => {
       return typeof msg.content === 'string' && msg.content.trim().length > 0;
     });
 
+    // Estimate input tokens and dynamically set max_tokens to fit context
+    const inputChars = messages.reduce((sum, m) => sum + (m.content?.length || 0), 0);
+    const estimatedInputTokens = Math.ceil(inputChars / 3.5); // ~3.5 chars per token
+    const contextLimit = 4096;
+    const maxTokens = Math.min(1024, Math.max(256, contextLimit - estimatedInputTokens - 100));
+
     try {
       const response = await callLLM({
         role: 'persona',
         messages,
+        userId: username,
         cognitiveMode: context.cognitiveMode,
         options: {
-          maxTokens: 2048,
+          maxTokens,
           repeatPenalty: 1.3,
           temperature,
         },
@@ -283,6 +313,7 @@ DO NOT repeat the technical details verbatim - translate them into your natural 
           const response = await callLLM({
             role: 'persona',
             messages,
+            userId: username,
             cognitiveMode: context.cognitiveMode,
             options: {
               maxTokens: 2048,
@@ -373,6 +404,7 @@ Based on these execution steps, provide a clear, helpful response to the user's 
     const response = await callLLM({
       role: 'persona',
       messages,
+      userId: username,
       cognitiveMode: context.cognitiveMode,
       options: {
         maxTokens: 2048,
@@ -404,7 +436,8 @@ Based on these execution steps, provide a clear, helpful response to the user's 
         conversationHistory,
         context.cognitiveMode || 'dual',
         {},
-        context.emitProgress
+        context.emitProgress,
+        username
       );
 
       if (synthesized.personaSynthesized) {
@@ -447,7 +480,8 @@ Based on these execution steps, provide a clear, helpful response to the user's 
           conversationHistory,
           context.cognitiveMode || 'dual',
           {},
-          context.emitProgress
+          context.emitProgress,
+          username
         );
 
         if (synthesized.personaSynthesized) {

@@ -53,6 +53,7 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
     const conversationHistory = inputs[1]?.messages || context.conversationHistory || [];
     const memories = inputs[2] || [];
     const orchestratorData = inputs[3];
+    const username = context.userId || context.username;
 
     const message = context.userMessage || '';
 
@@ -117,6 +118,7 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
       const response = await callLLM({
         role: 'persona',  // Uses persona role - must be configured in cognitiveModeMappings
         messages,
+        userId: username,
         cognitiveMode: context.cognitiveMode,
         options: {
           maxTokens: properties?.maxTokens || 2048,

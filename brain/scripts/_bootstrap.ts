@@ -12,16 +12,48 @@ import { withUserContext } from '@metahuman/core/context';
 import { getUsers } from '@metahuman/core/users';
 import { systemPaths } from '@metahuman/core/paths';  // Use systemPaths instead of paths
 
+import fs from 'node:fs';
+
 const agentScriptOverrides: Record<string, string> = {
   curiosity: 'curiosity-service.ts',
 };
+
+// Map service names to their locations in brain/services/
+const serviceOverrides: Record<string, string> = {
+  'scheduler-service': 'services/scheduler-service.ts',
+  'headless-watcher': 'services/headless-watcher.ts',
+  'sleep-service': 'services/sleep-service.ts',
+};
+
+/**
+ * Resolve agent path based on type:
+ * 1. Services in brain/services/
+ * 2. Modular agents in brain/agents/<name>/cli.ts
+ * 3. Legacy agents in brain/agents/<name>.ts
+ */
+function resolveAgentPath(agentName: string): string {
+  if (serviceOverrides[agentName]) {
+    // Services in brain/services/
+    return `${systemPaths.brain}/${serviceOverrides[agentName]}`;
+  }
+
+  // Check for modular agent (brain/agents/<name>/cli.ts) first
+  const modularPath = `${systemPaths.brain}/agents/${agentName}/cli.ts`;
+  if (fs.existsSync(modularPath)) {
+    return modularPath;
+  }
+
+  // Fall back to legacy path
+  const scriptName = agentScriptOverrides[agentName] ?? `${agentName}.ts`;
+  return `${systemPaths.brain}/agents/${scriptName}`;
+}
 
 async function main() {
   const agentName = process.argv[2];
 
   if (!agentName) {
     console.error('[bootstrap] Error: Agent name required');
-    console.error('Usage: tsx brain/agents/_bootstrap.ts <agent-name>');
+    console.error('Usage: tsx brain/scripts/_bootstrap.ts <agent-name>');
     process.exit(1);
   }
 
@@ -35,9 +67,8 @@ async function main() {
     process.exit(1);
   }
 
-  // Use systemPaths.brain (system-level path) before context is set
-  const scriptName = agentScriptOverrides[agentName] ?? `${agentName}.ts`;
-  const agentPath = `${systemPaths.brain}/agents/${scriptName}`;
+  // Resolve the agent path based on type (service, modular, legacy)
+  const agentPath = resolveAgentPath(agentName);
 
   // Establish owner context for the agent BEFORE importing
   // This allows agent module-level code to access user paths
