@@ -201,7 +201,23 @@ import { handleSwitchLlmBackend } from './handlers/llm-backend-switch.js';
 import { handleOllamaControl } from './handlers/llm-backend-ollama.js';
 import { handleVllmControl } from './handlers/llm-backend-vllm.js';
 import { handleGetVllmLoras, handleUpdateVllmLoras } from './handlers/vllm-loras.js';
-import { handleLlmChat } from './handlers/llm-proxy.js';
+import {
+  handleLlmChat,
+  handleLLMProxy,
+  handleListProxyModels,
+  handleGetProxyConfig,
+  handleSetProxyConfig,
+} from './handlers/llm-proxy.js';
+import {
+  handleGetToolExecutorConfig,
+  handleSetToolExecutorConfig,
+  handleSwitchBackend as handleSwitchToolExecutorBackend,
+  handleEnableBackend,
+} from './handlers/tool-executor-config.js';
+import {
+  handleGetInterpreterStatus,
+  handleInterpreterControl,
+} from './handlers/interpreter-status.js';
 import { handleGetModels, handleSetModels } from './handlers/models.js';
 import { handleGetFineTuneModels } from './handlers/fine-tune-models.js';
 import { handleGetDriftReport } from './handlers/drift-report.js';
@@ -630,6 +646,21 @@ const routes: RouteDefinition[] = [
 
   // LLM Proxy - allows remote clients to use this server's LLM (Ollama or vLLM)
   { method: 'POST', pattern: '/api/llm/chat', handler: handleLlmChat, requiresAuth: true },
+  // OpenAI-compatible proxy for Open Interpreter (uses user-configurable model from tool-executor.json)
+  { method: 'POST', pattern: '/api/llm/proxy', handler: handleLLMProxy, requiresAuth: true },
+  { method: 'GET', pattern: '/api/llm/proxy/models', handler: handleListProxyModels, requiresAuth: true },
+  { method: 'GET', pattern: '/api/llm/proxy/config', handler: handleGetProxyConfig, requiresAuth: true },
+  { method: 'POST', pattern: '/api/llm/proxy/config', handler: handleSetProxyConfig, requiresAuth: true, guard: 'owner' },
+
+  // Tool Executor Config (backend selection for skill execution)
+  { method: 'GET', pattern: '/api/tool-executor-config', handler: handleGetToolExecutorConfig, requiresAuth: true },
+  { method: 'POST', pattern: '/api/tool-executor-config', handler: handleSetToolExecutorConfig, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/tool-executor-config/switch', handler: handleSwitchToolExecutorBackend, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/tool-executor-config/enable', handler: handleEnableBackend, requiresAuth: true, guard: 'owner' },
+
+  // Open Interpreter Status and Control
+  { method: 'GET', pattern: '/api/interpreter-status', handler: handleGetInterpreterStatus, requiresAuth: true },
+  { method: 'POST', pattern: '/api/interpreter-status', handler: handleInterpreterControl, requiresAuth: true, guard: 'owner' },
 
   // Models
   { method: 'GET', pattern: '/api/models', handler: handleGetModels, requiresAuth: true, guard: 'owner' },

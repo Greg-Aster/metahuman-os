@@ -106,6 +106,57 @@ function loadKokoroVoices(rootDir: string, profileRoot: string): Array<{id: stri
   return voices;
 }
 
+interface RvcSpeaker {
+  id: string;
+  name: string;
+  hasModel: boolean;
+  hasIndex: boolean;
+  modelPath?: string;
+}
+
+function loadRvcSpeakers(profileRoot: string): RvcSpeaker[] {
+  const speakers: RvcSpeaker[] = [];
+  const rvcModelsDir = path.join(profileRoot, 'out', 'voices', 'rvc-models');
+
+  if (!fs.existsSync(rvcModelsDir)) {
+    return speakers;
+  }
+
+  try {
+    const entries = fs.readdirSync(rvcModelsDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+
+      const speakerId = entry.name;
+      const speakerDir = path.join(rvcModelsDir, speakerId);
+
+      // Look for .pth model file
+      const modelFile = path.join(speakerDir, `${speakerId}.pth`);
+      const hasModel = fs.existsSync(modelFile);
+
+      // Look for .index file
+      const indexFile = path.join(speakerDir, `${speakerId}.index`);
+      const hasIndex = fs.existsSync(indexFile);
+
+      // Only include if has a model
+      if (hasModel) {
+        speakers.push({
+          id: speakerId,
+          name: speakerId.charAt(0).toUpperCase() + speakerId.slice(1).replace(/_/g, ' '),
+          hasModel,
+          hasIndex,
+          modelPath: modelFile,
+        });
+      }
+    }
+  } catch (error) {
+    console.warn('[voice-settings] Failed to scan RVC speakers:', error);
+  }
+
+  return speakers;
+}
+
 type VoiceConfig = {
   tts: {
     provider: string;
@@ -496,6 +547,7 @@ const getHandler: APIRoute = async ({ cookies }) => {
 
     const providerForUI = config.tts.provider === 'gpt-sovits' ? 'sovits' : config.tts.provider;
     const kokoroVoices = loadKokoroVoices(rootDir, profileRoot);
+    const rvcSpeakers = loadRvcSpeakers(profileRoot);
 
     // Check Whisper server status and auto-start if configured
     let whisperServerStatus = 'unknown';
@@ -599,6 +651,7 @@ const getHandler: APIRoute = async ({ cookies }) => {
           protect: config.tts.rvc?.protect ?? 0.15,
           f0Method: config.tts.rvc?.f0Method || 'rmvpe',
           device: config.tts.rvc?.device || 'cuda',
+          speakers: rvcSpeakers,
         },
         kokoro: {
           langCode: config.tts.kokoro?.langCode || 'a',

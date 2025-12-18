@@ -50,6 +50,19 @@
     };
   }
 
+  interface InterpreterInfo {
+    running: boolean;
+    healthy: boolean;
+    available: boolean;
+    enabled: boolean;
+    endpoint: string;
+    config?: {
+      safeMode?: boolean;
+      autoRun?: boolean;
+      maxIterations?: number;
+    };
+  }
+
   // Prop to control polling - only poll when visible
   export let isVisible = true;
 
@@ -57,6 +70,7 @@
   let astroServers: AstroServer[] = [];
   let llmBackend: LLMBackendInfo | null = null;
   let localModels: LocalModelsInfo | null = null;
+  let interpreter: InterpreterInfo | null = null;
   let loading = true;
   let actionInProgress: string | null = null;
   let refreshInterval: ReturnType<typeof setInterval> | null = null;
@@ -121,6 +135,25 @@
     } catch (error) {
       console.error('Failed to fetch local-models status:', error);
       localModels = null;
+    }
+
+    // Fetch Open Interpreter status
+    try {
+      const interpreterResponse = await apiFetch('/api/interpreter-status');
+      if (interpreterResponse.ok) {
+        const data = await interpreterResponse.json();
+        interpreter = {
+          running: data.running ?? false,
+          healthy: data.healthy ?? false,
+          available: data.available ?? false,
+          enabled: data.enabled ?? false,
+          endpoint: data.config?.endpoint || 'http://localhost:4325',
+          config: data.config,
+        };
+      }
+    } catch (error) {
+      console.error('Failed to fetch interpreter status:', error);
+      interpreter = null;
     }
 
     for (const config of serverConfigs) {
@@ -201,6 +234,31 @@
       }
     } catch (error) {
       alert(`Error ${action}ing local-models: ${(error as Error).message}`);
+    } finally {
+      actionInProgress = null;
+    }
+  }
+
+  async function controlInterpreter(action: 'start' | 'stop' | 'restart') {
+    actionInProgress = `interpreter-${action}`;
+
+    try {
+      const response = await apiFetch('/api/interpreter-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        alert(`Failed to ${action} Open Interpreter: ${data.error || 'Unknown error'}`);
+      } else {
+        // Wait a moment then refresh
+        setTimeout(fetchServerStatus, 2000);
+      }
+    } catch (error) {
+      alert(`Error ${action}ing Open Interpreter: ${(error as Error).message}`);
     } finally {
       actionInProgress = null;
     }
@@ -530,6 +588,77 @@
               {/if}
               {#if localModels.generator.loaded}
                 <span class="detail-badge generator">💬 LLM: {localModels.generator.model}</span>
+              {/if}
+            </div>
+          {/if}
+        </div>
+
+        <!-- Open Interpreter (Tool Executor) -->
+        <div class="server-card interpreter-card" class:running={interpreter?.running}>
+          <div class="server-header">
+            <div class="server-info">
+              <span class="status-icon">
+                {#if !interpreter?.available}⚠️
+                {:else if interpreter?.running && interpreter?.healthy}🟢
+                {:else if interpreter?.running}🟡
+                {:else}🔴{/if}
+              </span>
+              <div class="server-details">
+                <div class="server-name">
+                  Open Interpreter
+                  <span class="tool-badge">Tool Executor</span>
+                  {#if interpreter?.enabled}
+                    <span class="enabled-badge">ENABLED</span>
+                  {/if}
+                </div>
+                <div class="server-meta">
+                  {interpreter?.endpoint || 'http://localhost:4325'}
+                  {#if interpreter?.running && interpreter?.config?.safeMode !== undefined}
+                    • {interpreter.config.safeMode ? 'Safe Mode' : 'Unrestricted'}
+                  {/if}
+                </div>
+              </div>
+            </div>
+          </div>
+          {#if interpreter?.available}
+            <div class="server-actions">
+              {#if interpreter?.running}
+                <button
+                  class="action-btn stop"
+                  on:click={() => controlInterpreter('stop')}
+                  disabled={actionInProgress !== null}
+                >
+                  {actionInProgress === 'interpreter-stop' ? '...' : 'Stop'}
+                </button>
+                <button
+                  class="action-btn restart"
+                  on:click={() => controlInterpreter('restart')}
+                  disabled={actionInProgress !== null}
+                >
+                  {actionInProgress === 'interpreter-restart' ? '...' : 'Restart'}
+                </button>
+              {:else}
+                <button
+                  class="action-btn start"
+                  on:click={() => controlInterpreter('start')}
+                  disabled={actionInProgress !== null}
+                >
+                  {actionInProgress === 'interpreter-start' ? '...' : 'Start'}
+                </button>
+              {/if}
+            </div>
+          {:else}
+            <div class="not-installed-msg">
+              Not installed - requires Python open-interpreter package
+            </div>
+          {/if}
+          {#if interpreter?.running && interpreter?.config}
+            <div class="server-details-extra">
+              {#if interpreter.config.autoRun}
+                <span class="detail-badge warning">⚡ Auto-Run Enabled</span>
+              {/if}
+              {#if interpreter.config.maxIterations}
+                <span class="detail-badge">Max Iterations: {interpreter.config.maxIterations}</span>
               {/if}
             </div>
           {/if}
@@ -1052,6 +1181,70 @@
   }
 
   :global(.dark) .detail-badge.loading {
+    background: rgba(250, 204, 21, 0.15);
+    color: rgb(250 204 21);
+  }
+
+  /* Open Interpreter card styles */
+  .interpreter-card {
+    border-color: rgba(139, 92, 246, 0.2);
+  }
+
+  :global(.dark) .interpreter-card {
+    border-color: rgba(167, 139, 250, 0.2);
+  }
+
+  .interpreter-card.running {
+    border-width: 2px;
+    border-color: rgba(139, 92, 246, 0.4);
+    background: rgba(139, 92, 246, 0.02);
+  }
+
+  :global(.dark) .interpreter-card.running {
+    border-color: rgba(167, 139, 250, 0.4);
+    background: rgba(167, 139, 250, 0.03);
+  }
+
+  .tool-badge {
+    display: inline-block;
+    padding: 0.125rem 0.375rem;
+    margin-left: 0.5rem;
+    background: rgba(139, 92, 246, 0.15);
+    color: rgb(139 92 246);
+    border-radius: 0.25rem;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+
+  :global(.dark) .tool-badge {
+    background: rgba(167, 139, 250, 0.2);
+    color: rgb(167 139 250);
+  }
+
+  .enabled-badge {
+    display: inline-block;
+    padding: 0.125rem 0.375rem;
+    margin-left: 0.5rem;
+    background: rgba(34, 197, 94, 0.15);
+    color: rgb(34 197 94);
+    border-radius: 0.25rem;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+
+  :global(.dark) .enabled-badge {
+    background: rgba(74, 222, 128, 0.2);
+    color: rgb(74 222 128);
+  }
+
+  .detail-badge.warning {
+    background: rgba(234, 179, 8, 0.1);
+    color: rgb(234 179 8);
+  }
+
+  :global(.dark) .detail-badge.warning {
     background: rgba(250, 204, 21, 0.15);
     color: rgb(250 204 21);
   }

@@ -203,9 +203,11 @@ export class RVCService implements ITextToSpeechService {
     const serverUrl = this.config.serverUrl || 'http://127.0.0.1:9881';
 
     try {
+      // Longer timeout (10s) because server may be busy processing on CPU
+      // RVC on CPU can take 3-7 seconds per segment, blocking the health endpoint
       const response = await fetch(`${serverUrl}/health`, {
         method: 'GET',
-        signal: AbortSignal.timeout(1000), // 1 second timeout
+        signal: AbortSignal.timeout(10000), // 10 second timeout for CPU mode
       });
 
       if (response.ok) {

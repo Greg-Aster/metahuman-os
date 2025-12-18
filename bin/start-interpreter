@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+#
+# Start Open Interpreter Server for MetaHuman OS
+#
+# This script:
+# 1. Creates virtualenv if it doesn't exist
+# 2. Installs dependencies
+# 3. Starts the interpreter server
+#
+# Usage:
+#   ./bin/start-interpreter              # Start server (default port 4325)
+#   ./bin/start-interpreter --port 4326  # Custom port
+#   ./bin/start-interpreter --background # Run in background
+#
+
+set -e
+
+# Get the root directory (where this script lives is bin/, go up one)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+INTERPRETER_DIR="$ROOT_DIR/external/open-interpreter"
+VENV_DIR="$ROOT_DIR/.venv-interpreter"
+LOG_DIR="$ROOT_DIR/logs/run"
+PID_FILE="$LOG_DIR/interpreter-server.pid"
+LOG_FILE="$LOG_DIR/interpreter-server.log"
+
+# Default settings
+PORT="${INTERPRETER_PORT:-4325}"
+HOST="${INTERPRETER_HOST:-127.0.0.1}"
+BACKGROUND=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --port)
+            PORT="$2"
+            shift 2
+            ;;
+        --host)
+            HOST="$2"
+            shift 2
+            ;;
+        --background|-b)
+            BACKGROUND=true
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --port PORT      Server port (default: 4325)"
+            echo "  --host HOST      Server host (default: 127.0.0.1)"
+            echo "  --background, -b Run in background"
+            echo "  --help, -h       Show this help"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
+# Ensure log directory exists
+mkdir -p "$LOG_DIR"
+
+# Check if Python 3 is available
+if ! command -v python3 &> /dev/null; then
+    echo "[interpreter] ERROR: Python 3 is not installed"
+    exit 1
+fi
+
+# Create virtualenv if it doesn't exist
+if [ ! -d "$VENV_DIR" ]; then
+    echo "[interpreter] Creating virtualenv at $VENV_DIR..."
+    python3 -m venv "$VENV_DIR"
+fi
+
+# Activate virtualenv
+source "$VENV_DIR/bin/activate"
+
+# Install/update dependencies
+if [ ! -f "$VENV_DIR/.deps-installed" ] || [ "$INTERPRETER_DIR/requirements.txt" -nt "$VENV_DIR/.deps-installed" ]; then
+    echo "[interpreter] Installing dependencies..."
+    pip install --upgrade pip -q
+    pip install -r "$INTERPRETER_DIR/requirements.txt" -q
+    touch "$VENV_DIR/.deps-installed"
+    echo "[interpreter] Dependencies installed"
+fi
+
+# Check if server is already running
+if [ -f "$PID_FILE" ]; then
+    OLD_PID=$(cat "$PID_FILE")
+    if kill -0 "$OLD_PID" 2>/dev/null; then
+        echo "[interpreter] Server already running (PID: $OLD_PID)"
+        echo "[interpreter] Use 'kill $OLD_PID' to stop it first"
+        exit 1
+    else
+        rm -f "$PID_FILE"
+    fi
+fi
+
+# Export environment variables
+export INTERPRETER_PORT="$PORT"
+export INTERPRETER_HOST="$HOST"
+export INTERPRETER_LLM_PROXY="http://localhost:4321/api/llm/proxy"
+
+echo "[interpreter] Starting Open Interpreter server..."
+echo "[interpreter] Host: $HOST"
+echo "[interpreter] Port: $PORT"
+echo "[interpreter] LLM Proxy: $INTERPRETER_LLM_PROXY"
+
+if [ "$BACKGROUND" = true ]; then
+    # Run in background
+    nohup python "$INTERPRETER_DIR/server.py" > "$LOG_FILE" 2>&1 &
+    SERVER_PID=$!
+    echo "$SERVER_PID" > "$PID_FILE"
+
+    # Wait a moment and check if it started
+    sleep 2
+    if kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "[interpreter] Server started in background (PID: $SERVER_PID)"
+        echo "[interpreter] Logs: $LOG_FILE"
+        echo "[interpreter] Stop with: kill $SERVER_PID"
+    else
+        echo "[interpreter] ERROR: Server failed to start. Check $LOG_FILE"
+        rm -f "$PID_FILE"
+        exit 1
+    fi
+else
+    # Run in foreground
+    echo "[interpreter] Press Ctrl+C to stop"
+    python "$INTERPRETER_DIR/server.py"
+fi

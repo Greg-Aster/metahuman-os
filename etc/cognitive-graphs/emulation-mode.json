@@ -1,332 +1,492 @@
 {
-  "version": "1.5",
+  "version": "1.0",
+  "format": "svelte-flow",
   "name": "Emulation Mode (Intelligent Memory)",
   "description": "AI-driven memory routing - orchestrator determines tier, memory_router handles retrieval. Thinking blocks preserved for UI, stripped for memory.",
   "cognitiveMode": "emulation",
-  "last_modified": "2025-12-05",
+  "last_modified": "2025-12-17",
   "nodes": [
     {
-      "id": 1,
-      "type": "cognitive/user_input",
-      "pos": [50, 260],
-      "size": [180, 60],
-      "properties": {
-        "message": ""
+      "id": "1",
+      "type": "inputNode",
+      "position": {
+        "x": 50,
+        "y": 260
       },
-      "title": "User Input"
-    },
-    {
-      "id": 2,
-      "type": "cognitive/session_context",
-      "pos": [50, 360],
-      "size": [180, 60],
-      "title": "Session Context"
-    },
-    {
-      "id": 3,
-      "type": "cognitive/system_settings",
-      "pos": [50, 460],
-      "size": [180, 80],
-      "title": "System Settings"
-    },
-    {
-      "id": 4,
-      "type": "cognitive/persona_loader",
-      "pos": [280, 100],
-      "size": [180, 80],
-      "title": "Persona Loader"
-    },
-    {
-      "id": 5,
-      "type": "cognitive/persona_formatter",
-      "pos": [500, 100],
-      "size": [200, 80],
-      "properties": {
-        "includePersonality": true,
-        "includeValues": true,
-        "includeGoals": true
+      "data": {
+        "label": "User Input",
+        "nodeType": "user_input",
+        "properties": {
+          "message": ""
+        }
       },
-      "title": "Persona Formatter"
+      "width": 180,
+      "height": 60
     },
     {
-      "id": 6,
-      "type": "cognitive/conversation_history",
-      "pos": [280, 340],
-      "size": [200, 80],
-      "properties": {
-        "mode": "conversation",
-        "maxMessages": 20
+      "id": "2",
+      "type": "contextNode",
+      "position": {
+        "x": 50,
+        "y": 360
       },
-      "title": "Conversation History"
-    },
-    {
-      "id": 7,
-      "type": "cognitive/orchestrator_llm",
-      "pos": [280, 200],
-      "size": [200, 80],
-      "title": "Intent Orchestrator"
-    },
-    {
-      "id": 8,
-      "type": "cognitive/memory_router",
-      "pos": [540, 150],
-      "size": [220, 100],
-      "properties": {
-        "topK": 8,
-        "threshold": 0.5
+      "data": {
+        "label": "Session Context",
+        "nodeType": "session_context",
+        "properties": {}
       },
-      "title": "Memory Router"
+      "width": 180,
+      "height": 60
     },
     {
-      "id": 10,
-      "type": "cognitive/persona_llm",
-      "pos": [1040, 200],
-      "size": [180, 80],
-      "properties": {
-        "model": "default.orchestrator",
-        "temperature": 0.7
+      "id": "3",
+      "type": "contextNode",
+      "position": {
+        "x": 50,
+        "y": 460
       },
-      "title": "Persona LLM"
-    },
-    {
-      "id": 11,
-      "type": "cognitive/cot_stripper",
-      "pos": [1280, 400],
-      "size": [200, 80],
-      "title": "CoT Stripper (deprecated)",
-      "muted": true,
-      "comment": "Replaced by Thinking Stripper for <think> block handling"
-    },
-    {
-      "id": 12,
-      "type": "cognitive/safety_validator",
-      "pos": [1540, 200],
-      "size": [200, 80],
-      "properties": {
-        "threshold": 0.75
+      "data": {
+        "label": "System Settings",
+        "nodeType": "system_settings",
+        "properties": {}
       },
-      "title": "Safety Validator"
+      "width": 180,
+      "height": 80
     },
     {
-      "id": 13,
-      "type": "cognitive/response_refiner",
-      "pos": [1800, 200],
-      "size": [200, 80],
-      "title": "Response Refiner"
+      "id": "4",
+      "type": "personaNode",
+      "position": {
+        "x": 280,
+        "y": 100
+      },
+      "data": {
+        "label": "Persona Loader",
+        "nodeType": "persona_loader",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 80
     },
     {
-      "id": 14,
-      "type": "cognitive/memory_capture",
-      "pos": [2060, 100],
-      "size": [180, 100],
-      "title": "Memory Capture"
+      "id": "5",
+      "type": "personaNode",
+      "position": {
+        "x": 500,
+        "y": 100
+      },
+      "data": {
+        "label": "Persona Formatter",
+        "nodeType": "persona_formatter",
+        "properties": {
+          "includePersonality": true,
+          "includeValues": true,
+          "includeGoals": true
+        }
+      },
+      "width": 200,
+      "height": 80
     },
     {
-      "id": 15,
-      "type": "cognitive/buffer_manager",
-      "pos": [2060, 300],
-      "size": [180, 80],
-      "title": "Buffer Manager"
+      "id": "6",
+      "type": "contextNode",
+      "position": {
+        "x": 280,
+        "y": 340
+      },
+      "data": {
+        "label": "Conversation History",
+        "nodeType": "conversation_history",
+        "properties": {
+          "mode": "conversation",
+          "maxMessages": 20
+        }
+      },
+      "width": 200,
+      "height": 80
     },
     {
-      "id": 16,
-      "type": "cognitive/stream_writer",
-      "pos": [2300, 200],
-      "size": [180, 60],
-      "title": "Stream Writer"
+      "id": "7",
+      "type": "llmNode",
+      "position": {
+        "x": 280,
+        "y": 200
+      },
+      "data": {
+        "label": "Intent Orchestrator",
+        "nodeType": "orchestrator_llm",
+        "properties": {}
+      },
+      "width": 200,
+      "height": 80
     },
     {
-      "id": 17,
-      "type": "cognitive/thinking_stripper",
-      "pos": [2060, 200],
-      "size": [180, 60],
-      "title": "Thinking Stripper",
-      "comment": "Strips <think> blocks for memory, preserves raw output for UI"
+      "id": "8",
+      "type": "memoryNode",
+      "position": {
+        "x": 540,
+        "y": 150
+      },
+      "data": {
+        "label": "Memory Router",
+        "nodeType": "memory_router",
+        "properties": {
+          "topK": 8,
+          "threshold": 0.5
+        }
+      },
+      "width": 220,
+      "height": 100
+    },
+    {
+      "id": "10",
+      "type": "llmNode",
+      "position": {
+        "x": 1040,
+        "y": 200
+      },
+      "data": {
+        "label": "Persona LLM",
+        "nodeType": "persona_llm",
+        "properties": {
+          "model": "default.orchestrator",
+          "temperature": 0.7
+        }
+      },
+      "width": 180,
+      "height": 80
+    },
+    {
+      "id": "11",
+      "type": "safetyNode",
+      "position": {
+        "x": 1280,
+        "y": 400
+      },
+      "data": {
+        "label": "CoT Stripper (deprecated)",
+        "nodeType": "cot_stripper",
+        "properties": {},
+        "muted": true,
+        "comment": "Replaced by Thinking Stripper for <think> block handling"
+      },
+      "width": 200,
+      "height": 80
+    },
+    {
+      "id": "12",
+      "type": "safetyNode",
+      "position": {
+        "x": 1540,
+        "y": 200
+      },
+      "data": {
+        "label": "Safety Validator",
+        "nodeType": "safety_validator",
+        "properties": {
+          "threshold": 0.75
+        }
+      },
+      "width": 200,
+      "height": 80
+    },
+    {
+      "id": "13",
+      "type": "safetyNode",
+      "position": {
+        "x": 1800,
+        "y": 200
+      },
+      "data": {
+        "label": "Response Refiner",
+        "nodeType": "response_refiner",
+        "properties": {}
+      },
+      "width": 200,
+      "height": 80
+    },
+    {
+      "id": "14",
+      "type": "outputNode",
+      "position": {
+        "x": 2060,
+        "y": 100
+      },
+      "data": {
+        "label": "Memory Capture",
+        "nodeType": "memory_capture",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 100
+    },
+    {
+      "id": "15",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 2060,
+        "y": 300
+      },
+      "data": {
+        "label": "Buffer Manager",
+        "nodeType": "buffer_manager",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 80
+    },
+    {
+      "id": "16",
+      "type": "outputNode",
+      "position": {
+        "x": 2300,
+        "y": 200
+      },
+      "data": {
+        "label": "Stream Writer",
+        "nodeType": "stream_writer",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "17",
+      "type": "outputNode",
+      "position": {
+        "x": 2060,
+        "y": 200
+      },
+      "data": {
+        "label": "Thinking Stripper",
+        "nodeType": "thinking_stripper",
+        "properties": {},
+        "comment": "Strips <think> blocks for memory, preserves raw output for UI"
+      },
+      "width": 180,
+      "height": 60
     }
   ],
-  "links": [
+  "edges": [
     {
-      "id": 1,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 7,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "User message → Orchestrator"
+      "id": "e-1-message-7-message",
+      "source": "1",
+      "target": "7",
+      "sourceHandle": "message",
+      "targetHandle": "message",
+      "data": {
+        "type": "string",
+        "comment": "User message → Orchestrator"
+      }
     },
     {
-      "id": 2,
-      "origin_id": 1,
-      "origin_slot": 1,
-      "target_id": 2,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Session ID → Session Context"
+      "id": "e-1-inputSource-2-sessionId",
+      "source": "1",
+      "target": "2",
+      "sourceHandle": "inputSource",
+      "targetHandle": "sessionId",
+      "data": {
+        "type": "string",
+        "comment": "Session ID → Session Context"
+      }
     },
     {
-      "id": 3,
-      "origin_id": 1,
-      "origin_slot": 1,
-      "target_id": 6,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Session ID → Conversation History"
+      "id": "e-1-inputSource-6-sessionId",
+      "source": "1",
+      "target": "6",
+      "sourceHandle": "inputSource",
+      "targetHandle": "sessionId",
+      "data": {
+        "type": "string",
+        "comment": "Session ID → Conversation History"
+      }
     },
     {
-      "id": 4,
-      "origin_id": 4,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Persona data → Persona Formatter"
+      "id": "e-4-persona-5-personaData",
+      "source": "4",
+      "target": "5",
+      "sourceHandle": "persona",
+      "targetHandle": "personaData",
+      "data": {
+        "type": "object",
+        "comment": "Persona data → Persona Formatter"
+      }
     },
     {
-      "id": 5,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 8,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Orchestrator hints (needsMemory, memoryTier, memoryQuery) → Memory Router"
+      "id": "e-7-needsMemory-8-orchestratorHints",
+      "source": "7",
+      "target": "8",
+      "sourceHandle": "needsMemory",
+      "targetHandle": "orchestratorHints",
+      "data": {
+        "type": "object",
+        "comment": "Orchestrator hints (needsMemory, memoryTier, memoryQuery) → Memory Router"
+      }
     },
     {
-      "id": 6,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 8,
-      "target_slot": 1,
-      "type": "string",
-      "comment": "User message → Memory Router (fallback query)"
+      "id": "e-1-message-8-userMessage",
+      "source": "1",
+      "target": "8",
+      "sourceHandle": "message",
+      "targetHandle": "userMessage",
+      "data": {
+        "type": "string",
+        "comment": "User message → Memory Router (fallback query)"
+      }
     },
     {
-      "id": 8,
-      "origin_id": 5,
-      "origin_slot": 0,
-      "target_id": 10,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Formatted persona → Persona LLM"
+      "id": "e-5-formatted-10-personaText",
+      "source": "5",
+      "target": "10",
+      "sourceHandle": "formatted",
+      "targetHandle": "personaText",
+      "data": {
+        "type": "object",
+        "comment": "Formatted persona → Persona LLM"
+      }
     },
     {
-      "id": 9,
-      "origin_id": 6,
-      "origin_slot": 0,
-      "target_id": 10,
-      "target_slot": 1,
-      "type": "array",
-      "comment": "Conversation history → Persona LLM"
+      "id": "e-6-history-10-conversationHistory",
+      "source": "6",
+      "target": "10",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "data": {
+        "type": "array",
+        "comment": "Conversation history → Persona LLM"
+      }
     },
     {
-      "id": 10,
-      "origin_id": 8,
-      "origin_slot": 0,
-      "target_id": 10,
-      "target_slot": 2,
-      "type": "object",
-      "comment": "Memory Router output (memories + searchPerformed) → Persona LLM"
+      "id": "e-8-memories-10-memories",
+      "source": "8",
+      "target": "10",
+      "sourceHandle": "memories",
+      "targetHandle": "memories",
+      "data": {
+        "type": "object",
+        "comment": "Memory Router output (memories + searchPerformed) → Persona LLM"
+      }
     },
     {
-      "id": 11,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 10,
-      "target_slot": 3,
-      "type": "object",
-      "comment": "Orchestrator instructions → Persona LLM"
+      "id": "e-7-needsMemory-10-orchestratorData",
+      "source": "7",
+      "target": "10",
+      "sourceHandle": "needsMemory",
+      "targetHandle": "orchestratorData",
+      "data": {
+        "type": "object",
+        "comment": "Orchestrator instructions → Persona LLM"
+      }
     },
     {
-      "id": 12,
-      "origin_id": 10,
-      "origin_slot": 0,
-      "target_id": 12,
-      "target_slot": 0,
-      "type": "llm_response",
-      "comment": "LLM response → Safety Validator (bypassing CoT Stripper - thinking preserved for UI)"
+      "id": "e-10-response-12-response",
+      "source": "10",
+      "target": "12",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "data": {
+        "type": "llm_response",
+        "comment": "LLM response → Safety Validator (bypassing CoT Stripper - thinking preserved for UI)"
+      }
     },
     {
-      "id": 14,
-      "origin_id": 12,
-      "origin_slot": 0,
-      "target_id": 13,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Validated response → Response Refiner"
+      "id": "e-12-response-13-response",
+      "source": "12",
+      "target": "13",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Validated response → Response Refiner"
+      }
     },
     {
-      "id": 15,
-      "origin_id": 12,
-      "origin_slot": 3,
-      "target_id": 13,
-      "target_slot": 1,
-      "type": "object",
-      "comment": "Safety metadata → Response Refiner"
+      "id": "e-12-safetyResult-13-safetyResult",
+      "source": "12",
+      "target": "13",
+      "sourceHandle": "safetyResult",
+      "targetHandle": "safetyResult",
+      "data": {
+        "type": "object",
+        "comment": "Safety metadata → Response Refiner"
+      }
     },
     {
-      "id": 16,
-      "origin_id": 13,
-      "origin_slot": 0,
-      "target_id": 17,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Refined response → Thinking Stripper"
+      "id": "e-13-response-17-response",
+      "source": "13",
+      "target": "17",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Refined response → Thinking Stripper"
+      }
     },
     {
-      "id": 22,
-      "origin_id": 17,
-      "origin_slot": 1,
-      "target_id": 14,
-      "target_slot": 1,
-      "type": "string",
-      "comment": "Stripped response → Memory Capture (no <think> blocks)"
+      "id": "e-17-stripped-14-assistantResponse",
+      "source": "17",
+      "target": "14",
+      "sourceHandle": "stripped",
+      "targetHandle": "assistantResponse",
+      "data": {
+        "type": "string",
+        "comment": "Stripped response → Memory Capture (no <think> blocks)"
+      }
     },
     {
-      "id": 17,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 14,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "User message → Memory Capture"
+      "id": "e-1-message-14-userMessage",
+      "source": "1",
+      "target": "14",
+      "sourceHandle": "message",
+      "targetHandle": "userMessage",
+      "data": {
+        "type": "string",
+        "comment": "User message → Memory Capture"
+      }
     },
     {
-      "id": 18,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 14,
-      "target_slot": 2,
-      "type": "object",
-      "comment": "System settings → Memory Capture"
+      "id": "e-3-cognitiveMode-14-cognitiveMode",
+      "source": "3",
+      "target": "14",
+      "sourceHandle": "cognitiveMode",
+      "targetHandle": "cognitiveMode",
+      "data": {
+        "type": "object",
+        "comment": "System settings → Memory Capture"
+      }
     },
     {
-      "id": 19,
-      "origin_id": 13,
-      "origin_slot": 0,
-      "target_id": 16,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Refined response → Stream Writer"
+      "id": "e-13-response-16-response",
+      "source": "13",
+      "target": "16",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Refined response → Stream Writer"
+      }
     },
     {
-      "id": 20,
-      "origin_id": 6,
-      "origin_slot": 0,
-      "target_id": 15,
-      "target_slot": 0,
-      "type": "array",
-      "comment": "Updated conversation history → Buffer Manager"
+      "id": "e-6-history-15-conversationHistory",
+      "source": "6",
+      "target": "15",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "data": {
+        "type": "array",
+        "comment": "Updated conversation history → Buffer Manager"
+      }
     },
     {
-      "id": 21,
-      "origin_id": 17,
-      "origin_slot": 1,
-      "target_id": 15,
-      "target_slot": 1,
-      "type": "string",
-      "comment": "Stripped response → Buffer Manager (no <think> blocks)"
+      "id": "e-17-stripped-15-response",
+      "source": "17",
+      "target": "15",
+      "sourceHandle": "stripped",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Stripped response → Buffer Manager (no <think> blocks)"
+      }
     }
-  ],
-  "config": {},
-  "extra": {},
-  "groups": []
+  ]
 }

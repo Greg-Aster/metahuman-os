@@ -11,21 +11,45 @@ import { validateSession } from '@metahuman/core/sessions';
 import { getUser } from '@metahuman/core/users';
 
 // ============================================================================
-// Big Brother Auto-Start (runs once on module load = server start)
+// Tool Executor / Open Interpreter Auto-Start (runs once on module load = server start)
 // ============================================================================
-let bigBrotherInitialized = false;
+let toolExecutorInitialized = false;
 
-async function initializeBigBrother(): Promise<void> {
-  if (bigBrotherInitialized) return;
-  bigBrotherInitialized = true;
+async function initializeToolExecutor(): Promise<void> {
+  if (toolExecutorInitialized) return;
+  toolExecutorInitialized = true;
 
   try {
-    const { loadOperatorConfig } = await import('@metahuman/core/config');
-    const config = loadOperatorConfig();
-    const bigBrotherEnabled = config.bigBrotherMode?.enabled === true;
+    const { loadToolExecutorConfig } = await import('@metahuman/core');
+    const config = loadToolExecutorConfig();
 
-    if (bigBrotherEnabled) {
-      console.log('[middleware] 🤖 Big Brother mode enabled - auto-starting Claude session...');
+    // Check if Open Interpreter autoStart is true (independent of enabled flag)
+    // The 'enabled' flag controls whether it's the active backend, not whether to auto-start
+    const interpreterConfig = config.backends['open-interpreter'];
+    if (interpreterConfig?.autoStart) {
+      console.log('[middleware] 🐍 Open Interpreter auto-start enabled - starting server...');
+
+      const { isInterpreterServerRunning, startInterpreterServer } = await import('@metahuman/core');
+
+      if (!(await isInterpreterServerRunning(interpreterConfig.endpoint))) {
+        const result = await startInterpreterServer({ endpoint: interpreterConfig.endpoint });
+        if (result.success) {
+          console.log('[middleware] ✅ Open Interpreter server started automatically');
+        } else {
+          console.warn('[middleware] ⚠️ Failed to start Open Interpreter server:', result.error);
+        }
+      } else {
+        console.log('[middleware] ✅ Open Interpreter server already running');
+      }
+    }
+
+    // Legacy Big Brother support (deprecated but kept for backward compatibility)
+    const { loadOperatorConfig } = await import('@metahuman/core/config');
+    const operatorConfig = loadOperatorConfig();
+    const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
+
+    if (bigBrotherEnabled && config.activeBackend === 'local-skills') {
+      console.log('[middleware] 🤖 Big Brother mode enabled (legacy) - auto-starting Claude session...');
 
       const { startClaudeSession, isClaudeSessionReady } = await import('@metahuman/core/claude-session');
 
@@ -42,8 +66,13 @@ async function initializeBigBrother(): Promise<void> {
       }
     }
   } catch (err) {
-    console.error('[middleware] ⚠️ Failed to auto-start Big Brother mode:', err);
+    console.error('[middleware] ⚠️ Failed to auto-start tool executor:', err);
   }
+}
+
+// Legacy function name for backward compatibility
+async function initializeBigBrother(): Promise<void> {
+  return initializeToolExecutor();
 }
 
 async function spawnBigBrotherTerminal(): Promise<void> {

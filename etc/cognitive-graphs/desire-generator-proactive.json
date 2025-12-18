@@ -1,153 +1,212 @@
 {
-  "version": "2.0",
+  "version": "1.0",
+  "format": "svelte-flow",
   "name": "Proactive Desire Generator",
   "description": "Analyzes recent user memories to detect implicit desires. Runs periodically to find patterns and goals the user hasn't explicitly stated.",
   "cognitiveMode": "agent",
-  "last_modified": "2025-12-04",
+  "last_modified": "2025-12-17",
   "nodes": [
     {
-      "id": 1,
-      "type": "agency/desire_memory_analyzer",
-      "pos": [100, 150],
-      "size": [220, 100],
-      "properties": {
-        "limit": 20,
-        "daysBack": 7,
-        "markAsAnalyzed": true
+      "id": "1",
+      "type": "agencyNode",
+      "position": {
+        "x": 100,
+        "y": 150
       },
-      "title": "Load Unanalyzed Memories"
+      "data": {
+        "label": "Load Unanalyzed Memories",
+        "nodeType": "desire_memory_analyzer",
+        "properties": {
+          "limit": 20,
+          "daysBack": 7,
+          "markAsAnalyzed": true
+        }
+      },
+      "width": 220,
+      "height": 100
     },
     {
-      "id": 2,
-      "type": "agency/desire_detector",
-      "pos": [380, 150],
-      "size": [220, 100],
-      "properties": {
-        "detectExplicit": true,
-        "detectImplicit": true,
-        "minConfidence": 0.75
+      "id": "2",
+      "type": "agencyNode",
+      "position": {
+        "x": 380,
+        "y": 150
       },
-      "title": "Detect Desires from Memories"
+      "data": {
+        "label": "Detect Desires from Memories",
+        "nodeType": "desire_detector",
+        "properties": {
+          "detectExplicit": true,
+          "detectImplicit": true,
+          "minConfidence": 0.75
+        }
+      },
+      "width": 220,
+      "height": 100
     },
     {
-      "id": 3,
-      "type": "control/conditional",
-      "pos": [650, 150],
-      "size": [160, 80],
-      "properties": {
-        "condition": "detected === true"
+      "id": "3",
+      "type": "routerNode",
+      "position": {
+        "x": 650,
+        "y": 150
       },
-      "title": "Desire Detected?"
+      "data": {
+        "label": "Desire Detected?",
+        "nodeType": "conditional",
+        "properties": {
+          "condition": "detected === true"
+        }
+      },
+      "width": 160,
+      "height": 80
     },
     {
-      "id": 4,
-      "type": "agency/desire_folder_creator",
-      "pos": [860, 100],
-      "size": [200, 100],
-      "properties": {
-        "createScratchpad": true,
-        "createManifest": true
+      "id": "4",
+      "type": "agencyNode",
+      "position": {
+        "x": 860,
+        "y": 100
       },
-      "title": "Create Desire Folder"
+      "data": {
+        "label": "Create Desire Folder",
+        "nodeType": "desire_folder_creator",
+        "properties": {
+          "createScratchpad": true,
+          "createManifest": true
+        }
+      },
+      "width": 200,
+      "height": 100
     },
     {
-      "id": 5,
-      "type": "agency/desire_updater",
-      "pos": [1100, 100],
-      "size": [200, 80],
-      "properties": {
-        "newStatus": "nascent"
+      "id": "5",
+      "type": "agencyNode",
+      "position": {
+        "x": 1100,
+        "y": 100
       },
-      "title": "Set Initial Status"
+      "data": {
+        "label": "Set Initial Status",
+        "nodeType": "desire_updater",
+        "properties": {
+          "newStatus": "nascent"
+        }
+      },
+      "width": 200,
+      "height": 80
     },
     {
-      "id": 6,
-      "type": "cognitive/audit_logger",
-      "pos": [1100, 220],
-      "size": [180, 60],
-      "properties": {
-        "category": "agency",
-        "event": "proactive_desire_created"
+      "id": "6",
+      "type": "outputNode",
+      "position": {
+        "x": 1100,
+        "y": 220
       },
-      "title": "Audit Log"
+      "data": {
+        "label": "Audit Log",
+        "nodeType": "audit_logger",
+        "properties": {
+          "category": "agency",
+          "event": "proactive_desire_created"
+        }
+      },
+      "width": 180,
+      "height": 60
     },
     {
-      "id": 7,
-      "type": "output/result_aggregator",
-      "pos": [860, 250],
-      "size": [180, 60],
-      "properties": {},
-      "title": "Skip (No Desire)"
+      "id": "7",
+      "type": "outputNode",
+      "position": {
+        "x": 860,
+        "y": 250
+      },
+      "data": {
+        "label": "Skip (No Desire)",
+        "nodeType": "result_aggregator",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 60
     }
   ],
-  "links": [
+  "edges": [
     {
-      "id": 1,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 2,
-      "target_slot": 0,
-      "type": "array",
-      "comment": "Memories → Desire Detector"
+      "id": "e-1-memories-2-userInput",
+      "source": "1",
+      "target": "2",
+      "sourceHandle": "memories",
+      "targetHandle": "userInput",
+      "data": {
+        "type": "array",
+        "comment": "Memories → Desire Detector"
+      }
     },
     {
-      "id": 2,
-      "origin_id": 2,
-      "origin_slot": 0,
-      "target_id": 3,
-      "target_slot": 0,
-      "type": "boolean",
-      "comment": "Detection Result → Conditional"
+      "id": "e-2-detected-3-value",
+      "source": "2",
+      "target": "3",
+      "sourceHandle": "detected",
+      "targetHandle": "value",
+      "data": {
+        "type": "boolean",
+        "comment": "Detection Result → Conditional"
+      }
     },
     {
-      "id": 3,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 4,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "If Detected → Create Folder"
+      "id": "e-3-ifTrue-4-desire",
+      "source": "3",
+      "target": "4",
+      "sourceHandle": "ifTrue",
+      "targetHandle": "desire",
+      "data": {
+        "type": "object",
+        "comment": "If Detected → Create Folder"
+      }
     },
     {
-      "id": 4,
-      "origin_id": 2,
-      "origin_slot": 1,
-      "target_id": 4,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Desire Data → Folder Creator"
+      "id": "e-2-desire-4-desire",
+      "source": "2",
+      "target": "4",
+      "sourceHandle": "desire",
+      "targetHandle": "desire",
+      "data": {
+        "type": "object",
+        "comment": "Desire Data → Folder Creator"
+      }
     },
     {
-      "id": 5,
-      "origin_id": 4,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Desire → Status Updater"
+      "id": "e-4-desire-5-desire",
+      "source": "4",
+      "target": "5",
+      "sourceHandle": "desire",
+      "targetHandle": "desire",
+      "data": {
+        "type": "object",
+        "comment": "Desire → Status Updater"
+      }
     },
     {
-      "id": 6,
-      "origin_id": 5,
-      "origin_slot": 0,
-      "target_id": 6,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Updated Desire → Audit"
+      "id": "e-5-desire-6-eventType",
+      "source": "5",
+      "target": "6",
+      "sourceHandle": "desire",
+      "targetHandle": "eventType",
+      "data": {
+        "type": "object",
+        "comment": "Updated Desire → Audit"
+      }
     },
     {
-      "id": 7,
-      "origin_id": 3,
-      "origin_slot": 1,
-      "target_id": 7,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "If Not Detected → Skip"
+      "id": "e-3-ifFalse-7-input",
+      "source": "3",
+      "target": "7",
+      "sourceHandle": "ifFalse",
+      "targetHandle": "input",
+      "data": {
+        "type": "object",
+        "comment": "If Not Detected → Skip"
+      }
     }
-  ],
-  "metadata": {
-    "trigger": "scheduled",
-    "interval": "1h",
-    "description": "Runs hourly to scan recent memories for implicit desires"
-  }
+  ]
 }

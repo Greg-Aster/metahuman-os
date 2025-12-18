@@ -1,197 +1,282 @@
 {
-  "version": "2.0",
+  "version": "1.0",
+  "format": "svelte-flow",
   "name": "Dreamer Agent Workflow",
   "description": "Generates surreal dreams from weighted lifetime memory sampling, extracts learnings, and saves to procedural memory",
   "cognitiveMode": "agent",
-  "last_modified": "2025-11-26",
+  "last_modified": "2025-12-17",
   "nodes": [
     {
-      "id": 1,
-      "type": "cognitive/dreamer_memory_curator",
-      "pos": [100, 100],
-      "size": [220, 100],
-      "properties": {
-        "sampleSize": 15,
-        "decayDays": 227
+      "id": "1",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 100,
+        "y": 100
       },
-      "title": "Curate Memories"
-    },
-    {
-      "id": 2,
-      "type": "cognitive/dreamer_dream_generator",
-      "pos": [400, 100],
-      "size": [220, 120],
-      "properties": {
-        "temperature": 1.0,
-        "role": "persona",
-        "timeout": 300000
+      "data": {
+        "label": "Curate Memories",
+        "nodeType": "dreamer_memory_curator",
+        "properties": {
+          "sampleSize": 15,
+          "decayDays": 227
+        }
       },
-      "title": "Generate Dream"
+      "width": 220,
+      "height": 100
     },
     {
-      "id": 3,
-      "type": "cognitive/dreamer_dream_saver",
-      "pos": [700, 100],
-      "size": [220, 100],
-      "properties": {
-        "type": "dream"
+      "id": "2",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 400,
+        "y": 100
       },
-      "title": "Save Dream"
-    },
-    {
-      "id": 4,
-      "type": "cognitive/dreamer_continuation_generator",
-      "pos": [700, 250],
-      "size": [220, 120],
-      "properties": {
-        "temperature": 1.0,
-        "continuationChance": 0.75,
-        "maxContinuations": 4,
-        "delaySeconds": 60,
-        "timeout": 300000
+      "data": {
+        "label": "Generate Dream",
+        "nodeType": "dreamer_dream_generator",
+        "properties": {
+          "temperature": 1,
+          "role": "persona",
+          "timeout": 300000
+        }
       },
-      "title": "Continuation Dreams"
+      "width": 220,
+      "height": 120
     },
     {
-      "id": 5,
-      "type": "cognitive/dreamer_learnings_extractor",
-      "pos": [400, 400],
-      "size": [220, 120],
-      "properties": {
-        "temperature": 0.3,
-        "role": "persona",
-        "timeout": 300000
+      "id": "3",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 700,
+        "y": 100
       },
-      "title": "Extract Learnings"
-    },
-    {
-      "id": 6,
-      "type": "cognitive/dreamer_learnings_writer",
-      "pos": [700, 400],
-      "size": [220, 100],
-      "properties": {},
-      "title": "Write Overnight Learnings"
-    },
-    {
-      "id": 7,
-      "type": "cognitive/audit_logger",
-      "pos": [1000, 100],
-      "size": [180, 60],
-      "properties": {
-        "event": "dream_completed"
+      "data": {
+        "label": "Save Dream",
+        "nodeType": "dreamer_dream_saver",
+        "properties": {
+          "type": "dream"
+        }
       },
-      "title": "Audit Completion"
+      "width": 220,
+      "height": 100
     },
     {
-      "id": 8,
-      "type": "cognitive/persona_loader",
-      "pos": [200, 0],
-      "size": [180, 60],
-      "title": "Persona Loader"
-    },
-    {
-      "id": 9,
-      "type": "cognitive/persona_formatter",
-      "pos": [350, 0],
-      "size": [200, 80],
-      "properties": {
-        "includePersonality": true,
-        "includeValues": false,
-        "includeGoals": false
+      "id": "4",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 700,
+        "y": 250
       },
-      "title": "Persona Formatter"
+      "data": {
+        "label": "Continuation Dreams",
+        "nodeType": "dreamer_continuation_generator",
+        "properties": {
+          "temperature": 1,
+          "continuationChance": 0.75,
+          "maxContinuations": 4,
+          "delaySeconds": 60,
+          "timeout": 300000
+        }
+      },
+      "width": 220,
+      "height": 120
+    },
+    {
+      "id": "5",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 400,
+        "y": 400
+      },
+      "data": {
+        "label": "Extract Learnings",
+        "nodeType": "dreamer_learnings_extractor",
+        "properties": {
+          "temperature": 0.3,
+          "role": "persona",
+          "timeout": 300000
+        }
+      },
+      "width": 220,
+      "height": 120
+    },
+    {
+      "id": "6",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 700,
+        "y": 400
+      },
+      "data": {
+        "label": "Write Overnight Learnings",
+        "nodeType": "dreamer_learnings_writer",
+        "properties": {}
+      },
+      "width": 220,
+      "height": 100
+    },
+    {
+      "id": "7",
+      "type": "outputNode",
+      "position": {
+        "x": 1000,
+        "y": 100
+      },
+      "data": {
+        "label": "Audit Completion",
+        "nodeType": "audit_logger",
+        "properties": {
+          "event": "dream_completed"
+        }
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "8",
+      "type": "personaNode",
+      "position": {
+        "x": 200,
+        "y": 0
+      },
+      "data": {
+        "label": "Persona Loader",
+        "nodeType": "persona_loader",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "9",
+      "type": "personaNode",
+      "position": {
+        "x": 350,
+        "y": 0
+      },
+      "data": {
+        "label": "Persona Formatter",
+        "nodeType": "persona_formatter",
+        "properties": {
+          "includePersonality": true,
+          "includeValues": false,
+          "includeGoals": false
+        }
+      },
+      "width": 200,
+      "height": 80
     }
   ],
-  "links": [
+  "edges": [
     {
-      "id": 1,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 2,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Curated memories -> Dream Generator"
+      "id": "e-1-memories-2-memories",
+      "source": "1",
+      "target": "2",
+      "sourceHandle": "memories",
+      "targetHandle": "memories",
+      "data": {
+        "type": "object",
+        "comment": "Curated memories -> Dream Generator"
+      }
     },
     {
-      "id": 2,
-      "origin_id": 2,
-      "origin_slot": 0,
-      "target_id": 3,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Generated dream -> Save Dream"
+      "id": "e-2-dream-3-dreamData",
+      "source": "2",
+      "target": "3",
+      "sourceHandle": "dream",
+      "targetHandle": "dreamData",
+      "data": {
+        "type": "object",
+        "comment": "Generated dream -> Save Dream"
+      }
     },
     {
-      "id": 3,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 3,
-      "target_slot": 1,
-      "type": "object",
-      "comment": "Source memories -> Save Dream (for citations)"
+      "id": "e-1-memories-3-memoriesData",
+      "source": "1",
+      "target": "3",
+      "sourceHandle": "memories",
+      "targetHandle": "memoriesData",
+      "data": {
+        "type": "object",
+        "comment": "Source memories -> Save Dream (for citations)"
+      }
     },
     {
-      "id": 4,
-      "origin_id": 2,
-      "origin_slot": 0,
-      "target_id": 4,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Initial dream -> Continuation Generator"
+      "id": "e-2-dream-4-previousDream",
+      "source": "2",
+      "target": "4",
+      "sourceHandle": "dream",
+      "targetHandle": "previousDream",
+      "data": {
+        "type": "object",
+        "comment": "Initial dream -> Continuation Generator"
+      }
     },
     {
-      "id": 5,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Curated memories -> Extract Learnings"
+      "id": "e-1-memories-5-memoriesData",
+      "source": "1",
+      "target": "5",
+      "sourceHandle": "memories",
+      "targetHandle": "memoriesData",
+      "data": {
+        "type": "object",
+        "comment": "Curated memories -> Extract Learnings"
+      }
     },
     {
-      "id": 6,
-      "origin_id": 5,
-      "origin_slot": 0,
-      "target_id": 6,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Extracted learnings -> Write Learnings"
+      "id": "e-5-preferences-6-learningsData",
+      "source": "5",
+      "target": "6",
+      "sourceHandle": "preferences",
+      "targetHandle": "learningsData",
+      "data": {
+        "type": "object",
+        "comment": "Extracted learnings -> Write Learnings"
+      }
     },
     {
-      "id": 7,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 6,
-      "target_slot": 1,
-      "type": "object",
-      "comment": "Memory citations -> Write Learnings"
+      "id": "e-1-memories-6-memoriesData",
+      "source": "1",
+      "target": "6",
+      "sourceHandle": "memories",
+      "targetHandle": "memoriesData",
+      "data": {
+        "type": "object",
+        "comment": "Memory citations -> Write Learnings"
+      }
     },
     {
-      "id": 8,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 7,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Save result -> Audit Logger"
+      "id": "e-3-saved-7-eventType",
+      "source": "3",
+      "target": "7",
+      "sourceHandle": "saved",
+      "targetHandle": "eventType",
+      "data": {
+        "type": "object",
+        "comment": "Save result -> Audit Logger"
+      }
     },
     {
-      "id": 9,
-      "origin_id": 8,
-      "origin_slot": 0,
-      "target_id": 9,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Persona data -> Persona Formatter"
+      "id": "e-8-persona-9-personaData",
+      "source": "8",
+      "target": "9",
+      "sourceHandle": "persona",
+      "targetHandle": "personaData",
+      "data": {
+        "type": "object",
+        "comment": "Persona data -> Persona Formatter"
+      }
     },
     {
-      "id": 10,
-      "origin_id": 9,
-      "origin_slot": 0,
-      "target_id": 2,
-      "target_slot": 1,
-      "type": "string",
-      "comment": "Formatted persona -> Dream Generator (for persona voice)"
+      "id": "e-9-formatted-2-personaPrompt",
+      "source": "9",
+      "target": "2",
+      "sourceHandle": "formatted",
+      "targetHandle": "personaPrompt",
+      "data": {
+        "type": "string",
+        "comment": "Formatted persona -> Dream Generator (for persona voice)"
+      }
     }
   ]
 }

@@ -5,3 +5,4 @@
  */
 
 export { MemoryRouterNode } from './memory-router.node.js';
+export { SearchInterpreterNode } from './search-interpreter.node.js';

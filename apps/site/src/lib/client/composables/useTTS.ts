@@ -734,6 +734,7 @@ export function useTTS() {
 
   /**
    * Smart speak - uses native TTS if enabled, otherwise server TTS
+   * Auto-selects streaming mode for slow providers (RVC) to reduce latency
    */
   async function speak(text: string, options?: { streaming?: boolean; pitchShift?: number; speed?: number }): Promise<void> {
     // Check if native voice mode is enabled
@@ -742,9 +743,22 @@ export function useTTS() {
       return speakTextNative(text);
     }
 
-    // Use server TTS
-    if (options?.streaming) {
-      return speakTextStreaming(text, { pitchShift: options.pitchShift, speed: options.speed });
+    // Use server TTS - auto-select streaming for slow providers
+    let useStreaming = options?.streaming;
+
+    // If streaming not explicitly set, auto-detect based on provider
+    if (useStreaming === undefined) {
+      const provider = await fetchVoiceProvider();
+      // RVC is slow (especially on CPU) - always use streaming for lower latency
+      // Kokoro has native streaming support, also benefits from streaming mode
+      useStreaming = provider === 'rvc' || provider === 'kokoro';
+      if (useStreaming) {
+        console.log(`[useTTS] Auto-selecting streaming mode for ${provider} provider`);
+      }
+    }
+
+    if (useStreaming) {
+      return speakTextStreaming(text, { pitchShift: options?.pitchShift, speed: options?.speed });
     }
     return speakText(text);
   }

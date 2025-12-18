@@ -1,277 +1,363 @@
 {
-  "version": "2.0",
+  "version": "1.0",
+  "format": "svelte-flow",
   "name": "Train of Thought Workflow",
   "description": "Recursive reasoning that follows memory associations, allowing one thought to trigger related thoughts until natural conclusion",
   "cognitiveMode": "agent",
-  "author": "MetaHuman OS",
-  "created": "2025-11-20",
-  "last_modified": "2025-11-20",
-  "tags": ["reflection", "train-of-thought", "recursive", "inner-dialogue"],
+  "last_modified": "2025-12-17",
   "nodes": [
     {
-      "id": 1,
-      "type": "cognitive/text_input",
-      "pos": [50, 200],
-      "size": [180, 80],
-      "properties": {
-        "inputKey": "seedMemory"
+      "id": "1",
+      "type": "inputNode",
+      "position": {
+        "x": 50,
+        "y": 200
       },
-      "title": "Seed Memory Input"
+      "data": {
+        "label": "Seed Memory Input",
+        "nodeType": "text_input",
+        "properties": {
+          "inputKey": "seedMemory"
+        }
+      },
+      "width": 180,
+      "height": 80
     },
     {
-      "id": 2,
-      "type": "cognitive/scratchpad_initializer",
-      "pos": [280, 200],
-      "size": [200, 80],
-      "properties": {
-        "fields": ["thoughts", "keywords", "seenMemoryIds"]
+      "id": "2",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 280,
+        "y": 200
       },
-      "title": "Initialize Scratchpad"
+      "data": {
+        "label": "Initialize Scratchpad",
+        "nodeType": "scratchpad_initializer",
+        "properties": {
+          "fields": [
+            "thoughts",
+            "keywords",
+            "seenMemoryIds"
+          ]
+        }
+      },
+      "width": 200,
+      "height": 80
     },
     {
-      "id": 3,
-      "type": "cognitive/thought_generator",
-      "pos": [530, 200],
-      "size": [220, 100],
-      "properties": {
-        "temperature": 0.75,
-        "extractKeywords": true,
-        "timeout": 300000
+      "id": "3",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 530,
+        "y": 200
       },
-      "title": "Generate Thought"
+      "data": {
+        "label": "Generate Thought",
+        "nodeType": "thought_generator",
+        "properties": {
+          "temperature": 0.75,
+          "extractKeywords": true,
+          "timeout": 300000
+        }
+      },
+      "width": 220,
+      "height": 100
     },
     {
-      "id": 4,
-      "type": "cognitive/scratchpad_updater",
-      "pos": [800, 200],
-      "size": [200, 100],
-      "properties": {
-        "appendTo": "thoughts",
-        "trackField": "seenMemoryIds"
+      "id": "4",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 800,
+        "y": 200
       },
-      "title": "Record Thought"
+      "data": {
+        "label": "Record Thought",
+        "nodeType": "scratchpad_updater",
+        "properties": {
+          "appendTo": "thoughts",
+          "trackField": "seenMemoryIds"
+        }
+      },
+      "width": 200,
+      "height": 100
     },
     {
-      "id": 5,
-      "type": "cognitive/thought_evaluator",
-      "pos": [1050, 200],
-      "size": [220, 100],
-      "properties": {
-        "minConfidence": 0.4,
-        "maxIterations": 7
+      "id": "5",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 1050,
+        "y": 200
       },
-      "title": "Evaluate: Continue?"
+      "data": {
+        "label": "Evaluate: Continue?",
+        "nodeType": "thought_evaluator",
+        "properties": {
+          "minConfidence": 0.4,
+          "maxIterations": 7
+        }
+      },
+      "width": 220,
+      "height": 100
     },
     {
-      "id": 6,
-      "type": "cognitive/loop_memory_search",
-      "pos": [800, 380],
-      "size": [220, 100],
-      "properties": {
-        "maxResults": 3,
-        "excludeSeen": true
+      "id": "6",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 800,
+        "y": 380
       },
-      "title": "Search Related Memories"
+      "data": {
+        "label": "Search Related Memories",
+        "nodeType": "loop_memory_search",
+        "properties": {
+          "maxResults": 3,
+          "excludeSeen": true
+        }
+      },
+      "width": 220,
+      "height": 100
     },
     {
-      "id": 7,
-      "type": "cognitive/conditional_router",
-      "pos": [1050, 380],
-      "size": [220, 100],
-      "properties": {
-        "conditionField": "shouldExit"
+      "id": "7",
+      "type": "routerNode",
+      "position": {
+        "x": 1050,
+        "y": 380
       },
-      "title": "Continue or Exit"
+      "data": {
+        "label": "Continue or Exit",
+        "nodeType": "conditional_router",
+        "properties": {
+          "conditionField": "shouldExit"
+        }
+      },
+      "width": 220,
+      "height": 100
     },
     {
-      "id": 8,
-      "type": "cognitive/thought_aggregator",
-      "pos": [1350, 200],
-      "size": [220, 100],
-      "properties": {
-        "summaryStyle": "narrative",
-        "maxLength": 200,
-        "timeout": 300000
+      "id": "8",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 1350,
+        "y": 200
       },
-      "title": "Aggregate Thoughts"
+      "data": {
+        "label": "Aggregate Thoughts",
+        "nodeType": "thought_aggregator",
+        "properties": {
+          "summaryStyle": "narrative",
+          "maxLength": 200,
+          "timeout": 300000
+        }
+      },
+      "width": 220,
+      "height": 100
     },
     {
-      "id": 9,
-      "type": "cognitive/inner_dialogue_capture",
-      "pos": [1620, 200],
-      "size": [200, 80],
-      "properties": {
-        "tags": ["train-of-thought", "reflection", "inner"]
+      "id": "9",
+      "type": "outputNode",
+      "position": {
+        "x": 1620,
+        "y": 200
       },
-      "title": "Save Thought Chain"
+      "data": {
+        "label": "Save Thought Chain",
+        "nodeType": "inner_dialogue_capture",
+        "properties": {
+          "tags": [
+            "train-of-thought",
+            "reflection",
+            "inner"
+          ]
+        }
+      },
+      "width": 200,
+      "height": 80
     },
     {
-      "id": 10,
-      "type": "cognitive/audit_logger",
-      "pos": [1620, 320],
-      "size": [180, 60],
-      "properties": {
-        "category": "decision",
-        "event": "train_of_thought_complete"
+      "id": "10",
+      "type": "outputNode",
+      "position": {
+        "x": 1620,
+        "y": 320
       },
-      "title": "Audit Completion"
+      "data": {
+        "label": "Audit Completion",
+        "nodeType": "audit_logger",
+        "properties": {
+          "category": "decision",
+          "event": "train_of_thought_complete"
+        }
+      },
+      "width": 180,
+      "height": 60
     }
   ],
-  "links": [
+  "edges": [
     {
-      "id": 1,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 2,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Seed Memory → Initialize Scratchpad"
+      "id": "e-1-text-2-slot_0",
+      "source": "1",
+      "target": "2",
+      "sourceHandle": "text",
+      "targetHandle": "slot_0",
+      "data": {
+        "type": "string",
+        "comment": "Seed Memory → Initialize Scratchpad"
+      }
     },
     {
-      "id": 2,
-      "origin_id": 2,
-      "origin_slot": 0,
-      "target_id": 3,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Scratchpad → Thought Generator"
+      "id": "e-2-scratchpad-3-context",
+      "source": "2",
+      "target": "3",
+      "sourceHandle": "scratchpad",
+      "targetHandle": "context",
+      "data": {
+        "type": "object",
+        "comment": "Scratchpad → Thought Generator"
+      }
     },
     {
-      "id": 3,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 3,
-      "target_slot": 1,
-      "type": "string",
-      "comment": "Seed Memory → Thought Generator (context)"
+      "id": "e-1-text-3-seedMemory",
+      "source": "1",
+      "target": "3",
+      "sourceHandle": "text",
+      "targetHandle": "seedMemory",
+      "data": {
+        "type": "string",
+        "comment": "Seed Memory → Thought Generator (context)"
+      }
     },
     {
-      "id": 4,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 4,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Thought → Record in Scratchpad"
+      "id": "e-3-result-4-iterationState",
+      "source": "3",
+      "target": "4",
+      "sourceHandle": "result",
+      "targetHandle": "iterationState",
+      "data": {
+        "type": "object",
+        "comment": "Thought → Record in Scratchpad"
+      }
     },
     {
-      "id": 5,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Thought Generator → Evaluator (current thought)"
+      "id": "e-3-result-5-thought",
+      "source": "3",
+      "target": "5",
+      "sourceHandle": "result",
+      "targetHandle": "thought",
+      "data": {
+        "type": "object",
+        "comment": "Thought Generator → Evaluator (current thought)"
+      }
     },
     {
-      "id": 15,
-      "origin_id": 4,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 2,
-      "type": "object",
-      "comment": "Updated Scratchpad → Evaluator (history)"
+      "id": "e-4-scratchpad-5-history",
+      "source": "4",
+      "target": "5",
+      "sourceHandle": "scratchpad",
+      "targetHandle": "history",
+      "data": {
+        "type": "object",
+        "comment": "Updated Scratchpad → Evaluator (history)"
+      }
     },
     {
-      "id": 6,
-      "origin_id": 5,
-      "origin_slot": 0,
-      "target_id": 6,
-      "target_slot": 0,
-      "type": "array",
-      "comment": "Search Terms → Memory Search"
+      "id": "e-5-evaluation-6-searchTerms",
+      "source": "5",
+      "target": "6",
+      "sourceHandle": "evaluation",
+      "targetHandle": "searchTerms",
+      "data": {
+        "type": "array",
+        "comment": "Search Terms → Memory Search"
+      }
     },
     {
-      "id": 7,
-      "origin_id": 4,
-      "origin_slot": 0,
-      "target_id": 6,
-      "target_slot": 1,
-      "type": "array",
-      "comment": "Seen Memory IDs → Memory Search (exclude)"
+      "id": "e-4-scratchpad-6-seenIds",
+      "source": "4",
+      "target": "6",
+      "sourceHandle": "scratchpad",
+      "targetHandle": "seenIds",
+      "data": {
+        "type": "array",
+        "comment": "Seen Memory IDs → Memory Search (exclude)"
+      }
     },
     {
-      "id": 8,
-      "origin_id": 5,
-      "origin_slot": 0,
-      "target_id": 7,
-      "target_slot": 0,
-      "type": "boolean",
-      "comment": "shouldContinue → Router"
+      "id": "e-5-evaluation-7-condition",
+      "source": "5",
+      "target": "7",
+      "sourceHandle": "evaluation",
+      "targetHandle": "condition",
+      "data": {
+        "type": "boolean",
+        "comment": "shouldContinue → Router"
+      }
     },
     {
-      "id": 9,
-      "origin_id": 6,
-      "origin_slot": 0,
-      "target_id": 7,
-      "target_slot": 2,
-      "type": "object",
-      "comment": "New memories → Router slot 2 (for back-edge when looping)"
+      "id": "e-6-result-7-falseData",
+      "source": "6",
+      "target": "7",
+      "sourceHandle": "result",
+      "targetHandle": "falseData",
+      "data": {
+        "type": "object",
+        "comment": "New memories → Router slot 2 (for back-edge when looping)"
+      }
     },
     {
-      "id": 16,
-      "origin_id": 5,
-      "origin_slot": 0,
-      "target_id": 7,
-      "target_slot": 1,
-      "type": "object",
-      "comment": "Evaluator (with thoughts) → Router slot 1 (for aggregator when exiting)"
+      "id": "e-5-evaluation-7-trueData",
+      "source": "5",
+      "target": "7",
+      "sourceHandle": "evaluation",
+      "targetHandle": "trueData",
+      "data": {
+        "type": "object",
+        "comment": "Evaluator (with thoughts) → Router slot 1 (for aggregator when exiting)"
+      }
     },
     {
-      "id": 10,
-      "origin_id": 7,
-      "origin_slot": 1,
-      "target_id": 3,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Loop back with new memory → Thought Generator [BACK-EDGE]"
+      "id": "e-7-loopOutput-3-context",
+      "source": "7",
+      "target": "3",
+      "sourceHandle": "loopOutput",
+      "targetHandle": "context",
+      "data": {
+        "type": "object",
+        "comment": "Loop back with new memory → Thought Generator [BACK-EDGE]"
+      }
     },
     {
-      "id": 11,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 8,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Exit Loop → Aggregate Thoughts"
+      "id": "e-7-exitOutput-8-scratchpad",
+      "source": "7",
+      "target": "8",
+      "sourceHandle": "exitOutput",
+      "targetHandle": "scratchpad",
+      "data": {
+        "type": "object",
+        "comment": "Exit Loop → Aggregate Thoughts"
+      }
     },
     {
-      "id": 13,
-      "origin_id": 8,
-      "origin_slot": 0,
-      "target_id": 9,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Consolidated Chain → Save"
+      "id": "e-8-result-9-text",
+      "source": "8",
+      "target": "9",
+      "sourceHandle": "result",
+      "targetHandle": "text",
+      "data": {
+        "type": "string",
+        "comment": "Consolidated Chain → Save"
+      }
     },
     {
-      "id": 14,
-      "origin_id": 8,
-      "origin_slot": 0,
-      "target_id": 10,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Aggregation Result → Audit"
-    }
-  ],
-  "groups": [
-    {
-      "id": 1,
-      "title": "Initialization",
-      "bounding": [30, 150, 270, 180],
-      "color": "#2d5a27"
-    },
-    {
-      "id": 2,
-      "title": "Thought Loop",
-      "bounding": [510, 150, 800, 380],
-      "color": "#5a4327"
-    },
-    {
-      "id": 3,
-      "title": "Output",
-      "bounding": [1330, 150, 520, 280],
-      "color": "#4a275a"
+      "id": "e-8-result-10-eventType",
+      "source": "8",
+      "target": "10",
+      "sourceHandle": "result",
+      "targetHandle": "eventType",
+      "data": {
+        "type": "object",
+        "comment": "Aggregation Result → Audit"
+      }
     }
   ]
 }

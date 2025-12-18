@@ -264,8 +264,8 @@ export function createUser(
     throw new Error('Owner account already exists');
   }
 
-  // Validate password strength (basic)
-  if (password.length < 6) {
+  // Validate password strength (basic) - skip for guest accounts
+  if (role !== 'guest' && password.length < 6) {
     throw new Error('Password must be at least 6 characters');
   }
 

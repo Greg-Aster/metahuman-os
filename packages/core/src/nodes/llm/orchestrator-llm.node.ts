@@ -53,6 +53,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     { name: 'message', type: 'string', description: 'User message to analyze' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
     { name: 'systemSettings', type: 'object', optional: true, description: 'System settings for permission context' },
+    { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },
   ],
   outputs: [
     { name: 'needsMemory', type: 'boolean', description: 'Whether memory search is needed' },
@@ -73,6 +74,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     const inputData = inputs[0];
     const conversationHistory = inputs[1] || context.conversationHistory || [];
     const systemSettings = inputs[2] || {};
+    const feedbackContext = inputs[3] || inputs.feedbackContext || null;
 
     const userMessage = typeof inputData === 'string'
       ? inputData
@@ -81,6 +83,10 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     // Analyze conversation context
     const conversationLength = Array.isArray(conversationHistory) ? conversationHistory.length : 0;
     const isInConversation = conversationLength > 2;
+
+    // Check if this is a refinement iteration
+    const isRefinementPass = feedbackContext !== null;
+    const currentIteration = feedbackContext?.iteration ?? 1;
 
     if (!userMessage || typeof userMessage !== 'string' || userMessage.trim().length === 0) {
       return {
@@ -110,6 +116,20 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
       : '';
 
     try {
+      // Build feedback section if this is a refinement pass
+      let feedbackSection = '';
+      if (isRefinementPass && feedbackContext) {
+        feedbackSection = `
+IMPORTANT: This is refinement iteration ${currentIteration}. Previous attempt(s) failed quality checks.
+Feedback from previous attempt: ${feedbackContext.specificFeedback || 'No specific feedback'}
+Feedback type: ${feedbackContext.feedbackType || 'quality'}
+
+Adjust your routing based on this feedback. If memory search already failed, consider:
+- Setting needsMemory to false (already searched, no results)
+- Recommending an "I don't know" style response
+- Adjusting responseStyle to be more honest about uncertainty`;
+      }
+
       const systemPrompt = `You are the Intent Orchestrator. Analyze the user's message and determine routing.
 
 Output JSON:
@@ -126,7 +146,7 @@ Output JSON:
   "isFollowUp": boolean,         // Is this continuing a conversation?
   "emotionalTone": string        // Detected emotional context
 }
-
+${feedbackSection}
 ${recentMessages ? `Recent conversation:\n${recentMessages}` : ''}`;
 
       const messages = [

@@ -1,170 +1,248 @@
 {
-  "version": "2.0",
+  "version": "1.0",
+  "format": "svelte-flow",
   "name": "Desire Plan Generator",
   "description": "Generates execution plans for activated desires using LLM-based planning",
   "cognitiveMode": "agent",
-  "last_modified": "2025-12-03",
+  "last_modified": "2025-12-17",
   "nodes": [
     {
-      "id": 1,
-      "type": "agency/desire_loader",
-      "pos": [100, 150],
-      "size": [200, 80],
-      "properties": {},
-      "title": "Load Desire"
-    },
-    {
-      "id": 2,
-      "type": "cognitive/tool_catalog_builder",
-      "pos": [350, 50],
-      "size": [200, 80],
-      "properties": {
-        "filterByTrust": true
+      "id": "1",
+      "type": "genericNode",
+      "position": {
+        "x": 100,
+        "y": 150
       },
-      "title": "Build Tool Catalog"
-    },
-    {
-      "id": 3,
-      "type": "cognitive/policy_loader",
-      "pos": [350, 150],
-      "size": [200, 80],
-      "properties": {
-        "include": ["decision-rules", "hard-rules"]
+      "data": {
+        "label": "Load Desire",
+        "nodeType": "desire_loader",
+        "properties": {}
       },
-      "title": "Load Policies"
+      "width": 200,
+      "height": 80
     },
     {
-      "id": 4,
-      "type": "context/semantic_search",
-      "pos": [350, 250],
-      "size": [200, 100],
-      "properties": {
-        "topK": 5
+      "id": "2",
+      "type": "genericNode",
+      "position": {
+        "x": 350,
+        "y": 50
       },
-      "title": "Search Relevant Memories"
-    },
-    {
-      "id": 5,
-      "type": "agency/desire_plan_generator",
-      "pos": [600, 150],
-      "size": [220, 120],
-      "properties": {
-        "temperature": 0.3
+      "data": {
+        "label": "Build Tool Catalog",
+        "nodeType": "tool_catalog_builder",
+        "properties": {
+          "filterByTrust": true
+        }
       },
-      "title": "Generate Plan"
+      "width": 200,
+      "height": 80
     },
     {
-      "id": 6,
-      "type": "cognitive/plan_validator",
-      "pos": [870, 150],
-      "size": [200, 100],
-      "properties": {
-        "checkSkillAvailability": true,
-        "checkTrustLevel": true
+      "id": "3",
+      "type": "genericNode",
+      "position": {
+        "x": 350,
+        "y": 150
       },
-      "title": "Validate Plan"
-    },
-    {
-      "id": 7,
-      "type": "agency/desire_updater",
-      "pos": [1120, 150],
-      "size": [200, 100],
-      "properties": {},
-      "title": "Update Desire with Plan"
-    },
-    {
-      "id": 8,
-      "type": "cognitive/audit_logger",
-      "pos": [1370, 150],
-      "size": [180, 60],
-      "properties": {
-        "category": "agency",
-        "event": "plan_generated"
+      "data": {
+        "label": "Load Policies",
+        "nodeType": "policy_loader",
+        "properties": {
+          "include": [
+            "decision-rules",
+            "hard-rules"
+          ]
+        }
       },
-      "title": "Audit Log"
+      "width": 200,
+      "height": 80
+    },
+    {
+      "id": "4",
+      "type": "contextNode",
+      "position": {
+        "x": 350,
+        "y": 250
+      },
+      "data": {
+        "label": "Search Relevant Memories",
+        "nodeType": "semantic_search",
+        "properties": {
+          "topK": 5
+        }
+      },
+      "width": 200,
+      "height": 100
+    },
+    {
+      "id": "5",
+      "type": "genericNode",
+      "position": {
+        "x": 600,
+        "y": 150
+      },
+      "data": {
+        "label": "Generate Plan",
+        "nodeType": "desire_plan_generator",
+        "properties": {
+          "temperature": 0.3
+        }
+      },
+      "width": 220,
+      "height": 120
+    },
+    {
+      "id": "6",
+      "type": "genericNode",
+      "position": {
+        "x": 870,
+        "y": 150
+      },
+      "data": {
+        "label": "Validate Plan",
+        "nodeType": "plan_validator",
+        "properties": {
+          "checkSkillAvailability": true,
+          "checkTrustLevel": true
+        }
+      },
+      "width": 200,
+      "height": 100
+    },
+    {
+      "id": "7",
+      "type": "agencyNode",
+      "position": {
+        "x": 1120,
+        "y": 150
+      },
+      "data": {
+        "label": "Update Desire with Plan",
+        "nodeType": "desire_updater",
+        "properties": {}
+      },
+      "width": 200,
+      "height": 100
+    },
+    {
+      "id": "8",
+      "type": "outputNode",
+      "position": {
+        "x": 1370,
+        "y": 150
+      },
+      "data": {
+        "label": "Audit Log",
+        "nodeType": "audit_logger",
+        "properties": {
+          "category": "agency",
+          "event": "plan_generated"
+        }
+      },
+      "width": 180,
+      "height": 60
     }
   ],
-  "links": [
+  "edges": [
     {
-      "id": 1,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 4,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Desire → Semantic Search (for query)"
+      "id": "e-1-slot_0-4-query",
+      "source": "1",
+      "target": "4",
+      "sourceHandle": "slot_0",
+      "targetHandle": "query",
+      "data": {
+        "type": "object",
+        "comment": "Desire → Semantic Search (for query)"
+      }
     },
     {
-      "id": 2,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Desire → Plan Generator"
+      "id": "e-1-slot_0-5-slot_0",
+      "source": "1",
+      "target": "5",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_0",
+      "data": {
+        "type": "object",
+        "comment": "Desire → Plan Generator"
+      }
     },
     {
-      "id": 3,
-      "origin_id": 2,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 1,
-      "type": "string",
-      "comment": "Tool Catalog → Plan Generator"
+      "id": "e-2-slot_0-5-slot_1",
+      "source": "2",
+      "target": "5",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_1",
+      "data": {
+        "type": "string",
+        "comment": "Tool Catalog → Plan Generator"
+      }
     },
     {
-      "id": 4,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 2,
-      "type": "string",
-      "comment": "Decision Rules → Plan Generator"
+      "id": "e-3-slot_0-5-slot_2",
+      "source": "3",
+      "target": "5",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_2",
+      "data": {
+        "type": "string",
+        "comment": "Decision Rules → Plan Generator"
+      }
     },
     {
-      "id": 5,
-      "origin_id": 4,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 3,
-      "type": "string",
-      "comment": "Relevant Memories → Plan Generator"
+      "id": "e-4-memories-5-slot_3",
+      "source": "4",
+      "target": "5",
+      "sourceHandle": "memories",
+      "targetHandle": "slot_3",
+      "data": {
+        "type": "string",
+        "comment": "Relevant Memories → Plan Generator"
+      }
     },
     {
-      "id": 6,
-      "origin_id": 5,
-      "origin_slot": 0,
-      "target_id": 6,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Plan → Validator"
+      "id": "e-5-slot_0-6-slot_0",
+      "source": "5",
+      "target": "6",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_0",
+      "data": {
+        "type": "object",
+        "comment": "Plan → Validator"
+      }
     },
     {
-      "id": 7,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 7,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Desire → Updater"
+      "id": "e-1-slot_0-7-desire",
+      "source": "1",
+      "target": "7",
+      "sourceHandle": "slot_0",
+      "targetHandle": "desire",
+      "data": {
+        "type": "object",
+        "comment": "Desire → Updater"
+      }
     },
     {
-      "id": 8,
-      "origin_id": 6,
-      "origin_slot": 0,
-      "target_id": 7,
-      "target_slot": 1,
-      "type": "object",
-      "comment": "Validated Plan → Updater"
+      "id": "e-6-slot_0-7-newStatus",
+      "source": "6",
+      "target": "7",
+      "sourceHandle": "slot_0",
+      "targetHandle": "newStatus",
+      "data": {
+        "type": "object",
+        "comment": "Validated Plan → Updater"
+      }
     },
     {
-      "id": 9,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 8,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Updated Desire → Audit"
+      "id": "e-7-desire-8-eventType",
+      "source": "7",
+      "target": "8",
+      "sourceHandle": "desire",
+      "targetHandle": "eventType",
+      "data": {
+        "type": "object",
+        "comment": "Updated Desire → Audit"
+      }
     }
   ]
 }

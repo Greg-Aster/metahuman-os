@@ -1,128 +1,185 @@
 {
-  "version": "2.0",
+  "version": "1.0",
+  "format": "svelte-flow",
   "name": "Desire Executor",
   "description": "Executes approved desire plans through Big Brother operator. Updates status and writes to scratchpad.",
   "cognitiveMode": "agent",
-  "last_modified": "2025-12-04",
+  "last_modified": "2025-12-17",
   "nodes": [
     {
-      "id": 1,
-      "type": "agency/desire_loader",
-      "pos": [100, 150],
-      "size": [200, 80],
-      "properties": {
-        "statusFilter": ["approved"]
+      "id": "1",
+      "type": "genericNode",
+      "position": {
+        "x": 100,
+        "y": 150
       },
-      "title": "Load Approved Desire"
+      "data": {
+        "label": "Load Approved Desire",
+        "nodeType": "desire_loader",
+        "properties": {
+          "statusFilter": [
+            "approved"
+          ]
+        }
+      },
+      "width": 200,
+      "height": 80
     },
     {
-      "id": 2,
-      "type": "context/user_context_loader",
-      "pos": [100, 280],
-      "size": [200, 80],
-      "properties": {},
-      "title": "Load User Context"
+      "id": "2",
+      "type": "genericNode",
+      "position": {
+        "x": 100,
+        "y": 280
+      },
+      "data": {
+        "label": "Load User Context",
+        "nodeType": "user_context_loader",
+        "properties": {}
+      },
+      "width": 200,
+      "height": 80
     },
     {
-      "id": 3,
-      "type": "agency/desire_executor",
-      "pos": [400, 180],
-      "size": [240, 120],
-      "properties": {
-        "operatorEndpoint": "/api/operator",
-        "defaultMode": "yolo"
+      "id": "3",
+      "type": "genericNode",
+      "position": {
+        "x": 400,
+        "y": 180
       },
-      "title": "Execute via Big Brother"
+      "data": {
+        "label": "Execute via Big Brother",
+        "nodeType": "desire_executor",
+        "properties": {
+          "operatorEndpoint": "/api/operator",
+          "defaultMode": "yolo"
+        }
+      },
+      "width": 240,
+      "height": 120
     },
     {
-      "id": 4,
-      "type": "agency/desire_updater",
-      "pos": [700, 180],
-      "size": [200, 100],
-      "properties": {
-        "newStatus": "executed",
-        "updateExecution": true,
-        "updateMetrics": true
+      "id": "4",
+      "type": "agencyNode",
+      "position": {
+        "x": 700,
+        "y": 180
       },
-      "title": "Update Desire State"
+      "data": {
+        "label": "Update Desire State",
+        "nodeType": "desire_updater",
+        "properties": {
+          "newStatus": "executed",
+          "updateExecution": true,
+          "updateMetrics": true
+        }
+      },
+      "width": 200,
+      "height": 100
     },
     {
-      "id": 5,
-      "type": "cognitive/scratchpad_writer",
-      "pos": [700, 320],
-      "size": [200, 80],
-      "properties": {
-        "eventType": "execution_completed",
-        "includeStepResults": true
+      "id": "5",
+      "type": "genericNode",
+      "position": {
+        "x": 700,
+        "y": 320
       },
-      "title": "Record Execution to Scratchpad"
+      "data": {
+        "label": "Record Execution to Scratchpad",
+        "nodeType": "scratchpad_writer",
+        "properties": {
+          "eventType": "execution_completed",
+          "includeStepResults": true
+        }
+      },
+      "width": 200,
+      "height": 80
     },
     {
-      "id": 6,
-      "type": "cognitive/audit_logger",
-      "pos": [950, 180],
-      "size": [180, 60],
-      "properties": {
-        "category": "agency",
-        "event": "desire_executed"
+      "id": "6",
+      "type": "outputNode",
+      "position": {
+        "x": 950,
+        "y": 180
       },
-      "title": "Audit Log"
+      "data": {
+        "label": "Audit Log",
+        "nodeType": "audit_logger",
+        "properties": {
+          "category": "agency",
+          "event": "desire_executed"
+        }
+      },
+      "width": 180,
+      "height": 60
     }
   ],
-  "links": [
+  "edges": [
     {
-      "id": 1,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 3,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Desire → Executor"
+      "id": "e-1-slot_0-3-slot_0",
+      "source": "1",
+      "target": "3",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_0",
+      "data": {
+        "type": "object",
+        "comment": "Desire → Executor"
+      }
     },
     {
-      "id": 2,
-      "origin_id": 2,
-      "origin_slot": 0,
-      "target_id": 3,
-      "target_slot": 1,
-      "type": "object",
-      "comment": "User Context → Executor"
+      "id": "e-2-slot_0-3-slot_1",
+      "source": "2",
+      "target": "3",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_1",
+      "data": {
+        "type": "object",
+        "comment": "User Context → Executor"
+      }
     },
     {
-      "id": 3,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 4,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Desire → Updater"
+      "id": "e-1-slot_0-4-desire",
+      "source": "1",
+      "target": "4",
+      "sourceHandle": "slot_0",
+      "targetHandle": "desire",
+      "data": {
+        "type": "object",
+        "comment": "Desire → Updater"
+      }
     },
     {
-      "id": 4,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 4,
-      "target_slot": 1,
-      "type": "object",
-      "comment": "Execution Result → Updater"
+      "id": "e-3-slot_0-4-newStatus",
+      "source": "3",
+      "target": "4",
+      "sourceHandle": "slot_0",
+      "targetHandle": "newStatus",
+      "data": {
+        "type": "object",
+        "comment": "Execution Result → Updater"
+      }
     },
     {
-      "id": 5,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Execution → Scratchpad"
+      "id": "e-3-slot_0-5-slot_0",
+      "source": "3",
+      "target": "5",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_0",
+      "data": {
+        "type": "object",
+        "comment": "Execution → Scratchpad"
+      }
     },
     {
-      "id": 6,
-      "origin_id": 4,
-      "origin_slot": 0,
-      "target_id": 6,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Updated Desire → Audit"
+      "id": "e-4-desire-6-eventType",
+      "source": "4",
+      "target": "6",
+      "sourceHandle": "desire",
+      "targetHandle": "eventType",
+      "data": {
+        "type": "object",
+        "comment": "Updated Desire → Audit"
+      }
     }
   ]
 }

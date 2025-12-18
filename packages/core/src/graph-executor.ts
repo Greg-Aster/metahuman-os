@@ -6,6 +6,7 @@
  */
 
 import type { CognitiveGraph } from './cognitive-graph-schema';
+import { normalizeForExecution } from './cognitive-graph-schema.js';
 import { createLogger } from './logger.js';
 
 const log = createLogger('graph-pipeline');
@@ -41,13 +42,16 @@ export type ExecutionEventHandler = (event: ExecutionEvent) => void;
 
 /**
  * Identify back-edges (edges that would create cycles)
- * These are allowed ONLY from conditional_router nodes
+ * These are allowed from conditional_router and feedback_router nodes
  */
 function identifyBackEdges(graph: CognitiveGraph): Set<string> {
   const backEdges = new Set<string>();
 
-  // Find all conditional_router nodes
-  const routerNodes = graph.nodes.filter(n => n.type === 'conditional_router' || n.type === 'cognitive/conditional_router');
+  // Find all router nodes that can create back-edges (conditional_router and feedback_router)
+  const routerNodes = graph.nodes.filter(n =>
+    n.type === 'conditional_router' || n.type === 'cognitive/conditional_router' ||
+    n.type === 'feedback_router' || n.type === 'control_flow/feedback_router'
+  );
   const routerIds = new Set(routerNodes.map(n => n.id));
 
   // For each router, identify which of its output links are "loop back" links
@@ -55,8 +59,11 @@ function identifyBackEdges(graph: CognitiveGraph): Set<string> {
     if (routerIds.has(link.origin_id)) {
       // Check if this link creates a cycle (target comes before origin in dependency order)
       // We'll mark links that might loop back based on slot naming or link properties
-      // Slot 0 = "true path" (exit/continue), Slot 1 = "false path" (loop back)
-      if (link.origin_slot === 1 || link.comment?.includes('loop') || link.comment?.includes('back')) {
+      // For conditional_router: Slot 1 = "false path" (loop back)
+      // For feedback_router: Slot 2 = feedbackContext (loop back to orchestrator)
+      if (link.origin_slot === 1 || link.origin_slot === 2 ||
+          link.comment?.includes('loop') || link.comment?.includes('back') ||
+          link.comment?.includes('BACK-EDGE')) {
         backEdges.add(`${link.origin_id}->${link.target_id}`);
       }
     }
@@ -423,10 +430,13 @@ function getLoopNodes(routerId: number, graph: CognitiveGraph, backEdges: Set<st
  * Supports conditional loops via conditional_router nodes
  */
 export async function executeGraph(
-  graph: CognitiveGraph,
+  inputGraph: CognitiveGraph | any,
   contextData: Record<string, any>,
   eventHandler?: ExecutionEventHandler
 ): Promise<GraphExecutionState> {
+  // Normalize graph to legacy format (handles both Svelte Flow and legacy formats)
+  const graph = normalizeForExecution(inputGraph);
+
   const executionState = new Map<number, NodeExecutionState>();
   const graphState: GraphExecutionState = {
     nodes: executionState,
@@ -568,14 +578,17 @@ export async function executeGraph(
  * Get the final output from a graph execution
  */
 export function getGraphOutput(state: GraphExecutionState): any {
-  // Priority 1: Look for stream_writer node (node 16 in dual-mode, node 9 in emulation-mode)
+  // Priority 1: Look for stream_writer node by checking for 'output' or 'response' properties
+  // Node IDs vary by graph: 16 (old dual-mode), 9 (emulation-mode), 23 (current dual-mode)
   let streamWriterOutput: any = null;
   let lastOutput: any = null;
 
   state.nodes.forEach((nodeState, nodeId) => {
     if (nodeState.status === 'completed' && nodeState.outputs) {
-      // Check if this is a stream_writer node
-      if (nodeId === 16 || nodeId === 9 || nodeState.outputs.output || nodeState.outputs.response) {
+      // Check if this is a stream_writer node (by ID or by having output/response)
+      // Include node 23 which is stream_writer in current dual-mode.json
+      if (nodeId === 16 || nodeId === 9 || nodeId === 23 ||
+          nodeState.outputs.output !== undefined || nodeState.outputs.response !== undefined) {
         streamWriterOutput = nodeState.outputs;
       }
       lastOutput = nodeState.outputs;

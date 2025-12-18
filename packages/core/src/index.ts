@@ -383,6 +383,13 @@ export * from './drift/index.js';
 // System Coder (error capture, fix management, maintenance)
 export * from './system-coder/index.js';
 
+// Tool Executor (replaces Big Brother CLI escalation)
+export * from './tool-executor-config.js';
+export * from './tool-executor-backends.js';
+export * from './tool-executor-compat.js';
+export * from './open-interpreter.js';
+export * from './legacy-cli-adapters.js';
+
 // Version
 export const VERSION = '0.1.0';
 export const PHASE = 'Phase 1-2: Intelligence & Autonomy (Multi-User)';

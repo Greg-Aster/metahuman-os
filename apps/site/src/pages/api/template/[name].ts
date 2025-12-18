@@ -4,16 +4,16 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getTemplate } from '../../../lib/client/visual-editor/template-loader';
-import { validateGraph } from '@metahuman/core/graph-error-handler';
+import fs from 'fs';
+import path from 'path';
+import { systemPaths } from '@metahuman/core';
 
 /**
  * GET /api/template/:name
- * Returns the latest version of a graph template with validation
+ * Returns the latest version of a graph template
  */
-export const GET: APIRoute = async ({ params, url }) => {
+export const GET: APIRoute = async ({ params }) => {
   const { name } = params;
-  const skipValidation = url.searchParams.get('skipValidation') === 'true';
 
   if (!name) {
     return new Response(
@@ -23,30 +23,23 @@ export const GET: APIRoute = async ({ params, url }) => {
   }
 
   try {
-    const template = await getTemplate(name);
+    // Look for template in cognitive-graphs directory
+    const templatePath = path.join(systemPaths.root, 'etc', 'cognitive-graphs', `${name}.json`);
 
-    if (!template) {
+    if (!fs.existsSync(templatePath)) {
       return new Response(
         JSON.stringify({ error: `Template '${name}' not found` }),
         { status: 404, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    // Validate template structure
-    let validation = { valid: true, errors: [] as string[] };
-    if (!skipValidation) {
-      validation = validateGraph(template);
-
-      if (!validation.valid) {
-        console.warn(`[API] Template ${name} has validation errors:`, validation.errors);
-      }
-    }
+    const content = fs.readFileSync(templatePath, 'utf-8');
+    const template = JSON.parse(content);
 
     return new Response(
       JSON.stringify({
         success: true,
         template,
-        validation,
         timestamp: Date.now(),
       }),
       {

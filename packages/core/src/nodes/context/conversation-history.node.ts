@@ -13,9 +13,7 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
   category: 'context',
   inputs: [],
   outputs: [
-    { name: 'messages', type: 'array', description: 'Conversation messages' },
-    { name: 'count', type: 'number', description: 'Message count' },
-    { name: 'estimatedTokens', type: 'number', description: 'Estimated token count' },
+    { name: 'history', type: 'array', description: 'Conversation messages' },
   ],
   properties: {
     limit: 20,

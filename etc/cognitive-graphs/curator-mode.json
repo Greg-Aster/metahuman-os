@@ -1,145 +1,216 @@
 {
-  "version": "2.0",
+  "version": "1.0",
+  "format": "svelte-flow",
   "name": "Curator Workflow",
   "description": "LLM-based memory curation for training data preparation - generates conversational exchanges from raw memories",
   "cognitiveMode": "agent",
-  "last_modified": "2025-11-24",
+  "last_modified": "2025-12-17",
   "nodes": [
     {
-      "id": 1,
-      "type": "cognitive/uncurated_memory_loader",
-      "pos": [100, 200],
-      "size": [220, 100],
-      "properties": {
-        "limit": 5
+      "id": "1",
+      "type": "curatorNode",
+      "position": {
+        "x": 100,
+        "y": 200
       },
-      "title": "Load Uncurated Memories"
-    },
-    {
-      "id": 2,
-      "type": "cognitive/persona_summary_loader",
-      "pos": [100, 350],
-      "size": [220, 80],
-      "properties": {},
-      "title": "Load Persona Context"
-    },
-    {
-      "id": 4,
-      "type": "cognitive/curator_llm",
-      "pos": [400, 200],
-      "size": [220, 140],
-      "properties": {
-        "temperature": 0.3,
-        "timeout": 300000
+      "data": {
+        "label": "Load Uncurated Memories",
+        "nodeType": "uncurated_memory_loader",
+        "properties": {
+          "limit": 5
+        }
       },
-      "title": "Curate Memories (LLM)"
+      "width": 220,
+      "height": 100
     },
     {
-      "id": 5,
-      "type": "cognitive/curated_memory_saver",
-      "pos": [700, 100],
-      "size": [220, 80],
-      "properties": {},
-      "title": "Save Curated Memories"
-    },
-    {
-      "id": 6,
-      "type": "cognitive/training_pair_generator",
-      "pos": [700, 220],
-      "size": [220, 100],
-      "properties": {},
-      "title": "Generate Training Pairs"
-    },
-    {
-      "id": 7,
-      "type": "cognitive/training_pair_appender",
-      "pos": [1000, 220],
-      "size": [220, 100],
-      "properties": {},
-      "title": "Append to JSONL"
-    },
-    {
-      "id": 8,
-      "type": "cognitive/memory_marker",
-      "pos": [700, 360],
-      "size": [220, 80],
-      "properties": {},
-      "title": "Mark as Curated"
-    },
-    {
-      "id": 9,
-      "type": "cognitive/audit_logger",
-      "pos": [1300, 200],
-      "size": [180, 60],
-      "properties": {
-        "event": "curator_completed"
+      "id": "2",
+      "type": "curatorNode",
+      "position": {
+        "x": 100,
+        "y": 350
       },
-      "title": "Audit Completion"
+      "data": {
+        "label": "Load Persona Context",
+        "nodeType": "persona_summary_loader",
+        "properties": {}
+      },
+      "width": 220,
+      "height": 80
+    },
+    {
+      "id": "4",
+      "type": "curatorNode",
+      "position": {
+        "x": 400,
+        "y": 200
+      },
+      "data": {
+        "label": "Curate Memories (LLM)",
+        "nodeType": "curator_llm",
+        "properties": {
+          "temperature": 0.3,
+          "timeout": 300000
+        }
+      },
+      "width": 220,
+      "height": 140
+    },
+    {
+      "id": "5",
+      "type": "curatorNode",
+      "position": {
+        "x": 700,
+        "y": 100
+      },
+      "data": {
+        "label": "Save Curated Memories",
+        "nodeType": "curated_memory_saver",
+        "properties": {}
+      },
+      "width": 220,
+      "height": 80
+    },
+    {
+      "id": "6",
+      "type": "curatorNode",
+      "position": {
+        "x": 700,
+        "y": 220
+      },
+      "data": {
+        "label": "Generate Training Pairs",
+        "nodeType": "training_pair_generator",
+        "properties": {}
+      },
+      "width": 220,
+      "height": 100
+    },
+    {
+      "id": "7",
+      "type": "curatorNode",
+      "position": {
+        "x": 1000,
+        "y": 220
+      },
+      "data": {
+        "label": "Append to JSONL",
+        "nodeType": "training_pair_appender",
+        "properties": {}
+      },
+      "width": 220,
+      "height": 100
+    },
+    {
+      "id": "8",
+      "type": "curatorNode",
+      "position": {
+        "x": 700,
+        "y": 360
+      },
+      "data": {
+        "label": "Mark as Curated",
+        "nodeType": "memory_marker",
+        "properties": {}
+      },
+      "width": 220,
+      "height": 80
+    },
+    {
+      "id": "9",
+      "type": "outputNode",
+      "position": {
+        "x": 1300,
+        "y": 200
+      },
+      "data": {
+        "label": "Audit Completion",
+        "nodeType": "audit_logger",
+        "properties": {
+          "event": "curator_completed"
+        }
+      },
+      "width": 180,
+      "height": 60
     }
   ],
-  "links": [
+  "edges": [
     {
-      "id": 1,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 4,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Uncurated memories → Curator LLM"
+      "id": "e-1-memories-4-memories",
+      "source": "1",
+      "target": "4",
+      "sourceHandle": "memories",
+      "targetHandle": "memories",
+      "data": {
+        "type": "object",
+        "comment": "Uncurated memories → Curator LLM"
+      }
     },
     {
-      "id": 2,
-      "origin_id": 2,
-      "origin_slot": 0,
-      "target_id": 4,
-      "target_slot": 1,
-      "type": "string",
-      "comment": "Persona summary → Curator LLM (context)"
+      "id": "e-2-personaSummary-4-personaSummary",
+      "source": "2",
+      "target": "4",
+      "sourceHandle": "personaSummary",
+      "targetHandle": "personaSummary",
+      "data": {
+        "type": "string",
+        "comment": "Persona summary → Curator LLM (context)"
+      }
     },
     {
-      "id": 4,
-      "origin_id": 4,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Curated memories → Save"
+      "id": "e-4-curatedMemories-5-curatedMemories",
+      "source": "4",
+      "target": "5",
+      "sourceHandle": "curatedMemories",
+      "targetHandle": "curatedMemories",
+      "data": {
+        "type": "object",
+        "comment": "Curated memories → Save"
+      }
     },
     {
-      "id": 5,
-      "origin_id": 4,
-      "origin_slot": 0,
-      "target_id": 6,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Curated memories → Training Pair Generator"
+      "id": "e-4-curatedMemories-6-curatedMemories",
+      "source": "4",
+      "target": "6",
+      "sourceHandle": "curatedMemories",
+      "targetHandle": "curatedMemories",
+      "data": {
+        "type": "object",
+        "comment": "Curated memories → Training Pair Generator"
+      }
     },
     {
-      "id": 6,
-      "origin_id": 6,
-      "origin_slot": 0,
-      "target_id": 7,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Training pairs → Append to JSONL"
+      "id": "e-6-trainingPairs-7-trainingPairs",
+      "source": "6",
+      "target": "7",
+      "sourceHandle": "trainingPairs",
+      "targetHandle": "trainingPairs",
+      "data": {
+        "type": "object",
+        "comment": "Training pairs → Append to JSONL"
+      }
     },
     {
-      "id": 7,
-      "origin_id": 4,
-      "origin_slot": 0,
-      "target_id": 8,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Curated memories → Mark as Curated"
+      "id": "e-4-curatedMemories-8-curatedMemories",
+      "source": "4",
+      "target": "8",
+      "sourceHandle": "curatedMemories",
+      "targetHandle": "curatedMemories",
+      "data": {
+        "type": "object",
+        "comment": "Curated memories → Mark as Curated"
+      }
     },
     {
-      "id": 8,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 9,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Append result → Audit Logger"
+      "id": "e-7-appendedCount-9-eventType",
+      "source": "7",
+      "target": "9",
+      "sourceHandle": "appendedCount",
+      "targetHandle": "eventType",
+      "data": {
+        "type": "object",
+        "comment": "Append result → Audit Logger"
+      }
     }
   ]
 }

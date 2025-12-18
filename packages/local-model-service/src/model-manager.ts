@@ -366,8 +366,13 @@ export class ModelManager extends EventEmitter {
         gpuLayers: serviceConfig.llama?.gpuLayers ?? 0
       });
 
-      // Create embedding context
-      this.embedContext = await this.embedModel.createEmbeddingContext();
+      // Create embedding context with explicit context size and batch size
+      // The default "auto" mode often limits to ~600 tokens which is too small
+      // Set contextSize and batchSize to handle longer texts (model supports up to 32K)
+      this.embedContext = await this.embedModel.createEmbeddingContext({
+        contextSize: 8192,
+        batchSize: 8192  // Process all tokens in a single batch
+      });
 
       this.currentEmbeddingModel = modelId;
       console.log(`[model-manager] Embedding model loaded: ${modelId} (${config.dimensions} dimensions)`);

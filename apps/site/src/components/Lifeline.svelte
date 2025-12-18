@@ -165,7 +165,7 @@
     <div class="panic-section">
       <button
         class="panic-button"
-        on:click={panic}
+        onclick={panic}
         disabled={triggering}
       >
         {triggering ? 'ENGAGING...' : 'P A N I C'}
@@ -195,7 +195,8 @@
 
 <!-- Full-Screen Overlay -->
 {#if showOverlay}
-  <button class="lifeline-overlay" on:click={(e) => { if (e.target === e.currentTarget) { dismissOverlay(); } }} type="button">
+  <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+  <div class="lifeline-overlay" onclick={(e) => { if (e.target === e.currentTarget) { dismissOverlay(); } }} role="presentation">
     <div class="overlay-content" role="dialog" aria-modal="true">
       <div class="overlay-header">
 <!--         <div class="alert-icon">🆘</div>
@@ -224,11 +225,11 @@
 
       </div>
 
-      <button class="dismiss-button" on:click={dismissOverlay}>
+      <button class="dismiss-button" onclick={dismissOverlay}>
         Dismiss
       </button>
     </div>
-  </button>
+  </div>
 {/if}
 
 <style>

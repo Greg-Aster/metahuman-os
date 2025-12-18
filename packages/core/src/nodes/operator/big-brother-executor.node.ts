@@ -1,6 +1,15 @@
 /**
  * Big Brother Executor Node
  *
+ * @deprecated Use ToolExecutorNode instead. Big Brother is being replaced by the
+ * unified tool executor system that supports multiple backends (Open Interpreter,
+ * local skills, Claude Code, Qwen Code, Aider, Gemini CLI) via user configuration.
+ *
+ * See: packages/core/src/nodes/operator/tool-executor.node.ts
+ * Config: etc/tool-executor.json
+ *
+ * This node is kept for backward compatibility but will be removed in a future version.
+ *
  * Executes skills via Claude CLI delegation
  */
 

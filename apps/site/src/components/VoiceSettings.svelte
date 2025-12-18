@@ -47,6 +47,7 @@
       protect?: number;
       f0Method?: string;
       device?: 'cuda' | 'cpu';
+      speakers?: Array<{id: string; name: string; hasModel: boolean; hasIndex: boolean}>;
     };
     kokoro?: {
       langCode: string;
@@ -292,6 +293,105 @@
     }
   }
 
+  /**
+   * Play audio from streaming SSE endpoint - used for slow providers like RVC
+   * Returns when all audio has finished playing
+   */
+  async function testVoiceStreaming(requestBody: any): Promise<void> {
+    const response = await apiFetch('/api/tts-stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) throw new Error('Failed to start streaming audio');
+    if (!response.body) throw new Error('No response body for streaming');
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const audioQueue: HTMLAudioElement[] = [];
+    let currentAudioIndex = 0;
+    let isPlaying = false;
+    let streamComplete = false;
+
+    // Play next audio in queue
+    const playNext = () => {
+      if (currentAudioIndex >= audioQueue.length) {
+        if (streamComplete) {
+          testingVoice = false;
+        }
+        return;
+      }
+
+      isPlaying = true;
+      const audio = audioQueue[currentAudioIndex];
+      audio.onended = () => {
+        URL.revokeObjectURL(audio.src);
+        currentAudioIndex++;
+        isPlaying = false;
+        playNext();
+      };
+      audio.onerror = () => {
+        URL.revokeObjectURL(audio.src);
+        currentAudioIndex++;
+        isPlaying = false;
+        playNext();
+      };
+      audio.play().catch(() => {
+        currentAudioIndex++;
+        isPlaying = false;
+        playNext();
+      });
+    };
+
+    // Read SSE events
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split('\n\n');
+      buffer = events.pop() || '';
+
+      for (const event of events) {
+        if (!event.startsWith('data: ')) continue;
+
+        try {
+          const data = JSON.parse(event.slice(6));
+
+          if (data.event === 'complete') {
+            streamComplete = true;
+            if (!isPlaying && currentAudioIndex >= audioQueue.length) {
+              testingVoice = false;
+            }
+            continue;
+          }
+
+          if (data.event === 'error') {
+            throw new Error(data.error);
+          }
+
+          if (data.audio_base64) {
+            // Decode base64 and create audio element
+            const audioBytes = Uint8Array.from(atob(data.audio_base64), c => c.charCodeAt(0));
+            const audioBlob = new Blob([audioBytes], { type: 'audio/wav' });
+            const audioUrl = URL.createObjectURL(audioBlob);
+            const audio = new Audio(audioUrl);
+            audioQueue.push(audio);
+
+            // Start playing if not already
+            if (!isPlaying) {
+              playNext();
+            }
+          }
+        } catch (e) {
+          console.warn('[VoiceSettings] Error parsing SSE event:', e);
+        }
+      }
+    }
+  }
+
   async function testVoice(forceProvider?: Provider) {
     if (!config) return;
 
@@ -311,6 +411,9 @@
       // Add cache-busting suffix to test text to ensure fresh audio generation
       const cacheBustedText = `${testText} [${Date.now()}]`;
       let requestBody: any = { text: cacheBustedText, provider: providerToTest };
+
+      // Determine if we should use streaming (for slow providers)
+      const useStreaming = providerToTest === 'rvc' || providerToTest === 'kokoro';
 
       if (providerToTest === 'piper' && config.piper) {
         const voice = config.piper.voices.find(v => v.id === config.piper!.currentVoice);
@@ -361,6 +464,14 @@
         }
       }
 
+      // Use streaming for slow providers (RVC, Kokoro) to reduce perceived latency
+      if (useStreaming) {
+        console.log('[VoiceSettings] Using streaming mode for', providerToTest);
+        await testVoiceStreaming(requestBody);
+        return;
+      }
+
+      // Batch mode for fast providers (Piper, SoVits)
       const response = await apiFetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -818,15 +929,30 @@
         </div>
 
         <div class="setting-group">
-          <label for="rvc-speaker">Speaker ID</label>
-          <input
-            id="rvc-speaker"
-            type="text"
-            bind:value={config.rvc.speakerId}
-            placeholder="default"
-            disabled={saving}
-          />
-          <p class="hint">References voice model in profiles/[user]/out/voices/rvc/[speaker-id]/</p>
+          <label for="rvc-speaker">Voice Model</label>
+          {#if config.rvc.speakers && config.rvc.speakers.length > 0}
+            <select
+              id="rvc-speaker"
+              bind:value={config.rvc.speakerId}
+              disabled={saving}
+            >
+              {#each config.rvc.speakers as speaker}
+                <option value={speaker.id}>
+                  {speaker.name} {speaker.hasIndex ? '✓' : ''}
+                </option>
+              {/each}
+            </select>
+            <p class="hint">Select a trained voice model. ✓ indicates index file available for better quality.</p>
+          {:else}
+            <input
+              id="rvc-speaker"
+              type="text"
+              bind:value={config.rvc.speakerId}
+              placeholder="default"
+              disabled={saving}
+            />
+            <p class="hint">No trained models found. Train a model first or enter speaker ID manually.</p>
+          {/if}
         </div>
 
         <div class="setting-group">

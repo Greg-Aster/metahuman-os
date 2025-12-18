@@ -1,140 +1,205 @@
 {
-  "version": "2.0",
+  "version": "1.0",
+  "format": "svelte-flow",
   "name": "Curiosity Service Workflow",
   "description": "Generates curiosity questions from weighted memory sampling with user privacy isolation",
   "cognitiveMode": "agent",
-  "last_modified": "2025-11-26",
+  "last_modified": "2025-12-17",
   "nodes": [
     {
-      "id": 1,
-      "type": "cognitive/curiosity_activity_check",
-      "pos": [100, 100],
-      "size": [220, 100],
-      "properties": {
-        "questionIntervalSeconds": 1800
+      "id": "1",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 100,
+        "y": 100
       },
-      "title": "Check Question Timing"
-    },
-    {
-      "id": 2,
-      "type": "cognitive/curiosity_weighted_sampler",
-      "pos": [400, 100],
-      "size": [220, 100],
-      "properties": {
-        "sampleSize": 5,
-        "decayFactor": 14
+      "data": {
+        "label": "Check Question Timing",
+        "nodeType": "curiosity_activity_check",
+        "properties": {
+          "questionIntervalSeconds": 1800
+        }
       },
-      "title": "Sample Memories"
+      "width": 220,
+      "height": 100
     },
     {
-      "id": 3,
-      "type": "cognitive/curiosity_question_generator",
-      "pos": [700, 100],
-      "size": [220, 120],
-      "properties": {
-        "temperature": 0.6
+      "id": "2",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 400,
+        "y": 100
       },
-      "title": "Generate Question"
-    },
-    {
-      "id": 4,
-      "type": "cognitive/curiosity_question_saver",
-      "pos": [1000, 100],
-      "size": [220, 100],
-      "properties": {},
-      "title": "Save Question"
-    },
-    {
-      "id": 5,
-      "type": "cognitive/audit_logger",
-      "pos": [1300, 100],
-      "size": [180, 60],
-      "properties": {},
-      "title": "Audit Completion"
-    },
-    {
-      "id": 6,
-      "type": "cognitive/persona_loader",
-      "pos": [600, 0],
-      "size": [180, 60],
-      "title": "Persona Loader"
-    },
-    {
-      "id": 7,
-      "type": "cognitive/persona_formatter",
-      "pos": [750, 0],
-      "size": [200, 80],
-      "properties": {
-        "includePersonality": true,
-        "includeValues": true,
-        "includeGoals": true
+      "data": {
+        "label": "Sample Memories",
+        "nodeType": "curiosity_weighted_sampler",
+        "properties": {
+          "sampleSize": 5,
+          "decayFactor": 14
+        }
       },
-      "title": "Persona Formatter"
+      "width": 220,
+      "height": 100
+    },
+    {
+      "id": "3",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 700,
+        "y": 100
+      },
+      "data": {
+        "label": "Generate Question",
+        "nodeType": "curiosity_question_generator",
+        "properties": {
+          "temperature": 0.6
+        }
+      },
+      "width": 220,
+      "height": 120
+    },
+    {
+      "id": "4",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 1000,
+        "y": 100
+      },
+      "data": {
+        "label": "Save Question",
+        "nodeType": "curiosity_question_saver",
+        "properties": {}
+      },
+      "width": 220,
+      "height": 100
+    },
+    {
+      "id": "5",
+      "type": "outputNode",
+      "position": {
+        "x": 1300,
+        "y": 100
+      },
+      "data": {
+        "label": "Audit Completion",
+        "nodeType": "audit_logger",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "6",
+      "type": "personaNode",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "data": {
+        "label": "Persona Loader",
+        "nodeType": "persona_loader",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "7",
+      "type": "personaNode",
+      "position": {
+        "x": 750,
+        "y": 0
+      },
+      "data": {
+        "label": "Persona Formatter",
+        "nodeType": "persona_formatter",
+        "properties": {
+          "includePersonality": true,
+          "includeValues": true,
+          "includeGoals": true
+        }
+      },
+      "width": 200,
+      "height": 80
     }
   ],
-  "links": [
+  "edges": [
     {
-      "id": 1,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 2,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Activity check result → Sample Memories"
+      "id": "e-1-canAsk-2-slot_0",
+      "source": "1",
+      "target": "2",
+      "sourceHandle": "canAsk",
+      "targetHandle": "slot_0",
+      "data": {
+        "type": "object",
+        "comment": "Activity check result → Sample Memories"
+      }
     },
     {
-      "id": 2,
-      "origin_id": 2,
-      "origin_slot": 0,
-      "target_id": 3,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Sampled memories → Generate Question"
+      "id": "e-2-memories-3-memories",
+      "source": "2",
+      "target": "3",
+      "sourceHandle": "memories",
+      "targetHandle": "memories",
+      "data": {
+        "type": "object",
+        "comment": "Sampled memories → Generate Question"
+      }
     },
     {
-      "id": 3,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 4,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Generated question → Save Question"
+      "id": "e-3-question-4-question",
+      "source": "3",
+      "target": "4",
+      "sourceHandle": "question",
+      "targetHandle": "question",
+      "data": {
+        "type": "object",
+        "comment": "Generated question → Save Question"
+      }
     },
     {
-      "id": 4,
-      "origin_id": 2,
-      "origin_slot": 0,
-      "target_id": 4,
-      "target_slot": 1,
-      "type": "object",
-      "comment": "Sampled memories → Save (for seed memories)"
+      "id": "e-2-memories-4-memories",
+      "source": "2",
+      "target": "4",
+      "sourceHandle": "memories",
+      "targetHandle": "memories",
+      "data": {
+        "type": "object",
+        "comment": "Sampled memories → Save (for seed memories)"
+      }
     },
     {
-      "id": 5,
-      "origin_id": 4,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Save result → Audit Logger"
+      "id": "e-4-questionId-5-eventType",
+      "source": "4",
+      "target": "5",
+      "sourceHandle": "questionId",
+      "targetHandle": "eventType",
+      "data": {
+        "type": "object",
+        "comment": "Save result → Audit Logger"
+      }
     },
     {
-      "id": 6,
-      "origin_id": 6,
-      "origin_slot": 0,
-      "target_id": 7,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Persona data → Persona Formatter"
+      "id": "e-6-persona-7-personaData",
+      "source": "6",
+      "target": "7",
+      "sourceHandle": "persona",
+      "targetHandle": "personaData",
+      "data": {
+        "type": "object",
+        "comment": "Persona data → Persona Formatter"
+      }
     },
     {
-      "id": 7,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 3,
-      "target_slot": 1,
-      "type": "string",
-      "comment": "Formatted persona → Question Generator (for persona voice)"
+      "id": "e-7-formatted-3-slot_1",
+      "source": "7",
+      "target": "3",
+      "sourceHandle": "formatted",
+      "targetHandle": "slot_1",
+      "data": {
+        "type": "string",
+        "comment": "Formatted persona → Question Generator (for persona voice)"
+      }
     }
   ]
 }

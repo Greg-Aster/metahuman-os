@@ -22,21 +22,43 @@
     vllm: { installed: boolean; running: boolean; model?: string };
   }
 
-  // Big Brother config (CLI LLM escalation)
-  type BigBrotherProvider = 'claude-code' | 'aider' | 'gemini' | 'codex' | 'ollama-cli' | 'custom';
+  // Tool Executor config (replaces Big Brother)
+  type ToolExecutorBackend = 'local-skills' | 'open-interpreter' | 'claude-code' | 'qwen-code' | 'aider' | 'gemini-cli';
 
-  const bigBrotherProviderOptions: { value: BigBrotherProvider; label: string; description: string }[] = [
-    { value: 'claude-code', label: 'Claude Code', description: 'Anthropic Claude via CLI' },
-    { value: 'aider', label: 'Aider', description: 'Aider with any model (GPT-4, Claude, Qwen)' },
-    { value: 'gemini', label: 'Gemini CLI', description: 'Google Gemini via CLI' },
-    { value: 'codex', label: 'OpenAI Codex', description: 'OpenAI Codex CLI' },
-    { value: 'ollama-cli', label: 'Ollama CLI', description: 'Local models via Ollama' },
-    { value: 'custom', label: 'Custom', description: 'Custom CLI command' },
+  const toolExecutorBackendOptions: { value: ToolExecutorBackend; label: string; description: string }[] = [
+    { value: 'local-skills', label: 'Local Skills', description: 'Native MetaHuman skill executor (default)' },
+    { value: 'open-interpreter', label: 'Open Interpreter', description: 'Python-based natural language code execution' },
+    { value: 'claude-code', label: 'Claude Code', description: 'Anthropic Claude CLI for complex reasoning' },
+    { value: 'qwen-code', label: 'Qwen Code', description: 'Qwen Code CLI (Gemini CLI fork)' },
+    { value: 'aider', label: 'Aider', description: 'AI pair programming with git integration' },
+    { value: 'gemini-cli', label: 'Gemini CLI', description: 'Google Gemini CLI' },
   ];
 
+  interface ToolExecutorBackendStatus {
+    id: string;
+    name: string;
+    enabled: boolean;
+    installed: boolean;
+    running?: boolean;
+    description?: string;
+  }
+
+  interface ToolExecutorConfig {
+    activeBackend: string;
+    backendStatus: ToolExecutorBackendStatus[];
+    llmProxy: {
+      enabled: boolean;
+      modelId: string;
+      fallbackModelId: string;
+      temperature: number;
+      maxTokens: number;
+    };
+  }
+
+  // Legacy Big Brother config (for backward compatibility - DEPRECATED)
   interface BigBrotherConfig {
     enabled: boolean;
-    provider: BigBrotherProvider;
+    provider: string;
     escalateOnStuck: boolean;
     escalateOnRepeatedFailures: boolean;
     maxRetries: number;
@@ -65,10 +87,20 @@
   let remoteServerUrl = '';
   let resolvedBackend: 'ollama' | 'vllm' | 'offline' | null = null;
 
-  // Big Brother config (CLI LLM - from operator.json)
+  // Tool Executor config (replaces Big Brother - from tool-executor.json)
+  let toolExecutorConfig: ToolExecutorConfig | null = null;
+  let toolExecutorActiveBackend: ToolExecutorBackend = 'local-skills';
+  let toolExecutorBackendStatus: ToolExecutorBackendStatus[] = [];
+  let toolExecutorLoading = false;
+  let savingToolExecutor = false;
+  let interpreterStatus: { running: boolean; version?: string; available: boolean } | null = null;
+  let interpreterStarting = false;
+  let interpreterStopping = false;
+
+  // Legacy Big Brother config (DEPRECATED - for backward compatibility)
   let bigBrotherConfig: BigBrotherConfig | null = null;
   let bigBrotherEnabled = false;
-  let bigBrotherProvider: BigBrotherProvider = 'claude-code';
+  let bigBrotherProvider: string = 'claude-code';
   let savingBigBrother = false;
 
 
@@ -105,9 +137,132 @@
 
   onMount(() => {
     loadStatus();
-    loadBigBrotherConfig();
+    loadToolExecutorConfig();
+    loadInterpreterStatus();
+    loadBigBrotherConfig(); // Legacy - kept for backward compatibility
     loadEmbeddingConfig();
   });
+
+  // Load Tool Executor config
+  async function loadToolExecutorConfig() {
+    toolExecutorLoading = true;
+    try {
+      const res = await apiFetch('/api/tool-executor-config');
+      if (res.ok) {
+        const data = await res.json();
+        toolExecutorConfig = data;
+        toolExecutorActiveBackend = (data.config?.activeBackend || 'local-skills') as ToolExecutorBackend;
+        toolExecutorBackendStatus = data.backendStatus || [];
+      }
+    } catch (err) {
+      console.error('[BackendSettings] Error loading tool executor config:', err);
+    } finally {
+      toolExecutorLoading = false;
+    }
+  }
+
+  // Load Open Interpreter status
+  async function loadInterpreterStatus() {
+    try {
+      const res = await apiFetch('/api/interpreter-status');
+      if (res.ok) {
+        interpreterStatus = await res.json();
+      }
+    } catch (err) {
+      console.error('[BackendSettings] Error loading interpreter status:', err);
+    }
+  }
+
+  // Switch tool executor backend
+  async function switchToolExecutorBackend(backend: ToolExecutorBackend) {
+    if (savingToolExecutor || backend === toolExecutorActiveBackend) return;
+    savingToolExecutor = true;
+
+    try {
+      const res = await apiFetch('/api/tool-executor-config/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backend }),
+      });
+
+      if (res.ok) {
+        toolExecutorActiveBackend = backend;
+        await loadToolExecutorConfig();
+        statusRefreshTrigger.update(n => n + 1);
+      } else {
+        const data = await res.json();
+        error = data.error || 'Failed to switch tool executor backend';
+      }
+    } catch (err) {
+      error = 'Failed to switch tool executor backend';
+    } finally {
+      savingToolExecutor = false;
+    }
+  }
+
+  // Start Open Interpreter server
+  async function startInterpreter() {
+    interpreterStarting = true;
+    error = null;
+
+    try {
+      const res = await apiFetch('/api/interpreter-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'start' }),
+      });
+
+      if (res.ok) {
+        await loadInterpreterStatus();
+        await loadToolExecutorConfig();
+      } else {
+        const data = await res.json();
+        error = data.error || 'Failed to start Open Interpreter';
+      }
+    } catch (err) {
+      error = 'Failed to start Open Interpreter';
+    } finally {
+      interpreterStarting = false;
+    }
+  }
+
+  // Stop Open Interpreter server
+  async function stopInterpreter() {
+    interpreterStopping = true;
+    error = null;
+
+    try {
+      const res = await apiFetch('/api/interpreter-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'stop' }),
+      });
+
+      if (res.ok) {
+        await loadInterpreterStatus();
+        await loadToolExecutorConfig();
+      } else {
+        const data = await res.json();
+        error = data.error || 'Failed to stop Open Interpreter';
+      }
+    } catch (err) {
+      error = 'Failed to stop Open Interpreter';
+    } finally {
+      interpreterStopping = false;
+    }
+  }
+
+  // Get tool executor backend label
+  function getToolExecutorBackendLabel(backend: ToolExecutorBackend): string {
+    const opt = toolExecutorBackendOptions.find(o => o.value === backend);
+    return opt?.label || backend;
+  }
+
+  // Check if a backend is available (installed)
+  function isBackendAvailable(backend: ToolExecutorBackend): boolean {
+    const status = toolExecutorBackendStatus.find(s => s.id === backend);
+    return status?.installed ?? (backend === 'local-skills');
+  }
 
   async function loadStatus() {
     try {
@@ -930,61 +1085,126 @@
 
     </div>
 
-    <!-- Big Brother Mode (CLI LLM Escalation) -->
-    <div class="remote-config big-brother-config">
-      <h4>🤖 Big Brother Mode (CLI LLM)</h4>
+    <!-- Tool Executor (replaces Big Brother) -->
+    <div class="remote-config tool-executor-config">
+      <h4>🛠️ Tool Executor Backend</h4>
       <p class="config-desc">
-        Escalate to a CLI LLM for complex reasoning. Requires terminal access on desktop.
+        Select the backend for tool execution. Open Interpreter provides natural language code execution,
+        while CLI backends offer specific AI integrations.
       </p>
 
-      <div class="config-row checkbox-row">
-        <label class="checkbox-label">
-          <input
-            type="checkbox"
-            bind:checked={bigBrotherEnabled}
-            on:change={saveBigBrotherConfig}
-            disabled={savingBigBrother}
-          />
-          <span>Enable Big Brother Mode</span>
-        </label>
-        <span class="config-hint">
-          {bigBrotherEnabled ? `${getBigBrotherProviderLabel(bigBrotherProvider)} will handle complex tasks` : 'Disabled - using local models only'}
-        </span>
-      </div>
-
-      <div class="config-row">
-          <label for="big-brother-provider">CLI Provider</label>
+      {#if toolExecutorLoading}
+        <div class="loading-small">Loading tool executor config...</div>
+      {:else}
+        <!-- Backend Selector -->
+        <div class="config-row">
+          <label for="tool-executor-backend">Active Backend</label>
           <select
-            id="big-brother-provider"
-            bind:value={bigBrotherProvider}
-            on:change={saveBigBrotherConfig}
-            disabled={savingBigBrother}
+            id="tool-executor-backend"
+            bind:value={toolExecutorActiveBackend}
+            on:change={() => switchToolExecutorBackend(toolExecutorActiveBackend)}
+            disabled={savingToolExecutor}
           >
-            {#each bigBrotherProviderOptions as opt}
-              <option value={opt.value}>{opt.label} - {opt.description}</option>
+            {#each toolExecutorBackendOptions as opt}
+              <option
+                value={opt.value}
+                disabled={!isBackendAvailable(opt.value)}
+              >
+                {opt.label} - {opt.description} {!isBackendAvailable(opt.value) ? '(not installed)' : ''}
+              </option>
             {/each}
           </select>
         </div>
 
-        {#if bigBrotherConfig}
-          <div class="config-details">
-            <div class="config-detail">
-              <span class="detail-label">Active Provider:</span>
-              <span class="detail-value">{getBigBrotherProviderLabel(bigBrotherProvider)}</span>
+        <!-- Backend Status Cards -->
+        <div class="backend-status-grid">
+          {#each toolExecutorBackendStatus as backend}
+            <div
+              class="backend-status-card"
+              class:active={backend.id === toolExecutorActiveBackend}
+              class:unavailable={!backend.installed}
+            >
+              <div class="backend-status-header">
+                <span class="backend-status-name">{backend.name}</span>
+                {#if backend.running}
+                  <span class="status-dot running" title="Running"></span>
+                {:else if backend.installed}
+                  <span class="status-dot stopped" title="Stopped"></span>
+                {:else}
+                  <span class="status-dot unavailable" title="Not installed"></span>
+                {/if}
+              </div>
+              <div class="backend-status-info">
+                {#if backend.installed}
+                  <span class="installed-badge">✓ Installed</span>
+                {:else}
+                  <span class="not-installed-badge">Not installed</span>
+                {/if}
+              </div>
             </div>
-            <div class="config-detail">
-              <span class="detail-label">Escalate on stuck:</span>
-              <span class="detail-value">{bigBrotherConfig.escalateOnStuck ? 'Yes' : 'No'}</span>
+          {/each}
+        </div>
+
+        <!-- Open Interpreter Controls -->
+        {#if toolExecutorActiveBackend === 'open-interpreter' || toolExecutorBackendStatus.find(b => b.id === 'open-interpreter')?.installed}
+          <div class="interpreter-controls">
+            <h5>🐍 Open Interpreter Server</h5>
+            <div class="interpreter-status-row">
+              <span class="status-label">Status:</span>
+              {#if interpreterStatus?.running}
+                <span class="status-badge running">Running</span>
+                {#if interpreterStatus.version}
+                  <span class="version-badge">v{interpreterStatus.version}</span>
+                {/if}
+              {:else if interpreterStatus?.available}
+                <span class="status-badge stopped">Stopped (can start)</span>
+              {:else}
+                <span class="status-badge unavailable">Not available</span>
+              {/if}
             </div>
-            <div class="config-detail">
-              <span class="detail-label">Auto-retry failures:</span>
-              <span class="detail-value">{bigBrotherConfig.escalateOnRepeatedFailures ? 'Yes' : 'No'}</span>
+            <div class="interpreter-actions">
+              {#if interpreterStatus?.running}
+                <button
+                  class="stop-btn small"
+                  on:click={stopInterpreter}
+                  disabled={interpreterStopping}
+                >
+                  {interpreterStopping ? 'Stopping...' : 'Stop Server'}
+                </button>
+              {:else if interpreterStatus?.available}
+                <button
+                  class="start-btn small"
+                  on:click={startInterpreter}
+                  disabled={interpreterStarting}
+                >
+                  {interpreterStarting ? 'Starting...' : 'Start Server'}
+                </button>
+              {:else}
+                <span class="hint-text">Run: bin/start-interpreter</span>
+              {/if}
             </div>
           </div>
         {/if}
 
-      {#if savingBigBrother}
-        <span class="saving-indicator">Saving...</span>
+        <!-- Config Details -->
+        {#if toolExecutorConfig}
+          <div class="config-details">
+            <div class="config-detail">
+              <span class="detail-label">Active Backend:</span>
+              <span class="detail-value">{getToolExecutorBackendLabel(toolExecutorActiveBackend)}</span>
+            </div>
+            {#if toolExecutorConfig.llmProxy}
+              <div class="config-detail">
+                <span class="detail-label">LLM Proxy Model:</span>
+                <span class="detail-value">{toolExecutorConfig.llmProxy.modelId || 'default.coder'}</span>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        {#if savingToolExecutor}
+          <span class="saving-indicator">Saving...</span>
+        {/if}
       {/if}
     </div>
 
@@ -2014,7 +2234,170 @@
     color: #f87171;
   }
 
-  /* Big Brother config specific styling */
+  /* Tool Executor config styling */
+  .tool-executor-config {
+    background: #f0fdf4;
+    border-color: #86efac;
+  }
+
+  :global(.dark) .tool-executor-config {
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(34, 197, 94, 0.3);
+  }
+
+  .tool-executor-config h4 {
+    color: #166534;
+  }
+
+  :global(.dark) .tool-executor-config h4 {
+    color: #4ade80;
+  }
+
+  .tool-executor-config .config-desc {
+    color: #166534;
+  }
+
+  :global(.dark) .tool-executor-config .config-desc {
+    color: #86efac;
+  }
+
+  .backend-status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+    margin: 1rem 0;
+  }
+
+  @media (max-width: 768px) {
+    .backend-status-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  .backend-status-card {
+    background: rgba(255, 255, 255, 0.5);
+    border: 1px solid #d1d5db;
+    border-radius: 0.5rem;
+    padding: 0.5rem;
+    font-size: 0.75rem;
+  }
+
+  :global(.dark) .backend-status-card {
+    background: rgba(0, 0, 0, 0.2);
+    border-color: #4b5563;
+  }
+
+  .backend-status-card.active {
+    border-color: #22c55e;
+    background: rgba(34, 197, 94, 0.1);
+  }
+
+  .backend-status-card.unavailable {
+    opacity: 0.5;
+  }
+
+  .backend-status-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.25rem;
+  }
+
+  .backend-status-name {
+    font-weight: 600;
+    font-size: 0.8125rem;
+  }
+
+  .backend-status-info {
+    font-size: 0.6875rem;
+    color: #6b7280;
+  }
+
+  :global(.dark) .backend-status-info {
+    color: #9ca3af;
+  }
+
+  .installed-badge {
+    color: #22c55e;
+  }
+
+  .not-installed-badge {
+    color: #9ca3af;
+  }
+
+  .interpreter-controls {
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    margin-top: 0.75rem;
+  }
+
+  :global(.dark) .interpreter-controls {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .interpreter-controls h5 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  .interpreter-status-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .status-label {
+    font-size: 0.8125rem;
+    color: #6b7280;
+  }
+
+  :global(.dark) .status-label {
+    color: #9ca3af;
+  }
+
+  .version-badge {
+    font-size: 0.6875rem;
+    background: #e0e7ff;
+    color: #3730a3;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+  }
+
+  :global(.dark) .version-badge {
+    background: rgba(99, 102, 241, 0.2);
+    color: #a5b4fc;
+  }
+
+  .interpreter-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .hint-text {
+    font-size: 0.75rem;
+    color: #6b7280;
+    font-family: monospace;
+  }
+
+  :global(.dark) .hint-text {
+    color: #9ca3af;
+  }
+
+  .loading-small {
+    font-size: 0.875rem;
+    color: #6b7280;
+    padding: 0.5rem 0;
+  }
+
+  :global(.dark) .loading-small {
+    color: #9ca3af;
+  }
+
+  /* Legacy Big Brother config styling (deprecated) */
   .big-brother-config {
     background: #eff6ff;
     border-color: #93c5fd;

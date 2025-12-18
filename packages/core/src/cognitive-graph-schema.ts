@@ -3,7 +3,15 @@
  *
  * This module defines the structure and validation logic for cognitive graphs
  * that can be saved, loaded, and executed by the node editor.
+ *
+ * Supports two formats:
+ * - Legacy (LiteGraph): numeric IDs, pos arrays, links array
+ * - Svelte Flow: string IDs, position objects, edges array with handles
  */
+
+// ============================================================================
+// LEGACY FORMAT (LiteGraph) - Used by graph-executor
+// ============================================================================
 
 export interface CognitiveGraphNode {
   id: number;
@@ -66,6 +74,142 @@ export interface CognitiveGraph {
   // LiteGraph compatibility
   config?: Record<string, any>;
   extra?: Record<string, any>;
+}
+
+// ============================================================================
+// SVELTE FLOW FORMAT - Used by visual editor
+// ============================================================================
+
+export interface SvelteFlowNode {
+  id: string;
+  type: string;
+  position: { x: number; y: number };
+  data: {
+    label: string;
+    nodeType: string;
+    properties: Record<string, any>;
+    muted?: boolean;
+    comment?: string;
+  };
+  width?: number;
+  height?: number;
+}
+
+export interface SvelteFlowEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle: string;
+  targetHandle: string;
+  data?: {
+    type?: string;
+    comment?: string;
+  };
+}
+
+export interface SvelteFlowGraph {
+  version: string;
+  format: 'svelte-flow';
+  name: string;
+  description?: string;
+  cognitiveMode?: 'dual' | 'agent' | 'emulation';
+  last_modified?: string;
+  nodes: SvelteFlowNode[];
+  edges: SvelteFlowEdge[];
+}
+
+// ============================================================================
+// FORMAT DETECTION & CONVERSION
+// ============================================================================
+
+/**
+ * Detect if a graph is in Svelte Flow format
+ */
+export function isSvelteFlowFormat(graph: any): graph is SvelteFlowGraph {
+  return graph.format === 'svelte-flow' || (
+    Array.isArray(graph.edges) &&
+    graph.nodes?.[0]?.position !== undefined
+  );
+}
+
+/**
+ * Convert Svelte Flow graph to legacy format for execution
+ */
+export function convertToLegacyFormat(sfGraph: SvelteFlowGraph): CognitiveGraph {
+  // Build handle index maps for each node
+  const nodeHandleIndices = new Map<string, { inputs: Map<string, number>; outputs: Map<string, number> }>();
+
+  // Track used handles per node to assign indices
+  sfGraph.edges.forEach((edge) => {
+    // Track source handles (outputs)
+    if (!nodeHandleIndices.has(edge.source)) {
+      nodeHandleIndices.set(edge.source, { inputs: new Map(), outputs: new Map() });
+    }
+    const sourceData = nodeHandleIndices.get(edge.source)!;
+    if (!sourceData.outputs.has(edge.sourceHandle)) {
+      sourceData.outputs.set(edge.sourceHandle, sourceData.outputs.size);
+    }
+
+    // Track target handles (inputs)
+    if (!nodeHandleIndices.has(edge.target)) {
+      nodeHandleIndices.set(edge.target, { inputs: new Map(), outputs: new Map() });
+    }
+    const targetData = nodeHandleIndices.get(edge.target)!;
+    if (!targetData.inputs.has(edge.targetHandle)) {
+      targetData.inputs.set(edge.targetHandle, targetData.inputs.size);
+    }
+  });
+
+  // Convert nodes
+  const nodes: CognitiveGraphNode[] = sfGraph.nodes.map((node) => {
+    const numericId = parseInt(node.id, 10);
+    const nodeType = node.data.nodeType;
+    return {
+      id: numericId,
+      type: nodeType.includes('/') ? nodeType : `cognitive/${nodeType}`,
+      pos: [node.position.x, node.position.y] as [number, number],
+      size: node.width && node.height ? [node.width, node.height] as [number, number] : undefined,
+      properties: node.data.properties,
+      title: node.data.label,
+      muted: node.data.muted,
+    };
+  });
+
+  // Convert edges to links
+  const links: CognitiveGraphLink[] = sfGraph.edges.map((edge, index) => {
+    const sourceData = nodeHandleIndices.get(edge.source);
+    const targetData = nodeHandleIndices.get(edge.target);
+
+    return {
+      id: index + 1,
+      origin_id: parseInt(edge.source, 10),
+      origin_slot: sourceData?.outputs.get(edge.sourceHandle) ?? 0,
+      target_id: parseInt(edge.target, 10),
+      target_slot: targetData?.inputs.get(edge.targetHandle) ?? 0,
+      type: edge.data?.type,
+      comment: edge.data?.comment,
+    };
+  });
+
+  return {
+    version: sfGraph.version,
+    name: sfGraph.name,
+    description: sfGraph.description || '',
+    cognitiveMode: sfGraph.cognitiveMode,
+    last_modified: sfGraph.last_modified,
+    nodes,
+    links,
+  };
+}
+
+/**
+ * Normalize any graph format to legacy format for execution
+ */
+export function normalizeForExecution(graph: any): CognitiveGraph {
+  if (isSvelteFlowFormat(graph)) {
+    return convertToLegacyFormat(graph as SvelteFlowGraph);
+  }
+  return graph as CognitiveGraph;
 }
 
 /**
@@ -133,20 +277,28 @@ export function validateCognitiveGraph(graph: any): CognitiveGraph {
     });
   }
 
-  // Check for circular dependencies (allowing conditional_router back-edges)
+  // Check for circular dependencies (allowing router back-edges for iterative loops)
   if (Array.isArray(graph.links) && graph.links.length > 0 && Array.isArray(graph.nodes)) {
-    // Identify conditional_router nodes
+    // Identify router nodes that are allowed to create back-edges
+    // - conditional_router: for conditional loops
+    // - feedback_router: for quality/safety refinement loops
     const routerNodes = graph.nodes
-      .filter((n: any) => n.type === 'conditional_router' || n.type === 'cognitive/conditional_router')
+      .filter((n: any) =>
+        n.type === 'conditional_router' ||
+        n.type === 'cognitive/conditional_router' ||
+        n.type === 'feedback_router' ||
+        n.type === 'control_flow/feedback_router'
+      )
       .map((n: any) => n.id);
     const routerSet = new Set(routerNodes);
 
-    // Identify back-edges (loops from conditional_router)
+    // Identify back-edges (loops from router nodes)
     const backEdges = new Set<string>();
     graph.links.forEach((link: any) => {
       if (routerSet.has(link.origin_id)) {
-        // Slot 1 = loop back path (false branch)
-        if (link.origin_slot === 1 || link.comment?.includes('loop') || link.comment?.includes('BACK-EDGE')) {
+        // Slot 1 or 2 = loop back path (feedback/false branch)
+        // Also check for explicit BACK-EDGE comments
+        if (link.origin_slot === 1 || link.origin_slot === 2 || link.comment?.includes('loop') || link.comment?.includes('BACK-EDGE')) {
           backEdges.add(`${link.origin_id}->${link.target_id}`);
         }
       }
@@ -186,7 +338,7 @@ export function validateCognitiveGraph(graph: any): CognitiveGraph {
 
     for (const nodeId of linkMap.keys()) {
       if (hasCycle(nodeId)) {
-        errors.push('Graph contains invalid circular dependencies (excluding allowed conditional_router back-edges)');
+        errors.push('Graph contains invalid circular dependencies (excluding allowed router back-edges from conditional_router and feedback_router)');
         break;
       }
     }

@@ -1,0 +1,115 @@
+{
+  "$schema": "https://metahuman.dev/schemas/tool-executor.json",
+  "version": "1.0.0",
+  "_TEMPLATE_WARNING": "══════════════════════════════════════════════════════════════════════════",
+  "_TEMPLATE_WARNING2": "██ THIS IS A SYSTEM TEMPLATE - DO NOT USE DIRECTLY FOR INDIVIDUAL USERS ██",
+  "_TEMPLATE_WARNING3": "██ This file is COPIED to user profiles, then the user's copy is used   ██",
+  "_TEMPLATE_WARNING4": "══════════════════════════════════════════════════════════════════════════",
+  "description": "Tool execution backend configuration for Open Interpreter and legacy CLIs",
+
+  "activeBackend": "local-skills",
+
+  "backends": {
+    "local-skills": {
+      "description": "Native MetaHuman skill executor (default, no external dependencies)",
+      "enabled": true,
+      "fallbackOnError": true
+    },
+
+    "open-interpreter": {
+      "description": "Open Interpreter for natural language code execution",
+      "enabled": false,
+      "endpoint": "http://localhost:4325",
+      "autoStart": true,
+      "modelId": "default.coder",
+      "safeMode": true,
+      "autoRun": false,
+      "maxIterations": 10,
+      "timeout": 120000,
+      "allowedLanguages": ["python", "shell", "javascript"],
+      "blockedCommands": ["rm -rf /", "sudo rm", "chmod 777", ":(){ :|:& };:"],
+      "sandboxMode": "none"
+    },
+
+    "claude-code": {
+      "description": "Claude Code CLI for complex reasoning tasks",
+      "enabled": false,
+      "command": "claude",
+      "args": ["--print"],
+      "dangerouslySkipPermissions": false,
+      "autoStartSession": true,
+      "timeout": 60000,
+      "terminalPort": 3099
+    },
+
+    "qwen-code": {
+      "description": "Qwen Code CLI - free tier available",
+      "enabled": false,
+      "command": "qwen-code",
+      "args": [],
+      "modelId": "default.coder",
+      "timeout": 120000
+    },
+
+    "aider": {
+      "description": "Aider AI pair programming - Git-aware code editing",
+      "enabled": false,
+      "command": "aider",
+      "args": ["--no-auto-commits", "--yes"],
+      "modelId": "default.coder",
+      "gitEnabled": true,
+      "autoCommit": false,
+      "timeout": 180000
+    },
+
+    "gemini-cli": {
+      "description": "Google Gemini CLI",
+      "enabled": false,
+      "command": "gemini",
+      "args": ["--non-interactive"],
+      "timeout": 120000
+    }
+  },
+
+  "routing": {
+    "strategy": "primary-with-fallback",
+    "primaryBackend": "local-skills",
+    "fallbackBackend": "open-interpreter",
+    "escalationRules": [
+      {
+        "trigger": "repeated_failures",
+        "threshold": 3,
+        "escalateTo": "open-interpreter",
+        "enabled": true
+      },
+      {
+        "trigger": "tool_not_found",
+        "threshold": 1,
+        "escalateTo": "open-interpreter",
+        "enabled": true
+      }
+    ]
+  },
+
+  "llmProxy": {
+    "enabled": true,
+    "endpoint": "/api/llm/proxy",
+    "modelId": "default.coder",
+    "fallbackModelId": "default.fallback",
+    "temperature": 0.0,
+    "maxTokens": 4096
+  },
+
+  "terminal": {
+    "enabled": true,
+    "port": 3099,
+    "showOutput": true,
+    "logFile": "logs/run/tool-executor.log"
+  },
+
+  "audit": {
+    "logAllExecutions": true,
+    "logToolOutputs": true,
+    "redactSensitiveData": true
+  }
+}

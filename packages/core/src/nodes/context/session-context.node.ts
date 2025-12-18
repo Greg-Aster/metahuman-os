@@ -10,11 +10,12 @@ export const SessionContextNode: NodeDefinition = defineNode({
   id: 'session_context',
   name: 'Session Context',
   category: 'context',
-  inputs: [],
+  inputs: [
+    { name: 'sessionId', type: 'string', description: 'Session ID to load context for' },
+  ],
   outputs: [
-    { name: 'conversationHistory', type: 'array', description: 'Conversation history messages' },
-    { name: 'user', type: 'user', description: 'User object' },
-    { name: 'sessionId', type: 'string', description: 'Current session ID' },
+    { name: 'conversationHistory', type: 'array', description: 'Recent conversation messages' },
+    { name: 'user', type: 'object', description: 'Current user object' },
   ],
   description: 'Provides conversation history and user context',
 

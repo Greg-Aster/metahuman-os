@@ -1,491 +1,912 @@
 {
-  "version": "2.5",
-  "name": "Dual Consciousness Mode (Intelligent Memory)",
-  "description": "AI-driven memory routing - orchestrator determines tier, memory_router handles retrieval. Thinking blocks preserved for UI, stripped for memory.",
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Dual Consciousness Mode (Iterative Refinement)",
+  "description": "AI-driven memory routing with search interpretation and iterative quality feedback loops. Search interpreter validates memory relevance. Quality scorer enables refinement loops.",
   "cognitiveMode": "dual",
-  "last_modified": "2025-12-05",
+  "last_modified": "2025-12-17",
   "nodes": [
     {
-      "id": 1,
-      "type": "cognitive/user_input",
-      "pos": [50, 200],
-      "size": [180, 60],
-      "properties": {
-        "message": ""
+      "id": "1",
+      "type": "inputNode",
+      "position": {
+        "x": 50,
+        "y": 200
       },
-      "title": "User Input"
-    },
-    {
-      "id": 2,
-      "type": "cognitive/session_context",
-      "pos": [50, 300],
-      "size": [180, 60],
-      "title": "Session Context"
-    },
-    {
-      "id": 3,
-      "type": "cognitive/system_settings",
-      "pos": [50, 400],
-      "size": [180, 80],
-      "title": "System Settings"
-    },
-    {
-      "id": 24,
-      "type": "cognitive/orchestrator_llm",
-      "pos": [280, 180],
-      "size": [200, 100],
-      "properties": {
-        "model": "orchestrator",
-        "temperature": 0.1,
-        "intentClassification": true,
-        "permissionCheck": true,
-        "timeout": 300000
+      "data": {
+        "label": "User Input",
+        "nodeType": "user_input",
+        "properties": {
+          "message": ""
+        }
       },
-      "title": "Intent Orchestrator"
+      "width": 180,
+      "height": 60
     },
     {
-      "id": 25,
-      "type": "cognitive/smart_router",
-      "pos": [530, 180],
-      "size": [200, 120],
-      "properties": {
-        "routeOnComplexity": true,
-        "simpleThreshold": 0.3
+      "id": "2",
+      "type": "contextNode",
+      "position": {
+        "x": 50,
+        "y": 300
       },
-      "title": "Smart Router"
-    },
-    {
-      "id": 4,
-      "type": "cognitive/auth_check",
-      "pos": [280, 320],
-      "size": [180, 60],
-      "title": "Auth Check"
-    },
-    {
-      "id": 5,
-      "type": "cognitive/operator_eligibility",
-      "pos": [530, 380],
-      "size": [200, 80],
-      "title": "Operator Eligibility"
-    },
-    {
-      "id": 6,
-      "type": "cognitive/memory_router",
-      "pos": [770, 100],
-      "size": [200, 100],
-      "properties": {
-        "topK": 8,
-        "threshold": 0.5
+      "data": {
+        "label": "Session Context",
+        "nodeType": "session_context",
+        "properties": {}
       },
-      "title": "Memory Router"
+      "width": 180,
+      "height": 60
     },
     {
-      "id": 7,
-      "type": "cognitive/conversation_history",
-      "pos": [770, 220],
-      "size": [200, 80],
-      "properties": {
-        "mode": "conversation",
-        "maxMessages": 20
+      "id": "3",
+      "type": "contextNode",
+      "position": {
+        "x": 50,
+        "y": 400
       },
-      "title": "Conversation History"
-    },
-    {
-      "id": 8,
-      "type": "cognitive/context_builder",
-      "pos": [1010, 160],
-      "size": [180, 80],
-      "properties": {
-        "searchDepth": "normal",
-        "maxMemories": 8,
-        "maxContextChars": 8000
+      "data": {
+        "label": "System Settings",
+        "nodeType": "system_settings",
+        "properties": {}
       },
-      "title": "Context Builder"
+      "width": 180,
+      "height": 80
     },
     {
-      "id": 17,
-      "type": "cognitive/response_synthesizer",
-      "pos": [1300, 180],
-      "size": [200, 100],
-      "properties": {
-        "model": "persona",
-        "style": "default"
+      "id": "24",
+      "type": "llmNode",
+      "position": {
+        "x": 280,
+        "y": 180
       },
-      "title": "Response Synthesizer"
-    },
-    {
-      "id": 18,
-      "type": "cognitive/cot_stripper",
-      "pos": [1550, 400],
-      "size": [200, 60],
-      "title": "CoT Stripper (deprecated)",
-      "muted": true,
-      "comment": "Replaced by Thinking Stripper for <think> block handling"
-    },
-    {
-      "id": 19,
-      "type": "cognitive/safety_validator",
-      "pos": [1800, 180],
-      "size": [200, 60],
-      "properties": {
-        "threshold": 0.75
+      "data": {
+        "label": "Intent Orchestrator",
+        "nodeType": "orchestrator_llm",
+        "properties": {
+          "model": "orchestrator",
+          "temperature": 0.1,
+          "intentClassification": true,
+          "permissionCheck": true,
+          "timeout": 300000
+        }
       },
-      "title": "Safety Validator"
+      "width": 200,
+      "height": 100
     },
     {
-      "id": 20,
-      "type": "cognitive/response_refiner",
-      "pos": [2050, 180],
-      "size": [200, 60],
-      "title": "Response Refiner"
-    },
-    {
-      "id": 21,
-      "type": "cognitive/memory_capture",
-      "pos": [2300, 100],
-      "size": [180, 80],
-      "title": "Memory Capture"
-    },
-    {
-      "id": 22,
-      "type": "cognitive/audit_logger",
-      "pos": [2300, 220],
-      "size": [180, 60],
-      "title": "Audit Logger"
-    },
-    {
-      "id": 23,
-      "type": "cognitive/stream_writer",
-      "pos": [2540, 160],
-      "size": [180, 60],
-      "title": "Stream Writer"
-    },
-    {
-      "id": 29,
-      "type": "cognitive/persona_loader",
-      "pos": [1050, 80],
-      "size": [180, 60],
-      "title": "Persona Loader"
-    },
-    {
-      "id": 30,
-      "type": "cognitive/persona_formatter",
-      "pos": [1200, 80],
-      "size": [200, 80],
-      "properties": {
-        "includePersonality": true,
-        "includeValues": true,
-        "includeGoals": true
+      "id": "25",
+      "type": "routerNode",
+      "position": {
+        "x": 530,
+        "y": 180
       },
-      "title": "Persona Formatter"
+      "data": {
+        "label": "Smart Router",
+        "nodeType": "smart_router",
+        "properties": {
+          "routeOnComplexity": true,
+          "simpleThreshold": 0.3
+        }
+      },
+      "width": 200,
+      "height": 120
     },
     {
-      "id": 26,
-      "type": "cognitive/buffer_manager",
-      "pos": [770, 340],
-      "size": [180, 80],
-      "title": "Buffer Manager"
+      "id": "4",
+      "type": "routerNode",
+      "position": {
+        "x": 280,
+        "y": 320
+      },
+      "data": {
+        "label": "Auth Check",
+        "nodeType": "auth_check",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 60
     },
     {
-      "id": 31,
-      "type": "cognitive/thinking_stripper",
-      "pos": [2150, 100],
-      "size": [180, 60],
-      "title": "Thinking Stripper",
-      "comment": "Strips <think> blocks for memory, preserves raw output for UI"
+      "id": "5",
+      "type": "routerNode",
+      "position": {
+        "x": 530,
+        "y": 380
+      },
+      "data": {
+        "label": "Operator Eligibility",
+        "nodeType": "operator_eligibility",
+        "properties": {}
+      },
+      "width": 200,
+      "height": 80
+    },
+    {
+      "id": "6",
+      "type": "memoryNode",
+      "position": {
+        "x": 770,
+        "y": 100
+      },
+      "data": {
+        "label": "Memory Router",
+        "nodeType": "memory_router",
+        "properties": {
+          "topK": 8,
+          "threshold": 0.5
+        }
+      },
+      "width": 200,
+      "height": 100
+    },
+    {
+      "id": "7",
+      "type": "contextNode",
+      "position": {
+        "x": 770,
+        "y": 220
+      },
+      "data": {
+        "label": "Conversation History",
+        "nodeType": "conversation_history",
+        "properties": {
+          "mode": "conversation",
+          "maxMessages": 20
+        }
+      },
+      "width": 200,
+      "height": 80
+    },
+    {
+      "id": "8",
+      "type": "contextNode",
+      "position": {
+        "x": 1010,
+        "y": 160
+      },
+      "data": {
+        "label": "Context Builder",
+        "nodeType": "context_builder",
+        "properties": {
+          "searchDepth": "normal",
+          "maxMemories": 8,
+          "maxContextChars": 8000
+        }
+      },
+      "width": 180,
+      "height": 80
+    },
+    {
+      "id": "17",
+      "type": "operatorNode",
+      "position": {
+        "x": 1300,
+        "y": 180
+      },
+      "data": {
+        "label": "Response Synthesizer",
+        "nodeType": "response_synthesizer",
+        "properties": {
+          "model": "persona",
+          "style": "default"
+        }
+      },
+      "width": 200,
+      "height": 100
+    },
+    {
+      "id": "18",
+      "type": "safetyNode",
+      "position": {
+        "x": 1550,
+        "y": 400
+      },
+      "data": {
+        "label": "CoT Stripper (deprecated)",
+        "nodeType": "cot_stripper",
+        "properties": {},
+        "muted": true,
+        "comment": "Replaced by Thinking Stripper for <think> block handling"
+      },
+      "width": 200,
+      "height": 60
+    },
+    {
+      "id": "19",
+      "type": "safetyNode",
+      "position": {
+        "x": 1800,
+        "y": 180
+      },
+      "data": {
+        "label": "Safety Validator",
+        "nodeType": "safety_validator",
+        "properties": {
+          "threshold": 0.75
+        }
+      },
+      "width": 200,
+      "height": 60
+    },
+    {
+      "id": "20",
+      "type": "safetyNode",
+      "position": {
+        "x": 2050,
+        "y": 180
+      },
+      "data": {
+        "label": "Response Refiner",
+        "nodeType": "response_refiner",
+        "properties": {}
+      },
+      "width": 200,
+      "height": 60
+    },
+    {
+      "id": "21",
+      "type": "outputNode",
+      "position": {
+        "x": 2300,
+        "y": 100
+      },
+      "data": {
+        "label": "Memory Capture",
+        "nodeType": "memory_capture",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 80
+    },
+    {
+      "id": "22",
+      "type": "outputNode",
+      "position": {
+        "x": 2300,
+        "y": 220
+      },
+      "data": {
+        "label": "Audit Logger",
+        "nodeType": "audit_logger",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "23",
+      "type": "outputNode",
+      "position": {
+        "x": 2540,
+        "y": 160
+      },
+      "data": {
+        "label": "Stream Writer",
+        "nodeType": "stream_writer",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "29",
+      "type": "personaNode",
+      "position": {
+        "x": 1050,
+        "y": 80
+      },
+      "data": {
+        "label": "Persona Loader",
+        "nodeType": "persona_loader",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "30",
+      "type": "personaNode",
+      "position": {
+        "x": 1200,
+        "y": 80
+      },
+      "data": {
+        "label": "Persona Formatter",
+        "nodeType": "persona_formatter",
+        "properties": {
+          "includePersonality": true,
+          "includeValues": true,
+          "includeGoals": true
+        }
+      },
+      "width": 200,
+      "height": 80
+    },
+    {
+      "id": "26",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 770,
+        "y": 340
+      },
+      "data": {
+        "label": "Buffer Manager",
+        "nodeType": "buffer_manager",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 80
+    },
+    {
+      "id": "31",
+      "type": "outputNode",
+      "position": {
+        "x": 2150,
+        "y": 100
+      },
+      "data": {
+        "label": "Thinking Stripper",
+        "nodeType": "thinking_stripper",
+        "properties": {},
+        "comment": "Strips <think> blocks for memory, preserves raw output for UI"
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "32",
+      "type": "genericNode",
+      "position": {
+        "x": 880,
+        "y": 100
+      },
+      "data": {
+        "label": "Search Interpreter",
+        "nodeType": "search_interpreter",
+        "properties": {
+          "relevanceThreshold": 0.6,
+          "maxResults": 5,
+          "strictMode": true
+        },
+        "comment": "Evaluates search result relevance, signals unknownSignal when no relevant memories found"
+      },
+      "width": 200,
+      "height": 100
+    },
+    {
+      "id": "33",
+      "type": "genericNode",
+      "position": {
+        "x": 1550,
+        "y": 180
+      },
+      "data": {
+        "label": "Quality Scorer",
+        "nodeType": "quality_scorer",
+        "properties": {
+          "qualityThreshold": 0.7,
+          "strictHallucinationCheck": true,
+          "requireGrounding": true
+        },
+        "comment": "Scores response quality and detects hallucinations for iterative refinement"
+      },
+      "width": 200,
+      "height": 80
+    },
+    {
+      "id": "34",
+      "type": "genericNode",
+      "position": {
+        "x": 2050,
+        "y": 280
+      },
+      "data": {
+        "label": "Feedback Router",
+        "nodeType": "feedback_router",
+        "properties": {
+          "maxIterations": 3,
+          "allowPartialSuccess": true
+        },
+        "comment": "Routes based on quality/safety - passes to output or loops back to orchestrator"
+      },
+      "width": 200,
+      "height": 100
+    },
+    {
+      "id": "99",
+      "type": "genericNode",
+      "position": {
+        "x": 50,
+        "y": -150
+      },
+      "data": {
+        "label": "Workflow Documentation",
+        "nodeType": "graph_note",
+        "properties": {
+          "title": "Dual Consciousness Mode v3.0 - Iterative Refinement Graph",
+          "content": "PURPOSE: This graph implements iterative refinement with feedback loops to prevent hallucinations and ensure quality responses.\n\nFLOW OVERVIEW:\n1. User Input → Orchestrator LLM (analyzes intent, determines routing)\n2. Memory Router → Search Interpreter (evaluates relevance, signals 'unknownSignal' if no relevant memories)\n3. Context Builder (combines memories + unknownSignal into context package)\n4. Response Synthesizer (generates response using persona + context)\n5. Quality Scorer (evaluates response quality, detects hallucinations)\n6. Safety Validator (checks for policy violations)\n7. Feedback Router (CRITICAL: decides output vs loop back)\n   - If quality/safety PASS → routes to Stream Writer (output)\n   - If FAIL → routes feedbackContext back to Orchestrator (iteration)\n8. Max 3 iterations to prevent infinite loops\n\nKEY INNOVATION: Search Interpreter\n- Evaluates if memory search results actually answer the user's question\n- Sets 'unknownSignal=true' if no relevant memories found\n- Prevents hallucination by telling persona to say 'I don't know'\n\nBACK-EDGE: Link 131 connects Feedback Router → Orchestrator for iterative refinement.\n\nNODE IDS:\n- 1: User Input | 24: Orchestrator | 6: Memory Router | 32: Search Interpreter\n- 8: Context Builder | 17: Response Synthesizer | 33: Quality Scorer\n- 19: Safety Validator | 20: Response Refiner | 34: Feedback Router\n- 23: Stream Writer | 31: Thinking Stripper | 21: Memory Capture",
+          "style": "info"
+        },
+        "comment": "Documentation node explaining the iterative refinement architecture"
+      },
+      "width": 600,
+      "height": 350
     }
   ],
-  "links": [
+  "edges": [
     {
-      "id": 101,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 24,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "User message → Orchestrator"
+      "id": "e-1-message-24-message",
+      "source": "1",
+      "target": "24",
+      "sourceHandle": "message",
+      "targetHandle": "message",
+      "data": {
+        "type": "string",
+        "comment": "User message → Orchestrator"
+      }
     },
     {
-      "id": 102,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 24,
-      "target_slot": 2,
-      "type": "object",
-      "comment": "System settings → Orchestrator slot 2 (permission context)"
+      "id": "e-3-cognitiveMode-24-systemSettings",
+      "source": "3",
+      "target": "24",
+      "sourceHandle": "cognitiveMode",
+      "targetHandle": "systemSettings",
+      "data": {
+        "type": "object",
+        "comment": "System settings → Orchestrator slot 2 (permission context)"
+      }
     },
     {
-      "id": 109,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 24,
-      "target_slot": 1,
-      "type": "array",
-      "comment": "Conversation History → Orchestrator slot 1 (context awareness for response length/style)"
+      "id": "e-7-history-24-conversationHistory",
+      "source": "7",
+      "target": "24",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "data": {
+        "type": "array",
+        "comment": "Conversation History → Orchestrator slot 1 (context awareness for response length/style)"
+      }
     },
     {
-      "id": 103,
-      "origin_id": 24,
-      "origin_slot": 0,
-      "target_id": 25,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Orchestrator analysis → Smart Router"
+      "id": "e-24-needsMemory-25-orchestratorAnalysis",
+      "source": "24",
+      "target": "25",
+      "sourceHandle": "needsMemory",
+      "targetHandle": "orchestratorAnalysis",
+      "data": {
+        "type": "object",
+        "comment": "Orchestrator analysis → Smart Router"
+      }
     },
     {
-      "id": 108,
-      "origin_id": 24,
-      "origin_slot": 0,
-      "target_id": 17,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Orchestrator guidance → Response Synthesizer"
+      "id": "e-24-needsMemory-17-goal",
+      "source": "24",
+      "target": "17",
+      "sourceHandle": "needsMemory",
+      "targetHandle": "goal",
+      "data": {
+        "type": "object",
+        "comment": "Orchestrator guidance → Response Synthesizer"
+      }
     },
     {
-      "id": 1,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 2,
-      "type": "string",
-      "comment": "User message → Operator Eligibility"
+      "id": "e-1-message-5-message",
+      "source": "1",
+      "target": "5",
+      "sourceHandle": "message",
+      "targetHandle": "message",
+      "data": {
+        "type": "string",
+        "comment": "User message → Operator Eligibility"
+      }
     },
     {
-      "id": 2,
-      "origin_id": 25,
-      "origin_slot": 0,
-      "target_id": 6,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Smart Router memoryHints → Memory Router (needsMemory, memoryTier, memoryQuery)"
+      "id": "e-25-complexPath-6-orchestratorHints",
+      "source": "25",
+      "target": "6",
+      "sourceHandle": "complexPath",
+      "targetHandle": "orchestratorHints",
+      "data": {
+        "type": "object",
+        "comment": "Smart Router memoryHints → Memory Router (needsMemory, memoryTier, memoryQuery)"
+      }
     },
     {
-      "id": 200,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 6,
-      "target_slot": 1,
-      "type": "string",
-      "comment": "User message → Memory Router (fallback query)"
+      "id": "e-1-message-6-userMessage",
+      "source": "1",
+      "target": "6",
+      "sourceHandle": "message",
+      "targetHandle": "userMessage",
+      "data": {
+        "type": "string",
+        "comment": "User message → Memory Router (fallback query)"
+      }
     },
     {
-      "id": 3,
-      "origin_id": 1,
-      "origin_slot": 1,
-      "target_id": 2,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Session ID → Session Context"
+      "id": "e-1-inputSource-2-sessionId",
+      "source": "1",
+      "target": "2",
+      "sourceHandle": "inputSource",
+      "targetHandle": "sessionId",
+      "data": {
+        "type": "string",
+        "comment": "Session ID → Session Context"
+      }
     },
     {
-      "id": 4,
-      "origin_id": 1,
-      "origin_slot": 1,
-      "target_id": 7,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Session ID → Conversation History"
+      "id": "e-1-inputSource-7-sessionId",
+      "source": "1",
+      "target": "7",
+      "sourceHandle": "inputSource",
+      "targetHandle": "sessionId",
+      "data": {
+        "type": "string",
+        "comment": "Session ID → Conversation History"
+      }
     },
     {
-      "id": 5,
-      "origin_id": 2,
-      "origin_slot": 1,
-      "target_id": 4,
-      "target_slot": 0,
-      "type": "user",
-      "comment": "User context → Auth Check"
+      "id": "e-2-user-4-user",
+      "source": "2",
+      "target": "4",
+      "sourceHandle": "user",
+      "targetHandle": "user",
+      "data": {
+        "type": "user",
+        "comment": "User context → Auth Check"
+      }
     },
     {
-      "id": 6,
-      "origin_id": 2,
-      "origin_slot": 0,
-      "target_id": 8,
-      "target_slot": 2,
-      "type": "array",
-      "comment": "Conversation history → Context Builder"
+      "id": "e-2-conversationHistory-8-conversationHistory",
+      "source": "2",
+      "target": "8",
+      "sourceHandle": "conversationHistory",
+      "targetHandle": "conversationHistory",
+      "data": {
+        "type": "array",
+        "comment": "Conversation history → Context Builder"
+      }
     },
     {
-      "id": 7,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 0,
-      "type": "cognitiveMode",
-      "comment": "Cognitive mode → Operator Eligibility"
+      "id": "e-3-cognitiveMode-5-cognitiveMode",
+      "source": "3",
+      "target": "5",
+      "sourceHandle": "cognitiveMode",
+      "targetHandle": "cognitiveMode",
+      "data": {
+        "type": "cognitiveMode",
+        "comment": "Cognitive mode → Operator Eligibility"
+      }
     },
     {
-      "id": 8,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 8,
-      "target_slot": 1,
-      "type": "cognitiveMode",
-      "comment": "Cognitive mode → Context Builder"
+      "id": "e-3-cognitiveMode-8-cognitiveMode",
+      "source": "3",
+      "target": "8",
+      "sourceHandle": "cognitiveMode",
+      "targetHandle": "cognitiveMode",
+      "data": {
+        "type": "cognitiveMode",
+        "comment": "Cognitive mode → Context Builder"
+      }
     },
     {
-      "id": 9,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 21,
-      "target_slot": 2,
-      "type": "cognitiveMode",
-      "comment": "Cognitive mode → Memory Capture"
+      "id": "e-3-cognitiveMode-21-cognitiveMode",
+      "source": "3",
+      "target": "21",
+      "sourceHandle": "cognitiveMode",
+      "targetHandle": "cognitiveMode",
+      "data": {
+        "type": "cognitiveMode",
+        "comment": "Cognitive mode → Memory Capture"
+      }
     },
     {
-      "id": 10,
-      "origin_id": 4,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 1,
-      "type": "boolean",
-      "comment": "Auth result → Operator Eligibility"
+      "id": "e-4-isAuthenticated-5-isAuthenticated",
+      "source": "4",
+      "target": "5",
+      "sourceHandle": "isAuthenticated",
+      "targetHandle": "isAuthenticated",
+      "data": {
+        "type": "boolean",
+        "comment": "Auth result → Operator Eligibility"
+      }
     },
     {
-      "id": 11,
-      "origin_id": 6,
-      "origin_slot": 0,
-      "target_id": 8,
-      "target_slot": 0,
-      "type": "array",
-      "comment": "Search results → Context Builder"
+      "id": "e-6-memories-32-searchResults",
+      "source": "6",
+      "target": "32",
+      "sourceHandle": "memories",
+      "targetHandle": "searchResults",
+      "data": {
+        "type": "object",
+        "comment": "Memory Router results → Search Interpreter (for relevance evaluation)"
+      }
     },
     {
-      "id": 12,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 8,
-      "target_slot": 2,
-      "type": "array",
-      "comment": "Conversation history → Context Builder"
+      "id": "e-7-history-8-conversationHistory",
+      "source": "7",
+      "target": "8",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "data": {
+        "type": "array",
+        "comment": "Conversation history → Context Builder"
+      }
     },
     {
-      "id": 29,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 17,
-      "target_slot": 1,
-      "type": "string",
-      "comment": "User message → Response Synthesizer"
+      "id": "e-1-message-17-scratchpad",
+      "source": "1",
+      "target": "17",
+      "sourceHandle": "message",
+      "targetHandle": "scratchpad",
+      "data": {
+        "type": "string",
+        "comment": "User message → Response Synthesizer"
+      }
     },
     {
-      "id": 30,
-      "origin_id": 8,
-      "origin_slot": 0,
-      "target_id": 17,
-      "target_slot": 2,
-      "type": "context",
-      "comment": "Context → Response Synthesizer"
+      "id": "e-8-context-17-context",
+      "source": "8",
+      "target": "17",
+      "sourceHandle": "context",
+      "targetHandle": "context",
+      "data": {
+        "type": "context",
+        "comment": "Context → Response Synthesizer"
+      }
     },
     {
-      "id": 31,
-      "origin_id": 17,
-      "origin_slot": 0,
-      "target_id": 19,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Response → Safety Validator (bypassing CoT Stripper - thinking preserved for UI)"
+      "id": "e-17-response-33-response",
+      "source": "17",
+      "target": "33",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Response Synthesizer → Quality Scorer response (for quality evaluation before safety check)"
+      }
     },
     {
-      "id": 33,
-      "origin_id": 19,
-      "origin_slot": 0,
-      "target_id": 20,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Validated response → Response Refiner"
+      "id": "e-19-response-20-response",
+      "source": "19",
+      "target": "20",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Validated response → Response Refiner"
+      }
     },
     {
-      "id": 34,
-      "origin_id": 19,
-      "origin_slot": 3,
-      "target_id": 20,
-      "target_slot": 1,
-      "type": "object",
-      "comment": "Safety metadata → Response Refiner"
+      "id": "e-19-safetyResult-20-safetyResult",
+      "source": "19",
+      "target": "20",
+      "sourceHandle": "safetyResult",
+      "targetHandle": "safetyResult",
+      "data": {
+        "type": "object",
+        "comment": "Safety metadata → Response Refiner"
+      }
     },
     {
-      "id": 35,
-      "origin_id": 20,
-      "origin_slot": 0,
-      "target_id": 31,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Refined response → Thinking Stripper"
+      "id": "e-34-response-31-response",
+      "source": "34",
+      "target": "31",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Feedback Router response → Thinking Stripper"
+      }
     },
     {
-      "id": 113,
-      "origin_id": 31,
-      "origin_slot": 1,
-      "target_id": 21,
-      "target_slot": 1,
-      "type": "string",
-      "comment": "Stripped response (no <think> blocks) → Memory Capture"
+      "id": "e-31-stripped-21-assistantResponse",
+      "source": "31",
+      "target": "21",
+      "sourceHandle": "stripped",
+      "targetHandle": "assistantResponse",
+      "data": {
+        "type": "string",
+        "comment": "Stripped response (no <think> blocks) → Memory Capture"
+      }
     },
     {
-      "id": 36,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 21,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "User message → Memory Capture"
+      "id": "e-1-message-21-userMessage",
+      "source": "1",
+      "target": "21",
+      "sourceHandle": "message",
+      "targetHandle": "userMessage",
+      "data": {
+        "type": "string",
+        "comment": "User message → Memory Capture"
+      }
     },
     {
-      "id": 37,
-      "origin_id": 20,
-      "origin_slot": 0,
-      "target_id": 23,
-      "target_slot": 0,
-      "type": "string",
-      "comment": "Refined response → Stream Writer"
+      "id": "e-34-response-23-response",
+      "source": "34",
+      "target": "23",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Feedback Router response → Stream Writer"
+      }
     },
     {
-      "id": 38,
-      "origin_id": 20,
-      "origin_slot": 0,
-      "target_id": 22,
-      "target_slot": 1,
-      "type": "object",
-      "comment": "Refined response → Audit Logger"
+      "id": "e-20-response-22-details",
+      "source": "20",
+      "target": "22",
+      "sourceHandle": "response",
+      "targetHandle": "details",
+      "data": {
+        "type": "object",
+        "comment": "Refined response → Audit Logger"
+      }
     },
     {
-      "id": 109,
-      "origin_id": 29,
-      "origin_slot": 0,
-      "target_id": 30,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Persona data → Persona Formatter"
+      "id": "e-29-persona-30-personaData",
+      "source": "29",
+      "target": "30",
+      "sourceHandle": "persona",
+      "targetHandle": "personaData",
+      "data": {
+        "type": "object",
+        "comment": "Persona data → Persona Formatter"
+      }
     },
     {
-      "id": 110,
-      "origin_id": 30,
-      "origin_slot": 0,
-      "target_id": 17,
-      "target_slot": 4,
-      "type": "string",
-      "comment": "Formatted persona → Response Synthesizer (for persona voice synthesis)"
+      "id": "e-30-formatted-17-personaText",
+      "source": "30",
+      "target": "17",
+      "sourceHandle": "formatted",
+      "targetHandle": "personaText",
+      "data": {
+        "type": "string",
+        "comment": "Formatted persona → Response Synthesizer personaText (for persona voice synthesis)"
+      }
     },
     {
-      "id": 111,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 26,
-      "target_slot": 0,
-      "type": "array",
-      "comment": "Conversation history → Buffer Manager"
+      "id": "e-7-history-26-conversationHistory",
+      "source": "7",
+      "target": "26",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "data": {
+        "type": "array",
+        "comment": "Conversation history → Buffer Manager"
+      }
     },
     {
-      "id": 112,
-      "origin_id": 31,
-      "origin_slot": 1,
-      "target_id": 26,
-      "target_slot": 1,
-      "type": "string",
-      "comment": "Stripped response → Buffer Manager (no <think> blocks in buffer)"
+      "id": "e-31-stripped-26-response",
+      "source": "31",
+      "target": "26",
+      "sourceHandle": "stripped",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Stripped response → Buffer Manager (no <think> blocks in buffer)"
+      }
+    },
+    {
+      "id": "e-1-message-32-userQuery",
+      "source": "1",
+      "target": "32",
+      "sourceHandle": "message",
+      "targetHandle": "userQuery",
+      "data": {
+        "type": "string",
+        "comment": "User message → Search Interpreter (for query context)"
+      }
+    },
+    {
+      "id": "e-32-relevantMemories-8-memories",
+      "source": "32",
+      "target": "8",
+      "sourceHandle": "relevantMemories",
+      "targetHandle": "memories",
+      "data": {
+        "type": "array",
+        "comment": "Search Interpreter relevantMemories → Context Builder memories"
+      }
+    },
+    {
+      "id": "e-32-fullResult-8-searchInterpretation",
+      "source": "32",
+      "target": "8",
+      "sourceHandle": "fullResult",
+      "targetHandle": "searchInterpretation",
+      "data": {
+        "type": "object",
+        "comment": "Search Interpreter fullResult → Context Builder searchInterpretation"
+      }
+    },
+    {
+      "id": "e-1-message-33-originalQuery",
+      "source": "1",
+      "target": "33",
+      "sourceHandle": "message",
+      "targetHandle": "originalQuery",
+      "data": {
+        "type": "string",
+        "comment": "User message → Quality Scorer (original query for relevance check)"
+      }
+    },
+    {
+      "id": "e-8-context-33-memories",
+      "source": "8",
+      "target": "33",
+      "sourceHandle": "context",
+      "targetHandle": "memories",
+      "data": {
+        "type": "array",
+        "comment": "Context Builder context → Quality Scorer memories (for grounding check)"
+      }
+    },
+    {
+      "id": "e-8-unknownSignal-33-unknownSignal",
+      "source": "8",
+      "target": "33",
+      "sourceHandle": "unknownSignal",
+      "targetHandle": "unknownSignal",
+      "data": {
+        "type": "boolean",
+        "comment": "Context Builder unknownSignal → Quality Scorer unknownSignal"
+      }
+    },
+    {
+      "id": "e-33-response-19-response",
+      "source": "33",
+      "target": "19",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Quality Scorer response passthrough → Safety Validator"
+      }
+    },
+    {
+      "id": "e-20-response-34-response",
+      "source": "20",
+      "target": "34",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Response Refiner output → Feedback Router"
+      }
+    },
+    {
+      "id": "e-33-qualityResult-34-qualityResult",
+      "source": "33",
+      "target": "34",
+      "sourceHandle": "qualityResult",
+      "targetHandle": "qualityResult",
+      "data": {
+        "type": "object",
+        "comment": "Quality Scorer qualityResult → Feedback Router qualityResult"
+      }
+    },
+    {
+      "id": "e-19-safetyResult-34-safetyResult",
+      "source": "19",
+      "target": "34",
+      "sourceHandle": "safetyResult",
+      "targetHandle": "safetyResult",
+      "data": {
+        "type": "object",
+        "comment": "Safety Validator safetyResult → Feedback Router safetyResult"
+      }
+    },
+    {
+      "id": "e-34-feedbackContext-24-feedbackContext",
+      "source": "34",
+      "target": "24",
+      "sourceHandle": "feedbackContext",
+      "targetHandle": "feedbackContext",
+      "data": {
+        "type": "object",
+        "comment": "Feedback Router feedbackContext → Orchestrator feedbackContext (BACK-EDGE for iterative refinement)"
+      }
     }
-  ],
-  "config": {},
-  "extra": {},
-  "groups": []
+  ]
 }

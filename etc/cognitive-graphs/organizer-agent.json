@@ -1,87 +1,120 @@
 {
+  "version": "1.0",
+  "format": "svelte-flow",
   "name": "Organizer Agent",
   "description": "Processes unprocessed episodic memories and enriches them with tags and entities using LLM analysis",
-  "version": "1.0.0",
-  "category": "agent",
+  "last_modified": "2025-12-17",
   "nodes": [
     {
-      "id": 1,
-      "type": "memory_loader",
-      "properties": {
-        "limit": 10,
-        "onlyUnprocessed": true
+      "id": "1",
+      "type": "agentNode",
+      "position": {
+        "x": 100,
+        "y": 100
       },
-      "position": [100, 100]
+      "data": {
+        "label": "memory_loader",
+        "nodeType": "memory_loader",
+        "properties": {
+          "limit": 10,
+          "onlyUnprocessed": true
+        }
+      }
     },
     {
-      "id": 2,
-      "type": "for_each",
-      "properties": {
-        "itemName": "memory"
+      "id": "2",
+      "type": "routerNode",
+      "position": {
+        "x": 400,
+        "y": 100
       },
-      "position": [400, 100]
+      "data": {
+        "label": "for_each",
+        "nodeType": "for_each",
+        "properties": {
+          "itemName": "memory"
+        }
+      }
     },
     {
-      "id": 3,
-      "type": "llm_enricher",
-      "properties": {
-        "promptTemplate": "Analyze this memory and extract relevant tags and entities.\n\nMemory: {content}\n\nReturn a JSON object with:\n- tags: array of relevant keyword tags (3-7 tags)\n- entities: array of entities mentioned (people, places, things)\n\nFormat: {\"tags\": [...], \"entities\": [...]}"
+      "id": "3",
+      "type": "agentNode",
+      "position": {
+        "x": 700,
+        "y": 100
       },
-      "position": [700, 100]
+      "data": {
+        "label": "llm_enricher",
+        "nodeType": "llm_enricher",
+        "properties": {
+          "promptTemplate": "Analyze this memory and extract relevant tags and entities.\n\nMemory: {content}\n\nReturn a JSON object with:\n- tags: array of relevant keyword tags (3-7 tags)\n- entities: array of entities mentioned (people, places, things)\n\nFormat: {\"tags\": [...], \"entities\": [...]}"
+        }
+      }
     },
     {
-      "id": 4,
-      "type": "memory_saver",
-      "properties": {
-        "updateOnly": true
+      "id": "4",
+      "type": "agentNode",
+      "position": {
+        "x": 1000,
+        "y": 100
       },
-      "position": [1000, 100]
+      "data": {
+        "label": "memory_saver",
+        "nodeType": "memory_saver",
+        "properties": {
+          "updateOnly": true
+        }
+      }
     },
     {
-      "id": 5,
-      "type": "audit_logger",
-      "properties": {
-        "category": "agent",
-        "event": "organizer_memory_processed"
+      "id": "5",
+      "type": "outputNode",
+      "position": {
+        "x": 1300,
+        "y": 100
       },
-      "position": [1300, 100]
+      "data": {
+        "label": "audit_logger",
+        "nodeType": "audit_logger",
+        "properties": {
+          "category": "agent",
+          "event": "organizer_memory_processed"
+        }
+      }
     }
   ],
-  "links": [
+  "edges": [
     {
-      "id": 1,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 2,
-      "target_slot": 0
+      "id": "e-1-memories-2-input",
+      "source": "1",
+      "target": "2",
+      "sourceHandle": "memories",
+      "targetHandle": "input",
+      "data": {}
     },
     {
-      "id": 2,
-      "origin_id": 2,
-      "origin_slot": 0,
-      "target_id": 3,
-      "target_slot": 0
+      "id": "e-2-results-3-memory",
+      "source": "2",
+      "target": "3",
+      "sourceHandle": "results",
+      "targetHandle": "memory",
+      "data": {}
     },
     {
-      "id": 3,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 4,
-      "target_slot": 0
+      "id": "e-3-memory-4-memory",
+      "source": "3",
+      "target": "4",
+      "sourceHandle": "memory",
+      "targetHandle": "memory",
+      "data": {}
     },
     {
-      "id": 4,
-      "origin_id": 4,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 0
+      "id": "e-4-success-5-eventType",
+      "source": "4",
+      "target": "5",
+      "sourceHandle": "success",
+      "targetHandle": "eventType",
+      "data": {}
     }
-  ],
-  "metadata": {
-    "author": "MetaHuman Core Team",
-    "created": "2025-11-19",
-    "tags": ["agent", "memory", "enrichment", "organizer"],
-    "executionMode": "scheduled",
-    "scheduledInterval": 300000
-  }
+  ]
 }

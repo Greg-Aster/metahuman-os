@@ -1,293 +1,436 @@
 {
-  "version": "2.0",
+  "version": "1.0",
+  "format": "svelte-flow",
   "name": "Desire Plan Reviewer",
   "description": "LLM self-review of generated plans for alignment and safety",
   "cognitiveMode": "agent",
-  "last_modified": "2025-12-03",
+  "last_modified": "2025-12-17",
   "nodes": [
     {
-      "id": 1,
-      "type": "agency/desire_loader",
-      "pos": [100, 200],
-      "size": [200, 80],
-      "properties": {},
-      "title": "Load Desire (with Plan)"
-    },
-    {
-      "id": 2,
-      "type": "persona/persona_loader",
-      "pos": [100, 50],
-      "size": [180, 60],
-      "properties": {},
-      "title": "Load Persona"
-    },
-    {
-      "id": 3,
-      "type": "cognitive/persona_formatter",
-      "pos": [320, 50],
-      "size": [200, 80],
-      "properties": {
-        "includeValues": true,
-        "includeGoals": true,
-        "includePersonality": false
+      "id": "1",
+      "type": "genericNode",
+      "position": {
+        "x": 100,
+        "y": 200
       },
-      "title": "Format Persona (Values)"
-    },
-    {
-      "id": 4,
-      "type": "cognitive/policy_loader",
-      "pos": [100, 350],
-      "size": [200, 80],
-      "properties": {
-        "include": ["decision-rules", "hard-rules"]
+      "data": {
+        "label": "Load Desire (with Plan)",
+        "nodeType": "desire_loader",
+        "properties": {}
       },
-      "title": "Load Decision Rules"
+      "width": 200,
+      "height": 80
     },
     {
-      "id": 5,
-      "type": "agency/desire_alignment_reviewer",
-      "pos": [400, 150],
-      "size": [220, 120],
-      "properties": {
-        "temperature": 0.2
+      "id": "2",
+      "type": "personaNode",
+      "position": {
+        "x": 100,
+        "y": 50
       },
-      "title": "Alignment Review"
-    },
-    {
-      "id": 6,
-      "type": "agency/desire_safety_reviewer",
-      "pos": [400, 300],
-      "size": [220, 120],
-      "properties": {
-        "temperature": 0.1
+      "data": {
+        "label": "Load Persona",
+        "nodeType": "persona_loader",
+        "properties": {}
       },
-      "title": "Safety Review"
+      "width": 180,
+      "height": 60
     },
     {
-      "id": 7,
-      "type": "agency/desire_verdict",
-      "pos": [700, 200],
-      "size": [200, 120],
-      "properties": {},
-      "title": "Synthesize Verdict"
-    },
-    {
-      "id": 8,
-      "type": "control-flow/conditional_router",
-      "pos": [950, 200],
-      "size": [180, 100],
-      "properties": {
-        "conditions": [
-          { "field": "verdict", "equals": "reject", "output": 0 },
-          { "field": "autoApprove", "equals": true, "output": 1 },
-          { "default": 2 }
-        ]
+      "id": "3",
+      "type": "personaNode",
+      "position": {
+        "x": 320,
+        "y": 50
       },
-      "title": "Route Decision"
-    },
-    {
-      "id": 9,
-      "type": "agency/desire_updater",
-      "pos": [1200, 80],
-      "size": [200, 80],
-      "properties": {
-        "newStatus": "rejected"
+      "data": {
+        "label": "Format Persona (Values)",
+        "nodeType": "persona_formatter",
+        "properties": {
+          "includeValues": true,
+          "includeGoals": true,
+          "includePersonality": false
+        }
       },
-      "title": "Mark Rejected"
+      "width": 200,
+      "height": 80
     },
     {
-      "id": 10,
-      "type": "agency/desire_updater",
-      "pos": [1200, 200],
-      "size": [200, 80],
-      "properties": {
-        "newStatus": "approved"
+      "id": "4",
+      "type": "genericNode",
+      "position": {
+        "x": 100,
+        "y": 350
       },
-      "title": "Auto-Approve"
-    },
-    {
-      "id": 11,
-      "type": "agency/approval_queue",
-      "pos": [1200, 320],
-      "size": [200, 80],
-      "properties": {},
-      "title": "Queue for Approval"
-    },
-    {
-      "id": 12,
-      "type": "cognitive/audit_logger",
-      "pos": [1450, 200],
-      "size": [180, 60],
-      "properties": {
-        "category": "agency",
-        "event": "desire_reviewed"
+      "data": {
+        "label": "Load Decision Rules",
+        "nodeType": "policy_loader",
+        "properties": {
+          "include": [
+            "decision-rules",
+            "hard-rules"
+          ]
+        }
       },
-      "title": "Audit Log"
+      "width": 200,
+      "height": 80
     },
     {
-      "id": 13,
-      "type": "cognitive/inner_dialogue_saver",
-      "pos": [1450, 300],
-      "size": [200, 80],
-      "properties": {
-        "tags": ["agency", "review", "inner"]
+      "id": "5",
+      "type": "genericNode",
+      "position": {
+        "x": 400,
+        "y": 150
       },
-      "title": "Log to Inner Dialogue"
+      "data": {
+        "label": "Alignment Review",
+        "nodeType": "desire_alignment_reviewer",
+        "properties": {
+          "temperature": 0.2
+        }
+      },
+      "width": 220,
+      "height": 120
+    },
+    {
+      "id": "6",
+      "type": "genericNode",
+      "position": {
+        "x": 400,
+        "y": 300
+      },
+      "data": {
+        "label": "Safety Review",
+        "nodeType": "desire_safety_reviewer",
+        "properties": {
+          "temperature": 0.1
+        }
+      },
+      "width": 220,
+      "height": 120
+    },
+    {
+      "id": "7",
+      "type": "genericNode",
+      "position": {
+        "x": 700,
+        "y": 200
+      },
+      "data": {
+        "label": "Synthesize Verdict",
+        "nodeType": "desire_verdict",
+        "properties": {}
+      },
+      "width": 200,
+      "height": 120
+    },
+    {
+      "id": "8",
+      "type": "routerNode",
+      "position": {
+        "x": 950,
+        "y": 200
+      },
+      "data": {
+        "label": "Route Decision",
+        "nodeType": "conditional_router",
+        "properties": {
+          "conditions": [
+            {
+              "field": "verdict",
+              "equals": "reject",
+              "output": 0
+            },
+            {
+              "field": "autoApprove",
+              "equals": true,
+              "output": 1
+            },
+            {
+              "default": 2
+            }
+          ]
+        }
+      },
+      "width": 180,
+      "height": 100
+    },
+    {
+      "id": "9",
+      "type": "agencyNode",
+      "position": {
+        "x": 1200,
+        "y": 80
+      },
+      "data": {
+        "label": "Mark Rejected",
+        "nodeType": "desire_updater",
+        "properties": {
+          "newStatus": "rejected"
+        }
+      },
+      "width": 200,
+      "height": 80
+    },
+    {
+      "id": "10",
+      "type": "agencyNode",
+      "position": {
+        "x": 1200,
+        "y": 200
+      },
+      "data": {
+        "label": "Auto-Approve",
+        "nodeType": "desire_updater",
+        "properties": {
+          "newStatus": "approved"
+        }
+      },
+      "width": 200,
+      "height": 80
+    },
+    {
+      "id": "11",
+      "type": "genericNode",
+      "position": {
+        "x": 1200,
+        "y": 320
+      },
+      "data": {
+        "label": "Queue for Approval",
+        "nodeType": "approval_queue",
+        "properties": {}
+      },
+      "width": 200,
+      "height": 80
+    },
+    {
+      "id": "12",
+      "type": "outputNode",
+      "position": {
+        "x": 1450,
+        "y": 200
+      },
+      "data": {
+        "label": "Audit Log",
+        "nodeType": "audit_logger",
+        "properties": {
+          "category": "agency",
+          "event": "desire_reviewed"
+        }
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "13",
+      "type": "genericNode",
+      "position": {
+        "x": 1450,
+        "y": 300
+      },
+      "data": {
+        "label": "Log to Inner Dialogue",
+        "nodeType": "inner_dialogue_saver",
+        "properties": {
+          "tags": [
+            "agency",
+            "review",
+            "inner"
+          ]
+        }
+      },
+      "width": 200,
+      "height": 80
     }
   ],
-  "links": [
+  "edges": [
     {
-      "id": 1,
-      "origin_id": 2,
-      "origin_slot": 0,
-      "target_id": 3,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Persona → Formatter"
+      "id": "e-2-persona-3-personaData",
+      "source": "2",
+      "target": "3",
+      "sourceHandle": "persona",
+      "targetHandle": "personaData",
+      "data": {
+        "type": "object",
+        "comment": "Persona → Formatter"
+      }
     },
     {
-      "id": 2,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Desire → Alignment Review"
+      "id": "e-1-slot_0-5-slot_0",
+      "source": "1",
+      "target": "5",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_0",
+      "data": {
+        "type": "object",
+        "comment": "Desire → Alignment Review"
+      }
     },
     {
-      "id": 3,
-      "origin_id": 3,
-      "origin_slot": 0,
-      "target_id": 5,
-      "target_slot": 2,
-      "type": "string",
-      "comment": "Persona Values → Alignment Review"
+      "id": "e-3-formatted-5-slot_2",
+      "source": "3",
+      "target": "5",
+      "sourceHandle": "formatted",
+      "targetHandle": "slot_2",
+      "data": {
+        "type": "string",
+        "comment": "Persona Values → Alignment Review"
+      }
     },
     {
-      "id": 4,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 6,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Desire → Safety Review"
+      "id": "e-1-slot_0-6-slot_0",
+      "source": "1",
+      "target": "6",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_0",
+      "data": {
+        "type": "object",
+        "comment": "Desire → Safety Review"
+      }
     },
     {
-      "id": 5,
-      "origin_id": 4,
-      "origin_slot": 0,
-      "target_id": 6,
-      "target_slot": 2,
-      "type": "string",
-      "comment": "Decision Rules → Safety Review"
+      "id": "e-4-slot_0-6-slot_2",
+      "source": "4",
+      "target": "6",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_2",
+      "data": {
+        "type": "string",
+        "comment": "Decision Rules → Safety Review"
+      }
     },
     {
-      "id": 6,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 7,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Desire → Verdict"
+      "id": "e-1-slot_0-7-slot_0",
+      "source": "1",
+      "target": "7",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_0",
+      "data": {
+        "type": "object",
+        "comment": "Desire → Verdict"
+      }
     },
     {
-      "id": 7,
-      "origin_id": 5,
-      "origin_slot": 0,
-      "target_id": 7,
-      "target_slot": 2,
-      "type": "object",
-      "comment": "Alignment Review → Verdict"
+      "id": "e-5-slot_0-7-slot_2",
+      "source": "5",
+      "target": "7",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_2",
+      "data": {
+        "type": "object",
+        "comment": "Alignment Review → Verdict"
+      }
     },
     {
-      "id": 8,
-      "origin_id": 6,
-      "origin_slot": 0,
-      "target_id": 7,
-      "target_slot": 3,
-      "type": "object",
-      "comment": "Safety Review → Verdict"
+      "id": "e-6-slot_0-7-slot_3",
+      "source": "6",
+      "target": "7",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_3",
+      "data": {
+        "type": "object",
+        "comment": "Safety Review → Verdict"
+      }
     },
     {
-      "id": 9,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 8,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Verdict → Router"
+      "id": "e-7-slot_0-8-condition",
+      "source": "7",
+      "target": "8",
+      "sourceHandle": "slot_0",
+      "targetHandle": "condition",
+      "data": {
+        "type": "object",
+        "comment": "Verdict → Router"
+      }
     },
     {
-      "id": 10,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 9,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Desire → Reject Updater (for desire object)"
+      "id": "e-1-slot_0-9-desire",
+      "source": "1",
+      "target": "9",
+      "sourceHandle": "slot_0",
+      "targetHandle": "desire",
+      "data": {
+        "type": "object",
+        "comment": "Desire → Reject Updater (for desire object)"
+      }
     },
     {
-      "id": 11,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 10,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Desire → Auto-Approve Updater (for desire object)"
+      "id": "e-1-slot_0-10-desire",
+      "source": "1",
+      "target": "10",
+      "sourceHandle": "slot_0",
+      "targetHandle": "desire",
+      "data": {
+        "type": "object",
+        "comment": "Desire → Auto-Approve Updater (for desire object)"
+      }
     },
     {
-      "id": 12,
-      "origin_id": 1,
-      "origin_slot": 0,
-      "target_id": 11,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Desire → Approval Queue (for desire object)"
+      "id": "e-1-slot_0-11-slot_0",
+      "source": "1",
+      "target": "11",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_0",
+      "data": {
+        "type": "object",
+        "comment": "Desire → Approval Queue (for desire object)"
+      }
     },
     {
-      "id": 15,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 9,
-      "target_slot": 2,
-      "type": "object",
-      "comment": "Review → Reject Updater (for review info)"
+      "id": "e-7-slot_0-9-plan",
+      "source": "7",
+      "target": "9",
+      "sourceHandle": "slot_0",
+      "targetHandle": "plan",
+      "data": {
+        "type": "object",
+        "comment": "Review → Reject Updater (for review info)"
+      }
     },
     {
-      "id": 16,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 10,
-      "target_slot": 2,
-      "type": "object",
-      "comment": "Review → Auto-Approve Updater (for review info)"
+      "id": "e-7-slot_0-10-plan",
+      "source": "7",
+      "target": "10",
+      "sourceHandle": "slot_0",
+      "targetHandle": "plan",
+      "data": {
+        "type": "object",
+        "comment": "Review → Auto-Approve Updater (for review info)"
+      }
     },
     {
-      "id": 17,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 11,
-      "target_slot": 1,
-      "type": "object",
-      "comment": "Review → Approval Queue (for review info)"
+      "id": "e-7-slot_0-11-slot_1",
+      "source": "7",
+      "target": "11",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_1",
+      "data": {
+        "type": "object",
+        "comment": "Review → Approval Queue (for review info)"
+      }
     },
     {
-      "id": 13,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 12,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Verdict → Audit"
+      "id": "e-7-slot_0-12-eventType",
+      "source": "7",
+      "target": "12",
+      "sourceHandle": "slot_0",
+      "targetHandle": "eventType",
+      "data": {
+        "type": "object",
+        "comment": "Verdict → Audit"
+      }
     },
     {
-      "id": 14,
-      "origin_id": 7,
-      "origin_slot": 0,
-      "target_id": 13,
-      "target_slot": 0,
-      "type": "object",
-      "comment": "Verdict → Inner Dialogue"
+      "id": "e-7-slot_0-13-slot_0",
+      "source": "7",
+      "target": "13",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_0",
+      "data": {
+        "type": "object",
+        "comment": "Verdict → Inner Dialogue"
+      }
     }
   ]
 }

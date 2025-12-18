@@ -134,6 +134,7 @@ export async function buildMemoryIndex(options: {
   const memPaths = resolveMemoryPaths();
 
   // Helper to get embedding and track dimensions
+  // Note: embeddings.ts handles truncation at 32K chars if needed
   const getEmbedding = async (text: string): Promise<number[]> => {
     const vector = await embedText(text)
     if (!firstVector) {

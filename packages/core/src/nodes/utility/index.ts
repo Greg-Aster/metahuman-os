@@ -8,3 +8,4 @@ export { JSONParserNode } from './json-parser.node.js';
 export { TextTemplateNode } from './text-template.node.js';
 export { DataTransformNode } from './data-transform.node.js';
 export { CacheNode } from './cache.node.js';
+export { GraphNoteNode } from './graph-note.node.js';

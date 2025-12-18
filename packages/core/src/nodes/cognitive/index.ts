@@ -12,6 +12,7 @@ export { PersonaFormatterNode } from './persona-formatter.node.js';
 export { PolicyLoaderNode } from './policy-loader.node.js';
 export { InnerDialogueSaverNode } from './inner-dialogue-saver.node.js';
 export { ScratchpadWriterNode } from './scratchpad-writer.node.js';
+export { QualityScorerNode } from './quality-scorer.node.js';
 
 // Re-export all nodes as an array for registration
 import { AuditLoggerNode } from './audit-logger.node.js';
@@ -21,6 +22,7 @@ import { PersonaFormatterNode } from './persona-formatter.node.js';
 import { PolicyLoaderNode } from './policy-loader.node.js';
 import { InnerDialogueSaverNode } from './inner-dialogue-saver.node.js';
 import { ScratchpadWriterNode } from './scratchpad-writer.node.js';
+import { QualityScorerNode } from './quality-scorer.node.js';
 
 export const cognitiveNodes = [
   AuditLoggerNode,
@@ -30,4 +32,5 @@ export const cognitiveNodes = [
   PolicyLoaderNode,
   InnerDialogueSaverNode,
   ScratchpadWriterNode,
+  QualityScorerNode,
 ];

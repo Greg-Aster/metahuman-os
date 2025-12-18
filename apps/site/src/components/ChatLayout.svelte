@@ -6,10 +6,10 @@
   import { apiFetch } from '../lib/client/api-config';
   import UserMenu from './UserMenu.svelte';
   import HeadlessClaimBanner from './HeadlessClaimBanner.svelte';
-  // NodeEditorLayout is loaded dynamically to avoid bundling @metahuman/core in client
+  // FlowEditorLayout is loaded dynamically to avoid bundling @xyflow/svelte in client
   import type { SvelteComponent } from 'svelte';
-  let NodeEditorLayoutComponent: typeof SvelteComponent | null = null;
-  let nodeEditorLoading = false;
+  let FlowEditorLayoutComponent: typeof SvelteComponent | null = null;
+  let flowEditorLoading = false;
 
   // Sidebar visibility state - mobile-first defaults
   let leftSidebarOpen = false;
@@ -313,18 +313,18 @@
     void loadCognitiveModeState();
   }
 
-  // Dynamically load NodeEditorLayout when node editor mode is activated
-  // This prevents @metahuman/core from being bundled into the main client bundle
-  $: if ($nodeEditorMode && !NodeEditorLayoutComponent && !nodeEditorLoading) {
-    nodeEditorLoading = true;
-    import('./NodeEditorLayout.svelte')
+  // Dynamically load FlowEditorLayout when node editor mode is activated
+  // This prevents @xyflow/svelte from being bundled into the main client bundle
+  $: if ($nodeEditorMode && !FlowEditorLayoutComponent && !flowEditorLoading) {
+    flowEditorLoading = true;
+    import('./flow-editor/FlowEditorLayout.svelte')
       .then(module => {
-        NodeEditorLayoutComponent = module.default;
-        nodeEditorLoading = false;
+        FlowEditorLayoutComponent = module.default;
+        flowEditorLoading = false;
       })
       .catch(err => {
-        console.error('[ChatLayout] Failed to load NodeEditorLayout:', err);
-        nodeEditorLoading = false;
+        console.error('[ChatLayout] Failed to load FlowEditorLayout:', err);
+        flowEditorLoading = false;
       });
   }
 
@@ -341,15 +341,15 @@
 </script>
 
 {#if $nodeEditorMode}
-  {#if nodeEditorLoading}
+  {#if flowEditorLoading}
     <div class="flex items-center justify-center h-screen bg-white dark:bg-slate-950">
       <div class="text-center">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500 mx-auto mb-4"></div>
-        <p class="text-gray-600 dark:text-gray-400">Loading Node Editor...</p>
+        <p class="text-gray-600 dark:text-gray-400">Loading Flow Editor...</p>
       </div>
     </div>
-  {:else if NodeEditorLayoutComponent}
-    <svelte:component this={NodeEditorLayoutComponent} cognitiveMode={cognitiveMode?.id} />
+  {:else if FlowEditorLayoutComponent}
+    <svelte:component this={FlowEditorLayoutComponent} cognitiveMode={cognitiveMode?.id} />
   {/if}
 {:else}
 <div class="flex flex-col app-root w-screen overflow-hidden bg-white dark:bg-slate-950">

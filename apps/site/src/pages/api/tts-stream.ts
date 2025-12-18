@@ -236,15 +236,40 @@ export const POST: APIRoute = async ({ request, cookies }) => {
         const encoder = new TextEncoder();
         const { generateSpeech } = await import('@metahuman/core');
 
+        // Track controller state to prevent "already closed" errors
+        let isClosed = false;
+        const safeEnqueue = (data: Uint8Array) => {
+          if (!isClosed) {
+            try {
+              controller.enqueue(data);
+            } catch (e) {
+              console.warn('[TTS Stream] Failed to enqueue (controller closed)');
+              isClosed = true;
+            }
+          }
+        };
+        const safeClose = () => {
+          if (!isClosed) {
+            isClosed = true;
+            try {
+              controller.close();
+            } catch (e) {
+              // Already closed
+            }
+          }
+        };
+
         // Prefetch queue: generate next sentence while current plays
-        // Higher lookahead for slow providers (RVC takes 500ms-2s per sentence)
-        const LOOKAHEAD = 3; // Number of sentences to prefetch ahead
+        // For RVC on CPU, reduce lookahead to avoid overwhelming the server
+        // RVC server processes ONE request at a time, so parallel calls just queue up
+        const LOOKAHEAD = 1; // Reduced from 3 - RVC is sequential, not parallel
         const pendingGenerations: Map<number, Promise<Buffer>> = new Map();
 
         // Start prefetching first sentences
         const startPrefetch = (index: number) => {
           if (index >= sentences.length) return;
           if (pendingGenerations.has(index)) return;
+          if (isClosed) return; // Don't start new work if stream is closed
 
           const sentence = sentences[index];
           console.log(`[TTS Stream] Prefetching sentence ${index + 1}/${sentences.length}: ${sentence.slice(0, 30)}...`);
@@ -256,6 +281,10 @@ export const POST: APIRoute = async ({ request, cookies }) => {
             pitchShift: rvcConfig.pitchShift,
             username: user.username,
             signal: request.signal,
+          }).catch(err => {
+            // Log but don't throw - return empty buffer so stream can continue
+            console.warn(`[TTS Stream] Failed to generate sentence ${index}:`, err.message);
+            return Buffer.alloc(0);
           });
 
           pendingGenerations.set(index, promise);
@@ -269,6 +298,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 
           // Process sentences in order, streaming as they complete
           for (let i = 0; i < sentences.length; i++) {
+            if (isClosed) break; // Stop processing if stream is closed
+
             // Ensure this sentence is being generated
             startPrefetch(i);
 
@@ -281,7 +312,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
             const audioBuffer = await pendingGenerations.get(i);
             pendingGenerations.delete(i);
 
-            if (!audioBuffer) {
+            if (!audioBuffer || audioBuffer.length === 0) {
               console.warn(`[TTS Stream] No audio for sentence ${i}`);
               continue;
             }
@@ -301,21 +332,21 @@ export const POST: APIRoute = async ({ request, cookies }) => {
               is_final: i === sentences.length - 1,
             });
 
-            controller.enqueue(encoder.encode(`data: ${eventData}\n\n`));
+            safeEnqueue(encoder.encode(`data: ${eventData}\n\n`));
           }
 
           // Send completion event
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ event: 'complete', total_chunks: sentences.length })}\n\n`));
-          controller.close();
+          safeEnqueue(encoder.encode(`data: ${JSON.stringify({ event: 'complete', total_chunks: sentences.length })}\n\n`));
+          safeClose();
         } catch (error) {
           if ((error as Error).name === 'AbortError') {
             console.log('[TTS Stream] Request aborted');
-            controller.close();
+            safeClose();
             return;
           }
           console.error('[TTS Stream] Error:', error);
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ event: 'error', error: (error as Error).message })}\n\n`));
-          controller.close();
+          safeEnqueue(encoder.encode(`data: ${JSON.stringify({ event: 'error', error: (error as Error).message })}\n\n`));
+          safeClose();
         }
       },
     });

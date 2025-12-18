@@ -51,6 +51,7 @@
     "./cognitive-graph-schema": "./src/cognitive-graph-schema.ts",
     "./graph-executor": "./src/graph-executor.ts",
     "./nodes/schemas": "./src/nodes/schemas.ts",
+    "./nodes/types": "./src/nodes/types.ts",
     "./nodes": "./src/nodes/index.ts",
     "./big-brother": "./src/big-brother.ts",
     "./claude-session": "./src/claude-session.ts",

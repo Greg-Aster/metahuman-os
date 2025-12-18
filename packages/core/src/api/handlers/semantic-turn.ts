@@ -51,7 +51,15 @@ User: "So basically what I'm trying to say is"
  * Body: { transcript: string, context?: string }
  */
 export async function handleSemanticTurn(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { body } = req;
+  const { body, user } = req;
+
+  // Require authentication - unauthenticated users cannot use LLM features
+  if (!user.isAuthenticated) {
+    return {
+      status: 401,
+      error: 'Authentication required',
+    };
+  }
 
   try {
     const { transcript, context } = body || {};

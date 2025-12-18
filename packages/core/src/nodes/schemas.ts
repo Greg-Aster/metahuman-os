@@ -159,8 +159,13 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'message', type: 'string' },
       { name: 'cognitiveMode', type: 'string' },
       { name: 'conversationHistory', type: 'array', optional: true },
+      { name: 'memories', type: 'array', optional: true, description: 'Pre-fetched memories from search interpreter' },
+      { name: 'searchInterpretation', type: 'object', optional: true, description: 'Search interpretation result (unknownSignal, etc.)' },
     ],
-    outputs: [{ name: 'context', type: 'object', description: 'Complete context package' }],
+    outputs: [
+      { name: 'context', type: 'object', description: 'Complete context package' },
+      { name: 'unknownSignal', type: 'boolean', description: 'Pass-through of unknownSignal from search interpretation' },
+    ],
     properties: { searchDepth: 'normal', maxMemories: 8, maxContextChars: 8000 },
     propertySchemas: {
       searchDepth: { type: 'select', default: 'normal', label: 'Search Depth', options: ['shallow', 'normal', 'deep', 'exhaustive'] },
@@ -280,6 +285,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'message', type: 'string', description: 'User message to analyze' },
       { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
       { name: 'systemSettings', type: 'object', optional: true, description: 'System settings for permission context' },
+      { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from iterative refinement loop' },
     ],
     outputs: [
       { name: 'needsMemory', type: 'boolean', description: 'Whether memory search is needed' },
@@ -407,6 +413,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'goal', type: 'string' },
       { name: 'scratchpad', type: 'array' },
       { name: 'context', type: 'object' },
+      { name: 'personaText', type: 'object', optional: true, description: 'Formatted persona text for voice synthesis' },
     ],
     outputs: [{ name: 'response', type: 'string', description: 'Final natural language response' }],
     properties: { model: 'persona', style: 'default' },
@@ -772,7 +779,66 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Generates conversational response',
   }),
 
+  // COGNITIVE NODES
+  defineSchema({
+    id: 'quality_scorer',
+    name: 'Quality Scorer',
+    category: 'cognitive',
+    inputs: [
+      { name: 'response', type: 'string', description: 'Generated response to evaluate' },
+      { name: 'originalQuery', type: 'string', description: 'Original user query' },
+      { name: 'memories', type: 'array', optional: true, description: 'Memories used for grounding check' },
+      { name: 'unknownSignal', type: 'boolean', optional: true, description: 'Whether search interpreter signaled unknown' },
+    ],
+    outputs: [
+      { name: 'response', type: 'string', description: 'Passthrough of the input response' },
+      { name: 'qualityResult', type: 'object', description: 'Full quality evaluation result' },
+      { name: 'qualityScore', type: 'number', description: 'Quality score 0-1' },
+      { name: 'issues', type: 'array', description: 'List of quality issues found' },
+      { name: 'passesThreshold', type: 'boolean', description: 'Whether response passes quality threshold' },
+      { name: 'needsRefinement', type: 'boolean', description: 'Whether response needs another pass' },
+      { name: 'suggestions', type: 'array', description: 'Specific improvement suggestions' },
+      { name: 'evaluation', type: 'string', description: 'Summary of quality assessment' },
+    ],
+    properties: { qualityThreshold: 0.7, strictHallucinationCheck: true, requireGrounding: true },
+    propertySchemas: {
+      qualityThreshold: { type: 'slider', default: 0.7, label: 'Quality Threshold', min: 0.5, max: 0.95, step: 0.05 },
+      strictHallucinationCheck: { type: 'toggle', default: true, label: 'Strict Hallucination Check' },
+      requireGrounding: { type: 'toggle', default: true, label: 'Require Memory Grounding' },
+    },
+    size: [240, 200],
+    description: 'Evaluates response quality and detects hallucinations for iterative refinement',
+  }),
+
   // CONTROL FLOW NODES
+  defineSchema({
+    id: 'feedback_router',
+    name: 'Feedback Router',
+    category: 'control_flow',
+    inputs: [
+      { name: 'response', type: 'string', description: 'Generated response' },
+      { name: 'qualityResult', type: 'object', description: 'Quality evaluation result' },
+      { name: 'safetyResult', type: 'object', optional: true, description: 'Safety validation result' },
+      { name: 'currentIteration', type: 'number', optional: true, description: 'Current loop iteration (default: 1)' },
+      { name: 'previousFeedback', type: 'object', optional: true, description: 'Feedback from previous iteration' },
+    ],
+    outputs: [
+      { name: 'routedTo', type: 'string', description: '"output" or "orchestrator"' },
+      { name: 'response', type: 'string', description: 'Response to output (may be modified on failure)' },
+      { name: 'feedbackContext', type: 'object', description: 'Feedback context for orchestrator (if looping)' },
+      { name: 'exitReason', type: 'string', description: 'Reason for routing decision' },
+      { name: 'shouldContinueLoop', type: 'boolean', description: 'True if routing back to orchestrator' },
+      { name: 'iteration', type: 'number', description: 'Current iteration number' },
+      { name: 'qualityScore', type: 'number', description: 'Quality score of the response' },
+    ],
+    properties: { maxIterations: 3, allowPartialSuccess: true },
+    propertySchemas: {
+      maxIterations: { type: 'slider', default: 3, label: 'Max Iterations', min: 1, max: 5, step: 1 },
+      allowPartialSuccess: { type: 'toggle', default: true, label: 'Allow Partial Success' },
+    },
+    size: [240, 160],
+    description: 'Routes responses based on quality/safety, enabling iterative refinement loops',
+  }),
   defineSchema({
     id: 'loop_controller',
     name: 'Loop Controller',
@@ -842,6 +908,21 @@ export const nodeSchemas: NodeSchema[] = [
   }),
 
   // UTILITY NODES
+  defineSchema({
+    id: 'graph_note',
+    name: 'Graph Note',
+    category: 'utility',
+    inputs: [],
+    outputs: [],
+    properties: { title: 'Note', content: '', style: 'info' },
+    propertySchemas: {
+      title: { type: 'string', default: 'Note', label: 'Title' },
+      content: { type: 'text_multiline', default: '', label: 'Content', rows: 15 },
+      style: { type: 'select', default: 'info', label: 'Style', options: ['info', 'warning', 'success', 'error'] },
+    },
+    size: [400, 200],
+    description: 'Documentation node for explaining graph workflows',
+  }),
   defineSchema({
     id: 'json_parser',
     name: 'JSON Parser',
@@ -1409,6 +1490,33 @@ export const nodeSchemas: NodeSchema[] = [
   }),
 
   // MEMORY NODES
+  defineSchema({
+    id: 'search_interpreter',
+    name: 'Search Interpreter',
+    category: 'memory',
+    inputs: [
+      { name: 'searchResults', type: 'object', description: 'Memory search results from memory_router' },
+      { name: 'userQuery', type: 'string', description: 'Original user query' },
+      { name: 'orchestratorIntent', type: 'object', optional: true, description: 'Intent hints from orchestrator' },
+    ],
+    outputs: [
+      { name: 'relevantMemories', type: 'array', description: 'Filtered relevant memories with relevance scores' },
+      { name: 'hasRelevantResults', type: 'boolean', description: 'Whether any relevant results were found' },
+      { name: 'unknownSignal', type: 'boolean', description: 'True if the system should respond "I don\'t know"' },
+      { name: 'interpretation', type: 'string', description: 'Summary of what was found or not found' },
+      { name: 'confidence', type: 'number', description: 'Confidence in the interpretation (0-1)' },
+      { name: 'rejectedCount', type: 'number', description: 'Number of memories rejected as irrelevant' },
+      { name: 'fullResult', type: 'object', description: 'Complete result object for Context Builder' },
+    ],
+    properties: { relevanceThreshold: 0.6, maxResults: 5, strictMode: true },
+    propertySchemas: {
+      relevanceThreshold: { type: 'slider', default: 0.6, label: 'Relevance Threshold', min: 0.3, max: 0.9, step: 0.05 },
+      maxResults: { type: 'slider', default: 5, label: 'Max Results', min: 1, max: 10, step: 1 },
+      strictMode: { type: 'toggle', default: true, label: 'Strict Mode' },
+    },
+    size: [240, 180],
+    description: 'Evaluates search results for relevance and signals "I don\'t know" when appropriate',
+  }),
   defineSchema({
     id: 'weighted_sampler',
     name: 'Weighted Sampler',

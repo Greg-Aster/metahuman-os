@@ -543,9 +543,9 @@
         meta: { tier: result.tier, model: result.model },
       });
 
-      // TTS if enabled
+      // TTS if enabled - uses streaming for slow providers like RVC
       if (ttsEnabled && result.response) {
-        void ttsApi.speakText(result.response);
+        void ttsApi.speak(result.response);
       }
 
       thinkingTraceApi.stop();
@@ -752,10 +752,11 @@
             messagesApi.pushMessage('assistant', data.response, data?.saved?.assistantRelPath, { facet: data.facet });
 
             // Auto-TTS: Speak assistant responses when TTS toggle is enabled
+            // Uses streaming for slow providers (RVC) to reduce latency
             console.log('[chat-tts] Auto-TTS check - ttsEnabled:', ttsEnabled, 'hasResponse:', !!data.response, 'responseLength:', data.response?.length || 0);
             if (ttsEnabled && data.response) {
               console.log('[chat-tts] Auto-TTS FIRING - speaking response:', data.response.substring(0, 50));
-              void ttsApi.speakText(data.response);
+              void ttsApi.speak(data.response);
             } else {
               console.log('[chat-tts] Auto-TTS SKIPPED - enabled:', ttsEnabled, 'mode:', mode, 'hasResponse:', !!data.response);
             }
@@ -1259,7 +1260,7 @@
         on:validateMessage={(e) => handleValidate(e.detail.relPath, e.detail.status)}
         on:speakMessage={(e) => {
           if (ttsEnabled) {
-            ttsApi.speakText(e.detail.content);
+            ttsApi.speak(e.detail.content);
           }
         }}
       />
