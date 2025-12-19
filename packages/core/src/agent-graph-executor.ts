@@ -9,7 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import type { CognitiveGraph } from './cognitive-graph-schema.js';
+import type { SvelteFlowGraph } from './cognitive-graph-schema.js';
 import { executeGraph, type GraphExecutionState, type ExecutionEventHandler } from './graph-executor.js';
 import { audit } from './audit.js';
 
@@ -25,7 +25,7 @@ export interface AgentTemplate {
   version: string;
   category: string;
   nodes: any[];
-  links: any[];
+  edges: any[];
   metadata?: {
     author?: string;
     created?: string;
@@ -92,25 +92,33 @@ export function listAgentTemplates(): Array<{ name: string; description: string;
 }
 
 /**
- * Convert agent template to cognitive graph format
+ * Convert agent template to Svelte Flow graph format
  */
-function templateToGraph(template: AgentTemplate): CognitiveGraph {
+function templateToGraph(template: AgentTemplate): SvelteFlowGraph {
   return {
+    format: 'svelte-flow',
     name: template.name,
     description: template.description || '',
     version: template.version || '1.0.0',
     nodes: template.nodes.map(node => ({
-      id: node.id,
-      type: node.type,
-      properties: node.properties || {},
-      pos: (node.position || [0, 0]) as [number, number],
+      id: String(node.id),
+      type: node.type || 'cognitiveNode',
+      position: {
+        x: node.position?.[0] ?? node.position?.x ?? 0,
+        y: node.position?.[1] ?? node.position?.y ?? 0,
+      },
+      data: {
+        label: node.title || node.data?.label || node.type,
+        nodeType: node.data?.nodeType || node.type,
+        properties: node.properties || node.data?.properties || {},
+      },
     })),
-    links: template.links.map(link => ({
-      id: link.id,
-      origin_id: link.origin_id,
-      origin_slot: link.origin_slot,
-      target_id: link.target_id,
-      target_slot: link.target_slot,
+    edges: template.edges.map(edge => ({
+      id: String(edge.id),
+      source: String(edge.source || edge.origin_id),
+      target: String(edge.target || edge.target_id),
+      sourceHandle: edge.sourceHandle || `output_${edge.origin_slot || 0}`,
+      targetHandle: edge.targetHandle || `input_${edge.target_slot || 0}`,
     })),
   };
 }
@@ -144,7 +152,7 @@ export async function executeAgentTemplate(
     }
 
     console.log(`[AgentGraphExecutor] Executing template: ${template.name}`);
-    console.log(`[AgentGraphExecutor] Nodes: ${template.nodes.length}, Links: ${template.links.length}`);
+    console.log(`[AgentGraphExecutor] Nodes: ${template.nodes.length}, Edges: ${template.edges.length}`);
 
     // Convert to cognitive graph format
     const graph = templateToGraph(template);
@@ -212,22 +220,24 @@ export function validateAgentTemplate(templateName: string): { valid: boolean; e
     if (!template.name) errors.push('Template missing required field: name');
     if (!template.description) errors.push('Template missing required field: description');
     if (!template.nodes || !Array.isArray(template.nodes)) errors.push('Template missing valid nodes array');
-    if (!template.links || !Array.isArray(template.links)) errors.push('Template missing valid links array');
+    if (!template.edges || !Array.isArray(template.edges)) errors.push('Template missing valid edges array');
 
     // Check nodes have IDs and types
-    template.nodes.forEach((node, index) => {
+    template.nodes.forEach((node: any, index: number) => {
       if (node.id === undefined) errors.push(`Node ${index} missing id`);
-      if (!node.type) errors.push(`Node ${index} missing type`);
+      if (!node.type && !node.data?.nodeType) errors.push(`Node ${index} missing type`);
     });
 
-    // Check links reference valid nodes
-    const nodeIds = new Set(template.nodes.map(n => n.id));
-    template.links.forEach((link, index) => {
-      if (!nodeIds.has(link.origin_id)) {
-        errors.push(`Link ${index}: origin node ${link.origin_id} does not exist`);
+    // Check edges reference valid nodes
+    const nodeIds = new Set(template.nodes.map((n: any) => String(n.id)));
+    template.edges.forEach((edge: any, index: number) => {
+      const sourceId = String(edge.source || edge.origin_id);
+      const targetId = String(edge.target || edge.target_id);
+      if (!nodeIds.has(sourceId)) {
+        errors.push(`Edge ${index}: source node ${sourceId} does not exist`);
       }
-      if (!nodeIds.has(link.target_id)) {
-        errors.push(`Link ${index}: target node ${link.target_id} does not exist`);
+      if (!nodeIds.has(targetId)) {
+        errors.push(`Edge ${index}: target node ${targetId} does not exist`);
       }
     });
 

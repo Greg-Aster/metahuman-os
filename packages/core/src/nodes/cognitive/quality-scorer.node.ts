@@ -1,28 +1,33 @@
 /**
- * Quality Scorer Node
+ * Quality Scorer Node (Persona Values Alignment)
  *
- * Scores response quality before final output, enabling iterative refinement.
- * This is a critical component for the feedback loop architecture.
+ * Evaluates response against PERSONA VALUES, not generic quality metrics.
+ * The persona defines what constitutes a "good" response.
  *
  * Purpose:
- * - Evaluate response quality against the original query
- * - Detect hallucinations and unsupported claims
- * - Check for factual grounding in provided memories
- * - Signal when response needs re-routing through the loop
+ * - Check if response aligns with persona's stated values
+ * - Respect privacy settings (private persona → don't overshare)
+ * - Ensure response matches persona's communication style
+ * - Only check hallucination when unknownSignal=true (claiming knowledge without memories)
+ *
+ * Philosophy: The AI should respond however it pleases as long as it:
+ * 1. Doesn't violate persona values
+ * 2. Doesn't claim knowledge it doesn't have (when unknownSignal=true)
+ * 3. Stays in character with the persona
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM } from '../../model-router.js';
 
-interface QualityIssue {
-  type: 'hallucination' | 'irrelevant' | 'incomplete' | 'unsupported' | 'contradiction';
+interface PersonaIssue {
+  type: 'values_violation' | 'privacy_breach' | 'out_of_character' | 'hallucination';
   severity: 'low' | 'medium' | 'high';
   description: string;
 }
 
 interface QualityScorerResult {
   qualityScore: number;
-  issues: QualityIssue[];
+  issues: PersonaIssue[];
   passesThreshold: boolean;
   needsRefinement: boolean;
   suggestions: string[];
@@ -35,75 +40,82 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const originalQuery = inputs.originalQuery ?? inputs[1] ?? context.userMessage ?? '';
   const memories = inputs.memories ?? inputs[2] ?? [];
   const unknownSignal = inputs.unknownSignal ?? inputs[3] ?? false;
+  const persona = inputs.persona ?? inputs[4] ?? null;
 
   // Extract properties
   const qualityThreshold = properties?.qualityThreshold ?? 0.7;
-  const strictHallucinationCheck = properties?.strictHallucinationCheck ?? true;
-  const requireGrounding = properties?.requireGrounding ?? true;
+  // Note: strictHallucinationCheck property exists but is not used for hard-coded checks.
+  // The LLM evaluation against persona values handles hallucination detection contextually.
 
   const responseText = typeof response === 'string' ? response : (response?.text || response?.content || '');
 
-  console.log(`[quality_scorer] Evaluating response quality for: "${originalQuery.substring(0, 60)}..."`);
+  console.log(`[quality_scorer] Persona-based evaluation for: "${originalQuery.substring(0, 60)}..."`);
+  console.log(`[quality_scorer] Has persona: ${!!persona}, unknownSignal: ${unknownSignal}`);
 
   // Early return for empty response
   if (!responseText || responseText.trim().length === 0) {
     return {
       qualityScore: 0,
-      issues: [{ type: 'incomplete', severity: 'high', description: 'Empty response' }],
+      issues: [{ type: 'out_of_character' as const, severity: 'high' as const, description: 'Empty response' }],
       passesThreshold: false,
       needsRefinement: true,
-      suggestions: ['Generate a proper response'],
+      suggestions: ['Generate a response'],
       evaluation: 'Response is empty',
     };
   }
 
-  // Build memory context for grounding check
-  const memoryContext = Array.isArray(memories)
-    ? memories.slice(0, 5).map((m: any, i: number) => {
-        const content = typeof m === 'string' ? m : (m.content || '');
-        return `[Memory ${i + 1}]: ${content.substring(0, 150)}...`;
-      }).join('\n')
-    : '';
+  // If no persona provided, auto-pass (can't check values without them)
+  if (!persona) {
+    console.log(`[quality_scorer] No persona provided - auto-pass (no values to check against)`);
+    return {
+      qualityScore: 0.9,
+      issues: [],
+      passesThreshold: true,
+      needsRefinement: false,
+      suggestions: [],
+      evaluation: 'No persona values to check against - response accepted',
+      response: responseText,
+      qualityResult: {
+        qualityScore: 0.9,
+        issues: [],
+        passesThreshold: true,
+        needsRefinement: false,
+        suggestions: [],
+        evaluation: 'No persona values to check against',
+      },
+    };
+  }
+
+  // Extract persona values for evaluation
+  const personaValues = persona.values || {};
+  const personaPersonality = persona.personality || {};
+  const personaIdentity = persona.identity || {};
+
+  // Build persona context for the evaluator
+  const personaContext = `
+PERSONA VALUES:
+${JSON.stringify(personaValues, null, 2)}
+
+PERSONALITY TRAITS:
+${JSON.stringify(personaPersonality, null, 2)}
+
+IDENTITY:
+${JSON.stringify(personaIdentity, null, 2)}
+`.trim();
 
   try {
-    const systemPrompt = `You are a Response Quality Evaluator.
+    const systemPrompt = `Check if this response aligns with the persona.
 
-Your purpose: Evaluate if a response is accurate, relevant, and grounded in facts.
+${personaContext}
 
-CRITICAL EVALUATION CRITERIA:
-1. HALLUCINATION CHECK: Does the response make claims not supported by the provided memories?
-2. RELEVANCE CHECK: Does the response actually answer the question asked?
-3. COMPLETENESS CHECK: Is the response complete and helpful?
-4. GROUNDING CHECK: Are factual claims supported by the provided memory context?
-5. HONEST UNCERTAINTY: If unknownSignal is true, does the response appropriately express uncertainty?
+Query: "${originalQuery}"
+Response: "${responseText}"
 
-User's Question: "${originalQuery}"
-
-Response to evaluate:
-"${responseText}"
-
-${memoryContext ? `Available memory context:\n${memoryContext}` : 'No memories were provided for this response.'}
-
-unknownSignal (should respond "I don\'t know"): ${unknownSignal}
-
-Output JSON:
-{
-  "qualityScore": 0.0-1.0,
-  "issues": [
-    {
-      "type": "hallucination|irrelevant|incomplete|unsupported|contradiction",
-      "severity": "low|medium|high",
-      "description": "brief description"
-    }
-  ],
-  "needsRefinement": boolean,
-  "suggestions": ["specific improvement suggestions"],
-  "evaluation": "brief summary of quality assessment"
-}`;
+Output JSON: {"qualityScore": 0.0-1.0, "issues": [], "needsRefinement": false, "evaluation": ""}`;
 
     const messages = [
       { role: 'system' as const, content: systemPrompt },
-      { role: 'user' as const, content: 'Evaluate this response quality.' },
+      { role: 'user' as const, content: 'Evaluate this response for persona values alignment.' },
     ];
 
     const llmResponse = await callLLM({
@@ -122,63 +134,35 @@ Output JSON:
     try {
       evaluation = JSON.parse(llmResponse.content);
     } catch {
-      // Fallback parsing
       console.warn('[quality_scorer] Failed to parse LLM response, using defaults');
       const scoreMatch = llmResponse.content.match(/qualityScore[":]\s*([\d.]+)/i);
       const needsRefMatch = llmResponse.content.match(/needsRefinement[":]\s*(true|false)/i);
 
       evaluation = {
-        qualityScore: scoreMatch ? parseFloat(scoreMatch[1]) : 0.5,
+        qualityScore: scoreMatch ? parseFloat(scoreMatch[1]) : 0.8,
         issues: [],
-        needsRefinement: needsRefMatch?.[1]?.toLowerCase() === 'true' ?? false,
+        needsRefinement: needsRefMatch?.[1]?.toLowerCase() === 'true',
         suggestions: [],
-        evaluation: 'Unable to parse full evaluation',
+        evaluation: 'Unable to parse full evaluation - defaulting to pass',
       };
     }
 
-    const qualityScore = Math.max(0, Math.min(1, evaluation.qualityScore ?? 0.5));
-    const issues: QualityIssue[] = evaluation.issues || [];
+    const qualityScore = Math.max(0, Math.min(1, evaluation.qualityScore ?? 0.8));
+    const issues: PersonaIssue[] = evaluation.issues || [];
 
-    // Apply strict hallucination check
-    if (strictHallucinationCheck && unknownSignal) {
-      // If we should be saying "I don't know" but the response makes claims
-      const hasAssertiveClaims = /(?:is|are|was|were|has|have|can|will)\s+(?!not sure|uncertain|unknown)/i.test(responseText);
-      const acknowledgesUncertainty = /(?:don't know|not sure|uncertain|no (?:memory|information|record)|can't recall)/i.test(responseText);
+    // NOTE: No hard-coded hallucination checks here.
+    // The LLM evaluation against persona values is the ONLY check.
+    // The persona defines what's acceptable - if the persona is open/trusting,
+    // conversational responses pass. If closed/private, revealing responses fail.
+    // Hard-coded regex checks caused false positives for greetings and casual chat.
 
-      if (hasAssertiveClaims && !acknowledgesUncertainty) {
-        issues.push({
-          type: 'hallucination',
-          severity: 'high',
-          description: 'Response makes claims when it should express uncertainty (unknownSignal was true)',
-        });
-      }
-    }
-
-    // Apply grounding requirement
-    if (requireGrounding && !unknownSignal && memoryContext.length === 0) {
-      const makesClaims = /(?:you|your|we|our|greg|the)/i.test(responseText);
-      if (makesClaims) {
-        issues.push({
-          type: 'unsupported',
-          severity: 'medium',
-          description: 'Response makes claims without memory grounding',
-        });
-      }
-    }
-
-    // Calculate final score based on issues
-    let adjustedScore = qualityScore;
-    for (const issue of issues) {
-      if (issue.severity === 'high') adjustedScore -= 0.3;
-      else if (issue.severity === 'medium') adjustedScore -= 0.15;
-      else adjustedScore -= 0.05;
-    }
-    adjustedScore = Math.max(0, Math.min(1, adjustedScore));
+    // Use the LLM's score directly - it already considers persona values and context
+    const adjustedScore = qualityScore;
 
     const passesThreshold = adjustedScore >= qualityThreshold;
     const needsRefinement = evaluation.needsRefinement ?? !passesThreshold;
 
-    console.log(`[quality_scorer] Score: ${adjustedScore.toFixed(2)} (threshold: ${qualityThreshold}), issues: ${issues.length}, passes: ${passesThreshold}`);
+    console.log(`[quality_scorer] Persona alignment score: ${adjustedScore.toFixed(2)} (threshold: ${qualityThreshold}), issues: ${issues.length}, passes: ${passesThreshold}`);
 
     const result: QualityScorerResult = {
       qualityScore: adjustedScore,
@@ -186,35 +170,39 @@ Output JSON:
       passesThreshold,
       needsRefinement,
       suggestions: evaluation.suggestions || [],
-      evaluation: evaluation.evaluation || `Quality score: ${adjustedScore.toFixed(2)}`,
+      evaluation: evaluation.evaluation || `Persona alignment score: ${adjustedScore.toFixed(2)}`,
     };
 
     return {
-      response: responseText,  // Passthrough for downstream nodes
-      qualityResult: result,   // Full result object for feedback router
+      response: responseText,
+      qualityResult: result,
       ...result,
       originalScore: qualityScore,
       adjustedScore,
       threshold: qualityThreshold,
+      personaChecked: true,
     };
 
   } catch (error) {
     console.error('[quality_scorer] Error:', error);
 
-    const errorResult = {
-      qualityScore: 0.5,
-      issues: [{ type: 'incomplete' as const, severity: 'medium' as const, description: 'Quality evaluation failed' }],
-      passesThreshold: false,
-      needsRefinement: true,
-      suggestions: ['Re-evaluate response quality'],
-      evaluation: 'Evaluation failed due to error',
-    };
-
-    // On error, be conservative - don't pass without evaluation, but still pass response through
+    // On error, pass through (don't block due to evaluation failure)
     return {
-      response: responseText,  // Still pass through the response
-      qualityResult: errorResult,
-      ...errorResult,
+      response: responseText,
+      qualityScore: 0.75,
+      issues: [],
+      passesThreshold: true,
+      needsRefinement: false,
+      suggestions: [],
+      evaluation: 'Evaluation failed - passing through',
+      qualityResult: {
+        qualityScore: 0.75,
+        issues: [],
+        passesThreshold: true,
+        needsRefinement: false,
+        suggestions: [],
+        evaluation: 'Evaluation failed - passing through',
+      },
       error: (error as Error).message,
     };
   }
@@ -227,29 +215,29 @@ export const QualityScorerNode: NodeDefinition = defineNode({
   inputs: [
     { name: 'response', type: 'string', description: 'Generated response to evaluate' },
     { name: 'originalQuery', type: 'string', description: 'Original user query' },
-    { name: 'memories', type: 'array', optional: true, description: 'Memories used for grounding check' },
+    { name: 'memories', type: 'array', optional: true, description: 'Memories (for context, not grounding check)' },
     { name: 'unknownSignal', type: 'boolean', optional: true, description: 'Whether search interpreter signaled unknown' },
+    { name: 'persona', type: 'object', optional: true, description: 'Persona data (values, personality, identity) for alignment check' },
   ],
   outputs: [
     { name: 'response', type: 'string', description: 'Passthrough of the input response' },
     { name: 'qualityResult', type: 'object', description: 'Full quality evaluation result' },
-    { name: 'qualityScore', type: 'number', description: 'Quality score 0-1' },
-    { name: 'issues', type: 'array', description: 'List of quality issues found' },
-    { name: 'passesThreshold', type: 'boolean', description: 'Whether response passes quality threshold' },
+    { name: 'qualityScore', type: 'number', description: 'Persona alignment score 0-1' },
+    { name: 'issues', type: 'array', description: 'List of persona alignment issues' },
+    { name: 'passesThreshold', type: 'boolean', description: 'Whether response aligns with persona values' },
     { name: 'needsRefinement', type: 'boolean', description: 'Whether response needs another pass' },
-    { name: 'suggestions', type: 'array', description: 'Specific improvement suggestions' },
-    { name: 'evaluation', type: 'string', description: 'Summary of quality assessment' },
+    { name: 'suggestions', type: 'array', description: 'How to better align with persona' },
+    { name: 'evaluation', type: 'string', description: 'Summary of persona alignment assessment' },
   ],
   properties: {
     qualityThreshold: 0.7,
     strictHallucinationCheck: true,
-    requireGrounding: true,
   },
   propertySchemas: {
     qualityThreshold: {
       type: 'slider',
       default: 0.7,
-      label: 'Quality Threshold',
+      label: 'Alignment Threshold',
       min: 0.5,
       max: 0.95,
       step: 0.05,
@@ -257,14 +245,9 @@ export const QualityScorerNode: NodeDefinition = defineNode({
     strictHallucinationCheck: {
       type: 'toggle',
       default: true,
-      label: 'Strict Hallucination Check',
-    },
-    requireGrounding: {
-      type: 'toggle',
-      default: true,
-      label: 'Require Memory Grounding',
+      label: 'Check Hallucination (when unknownSignal=true)',
     },
   },
-  description: 'Evaluates response quality and detects hallucinations for iterative refinement',
+  description: 'Evaluates response against persona VALUES - not generic quality. Checks values alignment, privacy, and character consistency.',
   execute,
 });

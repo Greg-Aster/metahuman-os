@@ -3,6 +3,11 @@
  *
  * GET/POST/DELETE single cognitive graph operations.
  * Works for both web (Astro) and mobile (nodejs-mobile).
+ *
+ * Save behavior:
+ * - Creates backup before overwriting existing graphs
+ * - Saves to original location (built-in or custom)
+ * - Backups stored in etc/cognitive-graphs/backups/
  */
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
@@ -14,10 +19,59 @@ import { systemPaths } from '../../paths.js';
 
 const GRAPHS_DIR = path.join(systemPaths.etc, 'cognitive-graphs');
 const CUSTOM_DIR = path.join(GRAPHS_DIR, 'custom');
+const BACKUPS_DIR = path.join(GRAPHS_DIR, 'backups');
 const NAME_REGEX = /^[a-z0-9_\-]+$/i;
 
 async function ensureCustomDir(): Promise<void> {
   await fs.mkdir(CUSTOM_DIR, { recursive: true });
+}
+
+async function ensureBackupsDir(): Promise<void> {
+  await fs.mkdir(BACKUPS_DIR, { recursive: true });
+}
+
+/**
+ * Check if a backup already exists for this graph
+ */
+async function backupExists(graphName: string): Promise<boolean> {
+  try {
+    if (!existsSync(BACKUPS_DIR)) return false;
+    const entries = await fs.readdir(BACKUPS_DIR);
+    // Check if any backup starts with this graph name
+    return entries.some(entry => entry.startsWith(`${graphName}_`) && entry.endsWith('.json'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create a backup of an existing graph before overwriting
+ * Only creates ONE backup per graph (the original) - subsequent saves don't create new backups
+ */
+async function createBackup(filePath: string, graphName: string): Promise<string | null> {
+  try {
+    if (!(await fileExists(filePath))) {
+      return null;
+    }
+
+    // Only create backup if one doesn't already exist for this graph
+    if (await backupExists(graphName)) {
+      console.log(`[cognitive-graph] Backup already exists for ${graphName}, skipping`);
+      return null;
+    }
+
+    await ensureBackupsDir();
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupName = `${graphName}_${timestamp}.json`;
+    const backupPath = path.join(BACKUPS_DIR, backupName);
+
+    await fs.copyFile(filePath, backupPath);
+    console.log(`[cognitive-graph] Created backup: ${backupName}`);
+    return backupName;
+  } catch (error) {
+    console.error('[cognitive-graph] Backup failed:', error);
+    return null;
+  }
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
@@ -36,9 +90,21 @@ function sanitizeName(name: string | null | undefined): string | null {
 }
 
 async function resolveGraphPath(
-  name: string
-): Promise<{ filePath: string; scope: 'builtin' | 'custom' } | null> {
+  name: string,
+  scope?: string
+): Promise<{ filePath: string; scope: 'builtin' | 'custom' | 'backup' } | null> {
   const fileName = `${name}.json`;
+
+  // If scope is specified, only look in that location
+  if (scope === 'backup') {
+    const backupPath = path.join(BACKUPS_DIR, fileName);
+    if (await fileExists(backupPath)) {
+      return { filePath: backupPath, scope: 'backup' };
+    }
+    return null;
+  }
+
+  // Otherwise, check custom then builtin
   const customPath = path.join(CUSTOM_DIR, fileName);
   if (await fileExists(customPath)) {
     return { filePath: customPath, scope: 'custom' };
@@ -52,15 +118,20 @@ async function resolveGraphPath(
 
 /**
  * GET /api/cognitive-graph - Get a single cognitive graph by name
+ * Query params:
+ *   - name: string (required) - Graph name (filename without .json)
+ *   - scope: string (optional) - 'backup' to load from backups directory
  */
 export async function handleGetCognitiveGraph(req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
     const rawName = sanitizeName(req.query?.name);
+    const scope = req.query?.scope;
+
     if (!rawName) {
       return { status: 400, error: 'Missing or invalid graph name' };
     }
 
-    const resolved = await resolveGraphPath(rawName);
+    const resolved = await resolveGraphPath(rawName, scope);
     if (!resolved) {
       return { status: 404, error: 'Graph not found' };
     }
@@ -76,39 +147,50 @@ export async function handleGetCognitiveGraph(req: UnifiedRequest): Promise<Unif
 
 /**
  * POST /api/cognitive-graph - Create/update a cognitive graph
+ *
+ * Behavior:
+ * - If graph exists (built-in or custom), creates backup then overwrites
+ * - If new graph, saves to built-in location (not custom)
+ * - Always creates backup before overwriting existing files
  */
 export async function handleCreateCognitiveGraph(req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
     const { body } = req;
     const rawName = sanitizeName(body?.name);
     const graph = body?.graph;
-    const overwrite = Boolean(body?.overwrite);
 
     if (!rawName || typeof graph !== 'object' || Array.isArray(graph)) {
       return { status: 400, error: 'Invalid payload' };
     }
 
-    await ensureCustomDir();
-    const targetPath = path.join(CUSTOM_DIR, `${rawName}.json`);
-
-    if (!overwrite && existsSync(targetPath)) {
-      return {
-        status: 409,
-        error: 'Graph already exists. Use overwrite to replace it.',
-      };
-    }
-
+    // Determine where to save: check if built-in exists first, then custom
     const builtinPath = path.join(GRAPHS_DIR, `${rawName}.json`);
-    if (!overwrite && existsSync(builtinPath)) {
-      return {
-        status: 409,
-        error: 'Cannot overwrite built-in graph without overwrite flag.',
-      };
+    const customPath = path.join(CUSTOM_DIR, `${rawName}.json`);
+
+    let targetPath: string;
+    let scope: 'builtin' | 'custom';
+    let backupCreated: string | null = null;
+
+    if (existsSync(builtinPath)) {
+      // Overwriting built-in graph - create backup first
+      backupCreated = await createBackup(builtinPath, rawName);
+      targetPath = builtinPath;
+      scope = 'builtin';
+    } else if (existsSync(customPath)) {
+      // Overwriting custom graph - create backup first
+      backupCreated = await createBackup(customPath, rawName);
+      targetPath = customPath;
+      scope = 'custom';
+    } else {
+      // New graph - save to built-in location
+      targetPath = builtinPath;
+      scope = 'builtin';
     }
 
     const now = new Date().toISOString();
     const graphPayload = {
       version: graph.version || '1.0',
+      format: 'svelte-flow',
       name: graph.name || rawName,
       description: graph.description || '',
       cognitiveMode: graph.cognitiveMode || null,
@@ -118,7 +200,15 @@ export async function handleCreateCognitiveGraph(req: UnifiedRequest): Promise<U
 
     await fs.writeFile(targetPath, JSON.stringify(graphPayload, null, 2), 'utf-8');
 
-    return successResponse({ status: 'ok', name: rawName, scope: 'custom', updatedAt: now });
+    console.log(`[cognitive-graph] Saved ${rawName} to ${scope} (backup: ${backupCreated || 'none'})`);
+
+    return successResponse({
+      status: 'ok',
+      name: rawName,
+      scope,
+      updatedAt: now,
+      backupCreated,
+    });
   } catch (error) {
     console.error('[cognitive-graph] POST failed:', error);
     return { status: 500, error: 'Failed to save graph' };

@@ -11,11 +11,13 @@ import { audit } from '../../audit.js';
 
 // Dynamic import for graph executor
 let executeGraph: any;
+let getGraphOutput: any;
 
 async function ensureGraphExecutor(): Promise<boolean> {
   try {
     const mod = await import('../../graph-executor.js');
     executeGraph = mod.executeGraph;
+    getGraphOutput = mod.getGraphOutput;
     return !!executeGraph;
   } catch {
     return false;
@@ -37,38 +39,54 @@ export async function handleExecuteGraph(req: UnifiedRequest): Promise<UnifiedRe
     const { body } = req;
     const { graph, sessionId, userMessage } = body || {};
 
-    if (!graph || !graph.nodes || !graph.links) {
-      return { status: 400, error: 'Invalid graph structure' };
+    // Svelte Flow format only - requires nodes and edges
+    if (!graph || !graph.nodes || !graph.edges) {
+      return { status: 400, error: 'Invalid graph structure - requires nodes and edges (Svelte Flow format)' };
     }
 
     console.log('[execute-graph] Starting graph execution:', {
       nodeCount: graph.nodes.length,
-      linkCount: graph.links.length,
+      edgeCount: graph.edges.length,
       sessionId,
       hasUserMessage: !!userMessage,
     });
 
     // Audit the execution request
-    await audit({
+    audit({
       level: 'info',
       category: 'system',
       event: 'graph_execution_start',
       details: {
         sessionId,
         nodeCount: graph.nodes.length,
-        linkCount: graph.links.length,
+        edgeCount: graph.edges.length,
         hasUserMessage: !!userMessage,
       },
     });
 
     // Execute the graph with real node implementations
-    const result = await executeGraph(graph, {
+    const graphState = await executeGraph(graph, {
       sessionId,
       userMessage,
       environment: 'server', // Force server-side execution
     });
 
     const durationMs = Date.now() - startTime;
+
+    // Extract the final output from the graph execution
+    const output = getGraphOutput(graphState);
+    const response = output?.response || output?.output || null;
+
+    // Build node outputs map for debugging
+    const nodeOutputs: Record<string, any> = {};
+    graphState.nodes.forEach((nodeState: any, nodeId: string) => {
+      if (nodeState.outputs) {
+        nodeOutputs[nodeId] = nodeState.outputs;
+      }
+    });
+
+    // Get list of executed nodes
+    const executedNodes = Array.from(graphState.nodes.keys());
 
     // Audit successful completion
     await audit({
@@ -78,19 +96,27 @@ export async function handleExecuteGraph(req: UnifiedRequest): Promise<UnifiedRe
       details: {
         sessionId,
         durationMs,
-        nodeCount: result.executedNodes?.length || 0,
+        nodeCount: executedNodes.length,
+        hasResponse: !!response,
         success: true,
       },
     });
 
     console.log('[execute-graph] Execution completed:', {
       durationMs,
-      executedNodes: result.executedNodes?.length || 0,
+      executedNodes: executedNodes.length,
+      hasResponse: !!response,
+      responsePreview: response ? response.substring(0, 100) : null,
     });
 
     return successResponse({
       success: true,
-      result,
+      result: {
+        status: graphState.status,
+        response,
+        nodeOutputs,
+        executedNodes,
+      },
       durationMs,
     });
   } catch (error: any) {

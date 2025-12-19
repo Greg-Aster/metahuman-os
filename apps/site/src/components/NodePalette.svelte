@@ -1,5 +1,18 @@
 <script lang="ts">
-  import { nodeSchemas } from '@metahuman/core/nodes/schemas';
+  import { onMount } from 'svelte';
+  import { apiFetch } from '../lib/client/api-config';
+
+  interface NodeSchema {
+    id: string;
+    name: string;
+    category: string;
+    description: string;
+    color: string;
+    bgColor: string;
+    inputs: Array<{ name: string; type: string; optional?: boolean; description?: string }>;
+    outputs: Array<{ name: string; type: string; optional?: boolean; description?: string }>;
+    properties?: Record<string, any>;
+  }
 
   let { onNodeSelected, collapsed = false }: {
     onNodeSelected: (nodeType: string) => void;
@@ -8,21 +21,38 @@
 
   let searchQuery = $state('');
   let expandedCategories = $state<Set<string>>(new Set(['input', 'output'])); // Default expanded
+  let allNodes = $state<NodeSchema[]>([]);
+  let loading = $state(true);
 
-  // Use nodeSchemas from @metahuman/core
-  const allNodes = nodeSchemas;
-
-  // Group nodes by category
-  const nodesByCategory = allNodes.reduce((acc, node) => {
-    if (!acc[node.category]) {
-      acc[node.category] = [];
+  // Fetch schemas from API (dynamic - auto-updates when new nodes are added)
+  onMount(async () => {
+    try {
+      const res = await apiFetch('/api/node-schemas');
+      if (res.ok) {
+        const data = await res.json();
+        allNodes = Array.isArray(data) ? data : (data.schemas || []);
+        console.log(`[NodePalette] Loaded ${allNodes.length} node schemas`);
+      }
+    } catch (e) {
+      console.error('[NodePalette] Failed to load schemas:', e);
+    } finally {
+      loading = false;
     }
-    acc[node.category].push(node);
-    return acc;
-  }, {} as Record<string, typeof allNodes>);
+  });
+
+  // Group nodes by category (reactive)
+  const nodesByCategory = $derived(
+    allNodes.reduce((acc, node) => {
+      if (!acc[node.category]) {
+        acc[node.category] = [];
+      }
+      acc[node.category].push(node);
+      return acc;
+    }, {} as Record<string, NodeSchema[]>)
+  );
 
   // Category display names and order
-  const categoryInfo = {
+  const categoryInfo: Record<string, { name: string; icon: string; order: number }> = {
     input: { name: 'Input', icon: '📥', order: 1 },
     router: { name: 'Router', icon: '🔀', order: 2 },
     context: { name: 'Context', icon: '📚', order: 3 },
@@ -31,29 +61,48 @@
     model: { name: 'Model', icon: '🤖', order: 6 },
     skill: { name: 'Skill', icon: '🔧', order: 7 },
     output: { name: 'Output', icon: '📤', order: 8 },
+    control_flow: { name: 'Control Flow', icon: '🔄', order: 9 },
+    memory: { name: 'Memory', icon: '🧠', order: 10 },
+    utility: { name: 'Utility', icon: '🛠️', order: 11 },
+    cognitive: { name: 'Cognitive', icon: '💡', order: 12 },
+    safety: { name: 'Safety', icon: '🛡️', order: 13 },
+    persona: { name: 'Persona', icon: '👤', order: 14 },
+    agent: { name: 'Agent', icon: '🤖', order: 15 },
+    thought: { name: 'Thought', icon: '💭', order: 16 },
+    dreamer: { name: 'Dreamer', icon: '🌙', order: 17 },
+    curiosity: { name: 'Curiosity', icon: '❓', order: 18 },
+    curator: { name: 'Curator', icon: '📋', order: 19 },
+    emulation: { name: 'Emulation', icon: '🎭', order: 20 },
+    agency: { name: 'Agency', icon: '🎯', order: 21 },
   };
 
-  // Get sorted categories
-  const sortedCategories = Object.keys(nodesByCategory).sort(
-    (a, b) => (categoryInfo[a]?.order || 99) - (categoryInfo[b]?.order || 99)
+  // Get sorted categories (reactive)
+  const sortedCategories = $derived(
+    Object.keys(nodesByCategory).sort(
+      (a, b) => (categoryInfo[a]?.order || 99) - (categoryInfo[b]?.order || 99)
+    )
   );
 
-  // Filter nodes based on search query
-  const filteredCategories = $derived(sortedCategories.map(category => ({
-    category,
-    nodes: nodesByCategory[category].filter(node =>
-      node.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      node.description.toLowerCase().includes(searchQuery.toLowerCase())
-    )
-  })).filter(cat => cat.nodes.length > 0));
+  // Filter nodes based on search query (reactive)
+  const filteredCategories = $derived(
+    sortedCategories.map(category => ({
+      category,
+      nodes: nodesByCategory[category].filter(node =>
+        node.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        node.description.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    })).filter(cat => cat.nodes.length > 0)
+  );
 
   function toggleCategory(category: string) {
-    if (expandedCategories.has(category)) {
-      expandedCategories.delete(category);
+    // Must create new Set for Svelte 5 reactivity (mutations don't trigger updates)
+    const newSet = new Set(expandedCategories);
+    if (newSet.has(category)) {
+      newSet.delete(category);
     } else {
-      expandedCategories.add(category);
+      newSet.add(category);
     }
-    expandedCategories = expandedCategories; // Trigger reactivity
+    expandedCategories = newSet;
   }
 
   function handleNodeClick(nodeId: string) {
@@ -100,6 +149,17 @@
     </div>
 
     <div class="categories-list">
+      {#if loading}
+        <div class="loading">
+          <span class="loading-spinner"></span>
+          <p>Loading nodes...</p>
+        </div>
+      {:else if allNodes.length === 0}
+        <div class="no-results">
+          <p>No nodes available</p>
+          <p class="hint">Check server connection</p>
+        </div>
+      {:else}
       {#each filteredCategories as { category, nodes }}
         <div class="category">
           <button
@@ -143,6 +203,7 @@
           <p>No nodes found</p>
           <p class="hint">Try a different search term</p>
         </div>
+      {/if}
       {/if}
     </div>
   {:else}
@@ -390,6 +451,31 @@
   .no-results .hint {
     font-size: 0.75rem;
     color: #555;
+  }
+
+  .loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 1rem;
+    gap: 1rem;
+    color: #888;
+  }
+
+  .loading-spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid #333;
+    border-top-color: #888;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   /* Custom scrollbar */

@@ -33,17 +33,22 @@ export const MemoryCaptureNode: NodeDefinition = defineNode({
   description: 'Saves conversation to episodic memory',
 
   execute: async (inputs, context) => {
-    // Extract user message (slot 0)
-    const message = typeof inputs[0] === 'string' ? inputs[0] : (context.userMessage || '');
+    // Named inputs from graph edges (with array fallbacks)
+    // Expected: userMessage, assistantResponse, cognitiveMode, metadata
+    const userMessageInput = inputs.userMessage || inputs[0];
+    const assistantResponseInput = inputs.assistantResponse || inputs[1];
 
-    // Extract response (slot 1) - handle both string and object formats
+    // Extract user message
+    const message = typeof userMessageInput === 'string' ? userMessageInput : (context.userMessage || '');
+
+    // Extract response - handle both string and object formats
     let response = '';
-    if (typeof inputs[1] === 'string') {
-      response = inputs[1];
-    } else if (inputs[1]?.response && typeof inputs[1].response === 'string') {
-      response = inputs[1].response;
-    } else if (inputs[0]?.response && typeof inputs[0].response === 'string') {
-      response = inputs[0].response;
+    if (typeof assistantResponseInput === 'string') {
+      response = assistantResponseInput;
+    } else if (assistantResponseInput?.response && typeof assistantResponseInput.response === 'string') {
+      response = assistantResponseInput.response;
+    } else if (userMessageInput?.response && typeof userMessageInput.response === 'string') {
+      response = userMessageInput.response;
     }
 
     if (!response || response.trim().length === 0) {
@@ -61,7 +66,8 @@ export const MemoryCaptureNode: NodeDefinition = defineNode({
     }
 
     try {
-      const result: CaptureResult = captureEventWithDetails(`User: ${message}\n\nAssistant: ${response}`, {
+      const content = `User: ${message}\n\nAssistant: ${response}`;
+      const result: CaptureResult = captureEventWithDetails(content, {
         type: 'conversation',
         metadata: {
           cognitiveMode: context.cognitiveMode as 'dual' | 'agent' | 'emulation',

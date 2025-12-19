@@ -1,13 +1,5 @@
 /**
  * ╔═══════════════════════════════════════════════════════════════════════════╗
- * ║                                                                           ║
- * ║   ██████╗  ██████╗     ██╗  ██╗ █████╗ ██████╗ ██████╗  ██████╗ ██████╗   ║
- * ║   ████╔═╝ ██╔═══██╗    ██║  ██║██╔══██╗██╔══██╗██╔══██╗██╔════╝██╔═══██╗  ║
- * ║   ██║██╗  ██║   ██║    ███████║███████║██████╔╝██║  ██║██║     ██║   ██║  ║
- * ║   ████╔═╝ ██║   ██║    ██╔══██║██╔══██║██╔══██╗██║  ██║██║     ██║   ██║  ║
- * ║   ██████╗ ╚██████╔╝    ██║  ██║██║  ██║██║  ██║██████╔╝╚██████╗╚██████╔╝  ║
- * ║   ╚═════╝  ╚═════╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝  ╚═════╝ ╚═════╝   ║
- * ║                                                                           ║
  * ║   NO HARDCODING! ALL INTENT DETECTION IS LLM-INTERPRETED                  ║
  * ║                                                                           ║
  * ║   The ActionType union and prompt examples are DOCUMENTATION ONLY.        ║
@@ -71,10 +63,11 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   description: 'Enhanced intent analysis with action detection and conversation awareness',
 
   execute: async (inputs, context) => {
-    const inputData = inputs[0];
-    const conversationHistory = inputs[1] || context.conversationHistory || [];
-    const systemSettings = inputs[2] || {};
-    const feedbackContext = inputs[3] || inputs.feedbackContext || null;
+    // Named inputs from graph edges with array fallbacks
+    const inputData = inputs.message || inputs[0];
+    const conversationHistory = inputs.conversationHistory || inputs[1] || context.conversationHistory || [];
+    const systemSettings = inputs.systemSettings || inputs[2] || {};
+    const feedbackContext = inputs.feedbackContext || inputs[3] || null;
 
     const userMessage = typeof inputData === 'string'
       ? inputData

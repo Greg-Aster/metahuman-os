@@ -1,7 +1,9 @@
 /**
  * Text Input Node
  *
- * Gateway to chat interface text input - reads from context.userMessage
+ * Provides text input for flow graphs.
+ * In flow editor: uses the node's message property (editable textarea)
+ * In chat: falls back to context.userMessage
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';
@@ -16,21 +18,23 @@ export const TextInputNode: NodeDefinition = defineNode({
     { name: 'hasTextInput', type: 'boolean', description: 'Whether text input is available' },
   ],
   properties: {
-    defaultText: '',
+    message: '',
   },
   propertySchemas: {
-    defaultText: {
+    message: {
       type: 'string',
       default: '',
-      label: 'Default Text',
-      description: 'Default text to use if no input provided',
-      placeholder: 'Enter default text...',
+      label: 'Message',
+      description: 'Text to output (editable in flow editor)',
+      placeholder: 'Enter text...',
+      multiline: true,
     },
   },
-  description: 'Gateway to chat interface text input - reads from context.userMessage',
+  description: 'Text input node - editable in flow editor, outputs to connected nodes',
 
   execute: async (inputs, context, properties) => {
-    const text = context.userMessage || properties?.defaultText || '';
+    // Priority: node property > context.userMessage (allows flow editor override)
+    const text = properties?.message || context.userMessage || '';
     const hasTextInput = !!text;
 
     return {

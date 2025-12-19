@@ -40,8 +40,8 @@ export async function handleGetNodeSchemas(req: UnifiedRequest): Promise<Unified
     }
 
     if (category) {
-      // Get schemas by category
-      const schemas = getSchemasByCategory(category);
+      // Get schemas by category - filter from full list
+      const schemas = nodeSchemas.filter(s => s.category === category);
       return successResponse(schemas);
     }
 

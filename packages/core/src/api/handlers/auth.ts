@@ -11,7 +11,7 @@ import { getUser, getUserByUsername, authenticateUser, listUsers, createUser, ha
 import type { ProfileStorageConfig } from '../../users.js';
 import { createSession, deleteSession } from '../../sessions.js';
 import { initializeProfile } from '../../profile.js';
-import { unlockProfile, lockProfile } from '../../encryption-manager.js';
+import { unlockProfile, lockProfile, getEncryptionStatus } from '../../encryption-manager.js';
 import { audit } from '../../audit.js';
 import { getSession } from '../../sessions.js';
 import { generateRecoveryCodes, saveRecoveryCodes, verifyRecoveryCode } from '../../recovery-codes.js';
@@ -231,6 +231,10 @@ export async function handleListUsers(_req: UnifiedRequest): Promise<UnifiedResp
  *
  * Returns current authenticated user info.
  * If not authenticated, returns 401 (handled by HTTP adapter).
+ *
+ * IMPORTANT: Also checks if encrypted storage is accessible.
+ * If user has encrypted storage (LUKS/VeraCrypt/AES) that isn't unlocked,
+ * returns 401 with encryptionLocked: true to prompt for password.
  */
 export async function handleGetMe(req: UnifiedRequest): Promise<UnifiedResponse> {
   const { user } = req;
@@ -254,6 +258,28 @@ export async function handleGetMe(req: UnifiedRequest): Promise<UnifiedResponse>
     };
   }
 
+  // Check if user has encrypted storage that needs unlocking
+  // This prevents the app from loading with inaccessible profile data
+  // NOTE: For unencrypted accounts, getEncryptionStatus returns { type: 'none', unlocked: true }
+  // so this check only applies to users with LUKS/VeraCrypt/AES encryption configured
+  const encryptionStatus = await getEncryptionStatus(user.userId);
+
+  // Only block if user HAS encryption AND it's not unlocked
+  // Unencrypted accounts pass through (type === 'none')
+  if (encryptionStatus.type !== 'none' && !encryptionStatus.unlocked) {
+    console.log(`[auth-handler] User ${fullUser.username} has locked ${encryptionStatus.type} encryption - requiring unlock`);
+
+    return {
+      status: 401,
+      error: 'Encrypted storage is locked - please login again to unlock',
+      data: {
+        encryptionLocked: true,
+        encryptionType: encryptionStatus.type,
+        username: fullUser.username,
+      },
+    };
+  }
+
   return successResponse({
     success: true,
     user: {
@@ -264,6 +290,10 @@ export async function handleGetMe(req: UnifiedRequest): Promise<UnifiedResponse>
       lastLogin: fullUser.lastLogin,
     },
     role: fullUser.role,
+    encryptionStatus: {
+      type: encryptionStatus.type,
+      unlocked: encryptionStatus.unlocked,
+    },
   });
 }
 

@@ -26,9 +26,9 @@ import {
   getLoggedInUsers,
   withUserContext,
   executeGraph,
-  validateCognitiveGraph,
+  validateSvelteFlowGraph,
   getActiveBackend,
-  type CognitiveGraph,
+  type SvelteFlowGraph,
 } from '@metahuman/core';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 
@@ -99,11 +99,11 @@ export function loadSleepConfig(): SleepConfig {
 /**
  * Load dreamer cognitive graph
  */
-export async function loadDreamerGraph(): Promise<CognitiveGraph> {
+export async function loadDreamerGraph(): Promise<SvelteFlowGraph> {
   const graphPath = path.join(ROOT, 'etc', 'cognitive-graphs', 'dreamer-mode.json');
   const raw = await fsp.readFile(graphPath, 'utf-8');
   const parsed = JSON.parse(raw);
-  return validateCognitiveGraph(parsed);
+  return validateSvelteFlowGraph(parsed);
 }
 
 // ============================================================================
@@ -155,9 +155,9 @@ export async function generateUserDreams(
     console.log(`[dreamer] Executing dreamer workflow for user: ${username}`);
     const graphResult = await executeGraph(graph, graphContext);
 
-    // Extract results from graph execution
+    // Extract results from graph execution (node IDs are strings in Svelte Flow format)
     // Node 1: Memory Curator
-    const memoryCuratorNode = graphResult.nodes.get(1);
+    const memoryCuratorNode = graphResult.nodes.get('1');
     const memoriesCurated = memoryCuratorNode?.outputs?.count || 0;
     const avgAgeDays = memoryCuratorNode?.outputs?.avgAgeDays || 0;
     const oldestAgeDays = memoryCuratorNode?.outputs?.oldestAgeDays || 0;
@@ -177,7 +177,7 @@ export async function generateUserDreams(
     console.log(`[dreamer]   Curated ${memoriesCurated} memories (avg age: ${avgAgeDays} days, oldest: ${oldestAgeDays} days)`);
 
     // Node 2: Dream Generator
-    const dreamGeneratorNode = graphResult.nodes.get(2);
+    const dreamGeneratorNode = graphResult.nodes.get('2');
     const initialDream = dreamGeneratorNode?.outputs?.dream;
     let dreamsGenerated = initialDream ? 1 : 0;
 
@@ -186,14 +186,14 @@ export async function generateUserDreams(
     }
 
     // Node 3: Dream Saver (handled by graph)
-    const dreamSaverNode = graphResult.nodes.get(3);
+    const dreamSaverNode = graphResult.nodes.get('3');
     const dreamSaved = dreamSaverNode?.outputs?.saved || false;
     if (dreamSaved) {
       console.log(`[dreamer]   Dream saved to episodic memory`);
     }
 
     // Node 4: Continuation Generator
-    const continuationNode = graphResult.nodes.get(4);
+    const continuationNode = graphResult.nodes.get('4');
     const continuationCount = continuationNode?.outputs?.count || 0;
     dreamsGenerated += continuationCount;
 
@@ -202,7 +202,7 @@ export async function generateUserDreams(
     }
 
     // Node 5: Learnings Extractor
-    const learningsExtractorNode = graphResult.nodes.get(5);
+    const learningsExtractorNode = graphResult.nodes.get('5');
     const preferences = learningsExtractorNode?.outputs?.preferences || [];
     const heuristics = learningsExtractorNode?.outputs?.heuristics || [];
     const styleNotes = learningsExtractorNode?.outputs?.styleNotes || [];
@@ -211,7 +211,7 @@ export async function generateUserDreams(
     console.log(`[dreamer]   Extracted ${preferences.length} preferences, ${heuristics.length} heuristics`);
 
     // Node 6: Learnings Writer
-    const learningsWriterNode = graphResult.nodes.get(6);
+    const learningsWriterNode = graphResult.nodes.get('6');
     const learningsWritten = learningsWriterNode?.outputs?.written || false;
     const learningsFilename = learningsWriterNode?.outputs?.filename || '';
 

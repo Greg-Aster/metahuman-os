@@ -19,9 +19,9 @@ import {
   loadCuriosityConfig,
   loadTrustLevel,
   executeGraph,
-  validateCognitiveGraph,
+  validateSvelteFlowGraph,
   getActiveBackend,
-  type CognitiveGraph,
+  type SvelteFlowGraph,
 } from '@metahuman/core';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 
@@ -47,11 +47,11 @@ export interface CuriosityServiceResult {
 /**
  * Load curiosity cognitive graph
  */
-export async function loadCuriosityGraph(): Promise<CognitiveGraph> {
+export async function loadCuriosityGraph(): Promise<SvelteFlowGraph> {
   const graphPath = path.join(ROOT, 'etc', 'cognitive-graphs', 'curiosity-mode.json');
   const raw = await fs.readFile(graphPath, 'utf-8');
   const parsed = JSON.parse(raw);
-  return validateCognitiveGraph(parsed);
+  return validateSvelteFlowGraph(parsed);
 }
 
 // ============================================================================
@@ -109,24 +109,24 @@ export async function generateUserQuestion(username: string): Promise<boolean> {
     console.log(`[curiosity-service] Executing curiosity workflow for user: ${username}`);
     const graphResult = await executeGraph(graph, graphContext);
 
-    // Extract results from graph execution
-    const activityCheckNode = graphResult.nodes.get(1);
-    const canAsk = activityCheckNode?.output?.canAsk;
+    // Extract results from graph execution (node IDs are strings in Svelte Flow format)
+    const activityCheckNode = graphResult.nodes.get('1');
+    const canAsk = activityCheckNode?.outputs?.canAsk;
 
     if (!canAsk) {
-      const timeSince = activityCheckNode?.output?.timeSinceLastQuestion;
+      const timeSince = activityCheckNode?.outputs?.timeSinceLastQuestion;
       console.log(`[curiosity-service] Cannot ask yet - only ${Math.round((timeSince || 0) / 60)}min since last question`);
       return false;
     }
 
-    const samplerNode = graphResult.nodes.get(3);
-    const questionGeneratorNode = graphResult.nodes.get(4);
-    const saverNode = graphResult.nodes.get(5);
+    const samplerNode = graphResult.nodes.get('2');
+    const questionGeneratorNode = graphResult.nodes.get('3');
+    const saverNode = graphResult.nodes.get('4');
 
-    const memoriesCount = samplerNode?.output?.count || 0;
-    const question = questionGeneratorNode?.output?.question || '';
-    const questionId = saverNode?.output?.questionId;
-    const saved = saverNode?.output?.saved;
+    const memoriesCount = samplerNode?.outputs?.count || 0;
+    const question = questionGeneratorNode?.outputs?.question || '';
+    const questionId = saverNode?.outputs?.questionId;
+    const saved = saverNode?.outputs?.saved;
 
     if (!saved || !question) {
       console.log(`[curiosity-service] Failed to generate or save question`);
@@ -138,6 +138,7 @@ export async function generateUserQuestion(username: string): Promise<boolean> {
 
     // Audit successful question generation
     audit({
+      event: 'curiosity_question_generated',
       category: 'decision',
       level: 'info',
       message: 'Curiosity service generated question',
@@ -158,6 +159,7 @@ export async function generateUserQuestion(username: string): Promise<boolean> {
   } catch (error) {
     console.error(`[curiosity-service] Error generating question for ${username}:`, error);
     audit({
+      event: 'curiosity_error',
       category: 'system',
       level: 'error',
       message: `Curiosity service error for ${username}: ${(error as Error).message}`,

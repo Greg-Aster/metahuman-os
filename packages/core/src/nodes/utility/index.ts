@@ -9,3 +9,4 @@ export { TextTemplateNode } from './text-template.node.js';
 export { DataTransformNode } from './data-transform.node.js';
 export { CacheNode } from './cache.node.js';
 export { GraphNoteNode } from './graph-note.node.js';
+export { OutputViewerNode } from './output-viewer.node.js';

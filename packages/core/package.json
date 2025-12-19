@@ -68,7 +68,8 @@
     "./api": "./src/api/index.ts",
     "./api/handlers/profile-sync": "./src/api/handlers/profile-sync.ts",
     "./api/adapters/http": "./src/api/adapters/http.ts",
-    "./api/adapters/astro": "./src/api/adapters/astro.ts"
+    "./api/adapters/astro": "./src/api/adapters/astro.ts",
+    "./api/handlers/execute-graph-stream": "./src/api/handlers/execute-graph-stream.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.939.0",

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, setContext } from 'svelte';
   import { writable } from 'svelte/store';
-  import { statusStore, statusRefreshTrigger, nodeEditorMode } from '../stores/navigation';
+  import { statusStore, statusRefreshTrigger, nodeEditorMode, rightSidebarOpen as rightSidebarStore } from '../stores/navigation';
   import { startPolicyPolling, fetchSecurityPolicy, policyStore, isReadOnly } from '../stores/security-policy';
   import { apiFetch } from '../lib/client/api-config';
   import UserMenu from './UserMenu.svelte';
@@ -13,7 +13,9 @@
 
   // Sidebar visibility state - mobile-first defaults
   let leftSidebarOpen = false;
-  let rightSidebarOpen = false;
+  // rightSidebarOpen is now from the store (rightSidebarStore)
+  // Use reactive statement to get current value
+  $: rightSidebarOpen = $rightSidebarStore;
   let isMobile = true;
 
   // Create a store for leftSidebarOpen and expose it via context
@@ -251,13 +253,16 @@
 
     // On desktop, default to open; on mobile, default to closed
     const defaultLeft = !isMobile;
-    const defaultRight = !isMobile;
 
     const savedLeft = localStorage.getItem('leftSidebarOpen');
-    const savedRight = localStorage.getItem('rightSidebarOpen');
-
     leftSidebarOpen = savedLeft !== null ? savedLeft === 'true' : defaultLeft;
-    rightSidebarOpen = savedRight !== null ? savedRight === 'true' : defaultRight;
+
+    // Right sidebar: if no saved preference exists, default to open on desktop
+    // Store handles persistence; we just set the initial default
+    const savedRight = localStorage.getItem('rightSidebarOpen');
+    if (savedRight === null && !isMobile) {
+      rightSidebarStore.set(true);
+    }
 
     // Listen for window resize
     window.addEventListener('resize', updateScreenSize);
@@ -335,8 +340,8 @@
   }
 
   function toggleRightSidebar() {
-    rightSidebarOpen = !rightSidebarOpen;
-    localStorage.setItem('rightSidebarOpen', String(rightSidebarOpen));
+    rightSidebarStore.update(v => !v);
+    // localStorage persistence handled by store subscription in navigation.ts
   }
 </script>
 

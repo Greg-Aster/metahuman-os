@@ -23,9 +23,9 @@ import {
   getLoggedInUsers,
   withUserContext,
   executeGraph,
-  validateCognitiveGraph,
+  validateSvelteFlowGraph,
   getActiveBackend,
-  type CognitiveGraph,
+  type SvelteFlowGraph,
 } from '@metahuman/core';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 
@@ -60,11 +60,11 @@ export interface ReflectorResult {
 // Cognitive Graph Loading
 // ============================================================================
 
-async function loadReflectorGraph(): Promise<CognitiveGraph> {
+async function loadReflectorGraph(): Promise<SvelteFlowGraph> {
   const graphPath = path.join(ROOT, 'etc', 'cognitive-graphs', 'reflector-mode.json');
   const raw = await fs.readFile(graphPath, 'utf-8');
   const parsed = JSON.parse(raw);
-  return validateCognitiveGraph(parsed);
+  return validateSvelteFlowGraph(parsed);
 }
 
 // ============================================================================
@@ -381,8 +381,8 @@ What am I noticing? What thoughts or feelings are emerging?
 
     const graphResult = await executeGraph(graph, graphContext);
 
-    const reflectionNode = graphResult.nodes.get(1);
-    const reflection = (reflectionNode?.output?.response || '').trim();
+    const reflectionNode = graphResult.nodes.get('1');
+    const reflection = (reflectionNode?.outputs?.response || '').trim();
 
     if (reflection) {
       console.log(`[reflector] Generated: "${reflection.substring(0, 80)}..."`);

@@ -37,11 +37,13 @@ export const ContextBuilderNode: NodeDefinition = defineNode({
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Conversation history' },
     { name: 'searchInterpretation', type: 'object', optional: true, description: 'Search interpreter result (unknownSignal, interpretation)' },
     { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration' },
+    { name: 'persona', type: 'object', optional: true, description: 'Persona data (identity, personality, values, goals)' },
   ],
   outputs: [
-    { name: 'context', type: 'context', description: 'Unified context package' },
+    { name: 'context', type: 'context', description: 'Unified context package (includes persona)' },
     { name: 'unknownSignal', type: 'boolean', description: 'Whether to respond "I don\'t know"' },
     { name: 'iteration', type: 'number', description: 'Current iteration number' },
+    { name: 'persona', type: 'object', description: 'Passthrough persona for downstream nodes (Quality Scorer)' },
   ],
   properties: {
     scratchpadMode: false,
@@ -65,43 +67,35 @@ export const ContextBuilderNode: NodeDefinition = defineNode({
   description: 'Combines multiple context sources into unified context with iteration tracking',
 
   execute: async (inputs, context, properties) => {
-    // Debug: log inputs
-    console.log('[context_builder] DEBUG inputs keys:', Object.keys(inputs));
-    console.log('[context_builder] DEBUG inputs[0] type:', typeof inputs[0], inputs[0] ? Object.keys(inputs[0]) : 'null');
+    // Named inputs from graph edges (with array index fallbacks for backwards compatibility)
+    // Expected inputs: conversationHistory, cognitiveMode, memories, searchInterpretation
+    const queryInput = inputs.query || inputs[0] || context.userMessage || '';
+    const modeInput = inputs.cognitiveMode || inputs.mode || inputs[1] || context.cognitiveMode || 'dual';
+    const memoriesInput = inputs.memories || inputs[2];
+    const conversationHistoryInput = inputs.conversationHistory || inputs[3];
+    const searchInterpretation = inputs.searchInterpretation || inputs[4] || null;
+    const feedbackContext = inputs.feedbackContext || inputs[5] || null;
+    const personaInput = inputs.persona || inputs[6] || null;
 
-    // Handle flexible input wiring - memories can come from slot 0 (from memory_router) or slot 2
-    const slot0 = inputs[0];
-    const isSlot0Memories = slot0 && (Array.isArray(slot0) || slot0.memories || slot0.relevantMemories);
-
-    console.log('[context_builder] DEBUG isSlot0Memories:', isSlot0Memories);
-    console.log('[context_builder] DEBUG slot0?.memories length:', slot0?.memories?.length);
-
-    const query = isSlot0Memories
-      ? (context.userMessage || '')
-      : (slot0 || inputs[2]?.message || context.userMessage || '');
-    const mode = inputs[1] || context.cognitiveMode || 'dual';
-
-    // Extract search interpretation result (from search_interpreter node)
-    const searchInterpretation = inputs[4] || inputs.searchInterpretation || null;
-    const feedbackContext = inputs[5] || inputs.feedbackContext || null;
+    // Handle query - might be a string or object
+    const query = typeof queryInput === 'string' ? queryInput : (queryInput?.message || context.userMessage || '');
+    const mode = typeof modeInput === 'string' ? modeInput : 'dual';
 
     // Extract unknownSignal from search interpretation
     const unknownSignal = searchInterpretation?.unknownSignal ?? false;
     const interpretation = searchInterpretation?.interpretation ?? '';
     const rejectedCount = searchInterpretation?.rejectedCount ?? 0;
 
-    // Extract memories - prefer relevantMemories from search interpreter, fall back to raw memories
+    // Extract memories - prefer relevantMemories from search interpreter, fall back to direct memories input
     const interpretedMemories = searchInterpretation?.relevantMemories || [];
-    const memoriesFromSlot0 = Array.isArray(slot0) ? slot0 : (slot0?.memories || slot0?.relevantMemories || []);
-    const memoriesFromSlot2 = inputs[2]?.memories || [];
-    const fallbackMemories = interpretedMemories.length > 0 ? interpretedMemories : (memoriesFromSlot0.length > 0 ? memoriesFromSlot0 : memoriesFromSlot2);
+    const directMemories = Array.isArray(memoriesInput) ? memoriesInput : (memoriesInput?.memories || memoriesInput?.relevantMemories || []);
+    const fallbackMemories = interpretedMemories.length > 0 ? interpretedMemories : directMemories;
     const memories = context.contextPackage?.memories || fallbackMemories;
 
-    console.log('[context_builder] DEBUG memoriesFromSlot0:', memoriesFromSlot0.length);
-    console.log('[context_builder] DEBUG interpretedMemories:', interpretedMemories.length);
-    console.log('[context_builder] DEBUG final memories:', memories.length);
-    console.log('[context_builder] DEBUG unknownSignal:', unknownSignal);
-    const conversationHistory = context.contextPackage?.conversationHistory || inputs[3]?.messages || context.conversationHistory || [];
+    // Conversation history - from input or context
+    const conversationHistory = context.contextPackage?.conversationHistory ||
+      (Array.isArray(conversationHistoryInput) ? conversationHistoryInput : conversationHistoryInput?.messages) ||
+      context.conversationHistory || [];
 
     // Scratchpad state for iterative refinement
     const scratchpadMode = properties?.scratchpadMode ?? false;
@@ -123,14 +117,18 @@ export const ContextBuilderNode: NodeDefinition = defineNode({
       }
     }
 
+    // Extract persona data if provided
+    const persona = personaInput || context.persona || null;
+
     // Build context payload
     const contextPayload: Record<string, any> = context.contextPackage
-      ? { ...context.contextPackage, query, mode, memories }
+      ? { ...context.contextPackage, query, mode, memories, persona }
       : {
           query,
           mode,
           memories,
           conversationHistory,
+          persona,
           timestamp: new Date().toISOString(),
         };
 
@@ -143,15 +141,16 @@ export const ContextBuilderNode: NodeDefinition = defineNode({
       contextPayload.scratchpad = scratchpad;
     }
 
-    // Add context guidance for persona based on unknownSignal
-    if (unknownSignal) {
-      contextPayload.contextGuidance = 'No relevant memories found. Respond honestly that you don\'t know or don\'t have information about this topic.';
-    } else if (memories.length > 0) {
-      contextPayload.contextGuidance = `Found ${memories.length} relevant memories. Base your response on these memories.`;
+    // Pass through feedback from previous iteration (if any)
+    // This tells Response Synthesizer what was wrong with the previous attempt
+    if (feedbackContext) {
+      contextPayload.feedbackContext = {
+        iteration: feedbackContext.iteration,
+        feedbackType: feedbackContext.feedbackType,
+        specificFeedback: feedbackContext.specificFeedback,
+        previousAttempts: feedbackContext.previousAttempts,
+      };
     }
-
-    console.log('[context_builder] DEBUG contextPayload.memories count:', contextPayload.memories?.length || 0);
-    console.log('[context_builder] DEBUG contextPayload.unknownSignal:', contextPayload.unknownSignal);
 
     if (context.contextInfo) {
       contextPayload.contextText = context.contextInfo;
@@ -161,6 +160,7 @@ export const ContextBuilderNode: NodeDefinition = defineNode({
       context: contextPayload,
       unknownSignal,
       iteration: currentIteration,
+      persona, // Passthrough for Quality Scorer
     };
   },
 });

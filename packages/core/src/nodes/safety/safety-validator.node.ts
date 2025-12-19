@@ -8,15 +8,18 @@ import { checkResponseSafety } from '../../cognitive-layers/index.js';
 
 const execute: NodeExecutor = async (inputs, context) => {
   // Extract response string from various input formats
+  // Use named inputs with positional fallback
+  const inputData = inputs.response ?? inputs[0];
+
   let response = '';
-  if (typeof inputs[0] === 'string') {
-    response = inputs[0];
-  } else if (inputs[0]?.response && typeof inputs[0].response === 'string') {
-    response = inputs[0].response;
-  } else if (inputs[0]?.content && typeof inputs[0].content === 'string') {
-    response = inputs[0].content;
-  } else if (inputs[0]?.cleaned && typeof inputs[0].cleaned === 'string') {
-    response = inputs[0].cleaned;
+  if (typeof inputData === 'string') {
+    response = inputData;
+  } else if (inputData?.response && typeof inputData.response === 'string') {
+    response = inputData.response;
+  } else if (inputData?.content && typeof inputData.content === 'string') {
+    response = inputData.content;
+  } else if (inputData?.cleaned && typeof inputData.cleaned === 'string') {
+    response = inputData.cleaned;
   }
 
   if (!response || response.trim().length === 0) {

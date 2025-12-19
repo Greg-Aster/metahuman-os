@@ -25,10 +25,10 @@ import {
   getLoggedInUsers,
   withUserContext,
   executeGraph,
-  validateCognitiveGraph,
+  validateSvelteFlowGraph,
   systemPaths,
   getProfilePaths,
-  type CognitiveGraph,
+  type SvelteFlowGraph,
 } from '@metahuman/core';
 
 // ─────────────────────────────────────────────────────────────
@@ -68,11 +68,11 @@ const technicalKeywords = [
 /**
  * Load the train-of-thought cognitive graph
  */
-export async function loadTrainOfThoughtGraph(): Promise<CognitiveGraph> {
+export async function loadTrainOfThoughtGraph(): Promise<SvelteFlowGraph> {
   const graphPath = path.join(systemPaths.etc, 'cognitive-graphs', 'train-of-thought.json');
   const raw = await fs.readFile(graphPath, 'utf-8');
   const parsed = JSON.parse(raw);
-  return validateCognitiveGraph(parsed);
+  return validateSvelteFlowGraph(parsed);
 }
 
 /**
@@ -233,8 +233,8 @@ export async function executeTrainOfThoughtForUser(username: string): Promise<Us
 
       const result = await executeGraph(graph, context);
 
-      // Extract results from graph execution
-      const aggregatorState = result.nodes.get(8); // Node 8 is thought_aggregator
+      // Extract results from graph execution (node IDs are strings in Svelte Flow format)
+      const aggregatorState = result.nodes.get('8'); // Node 8 is thought_aggregator
       const aggregatorOutput = aggregatorState?.outputs;
       const thoughtCount = aggregatorOutput?.thoughtCount || 0;
       const insight = aggregatorOutput?.insight || '';

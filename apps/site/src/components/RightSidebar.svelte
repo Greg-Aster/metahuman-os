@@ -6,6 +6,7 @@
   import AgentMonitor from './AgentMonitor.svelte';
   import ServerStatus from './ServerStatus.svelte';
   import { apiFetch } from '../lib/client/api-config';
+  import { rightSidebarOpen } from '../stores/navigation';
 
   let activeTab = 'monitor';
   let useEnhancedAudit = true; // Toggle between old and new audit stream (default: grouped mode)
@@ -286,7 +287,7 @@
       </div>
     {:else if activeTab === 'servers'}
       <div class="servers-container">
-        <ServerStatus isVisible={activeTab === 'servers'} />
+        <ServerStatus isVisible={$rightSidebarOpen && activeTab === 'servers'} />
       </div>
     {/if}
   </div>

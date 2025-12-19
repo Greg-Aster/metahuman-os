@@ -51,20 +51,37 @@ function parseThinkingBlocks(content: string): { thinking: string | null; stripp
 }
 
 const execute: NodeExecutor = async (inputs) => {
+  // Named inputs with array fallback
+  const inputData = inputs.response ?? inputs[0];
+
+  // Early exit if input is null (e.g., from closed gateway)
+  if (inputData === null || inputData === undefined) {
+    console.log('[ThinkingStripper] Received null input - gate may be closed, returning empty');
+    return {
+      response: '',
+      content: '',
+      thinking: null,
+      stripped: '',
+      hadThinking: false,
+      thinkingLength: 0,
+      skipped: true,
+    };
+  }
+
   // Extract response string from various input formats
   let response = '';
-  if (typeof inputs[0] === 'string') {
-    response = inputs[0];
-  } else if (inputs[0]?.response) {
-    if (typeof inputs[0].response === 'string') {
-      response = inputs[0].response;
-    } else if (typeof inputs[0].response === 'object' && inputs[0].response?.response) {
-      response = inputs[0].response.response;
-    } else if (typeof inputs[0].response === 'object' && inputs[0].response?.content) {
-      response = inputs[0].response.content;
+  if (typeof inputData === 'string') {
+    response = inputData;
+  } else if (inputData?.response) {
+    if (typeof inputData.response === 'string') {
+      response = inputData.response;
+    } else if (typeof inputData.response === 'object' && inputData.response?.response) {
+      response = inputData.response.response;
+    } else if (typeof inputData.response === 'object' && inputData.response?.content) {
+      response = inputData.response.content;
     }
-  } else if (inputs[0]?.content && typeof inputs[0].content === 'string') {
-    response = inputs[0].content;
+  } else if (inputData?.content && typeof inputData.content === 'string') {
+    response = inputData.content;
   }
 
   const { thinking, stripped } = parseThinkingBlocks(response);

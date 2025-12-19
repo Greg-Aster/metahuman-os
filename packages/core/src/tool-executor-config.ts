@@ -230,15 +230,28 @@ export function getDefaultToolExecutorConfig(): ToolExecutorConfig {
 // Configuration Loading/Saving
 // ============================================================================
 
-let configCache: ToolExecutorConfig | null = null;
+// Per-user config cache with TTL to avoid repeated disk reads during API polling
+const CONFIG_CACHE_TTL_MS = 5000; // 5 seconds
+interface CacheEntry {
+  config: ToolExecutorConfig;
+  timestamp: number;
+}
+const configCache = new Map<string, CacheEntry>();
 
 /**
  * Load tool executor configuration for a user
+ *
+ * Uses a 5-second per-user cache to avoid repeated disk reads
+ * during polling operations. Cache is invalidated on save.
  */
 export function loadToolExecutorConfig(username?: string): ToolExecutorConfig {
-  // Return cached if available and no specific username requested
-  if (configCache && !username) {
-    return configCache;
+  const cacheKey = username || '__system__';
+  const now = Date.now();
+
+  // Check cache - return if still valid
+  const cached = configCache.get(cacheKey);
+  if (cached && (now - cached.timestamp) < CONFIG_CACHE_TTL_MS) {
+    return cached.config;
   }
 
   const config = loadUserConfig<ToolExecutorConfig>(
@@ -247,10 +260,8 @@ export function loadToolExecutorConfig(username?: string): ToolExecutorConfig {
     username
   );
 
-  // Cache if no specific username (default user context)
-  if (!username) {
-    configCache = config;
-  }
+  // Cache the result
+  configCache.set(cacheKey, { config, timestamp: now });
 
   return config;
 }
@@ -280,8 +291,12 @@ export function saveToolExecutorConfig(
 /**
  * Invalidate cached configuration (call after external changes)
  */
-export function invalidateToolExecutorConfig(): void {
-  configCache = null;
+export function invalidateToolExecutorConfig(username?: string): void {
+  if (username) {
+    configCache.delete(username);
+  } else {
+    configCache.clear();
+  }
 }
 
 // ============================================================================

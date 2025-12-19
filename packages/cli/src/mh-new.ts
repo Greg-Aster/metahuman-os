@@ -1582,15 +1582,29 @@ async function indexCmd(args: string[]): Promise<void> {
 
   switch (sub) {
     case 'build': {
-      console.log('Building memory embeddings index...');
+      // Check if user context is set
+      const ctx = getUserContext();
+      if (!ctx || ctx.username === 'anonymous') {
+        console.error('Error: User context required for index build.');
+        console.error('Usage: mh --user <username> index build');
+        console.error('\nExample: mh --user greggles index build');
+        process.exit(1);
+      }
+      console.log(`Building memory embeddings index for ${ctx.username}...`);
       try {
-        const dest = await buildMemoryIndex();
-        const status = getIndexStatus();
+        // Pass username explicitly to bypass context resolution issues
+        const dest = await buildMemoryIndex({ username: ctx.username });
+        const status = getIndexStatus(undefined, ctx.username);
         console.log(`✓ Index written: ${dest}`);
         console.log(`  Items: ${status.items} | Model: ${status.model} | Provider: ${status.provider}`);
       } catch (err) {
-        console.error('Failed to build index:', (err as Error).message);
-        console.error('Tip: ensure Ollama is running (ollama serve) and model installed (mh ollama pull nomic-embed-text).');
+        const msg = (err as Error).message;
+        console.error('Failed to build index:', msg);
+        if (msg.includes('storage router')) {
+          console.error('Tip: Ensure you are running with user context: mh --user <username> index build');
+        } else {
+          console.error('Tip: Check your embedding service is running (see Settings → LLM Backend).');
+        }
         process.exit(1);
       }
       break;

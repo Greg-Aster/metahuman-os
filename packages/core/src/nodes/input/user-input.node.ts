@@ -51,9 +51,26 @@ export const UserInputNode: NodeDefinition = defineNode({
     const prioritizeChatInterface = properties?.prioritizeChatInterface !== false;
 
     if (prioritizeChatInterface) {
-      // Priority: chat interface (context.userMessage)
-      message = context.userMessage || properties?.message || '';
-      inputSource = 'chat';
+      // Priority when prioritizing chat interface:
+      // 1. Chat interface (context.userMessage) - main chat sends messages here
+      // 2. Connected text input (inputs.text) - flow editor text_input node
+      // 3. Speech input (inputs.speech) - from speech_to_text node
+      // 4. Node property fallback (properties.message)
+
+      if (context.userMessage) {
+        message = context.userMessage;
+        inputSource = 'chat';
+      } else if (inputs.text) {
+        // From connected text_input node in flow editor
+        message = inputs.text;
+        inputSource = 'text';
+      } else if (inputs.speech?.text && inputs.speech?.transcribed) {
+        message = inputs.speech.text;
+        inputSource = 'speech';
+      } else {
+        message = properties?.message || '';
+        inputSource = 'chat';
+      }
     } else {
       // Priority order when NOT prioritizing chat interface:
       // 1. Speech input from speech_to_text node (inputs.speech)
@@ -74,7 +91,7 @@ export const UserInputNode: NodeDefinition = defineNode({
         message = context.userMessage;
         inputSource = 'chat';
       } else {
-        // Final fallback to properties
+        // Final fallback to node property
         message = properties?.message || '';
         inputSource = 'chat';
       }

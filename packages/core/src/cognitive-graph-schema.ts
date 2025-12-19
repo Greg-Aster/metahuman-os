@@ -133,33 +133,48 @@ export function isSvelteFlowFormat(graph: any): graph is SvelteFlowGraph {
 }
 
 /**
+ * Extract slot index from handle name
+ * Handles formats like: "output_0", "input_1", "continue", "loop_back"
+ * Returns the extracted index or a fallback based on handle name semantics
+ */
+function extractSlotIndex(handleName: string, isOutput: boolean): number {
+  // Try to extract numeric index from handle name (e.g., "output_0" -> 0)
+  const match = handleName.match(/^(?:output|input)_(\d+)$/);
+  if (match) {
+    return parseInt(match[1], 10);
+  }
+
+  // Known semantic handle names for routers (used for back-edge detection)
+  // Slot 0 = continue/forward path, Slot 1+ = loop/back paths
+  if (isOutput) {
+    const outputSlotMap: Record<string, number> = {
+      'continue': 0,
+      'forward': 0,
+      'output': 0,
+      'response': 0,
+      'result': 0,
+      'loop_back': 1,
+      'loop': 1,
+      'back': 1,
+      'retry': 1,
+      'refine': 1,
+      'feedbackContext': 1,  // feedback router back-edge
+      'false': 1,  // conditional router false branch
+      'true': 0,   // conditional router true branch
+    };
+    if (handleName in outputSlotMap) {
+      return outputSlotMap[handleName];
+    }
+  }
+
+  // Default to 0 if we can't determine
+  return 0;
+}
+
+/**
  * Convert Svelte Flow graph to legacy format for execution
  */
 export function convertToLegacyFormat(sfGraph: SvelteFlowGraph): CognitiveGraph {
-  // Build handle index maps for each node
-  const nodeHandleIndices = new Map<string, { inputs: Map<string, number>; outputs: Map<string, number> }>();
-
-  // Track used handles per node to assign indices
-  sfGraph.edges.forEach((edge) => {
-    // Track source handles (outputs)
-    if (!nodeHandleIndices.has(edge.source)) {
-      nodeHandleIndices.set(edge.source, { inputs: new Map(), outputs: new Map() });
-    }
-    const sourceData = nodeHandleIndices.get(edge.source)!;
-    if (!sourceData.outputs.has(edge.sourceHandle)) {
-      sourceData.outputs.set(edge.sourceHandle, sourceData.outputs.size);
-    }
-
-    // Track target handles (inputs)
-    if (!nodeHandleIndices.has(edge.target)) {
-      nodeHandleIndices.set(edge.target, { inputs: new Map(), outputs: new Map() });
-    }
-    const targetData = nodeHandleIndices.get(edge.target)!;
-    if (!targetData.inputs.has(edge.targetHandle)) {
-      targetData.inputs.set(edge.targetHandle, targetData.inputs.size);
-    }
-  });
-
   // Convert nodes
   const nodes: CognitiveGraphNode[] = sfGraph.nodes.map((node) => {
     const numericId = parseInt(node.id, 10);
@@ -175,17 +190,14 @@ export function convertToLegacyFormat(sfGraph: SvelteFlowGraph): CognitiveGraph 
     };
   });
 
-  // Convert edges to links
+  // Convert edges to links, preserving slot indices from handle names
   const links: CognitiveGraphLink[] = sfGraph.edges.map((edge, index) => {
-    const sourceData = nodeHandleIndices.get(edge.source);
-    const targetData = nodeHandleIndices.get(edge.target);
-
     return {
       id: index + 1,
       origin_id: parseInt(edge.source, 10),
-      origin_slot: sourceData?.outputs.get(edge.sourceHandle) ?? 0,
+      origin_slot: extractSlotIndex(edge.sourceHandle, true),
       target_id: parseInt(edge.target, 10),
-      target_slot: targetData?.inputs.get(edge.targetHandle) ?? 0,
+      target_slot: extractSlotIndex(edge.targetHandle, false),
       type: edge.data?.type,
       comment: edge.data?.comment,
     };
@@ -220,6 +232,145 @@ export class GraphValidationError extends Error {
     super(`Graph validation failed: ${errors.join(', ')}`);
     this.name = 'GraphValidationError';
   }
+}
+
+/**
+ * Validate a Svelte Flow graph structure
+ */
+export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
+  const errors: string[] = [];
+
+  // Required metadata
+  if (!graph.version || typeof graph.version !== 'string') {
+    errors.push('Missing or invalid version');
+  }
+  if (!graph.name || typeof graph.name !== 'string') {
+    errors.push('Missing or invalid name');
+  }
+
+  // Validate cognitive mode if provided
+  if (graph.cognitiveMode && !['dual', 'agent', 'emulation'].includes(graph.cognitiveMode)) {
+    errors.push('Invalid cognitiveMode (must be dual, agent, or emulation)');
+  }
+
+  // Required structure - nodes
+  if (!Array.isArray(graph.nodes)) {
+    errors.push('Missing or invalid nodes array');
+  } else {
+    graph.nodes.forEach((node: any, index: number) => {
+      if (typeof node.id !== 'string') {
+        errors.push(`Node ${index}: missing or invalid id (must be string)`);
+      }
+      if (!node.type || typeof node.type !== 'string') {
+        errors.push(`Node ${index}: missing or invalid type`);
+      }
+      if (!node.position || typeof node.position.x !== 'number' || typeof node.position.y !== 'number') {
+        errors.push(`Node ${index}: missing or invalid position (must be {x, y})`);
+      }
+      if (!node.data || typeof node.data !== 'object') {
+        errors.push(`Node ${index}: missing or invalid data object`);
+      }
+    });
+  }
+
+  // Required structure - edges
+  if (!Array.isArray(graph.edges)) {
+    errors.push('Missing or invalid edges array');
+  } else {
+    graph.edges.forEach((edge: any, index: number) => {
+      if (typeof edge.id !== 'string') {
+        errors.push(`Edge ${index}: missing or invalid id`);
+      }
+      if (typeof edge.source !== 'string') {
+        errors.push(`Edge ${index}: missing or invalid source`);
+      }
+      if (typeof edge.target !== 'string') {
+        errors.push(`Edge ${index}: missing or invalid target`);
+      }
+      if (typeof edge.sourceHandle !== 'string') {
+        errors.push(`Edge ${index}: missing or invalid sourceHandle`);
+      }
+      if (typeof edge.targetHandle !== 'string') {
+        errors.push(`Edge ${index}: missing or invalid targetHandle`);
+      }
+    });
+  }
+
+  // Check for circular dependencies (allowing router back-edges for iterative loops)
+  if (Array.isArray(graph.edges) && graph.edges.length > 0 && Array.isArray(graph.nodes)) {
+    // Identify router nodes that are allowed to create back-edges
+    const routerNodeTypes = [
+      'conditional_router', 'cognitive/conditional_router', 'control_flow/conditional_router',
+      'feedback_router', 'cognitive/feedback_router', 'control_flow/feedback_router'
+    ];
+    const routerNodes = graph.nodes
+      .filter((n: any) => {
+        const nodeType = n.data?.nodeType || n.type;
+        return routerNodeTypes.some(rt => nodeType === rt || nodeType?.includes(rt));
+      })
+      .map((n: any) => n.id);
+    const routerSet = new Set(routerNodes);
+
+    // Identify back-edges (loops from router nodes)
+    const backEdgeHandles = new Set([
+      'loop_back', 'loop', 'back', 'retry', 'refine', 'feedbackContext', 'false'
+    ]);
+    const backEdges = new Set<string>();
+    graph.edges.forEach((edge: any) => {
+      if (routerSet.has(edge.source)) {
+        if (backEdgeHandles.has(edge.sourceHandle) ||
+            edge.data?.comment?.includes('loop') ||
+            edge.data?.comment?.includes('BACK-EDGE')) {
+          backEdges.add(`${edge.source}->${edge.target}`);
+        }
+      }
+    });
+
+    // Build edge map excluding back-edges
+    const edgeMap = new Map<string, string[]>();
+    graph.edges.forEach((edge: any) => {
+      const edgeKey = `${edge.source}->${edge.target}`;
+      if (!backEdges.has(edgeKey)) {
+        if (!edgeMap.has(edge.source)) {
+          edgeMap.set(edge.source, []);
+        }
+        edgeMap.get(edge.source)!.push(edge.target);
+      }
+    });
+
+    // Cycle detection using DFS (excluding allowed back-edges)
+    const visited = new Set<string>();
+    const recursionStack = new Set<string>();
+
+    function hasCycle(node: string): boolean {
+      if (recursionStack.has(node)) return true;
+      if (visited.has(node)) return false;
+
+      visited.add(node);
+      recursionStack.add(node);
+
+      const neighbors = edgeMap.get(node) || [];
+      for (const neighbor of neighbors) {
+        if (hasCycle(neighbor)) return true;
+      }
+
+      recursionStack.delete(node);
+      return false;
+    }
+
+    for (const nodeId of edgeMap.keys()) {
+      if (hasCycle(nodeId)) {
+        errors.push('Graph contains invalid circular dependencies (excluding allowed router back-edges)');
+        break;
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new GraphValidationError(errors);
+  }
+
+  return graph as SvelteFlowGraph;
 }
 
 /**
@@ -286,7 +437,9 @@ export function validateCognitiveGraph(graph: any): CognitiveGraph {
       .filter((n: any) =>
         n.type === 'conditional_router' ||
         n.type === 'cognitive/conditional_router' ||
+        n.type === 'control_flow/conditional_router' ||
         n.type === 'feedback_router' ||
+        n.type === 'cognitive/feedback_router' ||
         n.type === 'control_flow/feedback_router'
       )
       .map((n: any) => n.id);

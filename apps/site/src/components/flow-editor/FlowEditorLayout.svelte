@@ -14,25 +14,28 @@
   // State
   let flowEditorRef: FlowEditor | null = $state(null);
   let graphName = $state('Untitled Graph');
+  let graphFileName = $state(''); // The filename (slug) for saving
   let isExecuting = $state(false);
   let executionError = $state('');
   let showSaveDialog = $state(false);
-  let saveGraphName = $state('');
+  let saveFileName = $state(''); // Filename to save as
   let saveError = $state('');
   let saveSuccess = $state(false);
   let showLoadMenu = $state(false);
-  let savedGraphs = $state<Array<{ name: string; title: string; description: string }>>([]);
+  let savedGraphs = $state<Array<{ name: string; title: string; description: string; scope: string }>>([]);
+  let backupGraphs = $state<Array<{ name: string; title: string; originalName?: string }>>([]);
   let graphsLoading = $state(false);
   let schemas = $state<any[]>([]);
 
-  // Load saved graphs list
+  // Load saved graphs list (including backups)
   async function refreshSavedGraphs() {
     graphsLoading = true;
     try {
-      const res = await apiFetch('/api/cognitive-graphs');
+      const res = await apiFetch('/api/cognitive-graphs?includeBackups=true');
       if (res.ok) {
         const data = await res.json();
         savedGraphs = data.graphs?.filter((g: any) => g.scope === 'custom') || [];
+        backupGraphs = data.backups || [];
       }
     } catch (e) {
       console.error('[FlowEditorLayout] Failed to load graphs:', e);
@@ -47,7 +50,9 @@
       const res = await apiFetch('/api/node-schemas');
       if (res.ok) {
         const data = await res.json();
-        schemas = data.schemas || [];
+        // API returns array directly, not { schemas: [...] }
+        schemas = Array.isArray(data) ? data : (data.schemas || []);
+        console.log(`[FlowEditorLayout] Loaded ${schemas.length} schemas`);
       }
     } catch (e) {
       console.error('[FlowEditorLayout] Failed to load schemas:', e);
@@ -84,29 +89,47 @@
   function newGraph() {
     flowEditorRef?.clearGraph();
     graphName = 'Untitled Graph';
+    graphFileName = '';
+  }
+
+  // Convert display name to valid filename (slug)
+  function toSlug(name: string): string {
+    return name
+      .toLowerCase()
+      .replace(/[()]/g, '') // Remove parentheses
+      .replace(/[^a-z0-9]+/g, '-') // Replace non-alphanumeric with hyphens
+      .replace(/^-+|-+$/g, '') // Trim leading/trailing hyphens
+      .substring(0, 50); // Limit length
   }
 
   function openSaveDialog() {
-    saveGraphName = graphName;
+    // Use existing filename if we have one, otherwise generate from display name
+    saveFileName = graphFileName || toSlug(graphName);
     saveError = '';
     saveSuccess = false;
     showSaveDialog = true;
   }
 
   async function saveGraph() {
-    if (!flowEditorRef || !saveGraphName.trim()) return;
+    if (!flowEditorRef || !saveFileName.trim()) return;
 
     saveError = '';
     saveSuccess = false;
 
+    // Validate filename
+    const validFileName = saveFileName.toLowerCase().replace(/[^a-z0-9_\-]/g, '-');
+    if (!validFileName) {
+      saveError = 'Invalid filename - use alphanumeric characters, hyphens, or underscores';
+      return;
+    }
+
     try {
       const graph = flowEditorRef.getCurrentGraph();
-      graph.name = saveGraphName;
 
       const res = await apiFetch('/api/cognitive-graph', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: saveGraphName, graph }),
+        body: JSON.stringify({ name: validFileName, graph }),
       });
 
       if (!res.ok) {
@@ -114,33 +137,51 @@
         throw new Error(data.error || 'Failed to save');
       }
 
-      graphName = saveGraphName;
+      const result = await res.json();
+      graphFileName = validFileName;
       saveSuccess = true;
+
+      // Show backup info if one was created
+      if (result.backupCreated) {
+        console.log(`[FlowEditorLayout] Backup created: ${result.backupCreated}`);
+      }
+
       await refreshSavedGraphs();
 
       setTimeout(() => {
         showSaveDialog = false;
         saveSuccess = false;
-      }, 1000);
+      }, 1500);
     } catch (e) {
       saveError = (e as Error).message;
     }
   }
 
-  async function loadGraph(name: string) {
+  async function loadGraph(name: string, scope?: string) {
     try {
-      const res = await apiFetch(`/api/cognitive-graph?name=${encodeURIComponent(name)}`);
+      const url = scope
+        ? `/api/cognitive-graph?name=${encodeURIComponent(name)}&scope=${scope}`
+        : `/api/cognitive-graph?name=${encodeURIComponent(name)}`;
+      const res = await apiFetch(url);
       if (res.ok) {
         const data = await res.json();
-        // The template-converter in FlowEditor will handle the conversion
-        // For now, reload by changing cognitive mode won't work for custom graphs
-        // We need to add a direct load method
-        console.log('[FlowEditorLayout] Load graph:', name, data);
+        if (data.graph && flowEditorRef) {
+          // Load graph into editor using the enrichGraphWithSchemas via loadGraph
+          const { enrichGraphWithSchemas } = await import('../../lib/client/flow-editor/template-converter');
+          const sfGraph = enrichGraphWithSchemas(data.graph);
+          flowEditorRef.loadGraph(sfGraph);
+          graphName = sfGraph.name || name;
+          graphFileName = scope === 'backup' ? '' : name; // Don't keep backup filename
+        }
       }
     } catch (e) {
       console.error('[FlowEditorLayout] Failed to load graph:', e);
     }
     showLoadMenu = false;
+  }
+
+  async function loadBackup(backupName: string) {
+    await loadGraph(backupName, 'backup');
   }
 
   async function loadTemplate(templateId: string) {
@@ -156,16 +197,20 @@
     isExecuting = true;
     executionError = '';
 
-    try {
-      const graph = flowEditorRef.getExecutorGraph();
+    // Reset previous states - nodes will light up individually as they execute
+    flowEditorRef.resetExecutionStates();
 
-      const res = await apiFetch('/api/execute-graph', {
+    try {
+      // Send native Svelte Flow format directly - no conversion needed
+      const graph = flowEditorRef.getCurrentGraph();
+
+      // Use streaming endpoint for real-time node status
+      const res = await apiFetch('/api/execute-graph-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           graph,
           sessionId: `editor-${Date.now()}`,
-          userMessage: 'Test from flow editor',
         }),
       });
 
@@ -174,13 +219,99 @@
         throw new Error(data.error || 'Execution failed');
       }
 
-      const result = await res.json();
-      console.log('[FlowEditorLayout] Execution complete:', result);
+      // Read SSE stream and update nodes in real-time
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response stream');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let finalResponse = '';
+      let nodeOutputs: Record<string, any> | undefined;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from buffer
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+        let eventType = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            eventType = line.slice(7);
+          } else if (line.startsWith('data: ') && eventType) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              handleStreamEvent(eventType, data);
+
+              // Capture final response and node outputs
+              if (eventType === 'graph_complete') {
+                if (data.response) {
+                  finalResponse = data.response;
+                }
+                if (data.nodeOutputs) {
+                  nodeOutputs = data.nodeOutputs;
+                }
+              }
+            } catch {
+              // Ignore parse errors
+            }
+            eventType = '';
+          }
+        }
+      }
+
+      console.log('[FlowEditorLayout] Streaming execution complete');
+
+      // Update display nodes with final response and node outputs
+      if (finalResponse && flowEditorRef) {
+        flowEditorRef.updateDisplayNodes(finalResponse, nodeOutputs);
+      }
     } catch (e) {
       executionError = (e as Error).message;
-      setTimeout(() => (executionError = ''), 5000);
+      // Mark all nodes as failed on error
+      if (flowEditorRef) {
+        flowEditorRef.markAllNodesFailed();
+      }
     } finally {
       isExecuting = false;
+    }
+  }
+
+  /**
+   * Handle streaming SSE events to update node states
+   */
+  function handleStreamEvent(eventType: string, data: any) {
+    if (!flowEditorRef) return;
+
+    switch (eventType) {
+      case 'node_start':
+        // Mark this node as running
+        flowEditorRef.setNodeExecutionState(data.nodeId, 'running');
+        break;
+
+      case 'node_complete':
+        // Mark this node as completed
+        flowEditorRef.setNodeExecutionState(data.nodeId, 'completed');
+        break;
+
+      case 'node_error':
+        // Mark this node as failed
+        flowEditorRef.setNodeExecutionState(data.nodeId, 'failed');
+        break;
+
+      case 'graph_error':
+        // Graph-level error - mark all running nodes as failed
+        executionError = data.error || 'Execution failed';
+        flowEditorRef.markAllNodesFailed();
+        break;
+
+      case 'graph_complete':
+        console.log('[FlowEditorLayout] Graph complete:', data.durationMs + 'ms');
+        break;
     }
   }
 
@@ -188,6 +319,10 @@
     // Update graph name when template loads or graph changes
     if (graph.name && graph.name !== 'Untitled Graph') {
       graphName = graph.name;
+    }
+    // Set filename based on cognitive mode (e.g., "dual" -> "dual-mode")
+    if (graph.cognitiveMode) {
+      graphFileName = `${graph.cognitiveMode}-mode`;
     }
   }
 
@@ -269,10 +404,20 @@
 
             {#if savedGraphs.length > 0}
               <div class="dropdown-divider"></div>
-              <div class="dropdown-header">Saved Graphs</div>
+              <div class="dropdown-header">Custom Graphs</div>
               {#each savedGraphs as graph}
                 <button class="dropdown-item" onclick={() => loadGraph(graph.name)}>
                   {graph.title || graph.name}
+                </button>
+              {/each}
+            {/if}
+
+            {#if backupGraphs.length > 0}
+              <div class="dropdown-divider"></div>
+              <div class="dropdown-header">Backups</div>
+              {#each backupGraphs.slice(0, 10) as backup}
+                <button class="dropdown-item backup-item" onclick={() => loadBackup(backup.name)}>
+                  {backup.title}
                 </button>
               {/each}
             {/if}
@@ -333,17 +478,29 @@
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div class="modal" onclick={(e) => e.stopPropagation()}>
         <h3>Save Graph</h3>
-        <input
-          type="text"
-          bind:value={saveGraphName}
-          placeholder="Graph name"
-          class="graph-name-input"
-        />
+        <div class="save-info">
+          <span class="save-label">Graph:</span>
+          <span class="save-value">{graphName}</span>
+        </div>
+        <div class="save-field">
+          <label for="save-filename">Filename:</label>
+          <div class="filename-input-wrapper">
+            <input
+              id="save-filename"
+              type="text"
+              bind:value={saveFileName}
+              placeholder="filename"
+              class="graph-name-input"
+            />
+            <span class="filename-ext">.json</span>
+          </div>
+          <p class="save-hint">Change the filename to save as a new graph, or keep it to overwrite (backup created automatically)</p>
+        </div>
         {#if saveError}
           <div class="save-error">{saveError}</div>
         {/if}
         {#if saveSuccess}
-          <div class="save-success">Saved!</div>
+          <div class="save-success">Saved! Backup created.</div>
         {/if}
         <div class="modal-actions">
           <button class="cancel-button" onclick={() => (showSaveDialog = false)}>Cancel</button>
@@ -606,6 +763,71 @@
   .graph-name-input:focus {
     outline: none;
     border-color: #3b82f6;
+  }
+
+  .save-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background: #0a0a0a;
+    border-radius: 6px;
+  }
+
+  .save-label {
+    color: #888;
+    font-size: 0.875rem;
+  }
+
+  .save-value {
+    color: #fff;
+    font-weight: 500;
+  }
+
+  .save-field {
+    margin-bottom: 1rem;
+  }
+
+  .save-field label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: #888;
+    font-size: 0.875rem;
+  }
+
+  .filename-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+
+  .filename-input-wrapper .graph-name-input {
+    flex: 1;
+    border-radius: 6px 0 0 6px;
+    margin-bottom: 0;
+  }
+
+  .filename-ext {
+    padding: 0.75rem;
+    background: #333;
+    border: 1px solid #444;
+    border-left: none;
+    border-radius: 0 6px 6px 0;
+    color: #888;
+    font-size: 0.875rem;
+  }
+
+  .save-hint {
+    margin-top: 0.5rem;
+    color: #666;
+    font-size: 0.75rem;
+    line-height: 1.4;
+  }
+
+  .backup-item {
+    color: #a5a5a5;
+    font-size: 0.8rem;
   }
 
   .save-error {

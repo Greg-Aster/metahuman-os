@@ -5,12 +5,13 @@ import { embedText, cosineSimilarity } from './embeddings.js'
 
 /**
  * Resolve user-specific memory paths via storage router
+ * @param username - Optional explicit username (use when context isn't available, e.g., CLI)
  */
-function resolveMemoryPaths() {
-  const episodicResult = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
-  const tasksResult = storageClient.resolvePath({ category: 'memory', subcategory: 'tasks' });
-  const semanticResult = storageClient.resolvePath({ category: 'memory', subcategory: 'semantic' });
-  const indexResult = storageClient.resolvePath({ category: 'memory', subcategory: 'index' });
+function resolveMemoryPaths(username?: string) {
+  const episodicResult = storageClient.resolvePath({ username, category: 'memory', subcategory: 'episodic' });
+  const tasksResult = storageClient.resolvePath({ username, category: 'memory', subcategory: 'tasks' });
+  const semanticResult = storageClient.resolvePath({ username, category: 'memory', subcategory: 'semantic' });
+  const indexResult = storageClient.resolvePath({ username, category: 'memory', subcategory: 'index' });
 
   if (!episodicResult.success || !tasksResult.success || !indexResult.success) {
     throw new Error('Cannot resolve memory paths via storage router');
@@ -55,11 +56,11 @@ export interface VectorIndexFile {
   data: VectorIndexItem[]
 }
 
-// Default model name for index filename (used when model unknown)
-const DEFAULT_INDEX_MODEL = 'nomic-embed-text-v1.5'
+// Default model name for index filename - must match embeddings.ts DEFAULTS.model
+const DEFAULT_INDEX_MODEL = 'qwen3-embedding-0.6b'
 
-export function indexFilePath(model?: string): string {
-  const { indexDir } = resolveMemoryPaths();
+export function indexFilePath(model?: string, username?: string): string {
+  const { indexDir } = resolveMemoryPaths(username);
   fs.mkdirSync(indexDir, { recursive: true })
   const modelName = model || DEFAULT_INDEX_MODEL
   const safe = modelName.replace(/[^a-z0-9_.-]/gi, '_')
@@ -121,17 +122,19 @@ function walkFiles(dir: string, filter: (p: string) => boolean): string[] {
 export async function buildMemoryIndex(options: {
   force?: boolean
   include?: { episodic?: boolean; tasks?: boolean; curated?: boolean; functions?: boolean }
+  username?: string  // Explicit username (use when context isn't available, e.g., CLI)
 } = {}): Promise<string> {
   const includeEpisodic = options.include?.episodic !== false
   const includeTasks = options.include?.tasks !== false
   const includeCurated = options.include?.curated !== false
   const includeFunctions = options.include?.functions !== false
+  const username = options.username
 
   const items: VectorIndexItem[] = []
   let dimensions = 0
   let firstVector: number[] | null = null
 
-  const memPaths = resolveMemoryPaths();
+  const memPaths = resolveMemoryPaths(username);
 
   // Helper to get embedding and track dimensions
   // Note: embeddings.ts handles truncation at 32K chars if needed
@@ -148,14 +151,41 @@ export async function buildMemoryIndex(options: {
     const files = walkFiles(memPaths.episodic, p => p.endsWith('.json'))
     console.log(`[vector-index] Processing ${files.length} episodic memories...`)
     let processed = 0
+    let skippedLLM = 0
     for (const f of files) {
       try {
         const obj = readJSON<any>(f)
         if (!obj || !obj.id || !obj.content) continue
         if (obj.validation && obj.validation.status === 'incorrect') continue
+
+        // Skip LLM-generated memory types - these don't contain user data
+        const memType = obj.type?.toLowerCase() || ''
+        const llmGeneratedTypes = [
+          'inner_dialogue',     // LLM internal thoughts
+          'reflection',         // LLM reflections on memories
+          'reflection_summary', // LLM summaries of reflections
+          'dream',              // LLM dreams
+          'summary',            // LLM summaries
+        ]
+        if (llmGeneratedTypes.includes(memType)) {
+          skippedLLM++
+          continue
+        }
+
+        // Extract user-only content from conversation memories
+        // Memory format: "User: <message>\n\nAssistant: <response>"
+        let userContent = String(obj.content)
+        if (memType === 'conversation' && userContent.includes('\n\nAssistant:')) {
+          // Extract only the user portion before assistant response
+          const userMatch = userContent.match(/^User:\s*([\s\S]*?)\n\nAssistant:/i)
+          if (userMatch && userMatch[1]) {
+            userContent = userMatch[1].trim()
+          }
+        }
+
         const tags = Array.isArray(obj.tags) ? obj.tags.join(' ') : ''
         const entities = Array.isArray(obj.entities) ? obj.entities.join(' ') : ''
-        const text = [String(obj.content), tags ? `Tags: ${tags}` : '', entities ? ` Entities: ${entities}` : '']
+        const text = [userContent, tags ? `Tags: ${tags}` : '', entities ? ` Entities: ${entities}` : '']
           .filter(Boolean)
           .join(' ')
         const vector = await getEmbedding(text)
@@ -166,7 +196,7 @@ export async function buildMemoryIndex(options: {
         }
       } catch {}
     }
-    console.log(`[vector-index] ✓ Indexed ${processed} episodic memories`)
+    console.log(`[vector-index] ✓ Indexed ${processed} episodic memories (skipped ${skippedLLM} LLM-generated)`)
   }
 
   if (includeTasks) {
@@ -274,7 +304,7 @@ export async function buildMemoryIndex(options: {
     data: items,
   }
 
-  const dest = indexFilePath(model)
+  const dest = indexFilePath(model, username)
   fs.writeFileSync(dest, JSON.stringify(out, null, 2))
 
   // Clear cache so next query loads fresh index
@@ -285,8 +315,8 @@ export async function buildMemoryIndex(options: {
   return dest
 }
 
-export function loadIndex(model?: string): VectorIndexFile | null {
-  const p = indexFilePath(model)
+export function loadIndex(model?: string, username?: string): VectorIndexFile | null {
+  const p = indexFilePath(model, username)
 
   // Check cache validity
   if (indexCache && indexCache.path === p) {
@@ -328,16 +358,16 @@ export function loadIndex(model?: string): VectorIndexFile | null {
 
 export async function queryIndex(
   query: string,
-  options: { model?: string; topK?: number } = {}
+  options: { model?: string; topK?: number; username?: string } = {}
 ): Promise<Array<{ item: VectorIndexItem; score: number }>> {
   const totalStart = Date.now()
   const topK = options.topK ?? 10
 
   // Step 1: Load index (cached after first call)
   const loadStart = Date.now()
-  const idx = loadIndex(options.model)
+  const idx = loadIndex(options.model, options.username)
   const loadTime = Date.now() - loadStart
-  if (!idx) throw new Error('No index found. Run: mh index build')
+  if (!idx) throw new Error('No index found. Run: mh --user <username> index build')
 
   // Step 2: Generate embedding for query using model router
   const embedStart = Date.now()
@@ -356,8 +386,8 @@ export async function queryIndex(
   return scored.slice(0, topK)
 }
 
-export function getIndexStatus(model?: string) {
-  const idx = loadIndex(model)
+export function getIndexStatus(model?: string, username?: string) {
+  const idx = loadIndex(model, username)
   if (!idx) return { exists: false }
   return {
     exists: true,
@@ -393,16 +423,41 @@ export async function appendEventToIndex(event: {
   id: string
   timestamp: string
   content: string
+  type?: string
   tags?: string[]
   entities?: string[]
   path?: string
-}, options: { model?: string } = {}): Promise<boolean> {
-  const idx = loadIndex(options.model)
+}, options: { model?: string; username?: string } = {}): Promise<boolean> {
+  const idx = loadIndex(options.model, options.username)
   if (!idx) return false
+
+  // Skip LLM-generated memory types - these don't contain user data
+  const memType = event.type?.toLowerCase() || ''
+  const llmGeneratedTypes = [
+    'inner_dialogue',     // LLM internal thoughts
+    'reflection',         // LLM reflections on memories
+    'reflection_summary', // LLM summaries of reflections
+    'dream',              // LLM dreams
+    'summary',            // LLM summaries
+  ]
+  if (llmGeneratedTypes.includes(memType)) {
+    console.log(`[vector-index] Skipping LLM-generated memory type: ${memType}`)
+    return false
+  }
+
+  // Extract user-only content from conversation memories
+  // Memory format: "User: <message>\n\nAssistant: <response>"
+  let userContent = String(event.content)
+  if (memType === 'conversation' && userContent.includes('\n\nAssistant:')) {
+    const userMatch = userContent.match(/^User:\s*([\s\S]*?)\n\nAssistant:/i)
+    if (userMatch && userMatch[1]) {
+      userContent = userMatch[1].trim()
+    }
+  }
 
   const tags = Array.isArray(event.tags) ? event.tags.join(' ') : ''
   const entities = Array.isArray(event.entities) ? event.entities.join(' ') : ''
-  const text = [String(event.content), tags ? `Tags: ${tags}` : '', entities ? ` Entities: ${entities}` : '']
+  const text = [userContent, tags ? `Tags: ${tags}` : '', entities ? ` Entities: ${entities}` : '']
     .filter(Boolean)
     .join(' ')
 
@@ -411,7 +466,7 @@ export async function appendEventToIndex(event: {
   idx.data.push({ id: event.id, path: event.path || '', type: 'episodic', timestamp: event.timestamp, text, vector })
   idx.meta.items = idx.data.length
 
-  const indexPath = indexFilePath(options.model)
+  const indexPath = indexFilePath(options.model, options.username)
   fs.writeFileSync(indexPath, JSON.stringify(idx, null, 2))
 
   // Update cache in place (avoid full reload for single append)

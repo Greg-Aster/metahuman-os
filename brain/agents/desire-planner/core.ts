@@ -27,9 +27,9 @@ import {
   withUserContext,
   captureEvent,
   executeGraph,
-  validateCognitiveGraph,
+  validateSvelteFlowGraph,
   getActiveBackend,
-  type CognitiveGraph,
+  type SvelteFlowGraph,
   type Desire,
   listDesiresByStatus,
   isAgencyEnabled,
@@ -140,11 +140,11 @@ export async function loadPlannerConfig(): Promise<PlannerConfig> {
 // Graph Loading
 // ============================================================================
 
-export async function loadGraph(filename: string): Promise<CognitiveGraph> {
+export async function loadGraph(filename: string): Promise<SvelteFlowGraph> {
   const graphPath = path.join(GRAPHS_DIR, filename);
   const raw = await fs.readFile(graphPath, 'utf-8');
   const parsed = JSON.parse(raw);
-  return validateCognitiveGraph(parsed);
+  return validateSvelteFlowGraph(parsed);
 }
 
 // ============================================================================
@@ -156,8 +156,8 @@ export async function loadGraph(filename: string): Promise<CognitiveGraph> {
  */
 async function processDesire(
   desire: Desire,
-  plannerGraph: CognitiveGraph,
-  reviewerGraph: CognitiveGraph,
+  plannerGraph: SvelteFlowGraph,
+  reviewerGraph: SvelteFlowGraph,
   plannerConfig: PlannerConfig,
   username: string
 ): Promise<{
@@ -193,8 +193,8 @@ async function processDesire(
       };
     }
 
-    // Extract plan from graph output
-    const planGeneratorNode = planResult.nodes.get(5); // Node 5 is plan generator
+    // Extract plan from graph output (node IDs are strings in Svelte Flow format)
+    const planGeneratorNode = planResult.nodes.get('5'); // Node 5 is plan generator
     const plan = planGeneratorNode?.outputs?.plan;
 
     if (!plan) {
@@ -230,8 +230,8 @@ async function processDesire(
       return { success: true, outcome: 'planned' };
     }
 
-    // Extract verdict from graph output
-    const verdictNode = reviewResult.nodes.get(7); // Node 7 is verdict synthesizer
+    // Extract verdict from graph output (node IDs are strings in Svelte Flow format)
+    const verdictNode = reviewResult.nodes.get('7'); // Node 7 is verdict synthesizer
     const verdict = verdictNode?.outputs?.verdict;
     const autoApprove = verdictNode?.outputs?.autoApprove;
 

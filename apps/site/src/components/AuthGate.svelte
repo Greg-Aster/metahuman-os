@@ -83,6 +83,22 @@
           isCheckingAuth = false;
           return;
         }
+      } else {
+        // Check if this is an encryption locked error
+        try {
+          const errorData = await res.json();
+          if (errorData.data?.encryptionLocked) {
+            console.log('[AuthGate] Encrypted storage is locked for:', errorData.data.username);
+            // Pre-fill username and show login form with unlock message
+            username = errorData.data.username;
+            loginError = `Your encrypted storage is locked. Please enter your password to unlock.`;
+            view = 'login';
+            isCheckingAuth = false;
+            return;
+          }
+        } catch {
+          // Failed to parse error response, continue to show login screen
+        }
       }
     } catch (error) {
       console.warn('[AuthGate] Auth check failed:', error);

@@ -25,11 +25,8 @@ async function applyPersonaVoice(
   const personaPrompt = personaInput?.formatted || personaInput;
 
   if (!personaPrompt || typeof personaPrompt !== 'string' || personaPrompt.trim().length === 0) {
-    console.log('[ResponseSynthesizer] No persona input available, returning original response');
     return { response: responseText, personaSynthesized: false };
   }
-
-  console.log('[ResponseSynthesizer] Applying persona voice to response...');
 
   const systemPrompt = `${personaPrompt}
 
@@ -68,7 +65,6 @@ You are responding based on information that was gathered or generated. Your tas
       onProgress: emitProgress,
     });
 
-    console.log(`[ResponseSynthesizer] ✅ Applied persona voice successfully`);
     return { response: response.content, personaSynthesized: true };
   } catch (error) {
     console.error('[ResponseSynthesizer] Error applying persona voice:', error);
@@ -77,49 +73,171 @@ You are responding based on information that was gathered or generated. Your tas
 }
 
 const execute: NodeExecutor = async (inputs, context) => {
-  console.log(`[ResponseSynthesizer] ========== RESPONSE SYNTHESIZER ==========`);
-  console.log(`[ResponseSynthesizer] Received ${inputs.length} inputs`);
-
   // Extract username for LLM calls
   const username = context.userId || context.username;
 
-  // Store persona input for later synthesis (inputs[4])
-  const personaInput = inputs[4];
-  const hasPersona = personaInput && (personaInput.formatted || typeof personaInput === 'string');
+  // Named inputs from graph edges:
+  // - goal: from orchestrator_llm (node 24)
+  // - scratchpad: from input_message (node 1)
+  // - context: from context_builder (node 8)
+  // - persona: raw persona object from persona_loader or context_builder
+  // - personaText: from persona_formatter (node 30)
+  const goalInput = inputs.goal || inputs[0];
+  const scratchpadInput = inputs.scratchpad || inputs[1];
+  const contextInput = inputs.context || inputs[2];
+  // Raw persona object (for context/values) - from persona_loader or context_builder passthrough
+  const personaObjectInput = inputs.persona ?? inputs[3];
+  // Use nullish coalescing to preserve empty strings
+  const personaInputRaw = inputs.personaText ?? inputs[4];
 
-  // Check if inputs[1] has the SkillExecutor output
-  if (inputs[1]) {
-    if (inputs[1].finalResponse) {
-      console.log(`[ResponseSynthesizer] ✅ Found finalResponse in inputs[1] (SkillExecutor output)`);
+  // Extract persona text (could be object with .formatted or direct string)
+  const personaText = personaInputRaw?.formatted || (typeof personaInputRaw === 'string' && personaInputRaw.trim() ? personaInputRaw : null);
+  // Check if persona is inactive (LoRA-only mode):
+  // - If personaInputRaw has inactive: true flag (full object passed)
+  // - If personaText is empty/falsy (persona_formatter returns '' when persona is inactive)
+  // - If persona object has inactive: true
+  const personaInactive = personaInputRaw?.inactive === true || personaObjectInput?.inactive === true || !personaText;
+  // We can proceed with PRIMARY PATH even without persona - either use persona text, identity summary, or nothing (LoRA-only)
+  const hasPersona = true; // Always allow PRIMARY PATH when we have context
+
+  // Check if scratchpad input has the SkillExecutor output
+  if (scratchpadInput) {
+    if (scratchpadInput.finalResponse) {
+      console.log(`[ResponseSynthesizer] ✅ Found finalResponse in scratchpad (SkillExecutor output)`);
       return {
-        response: inputs[1].finalResponse,
+        response: scratchpadInput.finalResponse,
         skillExecutorOutput: true,
       };
     }
 
-    if (inputs[1].outputs && inputs[1].outputs.response) {
-      console.log(`[ResponseSynthesizer] ✅ Found response in inputs[1].outputs (SkillExecutor output)`);
+    if (scratchpadInput.outputs && scratchpadInput.outputs.response) {
+      console.log(`[ResponseSynthesizer] ✅ Found response in scratchpad.outputs (SkillExecutor output)`);
       return {
-        response: inputs[1].outputs.response,
+        response: scratchpadInput.outputs.response,
         skillExecutorOutput: true,
       };
     }
   }
 
   // Extract loop result or scratchpad
-  let loopResult = inputs[0] || inputs.loopResult || {};
+  let loopResult = goalInput || inputs.loopResult || {};
 
-  // Check if this is orchestrator guidance (from ConditionalReroute fallback)
+  // PRIMARY PATH: Context-based generation
+  // When we have context from context_builder (with memories or unknownSignal) and persona, generate directly
+  const contextData = contextInput || {};
+
+  // Check multiple locations for context data (handles different output formats)
+  // - Direct: contextData.memories, contextData.unknownSignal (from context_builder's context output)
+  // - Nested: contextData.context?.memories (if whole output object passed)
+  const hasMemories = contextData.memories !== undefined ||
+                      contextData.context?.memories !== undefined;
+  const hasUnknownSignal = contextData.unknownSignal !== undefined ||
+                           contextData.context?.unknownSignal !== undefined;
+  const hasContextPackage = hasMemories || hasUnknownSignal;
+
+  if (hasContextPackage && hasPersona) {
+
+    const userMsgInput = scratchpadInput || inputs.userMessage || context.userMessage || {};
+    const userMsgStr = typeof userMsgInput === 'string'
+      ? userMsgInput
+      : (userMsgInput.message || context.userMessage || '');
+
+    // When persona is inactive (LoRA-only mode), skip persona text - let the LoRA provide personality
+    // Otherwise use personaText from graph, or fall back to getIdentitySummary()
+    const personaSummary = personaInactive ? '' : (personaText || getIdentitySummary());
+    const conversationHistory = contextData.conversationHistory || contextData.context?.conversationHistory || context.conversationHistory || [];
+
+    // Extract memories, unknownSignal, and feedbackContext from context
+    const memories = contextData.memories ?? contextData.context?.memories ?? [];
+    const unknownSignal = contextData.unknownSignal ?? contextData.context?.unknownSignal ?? false;
+    const feedbackContext = contextData.feedbackContext ?? contextData.context?.feedbackContext ?? null;
+
+    // Build memory context
+    let memoryContext = '';
+    if (memories.length > 0) {
+      const memoryTexts = memories.slice(0, 5).map((m: any) => {
+        const text = m.content || m.item?.text || m.text || '';
+        return text;
+      }).filter((t: string) => t.length > 0);
+      if (memoryTexts.length > 0) {
+        memoryContext = `\n\n## Memories\n${memoryTexts.map((t: string, i: number) => `${i + 1}. ${t}`).join('\n\n')}`;
+      }
+    } else if (unknownSignal) {
+      memoryContext = '\n\n[No relevant memories found for this query]';
+    }
+
+    // Build feedback section if this is a refinement iteration
+    let feedbackSection = '';
+    if (feedbackContext && feedbackContext.specificFeedback) {
+      feedbackSection = `\n\n## Previous Attempt Failed\nIteration: ${feedbackContext.iteration}\n${feedbackContext.specificFeedback}`;
+    }
+
+    // IMPORTANT: User's current message is the PRIMARY focus
+    // Put it at the TOP of the system prompt so the LLM doesn't lose sight of it
+    const currentQuerySection = `## Current Question\n${userMsgStr}\n\n---\n`;
+
+    // Build system prompt with current query FIRST, then supporting context
+    const systemPrompt = `${currentQuerySection}${personaSummary}${memoryContext}${feedbackSection}`;
+
+    // Limit conversation history to 6 messages (not 10) to reduce context overload
+    const messages = [
+      { role: 'system' as const, content: systemPrompt },
+      ...conversationHistory.slice(-6).map((msg: any) => ({
+        role: msg.role || 'user',
+        content: msg.content || msg.message || '',
+      })).filter((msg: any) => typeof msg.content === 'string' && msg.content.trim().length > 0),
+      { role: 'user' as const, content: userMsgStr },
+    ].filter((msg) => typeof msg.content === 'string' && msg.content.trim().length > 0);
+
+    const inputChars = messages.reduce((sum, m) => sum + (m.content?.length || 0), 0);
+    const estimatedInputTokens = Math.ceil(inputChars / 3.5);
+    const contextLimit = 4096;
+    const maxTokens = Math.min(1024, Math.max(256, contextLimit - estimatedInputTokens - 100));
+
+    try {
+      const response = await callLLM({
+        role: 'persona',
+        messages,
+        userId: username,
+        cognitiveMode: context.cognitiveMode,
+        options: {
+          maxTokens,
+          repeatPenalty: 1.3,
+          temperature: 0.7,
+        },
+        onProgress: context.emitProgress,
+      });
+
+      return {
+        response: response.content,
+        contextBased: true,
+        unknownSignal,
+        memoriesUsed: memories.length,
+      };
+    } catch (error) {
+      console.error('[ResponseSynthesizer] Error in context-based generation:', error);
+      const errorMsg = (error as Error).message;
+      let fallbackMsg = 'I encountered an error while processing your request.';
+      if (errorMsg.includes('offline') || errorMsg.includes('not running') || errorMsg.includes('No remote provider')) {
+        fallbackMsg = 'LLM backend is unavailable. Please configure a working LLM in Settings.';
+      }
+      return {
+        response: fallbackMsg,
+        error: errorMsg,
+      };
+    }
+  }
+
+  // LEGACY PATH: Orchestrator guidance format (from ConditionalReroute fallback)
   if (loopResult.needsMemory !== undefined && loopResult.responseStyle) {
-    console.log(`[ResponseSynthesizer] ✅ Detected orchestrator guidance format`);
 
-    const userMessageInput = inputs[1] || inputs.userMessage || context.userMessage || {};
+    const userMessageInput = scratchpadInput || inputs.userMessage || context.userMessage || {};
     const userMessage = typeof userMessageInput === 'string'
       ? userMessageInput
       : (userMessageInput.message || context.userMessage || '');
 
     const personaSummary = getIdentitySummary();
-    const contextData = inputs[2] || {};
+    const contextData = contextInput || {};
     const conversationHistory = contextData.context?.conversationHistory || context.conversationHistory || [];
 
     // Extract memories from context and format them for the prompt
@@ -133,7 +251,6 @@ const execute: NodeExecutor = async (inputs, context) => {
       }).filter((t: string) => t.length > 0);
       if (memoryTexts.length > 0) {
         memoryContext = `\n\n## Memories\n${memoryTexts.map((t: string, i: number) => `${i + 1}. ${t}`).join('\n\n')}`;
-        console.log(`[ResponseSynthesizer] Including ${memoryTexts.length} memories in context`);
       }
     }
 
@@ -181,7 +298,6 @@ const execute: NodeExecutor = async (inputs, context) => {
         onProgress: context.emitProgress,
       });
 
-      console.log(`[ResponseSynthesizer] ✅ Generated response using orchestrator guidance`);
       return {
         response: response.content,
         orchestratorGuidance: true,
@@ -206,7 +322,6 @@ const execute: NodeExecutor = async (inputs, context) => {
 
   // Check if this is pre-formatted output from scratchpad_formatter
   if (loopResult.formatted && typeof loopResult.formatted === 'string') {
-    console.log(`[ResponseSynthesizer] Received pre-formatted scratchpad from formatter`);
 
     const obsIndex = loopResult.formatted.indexOf('Observation: ');
     if (obsIndex !== -1) {
@@ -230,7 +345,6 @@ const execute: NodeExecutor = async (inputs, context) => {
             const jsonStr = loopResult.formatted.substring(jsonStart, jsonEnd);
             const observation = JSON.parse(jsonStr);
             if (observation.success && observation.outputs && observation.outputs.response) {
-              console.log(`[ResponseSynthesizer] ✅ Extracted response from observation`);
               return {
                 response: observation.outputs.response,
                 formatted: loopResult.formatted,
@@ -247,11 +361,10 @@ const execute: NodeExecutor = async (inputs, context) => {
 
   // Unwrap routedData if present (from conditional_router)
   if (loopResult.routedData) {
-    console.log(`[ResponseSynthesizer] Unwrapping routedData from conditional_router`);
     loopResult = loopResult.routedData;
   }
 
-  const userMessage = inputs[1] || inputs.userMessage || context.userMessage || '';
+  const userMessage = scratchpadInput || inputs.userMessage || context.userMessage || '';
 
   // Handle loop controller output format
   let scratchpad: any[] = [];
@@ -269,18 +382,15 @@ const execute: NodeExecutor = async (inputs, context) => {
 
   // If loop controller already has a finalResponse, check if it needs persona synthesis
   if (finalResponse && finalResponse.trim().length > 0) {
-    console.log('[ResponseSynthesizer] Found finalResponse from loop controller');
+    if (loopResult.delegatedTo === 'claude-code' && loopResult.bypassedReActLoop && personaInputRaw && !personaInactive) {
 
-    if (loopResult.delegatedTo === 'claude-code' && loopResult.bypassedReActLoop && inputs[4]) {
-      console.log('[ResponseSynthesizer] Detected Big Brother delegation with persona input');
-
-      const personaPrompt = inputs[4]?.formatted || inputs[4];
+      const personaPrompt = personaInputRaw?.formatted || personaInputRaw;
 
       if (personaPrompt && typeof personaPrompt === 'string' && personaPrompt.trim().length > 0) {
-        const contextData = inputs[2] || {};
+        const contextData = contextInput || {};
         const conversationHistory = contextData.context?.conversationHistory || context.conversationHistory || [];
 
-        const userMessageInput = inputs[1] || context.userMessage || {};
+        const userMessageInput = scratchpadInput || context.userMessage || {};
         const userMsgStr = typeof userMessageInput === 'string'
           ? userMessageInput
           : (userMessageInput.message || context.userMessage || '');
@@ -323,7 +433,6 @@ DO NOT repeat the technical details verbatim - translate them into your natural 
             onProgress: context.emitProgress,
           });
 
-          console.log(`[ResponseSynthesizer] ✅ Generated persona-infused response for Big Brother`);
           return {
             response: response.content,
             bigBrotherDelegation: true,
@@ -342,7 +451,6 @@ DO NOT repeat the technical details verbatim - translate them into your natural 
       }
     }
 
-    console.log('[ResponseSynthesizer] Using final response from loop controller directly');
     return {
       response: finalResponse,
       loopComplete: loopResult.completed,
@@ -351,10 +459,64 @@ DO NOT repeat the technical details verbatim - translate them into your natural 
   }
 
   // Otherwise synthesize from scratchpad
-  console.log('[ResponseSynthesizer] Synthesizing from scratchpad:', scratchpad.length, 'steps');
-
   if (scratchpad.length === 0) {
-    console.warn('[ResponseSynthesizer] No scratchpad data available');
+
+    // Check context for unknownSignal or empty memories - this is valid conversation, not an error
+    const contextData = contextInput || {};
+    const unknownSignal = contextData.unknownSignal ?? contextData.context?.unknownSignal ?? false;
+    const memories = contextData.memories ?? contextData.context?.memories ?? [];
+
+    if (unknownSignal || memories.length === 0) {
+
+      // Just give the persona the context and let it respond naturally (skip if persona inactive)
+      const personaPrompt = personaInactive ? '' : (personaInputRaw?.formatted || personaInputRaw || '');
+      const conversationHistory = contextData.context?.conversationHistory || context.conversationHistory || [];
+      const userMsgStr = typeof userMessage === 'string'
+        ? userMessage
+        : (userMessage?.message || context.userMessage || '');
+
+      if (personaPrompt && typeof personaPrompt === 'string' && personaPrompt.trim().length > 0) {
+        // Minimal context: persona + fact that no memories were found
+        const systemPrompt = `${personaPrompt}
+
+[No relevant memories found for this query]`;
+
+        const messages = [
+          { role: 'system' as const, content: systemPrompt },
+          ...conversationHistory.slice(-10).map((msg: any) => ({
+            role: msg.role || 'user',
+            content: msg.content || msg.message || '',
+          })).filter((msg: any) => typeof msg.content === 'string' && msg.content.trim().length > 0),
+          { role: 'user' as const, content: userMsgStr },
+        ].filter((msg) => typeof msg.content === 'string' && msg.content.trim().length > 0);
+
+        try {
+          const response = await callLLM({
+            role: 'persona',
+            messages,
+            userId: username,
+            cognitiveMode: context.cognitiveMode,
+            options: {
+              maxTokens: 512,
+              repeatPenalty: 1.2,
+              temperature: 0.7,
+            },
+            onProgress: context.emitProgress,
+          });
+
+          return {
+            response: response.content,
+            unknownResponse: true,
+            personaSynthesized: true,
+          };
+        } catch (error) {
+          console.error('[ResponseSynthesizer] Error generating response:', error);
+        }
+      }
+    }
+
+    // Actual error case - no scratchpad, no persona, no context
+    console.warn('[ResponseSynthesizer] No scratchpad data available and no context');
     return {
       response: 'I was unable to process your request.',
       error: 'Empty scratchpad',
@@ -369,15 +531,14 @@ DO NOT repeat the technical details verbatim - translate them into your natural 
     const parsed = typeof obsText === 'string' ? JSON.parse(obsText) : obsText;
     const candidate = parsed?.outputs?.response || parsed?.response || parsed?.finalResponse;
     if (candidate && typeof candidate === 'string') {
-      console.log('[ResponseSynthesizer] Using response from last observation (fast-path)');
       return {
         response: candidate,
         loopComplete: loopResult.completed,
         iterations: scratchpad.length,
       };
     }
-  } catch (error) {
-    console.log('[ResponseSynthesizer] Fast-path failed:', (error as Error).message);
+  } catch (_) {
+    // Fast-path failed, continue to LLM synthesis
   }
 
   const messages = [
@@ -422,27 +583,30 @@ Based on these execution steps, provide a clear, helpful response to the user's 
 
     // Apply persona voice if persona input is available
     if (hasPersona) {
-      const contextData = inputs[2] || {};
+      const contextData = contextInput || {};
       const conversationHistory = contextData.context?.conversationHistory || context.conversationHistory || [];
-      const userMessageInput = inputs[1] || context.userMessage || {};
+      const userMessageInput = scratchpadInput || context.userMessage || {};
       const userMsgStr = typeof userMessageInput === 'string'
         ? userMessageInput
         : (userMessageInput.message || context.userMessage || '');
 
-      const synthesized = await applyPersonaVoice(
-        result.response,
-        personaInput,
-        userMsgStr,
-        conversationHistory,
-        context.cognitiveMode || 'dual',
-        {},
-        context.emitProgress,
-        username
-      );
+      // Skip persona voice if inactive (LoRA-only mode)
+      if (!personaInactive) {
+        const synthesized = await applyPersonaVoice(
+          result.response,
+          personaInputRaw,
+          userMsgStr,
+          conversationHistory,
+          context.cognitiveMode || 'dual',
+          {},
+          context.emitProgress,
+          username
+        );
 
-      if (synthesized.personaSynthesized) {
-        result.response = synthesized.response;
-        result.personaSynthesized = true;
+        if (synthesized.personaSynthesized) {
+          result.response = synthesized.response;
+          result.personaSynthesized = true;
+        }
       }
     }
 
@@ -464,10 +628,11 @@ Based on these execution steps, provide a clear, helpful response to the user's 
       error: errorMsg,
     };
 
-    if (hasPersona && result.response) {
-      const contextData = inputs[2] || {};
+    // Skip persona voice if inactive (LoRA-only mode)
+    if (!personaInactive && result.response) {
+      const contextData = contextInput || {};
       const conversationHistory = contextData.context?.conversationHistory || context.conversationHistory || [];
-      const userMessageInput = inputs[1] || context.userMessage || {};
+      const userMessageInput = scratchpadInput || context.userMessage || {};
       const userMsgStr = typeof userMessageInput === 'string'
         ? userMessageInput
         : (userMessageInput.message || context.userMessage || '');
@@ -475,7 +640,7 @@ Based on these execution steps, provide a clear, helpful response to the user's 
       try {
         const synthesized = await applyPersonaVoice(
           result.response,
-          personaInput,
+          personaInputRaw,
           userMsgStr,
           conversationHistory,
           context.cognitiveMode || 'dual',
@@ -505,6 +670,8 @@ export const ResponseSynthesizerNode: NodeDefinition = defineNode({
     { name: 'goal', type: 'string' },
     { name: 'scratchpad', type: 'array' },
     { name: 'context', type: 'context' },
+    { name: 'persona', type: 'object', optional: true, description: 'Raw persona object (values, personality, identity)' },
+    { name: 'personaText', type: 'object', optional: true, description: 'Formatted persona text for voice synthesis' },
   ],
   outputs: [
     { name: 'response', type: 'string', description: 'Final natural language response' },
@@ -528,6 +695,6 @@ export const ResponseSynthesizerNode: NodeDefinition = defineNode({
       options: ['default', 'strict', 'summary'],
     },
   },
-  description: 'Synthesizes final response from scratchpad',
+  description: 'Synthesizes final response using persona context',
   execute,
 });

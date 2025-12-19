@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getProfilePaths, ROOT } from '../../index.js';
 import { getSecurityPolicy } from '../../security-policy.js';
+import { indexFilePath } from '../../vector-index.js';
 
 interface EpisodicItem {
   id: string;
@@ -54,16 +55,59 @@ function extractTypeFromPath(filePath: string): string | undefined {
   return 'observation';
 }
 
-function listEpisodic(profilePaths: ReturnType<typeof getProfilePaths>, limit?: number): EpisodicItem[] {
-  const indexPath = path.join(profilePaths.indexDir, 'embeddings-nomic-embed-text.json');
-  let idx: { meta: any; data: any[] } | null = null;
+function listEpisodic(profilePaths: ReturnType<typeof getProfilePaths>, username: string, limit?: number): EpisodicItem[] {
+  // Get the configured index path from vector-index.ts (respects embedding model settings)
+  const configuredIndexPath = indexFilePath(undefined, username);
 
+  let idx: { meta: any; data: any[] } | null = null;
+  let usedIndexPath: string | null = null;
+
+  // Try the configured index first
   try {
-    if (fs.existsSync(indexPath)) {
-      idx = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+    if (fs.existsSync(configuredIndexPath)) {
+      idx = JSON.parse(fs.readFileSync(configuredIndexPath, 'utf8'));
+      usedIndexPath = configuredIndexPath;
+      console.log(`[memories_all] Using configured index: ${path.basename(configuredIndexPath)} (${idx?.data?.length || 0} items)`);
     }
   } catch (err) {
-    console.warn('[memories_all] Failed to load index:', err);
+    console.warn(`[memories_all] Failed to load configured index:`, err);
+  }
+
+  // If configured index doesn't exist or is empty, scan for any available index
+  if (!idx || !idx.data || idx.data.length === 0) {
+    console.log('[memories_all] Configured index not found or empty, scanning for available indices...');
+
+    try {
+      const indexDir = profilePaths.indexDir;
+      if (fs.existsSync(indexDir)) {
+        const files = fs.readdirSync(indexDir).filter(f => f.startsWith('embeddings-') && f.endsWith('.json'));
+
+        for (const file of files) {
+          const indexPath = path.join(indexDir, file);
+          try {
+            const candidate = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+            const itemCount = candidate?.data?.length || 0;
+            console.log(`[memories_all] Found index: ${file} (${itemCount} items)`);
+
+            // Use the index with the most items
+            if (itemCount > (idx?.data?.length || 0)) {
+              idx = candidate;
+              usedIndexPath = indexPath;
+            }
+          } catch (err) {
+            console.warn(`[memories_all] Failed to load ${file}:`, err);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[memories_all] Failed to scan index directory:', err);
+    }
+  }
+
+  if (usedIndexPath) {
+    console.log(`[memories_all] Selected index: ${path.basename(usedIndexPath)} (${idx?.data?.length || 0} items)`);
+  } else {
+    console.warn('[memories_all] No vector index found, falling back to filesystem scan');
   }
 
   if (idx && idx.data && idx.data.length > 0) {
@@ -84,6 +128,29 @@ function listEpisodic(profilePaths: ReturnType<typeof getProfilePaths>, limit?: 
           ? entitiesMatch[1].trim().split(/\s+/).filter(Boolean)
           : [];
 
+        // Compute relPath relative to profile root (handles custom external storage)
+        // IMPORTANT: Always use profile: prefix so paths resolve to the user's actual profile location
+        // This handles the case where index contains old paths but files have been moved
+        const itemPath = item.path;
+        let relPath: string;
+
+        if (itemPath.startsWith(profilePaths.root)) {
+          // Path is already in current profile location
+          relPath = 'profile:' + path.relative(profilePaths.root, itemPath);
+        } else {
+          // Path is from old location (e.g., ROOT/profiles/username/...)
+          // Extract the portion after profiles/username/ and make it relative to current profile
+          const oldDefaultProfileRoot = path.join(ROOT, 'profiles', username);
+          if (itemPath.startsWith(oldDefaultProfileRoot)) {
+            // Convert old path to profile-relative path
+            const relativePart = path.relative(oldDefaultProfileRoot, itemPath);
+            relPath = 'profile:' + relativePart;
+          } else {
+            // Unknown path format - try to extract meaningful relative path
+            relPath = 'profile:' + path.relative(profilePaths.root, itemPath);
+          }
+        }
+
         return {
           id: item.id,
           timestamp: item.timestamp || '',
@@ -92,7 +159,7 @@ function listEpisodic(profilePaths: ReturnType<typeof getProfilePaths>, limit?: 
           tags,
           entities,
           links: [],
-          relPath: path.relative(ROOT, item.path),
+          relPath,
           validation: undefined,
         };
       })
@@ -123,6 +190,8 @@ function listEpisodic(profilePaths: ReturnType<typeof getProfilePaths>, limit?: 
           const raw = fs.readFileSync(fullPath, 'utf8');
           const obj = JSON.parse(raw);
           if (obj && obj.id && obj.timestamp && obj.content) {
+            // Use profile: prefix for paths relative to profile root
+            const relPath = 'profile:' + path.relative(profilePaths.root, fullPath);
             items.push({
               id: obj.id,
               timestamp: obj.timestamp,
@@ -131,7 +200,7 @@ function listEpisodic(profilePaths: ReturnType<typeof getProfilePaths>, limit?: 
               tags: obj.tags || [],
               entities: Array.isArray(obj.entities) ? obj.entities : [],
               links: Array.isArray(obj.links) ? obj.links : [],
-              relPath: path.relative(ROOT, fullPath),
+              relPath,
               validation: obj.validation || undefined,
             });
           }
@@ -161,7 +230,7 @@ function listActiveTasks(profilePaths: ReturnType<typeof getProfilePaths>): Task
         status: obj.status,
         priority: obj.priority,
         updated: obj.updated,
-        relPath: path.relative(ROOT, full),
+        relPath: 'profile:' + path.relative(profilePaths.root, full),
       });
     } catch {}
   }
@@ -181,11 +250,11 @@ function listCurated(profilePaths: ReturnType<typeof getProfilePaths>): CuratedI
         for (const e2 of fs.readdirSync(full, { withFileTypes: true })) {
           const fp = path.join(full, e2.name);
           if (e2.isFile() && (fp.endsWith('.md') || fp.endsWith('.mdx') || fp.endsWith('.txt'))) {
-            out.push({ name: e2.name, relPath: path.relative(ROOT, fp) });
+            out.push({ name: e2.name, relPath: 'profile:' + path.relative(profilePaths.root, fp) });
           }
         }
       } else if (entry.isFile() && (full.endsWith('.md') || full.endsWith('.mdx') || full.endsWith('.txt'))) {
-        out.push({ name: entry.name, relPath: path.relative(ROOT, full) });
+        out.push({ name: entry.name, relPath: 'profile:' + path.relative(profilePaths.root, full) });
       }
     }
   }
@@ -219,7 +288,7 @@ function listCuriosityQuestions(profilePaths: ReturnType<typeof getProfilePaths>
           question: content.question,
           askedAt: content.askedAt,
           status,
-          relPath: path.relative(ROOT, fullPath),
+          relPath: 'profile:' + path.relative(profilePaths.root, fullPath),
           seedMemories: content.seedMemories,
           answeredAt: content.answeredAt,
         });
@@ -253,7 +322,7 @@ export async function handleGetAllMemories(req: UnifiedRequest): Promise<Unified
     // Parse limit from query
     const limit = Math.min(parseInt(req.query?.limit || '100'), 500);
 
-    const episodic = listEpisodic(profilePaths, limit);
+    const episodic = listEpisodic(profilePaths, req.user.username, limit);
     const reflections = episodic.filter(item => item.type === 'reflection');
     const dreams = episodic.filter(item => item.type === 'dream');
     const episodicFiltered = episodic.filter(item => item.type !== 'reflection' && item.type !== 'dream');

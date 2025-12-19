@@ -2,11 +2,11 @@
  * Graph Streaming Module
  *
  * Provides streaming graph execution with real-time progress updates.
- * Extracted from persona_chat.ts to be reusable across endpoints.
+ * Uses native Svelte Flow format (string IDs, edges with handles).
  */
 
 import { executeGraph, getGraphOutput } from './graph-executor.js';
-import { validateCognitiveGraph, type CognitiveGraph } from './cognitive-graph-schema.js';
+import { validateSvelteFlowGraph, type SvelteFlowGraph, type SvelteFlowNode } from './cognitive-graph-schema.js';
 import { withUserContext } from './context.js';
 import { ROOT } from './path-builder.js';
 import { existsSync } from 'node:fs';
@@ -61,7 +61,7 @@ export interface GraphStreamingCallbacks {
 }
 
 export interface LoadedGraph {
-  graph: CognitiveGraph;
+  graph: SvelteFlowGraph;
   source: string;
 }
 
@@ -100,22 +100,22 @@ export function clearCancellation(requestId: string): void {
 interface GraphCacheEntry {
   source: string;
   mtimeMs: number;
-  graph: CognitiveGraph;
+  graph: SvelteFlowGraph;
 }
 
 const graphCache: Record<string, GraphCacheEntry | null> = {};
 
 /**
- * Read and validate a cognitive graph from a file
+ * Read and validate a Svelte Flow graph from a file
  */
-async function readGraphFromFile(filePath: string): Promise<CognitiveGraph | null> {
+async function readGraphFromFile(filePath: string): Promise<SvelteFlowGraph | null> {
   try {
     console.log(`[graph-streaming] Reading graph: ${filePath}`);
     const raw = await readFile(filePath, 'utf-8');
     console.log(`[graph-streaming] File size: ${raw.length} bytes`);
     const parsed = JSON.parse(raw);
-    console.log(`[graph-streaming] Parsed: ${parsed.nodes?.length || 0} nodes`);
-    const validated = validateCognitiveGraph(parsed);
+    console.log(`[graph-streaming] Parsed: ${parsed.nodes?.length || 0} nodes, ${parsed.edges?.length || 0} edges`);
+    const validated = validateSvelteFlowGraph(parsed);
     console.log(`[graph-streaming] Validation PASSED`);
     return validated;
   } catch (error) {
@@ -320,9 +320,9 @@ export function streamGraphExecution(params: GraphStreamingParams): Response {
             lastProgressTime = now;
 
             if (event.type === 'node_start') {
-              const node = loaded.graph.nodes.find(n => n.id === event.nodeId);
-              const nodeName = node?.title || node?.type || `Node ${event.nodeId}`;
-              const nodeType = node?.type || '';
+              const node = loaded.graph.nodes.find((n: SvelteFlowNode) => n.id === event.nodeId);
+              const nodeName = node?.data?.label || node?.data?.nodeType || `Node ${event.nodeId}`;
+              const nodeType = node?.data?.nodeType || '';
 
               push('progress', {
                 step: 'node_executing',
@@ -337,8 +337,8 @@ export function streamGraphExecution(params: GraphStreamingParams): Response {
                 error: event.data?.error,
               });
             } else if (event.type === 'node_complete') {
-              const node = loaded.graph.nodes.find(n => n.id === event.nodeId);
-              const nodeType = node?.type || '';
+              const node = loaded.graph.nodes.find((n: SvelteFlowNode) => n.id === event.nodeId);
+              const nodeType = node?.data?.nodeType || '';
 
               // Extract thoughts from react_planner
               if (nodeType.includes('react_planner') && event.data?.outputs) {

@@ -33,9 +33,9 @@
     onGraphChange?: ((graph: SvelteFlowGraph) => void) | null;
   } = $props();
 
-  // State - use $state.raw for nodes/edges as recommended by Svelte Flow for performance
-  let nodes = $state.raw<Node[]>([]);
-  let edges = $state.raw<Edge[]>([]);
+  // State - use regular $state for two-way binding with Svelte Flow
+  let nodes = $state<Node[]>([]);
+  let edges = $state<Edge[]>([]);
   let graphName = $state('Untitled Graph');
   let graphDescription = $state('');
   let isLoading = $state(true);
@@ -111,6 +111,9 @@
         edges: edges.length,
       });
 
+      // Update unconnected status after loading
+      updateUnconnectedStatusInternal();
+
       // Notify parent of the loaded graph (includes name)
       notifyGraphChange();
     } catch (e) {
@@ -169,39 +172,35 @@
   }
 
   /**
-   * Handle node position changes
-   * Note: Svelte Flow event structure can vary - handle both formats
-   */
-  function handleNodeDragStop(event: CustomEvent<{ node: Node } | Node[]>) {
-    if (!event.detail) return;
-
-    // Svelte Flow may pass node directly, as { node }, or as array
-    const detail = event.detail;
-    let movedNode: Node | undefined;
-
-    if (Array.isArray(detail)) {
-      movedNode = detail[0];
-    } else if ('node' in detail) {
-      movedNode = (detail as { node: Node }).node;
-    } else if ('id' in detail) {
-      movedNode = detail as unknown as Node;
-    }
-
-    if (!movedNode) return;
-
-    nodes = nodes.map((n) =>
-      n.id === movedNode!.id ? { ...n, position: movedNode!.position } : n
-    );
-    notifyGraphChange();
-  }
-
-  /**
    * Notify parent of graph changes
    */
   function notifyGraphChange() {
+    // Update unconnected status whenever graph changes
+    updateUnconnectedStatusInternal();
+
     if (onGraphChange) {
       onGraphChange(getCurrentGraph());
     }
+  }
+
+  /**
+   * Internal function to update unconnected status
+   * (exported version calls this but is available externally)
+   */
+  function updateUnconnectedStatusInternal() {
+    const connectedNodeIds = new Set<string>();
+    for (const edge of edges) {
+      connectedNodeIds.add(edge.source);
+      connectedNodeIds.add(edge.target);
+    }
+
+    nodes = nodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        isUnconnected: !connectedNodeIds.has(node.id),
+      },
+    }));
   }
 
   /**
@@ -276,6 +275,168 @@
       data: { ...n.data, executionState: 'idle' },
     }));
   }
+
+  /**
+   * Delete selected nodes and edges
+   */
+  export function deleteSelected() {
+    const selectedNodeIds = new Set(nodes.filter(n => n.selected).map(n => n.id));
+    const selectedEdgeIds = new Set(edges.filter(e => e.selected).map(e => e.id));
+
+    if (selectedNodeIds.size === 0 && selectedEdgeIds.size === 0) {
+      console.log('[FlowEditor] No nodes or edges selected for deletion');
+      return;
+    }
+
+    // Remove selected nodes
+    nodes = nodes.filter(n => !selectedNodeIds.has(n.id));
+
+    // Remove selected edges AND edges connected to deleted nodes
+    edges = edges.filter(e =>
+      !selectedEdgeIds.has(e.id) &&
+      !selectedNodeIds.has(e.source) &&
+      !selectedNodeIds.has(e.target)
+    );
+
+    console.log(`[FlowEditor] Deleted ${selectedNodeIds.size} nodes, ${selectedEdgeIds.size} edges`);
+    notifyGraphChange();
+  }
+
+  /**
+   * Update display nodes with execution output
+   * Called after graph execution to show results in chat_view and display_buffer nodes
+   */
+  export function updateDisplayNodes(response: string, nodeOutputs?: Record<string, any>) {
+    const displayNodeTypes = ['chat_view', 'display_buffer', 'output_viewer'];
+
+    nodes = nodes.map((node) => {
+      const nodeType = node.data?.schema?.id || node.data?.nodeType?.replace('cognitive/', '');
+
+      if (displayNodeTypes.includes(nodeType)) {
+        // Get node-specific output if available, otherwise use the main response
+        let output = response;
+        if (nodeOutputs && nodeOutputs[node.id]) {
+          const nodeOutput = nodeOutputs[node.id];
+
+          // Output Viewer shows formatted debug info with full data
+          if (nodeType === 'output_viewer') {
+            const iteration = nodeOutput.iteration || 1;
+            const dataType = nodeOutput.dataType || 'unknown';
+            const entryCount = nodeOutput.entryCount || 1;
+            // Show full data, formatted based on type
+            let dataDisplay = '';
+            const data = nodeOutput.data;
+            if (data === null || data === undefined) {
+              dataDisplay = '(empty)';
+            } else if (typeof data === 'string') {
+              // Show full string, truncate only if very long
+              dataDisplay = data.length > 500 ? data.substring(0, 500) + '...' : data;
+            } else if (typeof data === 'object') {
+              // Pretty print JSON, truncate if too long
+              const json = JSON.stringify(data, null, 2);
+              dataDisplay = json.length > 800 ? json.substring(0, 800) + '\n...' : json;
+            } else {
+              dataDisplay = String(data);
+            }
+            output = `[Iter ${iteration}] ${dataType} (${entryCount} entries)\n─────────────────\n${dataDisplay}`;
+          } else {
+            output = nodeOutput.output || nodeOutput.response || nodeOutput.display || response;
+          }
+        }
+
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            executionOutput: output,
+            executionState: 'completed' as const,
+          },
+        };
+      }
+      return node;
+    });
+
+    console.log(`[FlowEditor] Updated display nodes with output (${response.length} chars)`);
+  }
+
+  /**
+   * Update unconnected status for all nodes
+   * Nodes with no incoming AND no outgoing edges are marked as unconnected (yellow)
+   */
+  export function updateUnconnectedStatus() {
+    // Build sets of connected node IDs
+    const connectedNodeIds = new Set<string>();
+    for (const edge of edges) {
+      connectedNodeIds.add(edge.source);
+      connectedNodeIds.add(edge.target);
+    }
+
+    nodes = nodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        isUnconnected: !connectedNodeIds.has(node.id),
+      },
+    }));
+  }
+
+  /**
+   * Mark all nodes as running (start of execution)
+   */
+  export function markAllNodesRunning() {
+    nodes = nodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        executionState: 'running' as const,
+      },
+    }));
+  }
+
+  /**
+   * Mark all nodes as completed
+   */
+  export function markAllNodesCompleted() {
+    nodes = nodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        executionState: 'completed' as const,
+      },
+    }));
+  }
+
+  /**
+   * Mark all nodes as failed
+   */
+  export function markAllNodesFailed() {
+    nodes = nodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        executionState: 'failed' as const,
+      },
+    }));
+  }
+
+  /**
+   * Mark specific nodes with their execution results
+   */
+  export function updateNodeResults(nodeResults: Record<string, { success: boolean; error?: string }>) {
+    nodes = nodes.map((node) => {
+      const result = nodeResults[node.id];
+      if (result) {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            executionState: result.success ? 'completed' as const : 'failed' as const,
+          },
+        };
+      }
+      return node;
+    });
+  }
 </script>
 
 <div class="flow-editor-container">
@@ -294,23 +455,29 @@
     </div>
   {:else}
     <SvelteFlow
-      {nodes}
-      {edges}
+      bind:nodes
+      bind:edges
       {nodeTypes}
       fitView
       snapToGrid
       snapGrid={[15, 15]}
+      minZoom={0.1}
+      maxZoom={2}
+      deleteKeyCode={['Delete', 'Backspace']}
+      selectionKeyCode="Shift"
+      multiSelectionKeyCode="Shift"
       onconnect={handleConnect}
       onedgesdelete={handleEdgesDelete}
       onnodesdelete={handleNodesDelete}
-      onnodedragstop={handleNodeDragStop}
     >
       <Background variant={BackgroundVariant.Dots} gap={20} color="#333" />
       <Controls />
+      <!-- MiniMap disabled - was causing 100% CPU with large graphs (26+ nodes)
       <MiniMap
         nodeColor={(node) => node.data?.schema?.bgColor || '#475569'}
         maskColor="rgba(0, 0, 0, 0.8)"
       />
+      -->
     </SvelteFlow>
   {/if}
 </div>

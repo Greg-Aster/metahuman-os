@@ -19,6 +19,7 @@ interface QualityResult {
   needsRefinement: boolean;
   issues: Array<{ type: string; severity: string; description: string }>;
   suggestions: string[];
+  evaluation?: string;
 }
 
 interface SafetyResult {
@@ -44,7 +45,8 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const response = inputs.response ?? inputs[0] ?? '';
   const qualityResult: QualityResult = inputs.qualityResult ?? inputs[1] ?? { passesThreshold: true, qualityScore: 1 };
   const safetyResult: SafetyResult = inputs.safetyResult ?? inputs[2] ?? { passed: true, violations: [], severity: 'low' };
-  const currentIteration = inputs.currentIteration ?? inputs[3] ?? 1;
+  // Get iteration from input, context (injected by graph executor), or default to 1
+  const currentIteration = inputs.currentIteration ?? inputs[3] ?? context._graphExecutorIteration ?? 1;
   const previousFeedback: FeedbackContext | null = inputs.previousFeedback ?? inputs[4] ?? null;
 
   // Extract properties
@@ -54,8 +56,6 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   const responseText = typeof response === 'string' ? response : (response?.text || response?.content || '');
   const iteration = typeof currentIteration === 'number' ? currentIteration : 1;
-
-  console.log(`[feedback_router] Iteration ${iteration}/${maxIterations}, quality: ${qualityResult.qualityScore?.toFixed(2)}, safety: ${safetyResult.passed}`);
 
   // Check safety first (higher priority than quality)
   const safetyPassed = safetyResult.passed ?? true;
@@ -115,14 +115,18 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       specificIssues.push(`Safety issues: ${safetyResult.violations?.join(', ') || 'unknown'}`);
     }
     if (!qualityPassed) {
+      // Pass ALL issues - let the LLM decide what's important
       const qualityIssues = (qualityResult.issues || [])
-        .filter(i => i.severity === 'high' || i.severity === 'medium')
         .map(i => i.description);
       if (qualityIssues.length > 0) {
         specificIssues.push(`Quality issues: ${qualityIssues.join(', ')}`);
       }
       if (qualityResult.suggestions?.length > 0) {
         specificIssues.push(`Suggestions: ${qualityResult.suggestions.join(', ')}`);
+      }
+      // Include evaluation summary if available
+      if (qualityResult.evaluation) {
+        specificIssues.push(`Evaluation: ${qualityResult.evaluation}`);
       }
     }
 
