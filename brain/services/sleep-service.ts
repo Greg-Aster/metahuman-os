@@ -172,7 +172,12 @@ export async function runNightlyPipeline(config: SleepConfig) {
       console.log(`[sleep-service] Max dreams per night reached (${config.maxDreamsPerNight}). Skipping dreamer.`);
     }
 
-    // Step 2: Run night-processor to handle audio backlog (transcriber + audio-organizer)
+    // Step 2: Run psychoanalyzer to update persona based on recent memories
+    // This closes the persona evolution loop - updating traits, values, goals, heuristics
+    console.log('[sleep-service] Running psychoanalyzer to update persona...');
+    await runAgent('psychoanalyzer', 'Analyze recent memories and update persona');
+
+    // Step 3: Run night-processor to handle audio backlog (transcriber + audio-organizer)
     // Check if there's work to do first
     const inboxResult = storageClient.resolvePath({ category: 'voice', subcategory: 'inbox' });
     const transcriptsResult = storageClient.resolvePath({ category: 'voice', subcategory: 'transcripts' });

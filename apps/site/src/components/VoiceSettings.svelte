@@ -1221,6 +1221,18 @@
           <p class="hint">Kokoro is optimized for CPU inference. GPU recommended only if CPU is slow.</p>
         </div>
 
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              bind:checked={config.kokoro.useCustomVoicepack}
+              disabled={saving}
+            />
+            <span>Use Custom Voicepack</span>
+          </label>
+          <p class="hint">Enable to use your trained voicepack instead of built-in voices. Disable to use the voice selected in the dropdown above.</p>
+        </div>
+
         {#if config.kokoro.useCustomVoicepack}
           <div class="setting-group">
             <label class="checkbox-label">
@@ -1231,12 +1243,7 @@
               />
               <span>Normalize Custom Voicepack Volume</span>
             </label>
-            <p class="hint">Automatically boost quiet custom voicepacks to -3dB peak. Enable if your voicepack sounds too quiet. Disable for natural volume levels.</p>
-          </div>
-
-          <div class="custom-voicepack-info">
-            <strong>✓ Using Custom Voicepack</strong>
-            <p>Currently using your trained voicepack. Select a built-in voice from the dropdown above to switch back.</p>
+            <p class="hint">Automatically boost quiet custom voicepacks to -3dB peak. Enable if your voicepack sounds too quiet.</p>
           </div>
         {/if}
 

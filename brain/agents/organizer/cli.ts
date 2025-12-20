@@ -8,19 +8,25 @@
  * Command line args:
  *   --limit=N      Only process N memories per user
  *   --single-user  Only process current user (not multi-user)
+ *
+ * Environment variables:
+ *   MH_TRIGGER_USERNAME  When set (by API), automatically enables single-user mode
  */
 
-import { initGlobalLogger } from '@metahuman/core';
-import { runCycle, type OrganizerOptions } from './core.js';
+import { initGlobalLogger, withUserContext } from '@metahuman/core';
+import { runCycle, processUserMemories, type OrganizerOptions } from './core.js';
 
 async function main() {
   initGlobalLogger('organizer');
 
   // Parse command line args
   const args = process.argv.slice(2);
-  const singleUser = args.includes('--single-user');
   const limitArg = args.find(a => a.startsWith('--limit='));
   const limit = limitArg ? parseInt(limitArg.split('=')[1], 10) : undefined;
+
+  // Check for trigger username from API (enables single-user mode automatically)
+  const triggerUsername = process.env.MH_TRIGGER_USERNAME;
+  const singleUser = args.includes('--single-user') || !!triggerUsername;
 
   const options: OrganizerOptions = {
     singleUser,
@@ -29,6 +35,20 @@ async function main() {
 
   console.log('[organizer] Running single cycle (managed by scheduler)...');
   if (limit) console.log(`[organizer]   Limit: ${limit} memories per user`);
+
+  // If triggered by a specific user via API, only process that user's memories
+  if (triggerUsername) {
+    console.log(`[organizer]   Mode: single-user (triggered by ${triggerUsername})`);
+
+    const processed = await withUserContext(
+      { userId: triggerUsername, username: triggerUsername, role: 'owner' },
+      async () => processUserMemories(triggerUsername, options)
+    );
+
+    console.log(`[organizer] Done. Processed ${processed} memories for user ${triggerUsername}.`);
+    return;
+  }
+
   if (singleUser) console.log('[organizer]   Mode: single-user');
 
   const result = await runCycle(options);

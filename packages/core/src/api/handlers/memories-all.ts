@@ -48,7 +48,30 @@ interface CuriosityQuestion {
   answeredAt?: string;
 }
 
-function extractTypeFromPath(filePath: string): string | undefined {
+/**
+ * Extract the actual type from a memory file.
+ * Reads just the first ~500 bytes to find the type field efficiently.
+ */
+function extractTypeFromFile(filePath: string): string {
+  try {
+    if (!fs.existsSync(filePath)) return 'observation';
+
+    // Read just the beginning of the file to find the type field
+    const fd = fs.openSync(filePath, 'r');
+    const buffer = Buffer.alloc(500);
+    fs.readSync(fd, buffer, 0, 500, 0);
+    fs.closeSync(fd);
+
+    const content = buffer.toString('utf8');
+    const typeMatch = content.match(/"type"\s*:\s*"([^"]+)"/);
+    if (typeMatch) {
+      return typeMatch[1];
+    }
+  } catch {
+    // Ignore read errors
+  }
+
+  // Fallback to path-based detection
   if (filePath.includes('/reflections/')) return 'reflection';
   if (filePath.includes('/dreams/')) return 'dream';
   if (filePath.includes('/audio-dreams/')) return 'dream';
@@ -155,7 +178,7 @@ function listEpisodic(profilePaths: ReturnType<typeof getProfilePaths>, username
           id: item.id,
           timestamp: item.timestamp || '',
           content: contentPart,
-          type: extractTypeFromPath(item.path),
+          type: extractTypeFromFile(item.path),
           tags,
           entities,
           links: [],
@@ -262,6 +285,56 @@ function listCurated(profilePaths: ReturnType<typeof getProfilePaths>): CuratedI
   return out;
 }
 
+/**
+ * List pruned memories from _pruned subdirectories
+ */
+function listPrunedMemories(profilePaths: ReturnType<typeof getProfilePaths>): EpisodicItem[] {
+  const items: EpisodicItem[] = [];
+  const episodicDir = profilePaths.episodic;
+
+  if (!fs.existsSync(episodicDir)) return items;
+
+  // Walk year directories looking for _pruned folders
+  const years = fs.readdirSync(episodicDir).filter(d => {
+    const full = path.join(episodicDir, d);
+    return fs.statSync(full).isDirectory() && /^\d{4}$/.test(d);
+  });
+
+  for (const year of years) {
+    const prunedDir = path.join(episodicDir, year, '_pruned');
+    if (!fs.existsSync(prunedDir)) continue;
+
+    const files = fs.readdirSync(prunedDir).filter(f => f.endsWith('.json'));
+
+    for (const file of files) {
+      const fullPath = path.join(prunedDir, file);
+      try {
+        const raw = fs.readFileSync(fullPath, 'utf8');
+        const obj = JSON.parse(raw);
+        if (obj && obj.id && obj.timestamp && obj.content) {
+          const relPath = 'profile:' + path.relative(profilePaths.root, fullPath);
+          items.push({
+            id: obj.id,
+            timestamp: obj.timestamp,
+            content: obj.content,
+            type: obj.type || 'pruned',
+            tags: obj.tags || [],
+            entities: Array.isArray(obj.entities) ? obj.entities : [],
+            links: Array.isArray(obj.links) ? obj.links : [],
+            relPath,
+            validation: obj.validation || undefined,
+          });
+        }
+      } catch {
+        // Skip invalid files
+      }
+    }
+  }
+
+  items.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
+  return items;
+}
+
 function listCuriosityQuestions(profilePaths: ReturnType<typeof getProfilePaths>): CuriosityQuestion[] {
   const out: CuriosityQuestion[] = [];
   const questionsDir = path.join(profilePaths.curiosity, 'questions');
@@ -303,6 +376,67 @@ function listCuriosityQuestions(profilePaths: ReturnType<typeof getProfilePaths>
 }
 
 /**
+ * Scan a specific directory for all memories (no type filtering).
+ * Used for categorized directories where all files are of the expected type.
+ */
+function scanDirectoryForMemories(
+  profilePaths: ReturnType<typeof getProfilePaths>,
+  directory: string,
+  limit?: number
+): EpisodicItem[] {
+  const items: EpisodicItem[] = [];
+  const seenIds = new Set<string>();
+
+  if (!fs.existsSync(directory)) return items;
+
+  const walkDirectory = (dir: string): void => {
+    if (!fs.existsSync(dir) || (limit && items.length >= limit)) return;
+
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (limit && items.length >= limit) break;
+
+      const fullPath = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        // Skip _pruned directories
+        if (entry.name !== '_pruned') {
+          walkDirectory(fullPath);
+        }
+      } else if (entry.isFile() && entry.name.endsWith('.json')) {
+        try {
+          const raw = fs.readFileSync(fullPath, 'utf8');
+          const obj = JSON.parse(raw);
+
+          if (obj && obj.id && !seenIds.has(obj.id)) {
+            seenIds.add(obj.id);
+            const relPath = 'profile:' + path.relative(profilePaths.root, fullPath);
+            items.push({
+              id: obj.id,
+              timestamp: obj.timestamp || '',
+              content: obj.content || '',
+              type: obj.type,
+              tags: obj.tags || [],
+              entities: Array.isArray(obj.entities) ? obj.entities : [],
+              links: Array.isArray(obj.links) ? obj.links : [],
+              relPath,
+              validation: obj.validation || undefined,
+            });
+          }
+        } catch {
+          // Skip files that can't be read
+        }
+      }
+    }
+  };
+
+  walkDirectory(directory);
+  items.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
+  return items;
+}
+
+/**
  * GET /api/memories/all - Get all memory types for browser
  */
 export async function handleGetAllMemories(req: UnifiedRequest): Promise<UnifiedResponse> {
@@ -319,17 +453,32 @@ export async function handleGetAllMemories(req: UnifiedRequest): Promise<Unified
   try {
     const profilePaths = getProfilePaths(req.user.username);
 
-    // Parse limit from query
-    const limit = Math.min(parseInt(req.query?.limit || '100'), 500);
+    // Parse limit from query (0 = no limit, max 10000 for safety)
+    const requestedLimit = parseInt(req.query?.limit || '500');
+    const limit = requestedLimit === 0 ? undefined : Math.min(requestedLimit, 10000);
 
     const episodic = listEpisodic(profilePaths, req.user.username, limit);
-    const reflections = episodic.filter(item => item.type === 'reflection');
-    const dreams = episodic.filter(item => item.type === 'dream');
-    const episodicFiltered = episodic.filter(item => item.type !== 'reflection' && item.type !== 'dream');
+
+    // Scan the dedicated categorized directories for reflections and dreams
+    // These are stored in episodic/reflections/ and episodic/dreams/ subdirectories
+    const reflectionsDir = path.join(profilePaths.episodic, 'reflections');
+    const dreamsDir = path.join(profilePaths.episodic, 'dreams');
+
+    const reflections = scanDirectoryForMemories(profilePaths, reflectionsDir, limit);
+    const dreams = scanDirectoryForMemories(profilePaths, dreamsDir, limit);
+
+    // Reflection types for filtering episodic memories
+    const reflectionTypes = ['reflection', 'reflection_summary', 'inner_dialogue'];
+
+    // Episodic excludes reflections and dreams (shown in their own tabs)
+    const episodicFiltered = episodic.filter(item =>
+      !reflectionTypes.includes(item.type || '') && item.type !== 'dream'
+    );
 
     const tasks = listActiveTasks(profilePaths);
     const curated = listCurated(profilePaths);
     const curiosityQuestions = listCuriosityQuestions(profilePaths);
+    const pruned = listPrunedMemories(profilePaths);
 
     return successResponse({
       episodic: episodicFiltered,
@@ -338,6 +487,7 @@ export async function handleGetAllMemories(req: UnifiedRequest): Promise<Unified
       tasks,
       curated,
       curiosityQuestions,
+      pruned,
       pagination: {
         limit,
         returned: episodic.length,

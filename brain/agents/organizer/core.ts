@@ -131,9 +131,12 @@ export async function analyzeMemoryContent(content: string): Promise<AnalysisRes
 
 /**
  * Find unprocessed memories in the episodic directory
+ * @param username - Username to resolve the correct profile storage location
+ * @param limit - Optional limit on number of memories to return
  */
-export function findUnprocessedMemories(limit?: number): string[] {
-  const result = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
+export function findUnprocessedMemories(username: string, limit?: number): string[] {
+  const result = storageClient.resolvePath({ username, category: 'memory', subcategory: 'episodic' });
+  console.log(`[organizer] Resolved episodic path for ${username}: ${result.path}`);
   if (!result.success || !result.path) {
     console.error('[organizer] Cannot resolve episodic path');
     return [];
@@ -158,9 +161,20 @@ export function findUnprocessedMemories(limit?: number): string[] {
           const content = fs.readFileSync(fullPath, 'utf8');
           const memory: EpisodicMemory = JSON.parse(content);
 
+          // Generic/system tags that don't count as "meaningful" semantic tags
+          const GENERIC_TAGS = new Set(['ingested', 'inbox', 'ai', 'curated', 'audio', 'transcript']);
+
+          // Check if memory has only generic tags (no semantic enrichment)
+          const hasOnlyGenericTags = memory.tags && memory.tags.length > 0 &&
+            memory.tags.every(tag => GENERIC_TAGS.has(tag.toLowerCase()));
+
+          // Memory needs processing if:
+          // 1. Not already processed AND
+          // 2. (Has no tags OR only generic tags) AND
+          // 3. Has no entities
           const needsProcessing =
             !memory.metadata?.processed &&
-            (!memory.tags || memory.tags.length === 0) &&
+            (!memory.tags || memory.tags.length === 0 || hasOnlyGenericTags) &&
             (!memory.entities || memory.entities.length === 0);
 
           if (needsProcessing) {
@@ -253,7 +267,7 @@ export async function processUserMemories(
   console.log(`[organizer] Processing user: ${username}`);
 
   try {
-    const memories = findUnprocessedMemories(options.limit);
+    const memories = findUnprocessedMemories(username, options.limit);
 
     if (memories.length > 0) {
       console.log(`[organizer]   Found ${memories.length} memories to process`);

@@ -59,6 +59,17 @@
   } | null = null;
   let storageLoading = false;
 
+  // Reflector content mode
+  type ContentMode = 'all' | 'user' | 'agent';
+  let reflectorContentMode: ContentMode = 'user';
+  let reflectorContentModeLoading = false;
+  let reflectorContentModeSaving = false;
+  const contentModeOptions: Record<ContentMode, string> = {
+    all: 'All content - includes both user messages and AI responses',
+    user: 'User only - reflects on user inputs, excluding verbose AI responses (recommended)',
+    agent: 'Agent only - reflects on AI responses, dreams, and system outputs'
+  };
+
   onMount(async () => {
     loadWelcomeModalSetting();
     loadModelInfo();
@@ -68,6 +79,7 @@
     loadNodePipelineState();
     loadEmbeddingConfig();
     loadStorageStatus();
+    loadReflectorContentMode();
   });
 
   async function loadNodePipelineState() {
@@ -409,6 +421,60 @@
   function refreshStorageStatus() {
     loadStorageStatus();
   }
+
+  async function loadReflectorContentMode() {
+    reflectorContentModeLoading = true;
+    try {
+      const res = await apiFetch('/api/scheduler-config');
+      if (res.ok) {
+        const data = await res.json();
+        // Check global setting first, then agent-specific
+        const mode = data.globalSettings?.memoryContentMode
+          || data.agents?.reflector?.contentMode;
+        if (mode && ['all', 'user', 'agent'].includes(mode)) {
+          reflectorContentMode = mode as ContentMode;
+        }
+      }
+    } catch (err) {
+      console.error('[SystemSettings] Error loading memory content mode:', err);
+    } finally {
+      reflectorContentModeLoading = false;
+    }
+  }
+
+  async function handleReflectorContentModeChange(event: Event) {
+    const target = event.target as HTMLSelectElement;
+    const newMode = target.value as ContentMode;
+
+    if (reflectorContentModeSaving) return;
+    reflectorContentModeSaving = true;
+
+    try {
+      // Update global setting so all memory-reflecting agents use it
+      const res = await apiFetch('/api/scheduler-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          globalSettings: {
+            memoryContentMode: newMode
+          }
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to update memory content mode');
+      }
+
+      reflectorContentMode = newMode;
+    } catch (err) {
+      console.error('[SystemSettings] Error updating memory content mode:', err);
+      // Revert on error
+      target.value = reflectorContentMode;
+      alert(`Failed to update memory content mode: ${(err as Error).message}`);
+    } finally {
+      reflectorContentModeSaving = false;
+    }
+  }
 </script>
 
 <div class="system-settings">
@@ -451,6 +517,34 @@
           <span class="resource-description">Source code and development</span>
         </div>
       </a>
+    </div>
+  </div>
+
+  <h3 class="section-title" style="margin-top: 2rem;">Agent Settings</h3>
+
+  <!-- Reflector Content Mode -->
+  <div class="setting-group">
+    <label class="setting-label">Idle Thoughts Content</label>
+    <div class="lora-toggle-container">
+      <p class="lora-toggle-description" style="margin-bottom: 0.75rem;">
+        Controls what content agents (reflector, curiosity, etc.) reflect on when generating idle thoughts and inner dialogue.
+      </p>
+      <select
+        class="content-mode-select"
+        bind:value={reflectorContentMode}
+        on:change={handleReflectorContentModeChange}
+        disabled={reflectorContentModeLoading || reflectorContentModeSaving}
+      >
+        {#each Object.entries(contentModeOptions) as [mode, description]}
+          <option value={mode}>{mode === 'user' ? '👤' : mode === 'agent' ? '🤖' : '📄'} {mode.charAt(0).toUpperCase() + mode.slice(1)}</option>
+        {/each}
+      </select>
+      <p class="content-mode-description">
+        {contentModeOptions[reflectorContentMode]}
+      </p>
+      {#if reflectorContentModeSaving}
+        <p class="saving-indicator">Saving...</p>
+      {/if}
     </div>
   </div>
 
@@ -1503,5 +1597,62 @@
 
   :global(.dark) .storage-hint strong {
     color: #d1d5db;
+  }
+
+  /* Content Mode Select Styles */
+  .content-mode-select {
+    width: 100%;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    font-size: 0.9375rem;
+    background: white;
+    color: #1f2937;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+
+  :global(.dark) .content-mode-select {
+    background: #1f2937;
+    border-color: #374151;
+    color: #f3f4f6;
+  }
+
+  .content-mode-select:focus {
+    outline: none;
+    border-color: #7c3aed;
+    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+  }
+
+  .content-mode-select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .content-mode-description {
+    font-size: 0.8125rem;
+    color: #6b7280;
+    margin: 0.5rem 0 0 0;
+    padding: 0.5rem 0.75rem;
+    background: rgba(124, 58, 237, 0.05);
+    border-radius: 0.25rem;
+    border-left: 3px solid #7c3aed;
+  }
+
+  :global(.dark) .content-mode-description {
+    color: #9ca3af;
+    background: rgba(167, 139, 250, 0.08);
+    border-left-color: #a78bfa;
+  }
+
+  .saving-indicator {
+    font-size: 0.75rem;
+    color: #7c3aed;
+    margin: 0.5rem 0 0 0;
+    font-style: italic;
+  }
+
+  :global(.dark) .saving-indicator {
+    color: #a78bfa;
   }
 </style>

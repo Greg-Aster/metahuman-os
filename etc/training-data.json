@@ -1,15 +1,16 @@
 {
   "$schema": "training-data-config-schema",
   "description": "Configuration for LoRA training data collection and curation",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "curator": {
     "batchSize": 100,
-    "qualityThreshold": 6.0,
+    "qualityThreshold": 6,
     "temperature": 0.3
   },
   "collection": {
     "maxDays": 999999,
-    "maxSamplesPerSource": 3000
+    "maxSamplesPerSource": 3000,
+    "includePersona": true
   },
   "memoryTypes": {
     "enabled": [
@@ -36,6 +37,20 @@
       "dream": 3,
       "journal": 3,
       "summary": 2
+    },
+    "percentages": {
+      "_comment": "Target percentages for each memory type in training data (0-100). Conversations and observations are weighted highest by default for authentic user voice. Reflections/dreams/curiosity are lower by default but can be increased for more self-growth focus.",
+      "conversation": 40,
+      "observation": 25,
+      "therapy_session": 15,
+      "reflection": 5,
+      "reflection_summary": 3,
+      "inner_dialogue": 3,
+      "dream": 3,
+      "curiosity_question": 3,
+      "decision": 2,
+      "journal": 1,
+      "summary": 0
     }
   },
   "phases": {

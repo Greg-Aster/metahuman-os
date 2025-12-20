@@ -7,7 +7,9 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM } from '../../model-router.js';
-import { getIdentitySummary } from '../../identity.js';
+// NOTE: getIdentitySummary import REMOVED (2025-12-18)
+// Persona injection should ONLY come from graph nodes (persona_loader → persona_formatter)
+// Hidden fallbacks bypass the graph editor workflow and cause unexpected behavior
 
 /**
  * Helper: Apply persona voice to a response if persona input is available
@@ -143,8 +145,9 @@ const execute: NodeExecutor = async (inputs, context) => {
       : (userMsgInput.message || context.userMessage || '');
 
     // When persona is inactive (LoRA-only mode), skip persona text - let the LoRA provide personality
-    // Otherwise use personaText from graph, or fall back to getIdentitySummary()
-    const personaSummary = personaInactive ? '' : (personaText || getIdentitySummary());
+    // Otherwise use ONLY personaText from graph - NO hidden fallbacks
+    // If persona isn't connected in graph, don't inject it (graph is single source of truth)
+    const personaSummary = personaInactive ? '' : (personaText || '');
     const conversationHistory = contextData.conversationHistory || contextData.context?.conversationHistory || context.conversationHistory || [];
 
     // Extract memories, unknownSignal, and feedbackContext from context
@@ -236,7 +239,8 @@ const execute: NodeExecutor = async (inputs, context) => {
       ? userMessageInput
       : (userMessageInput.message || context.userMessage || '');
 
-    const personaSummary = getIdentitySummary();
+    // Use ONLY persona from graph - NO hidden fallbacks (graph is single source of truth)
+    const personaSummary = personaText || '';
     const contextData = contextInput || {};
     const conversationHistory = contextData.context?.conversationHistory || context.conversationHistory || [];
 

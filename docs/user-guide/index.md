@@ -29,6 +29,7 @@ Welcome to **MetaHuman OS** — an autonomous digital personality extension oper
 ### 🎓 4. Advanced Features
 - [Node Editor](advanced-features/node-editor.md) - Visual workflow design
 - [Autonomous Agents](advanced-features/autonomous-agents.md) - Background processing agents
+- [Agency System](advanced-features/agency-system.md) - Desires, goals, and autonomous goal pursuit
 - [Skills System](advanced-features/skills-system.md) - Operator and ReAct engine
 - [Multi-User Profiles](advanced-features/multi-user-profiles.md) - Shared system management
 - [Headless Runtime Mode](advanced-features/headless-mode.md) - Run without UI

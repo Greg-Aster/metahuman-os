@@ -26,6 +26,7 @@ import {
 import { loadCognitiveMode, canWriteMemory as modeAllowsMemoryWrites } from '../../cognitive-mode.js';
 import { loadChatSettings } from '../../chat-settings.js';
 import { scheduler } from '../../agent-scheduler.js';
+import { appendToUserBuffer } from '../../conversation-buffer.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -338,9 +339,15 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
       message: `Graph completed in ${duration}ms`,
     });
 
-    // Update history
+    // Update in-memory history
     pushMessage(mode, { role: 'user', content: message }, sessionId);
     pushMessage(mode, { role: 'assistant', content: responseText, meta: { graphPipeline: true } }, sessionId);
+
+    // Persist to on-disk buffer for UI display
+    if (userContext?.username) {
+      appendToUserBuffer(userContext.username, mode, { role: 'user', content: message });
+      appendToUserBuffer(userContext.username, mode, { role: 'assistant', content: responseText, meta: { graphPipeline: true } });
+    }
 
     // Send final answer
     const facet = getActiveFacet();

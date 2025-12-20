@@ -153,157 +153,236 @@ class StreamSynthesizeRequest(BaseModel):
 @app.post("/synthesize-stream")
 async def synthesize_stream(request: StreamSynthesizeRequest):
     """
-    Stream speech synthesis chunk by chunk with parallel prefetching.
+    PARAGRAPH-LEVEL speech synthesis streaming.
     Returns Server-Sent Events (SSE) with base64-encoded WAV chunks.
 
     Features:
-    - Sub-sentence streaming: Yields phoneme chunks as they're generated
-    - Parallel prefetching: Starts generating next sentence while current streams
-    - Minimal latency: First audio chunk sent as soon as possible
+    - Respects actual paragraph boundaries (double newlines in text)
+    - Each paragraph synthesized as one continuous audio chunk
+    - Natural pauses occur ONLY at real paragraph breaks
+    - Prefetches next paragraph while current one plays
 
     Each event contains:
-    - data: JSON with {chunk_index, sentence_index, total_sentences, audio_base64, is_final}
+    - data: JSON with {chunk_index, audio_base64, audio_size, is_final}
+    - Final 'complete' event with total_chunks count
     """
     from fastapi.responses import StreamingResponse
+    from concurrent.futures import ThreadPoolExecutor
     import base64
     import numpy as np
     import asyncio
-    from concurrent.futures import ThreadPoolExecutor
-    from queue import Queue
-    import threading
+    import re
 
     if pipeline is None:
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
-    # Thread pool for parallel synthesis
-    executor = ThreadPoolExecutor(max_workers=2)
+    # Thread pool for parallel paragraph synthesis
+    executor = ThreadPoolExecutor(max_workers=3)
 
-    def synthesize_sentence(sentence: str, voice: str, speed: float, normalize: bool) -> list:
-        """Synthesize a single sentence in a thread, returning list of audio chunks"""
-        chunks = []
+    def synthesize_paragraph(paragraph: str, voice: str, speed: float, normalize: bool) -> bytes:
+        """Synthesize a full paragraph as ONE continuous audio chunk.
+
+        Key: We use split_pattern=None to prevent ANY internal splitting.
+        The entire paragraph becomes one seamless audio segment.
+        """
         sr = 24000
 
+        # NO split pattern = entire paragraph as one chunk
+        # This ensures continuous audio within each paragraph
         gen = pipeline(
-            sentence,
+            paragraph,
             voice=voice,
             speed=speed,
-            split_pattern=r'[.!?,;:\n]+'  # Split on more punctuation for finer chunks
+            split_pattern=None  # CRITICAL: No splitting = continuous audio
         )
 
+        # Collect all audio (should be just one chunk with split_pattern=None)
+        audio_chunks = []
         for result in gen:
             audio_tensor = result.output.audio
             audio_np = audio_tensor.cpu().numpy()
+            audio_chunks.append(audio_np)
 
-            # Normalize chunk if requested
-            if normalize:
-                max_val = np.abs(audio_np).max()
-                if max_val > 0:
-                    target_peak = 0.707
-                    gain = target_peak / max_val
-                    audio_np = audio_np * gain
+        # Concatenate if multiple (shouldn't happen with split_pattern=None)
+        if len(audio_chunks) > 1:
+            audio = np.concatenate(audio_chunks)
+        elif audio_chunks:
+            audio = audio_chunks[0]
+        else:
+            return b''
 
-            # Convert to WAV bytes
-            buffer = io.BytesIO()
-            sf.write(buffer, audio_np, sr, format='WAV')
-            buffer.seek(0)
-            chunks.append(buffer.read())
+        # Normalize if requested
+        if normalize:
+            max_val = np.abs(audio).max()
+            if max_val > 0:
+                target_peak = 0.707
+                gain = target_peak / max_val
+                audio = audio * gain
 
-        return chunks
+        # Convert to WAV bytes
+        buffer = io.BytesIO()
+        sf.write(buffer, audio, sr, format='WAV')
+        buffer.seek(0)
+        return buffer.read()
 
     async def generate_chunks():
         try:
             voice_to_use = request.custom_voicepack if (request.custom_voicepack and Path(request.custom_voicepack).exists()) else request.voice
 
-            print(f"[Kokoro Server] Streaming synthesis started (parallel mode):")
+            print(f"[Kokoro Server] PARAGRAPH-LEVEL streaming started:")
             print(f"  text length: {len(request.text)}")
             print(f"  voice: {voice_to_use}")
 
-            # Split text into sentences for chunking
-            import re
-            # Split on sentence boundaries but keep the punctuation
-            sentences = re.split(r'(?<=[.!?])\s+', request.text)
-            sentences = [s.strip() for s in sentences if s.strip()]
+            # Split text into REAL paragraphs (double newlines) first
+            raw_paragraphs = re.split(r'\n\s*\n', request.text)
+            raw_paragraphs = [p.strip() for p in raw_paragraphs if p.strip()]
 
-            print(f"[Kokoro Server] Split into {len(sentences)} sentences")
+            # FALLBACK: If no paragraph breaks OR any paragraph is too long,
+            # use character-based chunking (400-800 chars) for natural pacing
+            MIN_CHUNK_LENGTH = 400
+            MAX_CHUNK_LENGTH = 800
 
-            if not sentences:
+            paragraphs = []
+            for para in raw_paragraphs:
+                if len(para) <= MAX_CHUNK_LENGTH:
+                    # Paragraph is good size, use as-is
+                    paragraphs.append(para)
+                else:
+                    # Long paragraph - split at sentence boundaries
+                    sentences = re.split(r'(?<=[.!?])\s+', para)
+                    current_chunk = []
+                    current_length = 0
+
+                    for sentence in sentences:
+                        sentence = sentence.strip()
+                        if not sentence:
+                            continue
+
+                        # If adding this sentence would exceed max, finalize current chunk
+                        if current_length + len(sentence) > MAX_CHUNK_LENGTH and current_chunk:
+                            paragraphs.append(' '.join(current_chunk))
+                            current_chunk = []
+                            current_length = 0
+
+                        current_chunk.append(sentence)
+                        current_length += len(sentence) + 1  # +1 for space
+
+                        # If chunk is good size (>= MIN), finalize it
+                        if current_length >= MIN_CHUNK_LENGTH:
+                            paragraphs.append(' '.join(current_chunk))
+                            current_chunk = []
+                            current_length = 0
+
+                    # Don't forget remaining sentences
+                    if current_chunk:
+                        paragraphs.append(' '.join(current_chunk))
+
+            # If still no paragraphs (empty text or no splits found), use full text
+            if len(paragraphs) == 0 and request.text.strip():
+                # No paragraph breaks - chunk the entire text by character count
+                text = request.text.strip()
+                sentences = re.split(r'(?<=[.!?])\s+', text)
+                current_chunk = []
+                current_length = 0
+
+                for sentence in sentences:
+                    sentence = sentence.strip()
+                    if not sentence:
+                        continue
+
+                    if current_length + len(sentence) > MAX_CHUNK_LENGTH and current_chunk:
+                        paragraphs.append(' '.join(current_chunk))
+                        current_chunk = []
+                        current_length = 0
+
+                    current_chunk.append(sentence)
+                    current_length += len(sentence) + 1
+
+                    if current_length >= MIN_CHUNK_LENGTH:
+                        paragraphs.append(' '.join(current_chunk))
+                        current_chunk = []
+                        current_length = 0
+
+                if current_chunk:
+                    paragraphs.append(' '.join(current_chunk))
+
+            print(f"[Kokoro Server] Split into {len(paragraphs)} chunks (from {len(raw_paragraphs)} raw paragraphs)")
+            for i, p in enumerate(paragraphs):
+                print(f"  Chunk {i+1}: {len(p)} chars - '{p[:50]}...'")
+
+            if not paragraphs:
                 yield f"data: {json.dumps({'event': 'complete', 'total_chunks': 0})}\n\n"
                 return
 
-            chunk_index = 0
             loop = asyncio.get_event_loop()
 
-            # Prefetch queue: maps sentence_index -> Future
-            PREFETCH_COUNT = 2  # Prefetch 2 sentences ahead
+            # Prefetch queue: paragraph_index -> Future
+            PREFETCH_COUNT = 2  # Prefetch 2 paragraphs ahead
             pending_futures = {}
 
             def start_prefetch(idx: int):
-                """Start synthesizing a sentence if not already started"""
-                if idx >= len(sentences) or idx in pending_futures:
+                """Start synthesizing a paragraph if not already started"""
+                if idx >= len(paragraphs) or idx in pending_futures:
                     return
-                sentence = sentences[idx]
+                paragraph = paragraphs[idx]
                 future = loop.run_in_executor(
                     executor,
-                    synthesize_sentence,
-                    sentence,
+                    synthesize_paragraph,
+                    paragraph,
                     voice_to_use,
                     request.speed,
                     request.normalize
                 )
                 pending_futures[idx] = future
-                print(f"[Kokoro Server] Prefetching sentence {idx+1}/{len(sentences)}")
+                print(f"[Kokoro Server] Prefetching paragraph {idx+1}/{len(paragraphs)} ({len(paragraph)} chars)")
 
             # Start initial prefetch batch
-            for i in range(min(PREFETCH_COUNT + 1, len(sentences))):
+            for i in range(min(PREFETCH_COUNT + 1, len(paragraphs))):
                 start_prefetch(i)
 
-            # Process sentences in order, streaming chunks as they complete
-            for sentence_idx in range(len(sentences)):
-                # Ensure this sentence is being generated
-                start_prefetch(sentence_idx)
+            # Process paragraphs in order, streaming as they complete
+            for para_idx in range(len(paragraphs)):
+                # Ensure this paragraph is being generated
+                start_prefetch(para_idx)
 
-                # Start prefetching next sentences
-                for j in range(sentence_idx + 1, min(sentence_idx + PREFETCH_COUNT + 1, len(sentences))):
+                # Start prefetching next paragraphs
+                for j in range(para_idx + 1, min(para_idx + PREFETCH_COUNT + 1, len(paragraphs))):
                     start_prefetch(j)
 
-                # Wait for current sentence's audio chunks
-                future = pending_futures.get(sentence_idx)
+                # Wait for current paragraph's audio
+                future = pending_futures.get(para_idx)
                 if not future:
                     continue
 
                 try:
-                    audio_chunks = await future
-                    del pending_futures[sentence_idx]  # Free memory
+                    wav_bytes = await future
+                    del pending_futures[para_idx]  # Free memory
                 except Exception as e:
-                    print(f"[Kokoro Server] Error synthesizing sentence {sentence_idx}: {e}")
+                    print(f"[Kokoro Server] Error synthesizing paragraph {para_idx}: {e}")
                     continue
 
-                if not audio_chunks:
+                if not wav_bytes:
                     continue
 
-                # Stream each sub-chunk (phoneme group) immediately
-                for sub_idx, wav_bytes in enumerate(audio_chunks):
-                    audio_base64 = base64.b64encode(wav_bytes).decode('utf-8')
+                audio_base64 = base64.b64encode(wav_bytes).decode('utf-8')
 
-                    is_final = (sentence_idx == len(sentences) - 1) and (sub_idx == len(audio_chunks) - 1)
-                    event_data = json.dumps({
-                        "chunk_index": chunk_index,
-                        "sentence_index": sentence_idx,
-                        "sub_chunk_index": sub_idx,
-                        "total_sentences": len(sentences),
-                        "audio_base64": audio_base64,
-                        "audio_size": len(wav_bytes),
-                        "is_final": is_final
-                    })
+                is_final = para_idx == len(paragraphs) - 1
+                event_data = json.dumps({
+                    "chunk_index": para_idx,
+                    "sentence_index": para_idx,
+                    "sub_chunk_index": 0,
+                    "total_sentences": len(paragraphs),
+                    "audio_base64": audio_base64,
+                    "audio_size": len(wav_bytes),
+                    "is_final": is_final
+                })
 
-                    yield f"data: {event_data}\n\n"
-                    chunk_index += 1
-
-                    print(f"[Kokoro Server] Sent chunk {chunk_index} (sentence {sentence_idx+1}, sub {sub_idx+1}): {len(wav_bytes)} bytes")
+                yield f"data: {event_data}\n\n"
+                print(f"[Kokoro Server] Streamed paragraph {para_idx+1}/{len(paragraphs)}: {len(wav_bytes)} bytes")
 
             # Send completion event
-            yield f"data: {json.dumps({'event': 'complete', 'total_chunks': chunk_index})}\n\n"
-            print(f"[Kokoro Server] Streaming complete: {chunk_index} chunks sent")
+            yield f"data: {json.dumps({'event': 'complete', 'total_chunks': len(paragraphs)})}\n\n"
+            print(f"[Kokoro Server] Streaming complete: {len(paragraphs)} paragraphs sent")
 
         except Exception as e:
             import traceback

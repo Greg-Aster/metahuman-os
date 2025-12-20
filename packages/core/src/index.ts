@@ -15,6 +15,7 @@ export * from './paths';  // Path utilities (systemPaths, getProfilePaths, ROOT)
 export * from './deployment';  // Deployment mode configuration (local vs server)
 export * from './identity';
 export * from './memory';
+export * from './memory-content-filter';  // Content mode filtering for agent reflections
 // Note: memory-validation and memory-cleanup are internal utilities, not exported
 export * from './memory-metrics-cache';
 export * from './recent-tools-cache';

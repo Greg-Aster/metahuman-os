@@ -161,6 +161,7 @@ let aiIngestorMemories: EventItem[] = []
 let audioTranscriptMemories: EventItem[] = []
 let dreamMemories: EventItem[] = [];
 let reflectionMemories: EventItem[] = [];
+let prunedMemories: EventItem[] = [];
 let curiosityQuestionsTab: Array<{ id: string; question: string; status: string; askedAt: string; relPath: string; seedMemories?: string[]; answeredAt?: string }> = []
 let functionMemories: Array<{
   id: string
@@ -181,7 +182,7 @@ let currentPage = 1
 const itemsPerPage = 50
 
 let personaTab: 'editor' | 'memory' | 'generator' = 'editor'
-let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' = 'episodic'
+let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' | 'pruned' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'wizard' | 'datasets' | 'manage' | 'system' | 'monitor' | 'adapters' = 'wizard'
 let systemTab: 'chat' | 'lifeline' | 'settings' | 'security' | 'network' | 'storage' | 'addons' | 'scheduler' = 'settings'
@@ -220,23 +221,25 @@ async function loadEvents() {
   loadingEvents = true;
   eventsError = null;
     try {
-      // Load most recent 100 memories (paginated for performance)
-      const res = await apiFetch('/api/memories_all?limit=100');
+      // Load all memories (limit=0 means no limit, client-side pagination handles display)
+      const res = await apiFetch('/api/memories_all?limit=0');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const episodicEvents = Array.isArray(data.episodic) ? data.episodic : [];
       const reflections = Array.isArray(data.reflections) ? data.reflections : [];
       const dreams = Array.isArray(data.dreams) ? data.dreams : [];
+      const pruned = Array.isArray(data.pruned) ? data.pruned : [];
       tasksTab = Array.isArray(data.tasks) ? data.tasks : [];
       curatedTab = Array.isArray(data.curated) ? data.curated : [];
       curiosityQuestionsTab = Array.isArray(data.curiosityQuestions) ? data.curiosityQuestions : [];
-      
+
       // DEBUG: Log all fetched events
-      console.log('--- Memory Buckets Fetched ---', { episodicEvents, reflections, dreams });
+      console.log('--- Memory Buckets Fetched ---', { episodicEvents, reflections, dreams, pruned });
 
       events = episodicEvents;
       reflectionMemories = reflections;
       dreamMemories = dreams;
+      prunedMemories = pruned;
 
       // Filter for AI Ingestor memories (those with 'ingested' or 'ai' tags, or with source links)
       aiIngestorMemories = events.filter(event => 
@@ -359,6 +362,11 @@ $: filteredDreams = filterMemories(dreamMemories, searchQuery);
 $: paginatedDreams = paginate(filteredDreams, currentPage, itemsPerPage);
 $: totalDreamPages = Math.ceil(filteredDreams.length / itemsPerPage);
 
+// Filtered and paginated pruned
+$: filteredPruned = filterMemories(prunedMemories, searchQuery);
+$: paginatedPruned = paginate(filteredPruned, currentPage, itemsPerPage);
+$: totalPrunedPages = Math.ceil(filteredPruned.length / itemsPerPage);
+
 // Filtered and paginated AI ingestor
 $: filteredAiIngestor = filterMemories(aiIngestorMemories, searchQuery);
 $: paginatedAiIngestor = paginate(filteredAiIngestor, currentPage, itemsPerPage);
@@ -375,6 +383,7 @@ $: currentTotalPages = (() => {
     case 'episodic': return totalEpisodicPages;
     case 'reflections': return totalReflectionPages;
     case 'dreams': return totalDreamPages;
+    case 'pruned': return totalPrunedPages;
     case 'ai-ingestor': return totalAiIngestorPages;
     case 'audio': return totalAudioPages;
     default: return 1;
@@ -386,6 +395,7 @@ $: currentTotalItems = (() => {
     case 'episodic': return filteredEvents.length;
     case 'reflections': return filteredReflections.length;
     case 'dreams': return filteredDreams.length;
+    case 'pruned': return filteredPruned.length;
     case 'ai-ingestor': return filteredAiIngestor.length;
     case 'audio': return filteredAudio.length;
     default: return 0;
@@ -737,6 +747,7 @@ async function loadMemoryContent(relPath: string) {
             <button class="tab-button" class:active={memoryTab==='dreams'} on:click={() => memoryTab='dreams'}>Dreams 💭</button>
             <button class="tab-button" class:active={memoryTab==='curiosity'} on:click={() => memoryTab='curiosity'}>Curiosity ❓</button>
             <button class="tab-button" class:active={memoryTab==='functions'} on:click={() => memoryTab='functions'}>Functions 🔧</button>
+            <button class="tab-button" class:active={memoryTab==='pruned'} on:click={() => memoryTab='pruned'}>Pruned 🗑️</button>
           </div>
 
           <!-- Search and Pagination Controls -->
@@ -1333,6 +1344,45 @@ async function loadMemoryContent(relPath: string) {
               </div>
             {/if}
           </div>
+        {:else if memoryTab === 'pruned'}
+          <div class="events-list">
+            {#if prunedMemories.length === 0}
+              <div class="empty-state">
+                <div class="empty-icon">🗑️</div>
+                <div class="empty-title">No pruned memories</div>
+                <div class="empty-description">
+                  Pruned memories will appear here after running the Memory Pruner agent.
+                  Use the "Run Pruner" button in the Memory Controls section above.
+                </div>
+              </div>
+            {:else}
+              {#each paginatedPruned as event}
+                <div class="event-card pruned-card">
+                  <div class="event-card-header">
+                    <div class="event-card-time">
+                      {new Date(event.timestamp).toLocaleString()}
+                    </div>
+                    <div class="validation-controls">
+                      <button class="val-btn edit" title="View pruned memory" on:click|stopPropagation={() => openMemoryEditor(event.relPath, 'Pruned Memory')}>
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="event-body">{event.content}</div>
+                  {#if event.tags && event.tags.length > 0}
+                    <div class="event-tags">
+                      {#each event.tags.slice(0, 5) as tag}
+                        <span class="tag">{tag}</span>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            {/if}
+          </div>
         {/if}
         {:else if personaTab === 'generator'}
           {#await loadComponent('PersonaGenerator')}
@@ -1797,6 +1847,15 @@ async function loadMemoryContent(relPath: string) {
 
   :global(.dark) .function-card {
     border-left-color: #818cf8;
+  }
+
+  .pruned-card {
+    border-left: 3px solid #9ca3af;
+    opacity: 0.85;
+  }
+
+  :global(.dark) .pruned-card {
+    border-left-color: #6b7280;
   }
 
   .function-header-content {

@@ -89,7 +89,7 @@ function cleanupStuckProcesses(username: string) {
 
     // Find all full-cycle and dataset-builder processes for this user
     const psOutput = execSync(
-      `ps aux | grep -E "full-cycle.ts|full-cycle-local.ts|ai-dataset-builder.ts|adapter-builder.ts" | grep "${username}" | grep -v grep | awk '{print $2}'`,
+      `ps aux | grep -E "full-cycle.ts|full-cycle-local.ts|adapter-builder.ts" | grep "${username}" | grep -v grep | awk '{print $2}'`,
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
     ).trim();
 

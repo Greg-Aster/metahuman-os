@@ -28,6 +28,7 @@ interface CuratedMemory {
   curatedAt: string;
   flags: string[];
   suitableForTraining: boolean;
+  rejectionReason?: string;
   cognitiveMode?: string;
   memoryType?: string;
 }
@@ -65,13 +66,55 @@ MEMORY TYPE: ${memoryType}
 
 Convert this memory into a conversational exchange suitable for training.
 
+=== QUALITY CRITERIA ===
+
+REJECT (suitableForTraining=false) if ANY of these apply:
+
+1. CONTAMINATION PATTERNS:
+   - Repetitive phrases repeated 3+ times in same message
+   - Nonsense syllables or garbled text (gibberish, typos dominating content)
+   - Self-referential loops ("you ok home", "test test", repeated greetings)
+   - Model confusion (mixing personas, contradicting identity)
+
+2. SYSTEM ARTIFACTS:
+   - Raw JSON, XML, or code blocks (unless the conversation IS about code)
+   - Tool syntax, function calls, or API responses
+   - Error messages, stack traces, or debug output
+   - System prompts or internal instructions leaked
+
+3. LOW-QUALITY EXCHANGES:
+   - Empty or near-empty responses (< 5 words total)
+   - Single word replies without context ("ok", "yes", "no")
+   - Incomplete thoughts cut off mid-sentence
+   - Responses that don't address the user's message
+
+4. SELF-AWARE AI ARTIFACTS:
+   - "As an AI/LLM/assistant, I..." disclaimers
+   - Explaining model limitations or training cutoffs
+   - Refusing to engage for safety reasons (unless persona-appropriate)
+   - Meta-commentary about being trained or fine-tuned
+
+5. DUPLICATE INDICATORS:
+   - Exact repetition of a previous exchange
+   - Same question asked multiple times with minor variations
+   - Greeting exchanges that add no unique value
+
+ACCEPT (suitableForTraining=true) if:
+- Natural, coherent conversation that reflects the persona
+- Meaningful exchange with substantive content
+- Appropriate emotional tone and style consistency
+- Unique perspective or information not repetitive
+
+=== OUTPUT FORMAT ===
+
 Respond with JSON:
 {
-  "conversationalEssence": "Natural language summary",
-  "userMessage": "Generated or extracted user message",
-  "assistantResponse": "Generated or extracted assistant response",
-  "context": "Additional context if needed",
-  "flags": ["sensitive-data", "tool-syntax", "etc"],
+  "conversationalEssence": "Natural language summary of what this exchange is about",
+  "userMessage": "Clean user message (extracted or synthesized)",
+  "assistantResponse": "Clean assistant response (extracted or synthesized)",
+  "context": "Additional context if helpful",
+  "flags": ["contamination", "system-artifact", "low-quality", "ai-disclaimer", "duplicate"],
+  "rejectionReason": "If rejected, explain why in 1 sentence",
   "suitableForTraining": true/false
 }`;
 
@@ -102,9 +145,15 @@ Respond with JSON:
         curatedAt: new Date().toISOString(),
         flags: result.flags || [],
         suitableForTraining: result.suitableForTraining !== false,
+        rejectionReason: result.rejectionReason,
         cognitiveMode,
         memoryType,
       };
+
+      // Log rejections for debugging
+      if (!curated.suitableForTraining) {
+        console.log(`[curator_llm] ❌ Rejected memory ${memory.id}: ${result.rejectionReason || 'No reason provided'}`);
+      }
 
       curatedResults.push({
         success: true,

@@ -491,7 +491,14 @@ def main():
     log_progress("COMPLETE", "=" * 60)
     log_progress("COMPLETE", f"🎉 Training pipeline complete in {total_time/60:.1f} minutes")
     log_progress("COMPLETE", f"📁 Adapter: {output_dir}")
-    log_progress("COMPLETE", f"📁 Merged GGUF: /workspace/final_merged_model.gguf")
+    if not skip_gguf:
+        final_gguf_path = "/workspace/final_merged_model.gguf" if in_container else os.path.join(os.path.dirname(output_dir), "adapter.gguf")
+        if os.path.exists(final_gguf_path):
+            log_progress("COMPLETE", f"📁 Merged GGUF: {final_gguf_path}")
+        else:
+            log_progress("COMPLETE", "⚠️  GGUF file not found (merge may have failed)")
+    else:
+        log_progress("COMPLETE", "📁 Mode: vLLM safetensors (no GGUF)")
     log_progress("COMPLETE", "=" * 60)
 
 

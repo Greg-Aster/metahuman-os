@@ -19,7 +19,8 @@ function markBackgroundActivity() {
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  const memoriesInput = inputs[0]?.memories || inputs[0] || [];
+  // inputs is an object keyed by handle name, not an array
+  const memoriesInput = inputs.memoriesData?.memories || inputs.memoriesData || [];
   const memories = Array.isArray(memoriesInput) ? memoriesInput : [];
   const temperature = properties?.temperature || 0.3;
   const role = properties?.role || 'persona';

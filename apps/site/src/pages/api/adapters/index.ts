@@ -474,9 +474,9 @@ export const POST: APIRoute = async ({ cookies, request }) => {
 
         // FALLBACK: If PID file doesn't exist or failed, find processes by name
         try {
-          // Find all full-cycle and ai-dataset-builder processes for this user
+          // Find all full-cycle processes for this user
           const psOutput = execSync(
-            `ps aux | grep -E "full-cycle.ts|ai-dataset-builder.ts" | grep "${user.username}" | grep -v grep | awk '{print $2}'`,
+            `ps aux | grep -E "full-cycle.ts" | grep "${user.username}" | grep -v grep | awk '{print $2}'`,
             { encoding: 'utf-8' }
           ).trim();
 

@@ -19,11 +19,12 @@ function markBackgroundActivity() {
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  const memoriesInput = inputs[0]?.memories || inputs[0] || [];
+  // inputs is an object keyed by handle name, not an array
+  const memoriesInput = inputs.memories?.memories || inputs.memories || [];
   const memories = Array.isArray(memoriesInput) ? memoriesInput : [];
-  const personaPrompt = inputs[1]?.formatted || inputs[1] || '';
+  // Note: personaPrompt input is ignored - we use LoRA adapter for persona voice instead
   const temperature = properties?.temperature || 1.0;
-  const role = properties?.role || 'persona';
+  const role = properties?.role || 'persona'; // 'persona' role triggers LoRA adapter
   const username = context.userId || context.username;
 
   if (memories.length < 3) {
@@ -38,7 +39,8 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     .map((m: Memory) => `- A fragment: ${(m.content || '').substring(0, 300)}`)
     .join('\n');
 
-  const systemPrompt = `${personaPrompt ? personaPrompt + '\n\n' : ''}You are the dreamer. You are processing recent experiences into a surreal, metaphorical dream.
+  // No persona text needed - LoRA adapter provides the voice
+  const systemPrompt = `You are the dreamer. You are processing recent experiences into a surreal, metaphorical dream.
 Do not be literal. Weave the following memory fragments into an unbound dream narrative.
 Use symbolism, look for unexpected connections, break logic, merge impossible things.
 The output should feel like a dream—no rules, no structure, pure subconscious flow.

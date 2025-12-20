@@ -80,6 +80,16 @@ import {
 } from './encryption.js';
 import { getProfileStorageConfig } from './users.js';
 
+// Dynamic import for agency module to avoid circular dependencies
+// Used for task-desire reinforcement when tasks complete
+let agencyModule: typeof import('./agency/storage.js') | null = null;
+async function getAgencyModule() {
+  if (!agencyModule) {
+    agencyModule = await import('./agency/storage.js');
+  }
+  return agencyModule;
+}
+
 /**
  * Enhanced metadata schema for episodic events
  * Supports memory continuity features and mode-aware capture
@@ -546,6 +556,19 @@ export function updateTaskStatus(taskId: string, status: Task['status']): void {
     if (fs.existsSync(activePath)) {
       fs.unlinkSync(activePath);
     }
+
+    // Goal-Task-Desire Integration: Reinforce linked desires on task completion
+    // Check if this task has a desire:xxx tag and reinforce the corresponding desire
+    if (status === 'done' && task.tags) {
+      const desireTag = task.tags.find(t => t.startsWith('desire:'));
+      if (desireTag) {
+        const desireId = desireTag.replace('desire:', '');
+        // Fire-and-forget async reinforcement (don't block task completion)
+        reinforceLinkedDesire(desireId, task.title).catch(err => {
+          console.warn('[memory] Failed to reinforce linked desire:', err);
+        });
+      }
+    }
   } else {
     delete task.completed;
     fs.mkdirSync(activeDir, { recursive: true });
@@ -553,6 +576,66 @@ export function updateTaskStatus(taskId: string, status: Task['status']): void {
     if (inCompleted && fs.existsSync(completedPath)) {
       fs.unlinkSync(completedPath);
     }
+  }
+}
+
+/**
+ * Reinforce a desire when its linked task completes successfully.
+ * Part of Goal-Task-Desire integration.
+ * @internal
+ */
+async function reinforceLinkedDesire(desireId: string, taskTitle: string): Promise<void> {
+  try {
+    const agency = await getAgencyModule();
+    const ctx = getUserContext();
+    const username = ctx?.username;
+
+    // Load the desire
+    const desire = await agency.loadDesire(desireId, username);
+    if (!desire) {
+      console.log(`[memory] Desire ${desireId} not found for reinforcement`);
+      return;
+    }
+
+    // Only reinforce nascent/pending desires (not already executing/completed)
+    if (desire.status !== 'nascent' && desire.status !== 'pending') {
+      console.log(`[memory] Desire ${desireId} is ${desire.status}, skipping reinforcement`);
+      return;
+    }
+
+    // Apply reinforcement boost (+0.08 by default)
+    const REINFORCEMENT_BOOST = 0.08;
+    const newStrength = Math.min(1.0, desire.strength + REINFORCEMENT_BOOST);
+
+    const updatedDesire = {
+      ...desire,
+      strength: newStrength,
+      reinforcements: (desire.reinforcements || 0) + 1,
+      updatedAt: timestamp(),
+      lastReviewedAt: timestamp(),
+    };
+
+    await agency.saveDesire(updatedDesire, username);
+
+    audit({
+      category: 'data',
+      level: 'info',
+      event: 'desire_reinforced_by_task',
+      actor: 'memory',
+      details: {
+        desireId,
+        taskTitle,
+        oldStrength: desire.strength,
+        newStrength,
+        reinforcements: updatedDesire.reinforcements,
+        username,
+      },
+    });
+
+    console.log(`[memory] ✓ Reinforced desire "${desire.title}" from task completion (${desire.strength.toFixed(2)} → ${newStrength.toFixed(2)})`);
+  } catch (error) {
+    console.error('[memory] Error reinforcing desire:', error);
+    throw error;
   }
 }
 

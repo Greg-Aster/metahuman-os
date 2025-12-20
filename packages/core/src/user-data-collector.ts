@@ -603,12 +603,55 @@ export function collectCuriosityQA(curiosityDir: string, maxSamples?: number): R
 }
 
 /**
+ * Apply percentage-based sampling to collected samples
+ * This takes the full pool of samples and selects a subset based on type percentages
+ */
+function applyPercentageWeights(
+  samples: RawTrainingSample[],
+  percentages: Record<string, number>,
+  targetTotal: number
+): RawTrainingSample[] {
+  // Group samples by memory type
+  const byType: Record<string, RawTrainingSample[]> = {};
+  for (const sample of samples) {
+    const type = sample.metadata?.memoryType || sample.metadata?.source || 'unknown';
+    if (!byType[type]) byType[type] = [];
+    byType[type].push(sample);
+  }
+
+  // Calculate target counts for each type
+  const result: RawTrainingSample[] = [];
+  const typeCounts: Record<string, { target: number; actual: number }> = {};
+
+  for (const [type, pool] of Object.entries(byType)) {
+    const pct = percentages[type] ?? 0;
+    const targetCount = Math.round((pct / 100) * targetTotal);
+
+    // Randomly sample from pool (or take all if pool is smaller)
+    const shuffled = [...pool].sort(() => Math.random() - 0.5);
+    const selected = shuffled.slice(0, Math.min(targetCount, pool.length));
+
+    result.push(...selected);
+    typeCounts[type] = { target: targetCount, actual: selected.length };
+  }
+
+  console.log('[user-data-collector] Percentage-based sampling results:');
+  for (const [type, counts] of Object.entries(typeCounts)) {
+    console.log(`  ${type}: ${counts.actual}/${counts.target} (${((counts.actual / Math.max(targetTotal, 1)) * 100).toFixed(1)}%)`);
+  }
+
+  return result;
+}
+
+/**
  * Collect all training data for a user
  */
 export function collectAllUserData(profileRoot: string, options?: {
   maxDays?: number;
   maxSamplesPerSource?: number;
   memoryTypes?: string[];
+  percentages?: Record<string, number>;
+  targetTotal?: number;
 }): RawTrainingSample[] {
   console.log(`[user-data-collector] Collecting all training data from: ${profileRoot}`);
 
@@ -643,6 +686,12 @@ export function collectAllUserData(profileRoot: string, options?: {
   console.log(`[user-data-collector]   Memories: ${memorySamples.length}`);
   console.log(`[user-data-collector]   Chat: ${chatSamples.length}`);
   console.log(`[user-data-collector]   Curiosity: ${curiositySamples.length}`);
+
+  // Apply percentage-based sampling if configured
+  if (options?.percentages && options?.targetTotal && options.targetTotal > 0) {
+    console.log(`[user-data-collector] Applying percentage-based sampling (target: ${options.targetTotal})`);
+    return applyPercentageWeights(allSamples, options.percentages, options.targetTotal);
+  }
 
   return allSamples;
 }

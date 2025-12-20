@@ -125,11 +125,25 @@ Adjust your routing based on this feedback. If memory search already failed, con
 
       const systemPrompt = `You are the Intent Orchestrator. Analyze the user's message and determine routing.
 
+MEMORY SEARCH RULES:
+needsMemory=TRUE when:
+- User asks a QUESTION about past events, history, or stored information
+- User explicitly references memory ("remember when...", "what did I say about...")
+- User asks about preferences, relationships, or past conversations
+
+needsMemory=FALSE when:
+- Casual greetings, social statements, or observations ("hey", "it's late", "I'm bored")
+- User is SHARING new information, not asking about old information
+- Simple conversational exchanges that don't require recall
+- Creative requests or philosophical discussions
+
+Default to FALSE for statements/observations. Only TRUE for actual recall questions.
+
 Output JSON:
 {
-  "needsMemory": boolean,        // Should we search episodic memory?
+  "needsMemory": boolean,        // See rules above - default FALSE for statements
   "memoryTier": string,          // hot|warm|cold|facts|all - memory recency
-  "memoryQuery": string,         // Semantic search keywords
+  "memoryQuery": string,         // Semantic search keywords (only if needsMemory=true)
   "needsAction": boolean,        // Does this require an action/skill?
   "actionType": string,          // none|file_read|file_write|task_create|task_update|task_list|web_search|code_execute|complex_task
   "actionParams": object,        // Parameters for the action

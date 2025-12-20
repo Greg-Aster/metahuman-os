@@ -10,12 +10,14 @@
     "note": "Run manually via CLI: ./bin/mh agent run psychoanalyzer"
   },
   "memorySelection": {
-    "strategy": "recent",
-    "daysBack": 14,
-    "maxMemories": 100,
-    "minMemories": 10,
-    "excludeTypes": ["audit", "system"],
-    "priorityTags": ["insight", "reflection", "goal", "value", "decision"]
+    "strategy": "weighted_random",
+    "daysBack": 30,
+    "maxMemories": 30,
+    "minMemories": 5,
+    "excludeTypes": ["audit", "system", "inner_dialogue", "reflection", "reflection_summary", "dream", "curiosity_question", "summary"],
+    "priorityTags": ["insight", "goal", "value", "decision"],
+    "userInputOnly": true,
+    "note": "Chunked processing allows more memories (30) since each section is analyzed separately with lower token usage."
   },
   "analysis": {
     "model": "psychotherapist",
@@ -37,6 +39,7 @@
     "mergeStrategy": "merge",
     "fields": {
       "identity": false,
+      "personality.traits": true,
       "personality.communicationStyle": true,
       "personality.interests": true,
       "personality.aesthetic": true,
@@ -54,17 +57,15 @@
     "removeStaleGoals": true,
     "removeStaleInterests": true,
     "updateGoalStatuses": true,
-    "removeContradictedValues": false,
+    "removeContradictedValues": true,
     "removeUnusedHeuristics": true,
-    "note": "Reconciliation keeps persona fresh by removing outdated content. removeContradictedValues is conservative (disabled by default) as values evolve slowly."
+    "note": "Reconciliation keeps persona fresh by removing outdated content. LLM identifies stale items based on recent conversations."
   },
-  "archival": {
+  "insights": {
     "enabled": true,
-    "path": "archives",
-    "format": "YYYY-MM-DD-HHmmss.json",
-    "keepVersions": 50,
-    "generateChangelog": true,
-    "changelogPath": "archives/CHANGELOG.md"
+    "filePath": "persona/insights.json",
+    "maxEntries": 100,
+    "note": "Tracks persona changes over time - additions and removals logged with timestamps"
   },
   "notifications": {
     "createMemory": true,

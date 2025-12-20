@@ -17,6 +17,7 @@ import { spawn, execSync } from 'node:child_process';
 import { systemPaths, audit, setActiveAdapter } from '../../packages/core/src/index.js';
 import { withUserContext, getUserContext } from '../../packages/core/src/context.js';
 import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
+import { getActiveBackend } from '../../packages/core/src/llm-backend.js';
 import dotenv from 'dotenv';
 const mkdirpSync = (dir: string) => fs.mkdirSync(dir, { recursive: true });
 import { runRemoteTraining } from './lora-trainer';
@@ -96,7 +97,7 @@ function cleanupStuckProcesses(username: string) {
 
     // Find all full-cycle and dataset-builder processes for this user
     const psOutput = execSync(
-      `ps aux | grep -E "full-cycle.ts|ai-dataset-builder.ts|adapter-builder.ts" | grep "${username}" | grep -v grep | awk '{print $2}'`,
+      `ps aux | grep -E "full-cycle.ts|adapter-builder.ts" | grep "${username}" | grep -v grep | awk '{print $2}'`,
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
     ).trim();
 
@@ -394,6 +395,13 @@ async function mainWithContext() {
     // The curator processes ~50 memories per run and maintains quality over time
     // For training, we simply aggregate all available curated conversations
 
+    // Optional mode filter - set METAHUMAN_MODE_FILTER=dual to only include dual mode samples
+    // By default, include all modes since emulation mode IS the AI emulating user voice
+    if (process.env.METAHUMAN_MODE_FILTER && process.env.METAHUMAN_MODE_FILTER !== 'all') {
+      aggregatorArgs.push('--mode', process.env.METAHUMAN_MODE_FILTER);
+      console.log(`[full-cycle] Mode filter: ${process.env.METAHUMAN_MODE_FILTER}`);
+    }
+
     if (process.env.METAHUMAN_MAX_SAMPLES) {
       aggregatorArgs.push('--max', process.env.METAHUMAN_MAX_SAMPLES);
     }
@@ -446,46 +454,6 @@ async function mainWithContext() {
     samples_used = schemaAppliedSamples.length;
     console.log(`[full-cycle] Advanced curation complete: ${samples_used} high-quality samples`);
 
-  } else if (datasetStrategy === 'ai') {
-    console.log('[full-cycle] Using AI dataset builder strategy');
-    const aiBuilderPath = path.join(systemPaths.brain, 'agents', 'ai-dataset-builder.ts');
-    const args = ['tsx', aiBuilderPath, '--output', CLEAN_DATA_FILE];
-    // BUGFIX: Pass username to ensure we only process this user's memories
-    args.push('--username', ctx.username);
-    if (process.env.METAHUMAN_DATASET_MAX) {
-      args.push('--max', process.env.METAHUMAN_DATASET_MAX);
-    }
-    if (process.env.METAHUMAN_DATASET_CHUNK) {
-      args.push('--chunk', process.env.METAHUMAN_DATASET_CHUNK);
-    }
-    if (process.env.METAHUMAN_DATASET_MODEL) {
-      args.push('--model', process.env.METAHUMAN_DATASET_MODEL);
-    }
-
-    console.log(`[full-cycle] Running: ${args.join(' ')}`);
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(args[0], args.slice(1), { cwd: systemPaths.root, stdio: 'inherit' });
-      child.on('exit', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`ai-dataset-builder exited with code ${code}`));
-      });
-      child.on('error', reject);
-    });
-
-    if (!fs.existsSync(CLEAN_DATA_FILE)) {
-      throw new Error('AI dataset builder did not produce output file');
-    }
-    samples_used = fs.readFileSync(CLEAN_DATA_FILE, 'utf-8').split('\n').filter(Boolean).length;
-    console.log(`[full-cycle] AI builder produced ${samples_used} samples`);
-
-    // For compatibility write RAW_DATA_FILE as a copy if needed
-    try {
-      if (!fs.existsSync(RAW_DATA_FILE)) {
-        fs.copyFileSync(CLEAN_DATA_FILE, RAW_DATA_FILE);
-      }
-    } catch (copyErr) {
-      console.warn('[full-cycle] Failed to copy AI dataset to raw path:', (copyErr as Error).message);
-    }
   } else {
     // First run adapter-builder to generate raw dataset
     writeDebugLog('Checking dataset directory', { datasetDir });
@@ -688,55 +656,99 @@ async function mainWithContext() {
     }
   }
 
-  // GGUF conversion is now done on the RunPod during training
-  // The merged GGUF file has already been downloaded to adapter.gguf
-  console.log('[full-cycle] Skipping GGUF conversion (already merged on RunPod)...');
+  // Check which backend we're targeting
+  const activeBackend = getActiveBackend();
+  const isVllmMode = activeBackend === 'vllm';
 
-  // Step 5: Activate - Create Modelfile that loads the merged GGUF directly
-  const modelName = `${ctx.username}-${DATE_STR}`;
+  console.log(`[full-cycle] Active backend: ${activeBackend}`);
+
+  // Step 5: Activate adapter based on backend
+  const modelName = `${ctx.username}-${isVllmMode ? 'vllm' : ''}-${DATE_STR}`;
   const personaName = ctx.username.charAt(0).toUpperCase() + ctx.username.slice(1);
+  const safetensorsAdapter = path.join(OUT_ROOT, 'adapter');
   const recentGGUF = path.join(OUT_ROOT, 'adapter.gguf');
   const canonicalGGUF = path.join(datasetDir, 'adapter.gguf');
 
-  // Verify the merged GGUF exists
-  if (!fs.existsSync(recentGGUF)) {
-    throw new Error(`Merged GGUF not found at ${recentGGUF}. Training may have failed.`);
+  if (isVllmMode) {
+    // vLLM mode: Verify safetensors adapter exists
+    const adapterConfigPath = path.join(safetensorsAdapter, 'adapter_config.json');
+    if (!fs.existsSync(adapterConfigPath)) {
+      throw new Error(`Safetensors adapter not found at ${safetensorsAdapter}. Training may have failed.`);
+    }
+    console.log(`[full-cycle] vLLM mode: Safetensors adapter verified at ${safetensorsAdapter}`);
+  } else {
+    // Ollama mode: Verify GGUF exists
+    if (!fs.existsSync(recentGGUF)) {
+      throw new Error(`Merged GGUF not found at ${recentGGUF}. Training may have failed.`);
+    }
+    console.log('[full-cycle] Ollama mode: GGUF adapter verified');
   }
 
   // Note: Removed timestamped copy creation - files already exist in run directories
   // Symlinks provide access to latest without duplicating storage
 
-  try {
-    if (fs.existsSync(canonicalGGUF) || fs.lstatSync(canonicalGGUF)) {
-      fs.rmSync(canonicalGGUF);
-    }
-  } catch {
-    // Ignore if nothing to remove
-  }
+  const activatedAt = new Date().toISOString();
+  let modelfilePath: string | undefined;
 
-  try {
-    const relative = path.relative(datasetDir, recentGGUF);
-    fs.symlinkSync(relative, canonicalGGUF);
-  } catch (e) {
-    console.warn('[full-cycle] Failed to create adapter.gguf symlink, falling back to copy:', (e as Error).message);
+  if (isVllmMode) {
+    // ========== vLLM MODE ==========
+    // Register the safetensors adapter for vLLM LoRA loading
+    console.log('[full-cycle] vLLM mode: Registering safetensors adapter');
+
+    const activeInfo: ActiveAdapterInfo = {
+      modelName,
+      activatedAt,
+      adapterPath: safetensorsAdapter,
+      dataset: DATE_STR,
+      date: DATE_STR,
+      status: 'loaded',
+      activatedBy: 'full-cycle',
+      isDualAdapter: false,
+      runLabel: RUN_LABEL,
+      trainingMethod: 'unsloth-remote',
+      baseModel: config.base_model,
+    };
+
+    setActiveAdapter(activeInfo);
+    audit({ level: 'info', category: 'action', event: 'adapter_activated', details: { date: DATE_STR, modelName, backend: 'vllm', adapterPath: safetensorsAdapter, username: ctx.username }, actor: ctx.username });
+
+    console.log(`[full-cycle] vLLM adapter registered: ${safetensorsAdapter}`);
+    console.log('[full-cycle] Use vLLM LoRA API to load adapter or it will auto-load on next request');
+
+  } else {
+    // ========== OLLAMA MODE ==========
+    // Create GGUF symlinks and Modelfile for Ollama
+
     try {
-      fs.copyFileSync(recentGGUF, canonicalGGUF);
-    } catch (copyErr) {
-      console.warn('[full-cycle] Failed to copy adapter.gguf into dataset directory:', (copyErr as Error).message);
+      if (fs.existsSync(canonicalGGUF) || fs.lstatSync(canonicalGGUF)) {
+        fs.rmSync(canonicalGGUF);
+      }
+    } catch {
+      // Ignore if nothing to remove
     }
-  }
 
-  let modelfile: string;
-  // Check if dual mode is enabled or if we have both adapters and dual wasn't explicitly disabled
-  const shouldUseDual = mergedAdapterPath && fs.existsSync(recentGGUF) && (dualModeEnabled || process.env.METAHUMAN_DUAL_MODE === undefined);
+    try {
+      const relative = path.relative(datasetDir, recentGGUF);
+      fs.symlinkSync(relative, canonicalGGUF);
+    } catch (e) {
+      console.warn('[full-cycle] Failed to create adapter.gguf symlink, falling back to copy:', (e as Error).message);
+      try {
+        fs.copyFileSync(recentGGUF, canonicalGGUF);
+      } catch (copyErr) {
+        console.warn('[full-cycle] Failed to copy adapter.gguf into dataset directory:', (copyErr as Error).message);
+      }
+    }
 
-  if (shouldUseDual) {
-    // WARNING: Dual-adapter mode may not work with Qwen3-30B (llama.cpp limitation)
-    // The merged GGUF is loaded as the base, and historical adapter applied on top
-    console.warn('[full-cycle] Warning: Dual-adapter mode may not work with Qwen3-30B architecture');
-    console.warn('[full-cycle] Consider disabling dual mode: export METAHUMAN_DUAL_MODE=0');
+    let modelfile: string;
+    // Check if dual mode is enabled or if we have both adapters and dual wasn't explicitly disabled
+    const shouldUseDual = mergedAdapterPath && fs.existsSync(recentGGUF) && (dualModeEnabled || process.env.METAHUMAN_DUAL_MODE === undefined);
 
-    modelfile = `# MetaHuman OS Dual-Adapter Model - ${ctx.username} - ${DATE_STR}
+    if (shouldUseDual) {
+      // WARNING: Dual-adapter mode may not work with Qwen3-30B (llama.cpp limitation)
+      console.warn('[full-cycle] Warning: Dual-adapter mode may not work with Qwen3-30B architecture');
+      console.warn('[full-cycle] Consider disabling dual mode: export METAHUMAN_DUAL_MODE=0');
+
+      modelfile = `# MetaHuman OS Dual-Adapter Model - ${ctx.username} - ${DATE_STR}
 # WARNING: This may not work with Qwen3-30B due to llama.cpp limitations
 FROM ${recentGGUF}
 ADAPTER ${mergedAdapterPath}
@@ -744,11 +756,10 @@ ADAPTER ${mergedAdapterPath}
 SYSTEM You are ${personaName}'s digital personality extension. Speak naturally in first person as ${personaName}.
 `;
 
-    audit({ level: 'info', category: 'action', event: 'full_cycle_dual_adapter_modelfile', details: { base: recentGGUF, historical: mergedAdapterPath, username: ctx.username }, actor: ctx.username });
-  } else {
-    // Single merged model - NO ADAPTER keyword needed
-    // This is the recommended approach for Qwen3-30B
-    modelfile = `# MetaHuman OS Fully-Merged Model - ${ctx.username} - ${DATE_STR}
+      audit({ level: 'info', category: 'action', event: 'full_cycle_dual_adapter_modelfile', details: { base: recentGGUF, historical: mergedAdapterPath, username: ctx.username }, actor: ctx.username });
+    } else {
+      // Single merged model - NO ADAPTER keyword needed
+      modelfile = `# MetaHuman OS Fully-Merged Model - ${ctx.username} - ${DATE_STR}
 # This GGUF contains both the base model and trained adapter (merged on RunPod)
 FROM ${recentGGUF}
 
@@ -763,80 +774,80 @@ TEMPLATE """{{ if .System }}<|im_start|>system
 SYSTEM You are ${personaName}'s digital personality extension. Speak naturally in first person as ${personaName}.
 `;
 
-    console.log('[full-cycle] Using single fully-merged model (recommended for Qwen3-30B)');
-    audit({ level: 'info', category: 'action', event: 'full_cycle_single_merged_modelfile', details: { ggufPath: recentGGUF, run_label: RUN_LABEL, username: ctx.username }, actor: ctx.username });
-  }
-
-  const modelfilePath = path.join(OUT_ROOT, 'Modelfile');
-  fs.writeFileSync(modelfilePath, modelfile);
-
-  const canonicalModelfile = path.join(datasetDir, 'Modelfile');
-  const uniqueModelfile = path.join(datasetDir, `Modelfile-${RUN_LABEL}`);
-  try {
-    fs.writeFileSync(uniqueModelfile, modelfile);
-  } catch (e) {
-    console.warn('[full-cycle] Failed to write unique Modelfile copy:', (e as Error).message);
-  }
-  try {
-    if (fs.existsSync(canonicalModelfile) || fs.lstatSync(canonicalModelfile)) {
-      fs.rmSync(canonicalModelfile);
+      console.log('[full-cycle] Using single fully-merged model (recommended for Qwen3-30B)');
+      audit({ level: 'info', category: 'action', event: 'full_cycle_single_merged_modelfile', details: { ggufPath: recentGGUF, run_label: RUN_LABEL, username: ctx.username }, actor: ctx.username });
     }
-  } catch {
-    // ignore
-  }
-  try {
-    const relative = path.relative(datasetDir, modelfilePath);
-    fs.symlinkSync(relative, canonicalModelfile);
-  } catch (e) {
-    console.warn('[full-cycle] Failed to symlink Modelfile, falling back to copy:', (e as Error).message);
+
+    modelfilePath = path.join(OUT_ROOT, 'Modelfile');
+    fs.writeFileSync(modelfilePath, modelfile);
+
+    const canonicalModelfile = path.join(datasetDir, 'Modelfile');
+    const uniqueModelfile = path.join(datasetDir, `Modelfile-${RUN_LABEL}`);
     try {
-      fs.copyFileSync(modelfilePath, canonicalModelfile);
-    } catch (copyErr) {
-      console.warn('[full-cycle] Failed to copy Modelfile into dataset directory:', (copyErr as Error).message);
+      fs.writeFileSync(uniqueModelfile, modelfile);
+    } catch (e) {
+      console.warn('[full-cycle] Failed to write unique Modelfile copy:', (e as Error).message);
     }
-  }
+    try {
+      if (fs.existsSync(canonicalModelfile) || fs.lstatSync(canonicalModelfile)) {
+        fs.rmSync(canonicalModelfile);
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      const relative = path.relative(datasetDir, modelfilePath);
+      fs.symlinkSync(relative, canonicalModelfile);
+    } catch (e) {
+      console.warn('[full-cycle] Failed to symlink Modelfile, falling back to copy:', (e as Error).message);
+      try {
+        fs.copyFileSync(modelfilePath, canonicalModelfile);
+      } catch (copyErr) {
+        console.warn('[full-cycle] Failed to copy Modelfile into dataset directory:', (copyErr as Error).message);
+      }
+    }
 
-  const activatedAt = new Date().toISOString();
-  const activeInfo: ActiveAdapterInfo = {
-    modelName,
-    activatedAt,
-    adapterPath: recentGGUF,
-    dataset: RUN_LABEL,
-    date: DATE_STR,
-    modelfilePath,
-    status: 'ready_for_ollama_load',
-    activatedBy: 'full-cycle',
-    isDualAdapter: !!mergedAdapterPath,
-    runLabel: RUN_LABEL,
-    trainingMethod: mergedAdapterPath ? 'remote-dual' : 'remote',
-    ggufAdapterPath: recentGGUF,
-    baseModel: config.base_model,
-  };
-
-  if (mergedAdapterPath) {
-    activeInfo.adapters = {
-      historical: mergedAdapterPath,
-      recent: recentGGUF,
+    const activeInfo: ActiveAdapterInfo = {
+      modelName,
+      activatedAt,
+      adapterPath: recentGGUF,
+      dataset: RUN_LABEL,
+      date: DATE_STR,
+      modelfilePath,
+      status: 'ready_for_ollama_load',
+      activatedBy: 'full-cycle',
+      isDualAdapter: !!mergedAdapterPath,
+      runLabel: RUN_LABEL,
+      trainingMethod: mergedAdapterPath ? 'remote-dual' : 'remote',
+      ggufAdapterPath: recentGGUF,
+      baseModel: config.base_model,
     };
-    activeInfo.mergedPath = mergedAdapterPath;
-    activeInfo.dual = true;
-  }
 
-  setActiveAdapter(activeInfo);
+    if (mergedAdapterPath) {
+      activeInfo.adapters = {
+        historical: mergedAdapterPath,
+        recent: recentGGUF,
+      };
+      activeInfo.mergedPath = mergedAdapterPath;
+      activeInfo.dual = true;
+    }
 
-  audit({ level: 'info', category: 'action', event: 'adapter_activated', details: { date: DATE_STR, modelName, auto: true, username: ctx.username }, actor: ctx.username });
+    setActiveAdapter(activeInfo);
+    audit({ level: 'info', category: 'action', event: 'adapter_activated', details: { date: DATE_STR, modelName, backend: 'ollama', auto: true, username: ctx.username }, actor: ctx.username });
 
-  // Step 6: Auto-load into Ollama (best-effort)
-  try {
-    const { execSync } = await import('node:child_process');
-    console.log(`[full-cycle] Creating Ollama model: ${modelName}`);
-    execSync(`ollama create ${modelName} -f ${modelfilePath}`, { stdio: 'inherit' });
-    const loadedInfo: ActiveAdapterInfo = { ...activeInfo, status: 'loaded' };
-    setActiveAdapter(loadedInfo);
-  } catch (e) {
-    console.warn('[full-cycle] Failed to auto-load model into Ollama:', (e as Error).message);
-  }
+    // Step 6: Auto-load into Ollama (best-effort)
+    try {
+      const { execSync } = await import('node:child_process');
+      console.log(`[full-cycle] Creating Ollama model: ${modelName}`);
+      execSync(`ollama create ${modelName} -f ${modelfilePath}`, { stdio: 'inherit' });
+      const loadedInfo: ActiveAdapterInfo = { ...activeInfo, status: 'loaded' };
+      setActiveAdapter(loadedInfo);
+    } catch (e) {
+      console.warn('[full-cycle] Failed to auto-load model into Ollama:', (e as Error).message);
+    }
+  } // End of Ollama mode block
 
+  // Common cleanup and completion (both backends)
   try {
     fs.writeFileSync(uniqueRunInfoPath, JSON.stringify({ runId: currentRunId, runLabel: RUN_LABEL, createdAt: new Date().toISOString() }, null, 2));
     fs.writeFileSync(path.join(datasetDir, 'latest-run.json'), JSON.stringify({ runId: currentRunId, runLabel: RUN_LABEL, updatedAt: new Date().toISOString() }, null, 2));
@@ -844,12 +855,14 @@ SYSTEM You are ${personaName}'s digital personality extension. Speak naturally i
     console.warn('[full-cycle] Failed to record run metadata:', (e as Error).message);
   }
 
-  if (fs.existsSync(recentGGUF)) {
+  // Cleanup (only for Ollama mode with GGUF)
+  if (!isVllmMode && fs.existsSync(recentGGUF)) {
     cleanupAfterSuccessfulMerge(OUT_ROOT, WORK_LOCAL);
   }
 
-  audit({ level: 'info', category: 'action', event: 'full_cycle_completed', details: { date: DATE_STR, run_id: currentRunId, run_label: RUN_LABEL, username: ctx.username }, actor: ctx.username });
+  audit({ level: 'info', category: 'action', event: 'full_cycle_completed', details: { date: DATE_STR, run_id: currentRunId, run_label: RUN_LABEL, backend: activeBackend, username: ctx.username }, actor: ctx.username });
   console.log(`\n✅ [full-cycle] Training complete for user: ${ctx.username}`);
+  console.log(`   Backend: ${activeBackend}`);
   console.log(`   Model name: ${modelName}`);
   console.log(`   Dataset: ${datasetDir}`);
 

@@ -273,6 +273,170 @@ Mark memories as correct or incorrect for training data quality:
 - **Validation badge**: Shows "correct" or "incorrect" status
 - **Training integration**: Validated memories influence AI training quality
 
+---
+
+## Memory Controls (Web UI)
+
+The Memory Controls section provides tools for cleaning, curating, and managing your memory database. Access it via the **Persona → Memory** tab in the web UI.
+
+### Memory Pruner 🧹
+
+**Purpose**: Fast, rule-based cleanup of duplicate and low-quality memories.
+
+**What it detects**:
+- **Exact duplicates**: MD5 hash matching of normalized content
+- **Near-duplicates**: Jaccard similarity (configurable threshold, default 85%)
+- **Contamination patterns**: "you ok home", "test test test", single-word replies
+- **AI disclaimers**: "As an AI...", "I cannot...", "I don't have the ability"
+- **System artifacts**: Raw JSON, XML, error messages, stack traces
+
+**Settings** (click ⚙️):
+- **Min Content Length**: Minimum characters for valid content (5-50, default 10)
+- **Similarity Threshold**: Word overlap percentage for near-duplicate detection (70-95%, default 85%)
+- **Auto-rebuild index**: Automatically rebuild search index after pruning
+
+**Actions**:
+- **Preview**: Runs in dry-run mode - shows what would be pruned without actually pruning (safe!)
+- **Run Pruner**: Actually prunes memories, moving them to `_pruned/` subdirectories
+
+**Recovery**: Pruned files are NOT deleted - they're moved to `memory/episodic/YYYY/_pruned/` for review. You can view them in the **Pruned** tab and restore if needed.
+
+**CLI Usage**:
+```bash
+# Preview what would be pruned (dry run)
+tsx brain/agents/memory-pruner/cli.ts --username greggles --dry-run --verbose
+
+# Actually prune memories
+tsx brain/agents/memory-pruner/cli.ts --username greggles
+
+# Custom settings
+tsx brain/agents/memory-pruner/cli.ts --username greggles --min-length 15 --similarity 0.90
+```
+
+---
+
+### Training Curator 📋
+
+**Purpose**: LLM-based quality evaluation for training data preparation.
+
+**What it does**:
+- Analyzes each memory using an LLM (curator role)
+- Evaluates suitability for LoRA/fine-tuning training
+- Extracts clean conversation pairs (user message → assistant response)
+- Filters unsuitable content based on quality criteria
+
+**Quality Criteria** (LLM judges):
+- ✓ Natural, coherent conversation
+- ✓ Reflects persona accurately
+- ✓ Meaningful exchange with substance
+- ✗ Repetitive phrases (3+ times in same message)
+- ✗ System artifacts (JSON, tools, errors)
+- ✗ AI disclaimers / model confusion
+- ✗ Empty or near-empty responses
+
+**Settings** (click ⚙️):
+- **Temperature**: LLM creativity (0.0 = strict, 1.0 = creative, default 0.3)
+
+**Output**: Creates curated records in `memory/curated/conversations/` with:
+- `suitableForTraining`: true/false
+- `rejectionReason`: Why memory was rejected (if applicable)
+- `conversationalEssence`: Summary of the exchange
+- `userMessage` / `assistantResponse`: Clean extracted pairs
+
+---
+
+### Memory Organizer 🏷️
+
+**Purpose**: Enriches memories with LLM-extracted metadata.
+
+**What it does**:
+- Scans unprocessed episodic memories
+- Uses LLM to extract:
+  - **Tags**: Lowercase keywords describing content
+  - **Entities**: People, places, organizations mentioned
+- Updates `metadata.processed = true` when complete
+
+#### How Memory Tagging Works
+
+MetaHuman OS uses **two tagging paths**:
+
+1. **Chat conversations** (automatic): Tagged at save time via the LLM Enricher node in the cognitive graph. When you chat, the system automatically extracts tags and entities before saving the memory. This means most memories are already enriched when saved.
+
+2. **File ingestion** (basic): The ingestor agent adds only generic tags like `['ingested', 'inbox']`. These memories benefit from running the organizer to add semantic tags.
+
+3. **Manual captures** (needs organizer): CLI captures via `mh capture` may need organizer processing for semantic enrichment.
+
+**When to run**:
+- After file ingestion (the ingestor doesn't use LLM enrichment)
+- After capturing new memories manually via CLI
+- For legacy memories from before the LLM enricher was implemented
+
+**Note**: If you see "No new memories to process", this means all memories already have tags and entities. This is expected for chat-based memories.
+
+---
+
+### Search Index 🔍
+
+**Purpose**: Manages vector embeddings for semantic search.
+
+**Status displays**:
+- **Ready/Not built**: Whether index exists
+- **Items**: Number of memories indexed
+- **Model**: Embedding model used (e.g., `qwen3-embedding-0.6b`)
+- **Built**: Date index was last built
+
+**Actions**:
+- **Refresh**: Reload current status
+- **Rebuild**: Generate fresh embeddings for all memories
+
+**When to rebuild**:
+- After running the pruner (removes pruned memories from search)
+- After adding many new memories
+- After changing embedding model
+
+---
+
+### Pruner vs Curator: When to Use Each?
+
+| | 🧹 Pruner | 📋 Curator |
+|---|---|---|
+| **Speed** | Fast (no LLM) | Slow (LLM per memory) |
+| **Purpose** | Clean up storage | Prepare training data |
+| **Detects** | Duplicates, patterns | Quality, coherence |
+| **Result** | Moves to `_pruned/` | Creates curated records |
+| **Run order** | First (cleanup) | Second (prepare training) |
+
+**Recommended workflow**:
+1. **Preview** - See what pruner would remove (safe)
+2. **Run Pruner** - Clean duplicates and junk
+3. **Check Pruned tab** - Review and restore if needed
+4. **Run Curator** - Prepare clean training data
+5. **Rebuild Index** - Update search (auto if enabled)
+
+---
+
+### Pruned Tab 🗑️
+
+The **Pruned** tab in the Memory Browser shows all memories that have been pruned:
+
+- View pruned memory content
+- Click the eye icon to open full memory editor
+- Review why each memory was pruned
+- Restore memories by moving files back from `_pruned/` to parent directory
+
+**Directory structure**:
+```
+memory/episodic/
+├── 2025/
+│   ├── 2025-01-15-abc123.json      # Active memory
+│   ├── 2025-01-16-def456.json      # Active memory
+│   └── _pruned/                     # Pruned memories
+│       ├── 2025-01-10-old123.json  # Duplicate removed
+│       └── 2025-01-12-junk456.json # Contamination removed
+```
+
+---
+
 ## Storage Locations
 
 All memory data is stored in the `memory/` directory:

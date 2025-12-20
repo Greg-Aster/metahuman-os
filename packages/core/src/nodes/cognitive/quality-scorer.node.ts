@@ -86,21 +86,35 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     };
   }
 
-  // Extract persona values for evaluation
+  // Extract ONLY essential persona data for alignment check
+  // Full persona objects are too heavy (10KB+) - slim down to what's needed
   const personaValues = persona.values || {};
   const personaPersonality = persona.personality || {};
   const personaIdentity = persona.identity || {};
 
-  // Build persona context for the evaluator
+  // Extract only core values (the main alignment check)
+  const coreValues = personaValues.core || [];
+  const coreValuesText = coreValues.length > 0
+    ? coreValues.map((v: any) => `- ${v.value}: ${v.description || ''}`).join('\n')
+    : 'No core values defined';
+
+  // Extract privacy/boundaries if present
+  const boundaries = personaValues.boundaries || [];
+  const boundariesText = boundaries.length > 0
+    ? boundaries.map((b: any) => `- ${b}`).join('\n')
+    : '';
+
+  // Extract communication style (compact)
+  const commStyle = personaPersonality.communicationStyle || {};
+  const styleText = commStyle.tone ? `Tone: ${commStyle.tone}` : '';
+
+  // Build COMPACT persona context (only what's needed for alignment check)
   const personaContext = `
-PERSONA VALUES:
-${JSON.stringify(personaValues, null, 2)}
-
-PERSONALITY TRAITS:
-${JSON.stringify(personaPersonality, null, 2)}
-
-IDENTITY:
-${JSON.stringify(personaIdentity, null, 2)}
+PERSONA: ${personaIdentity.name || 'Unknown'}
+CORE VALUES:
+${coreValuesText}
+${boundariesText ? `\nBOUNDARIES:\n${boundariesText}` : ''}
+${styleText ? `\nSTYLE: ${styleText}` : ''}
 `.trim();
 
   try {

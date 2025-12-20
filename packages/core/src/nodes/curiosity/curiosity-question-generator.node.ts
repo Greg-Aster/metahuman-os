@@ -7,8 +7,10 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { callLLM, type RouterMessage } from '../../model-router.js';
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  const memories = inputs[0]?.memories || [];
-  const personaInput = inputs[1];
+  // Access inputs by handle name, with fallback to indexed access
+  const memoriesInput = inputs['memories'] || inputs.memories || inputs[0];
+  const memories = Array.isArray(memoriesInput) ? memoriesInput : memoriesInput?.memories || [];
+  const personaInput = inputs['personaPrompt'] || inputs.personaPrompt || inputs[1];
   const temperature = properties?.temperature || 0.6;
   const username = context.userId;
 

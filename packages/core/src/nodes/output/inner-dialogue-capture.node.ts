@@ -38,10 +38,12 @@ export const InnerDialogueCaptureNode: NodeDefinition = defineNode({
   description: 'Saves inner dialogue to episodic memory (never shown in main chat)',
 
   execute: async (inputs, context, properties) => {
-    // Extract reflection text (slot 0)
-    const reflectionText = typeof inputs[0] === 'string'
-      ? inputs[0]
-      : inputs[0]?.response || inputs[0]?.reflection || inputs[0]?.consolidatedChain || inputs[0]?.insight || '';
+    // Extract reflection text from 'text' input handle
+    // The graph executor maps inputs by handle name, not index
+    const textInput = inputs['text'] || inputs.text;
+    const reflectionText = typeof textInput === 'string'
+      ? textInput
+      : textInput?.response || textInput?.reflection || textInput?.consolidatedChain || textInput?.insight || '';
 
     if (!reflectionText || reflectionText.trim().length === 0) {
       return {
@@ -58,10 +60,12 @@ export const InnerDialogueCaptureNode: NodeDefinition = defineNode({
     }
 
     try {
+      // Access metadata by handle name, not index
+      const metadataInput = inputs['metadata'] || inputs.metadata;
       const options = {
         type: 'inner_dialogue' as const,
-        tags: inputs[1]?.tags || properties?.tags || ['idle-thought', 'self-reflection', 'inner'],
-        links: inputs[1]?.links || undefined,
+        tags: metadataInput?.tags || properties?.tags || ['idle-thought', 'self-reflection', 'inner'],
+        links: metadataInput?.links || undefined,
       };
 
       const result: CaptureResult = captureEventWithDetails(reflectionText, options);

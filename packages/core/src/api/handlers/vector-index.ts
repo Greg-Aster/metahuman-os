@@ -21,7 +21,7 @@ export async function handleGetIndex(req: UnifiedRequest): Promise<UnifiedRespon
   }
 
   try {
-    const status = await getIndexStatus();
+    const status = await getIndexStatus(undefined, req.user.username);
     return successResponse(status);
   } catch (error) {
     console.error('[api/index] GET error:', error);
@@ -48,10 +48,10 @@ export async function handleBuildIndex(req: UnifiedRequest): Promise<UnifiedResp
   try {
     console.log('[api/index] Starting index build...');
     // buildMemoryIndex returns the file path as a string
-    await buildMemoryIndex();
+    await buildMemoryIndex({ username: req.user.username });
 
     // Get the status to know how many items were indexed
-    const status = await getIndexStatus();
+    const status = await getIndexStatus(undefined, req.user.username);
 
     audit({
       level: 'info',

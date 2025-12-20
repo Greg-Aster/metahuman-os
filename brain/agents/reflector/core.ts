@@ -36,6 +36,9 @@ import { executeTrainOfThoughtForUser } from '../train-of-thought/core.js';
 // Configuration
 // ============================================================================
 
+// Content mode: what type of content to include in reflections
+export type ContentMode = 'all' | 'user' | 'agent';
+
 // Technical keywords to deprioritize (not exclude, just lower weight)
 const technicalKeywords = [
   'metahuman', 'ai agent', 'organizer', 'reflector', 'boredom-service',
@@ -43,10 +46,61 @@ const technicalKeywords = [
   'audit', 'persona', 'memory system', 'cli', 'codebase', 'development'
 ];
 
+// Cached content mode setting
+let cachedContentMode: ContentMode | null = null;
+
+/**
+ * Load the content mode setting from agents.json
+ * Priority: globalSettings.memoryContentMode > agents.reflector.contentMode > default 'user'
+ */
+async function loadContentMode(): Promise<ContentMode> {
+  if (cachedContentMode) return cachedContentMode;
+
+  try {
+    // Try user profile first, fall back to system config
+    const profileResult = storageClient.resolvePath({ category: 'config' as any, subcategory: 'agents' });
+    let agentsPath = profileResult.success && profileResult.path
+      ? profileResult.path
+      : path.join(ROOT, 'etc', 'agents.json');
+
+    // Ensure we have the full path
+    if (!agentsPath.endsWith('.json')) {
+      agentsPath = path.join(agentsPath, 'agents.json');
+    }
+
+    const raw = await fs.readFile(agentsPath, 'utf-8');
+    const config = JSON.parse(raw);
+
+    // Check global setting first, then agent-specific, then default
+    const mode = config.globalSettings?.memoryContentMode
+      || config.agents?.reflector?.contentMode
+      || 'user';
+
+    if (['all', 'user', 'agent'].includes(mode)) {
+      cachedContentMode = mode as ContentMode;
+      console.log(`[reflector] Content mode: ${mode}`);
+      return cachedContentMode;
+    }
+  } catch (err) {
+    console.warn('[reflector] Could not load contentMode from config, using default:', err);
+  }
+
+  cachedContentMode = 'user';
+  return cachedContentMode;
+}
+
+/**
+ * Clear cached content mode (call when config changes)
+ */
+export function clearContentModeCache(): void {
+  cachedContentMode = null;
+}
+
 export interface ReflectorOptions {
   useTrainOfThought?: boolean;
   chainLength?: number;
   singleUser?: boolean;
+  contentMode?: ContentMode;
 }
 
 export interface ReflectorResult {
@@ -72,9 +126,114 @@ async function loadReflectorGraph(): Promise<SvelteFlowGraph> {
 // ============================================================================
 
 /**
- * Get ALL memories (no pool limit)
+ * Extract content from a memory based on the content mode setting.
+ *
+ * Content modes:
+ * - 'user': User inputs only (excludes AI responses, includes dreams)
+ * - 'agent': Agent outputs only (AI responses, dreams, system outputs)
+ * - 'all': Everything (both user and AI content)
  */
-export async function getAllMemories() {
+function extractMemoryContent(memory: any, mode: ContentMode): string | null {
+  const type = memory.type || memory.metadata?.type;
+  const content = memory.content || '';
+  const response = memory.response || '';
+
+  // Handle based on content mode
+  switch (mode) {
+    case 'all':
+      // Return everything - skip only pure system/operator actions
+      if (type === 'operator') return null;
+      return content;
+
+    case 'agent':
+      // Agent-only: return AI responses, dreams, system outputs
+      if (type === 'dream' || type === 'inner_dialogue') {
+        return content;
+      }
+      if (type === 'conversation') {
+        // Extract only the AI response
+        if (response) return response;
+        if (content.includes('\n\nAssistant:')) {
+          const parts = content.split('\n\nAssistant:');
+          return parts[1]?.trim() || null;
+        }
+        return null; // No AI response found
+      }
+      if (type === 'action' || type === 'system') {
+        return content;
+      }
+      return null; // Skip user-only content
+
+    case 'user':
+    default:
+      // User-only: skip system/action types
+      if (type === 'action' || type === 'system' || type === 'operator') {
+        return null;
+      }
+
+      // Dreams are creative AI output worth reflecting on (exception)
+      if (type === 'dream') {
+        return content;
+      }
+
+      // For conversations, extract only the user portion
+      if (type === 'conversation') {
+        // Format 1: "User: <message>\n\nAssistant: <response>"
+        if (content.includes('\n\nAssistant:')) {
+          const userPart = content.split('\n\nAssistant:')[0];
+          return userPart.replace(/^User:\s*/i, '').trim();
+        }
+
+        // Format 2: "Me: \"<message>\"" with separate response field
+        if (content.startsWith('Me:') || content.startsWith('User:')) {
+          return content
+            .replace(/^(Me|User):\s*/i, '')
+            .replace(/^"/, '')
+            .replace(/"$/, '')
+            .trim();
+        }
+
+        // If there's a separate response field, content is likely just user input
+        if (response) {
+          return content.replace(/^(Me|User):\s*/i, '').replace(/^"/, '').replace(/"$/, '').trim();
+        }
+
+        // Try to detect and strip AI response
+        const assistantPatterns = [
+          /\n\n(Assistant|AI|Greg|MetaHuman):/i,
+          /\n\n---\n/,
+        ];
+        for (const pattern of assistantPatterns) {
+          if (pattern.test(content)) {
+            return content.split(pattern)[0].trim();
+          }
+        }
+
+        return content;
+      }
+
+      // Observations are user-captured, pass through
+      if (type === 'observation') {
+        return content;
+      }
+
+      // Default: return content for unknown types
+      return content;
+  }
+}
+
+// Backwards compatibility alias
+function extractUserContent(memory: any): string | null {
+  return extractMemoryContent(memory, 'user');
+}
+
+/**
+ * Get ALL memories (no pool limit), extracting content based on content mode
+ */
+export async function getAllMemories(contentModeOverride?: ContentMode) {
+  // Load content mode from config (or use override)
+  const contentMode = contentModeOverride || await loadContentMode();
+
   const result = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
   if (!result.success || !result.path) {
     console.error('[reflector] Cannot resolve episodic path');
@@ -82,7 +241,7 @@ export async function getAllMemories() {
   }
   const episodicDir = result.path;
 
-  async function walk(dir: string, acc: Array<{ file: string; timestamp: Date; content: any }>) {
+  async function walk(dir: string, acc: Array<{ file: string; timestamp: Date; content: any; userContent: string }>, mode: ContentMode) {
     let entries: string[];
     try {
       entries = await fs.readdir(dir);
@@ -103,21 +262,30 @@ export async function getAllMemories() {
       }
 
       if (stats.isDirectory()) {
-        await walk(fullPath, acc);
+        await walk(fullPath, acc, mode);
       } else if (stats.isFile() && entry.endsWith('.json')) {
         try {
           const content = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
 
-          // Skip self-referential reflections and inner dialogue
-          if (content.type === 'reflection' || content.type === 'inner_dialogue' ||
-              content.metadata?.type === 'reflection' || content.metadata?.type === 'inner_dialogue') {
-            continue;
+          // Skip self-referential reflections and inner dialogue (unless in agent mode)
+          if (mode !== 'agent') {
+            if (content.type === 'reflection' || content.type === 'inner_dialogue' ||
+                content.metadata?.type === 'reflection' || content.metadata?.type === 'inner_dialogue') {
+              continue;
+            }
+          }
+
+          // Extract content based on mode
+          const extractedContent = extractMemoryContent(content, mode);
+          if (!extractedContent) {
+            continue; // Skip memories with no relevant content for this mode
           }
 
           acc.push({
             file: fullPath,
             timestamp: new Date(content.timestamp),
-            content
+            content,
+            userContent: extractedContent, // Named userContent for backwards compat
           });
         } catch {
           // Skip malformed files
@@ -126,8 +294,8 @@ export async function getAllMemories() {
     }
   }
 
-  const allMemories: Array<{ file: string; timestamp: Date; content: any }> = [];
-  await walk(episodicDir, allMemories);
+  const allMemories: Array<{ file: string; timestamp: Date; content: any; userContent: string }> = [];
+  await walk(episodicDir, allMemories, contentMode);
 
   // Sort by timestamp (newest first)
   allMemories.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
@@ -162,10 +330,11 @@ export function extractKeywords(memory: any): string[] {
 }
 
 /**
- * Build associative memory chain
+ * Build associative memory chain using content based on contentMode
  */
-export async function getAssociativeMemoryChain(chainLength: number = 3): Promise<any[]> {
-  const allMemories = await getAllMemories();
+export async function getAssociativeMemoryChain(chainLength: number = 3, contentModeOverride?: ContentMode): Promise<any[]> {
+  const contentMode = contentModeOverride || await loadContentMode();
+  const allMemories = await getAllMemories(contentMode);
   if (allMemories.length === 0) return [];
 
   const chain: any[] = [];
@@ -179,7 +348,8 @@ export async function getAssociativeMemoryChain(chainLength: number = 3): Promis
     const ageInDays = (now - mem.timestamp.getTime()) / (1000 * 60 * 60 * 24);
     let weight = Math.exp(-ageInDays / decayFactor);
 
-    const contentLower = mem.content.content?.toLowerCase() || '';
+    // Use userContent (user input only) for technical keyword check
+    const contentLower = mem.userContent.toLowerCase();
     const isTechnical = technicalKeywords.some(kw => contentLower.includes(kw));
     if (isTechnical) {
       weight *= 0.3;
@@ -201,11 +371,16 @@ export async function getAssociativeMemoryChain(chainLength: number = 3): Promis
     }
   }
 
-  const seedEvent = { ...seedMemory.content, __file: seedMemory.file };
+  // Store userContent in the chain item for use in prompts
+  const seedEvent = {
+    ...seedMemory.content,
+    __file: seedMemory.file,
+    __userContent: seedMemory.userContent, // User input only
+  };
   chain.push(seedEvent);
   usedFiles.add(seedMemory.file);
 
-  console.log(`[reflector] Seed: "${seedMemory.content.content?.substring(0, 60)}..."`);
+  console.log(`[reflector] Seed: "${seedMemory.userContent.substring(0, 60)}..."`);
 
   // Follow associative links
   for (let i = 1; i < chainLength; i++) {
@@ -236,11 +411,22 @@ export async function getAssociativeMemoryChain(chainLength: number = 3): Promis
 
       try {
         const memContent = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
-        (memContent as any).__file = fullPath;
-        if (memContent.type !== 'reflection' && memContent.type !== 'inner_dialogue' &&
-            memContent.metadata?.type !== 'reflection' && memContent.metadata?.type !== 'inner_dialogue') {
-          relatedMemories.push(memContent);
+
+        // Skip self-referential content (unless in agent mode)
+        if (contentMode !== 'agent') {
+          if (memContent.type === 'reflection' || memContent.type === 'inner_dialogue' ||
+              memContent.metadata?.type === 'reflection' || memContent.metadata?.type === 'inner_dialogue') {
+            continue;
+          }
         }
+
+        // Extract content based on contentMode
+        const extractedContent = extractMemoryContent(memContent, contentMode);
+        if (!extractedContent) continue; // Skip if no relevant content
+
+        (memContent as any).__file = fullPath;
+        (memContent as any).__userContent = extractedContent;
+        relatedMemories.push(memContent);
       } catch {
         // Skip invalid files
       }
@@ -253,13 +439,14 @@ export async function getAssociativeMemoryChain(chainLength: number = 3): Promis
 
     const nextMemory = relatedMemories[Math.floor(Math.random() * Math.min(10, relatedMemories.length))];
     const nextFilePath = (nextMemory as any).__file as string | undefined;
+    const nextUserContent = (nextMemory as any).__userContent as string;
 
     chain.push(nextMemory);
     if (nextFilePath) {
       usedFiles.add(nextFilePath);
     }
 
-    console.log(`[reflector] Found: "${nextMemory.content?.substring(0, 60)}..."`);
+    console.log(`[reflector] Found: "${nextUserContent?.substring(0, 60)}..."`);
   }
 
   console.log(`[reflector] Built chain of ${chain.length} associated memories`);
@@ -321,7 +508,8 @@ export async function generateUserReflection(
 
   if (recentMemories.length === 1) {
     const singleMemory = recentMemories[0];
-    const memoryText = singleMemory.content;
+    // Use __userContent (user input only, no AI responses)
+    const memoryText = singleMemory.__userContent || singleMemory.content;
 
     systemPrompt = `
       You are Greg's inner voice, spontaneously reflecting on a memory that surfaced.
@@ -338,8 +526,9 @@ A memory just surfaced:
 What comes to mind?
     `.trim();
   } else {
+    // Use __userContent (user input only, no AI responses)
     const memoriesText = recentMemories
-      .map((m, i) => `${i + 1}. ${m.content}`)
+      .map((m, i) => `${i + 1}. ${m.__userContent || m.content}`)
       .join('\n\n');
 
     systemPrompt = `

@@ -14,8 +14,9 @@ interface Memory {
 }
 
 const execute: NodeExecutor = async (inputs, context) => {
-  const learnings = inputs[0] || {};
-  const memoriesInput = inputs[1]?.memories || inputs[0]?.memories || [];
+  // inputs is an object keyed by handle name, not an array
+  const learnings = inputs.learningsData || {};
+  const memoriesInput = inputs.memoriesData?.memories || inputs.learningsData?.memories || [];
   const memories = Array.isArray(memoriesInput) ? memoriesInput : [];
   const username = context.userId || context.username;
 

@@ -10,6 +10,9 @@
  * Options:
  *   --username <name>  Process specific user
  *   --single-user      Process only the default user
+ *
+ * Environment variables:
+ *   MH_TRIGGER_USERNAME  When set (by API), automatically targets that user
  */
 
 import { initGlobalLogger, audit } from '@metahuman/core';
@@ -20,16 +23,25 @@ async function main() {
 
   // Parse arguments
   const args = process.argv.slice(2);
+
+  // Check for trigger username from API (enables single-user mode automatically)
+  const triggerUsername = process.env.MH_TRIGGER_USERNAME;
+
   const options: PsychoanalyzerOptions = {
-    singleUser: args.includes('--single-user'),
+    singleUser: args.includes('--single-user') || !!triggerUsername,
+    username: triggerUsername, // Use trigger username if set
   };
 
-  // Parse username
+  // Parse username from CLI args (overrides trigger username if provided)
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--username' && i + 1 < args.length) {
       options.username = args[i + 1];
       break;
     }
+  }
+
+  if (triggerUsername && !args.includes('--username')) {
+    console.log(`[psychoanalyzer] Mode: single-user (triggered by ${triggerUsername})`);
   }
 
   console.log('[psychoanalyzer] Starting with options:', options);

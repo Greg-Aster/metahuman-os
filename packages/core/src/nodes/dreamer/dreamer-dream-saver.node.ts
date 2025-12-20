@@ -20,9 +20,10 @@ function markBackgroundActivity() {
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  const dreamInput = inputs[0];
+  // inputs is an object keyed by handle name, not an array
+  const dreamInput = inputs.dreamData;
   const dream = dreamInput?.dream || dreamInput;
-  const sourceIds = dreamInput?.sourceIds || inputs[1]?.memories?.map((m: Memory) => m.id) || [];
+  const sourceIds = dreamInput?.sourceIds || inputs.memoriesData?.memories?.map((m: Memory) => m.id) || [];
   const username = context.userId || context.username;
   const type = properties?.type || 'dream';
 

@@ -400,6 +400,249 @@ export function loadPersonaWithFacet(): PersonaCore | null {
   }
 }
 
+// ============================================================================
+// Goal-Task-Desire Integration
+// ============================================================================
+
+/**
+ * Thresholds for promoting a desire to a goal proposal.
+ */
+export const GOAL_PROPOSAL_THRESHOLDS = {
+  minStrength: 0.9,
+  minReinforcements: 5,
+};
+
+/**
+ * Propose a goal from a strong desire.
+ *
+ * When a desire has been reinforced enough times (5+) and reached high strength (>0.9),
+ * it indicates a genuine, persistent want that should be elevated to a goal.
+ *
+ * The goal is added with status 'proposed' for user approval.
+ *
+ * @param desire - The desire to propose as a goal
+ * @returns Object with success status and message
+ */
+export function proposeGoalFromDesire(desire: {
+  id: string;
+  title: string;
+  description: string;
+  reason: string;
+  strength: number;
+  reinforcements: number;
+  source: string;
+}): { proposed: boolean; message: string; goalId?: string } {
+  // Check if desire qualifies for goal promotion
+  if (desire.strength < GOAL_PROPOSAL_THRESHOLDS.minStrength) {
+    return {
+      proposed: false,
+      message: `Desire strength ${desire.strength.toFixed(2)} below threshold ${GOAL_PROPOSAL_THRESHOLDS.minStrength}`,
+    };
+  }
+
+  if (desire.reinforcements < GOAL_PROPOSAL_THRESHOLDS.minReinforcements) {
+    return {
+      proposed: false,
+      message: `Desire has ${desire.reinforcements} reinforcements, needs ${GOAL_PROPOSAL_THRESHOLDS.minReinforcements}`,
+    };
+  }
+
+  try {
+    const persona = loadPersonaCore();
+
+    // Check if this desire is already proposed as a goal
+    const allGoals = [
+      ...(persona.goals?.shortTerm || []),
+      ...(persona.goals?.midTerm || []),
+      ...(persona.goals?.longTerm || []),
+    ];
+
+    const alreadyProposed = allGoals.some(
+      (g: any) => g.sourceDesireId === desire.id || g.goal.toLowerCase() === desire.title.toLowerCase()
+    );
+
+    if (alreadyProposed) {
+      return {
+        proposed: false,
+        message: `Desire "${desire.title}" is already proposed or exists as a goal`,
+      };
+    }
+
+    // Create the new goal entry
+    const goalId = `goal-from-desire-${desire.id}`;
+    const newGoal = {
+      id: goalId,
+      goal: desire.title,
+      description: desire.description || desire.reason,
+      status: 'proposed',
+      sourceDesireId: desire.id,
+      sourceType: desire.source,
+      proposedAt: new Date().toISOString(),
+      proposedReason: `Automatically proposed from desire with strength ${desire.strength.toFixed(2)} and ${desire.reinforcements} reinforcements`,
+    };
+
+    // Add to shortTerm goals (proposed goals start as short-term, user can reclassify)
+    if (!persona.goals) {
+      persona.goals = { shortTerm: [], midTerm: [], longTerm: [] };
+    }
+    if (!persona.goals.shortTerm) {
+      persona.goals.shortTerm = [];
+    }
+
+    persona.goals.shortTerm.push(newGoal);
+
+    // Save the updated persona
+    savePersonaCore(persona);
+
+    console.log(`[identity] ✓ Proposed goal "${desire.title}" from desire ${desire.id}`);
+
+    return {
+      proposed: true,
+      message: `Goal "${desire.title}" proposed successfully`,
+      goalId,
+    };
+  } catch (error) {
+    console.error('[identity] Error proposing goal from desire:', error);
+    return {
+      proposed: false,
+      message: `Error: ${(error as Error).message}`,
+    };
+  }
+}
+
+/**
+ * Approve a proposed goal (change status from 'proposed' to 'active').
+ *
+ * @param goalId - The ID of the goal to approve
+ * @param targetTier - Which tier to move it to (shortTerm, midTerm, longTerm)
+ * @returns Success status and message
+ */
+export function approveProposedGoal(
+  goalId: string,
+  targetTier: 'shortTerm' | 'midTerm' | 'longTerm' = 'shortTerm'
+): { approved: boolean; message: string } {
+  try {
+    const persona = loadPersonaCore();
+
+    // Find the proposed goal across all tiers
+    let foundGoal: any = null;
+
+    for (const tier of ['shortTerm', 'midTerm', 'longTerm'] as const) {
+      const goals = persona.goals?.[tier] || [];
+      const idx = goals.findIndex((g: any) => g.id === goalId);
+      if (idx !== -1) {
+        foundGoal = goals[idx];
+        // Remove from source tier
+        persona.goals[tier].splice(idx, 1);
+        break;
+      }
+    }
+
+    if (!foundGoal) {
+      return { approved: false, message: `Goal ${goalId} not found` };
+    }
+
+    if (foundGoal.status !== 'proposed') {
+      return { approved: false, message: `Goal ${goalId} is not in 'proposed' status` };
+    }
+
+    // Update status and add approval metadata
+    foundGoal.status = 'active';
+    foundGoal.approvedAt = new Date().toISOString();
+
+    // Add to target tier
+    if (!persona.goals[targetTier]) {
+      persona.goals[targetTier] = [];
+    }
+    persona.goals[targetTier].push(foundGoal);
+
+    savePersonaCore(persona);
+
+    console.log(`[identity] ✓ Approved goal "${foundGoal.goal}" → ${targetTier}`);
+
+    return {
+      approved: true,
+      message: `Goal "${foundGoal.goal}" approved and added to ${targetTier}`,
+    };
+  } catch (error) {
+    console.error('[identity] Error approving goal:', error);
+    return { approved: false, message: `Error: ${(error as Error).message}` };
+  }
+}
+
+/**
+ * Reject a proposed goal.
+ *
+ * @param goalId - The ID of the goal to reject
+ * @param reason - Reason for rejection
+ * @returns Success status and message
+ */
+export function rejectProposedGoal(goalId: string, reason?: string): { rejected: boolean; message: string } {
+  try {
+    const persona = loadPersonaCore();
+
+    // Find and remove the proposed goal
+    for (const tier of ['shortTerm', 'midTerm', 'longTerm'] as const) {
+      const goals = persona.goals?.[tier] || [];
+      const idx = goals.findIndex((g: any) => g.id === goalId);
+      if (idx !== -1) {
+        const goal = goals[idx];
+        if (goal.status !== 'proposed') {
+          return { rejected: false, message: `Goal ${goalId} is not in 'proposed' status` };
+        }
+
+        // Remove the goal
+        persona.goals[tier].splice(idx, 1);
+        savePersonaCore(persona);
+
+        console.log(`[identity] ✓ Rejected proposed goal "${goal.goal}"${reason ? `: ${reason}` : ''}`);
+
+        return {
+          rejected: true,
+          message: `Goal "${goal.goal}" rejected${reason ? `: ${reason}` : ''}`,
+        };
+      }
+    }
+
+    return { rejected: false, message: `Goal ${goalId} not found` };
+  } catch (error) {
+    console.error('[identity] Error rejecting goal:', error);
+    return { rejected: false, message: `Error: ${(error as Error).message}` };
+  }
+}
+
+/**
+ * Get all proposed goals awaiting approval.
+ */
+export function getProposedGoals(): Array<{
+  id: string;
+  goal: string;
+  description?: string;
+  tier: string;
+  sourceDesireId?: string;
+  proposedAt?: string;
+  proposedReason?: string;
+}> {
+  try {
+    const persona = loadPersonaCore();
+    const proposed: any[] = [];
+
+    for (const tier of ['shortTerm', 'midTerm', 'longTerm'] as const) {
+      const goals = persona.goals?.[tier] || [];
+      for (const goal of goals) {
+        if (goal.status === 'proposed') {
+          proposed.push({ ...goal, tier });
+        }
+      }
+    }
+
+    return proposed;
+  } catch (error) {
+    console.error('[identity] Error getting proposed goals:', error);
+    return [];
+  }
+}
+
 /**
  * Get current active facet name
  */

@@ -9,8 +9,16 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { audit, getProfilePaths, appendToUserBuffer } from '../../index.js';
 
 const execute: NodeExecutor = async (inputs, context) => {
-  const question = inputs[0]?.question || '';
-  const memories = inputs[0]?.memories || [];
+  // Access inputs by handle name with fallbacks for flexible edge connections
+  // Can receive: questionData object OR separate question/memories inputs
+  const questionData = inputs['questionData'] || inputs.questionData || inputs[0];
+  const questionInput = inputs['question'] || inputs.question;
+  const memoriesInput = inputs['memories'] || inputs.memories;
+
+  // Extract question (prefer direct input, fallback to questionData object)
+  const question = questionInput?.question || questionInput || questionData?.question || '';
+  // Extract memories (prefer direct input, fallback to questionData object)
+  const memories = memoriesInput || questionData?.memories || [];
   const username = context.userId;
 
   if (!username) {

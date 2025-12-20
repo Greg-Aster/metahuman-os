@@ -153,7 +153,7 @@
       "sourceHandle": "question",
       "targetHandle": "question",
       "data": {
-        "type": "object",
+        "type": "string",
         "comment": "Generated question → Save Question"
       }
     },
@@ -164,8 +164,8 @@
       "sourceHandle": "memories",
       "targetHandle": "memories",
       "data": {
-        "type": "object",
-        "comment": "Sampled memories → Save (for seed memories)"
+        "type": "array",
+        "comment": "Sampled memories → Save Question (for seed memory tracking)"
       }
     },
     {

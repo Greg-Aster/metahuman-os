@@ -22,10 +22,12 @@ interface TrainingDataConfig {
   collection: {
     maxDays: number;
     maxSamplesPerSource: number;
+    includePersona?: boolean;
   };
   memoryTypes: {
     enabled: string[];
     priorities: Record<string, number>;
+    percentages?: Record<string, number>;
   };
   phases: {
     description: string;
@@ -77,6 +79,7 @@ function getDefaultConfig(): TrainingDataConfig {
     collection: {
       maxDays: 999999,
       maxSamplesPerSource: 3000,
+      includePersona: true,
     },
     memoryTypes: {
       enabled: [
@@ -103,6 +106,19 @@ function getDefaultConfig(): TrainingDataConfig {
         dream: 3,
         journal: 3,
         summary: 2,
+      },
+      percentages: {
+        conversation: 40,
+        observation: 25,
+        therapy_session: 15,
+        reflection: 5,
+        reflection_summary: 3,
+        inner_dialogue: 3,
+        dream: 3,
+        curiosity_question: 3,
+        decision: 2,
+        journal: 1,
+        summary: 0,
       },
     },
     phases: {
@@ -190,11 +206,28 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
       if (typeof body.collection.maxSamplesPerSource === 'number' && body.collection.maxSamplesPerSource > 0) {
         config.collection.maxSamplesPerSource = body.collection.maxSamplesPerSource;
       }
+      if (typeof body.collection.includePersona === 'boolean') {
+        config.collection.includePersona = body.collection.includePersona;
+      }
     }
 
     // Update memory types if provided
     if (body.memoryTypes?.enabled && Array.isArray(body.memoryTypes.enabled)) {
       config.memoryTypes.enabled = body.memoryTypes.enabled;
+    }
+
+    // Update memory type percentages if provided
+    if (body.memoryTypes?.percentages && typeof body.memoryTypes.percentages === 'object') {
+      // Initialize percentages if not present
+      if (!config.memoryTypes.percentages) {
+        config.memoryTypes.percentages = {};
+      }
+      // Update each percentage (0-100 range validation)
+      for (const [type, value] of Object.entries(body.memoryTypes.percentages)) {
+        if (typeof value === 'number') {
+          config.memoryTypes.percentages[type] = Math.max(0, Math.min(100, value));
+        }
+      }
     }
 
     // Save updated config

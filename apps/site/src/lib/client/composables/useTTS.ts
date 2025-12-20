@@ -110,7 +110,8 @@ export function useTTS() {
   let streamAbortController: AbortController | null = null;
 
   // Buffer threshold: wait for this many chunks before starting playback
-  // This builds a buffer to prevent gaps during slow generation
+  // With paragraph-level streaming, each chunk is a full paragraph
+  // Buffer 2 paragraphs to smooth over any synthesis delays
   const BUFFER_THRESHOLD = 2;
   let streamComplete = false; // Track if all chunks have been received
 
@@ -388,8 +389,9 @@ export function useTTS() {
   }
 
   /**
-   * Speak text using streaming TTS (sentence-by-sentence)
-   * Audio starts playing as soon as the first chunk is ready
+   * Speak text using streaming TTS (paragraph-level)
+   * Each paragraph is synthesized as one continuous audio chunk
+   * Pauses occur ONLY at real paragraph boundaries (double newlines)
    *
    * @param text - Text to speak
    * @param options - Optional parameters for voice control

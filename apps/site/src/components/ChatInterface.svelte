@@ -46,6 +46,8 @@
   let curiosityQuestions: any[] = [];
   let lastQuestionCheck = 0;
   let yoloMode = false;
+  // Synchronous guard to prevent double/triple submit race condition
+  let sendInProgress = false;
 
   // Initialize TTS composable
   const ttsApi = useTTS();
@@ -99,10 +101,16 @@
         }
       } else {
         // Single input mode: put transcript in input field for user to review/edit
+        // APPEND to existing input if there's already text (allows multiple voice inputs)
         console.log('[chat-mic] Transcribed:', transcript.substring(0, 50) + (transcript.length > 50 ? '...' : ''));
-        input = transcript;
-        // Auto-send after single input too (tap or "hey greg")
-        void sendMessage();
+        if (input.trim()) {
+          // Append with a space separator
+          input = input.trim() + ' ' + transcript;
+          console.log('[chat-mic] Appended to existing input, total length:', input.length);
+        } else {
+          input = transcript;
+        }
+        // Do NOT auto-send - let user review and edit before manually sending
       }
     },
     onSystemMessage: (message: string) => {
@@ -560,7 +568,10 @@
   }
 
   async function sendMessage() {
-    if (!input.trim() || loading) return;
+    // Synchronous guard: prevent race condition where multiple clicks
+    // get past the loading check before loading is set to true
+    if (!input.trim() || loading || sendInProgress) return;
+    sendInProgress = true;
 
     let connected = get(isConnected);
 
@@ -572,12 +583,14 @@
 
     // If offline, use UnifiedChat with tier selection
     if (!connected) {
+      sendInProgress = false; // Reset guard before delegating
       await sendMessageOffline();
       return;
     }
 
     // Check LLM backend status before sending (only when online)
     if (!backendApi.isReady()) {
+      sendInProgress = false; // Reset guard on early return
       const backend = get(activeBackend);
       const msg = backend === 'vllm'
         ? 'Cannot send message: vLLM server is not running. Please start vLLM from Settings → Backend.'
@@ -609,6 +622,7 @@
     messagesApi.pushMessage('user', userMessage);
 
     loading = true;
+    sendInProgress = false; // loading now takes over as the guard
     reasoningStages = [];
     thinkingTraceApi.start();
     console.log('[sendMessage] Step 1: Set loading state');
@@ -837,6 +851,7 @@
       messagesApi.pushMessage('system', 'Error: Could not send message.');
       thinkingTraceApi.stop();
       loading = false;
+      sendInProgress = false; // Safety net: ensure guard is reset on error
       reasoningStages = [];
     }
   }

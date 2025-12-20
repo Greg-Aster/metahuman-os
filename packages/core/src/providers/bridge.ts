@@ -592,8 +592,18 @@ async function callVLLMProvider(
       message: `Generating with ${model}...`,
     });
 
+    // Debug: Log what we're sending to vLLM
+    const mappedMessages = messages.map(m => ({ role: m.role as 'system' | 'user' | 'assistant', content: m.content }));
+    for (let i = 0; i < mappedMessages.length; i++) {
+      const msg = mappedMessages[i];
+      if (msg.content === undefined || msg.content === null) {
+        console.error(`[provider-bridge] WARNING: Message ${i} (${msg.role}) has ${msg.content === null ? 'null' : 'undefined'} content!`);
+      }
+      console.log(`[provider-bridge] Message ${i} (${msg.role}): ${(msg.content || '').length} chars`);
+    }
+
     const response = await vllm.chat(
-      messages.map(m => ({ role: m.role as 'system' | 'user' | 'assistant', content: m.content })),
+      mappedMessages,
       {
         model,
         temperature: options.temperature,

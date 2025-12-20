@@ -17,7 +17,13 @@
     "maxConcurrentLLMAgents": 1,
     "maxConcurrentNonLLMAgents": 10,
     "pauseQueueOnActivity": true,
-    "activityResumeDelay": 240
+    "activityResumeDelay": 240,
+    "memoryContentMode": "user",
+    "memoryContentModeOptions": {
+      "all": "All content - includes both user messages and AI responses",
+      "user": "User only - reflects on user inputs, excluding verbose AI responses (recommended)",
+      "agent": "Agent only - reflects on AI responses, dreams, and system outputs"
+    }
   },
   "agents": {
     "organizer": {
@@ -70,7 +76,13 @@
       "runOnBoot": false,
       "autoRestart": false,
       "maxRetries": 1,
-      "comment": "Activity-based reflections - triggers after 15 min of inactivity"
+      "comment": "Activity-based reflections - triggers after 15 min of inactivity",
+      "contentMode": "user",
+      "contentModeOptions": {
+        "all": "All content - includes both user messages and AI responses",
+        "user": "User only - reflects on user inputs, excluding verbose AI responses (recommended)",
+        "agent": "Agent only - reflects on AI responses, dreams, and system outputs"
+      }
     },
     "curiosity": {
       "id": "curiosity",

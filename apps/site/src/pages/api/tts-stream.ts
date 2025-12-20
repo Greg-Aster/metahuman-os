@@ -8,8 +8,8 @@ import path from 'node:path';
  * Stream TTS audio chunk by chunk using Server-Sent Events
  *
  * This endpoint supports real-time streaming for providers that support it (Kokoro).
- * For providers that don't support streaming (RVC, Piper), uses sentence-level chunking
- * with lookahead prefetching for minimal latency.
+ * For providers that don't support streaming (RVC, Piper), uses paragraph-level chunking
+ * (~400-800 chars) with lookahead prefetching for smooth, continuous playback.
  *
  * Body: {
  *   text: string,
@@ -24,71 +24,89 @@ import path from 'node:path';
  */
 
 /**
- * Smart sentence splitter that handles:
- * - Standard sentence endings (.!?)
- * - Abbreviations (Dr., Mr., Mrs., etc.)
- * - Numbers with decimals (3.14)
- * - Ellipsis (...)
- * - Quoted sentences
+ * Smart paragraph splitter for streaming TTS.
+ * Creates ~400-800 character chunks that:
+ * - Respect natural paragraph boundaries (double newlines)
+ * - Split long paragraphs at sentence boundaries
+ * - FALLBACK: If no paragraph breaks, chunk by character count (400-800 chars)
+ *
+ * Using paragraph-level chunks eliminates awkward mid-thought pauses.
+ * Natural paragraph breaks feel intentional rather than stuttery.
  */
-function splitIntoSentences(text: string): string[] {
-  // Common abbreviations that shouldn't end sentences
-  const abbreviations = new Set([
-    'dr', 'mr', 'mrs', 'ms', 'prof', 'sr', 'jr', 'vs', 'etc', 'inc', 'ltd',
-    'corp', 'st', 'ave', 'blvd', 'rd', 'apt', 'no', 'vol', 'rev', 'gen',
-    'col', 'lt', 'sgt', 'capt', 'cmdr', 'adm', 'pvt', 'cpl', 'maj',
-    'e.g', 'i.e', 'cf', 'al', 'fig', 'approx', 'dept', 'est', 'min', 'max'
-  ]);
+function splitIntoParagraphs(text: string): string[] {
+  const MIN_PARAGRAPH_LENGTH = 400;
+  const MAX_PARAGRAPH_LENGTH = 800;
 
-  const sentences: string[] = [];
-  let current = '';
+  // First, split by explicit paragraph breaks (double newlines)
+  const rawParagraphs = text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
 
-  // Split by potential sentence boundaries
-  const parts = text.split(/([.!?]+["']?\s+)/);
+  const paragraphs: string[] = [];
 
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i];
-
-    if (i % 2 === 0) {
-      // Content part
-      current += part;
+  for (const para of rawParagraphs) {
+    if (para.length <= MAX_PARAGRAPH_LENGTH) {
+      // Paragraph is good size, use as-is
+      paragraphs.push(para);
     } else {
-      // Delimiter part (punctuation + space)
-      current += part;
+      // Long paragraph - split at sentence boundaries
+      const sentences = para.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+      let currentChunk: string[] = [];
+      let currentLength = 0;
 
-      // Check if previous word is an abbreviation
-      const words = current.trim().split(/\s+/);
-      const lastWord = words[words.length - 1]?.replace(/[.!?,"']+$/, '').toLowerCase() || '';
-
-      // Don't split on abbreviations or single letters (initials)
-      if (!abbreviations.has(lastWord) && lastWord.length > 1) {
-        const trimmed = current.trim();
-        if (trimmed) {
-          sentences.push(trimmed);
+      for (const sentence of sentences) {
+        // If adding this sentence would exceed max, finalize current chunk
+        if (currentLength + sentence.length > MAX_PARAGRAPH_LENGTH && currentChunk.length > 0) {
+          paragraphs.push(currentChunk.join(' '));
+          currentChunk = [];
+          currentLength = 0;
         }
-        current = '';
+
+        currentChunk.push(sentence);
+        currentLength += sentence.length + 1; // +1 for space
+
+        // If chunk is good size, finalize it
+        if (currentLength >= MIN_PARAGRAPH_LENGTH) {
+          paragraphs.push(currentChunk.join(' '));
+          currentChunk = [];
+          currentLength = 0;
+        }
+      }
+
+      // Don't forget remaining sentences
+      if (currentChunk.length > 0) {
+        paragraphs.push(currentChunk.join(' '));
       }
     }
   }
 
-  // Add remaining text
-  const remaining = current.trim();
-  if (remaining) {
-    sentences.push(remaining);
-  }
+  // FALLBACK: If no paragraph breaks found, chunk entire text by character count
+  if (paragraphs.length === 0 && text.trim()) {
+    const sentences = text.trim().split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+    let currentChunk: string[] = [];
+    let currentLength = 0;
 
-  // Filter out empty sentences and merge very short ones
-  const merged: string[] = [];
-  for (const sentence of sentences) {
-    // Merge very short sentences (< 10 chars) with previous
-    if (sentence.length < 10 && merged.length > 0) {
-      merged[merged.length - 1] += ' ' + sentence;
-    } else if (sentence.length > 0) {
-      merged.push(sentence);
+    for (const sentence of sentences) {
+      if (currentLength + sentence.length > MAX_PARAGRAPH_LENGTH && currentChunk.length > 0) {
+        paragraphs.push(currentChunk.join(' '));
+        currentChunk = [];
+        currentLength = 0;
+      }
+
+      currentChunk.push(sentence);
+      currentLength += sentence.length + 1;
+
+      if (currentLength >= MIN_PARAGRAPH_LENGTH) {
+        paragraphs.push(currentChunk.join(' '));
+        currentChunk = [];
+        currentLength = 0;
+      }
+    }
+
+    if (currentChunk.length > 0) {
+      paragraphs.push(currentChunk.join(' '));
     }
   }
 
-  return merged;
+  return paragraphs;
 }
 export const POST: APIRoute = async ({ request, cookies }) => {
   // Authenticate user - returns 401 if not authenticated
@@ -106,7 +124,9 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   }
 
   try {
-    const { text, provider, voice, speed, pitchShift, langCode } = await request.json();
+    const { text, provider, voice, voiceId, speed, pitchShift, langCode } = await request.json();
+
+    console.log('[TTS Stream] Request params:', { provider, voice, voiceId, speed, langCode });
 
     if (!text || typeof text !== 'string') {
       return new Response(JSON.stringify({ error: 'Text is required' }), {
@@ -122,7 +142,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     if (selectedProvider === 'kokoro') {
       // Get user-specific voice config if available
       let kokoroConfig: any = {
-        voice: voice || 'af_heart',
+        voice: voiceId || voice || 'af_heart',
         speed: speed || 1.0,
         langCode: langCode || 'a',
         customVoicepack: null,
@@ -138,13 +158,22 @@ export const POST: APIRoute = async ({ request, cookies }) => {
             const voiceConfig = JSON.parse(fs.readFileSync(voiceConfigPath, 'utf-8'));
             if (voiceConfig.tts?.kokoro) {
               const kConfig = voiceConfig.tts.kokoro;
-              kokoroConfig.voice = voice || kConfig.voice || 'af_heart';
+              console.log('[TTS Stream] Saved kConfig.voice:', kConfig.voice, 'useCustomVoicepack:', kConfig.useCustomVoicepack);
+              kokoroConfig.voice = voiceId || voice || kConfig.voice || 'af_heart';
               kokoroConfig.speed = speed || kConfig.speed || 1.0;
               kokoroConfig.langCode = langCode || kConfig.langCode || 'a';
-              if (kConfig.useCustomVoicepack && kConfig.customVoicepackPath) {
+
+              // Check if a built-in voice was explicitly requested via voiceId/voice params
+              // Built-in voices follow pattern: af_*, am_*, bf_*, bm_*, etc.
+              const requestedVoice = voiceId || voice;
+              const isBuiltInVoiceRequested = requestedVoice && /^[a-z]{2}_[a-z]+$/.test(requestedVoice);
+
+              // Only use custom voicepack if NOT explicitly requesting a built-in voice
+              if (kConfig.useCustomVoicepack && kConfig.customVoicepackPath && !isBuiltInVoiceRequested) {
                 kokoroConfig.customVoicepack = kConfig.customVoicepackPath;
                 kokoroConfig.normalize = kConfig.normalizeCustomVoicepacks ?? true;
               }
+              console.log('[TTS Stream] Final kokoroConfig.voice:', kokoroConfig.voice, 'customVoicepack:', kokoroConfig.customVoicepack, 'isBuiltInVoiceRequested:', isBuiltInVoiceRequested);
             }
           } catch (e) {
             console.warn('[TTS Stream] Failed to load user voice config:', e);
@@ -189,18 +218,18 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       });
     }
 
-    // For RVC/Piper: Implement sentence-level chunking with lookahead prefetching
-    // Use smart sentence splitter
-    const sentences = splitIntoSentences(text);
+    // For RVC/Piper: Implement paragraph-level chunking with lookahead prefetching
+    // Using paragraphs (~400-800 chars) instead of sentences for smoother streaming
+    const paragraphs = splitIntoParagraphs(text);
 
-    if (sentences.length === 0) {
-      return new Response(JSON.stringify({ error: 'No sentences to process' }), {
+    if (paragraphs.length === 0) {
+      return new Response(JSON.stringify({ error: 'No content to process' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
-    console.log(`[TTS Stream] ${selectedProvider.toUpperCase()} streaming: ${sentences.length} sentences`);
+    console.log(`[TTS Stream] ${selectedProvider.toUpperCase()} streaming: ${paragraphs.length} paragraphs`);
 
     // Load RVC-specific config if applicable
     let rvcConfig: { pitchShift?: number; voice?: string; speed?: number } = {
@@ -259,22 +288,22 @@ export const POST: APIRoute = async ({ request, cookies }) => {
           }
         };
 
-        // Prefetch queue: generate next sentence while current plays
+        // Prefetch queue: generate next paragraph while current plays
         // For RVC on CPU, reduce lookahead to avoid overwhelming the server
         // RVC server processes ONE request at a time, so parallel calls just queue up
         const LOOKAHEAD = 1; // Reduced from 3 - RVC is sequential, not parallel
         const pendingGenerations: Map<number, Promise<Buffer>> = new Map();
 
-        // Start prefetching first sentences
+        // Start prefetching first paragraphs
         const startPrefetch = (index: number) => {
-          if (index >= sentences.length) return;
+          if (index >= paragraphs.length) return;
           if (pendingGenerations.has(index)) return;
           if (isClosed) return; // Don't start new work if stream is closed
 
-          const sentence = sentences[index];
-          console.log(`[TTS Stream] Prefetching sentence ${index + 1}/${sentences.length}: ${sentence.slice(0, 30)}...`);
+          const paragraph = paragraphs[index];
+          console.log(`[TTS Stream] Prefetching paragraph ${index + 1}/${paragraphs.length} (${paragraph.length} chars)`);
 
-          const promise = generateSpeech(sentence, {
+          const promise = generateSpeech(paragraph, {
             provider: selectedProvider as 'piper' | 'rvc',
             voice: rvcConfig.voice,
             speakingRate: rvcConfig.speed,
@@ -283,7 +312,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
             signal: request.signal,
           }).catch(err => {
             // Log but don't throw - return empty buffer so stream can continue
-            console.warn(`[TTS Stream] Failed to generate sentence ${index}:`, err.message);
+            console.warn(`[TTS Stream] Failed to generate paragraph ${index}:`, err.message);
             return Buffer.alloc(0);
           });
 
@@ -292,32 +321,32 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 
         try {
           // Start initial prefetch batch
-          for (let i = 0; i < Math.min(LOOKAHEAD + 1, sentences.length); i++) {
+          for (let i = 0; i < Math.min(LOOKAHEAD + 1, paragraphs.length); i++) {
             startPrefetch(i);
           }
 
-          // Process sentences in order, streaming as they complete
-          for (let i = 0; i < sentences.length; i++) {
+          // Process paragraphs in order, streaming as they complete
+          for (let i = 0; i < paragraphs.length; i++) {
             if (isClosed) break; // Stop processing if stream is closed
 
-            // Ensure this sentence is being generated
+            // Ensure this paragraph is being generated
             startPrefetch(i);
 
-            // Start prefetching next sentences
-            for (let j = i + 1; j <= i + LOOKAHEAD && j < sentences.length; j++) {
+            // Start prefetching next paragraphs
+            for (let j = i + 1; j <= i + LOOKAHEAD && j < paragraphs.length; j++) {
               startPrefetch(j);
             }
 
-            // Wait for current sentence
+            // Wait for current paragraph
             const audioBuffer = await pendingGenerations.get(i);
             pendingGenerations.delete(i);
 
             if (!audioBuffer || audioBuffer.length === 0) {
-              console.warn(`[TTS Stream] No audio for sentence ${i}`);
+              console.warn(`[TTS Stream] No audio for paragraph ${i}`);
               continue;
             }
 
-            console.log(`[TTS Stream] Streaming sentence ${i + 1}/${sentences.length}: ${audioBuffer.length} bytes`);
+            console.log(`[TTS Stream] Streaming paragraph ${i + 1}/${paragraphs.length}: ${audioBuffer.length} bytes`);
 
             // Encode audio as base64
             const audioBase64 = audioBuffer.toString('base64');
@@ -326,17 +355,17 @@ export const POST: APIRoute = async ({ request, cookies }) => {
             const eventData = JSON.stringify({
               chunk_index: i,
               sentence_index: i,
-              total_sentences: sentences.length,
+              total_sentences: paragraphs.length,
               audio_base64: audioBase64,
               audio_size: audioBuffer.length,
-              is_final: i === sentences.length - 1,
+              is_final: i === paragraphs.length - 1,
             });
 
             safeEnqueue(encoder.encode(`data: ${eventData}\n\n`));
           }
 
           // Send completion event
-          safeEnqueue(encoder.encode(`data: ${JSON.stringify({ event: 'complete', total_chunks: sentences.length })}\n\n`));
+          safeEnqueue(encoder.encode(`data: ${JSON.stringify({ event: 'complete', total_chunks: paragraphs.length })}\n\n`));
           safeClose();
         } catch (error) {
           if ((error as Error).name === 'AbortError') {

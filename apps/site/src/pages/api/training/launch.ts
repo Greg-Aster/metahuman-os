@@ -177,6 +177,11 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       }
     }
 
+    // Pass RunPod GPU type from wizard selection (overrides .env default)
+    if (runpodConfig?.gpuType) {
+      trainingEnv.RUNPOD_GPU_TYPE = runpodConfig.gpuType
+    }
+
     const child = spawn(tsxPath, [agentPath, ...agentArgs], {
       stdio: ['ignore', logStream, logStream], // stdout and stderr to log file
       cwd: systemPaths.root,

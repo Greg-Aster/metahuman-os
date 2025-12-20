@@ -67,7 +67,9 @@ export async function loadCuratorGraph(): Promise<CognitiveGraph> {
  * Run curator for a single user
  */
 export async function runCuratorForUser(username: string): Promise<UserCuratorStats> {
-  return await withUserContext(username, async () => {
+  return await withUserContext(
+    { userId: username, username: username, role: 'owner' },
+    async () => {
     console.log(`[curator] Processing user: ${username}`);
 
     // Register in agent monitor so it shows up while running

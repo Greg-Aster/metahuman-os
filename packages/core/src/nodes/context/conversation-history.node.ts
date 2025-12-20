@@ -68,10 +68,23 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
         // Unified Consciousness: Load inner dialogue buffer and merge if enabled
         if (mode === 'conversation') {
           try {
-            const { loadChatSettings } = await import('../../chat-settings.js');
-            const chatSettings = loadChatSettings();
+            // Load user's chat settings directly from their profile
+            // (don't use loadChatSettings() which relies on getUserContext())
+            let unifiedConsciousness = false;
+            const userSettingsPath = path.join(profilePaths.root, 'etc', 'chat-settings.json');
+            if (fs.existsSync(userSettingsPath)) {
+              try {
+                const settingsRaw = fs.readFileSync(userSettingsPath, 'utf-8');
+                const settingsConfig = JSON.parse(settingsRaw);
+                unifiedConsciousness = settingsConfig.settings?.unifiedConsciousness?.value ?? false;
+              } catch (e) {
+                console.warn('[ConversationHistory] Could not parse user chat-settings.json:', e);
+              }
+            }
 
-            if (chatSettings.unifiedConsciousness) {
+            console.log(`[ConversationHistory] unifiedConsciousness=${unifiedConsciousness} for user ${username}`);
+
+            if (unifiedConsciousness) {
               const innerBufferPath = path.join(profilePaths.state, 'conversation-buffer-inner.json');
 
               if (fs.existsSync(innerBufferPath)) {

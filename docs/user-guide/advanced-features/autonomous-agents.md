@@ -1,6 +1,6 @@
 # Autonomous Agents
 
-MetaHuman OS includes a comprehensive suite of **40 autonomous agents** that run as background processes to enrich memories, generate reflections, train models, and maintain the system. These agents are coordinated by the **Scheduler Service** and can be triggered by intervals, time-of-day, events, or user activity.
+MetaHuman OS includes a comprehensive suite of **42 autonomous agents** that run as background processes to enrich memories, generate reflections, train models, and maintain the system. These agents are coordinated by the **Scheduler Service** and can be triggered by intervals, time-of-day, events, or user activity.
 
 > **Source of Truth**: This documentation is generated from actual agent implementations in [`brain/agents/`](../../brain/agents/) as of 2025-11-25.
 
@@ -114,7 +114,50 @@ Agents are organized by function:
 
 ---
 
-### 5. Memory Metrics Cache Agent
+### 5. Memory Pruner Agent
+
+**File**: `brain/agents/memory-pruner/cli.ts`
+
+**Purpose**: Fast, rule-based cleanup of duplicate and low-quality memories.
+
+**Behavior**:
+- Scans all episodic memories for cleanup candidates
+- Uses multiple detection methods:
+  - **Exact duplicates**: MD5 hash matching of normalized content
+  - **Near-duplicates**: Jaccard similarity (configurable threshold, default 85%)
+  - **Contamination patterns**: "you ok home", "test test test", single-word replies
+  - **AI disclaimers**: "As an AI...", "I cannot...", "I don't have the ability"
+  - **System artifacts**: Raw JSON, XML, error messages, stack traces
+- Moves pruned files to `memory/episodic/YYYY/_pruned/` (not deleted!)
+- Supports dry-run mode for safe preview
+- **MULTI-USER**: Processes specified user with isolated context
+- **No LLM required** - pure algorithmic detection
+
+**Trigger**: Manual via Web UI or CLI
+
+**Configuration**: Options passed via CLI flags
+
+**CLI Usage**:
+```bash
+# Preview what would be pruned (dry run)
+tsx brain/agents/memory-pruner/cli.ts --username greggles --dry-run --verbose
+
+# Actually prune memories
+tsx brain/agents/memory-pruner/cli.ts --username greggles
+
+# Custom settings
+tsx brain/agents/memory-pruner/cli.ts --username greggles --min-length 15 --similarity 0.90
+```
+
+**Web UI**: Access via **Persona → Memory → Memory Pruner**
+- Preview button: Safe dry-run mode
+- Settings: Min content length, similarity threshold, auto-rebuild index
+
+**Recovery**: Pruned files are NOT deleted. View and restore from the **Pruned** tab in the Memory Browser.
+
+---
+
+### 6. Memory Metrics Cache Agent
 
 **File**: `brain/agents/memory-metrics-cache.ts`
 
@@ -132,7 +175,7 @@ Agents are organized by function:
 
 ## Curiosity & Reflection Agents
 
-### 6. Reflector Agent
+### 7. Reflector Agent
 
 **File**: `brain/agents/reflector.ts`
 
@@ -159,7 +202,7 @@ Agents are organized by function:
 
 ---
 
-### 7. Train-of-Thought Agent
+### 8. Train-of-Thought Agent
 
 **File**: `brain/agents/train-of-thought.ts`
 
@@ -183,7 +226,7 @@ Agents are organized by function:
 
 ---
 
-### 8. Curiosity Service Agent
+### 9. Curiosity Service Agent
 
 **File**: `brain/agents/curiosity-service.ts`
 
@@ -210,7 +253,7 @@ Agents are organized by function:
 
 ---
 
-### 9. Inner Curiosity Agent
+### 10. Inner Curiosity Agent
 
 **File**: `brain/agents/inner-curiosity.ts`
 
@@ -236,7 +279,7 @@ Agents are organized by function:
 
 ---
 
-### 10. Curiosity Researcher Agent
+### 11. Curiosity Researcher Agent
 
 **File**: `brain/agents/curiosity-researcher.ts`
 
@@ -258,7 +301,7 @@ Agents are organized by function:
 
 ## Sleep & Night Processing Agents
 
-### 11. Dreamer Agent
+### 12. Dreamer Agent
 
 **File**: `brain/agents/dreamer.ts`
 
@@ -287,7 +330,7 @@ Agents are organized by function:
 
 ---
 
-### 12. Sleep Service
+### 13. Sleep Service
 
 **File**: `brain/agents/sleep-service.ts`
 
@@ -314,7 +357,7 @@ Agents are organized by function:
 
 ---
 
-### 13. Night Pipeline Agent
+### 14. Night Pipeline Agent
 
 **File**: `brain/agents/night-pipeline.ts`
 
@@ -330,7 +373,7 @@ Agents are organized by function:
 
 ---
 
-### 14. Night Processor Agent
+### 15. Night Processor Agent
 
 **File**: `brain/agents/night-processor.ts`
 
@@ -346,7 +389,7 @@ Agents are organized by function:
 
 ---
 
-### 15. Morning Loader Agent
+### 16. Morning Loader Agent
 
 **File**: `brain/agents/morning-loader.ts`
 
@@ -367,7 +410,7 @@ Agents are organized by function:
 
 ## Dataset Building Agents
 
-### 16. Curator Agent
+### 17. Curator Agent
 
 **File**: `brain/agents/curator.ts`
 
@@ -394,7 +437,7 @@ Agents are organized by function:
 
 ---
 
-### 17. AI Dataset Builder Agent
+### 18. AI Dataset Builder Agent
 
 **File**: `brain/agents/ai-dataset-builder.ts`
 
@@ -422,7 +465,7 @@ pnpm tsx brain/agents/ai-dataset-builder.ts --output ./out/datasets/2025-10-31/a
 
 ---
 
-### 18. AI Dataset Builder (Restrictive)
+### 19. AI Dataset Builder (Restrictive)
 
 **File**: `brain/agents/ai-dataset-builder-restrictive.ts`
 
@@ -439,7 +482,7 @@ pnpm tsx brain/agents/ai-dataset-builder.ts --output ./out/datasets/2025-10-31/a
 
 ---
 
-### 19. User Dataset Builder Agent
+### 20. User Dataset Builder Agent
 
 **File**: `brain/agents/user-dataset-builder.ts`
 
@@ -462,7 +505,7 @@ npx tsx brain/agents/user-dataset-builder.ts --username greggles --output out/ad
 
 ---
 
-### 20. Curated Aggregator Agent
+### 21. Curated Aggregator Agent
 
 **File**: `brain/agents/curated-aggregator.ts`
 
@@ -485,7 +528,7 @@ npx tsx brain/agents/user-dataset-builder.ts --username greggles --output out/ad
 
 ## Training Pipeline Agents
 
-### 21. Adapter Builder Agent
+### 22. Adapter Builder Agent
 
 **File**: `brain/agents/adapter-builder.ts`
 
@@ -512,7 +555,7 @@ pnpm tsx brain/agents/adapter-builder.ts --username greggles --output out/adapte
 
 ---
 
-### 22. Auto-Approver Agent
+### 23. Auto-Approver Agent
 
 **File**: `brain/agents/auto-approver.ts`
 
@@ -538,7 +581,7 @@ tsx auto-approver.ts 2025-10-21
 
 ---
 
-### 23. LoRA Trainer Agent
+### 24. LoRA Trainer Agent
 
 **File**: `brain/agents/lora-trainer.ts`
 
@@ -568,7 +611,7 @@ tsx auto-approver.ts 2025-10-21
 
 ---
 
-### 24. Fine-Tune Trainer Agent
+### 25. Fine-Tune Trainer Agent
 
 **File**: `brain/agents/fine-tune-trainer.ts`
 
@@ -588,7 +631,7 @@ tsx auto-approver.ts 2025-10-21
 
 ---
 
-### 25. Fine-Tune Cycle Orchestrator
+### 26. Fine-Tune Cycle Orchestrator
 
 **File**: `brain/agents/fine-tune-cycle.ts`
 
@@ -627,7 +670,7 @@ tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model qwen3-coder
 
 ---
 
-### 26. Full-Cycle Orchestrator (Remote)
+### 27. Full-Cycle Orchestrator (Remote)
 
 **File**: `brain/agents/full-cycle.ts`
 
@@ -664,7 +707,7 @@ npx tsx brain/agents/full-cycle.ts --username greggles
 
 ---
 
-### 27. Full-Cycle Orchestrator (Local)
+### 28. Full-Cycle Orchestrator (Local)
 
 **File**: `brain/agents/full-cycle-local.ts`
 
@@ -699,7 +742,7 @@ npx tsx brain/agents/full-cycle-local.ts --username greggles
 
 ## Training Support Agents
 
-### 28. Adapter Merger Agent
+### 29. Adapter Merger Agent
 
 **File**: `brain/agents/adapter-merger.ts`
 
@@ -727,7 +770,7 @@ npx tsx brain/agents/full-cycle-local.ts --username greggles
 
 ---
 
-### 29. GGUF Converter Agent
+### 30. GGUF Converter Agent
 
 **File**: `brain/agents/gguf-converter.ts`
 
@@ -755,7 +798,7 @@ tsx gguf-converter.ts 2025-10-21
 
 ---
 
-### 30. Eval Adapter Agent
+### 31. Eval Adapter Agent
 
 **File**: `brain/agents/eval-adapter.ts`
 
@@ -786,7 +829,7 @@ tsx eval-adapter.ts 2025-10-21
 
 ---
 
-### 31. Training Exporter Agent
+### 32. Training Exporter Agent
 
 **File**: `brain/agents/training-exporter.ts`
 
@@ -809,7 +852,7 @@ tsx eval-adapter.ts 2025-10-21
 
 ---
 
-### 32. Mode Formatter Agent
+### 33. Mode Formatter Agent
 
 **File**: `brain/agents/mode-formatter.ts`
 
@@ -832,7 +875,7 @@ tsx eval-adapter.ts 2025-10-21
 
 ## Persona & Analysis Agents
 
-### 33. Psychoanalyzer Agent
+### 34. Psychoanalyzer Agent
 
 **File**: `brain/agents/psychoanalyzer.ts`
 
@@ -860,7 +903,7 @@ tsx eval-adapter.ts 2025-10-21
 
 ---
 
-### 34. Digest Agent
+### 35. Digest Agent
 
 **File**: `brain/agents/digest.ts`
 
@@ -889,7 +932,7 @@ tsx eval-adapter.ts 2025-10-21
 
 ---
 
-### 35. Summarizer Agent
+### 36. Summarizer Agent
 
 **File**: `brain/agents/summarizer.ts`
 
@@ -925,7 +968,7 @@ tsx brain/agents/summarizer.ts --auto  # Summarize all unsummarized sessions
 
 ## Audio Processing Agents
 
-### 36. Transcriber Agent
+### 37. Transcriber Agent
 
 **File**: `brain/agents/transcriber.ts`
 
@@ -956,7 +999,7 @@ tsx brain/agents/summarizer.ts --auto  # Summarize all unsummarized sessions
 
 ---
 
-### 37. Audio Organizer Agent
+### 38. Audio Organizer Agent
 
 **File**: `brain/agents/audio-organizer.ts`
 
@@ -966,7 +1009,7 @@ tsx brain/agents/summarizer.ts --auto  # Summarize all unsummarized sessions
 
 ## System Services
 
-### 38. Scheduler Service
+### 39. Scheduler Service
 
 **File**: `brain/agents/scheduler-service.ts`
 
@@ -1002,7 +1045,7 @@ tsx brain/agents/summarizer.ts --auto  # Summarize all unsummarized sessions
 
 ---
 
-### 39. Operator (ReAct Loop)
+### 40. Operator (ReAct Loop)
 
 **File**: `brain/agents/operator-react.ts`
 
@@ -1050,7 +1093,7 @@ tsx brain/agents/summarizer.ts --auto  # Summarize all unsummarized sessions
 
 ---
 
-### 40. Headless Watcher Service
+### 41. Headless Watcher Service
 
 **File**: `brain/agents/headless-watcher.ts`
 
@@ -1079,7 +1122,7 @@ tsx brain/agents/summarizer.ts --auto  # Summarize all unsummarized sessions
 
 ---
 
-### 41. Bootstrap Wrapper
+### 42. Bootstrap Wrapper
 
 **File**: `brain/agents/_bootstrap.ts`
 

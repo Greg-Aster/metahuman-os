@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
+  import TrainingDataControls from './TrainingDataControls.svelte';
 
   // Wizard state machine
   type WizardStep = 1 | 2 | 3 | 4 | 5;
@@ -165,6 +166,23 @@
   let enablePreprocessing = true; // Enable curation/preprocessing by default
   let hasS3Configured = false; // Track if S3 credentials exist
 
+  // Training data configuration (memory type weights)
+  let includePersona = true;
+  let memoryPercentages: Record<string, number> = {
+    conversation: 40,
+    observation: 25,
+    therapy_session: 15,
+    reflection: 5,
+    reflection_summary: 3,
+    inner_dialogue: 3,
+    dream: 3,
+    curiosity_question: 3,
+    decision: 2,
+    journal: 1,
+    summary: 0,
+  };
+  let trainingDataConfigLoaded = false;
+
   // Training monitor state
   let trainingPid: number | null = null;
   let trainingLogs: Array<{ timestamp: string; event: string; details?: any }> = [];
@@ -174,6 +192,8 @@
   let eventsScrollContainer: HTMLDivElement | null = null;
   let cancelling = false;
   let trainingComplete = false;
+  let trainingFailed = false;
+  let failureReason = '';
   let loadingModel = false;
   let modelLoadSuccess = '';
 
@@ -350,6 +370,60 @@
     }
   }
 
+  // Load training data configuration (memory type weights)
+  async function loadTrainingDataConfig() {
+    try {
+      const res = await apiFetch('/api/training-data');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.config) {
+          // Load includePersona
+          if (typeof data.config.collection?.includePersona === 'boolean') {
+            includePersona = data.config.collection.includePersona;
+          }
+          // Load percentages
+          if (data.config.memoryTypes?.percentages) {
+            memoryPercentages = { ...memoryPercentages, ...data.config.memoryTypes.percentages };
+          }
+          trainingDataConfigLoaded = true;
+        }
+      }
+    } catch (err) {
+      console.warn('[TrainingWizard] Failed to load training data config:', err);
+    }
+  }
+
+  // Save training data configuration
+  async function saveTrainingDataConfig() {
+    try {
+      const res = await apiFetch('/api/training-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          collection: { includePersona },
+          memoryTypes: { percentages: memoryPercentages },
+        }),
+      });
+
+      if (!res.ok) {
+        console.warn('[TrainingWizard] Failed to save training data config');
+      }
+    } catch (err) {
+      console.warn('[TrainingWizard] Error saving training data config:', err);
+    }
+  }
+
+  // Handle training data config changes
+  function handlePersonaChange(event: CustomEvent<boolean>) {
+    includePersona = event.detail;
+    saveTrainingDataConfig();
+  }
+
+  function handlePercentagesChange(event: CustomEvent<Record<string, number>>) {
+    memoryPercentages = event.detail;
+    saveTrainingDataConfig();
+  }
+
   // Validate RunPod credentials
   async function validateRunpod() {
     if (!runpodConfig.apiKey) {
@@ -480,6 +554,29 @@
           if (!statusData.running && !trainingComplete) {
             trainingComplete = true;
             currentProgress = null; // Clear progress on completion
+
+            // Check if training failed by looking for failure indicators in logs
+            const logText = consoleLogs.join('\n');
+            if (logText.includes('TRAINING FAILED') ||
+                logText.includes('training_success=false') ||
+                logText.includes('Remote training failed') ||
+                logText.includes('You need a GPU')) {
+              trainingFailed = true;
+              // Extract failure reason
+              const gpuMatch = logText.match(/Unsloth cannot find any torch accelerator/);
+              const errorMatch = logText.match(/❌ TRAINING FAILED[^\n]*\n[^\n]*\n[^\n]*• Error: ([^\n]+)/);
+              if (gpuMatch) {
+                failureReason = 'GPU not detected on RunPod pod. This can happen with community cloud - try again.';
+              } else if (errorMatch) {
+                failureReason = errorMatch[1];
+              } else {
+                failureReason = 'Training process failed. Check console logs for details.';
+              }
+            } else {
+              trainingFailed = false;
+              failureReason = '';
+            }
+
             stopLogsPolling();
           }
         }
@@ -629,6 +726,20 @@
     }
   }
 
+  // Retry training after failure
+  async function retryTraining() {
+    // Reset failure state
+    trainingComplete = false;
+    trainingFailed = false;
+    failureReason = '';
+    consoleLogs = [];
+    trainingLogs = [];
+    error = '';
+
+    // Launch training again with same settings
+    await launchTraining();
+  }
+
   // Lifecycle
   onMount(() => {
     detectCapabilities();
@@ -679,6 +790,11 @@
   // Watch for step changes to load data
   $: if (currentStep === 3 && datasetStats === null) {
     loadDatasetStats();
+  }
+
+  // Load training data config when entering step 3
+  $: if (currentStep === 3 && !trainingDataConfigLoaded) {
+    loadTrainingDataConfig();
   }
 
   // Auto-scroll is now handled in pollTrainingLogs() using requestAnimationFrame
@@ -1039,6 +1155,22 @@
               </div>
             {/if}
           </div>
+
+          <!-- Training Data Controls -->
+          <div class="training-data-section">
+            <h4>Training Data Composition</h4>
+            <p class="section-description">
+              Control what types of memories are used in training. By default, conversations and observations
+              are weighted higher for authentic voice. Increase reflections/dreams for more self-growth focus.
+            </p>
+            <TrainingDataControls
+              {includePersona}
+              percentages={memoryPercentages}
+              disabled={loading}
+              on:personaChange={handlePersonaChange}
+              on:percentagesChange={handlePercentagesChange}
+            />
+          </div>
         {/if}
       </div>
 
@@ -1374,6 +1506,21 @@
               <button class="btn-danger-small" on:click={cancelTraining} disabled={cancelling}>
                 {cancelling ? 'Cancelling...' : '🛑 Cancel Training'}
               </button>
+            {:else if trainingComplete && trainingFailed}
+              <div class="status-badge failed">
+                <span>❌ Training Failed</span>
+              </div>
+              <div class="failure-info">
+                <p class="failure-reason">{failureReason}</p>
+              </div>
+              <div class="post-training-actions">
+                <button class="btn-primary-small retry-btn" on:click={retryTraining} disabled={loading}>
+                  {loading ? 'Starting...' : '🔄 Retry Training'}
+                </button>
+                <button class="btn-tertiary-small" on:click={() => currentStep = 1}>
+                  ⚙️ Change Settings
+                </button>
+              </div>
             {:else if trainingComplete}
               <div class="status-badge complete">
                 <span>✅ Training Complete!</span>
@@ -1954,6 +2101,38 @@
     padding-left: 2rem;
   }
 
+  /* Training Data Section */
+  .training-data-section {
+    margin-top: 2rem;
+    border-top: 1px solid var(--border-color, #e5e7eb);
+    padding-top: 1.5rem;
+  }
+
+  :global(.dark) .training-data-section {
+    border-top-color: #374151;
+  }
+
+  .training-data-section h4 {
+    font-size: 1.125rem;
+    margin-bottom: 0.5rem;
+    color: var(--text-color, #111827);
+  }
+
+  :global(.dark) .training-data-section h4 {
+    color: #f3f4f6;
+  }
+
+  .section-description {
+    font-size: 0.875rem;
+    color: #6b7280;
+    margin-bottom: 1rem;
+    line-height: 1.5;
+  }
+
+  :global(.dark) .section-description {
+    color: #9ca3af;
+  }
+
   /* Training Config */
   .range-value {
     display: inline-block;
@@ -2259,6 +2438,35 @@
     background: rgba(76, 175, 80, 0.1);
     color: #4caf50;
     border: 1px solid rgba(76, 175, 80, 0.3);
+  }
+
+  .status-badge.failed {
+    background: rgba(244, 67, 54, 0.1);
+    color: #f44336;
+    border: 1px solid rgba(244, 67, 54, 0.3);
+  }
+
+  .failure-info {
+    background: rgba(244, 67, 54, 0.05);
+    border: 1px solid rgba(244, 67, 54, 0.2);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin: 0.75rem 0;
+  }
+
+  .failure-reason {
+    color: var(--text-secondary, #9ca3af);
+    font-size: 0.9rem;
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  .retry-btn {
+    background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%) !important;
+  }
+
+  .retry-btn:hover {
+    background: linear-gradient(135deg, #d97706 0%, #ea580c 100%) !important;
   }
 
   .status-badge.idle {

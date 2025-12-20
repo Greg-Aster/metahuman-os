@@ -609,8 +609,11 @@ export async function executeGraph(
               console.log(`[GraphExecutor] Re-queuing output path nodes: ${outputPathNodes.join(', ')}`);
               // Clear execution state for output nodes so they can re-execute
               outputPathNodes.forEach(id => executionState.delete(id));
-              // Add them to the front of the queue
-              executionQueue.unshift(...outputPathNodes);
+              // Remove any existing copies from queue first to prevent duplicates
+              const outputPathSet = new Set(outputPathNodes);
+              const filteredQueue = executionQueue.filter(id => !outputPathSet.has(id));
+              executionQueue.length = 0;
+              executionQueue.push(...outputPathNodes, ...filteredQueue);
             }
           }
           console.log(`[GraphExecutor] ================================================`);

@@ -29,6 +29,8 @@ import {
   moveDesire,
   listDesiresByStatus,
   incrementMetric,
+  createTask,
+  updateTaskStatus,
 } from '@metahuman/core';
 
 const LOCK_NAME = 'desire-executor';
@@ -193,12 +195,49 @@ export async function processApprovedDesires(username?: string): Promise<{
     };
     await moveDesire(executingDesire, 'approved', 'executing', username);
 
+    // Create a linked task for this desire (Goal-Task-Desire integration)
+    let linkedTaskPath: string | undefined;
+    try {
+      linkedTaskPath = createTask(desire.title, {
+        description: desire.description || desire.plan?.operatorGoal || '',
+        status: 'in_progress',
+        priority: desire.risk === 'high' || desire.risk === 'critical' ? 'P0'
+          : desire.risk === 'medium' ? 'P1' : 'P2',
+        tags: ['agency', `desire:${desire.id}`, desire.source],
+      });
+      console.log(`${LOG_PREFIX}   📋 Created linked task: ${linkedTaskPath}`);
+
+      audit({
+        category: 'agent',
+        level: 'info',
+        event: 'desire_task_created',
+        actor: 'desire-executor',
+        details: {
+          desireId: desire.id,
+          taskPath: linkedTaskPath,
+          title: desire.title,
+          username,
+        },
+      });
+    } catch (taskError) {
+      console.warn(`${LOG_PREFIX}   ⚠ Failed to create linked task:`, taskError);
+    }
+
     // Execute the plan
     const execution = await executePlan(executingDesire, username);
     executed++;
 
     // Update desire with execution results
     const now = new Date().toISOString();
+
+    // Extract task ID from path for status update
+    let linkedTaskId: string | undefined;
+    if (linkedTaskPath) {
+      const match = linkedTaskPath.match(/([^/]+)\.json$/);
+      if (match) {
+        linkedTaskId = match[1];
+      }
+    }
 
     if (execution.status === 'completed') {
       const finalDesire: Desire = {
@@ -213,6 +252,16 @@ export async function processApprovedDesires(username?: string): Promise<{
 
       await incrementMetric('totalCompleted', 1, username);
 
+      // Complete the linked task (Goal-Task-Desire integration)
+      if (linkedTaskId) {
+        try {
+          updateTaskStatus(linkedTaskId, 'done');
+          console.log(`${LOG_PREFIX}   ✓ Linked task completed: ${linkedTaskId}`);
+        } catch (taskError) {
+          console.warn(`${LOG_PREFIX}   ⚠ Failed to complete linked task:`, taskError);
+        }
+      }
+
       console.log(`${LOG_PREFIX}   ✓ Completed successfully`);
     } else {
       const finalDesire: Desire = {
@@ -226,6 +275,16 @@ export async function processApprovedDesires(username?: string): Promise<{
       failed++;
 
       await incrementMetric('totalFailed', 1, username);
+
+      // Cancel the linked task on failure (Goal-Task-Desire integration)
+      if (linkedTaskId) {
+        try {
+          updateTaskStatus(linkedTaskId, 'cancelled');
+          console.log(`${LOG_PREFIX}   ✗ Linked task cancelled: ${linkedTaskId}`);
+        } catch (taskError) {
+          console.warn(`${LOG_PREFIX}   ⚠ Failed to cancel linked task:`, taskError);
+        }
+      }
 
       console.log(`${LOG_PREFIX}   ✗ Failed: ${execution.error}`);
     }

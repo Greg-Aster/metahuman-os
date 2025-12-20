@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
 import { ROOT, audit, ProgressTracker, getProfilePaths } from '../../packages/core/src/index.js';
+import { getActiveBackend } from '../../packages/core/src/llm-backend.js';
 import dotenv from 'dotenv';
 import { ensureDirSync } from 'fs-extra';
 import fetch from 'node-fetch';
@@ -535,7 +536,18 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     cfg = { base_model, training_mode: 'lora' };
   }
 
-  tracker.setMetadata({ base_model, samples: opts.samples_used });
+  // Check if vLLM is the active backend - if so, skip GGUF conversion
+  // vLLM uses safetensors adapters directly, not merged GGUF files
+  const activeBackend = getActiveBackend();
+  const isVllmBackend = activeBackend === 'vllm';
+  if (isVllmBackend) {
+    log(logFilePath, 'vLLM backend detected - disabling GGUF conversion (safetensors mode)');
+    cfg.gguf_conversion = { enabled: false };
+    // Write updated config back to file
+    fs.writeFileSync(opts.CONFIG_FILE, JSON.stringify(cfg, null, 2));
+  }
+
+  tracker.setMetadata({ base_model, samples: opts.samples_used, backend: activeBackend });
   tracker.completeStage('initialization');
 
   const summary: any = {
@@ -1420,13 +1432,21 @@ echo "Upload complete!"
         }
     } else {
         // LoRA training: download GGUF + adapter artifacts
-        console.log('\n📥 Stage 5/6: Downloading trained model...');
-        console.log('⏱️  This will download both the merged GGUF (~20GB) and adapter artifacts (~2GB)\n');
-        log(logFilePath, 'Downloading merged GGUF and adapter artifacts...');
-        tracker.startStage('adapter_download', 'Downloading merged GGUF');
+        // For vLLM, we only need safetensors - skip GGUF download
+        if (isVllmBackend) {
+            console.log('\n📥 Stage 5/6: Downloading trained adapter (vLLM safetensors mode)...');
+            console.log('⏱️  Downloading adapter artifacts only (~2GB) - GGUF not needed for vLLM\n');
+            log(logFilePath, 'vLLM mode: Downloading safetensors adapter only (skipping GGUF)...');
+            tracker.startStage('adapter_download', 'Downloading safetensors adapter');
+        } else {
+            console.log('\n📥 Stage 5/6: Downloading trained model...');
+            console.log('⏱️  This will download both the merged GGUF (~20GB) and adapter artifacts (~2GB)\n');
+            log(logFilePath, 'Downloading merged GGUF and adapter artifacts...');
+            tracker.startStage('adapter_download', 'Downloading merged GGUF');
+        }
 
-        // First, download the merged GGUF (this is what we'll actually use)
-        if (summary.training_success) {
+        // Download the merged GGUF (only for Ollama, not for vLLM)
+        if (summary.training_success && !isVllmBackend) {
             console.log('📥 Part 1/2: Downloading merged GGUF model via SCP...');
             const finalGGUFPath = path.join(path.dirname(opts.FINAL_ADAPTER_DIR), 'adapter.gguf');
             ensureDirSync(path.dirname(finalGGUFPath));
@@ -1462,13 +1482,17 @@ echo "Upload complete!"
                 console.log(`✅ Merged GGUF saved successfully via SCP (${sizeGB}GB)`);
                 tracker.updateStage('adapter_download', 50, 'GGUF ready, downloading adapter artifacts...');
             }
-        } else {
+        } else if (!summary.training_success) {
             log(logFilePath, 'Skipping GGUF download due to training failure.');
             console.log('⚠️ Skipping GGUF download due to training failure.');
         }
 
-        // Second, download the adapter artifacts (for potential future merging)
-        console.log('\n📥 Part 2/2: Downloading adapter artifacts for archival via SCP...');
+        // Second, download the adapter artifacts (primary for vLLM, archival for Ollama)
+        if (isVllmBackend) {
+            console.log('\n📥 Downloading safetensors adapter via SCP (primary vLLM artifact)...');
+        } else {
+            console.log('\n📥 Part 2/2: Downloading adapter artifacts for archival via SCP...');
+        }
         ensureDirSync(opts.FINAL_ADAPTER_DIR);
 
         // Create a temporary directory for downloading the adapter contents
@@ -1486,14 +1510,28 @@ echo "Upload complete!"
 
         if (adapterDownloadResult.exitCode === 0) {
             // Move contents from tempAdapterDir/adapter to FINAL_ADAPTER_DIR
+            // Use recursive copy+delete instead of rename to support cross-filesystem moves
             const downloadedAdapterPath = path.join(tempAdapterDir, 'adapter');
             if (fs.existsSync(downloadedAdapterPath)) {
                 fs.readdirSync(downloadedAdapterPath).forEach(file => {
-                    fs.renameSync(path.join(downloadedAdapterPath, file), path.join(opts.FINAL_ADAPTER_DIR, file));
+                    const srcPath = path.join(downloadedAdapterPath, file);
+                    const destPath = path.join(opts.FINAL_ADAPTER_DIR, file);
+                    const stat = fs.statSync(srcPath);
+                    if (stat.isDirectory()) {
+                        // Recursively copy directories
+                        fs.cpSync(srcPath, destPath, { recursive: true });
+                    } else {
+                        fs.copyFileSync(srcPath, destPath);
+                    }
                 });
                 fs.rmSync(tempAdapterDir, { recursive: true, force: true });
                 log(logFilePath, 'Adapter artifacts moved to final directory.');
-                console.log('✅ Adapter artifacts downloaded and moved successfully.');
+                if (isVllmBackend) {
+                    console.log('✅ Safetensors adapter downloaded successfully (ready for vLLM).');
+                    tracker.completeStage('adapter_download');
+                } else {
+                    console.log('✅ Adapter artifacts downloaded and moved successfully.');
+                }
             } else {
                 log(logFilePath, 'Downloaded adapter directory not found in temp location.');
             }
@@ -1639,10 +1677,20 @@ SYSTEM You are ${usernameCapitalized}'s digital personality extension. Speak nat
       console.log(`📊 Progress log: ${tracker.getStatusFilePath()}`);
       console.log(`📝 Training output: ${path.join(opts.WORK_LOCAL, 'training_output.txt')}\n`);
 
-      // 3.6.1 Load model into Ollama automatically
-      console.log('\n🦙 Stage 7/7: Loading model into Ollama...');
-      log(logFilePath, 'Creating Ollama model from GGUF...');
-      tracker.startStage('ollama_load', 'Creating Ollama model');
+      // 3.6.1 Load model into Ollama automatically (skip for vLLM)
+      if (isVllmBackend) {
+        console.log('\n📦 vLLM Mode: Skipping Ollama load (use vLLM LoRA API to load adapter)');
+        log(logFilePath, 'vLLM backend detected - skipping Ollama model creation');
+        console.log(`📁 Safetensors adapter ready at: ${opts.FINAL_ADAPTER_DIR}`);
+        console.log('💡 Use vLLM LoRA API: POST /api/lora/load with adapter path');
+        tracker.startStage('ollama_load', 'Skipped (vLLM mode)');
+        tracker.completeStage('ollama_load');
+        summary.ollama_loaded = false;
+        summary.vllm_adapter_path = opts.FINAL_ADAPTER_DIR;
+      } else {
+        console.log('\n🦙 Stage 7/7: Loading model into Ollama...');
+        log(logFilePath, 'Creating Ollama model from GGUF...');
+        tracker.startStage('ollama_load', 'Creating Ollama model');
 
       try {
         // Extract username from path (e.g., profiles/greggles/out/...)
@@ -1731,6 +1779,7 @@ SYSTEM You are ${usernameCapitalized}'s digital personality extension. Speak nat
         summary.ollama_loaded = false;
         // Don't fail the entire training - model files are still usable
       }
+      } // end of else (Ollama branch)
     }
 
     // 3.7. Write final summary

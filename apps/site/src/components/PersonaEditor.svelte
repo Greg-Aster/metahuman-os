@@ -84,7 +84,7 @@
     facets: Record<string, Facet>;
   };
 
-  let editorTab: 'core' | 'facets' | 'archives' = 'core';
+  let editorTab: 'core' | 'facets' | 'insights' | 'archives' = 'core';
   let coreTab: 'identity' | 'personality' | 'values' | 'goals' | 'context' | 'advanced' = 'identity';
 
   let personaCore: PersonaCore | null = null;
@@ -110,6 +110,28 @@
   let archivesLoaded = false; // Track if we've attempted to load
   let selectedArchive: any = null;
   let viewingArchive = false;
+
+  // Insights state
+  type InsightEntry = {
+    timestamp: string;
+    type: 'addition' | 'removal' | 'update';
+    category: string;
+    section?: string;
+    items: string[];
+    memoriesAnalyzed: number;
+    confidence: number;
+    reasoning?: string;
+    archiveCompared?: string;
+    sessionId?: string;
+  };
+  type InsightsData = {
+    version: string;
+    lastUpdated: string | null;
+    entries: InsightEntry[];
+  };
+  let insights: InsightsData | null = null;
+  let loadingInsights = false;
+  let insightsLoaded = false;
 
   onMount(() => {
     loadPersonaData();
@@ -265,6 +287,59 @@
     facetsConfig = facetsConfig;
   }
 
+  // Insights functions
+  async function loadInsights() {
+    console.log('[PersonaEditor] Loading insights...');
+    loadingInsights = true;
+    error = null;
+    try {
+      const res = await apiFetch('/api/persona-insights');
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
+      const data = await res.json();
+      insights = data;
+      insightsLoaded = true;
+      console.log('[PersonaEditor] Loaded insights:', insights?.entries?.length || 0);
+    } catch (e) {
+      console.error('[PersonaEditor] Failed to load insights:', e);
+      error = (e as Error).message;
+      insightsLoaded = true;
+    } finally {
+      loadingInsights = false;
+    }
+  }
+
+  function formatInsightDate(timestamp: string): string {
+    const date = new Date(timestamp);
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  function getInsightIcon(type: 'addition' | 'removal' | 'update'): string {
+    switch (type) {
+      case 'addition': return '+';
+      case 'removal': return '−';
+      case 'update': return '↻';
+      default: return '•';
+    }
+  }
+
+  function getInsightColor(type: 'addition' | 'removal' | 'update'): string {
+    switch (type) {
+      case 'addition': return '#10b981';
+      case 'removal': return '#ef4444';
+      case 'update': return '#f59e0b';
+      default: return '#6b7280';
+    }
+  }
+
   // Archive management functions
   async function loadArchives() {
     console.log('[PersonaEditor] Loading archives...');
@@ -398,6 +473,11 @@
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   }
 
+  // Load insights when switching to insights tab (only once)
+  $: if (editorTab === 'insights' && !insightsLoaded && !loadingInsights) {
+    loadInsights();
+  }
+
   // Load archives when switching to archives tab (only once)
   $: if (editorTab === 'archives' && !archivesLoaded && !loadingArchives) {
     loadArchives();
@@ -421,6 +501,9 @@
         </button>
         <button class="editor-tab" class:active={editorTab === 'facets'} on:click={() => editorTab = 'facets'}>
           Facets
+        </button>
+        <button class="editor-tab" class:active={editorTab === 'insights'} on:click={() => editorTab = 'insights'}>
+          Insights
         </button>
         <button class="editor-tab" class:active={editorTab === 'archives'} on:click={() => editorTab = 'archives'}>
           Archives
@@ -878,6 +961,71 @@
         </div>
       </div>
 
+    {:else if editorTab === 'insights'}
+      <div class="editor-content">
+        <div class="insights-header">
+          <div>
+            <h3>Persona Insights</h3>
+            <p class="insights-description">
+              Track how your persona evolves over time. The psychoanalyzer agent analyzes your conversations and updates your persona based on patterns it discovers.
+            </p>
+          </div>
+          <button class="btn-refresh" on:click={loadInsights} disabled={loadingInsights}>
+            {loadingInsights ? 'Loading...' : 'Refresh'}
+          </button>
+        </div>
+
+        {#if loadingInsights && !insights}
+          <div class="loading-state">Loading insights...</div>
+        {:else if insights && insights.entries.length === 0}
+          <div class="empty-state">
+            <p>No insights yet. Run the psychoanalyzer agent to analyze your conversations and discover personality patterns.</p>
+            <p class="hint">Go to Memory → Run Psychoanalyzer to get started.</p>
+          </div>
+        {:else if insights && insights.entries.length > 0}
+          <div class="insights-timeline">
+            {#each insights.entries as entry}
+              <div class="insight-entry">
+                <div class="insight-indicator" style="background-color: {getInsightColor(entry.type)}">
+                  <span class="insight-icon">{getInsightIcon(entry.type)}</span>
+                </div>
+                <div class="insight-content">
+                  <div class="insight-header">
+                    <span class="insight-category">{entry.category}</span>
+                    <span class="insight-type" style="color: {getInsightColor(entry.type)}">{entry.type}</span>
+                  </div>
+                  <div class="insight-items">
+                    {#each entry.items as item}
+                      <span class="insight-item">{item}</span>
+                    {/each}
+                  </div>
+                  {#if entry.reasoning}
+                    <div class="insight-reasoning">
+                      <span class="reasoning-label">Reasoning:</span>
+                      <span class="reasoning-text">{entry.reasoning}</span>
+                    </div>
+                  {/if}
+                  <div class="insight-meta">
+                    <span class="insight-date">{formatInsightDate(entry.timestamp)}</span>
+                    <span class="insight-stats">
+                      {entry.memoriesAnalyzed} memories · {Math.round(entry.confidence * 100)}% confidence
+                      {#if entry.sessionId}
+                        · Session: {entry.sessionId.slice(-8)}
+                      {/if}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+          {#if insights.lastUpdated}
+            <div class="insights-footer">
+              Last updated: {formatInsightDate(insights.lastUpdated)}
+            </div>
+          {/if}
+        {/if}
+      </div>
+
     {:else if editorTab === 'archives'}
       <div class="editor-content">
         <div class="archives-header">
@@ -1324,6 +1472,181 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
+  }
+
+  /* Insights styles */
+  .insights-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1.5rem;
+  }
+
+  .insights-header h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+
+  .insights-description {
+    margin: 0;
+    font-size: 0.875rem;
+    color: #6b7280;
+    max-width: 600px;
+  }
+
+  :global(.dark) .insights-description {
+    color: #9ca3af;
+  }
+
+  .insights-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .insight-entry {
+    display: flex;
+    gap: 1rem;
+    padding: 1rem;
+    background: #f9fafb;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+  }
+
+  :global(.dark) .insight-entry {
+    background: #1f2937;
+    border-color: #374151;
+  }
+
+  .insight-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .insight-icon {
+    color: white;
+    font-weight: bold;
+    font-size: 1rem;
+  }
+
+  .insight-content {
+    flex: 1;
+  }
+
+  .insight-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .insight-category {
+    font-weight: 600;
+    text-transform: capitalize;
+    font-size: 0.95rem;
+  }
+
+  .insight-type {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+
+  .insight-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .insight-item {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    background: #e5e7eb;
+    border-radius: 999px;
+    font-size: 0.875rem;
+    color: #374151;
+  }
+
+  :global(.dark) .insight-item {
+    background: #374151;
+    color: #e5e7eb;
+  }
+
+  .insight-reasoning {
+    margin: 0.75rem 0;
+    padding: 0.75rem;
+    background: #f3f4f6;
+    border-radius: 0.375rem;
+    border-left: 3px solid #8b5cf6;
+  }
+
+  :global(.dark) .insight-reasoning {
+    background: #111827;
+    border-left-color: #a78bfa;
+  }
+
+  .reasoning-label {
+    font-weight: 600;
+    font-size: 0.75rem;
+    color: #7c3aed;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    display: block;
+    margin-bottom: 0.25rem;
+  }
+
+  :global(.dark) .reasoning-label {
+    color: #a78bfa;
+  }
+
+  .reasoning-text {
+    font-size: 0.875rem;
+    color: #374151;
+    line-height: 1.5;
+    display: block;
+  }
+
+  :global(.dark) .reasoning-text {
+    color: #d1d5db;
+  }
+
+  .insight-meta {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+
+  :global(.dark) .insight-meta {
+    color: #9ca3af;
+  }
+
+  .insights-footer {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid #e5e7eb;
+    font-size: 0.75rem;
+    color: #6b7280;
+    text-align: center;
+  }
+
+  :global(.dark) .insights-footer {
+    border-color: #374151;
+    color: #9ca3af;
+  }
+
+  .hint {
+    font-size: 0.8rem;
+    color: #9ca3af;
+    margin-top: 0.5rem;
   }
 
   /* Archives styles */

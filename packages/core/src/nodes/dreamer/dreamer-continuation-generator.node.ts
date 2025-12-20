@@ -9,6 +9,7 @@ import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
 import { recordSystemActivity } from '../../system-activity.js';
 import { scheduler } from '../../agent-scheduler.js';
+import { appendDreamToBuffer } from '../../conversation-buffer.js';
 
 function markBackgroundActivity() {
   try { recordSystemActivity(); } catch {}
@@ -16,7 +17,8 @@ function markBackgroundActivity() {
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  const previousDreamInput = inputs[0];
+  // inputs is an object keyed by handle name, not an array
+  const previousDreamInput = inputs.previousDream;
   let lastDream = previousDreamInput?.dream || previousDreamInput;
   const username = context.userId || context.username;
   const temperature = properties?.temperature || 1.0;
@@ -83,6 +85,11 @@ Do not summarize; let one dream bleed into another. No length limits.`.trim();
           parentDream: dreams[dreams.length - 2] || lastDream,
         },
       });
+
+      // Append to conversation buffer so it appears in UI
+      if (username) {
+        appendDreamToBuffer(username, continuation);
+      }
 
       audit({
         level: 'info',

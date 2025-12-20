@@ -864,13 +864,17 @@ export function useMicrophone(options: UseMicrophoneOptions) {
         // NOW send the accumulated transcript (this is when we actually send in conversation mode)
         if (fullTranscript) {
           console.log('[useMicrophone] Conversation mode: sending accumulated transcript:', fullTranscript);
-          accumulatedTranscript = ''; // Reset BEFORE onTranscript to prevent double-send in onend
+          // Reset BOTH accumulatedTranscript AND interimTranscript BEFORE onTranscript
+          // to prevent double-send in onend (onend also reads interimTranscript)
+          accumulatedTranscript = '';
+          interimTranscript.set('');
           conversationGotTranscript = true;
           onTranscript(fullTranscript);
           conversationEmptyTurns = 0;
         } else {
           console.log('[useMicrophone] Conversation mode: no transcript detected, backing off');
           accumulatedTranscript = '';
+          interimTranscript.set('');
           conversationEmptyTurns += 1;
           if (conversationEmptyTurns >= 2) {
             stopConversationMode();

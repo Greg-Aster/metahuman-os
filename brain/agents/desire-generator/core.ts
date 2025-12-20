@@ -36,6 +36,8 @@ import {
   storageClient,
   getActiveBackend,
   callLLM,
+  proposeGoalFromDesire,
+  GOAL_PROPOSAL_THRESHOLDS,
   type RouterMessage,
 } from '@metahuman/core';
 
@@ -243,6 +245,175 @@ export async function loadRecentMemories(days: number = 7): Promise<MemorySummar
     console.error(`${LOG_PREFIX} Error loading memories:`, error);
     return [];
   }
+}
+
+/**
+ * Detect patterns in memories based on recurring tags and themes.
+ * Analyzes tag frequency and co-occurrences to identify patterns.
+ */
+export function detectMemoryPatterns(memories: MemorySummary[]): import('@metahuman/core').MemoryPattern[] {
+  if (memories.length < 3) {
+    // Not enough memories to detect meaningful patterns
+    return [];
+  }
+
+  // Tags to exclude from pattern detection (too generic or system-level)
+  const excludedTags = new Set([
+    'processed', 'unprocessed', 'system', 'meta', 'test',
+    'conversation', 'observation', 'episodic', 'memory',
+  ]);
+
+  // Count tag frequencies and track which memories contain each tag
+  const tagFrequency = new Map<string, { count: number; memoryIds: string[] }>();
+
+  for (const memory of memories) {
+    const tags = memory.tags || [];
+    for (const tag of tags) {
+      const normalizedTag = tag.toLowerCase().trim();
+      if (excludedTags.has(normalizedTag) || normalizedTag.length < 2) {
+        continue;
+      }
+
+      const existing = tagFrequency.get(normalizedTag);
+      if (existing) {
+        existing.count++;
+        existing.memoryIds.push(memory.id);
+      } else {
+        tagFrequency.set(normalizedTag, { count: 1, memoryIds: [memory.id] });
+      }
+    }
+  }
+
+  // Track tag co-occurrences (tags that appear together)
+  const coOccurrences = new Map<string, { count: number; memoryIds: string[] }>();
+
+  for (const memory of memories) {
+    const tags = (memory.tags || [])
+      .map(t => t.toLowerCase().trim())
+      .filter(t => !excludedTags.has(t) && t.length >= 2);
+
+    // Generate pairs of co-occurring tags
+    for (let i = 0; i < tags.length; i++) {
+      for (let j = i + 1; j < tags.length; j++) {
+        // Sort alphabetically to ensure consistent key
+        const pair = [tags[i], tags[j]].sort().join(' + ');
+        const existing = coOccurrences.get(pair);
+        if (existing) {
+          existing.count++;
+          if (!existing.memoryIds.includes(memory.id)) {
+            existing.memoryIds.push(memory.id);
+          }
+        } else {
+          coOccurrences.set(pair, { count: 1, memoryIds: [memory.id] });
+        }
+      }
+    }
+  }
+
+  const patterns: import('@metahuman/core').MemoryPattern[] = [];
+  let patternIndex = 0;
+
+  // Pattern 1: High-frequency single tags (appears in 3+ memories)
+  const frequentTags = [...tagFrequency.entries()]
+    .filter(([_, data]) => data.count >= 3)
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 5);
+
+  for (const [tag, data] of frequentTags) {
+    patterns.push({
+      id: `pattern-tag-${patternIndex++}`,
+      description: `Recurring theme: "${tag}" appears frequently (${data.count} times)`,
+      frequency: data.count,
+      relatedMemoryIds: data.memoryIds.slice(0, 10),
+    });
+  }
+
+  // Pattern 2: Significant co-occurrences (pairs appearing 2+ times)
+  const frequentPairs = [...coOccurrences.entries()]
+    .filter(([_, data]) => data.count >= 2)
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 5);
+
+  for (const [pair, data] of frequentPairs) {
+    patterns.push({
+      id: `pattern-pair-${patternIndex++}`,
+      description: `Connected themes: "${pair}" appear together (${data.count} times)`,
+      frequency: data.count,
+      relatedMemoryIds: data.memoryIds.slice(0, 10),
+    });
+  }
+
+  // Pattern 3: Time-based patterns (morning/afternoon/evening clustering)
+  const timePatterns = detectTimePatterns(memories, tagFrequency);
+  patterns.push(...timePatterns.map((tp, idx) => ({
+    id: `pattern-time-${idx}`,
+    description: tp.description,
+    frequency: tp.frequency,
+    relatedMemoryIds: tp.memoryIds,
+  })));
+
+  console.log(`${LOG_PREFIX} Detected ${patterns.length} memory patterns`);
+  return patterns.slice(0, 10); // Limit to 10 patterns
+}
+
+/**
+ * Detect time-based patterns (tags that cluster at certain times of day)
+ */
+function detectTimePatterns(
+  memories: MemorySummary[],
+  tagFrequency: Map<string, { count: number; memoryIds: string[] }>
+): Array<{ description: string; frequency: number; memoryIds: string[] }> {
+  const timeSlots = {
+    morning: { start: 5, end: 12, tags: new Map<string, string[]>() },
+    afternoon: { start: 12, end: 17, tags: new Map<string, string[]>() },
+    evening: { start: 17, end: 22, tags: new Map<string, string[]>() },
+    night: { start: 22, end: 5, tags: new Map<string, string[]>() },
+  };
+
+  // Categorize memories by time slot
+  for (const memory of memories) {
+    const hour = new Date(memory.timestamp).getHours();
+    let slot: keyof typeof timeSlots;
+
+    if (hour >= 5 && hour < 12) slot = 'morning';
+    else if (hour >= 12 && hour < 17) slot = 'afternoon';
+    else if (hour >= 17 && hour < 22) slot = 'evening';
+    else slot = 'night';
+
+    const tags = memory.tags || [];
+    for (const tag of tags) {
+      const normalizedTag = tag.toLowerCase().trim();
+      if (normalizedTag.length < 2) continue;
+
+      const existing = timeSlots[slot].tags.get(normalizedTag);
+      if (existing) {
+        existing.push(memory.id);
+      } else {
+        timeSlots[slot].tags.set(normalizedTag, [memory.id]);
+      }
+    }
+  }
+
+  const patterns: Array<{ description: string; frequency: number; memoryIds: string[] }> = [];
+
+  // Find tags that cluster significantly in one time slot
+  for (const [slotName, slotData] of Object.entries(timeSlots)) {
+    for (const [tag, memoryIds] of slotData.tags.entries()) {
+      const totalCount = tagFrequency.get(tag)?.count || 0;
+      const slotCount = memoryIds.length;
+
+      // If 70%+ of a tag's occurrences are in one time slot (min 3 occurrences)
+      if (totalCount >= 3 && slotCount / totalCount >= 0.7) {
+        patterns.push({
+          description: `"${tag}" tends to occur in the ${slotName} (${slotCount}/${totalCount} times)`,
+          frequency: slotCount,
+          memoryIds: memoryIds.slice(0, 10),
+        });
+      }
+    }
+  }
+
+  return patterns.slice(0, 3); // Limit time patterns
 }
 
 /**
@@ -475,12 +646,17 @@ export async function gatherInputs(enabledSources: DesireSource[]): Promise<Desi
     loadExistingDesires(),
   ]);
 
+  // Detect patterns from loaded memories
+  const memoryPatterns = enabledSources.includes('memory_pattern')
+    ? detectMemoryPatterns(recentMemories)
+    : [];
+
   return {
     personaGoals,
     urgentTasks: tasks.urgent,
     activeTasks: tasks.regular,
     recentMemories,
-    memoryPatterns: [], // TODO: Implement pattern detection
+    memoryPatterns,
     pendingCuriosityQuestions: curiosityQuestions,
     recentReflections: reflections,
     recentDreams: dreams,
@@ -516,8 +692,14 @@ ${inputs.activeTasks.slice(0, 10).map(t => `- ${t.title}`).join('\n')}`);
   }
 
   if (inputs.recentMemories.length > 0) {
-    sections.push(`### Recent Memories (Weight: ${DESIRE_SOURCE_WEIGHTS.memory_pattern})
+    sections.push(`### Recent Memories
 ${inputs.recentMemories.slice(0, 10).map(m => `- [${m.type || 'observation'}] ${m.content.substring(0, 100)}...`).join('\n')}`);
+  }
+
+  if (inputs.memoryPatterns.length > 0) {
+    sections.push(`### Detected Memory Patterns (Weight: ${DESIRE_SOURCE_WEIGHTS.memory_pattern})
+These are recurring themes identified from recent experiences:
+${inputs.memoryPatterns.map(p => `- ${p.description} (appears in ${p.relatedMemoryIds.length} memories)`).join('\n')}`);
   }
 
   if (inputs.pendingCuriosityQuestions.length > 0) {
@@ -566,6 +748,8 @@ A desire is not just a task - it's a motivated intention. It represents somethin
 ## Guidelines
 - Focus on desires that are actionable within the system's capabilities
 - Prefer desires that align with persona goals
+- **Pay special attention to Detected Memory Patterns** - these recurring themes represent genuine interests and concerns that have emerged organically from experiences
+- When a pattern appears frequently (3+ times), consider if it suggests a desire to explore, resolve, or build upon that theme
 - Consider patterns in memories and reflections
 - Avoid duplicating already active desires
 - Be selective - only identify 0-5 genuine desires
@@ -821,7 +1005,7 @@ async function nurtureExistingDesires(
   username: string,
   inputs: DesireGeneratorInputs,
   config: Awaited<ReturnType<typeof loadConfig>>
-): Promise<{ reinforced: number; decayed: number; abandoned: number }> {
+): Promise<{ reinforced: number; decayed: number; abandoned: number; goalsProposed: number }> {
   // Load ALL nascent and pending desires
   const nascentDesires = await listNascentDesires(username);
   const pendingDesires = await listPendingDesires(username);
@@ -829,7 +1013,7 @@ async function nurtureExistingDesires(
 
   if (allDesires.length === 0) {
     console.log(`${LOG_PREFIX} No existing desires to nurture`);
-    return { reinforced: 0, decayed: 0, abandoned: 0 };
+    return { reinforced: 0, decayed: 0, abandoned: 0, goalsProposed: 0 };
   }
 
   console.log(`${LOG_PREFIX} Nurturing ${allDesires.length} existing desires...`);
@@ -841,6 +1025,7 @@ async function nurtureExistingDesires(
   let reinforced = 0;
   let decayed = 0;
   let abandoned = 0;
+  let goalsProposed = 0;
 
   for (const desire of allDesires) {
     const isReinforced = reinforcements.has(desire.id);
@@ -871,6 +1056,51 @@ async function nurtureExistingDesires(
           username,
         },
       });
+
+      // =========================================================================
+      // Goal-Task-Desire Integration: Strong Desire → Goal Proposal
+      // When a desire reaches high strength (>0.9) with 5+ reinforcements,
+      // it represents a genuine, persistent want that should become a goal.
+      // =========================================================================
+      if (
+        newStrength >= GOAL_PROPOSAL_THRESHOLDS.minStrength &&
+        desire.reinforcements >= GOAL_PROPOSAL_THRESHOLDS.minReinforcements
+      ) {
+        console.log(`${LOG_PREFIX} 🎯 Desire "${desire.title}" qualifies for goal promotion!`);
+
+        const proposalResult = proposeGoalFromDesire({
+          id: desire.id,
+          title: desire.title,
+          description: desire.description,
+          reason: desire.reason,
+          strength: newStrength,
+          reinforcements: desire.reinforcements,
+          source: desire.source,
+        });
+
+        if (proposalResult.proposed) {
+          goalsProposed++;
+          console.log(`${LOG_PREFIX} 🎯 ${proposalResult.message}`);
+
+          audit({
+            category: 'agent',
+            level: 'info',
+            event: 'goal_proposed_from_desire',
+            actor: 'desire-generator',
+            details: {
+              desireId: desire.id,
+              desireTitle: desire.title,
+              goalId: proposalResult.goalId,
+              strength: newStrength,
+              reinforcements: desire.reinforcements,
+              source: desire.source,
+              username,
+            },
+          });
+        } else {
+          console.log(`${LOG_PREFIX}    (Not proposed: ${proposalResult.message})`);
+        }
+      }
     } else {
       // Decay: reduce strength
       const newStrength = applyDecay(
@@ -908,8 +1138,8 @@ async function nurtureExistingDesires(
     await saveDesire(desire, username);
   }
 
-  console.log(`${LOG_PREFIX} Nurture complete: ${reinforced} reinforced, ${decayed} decayed, ${abandoned} abandoned`);
-  return { reinforced, decayed, abandoned };
+  console.log(`${LOG_PREFIX} Nurture complete: ${reinforced} reinforced, ${decayed} decayed, ${abandoned} abandoned, ${goalsProposed} goals proposed`);
+  return { reinforced, decayed, abandoned, goalsProposed };
 }
 
 // ============================================================================
@@ -1120,7 +1350,7 @@ export async function generateDesiresForUser(username: string): Promise<number> 
   }
 
   // Log to inner dialogue if enabled
-  if (config.logging.logToInnerDialogue && (created > 0 || nurtureResult.reinforced > 0 || activatedCount > 0)) {
+  if (config.logging.logToInnerDialogue && (created > 0 || nurtureResult.reinforced > 0 || activatedCount > 0 || nurtureResult.goalsProposed > 0)) {
     const parts: string[] = [];
 
     // Report on nurtured desires
@@ -1135,6 +1365,9 @@ export async function generateDesiresForUser(username: string): Promise<number> 
     }
     if (activatedCount > 0) {
       parts.push(`⬆ ${activatedCount} desire(s) reached activation threshold!`);
+    }
+    if (nurtureResult.goalsProposed > 0) {
+      parts.push(`🎯 ${nurtureResult.goalsProposed} desire(s) promoted to proposed goals!`);
     }
 
     // Report on new desires
@@ -1158,6 +1391,7 @@ export async function generateDesiresForUser(username: string): Promise<number> 
         desiresDecayed: nurtureResult.decayed,
         desiresAbandoned: nurtureResult.abandoned,
         desiresActivated: activatedCount,
+        goalsProposed: nurtureResult.goalsProposed,
         sources: [...new Set(uniqueCandidates.map(c => c.source))],
       },
     });

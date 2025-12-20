@@ -13,16 +13,32 @@ export async function handleStartAgent(req: UnifiedRequest): Promise<UnifiedResp
   // User is already authenticated by router (requiresAuth: true)
   const user = req.user;
 
-  const { agentName } = req.body || {};
+  const { agentName, options = {} } = req.body || {};
 
   if (!agentName) {
     return errorResponse('agentName is required', 400);
   }
 
-  const agentPath = `${systemPaths.brain}/agents/${agentName}.ts`;
+  // Build CLI args from options
+  const optionArgs: string[] = [];
+  if (options.dryRun) optionArgs.push('--dry-run');
+  if (options.verbose) optionArgs.push('--verbose');
+  if (options.minLength !== undefined) optionArgs.push('--min-length', String(options.minLength));
+  if (options.similarity !== undefined) optionArgs.push('--similarity', String(options.similarity));
+  if (options.temperature !== undefined) optionArgs.push('--temperature', String(options.temperature));
 
-  if (!fs.existsSync(agentPath)) {
-    return notFoundResponse(`Agent not found: ${agentName}`);
+  // Support both new directory structure and legacy flat files
+  const possiblePaths = [
+    path.join(systemPaths.brain, 'agents', agentName, 'cli.ts'),  // New: brain/agents/name/cli.ts
+    path.join(systemPaths.brain, 'agents', agentName, 'core.ts'), // New: brain/agents/name/core.ts (if no cli)
+    path.join(systemPaths.brain, 'training', `${agentName}.ts`),  // Training scripts
+    path.join(systemPaths.brain, 'agents', `${agentName}.ts`),    // Legacy: brain/agents/name.ts
+  ];
+
+  const agentPath = possiblePaths.find(p => fs.existsSync(p));
+
+  if (!agentPath) {
+    return notFoundResponse(`Agent not found: ${agentName}. Checked: ${possiblePaths.map(p => path.basename(path.dirname(p)) + '/' + path.basename(p)).join(', ')}`);
   }
 
   console.log(`[Web UI] Spawning agent: ${agentName}...`);
@@ -42,7 +58,10 @@ export async function handleStartAgent(req: UnifiedRequest): Promise<UnifiedResp
       MH_TRIGGER_ROLE: user.role,
     };
 
-    const child = spawn(tsxCmd, [agentPath], {
+    // Pass username to agent via CLI args (most agents require it)
+    const agentArgs = [agentPath, '--username', user.username, ...optionArgs];
+
+    const child = spawn(tsxCmd, agentArgs, {
       stdio: 'pipe', // Pipe output so we can log it
       cwd: ROOT,
       detached: true, // Detach from the web server process
