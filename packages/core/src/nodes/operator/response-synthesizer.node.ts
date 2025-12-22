@@ -102,6 +102,19 @@ const execute: NodeExecutor = async (inputs, context) => {
   // We can proceed with PRIMARY PATH even without persona - either use persona text, identity summary, or nothing (LoRA-only)
   const hasPersona = true; // Always allow PRIMARY PATH when we have context
 
+  // Check if goalInput has Claude Full Task output (Big Brother mode)
+  // In Big Brother graph, claude_full_task output goes to 'goal' input
+  if (goalInput && typeof goalInput === 'object') {
+    if (goalInput.finalResponse) {
+      console.log(`[ResponseSynthesizer] ✅ Found finalResponse in goal (Claude Full Task output)`);
+      return {
+        response: goalInput.finalResponse,
+        claudeFullTaskOutput: true,
+        bypassedReActLoop: goalInput.bypassedReActLoop,
+      };
+    }
+  }
+
   // Check if scratchpad input has the SkillExecutor output
   if (scratchpadInput) {
     if (scratchpadInput.finalResponse) {
@@ -157,16 +170,35 @@ const execute: NodeExecutor = async (inputs, context) => {
 
     // Build memory context
     let memoryContext = '';
-    if (memories.length > 0) {
-      const memoryTexts = memories.slice(0, 5).map((m: any) => {
+    let unknownInstruction = '';
+
+    // CRITICAL: unknownSignal means search found NO direct answers
+    // Even if we have partial memories, they don't answer the question
+    if (unknownSignal) {
+      console.log(`[ResponseSynthesizer] unknownSignal=true - no direct answer found in memories`);
+      if (memories.length > 0) {
+        // We have related memories but NO direct answer
+        const memoryTexts = memories.slice(0, 3).map((m: any, i: number) => {
+          const text = m.content || m.item?.text || m.text || '';
+          console.log(`[ResponseSynthesizer] Context memory ${i + 1}: "${text.substring(0, 60)}..."`);
+          return text;
+        }).filter((t: string) => t.length > 0);
+
+        unknownInstruction = `\n\n## Memory Search Result\nNo direct answer found. Related content:\n${memoryTexts.map((t: string) => `- ${t.substring(0, 100)}...`).join('\n')}\n\nSay you don't know or don't have a memory of this.\n`;
+      } else {
+        unknownInstruction = `\n\n## Memory Search Result\nNo relevant memories found. Say you don't know or don't have a memory of this.\n`;
+      }
+    } else if (memories.length > 0) {
+      // We have actual answers - use them
+      console.log(`[ResponseSynthesizer] Processing ${memories.length} memories with direct answers`);
+      const memoryTexts = memories.slice(0, 5).map((m: any, i: number) => {
         const text = m.content || m.item?.text || m.text || '';
+        console.log(`[ResponseSynthesizer] Memory ${i + 1} (${m.relevanceLevel || 'unknown'}): "${text.substring(0, 80)}..."`);
         return text;
       }).filter((t: string) => t.length > 0);
       if (memoryTexts.length > 0) {
-        memoryContext = `\n\n## Memories\n${memoryTexts.map((t: string, i: number) => `${i + 1}. ${t}`).join('\n\n')}`;
+        memoryContext = `\n\n## Relevant Memories\n${memoryTexts.map((t: string, i: number) => `${i + 1}. ${t}`).join('\n\n')}\n`;
       }
-    } else if (unknownSignal) {
-      memoryContext = '\n\n[No relevant memories found for this query]';
     }
 
     // Build feedback section if this is a refinement iteration
@@ -179,8 +211,19 @@ const execute: NodeExecutor = async (inputs, context) => {
     // Put it at the TOP of the system prompt so the LLM doesn't lose sight of it
     const currentQuerySection = `## Current Question\n${userMsgStr}\n\n---\n`;
 
-    // Build system prompt with current query FIRST, then supporting context
-    const systemPrompt = `${currentQuerySection}${personaSummary}${memoryContext}${feedbackSection}`;
+    // Check if we have factual information that should override persona style
+    const hasFactualMemories = memories.length > 0 && !unknownSignal;
+
+    // Build system prompt: Question first, then FACTS (before persona), then persona for style
+    // This ensures factual answers aren't filtered through persona's philosophical tendencies
+    let systemPrompt: string;
+    if (hasFactualMemories) {
+      // Facts-first prompt: memories come BEFORE persona so facts take priority
+      systemPrompt = `${currentQuerySection}${memoryContext}\n\n---\n\n## Your Identity\n${personaSummary}${feedbackSection}`;
+    } else {
+      // No memories: persona-first (unknownInstruction already handles "I don't know")
+      systemPrompt = `${currentQuerySection}${unknownInstruction}${personaSummary}${feedbackSection}`;
+    }
 
     // Limit conversation history to 6 messages (not 10) to reduce context overload
     const messages = [
@@ -197,6 +240,9 @@ const execute: NodeExecutor = async (inputs, context) => {
     const contextLimit = 4096;
     const maxTokens = Math.min(1024, Math.max(256, contextLimit - estimatedInputTokens - 100));
 
+    // Lower temperature when we have factual memories to prioritize accuracy over creativity
+    const temperature = hasFactualMemories ? 0.4 : 0.7;
+
     try {
       const response = await callLLM({
         role: 'persona',
@@ -206,7 +252,7 @@ const execute: NodeExecutor = async (inputs, context) => {
         options: {
           maxTokens,
           repeatPenalty: 1.3,
-          temperature: 0.7,
+          temperature,
         },
         onProgress: context.emitProgress,
       });

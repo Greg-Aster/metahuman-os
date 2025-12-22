@@ -2,6 +2,30 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { storageClient } from './storage-client.js'
 import { embedText, cosineSimilarity } from './embeddings.js'
+import { extractMemoryContent, type ContentMode } from './memory-content-filter.js'
+import { ROOT } from './paths.js'
+
+// ============================================================================
+// Index Content Mode Configuration
+// ============================================================================
+
+/**
+ * Load the index content mode from embeddings.json
+ * Controls what content types are included in the vector index
+ */
+function loadIndexContentMode(): ContentMode {
+  try {
+    const embeddingsPath = path.join(ROOT, 'etc', 'embeddings.json')
+    const config = JSON.parse(fs.readFileSync(embeddingsPath, 'utf-8'))
+    const mode = config.indexContentMode || 'user'
+    if (['user', 'all', 'agent'].includes(mode)) {
+      return mode as ContentMode
+    }
+  } catch (err) {
+    console.warn('[vector-index] Could not load indexContentMode, using default "user"')
+  }
+  return 'user'
+}
 
 /**
  * Resolve user-specific memory paths via storage router
@@ -136,6 +160,10 @@ export async function buildMemoryIndex(options: {
 
   const memPaths = resolveMemoryPaths(username);
 
+  // Load content mode from config - determines what content types to index
+  const indexContentMode = loadIndexContentMode()
+  console.log(`[vector-index] Index content mode: ${indexContentMode}`)
+
   // Helper to get embedding and track dimensions
   // Note: embeddings.ts handles truncation at 32K chars if needed
   const getEmbedding = async (text: string): Promise<number[]> => {
@@ -158,7 +186,7 @@ export async function buildMemoryIndex(options: {
         if (!obj || !obj.id || !obj.content) continue
         if (obj.validation && obj.validation.status === 'incorrect') continue
 
-        // Skip LLM-generated memory types - these don't contain user data
+        // Skip LLM-generated memory types when in 'user' mode
         const memType = obj.type?.toLowerCase() || ''
         const llmGeneratedTypes = [
           'inner_dialogue',     // LLM internal thoughts
@@ -167,25 +195,23 @@ export async function buildMemoryIndex(options: {
           'dream',              // LLM dreams
           'summary',            // LLM summaries
         ]
-        if (llmGeneratedTypes.includes(memType)) {
+        // In 'user' mode, skip all LLM types. In 'agent' mode, we want these.
+        // In 'all' mode, include everything.
+        if (indexContentMode === 'user' && llmGeneratedTypes.includes(memType)) {
           skippedLLM++
           continue
         }
 
-        // Extract user-only content from conversation memories
-        // Memory format: "User: <message>\n\nAssistant: <response>"
-        let userContent = String(obj.content)
-        if (memType === 'conversation' && userContent.includes('\n\nAssistant:')) {
-          // Extract only the user portion before assistant response
-          const userMatch = userContent.match(/^User:\s*([\s\S]*?)\n\nAssistant:/i)
-          if (userMatch && userMatch[1]) {
-            userContent = userMatch[1].trim()
-          }
+        // Extract content using configured mode (handles all formats)
+        const extractedContent = extractMemoryContent(obj, indexContentMode)
+        if (!extractedContent) {
+          // Skip memories with no relevant content for this mode
+          continue
         }
 
         const tags = Array.isArray(obj.tags) ? obj.tags.join(' ') : ''
         const entities = Array.isArray(obj.entities) ? obj.entities.join(' ') : ''
-        const text = [userContent, tags ? `Tags: ${tags}` : '', entities ? ` Entities: ${entities}` : '']
+        const text = [extractedContent, tags ? `Tags: ${tags}` : '', entities ? ` Entities: ${entities}` : '']
           .filter(Boolean)
           .join(' ')
         const vector = await getEmbedding(text)
@@ -356,34 +382,63 @@ export function loadIndex(model?: string, username?: string): VectorIndexFile | 
   return index
 }
 
+/**
+ * Compute keyword overlap score between query and text.
+ * Returns 0-1 based on what fraction of query words appear in text.
+ */
+function keywordScore(query: string, text: string): number {
+  const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2)
+  if (queryWords.length === 0) return 0
+
+  const textLower = text.toLowerCase()
+  let matches = 0
+  for (const word of queryWords) {
+    if (textLower.includes(word)) matches++
+  }
+  return matches / queryWords.length
+}
+
 export async function queryIndex(
   query: string,
-  options: { model?: string; topK?: number; username?: string } = {}
+  options: { model?: string; topK?: number; username?: string; hybridWeight?: number } = {}
 ): Promise<Array<{ item: VectorIndexItem; score: number }>> {
   const totalStart = Date.now()
   const topK = options.topK ?? 10
+  // Hybrid weight: 0 = pure vector, 1 = pure keyword, 0.3 = 70% vector + 30% keyword
+  const hybridWeight = options.hybridWeight ?? 0.3
 
   // Step 1: Load index (cached after first call)
   const loadStart = Date.now()
   const idx = loadIndex(options.model, options.username)
   const loadTime = Date.now() - loadStart
-  if (!idx) throw new Error('No index found. Run: mh --user <username> index build')
+  if (!idx) {
+    // Gracefully handle missing index (new users, etc.)
+    console.log('[vector-index] No index found - returning empty results. Build with: mh --user <username> index build')
+    return []
+  }
 
   // Step 2: Generate embedding for query using model router
   const embedStart = Date.now()
   const qvec = await embedText(query)
   const embedTime = Date.now() - embedStart
 
-  // Step 3: Compute similarity scores
+  // Step 3: Compute HYBRID scores (vector + keyword)
   const scoreStart = Date.now()
-  const scored = idx.data.map(item => ({ item, score: cosineSimilarity(qvec, item.vector) }))
+  const scored = idx.data.map(item => {
+    const vectorSim = cosineSimilarity(qvec, item.vector)
+    const kwScore = keywordScore(query, item.text)
+    // Hybrid: combine vector and keyword scores
+    const hybridScore = (1 - hybridWeight) * vectorSim + hybridWeight * kwScore
+    return { item, score: hybridScore, vectorScore: vectorSim, keywordScore: kwScore }
+  })
   scored.sort((a, b) => b.score - a.score)
   const scoreTime = Date.now() - scoreStart
 
   const totalTime = Date.now() - totalStart
-  console.log(`[vector-index] queryIndex: load=${loadTime}ms, embed=${embedTime}ms, score=${scoreTime}ms, total=${totalTime}ms (${idx.data.length} items)`)
+  console.log(`[vector-index] queryIndex (hybrid): load=${loadTime}ms, embed=${embedTime}ms, score=${scoreTime}ms, total=${totalTime}ms (${idx.data.length} items)`)
 
-  return scored.slice(0, topK)
+  // Return with combined score
+  return scored.slice(0, topK).map(s => ({ item: s.item, score: s.score }))
 }
 
 export function getIndexStatus(model?: string, username?: string) {
@@ -431,7 +486,10 @@ export async function appendEventToIndex(event: {
   const idx = loadIndex(options.model, options.username)
   if (!idx) return false
 
-  // Skip LLM-generated memory types - these don't contain user data
+  // Load content mode from config
+  const indexContentMode = loadIndexContentMode()
+
+  // Skip LLM-generated memory types when in 'user' mode
   const memType = event.type?.toLowerCase() || ''
   const llmGeneratedTypes = [
     'inner_dialogue',     // LLM internal thoughts
@@ -440,24 +498,21 @@ export async function appendEventToIndex(event: {
     'dream',              // LLM dreams
     'summary',            // LLM summaries
   ]
-  if (llmGeneratedTypes.includes(memType)) {
+  if (indexContentMode === 'user' && llmGeneratedTypes.includes(memType)) {
     console.log(`[vector-index] Skipping LLM-generated memory type: ${memType}`)
     return false
   }
 
-  // Extract user-only content from conversation memories
-  // Memory format: "User: <message>\n\nAssistant: <response>"
-  let userContent = String(event.content)
-  if (memType === 'conversation' && userContent.includes('\n\nAssistant:')) {
-    const userMatch = userContent.match(/^User:\s*([\s\S]*?)\n\nAssistant:/i)
-    if (userMatch && userMatch[1]) {
-      userContent = userMatch[1].trim()
-    }
+  // Extract content using configured mode (handles all formats)
+  const extractedContent = extractMemoryContent(event, indexContentMode)
+  if (!extractedContent) {
+    console.log(`[vector-index] Skipping memory with no relevant content: ${event.id}`)
+    return false
   }
 
   const tags = Array.isArray(event.tags) ? event.tags.join(' ') : ''
   const entities = Array.isArray(event.entities) ? event.entities.join(' ') : ''
-  const text = [userContent, tags ? `Tags: ${tags}` : '', entities ? ` Entities: ${entities}` : '']
+  const text = [extractedContent, tags ? `Tags: ${tags}` : '', entities ? ` Entities: ${entities}` : '']
     .filter(Boolean)
     .join(' ')
 

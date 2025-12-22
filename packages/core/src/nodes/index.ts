@@ -80,6 +80,9 @@ import * as cognitiveNodes from './cognitive/index.js';
 // Memory nodes
 import * as memoryNodes from './memory/index.js';
 
+// Active Operator nodes
+import * as activeOperatorNodes from './active-operator/index.js';
+
 // ============================================================================
 // COLLECT ALL NODES
 // ============================================================================
@@ -120,6 +123,7 @@ export const allNodes: NodeDefinition[] = collectNodes(
   agencyNodes,
   cognitiveNodes,
   memoryNodes,
+  activeOperatorNodes,
 );
 
 // ============================================================================

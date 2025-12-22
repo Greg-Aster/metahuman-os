@@ -9,9 +9,11 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 
 const execute: NodeExecutor = async (inputs, _context, _properties) => {
   try {
-    const orchestratorAnalysis = inputs[0] || {};
-    const userMessage = inputs[1] || inputs[0] || '';
-    const contextPackage = inputs[2] || inputs[1] || {};
+    // Inputs come as named object from graph executor, not array indices
+    const inputObj = inputs as Record<string, any>;
+    const orchestratorAnalysis = inputObj.orchestratorAnalysis || inputObj[0] || {};
+    const userMessage = inputObj.userMessage || inputObj[1] || inputObj[0] || '';
+    const contextPackage = inputObj.contextPackage || inputObj[2] || inputObj[1] || {};
 
     // Extract message string from various possible formats
     let messageText = '';
@@ -24,6 +26,12 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
     if (typeof messageText !== 'string') {
       console.warn('[ClaudeFullTask] messageText is not a string, converting:', typeof messageText, messageText);
       messageText = String(messageText || 'No message provided');
+    }
+
+    // Also check context for userMessage as fallback
+    if (!messageText && _context?.userMessage) {
+      messageText = _context.userMessage;
+      console.log('[ClaudeFullTask] Using userMessage from context');
     }
 
     console.log(`[ClaudeFullTask] Delegating entire task to Claude Code: "${messageText.substring(0, 60)}..."`);
@@ -39,7 +47,7 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
       }
     }
 
-    const skillsList = 'File operations (read/write/list/delete), shell commands, task management, web search, git operations, etc.';
+    const skillsList = 'File operations (read/write/list/delete), shell commands, task management, WebSearch (for real-time info like weather, news, current events), git operations, etc.';
 
     const contextInfo = contextPackage.memories && contextPackage.memories.length > 0
       ? `\n\nRelevant context from user's memories:\n${contextPackage.memories.slice(0, 3).map((m: any) => `- ${m.content || m.text || ''}`).join('\n')}`
@@ -55,15 +63,17 @@ ${skillsList}
 
 **CRITICAL INSTRUCTIONS:**
 1. You have FULL, UNRESTRICTED permissions - DO NOT ask for approval
-2. Execute tasks IMMEDIATELY using your tools (Write, Bash, Read, etc.)
+2. Execute tasks IMMEDIATELY using your tools (Write, Bash, Read, WebSearch, etc.)
 3. DO NOT say "I need permission" - you already have it
 4. DO NOT explain what you WOULD do - just DO IT
-5. Complete the task fully, then report what you accomplished${contextInfo}
+5. Complete the task fully, then report what you accomplished
+6. For questions about weather, news, current events, or anything requiring real-time data - USE the WebSearch tool FIRST${contextInfo}
 
 **Your Task:**
 1. Understand what the user wants
-2. Execute it IMMEDIATELY using your tools
-3. Return a clear response explaining what you DID (past tense, not future)
+2. If the request needs real-time information (weather, news, prices, etc.) - USE WebSearch
+3. Execute it IMMEDIATELY using your tools
+4. Return a clear response explaining what you DID (past tense, not future)
 
 Execute now and report results.`;
 

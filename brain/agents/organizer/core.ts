@@ -22,6 +22,7 @@ import {
   type RouterMessage,
   getLoggedInUsers,
   withUserContext,
+  extractMemoryContent,
 } from '@metahuman/core';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 
@@ -53,6 +54,7 @@ export interface AnalysisResult {
 export interface OrganizerOptions {
   limit?: number;
   singleUser?: boolean;
+  reprocess?: boolean; // Clear existing tags/entities and regenerate from user content
 }
 
 export interface OrganizerResult {
@@ -130,11 +132,12 @@ export async function analyzeMemoryContent(content: string): Promise<AnalysisRes
 // ============================================================================
 
 /**
- * Find unprocessed memories in the episodic directory
+ * Find memories to process in the episodic directory
  * @param username - Username to resolve the correct profile storage location
  * @param limit - Optional limit on number of memories to return
+ * @param reprocess - If true, return ALL memories (ignoring processed flag) for regeneration
  */
-export function findUnprocessedMemories(username: string, limit?: number): string[] {
+export function findUnprocessedMemories(username: string, limit?: number, reprocess?: boolean): string[] {
   const result = storageClient.resolvePath({ username, category: 'memory', subcategory: 'episodic' });
   console.log(`[organizer] Resolved episodic path for ${username}: ${result.path}`);
   if (!result.success || !result.path) {
@@ -169,13 +172,13 @@ export function findUnprocessedMemories(username: string, limit?: number): strin
             memory.tags.every(tag => GENERIC_TAGS.has(tag.toLowerCase()));
 
           // Memory needs processing if:
-          // 1. Not already processed AND
-          // 2. (Has no tags OR only generic tags) AND
-          // 3. Has no entities
-          const needsProcessing =
+          // 1. Reprocess flag is set (regenerate all), OR
+          // 2. Not already processed AND (has no tags OR only generic tags) AND has no entities
+          const needsProcessing = reprocess || (
             !memory.metadata?.processed &&
             (!memory.tags || memory.tags.length === 0 || hasOnlyGenericTags) &&
-            (!memory.entities || memory.entities.length === 0);
+            (!memory.entities || memory.entities.length === 0)
+          );
 
           if (needsProcessing) {
             files.push(fullPath);
@@ -214,17 +217,38 @@ function normalizeEntities(entities: any[] | undefined): string[] {
 
 /**
  * Process a single memory file
+ * @param filepath - Path to the memory JSON file
+ * @param reprocess - If true, clear existing tags/entities and regenerate from user content
  */
-export async function processMemory(filepath: string): Promise<boolean> {
+export async function processMemory(filepath: string, reprocess?: boolean): Promise<boolean> {
   try {
     const content = fs.readFileSync(filepath, 'utf8');
     const memory: EpisodicMemory = JSON.parse(content);
 
-    // Normalize existing entities
-    memory.entities = normalizeEntities(memory.entities);
+    // When reprocessing, clear existing LLM-generated tags/entities
+    // Preserve only generic system tags (ingested, inbox, etc.)
+    if (reprocess) {
+      const GENERIC_TAGS = new Set(['ingested', 'inbox', 'ai', 'curated', 'audio', 'transcript']);
+      memory.tags = (memory.tags || []).filter(tag => GENERIC_TAGS.has(tag.toLowerCase()));
+      memory.entities = [];
+      console.log(`[organizer] Reprocessing ${path.basename(filepath)} - cleared LLM-generated tags/entities`);
+    } else {
+      // Normalize existing entities
+      memory.entities = normalizeEntities(memory.entities);
+    }
 
-    // Analyze content
-    const analysis = await analyzeMemoryContent(memory.content);
+    // Extract user-only content for analysis (excludes LLM responses)
+    const userContent = extractMemoryContent(memory, 'user');
+    if (!userContent) {
+      console.log(`[organizer] Skipped ${path.basename(filepath)} (no user content)`);
+      // Mark as processed so we don't retry
+      memory.metadata = { ...memory.metadata, processed: true, processedAt: new Date().toISOString() };
+      fs.writeFileSync(filepath, JSON.stringify(memory, null, 2));
+      return false;
+    }
+
+    // Analyze only user content - tags/entities reflect what the USER said, not LLM
+    const analysis = await analyzeMemoryContent(userContent);
 
     if (analysis.tags.length > 0 || analysis.entities.length > 0) {
       // Update memory with new tags/entities
@@ -264,17 +288,17 @@ export async function processUserMemories(
   username: string,
   options: OrganizerOptions = {}
 ): Promise<number> {
-  console.log(`[organizer] Processing user: ${username}`);
+  console.log(`[organizer] Processing user: ${username}${options.reprocess ? ' (REPROCESS MODE)' : ''}`);
 
   try {
-    const memories = findUnprocessedMemories(username, options.limit);
+    const memories = findUnprocessedMemories(username, options.limit, options.reprocess);
 
     if (memories.length > 0) {
-      console.log(`[organizer]   Found ${memories.length} memories to process`);
+      console.log(`[organizer]   Found ${memories.length} memories to ${options.reprocess ? 'reprocess' : 'process'}`);
 
       let processed = 0;
       for (const filepath of memories) {
-        const success = await processMemory(filepath);
+        const success = await processMemory(filepath, options.reprocess);
         if (success) processed++;
       }
 

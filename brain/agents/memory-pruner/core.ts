@@ -231,7 +231,7 @@ export async function runPrunerForUser(
   username: string,
   options: PrunerOptions = {}
 ): Promise<PrunerResult> {
-  return await withUserContext(username, async () => {
+  return await withUserContext({ userId: username, username, role: 'owner' }, async () => {
     const ctx = getUserContext();
     if (!ctx?.profilePaths) {
       throw new Error('User context not available');

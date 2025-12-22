@@ -1,0 +1,25 @@
+{
+  "enabled": false,
+  "decisionModel": "default",
+  "energyBudget": {
+    "enabled": false,
+    "tokensPerHour": 0
+  },
+  "enabledTaskTypes": [
+    "user_message",
+    "memory_curate",
+    "index_build",
+    "reflect",
+    "curiosity",
+    "inner_curiosity",
+    "dream",
+    "desire_generate",
+    "desire_execute",
+    "psychoanalyze"
+  ],
+  "cooldownMs": 5000,
+  "maxConsecutiveTasks": 20,
+  "enableSelfHealing": true,
+  "stuckTimeoutMs": 300000,
+  "maxConsecutiveErrors": 10
+}

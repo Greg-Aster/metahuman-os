@@ -61,6 +61,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { generateId, timestamp } from './paths.js';
 import { systemPaths } from './path-builder.js';
 import { storageClient } from './storage-client.js';
@@ -88,6 +89,62 @@ async function getAgencyModule() {
     agencyModule = await import('./agency/storage.js');
   }
   return agencyModule;
+}
+
+// ============================================================================
+// Memory Deduplication
+// ============================================================================
+
+// Cache of recent content hashes to detect duplicates
+// Key: normalized content hash, Value: timestamp when first seen
+const recentContentHashes = new Map<string, number>();
+const DEDUP_CACHE_MAX_SIZE = 500;
+const DEDUP_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Normalize content for duplicate detection.
+ * Strips formatting differences to catch semantic duplicates.
+ */
+function normalizeContent(content: string): string {
+  return content
+    .toLowerCase()
+    .replace(/\s+/g, ' ')           // Collapse whitespace
+    .replace(/[^\w\s]/g, '')        // Remove punctuation
+    .trim();
+}
+
+/**
+ * Generate a hash of normalized content for fast duplicate lookup.
+ */
+function contentHash(content: string): string {
+  const normalized = normalizeContent(content);
+  return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+}
+
+/**
+ * Check if content is a duplicate of a recent memory.
+ * Returns true if duplicate detected.
+ */
+function isDuplicateContent(content: string): boolean {
+  // Clean up old entries periodically
+  if (recentContentHashes.size > DEDUP_CACHE_MAX_SIZE) {
+    const now = Date.now();
+    for (const [hash, ts] of recentContentHashes) {
+      if (now - ts > DEDUP_CACHE_TTL_MS) {
+        recentContentHashes.delete(hash);
+      }
+    }
+  }
+
+  const hash = contentHash(content);
+  if (recentContentHashes.has(hash)) {
+    console.log(`[memory] Duplicate content detected, skipping save (hash: ${hash.slice(0, 8)}...)`);
+    return true;
+  }
+
+  // Not a duplicate - add to cache
+  recentContentHashes.set(hash, Date.now());
+  return false;
 }
 
 /**
@@ -160,8 +217,43 @@ export interface Task {
   priority?: string;
   due?: string;
   tags?: string[];
-  dependencies?: string[];
-  userId?: string; // NEW: Track which user owns this task
+  dependencies?: string[]; // Task IDs that must complete before this task can start
+  projectId?: string; // Project this task belongs to
+  userId?: string; // Track which user owns this task
+  created: string;
+  updated: string;
+  completed?: string;
+  /** Source of task creation (e.g., 'reflection', 'desire', 'user', 'operator') */
+  source?: string;
+  /** ID of source entity (e.g., reflection event ID, desire ID) */
+  sourceId?: string;
+  /** Estimated effort in minutes */
+  estimatedMinutes?: number;
+  /** Actual time spent in minutes */
+  actualMinutes?: number;
+}
+
+/**
+ * Project: A container for related tasks with shared goals
+ * Projects can have their own status and track overall progress
+ */
+export interface Project {
+  id: string;
+  title: string;
+  description?: string;
+  status: 'active' | 'paused' | 'completed' | 'archived';
+  priority?: string;
+  /** Target completion date */
+  targetDate?: string;
+  /** Tags for categorization */
+  tags?: string[];
+  /** User who owns this project */
+  userId?: string;
+  /** Calculated from task completion */
+  progress?: number;
+  /** Source of project creation */
+  source?: string;
+  sourceId?: string;
   created: string;
   updated: string;
   completed?: string;
@@ -190,6 +282,8 @@ export interface CaptureResult {
   encryptionWarning?: string;
   /** True if encryption was configured but file was written plain (security concern) */
   encryptionFallback?: boolean;
+  /** True if this was detected as duplicate content and not saved */
+  deduplicated?: boolean;
 }
 
 const DEFAULT_EVENT_CATEGORY = 'episodic';
@@ -303,6 +397,21 @@ function getEncryptionContext(username?: string): EncryptionContext {
 export function captureEventWithDetails(content: string, opts: Partial<EpisodicEvent> = {}): CaptureResult {
   // Get current user context (if any)
   const ctx = getUserContext();
+
+  // Check for duplicate content (skip if already saved recently)
+  // This prevents the same question/message from being saved multiple times
+  const skipDedup = opts.metadata?.skipDedup === true;
+  if (!skipDedup && isDuplicateContent(content)) {
+    return {
+      eventId: 'duplicate',
+      filePath: '',
+      encrypted: false,
+      timestamp: timestamp(),
+      eventType: opts.type || 'observation',
+      bytesWritten: 0,
+      deduplicated: true,
+    };
+  }
 
   const rawEvent: EpisodicEvent = {
     id: generateId('evt'),
@@ -780,6 +889,358 @@ export function listCompletedTasks(): Task[] {
     return bUpdated - aUpdated;
   });
   return tasks;
+}
+
+// ============================================================================
+// Project Management (Phase 4: Task Graph)
+// ============================================================================
+
+function readProjectsFromDirectory(dir: string): Project[] {
+  if (!fs.existsSync(dir)) return [];
+
+  const projects: Project[] = [];
+  for (const file of fs.readdirSync(dir)) {
+    if (!file.endsWith('.json')) continue;
+    const fullPath = path.join(dir, file);
+    try {
+      const content = fs.readFileSync(fullPath, 'utf8');
+      projects.push(JSON.parse(content));
+    } catch (error) {
+      console.warn('[memory] Failed to read project file:', fullPath, error);
+    }
+  }
+  return projects;
+}
+
+/**
+ * Create a new project.
+ */
+export function createProject(title: string, opts: Partial<Project> = {}): string {
+  const ctx = getUserContext();
+
+  const project: Project = {
+    id: generateId('proj'),
+    title,
+    description: opts.description || '',
+    status: opts.status || 'active',
+    priority: opts.priority || 'P2',
+    targetDate: opts.targetDate,
+    tags: opts.tags || [],
+    userId: ctx?.userId,
+    progress: 0,
+    source: opts.source,
+    sourceId: opts.sourceId,
+    created: timestamp(),
+    updated: timestamp(),
+  };
+
+  const tasksResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'tasks',
+  });
+  if (!tasksResult.success || !tasksResult.path) {
+    throw new Error('Cannot resolve tasks path');
+  }
+
+  const filepath = path.join(tasksResult.path, 'projects', `${project.id}.json`);
+  fs.mkdirSync(path.dirname(filepath), { recursive: true });
+  fs.writeFileSync(filepath, JSON.stringify(project, null, 2));
+
+  return project.id;
+}
+
+/**
+ * Get a project by ID.
+ */
+export function getProject(projectId: string): Project | null {
+  const tasksResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'tasks',
+  });
+  if (!tasksResult.success || !tasksResult.path) return null;
+
+  const filepath = path.join(tasksResult.path, 'projects', `${projectId}.json`);
+  if (!fs.existsSync(filepath)) return null;
+
+  try {
+    return JSON.parse(fs.readFileSync(filepath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Update a project.
+ */
+export function updateProject(projectId: string, updates: Partial<Project>): Project | null {
+  const tasksResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'tasks',
+  });
+  if (!tasksResult.success || !tasksResult.path) return null;
+
+  const filepath = path.join(tasksResult.path, 'projects', `${projectId}.json`);
+  if (!fs.existsSync(filepath)) return null;
+
+  try {
+    const project: Project = JSON.parse(fs.readFileSync(filepath, 'utf8'));
+
+    // Update allowed fields
+    if (updates.title !== undefined) project.title = updates.title;
+    if (updates.description !== undefined) project.description = updates.description;
+    if (updates.status !== undefined) project.status = updates.status;
+    if (updates.priority !== undefined) project.priority = updates.priority;
+    if (updates.targetDate !== undefined) project.targetDate = updates.targetDate;
+    if (updates.tags !== undefined) project.tags = updates.tags;
+
+    project.updated = timestamp();
+
+    if (updates.status === 'completed' || updates.status === 'archived') {
+      project.completed = timestamp();
+    }
+
+    fs.writeFileSync(filepath, JSON.stringify(project, null, 2));
+    return project;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * List all active projects.
+ */
+export function listProjects(includeArchived = false): Project[] {
+  const tasksResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'tasks',
+  });
+  if (!tasksResult.success || !tasksResult.path) return [];
+
+  const projectsDir = path.join(tasksResult.path, 'projects');
+  const projects = readProjectsFromDirectory(projectsDir);
+
+  // Calculate progress for each project
+  const allTasks = [...listActiveTasks(), ...listCompletedTasks()];
+  for (const project of projects) {
+    const projectTasks = allTasks.filter(t => t.projectId === project.id);
+    if (projectTasks.length > 0) {
+      const completed = projectTasks.filter(t => t.status === 'done').length;
+      project.progress = Math.round((completed / projectTasks.length) * 100);
+    }
+  }
+
+  if (!includeArchived) {
+    return projects.filter(p => p.status !== 'archived');
+  }
+
+  return projects.sort((a, b) => {
+    const priorityOrder = { P0: 0, P1: 1, P2: 2, P3: 3 };
+    const aPri = priorityOrder[a.priority as keyof typeof priorityOrder] ?? 999;
+    const bPri = priorityOrder[b.priority as keyof typeof priorityOrder] ?? 999;
+    return aPri - bPri;
+  });
+}
+
+/**
+ * Get tasks for a specific project.
+ */
+export function getProjectTasks(projectId: string): Task[] {
+  const allTasks = [...listActiveTasks(), ...listCompletedTasks()];
+  return allTasks.filter(t => t.projectId === projectId);
+}
+
+/**
+ * Delete a project (archive it).
+ */
+export function deleteProject(projectId: string): boolean {
+  return updateProject(projectId, { status: 'archived' }) !== null;
+}
+
+// ============================================================================
+// Task Dependencies (Phase 4: Task Graph)
+// ============================================================================
+
+/**
+ * Check if a task's dependencies are all completed.
+ */
+export function areDependenciesMet(task: Task): boolean {
+  if (!task.dependencies || task.dependencies.length === 0) return true;
+
+  const completedTasks = listCompletedTasks();
+  const completedIds = new Set(completedTasks.filter(t => t.status === 'done').map(t => t.id));
+
+  return task.dependencies.every(depId => completedIds.has(depId));
+}
+
+/**
+ * Get blocking dependencies for a task (dependencies not yet completed).
+ */
+export function getBlockingDependencies(task: Task): Task[] {
+  if (!task.dependencies || task.dependencies.length === 0) return [];
+
+  const allTasks = [...listActiveTasks(), ...listCompletedTasks()];
+  const taskMap = new Map(allTasks.map(t => [t.id, t]));
+
+  return task.dependencies
+    .map(depId => taskMap.get(depId))
+    .filter((t): t is Task => t !== undefined && t.status !== 'done');
+}
+
+/**
+ * Get tasks that depend on a given task.
+ */
+export function getDependentTasks(taskId: string): Task[] {
+  const allTasks = listActiveTasks();
+  return allTasks.filter(t => t.dependencies?.includes(taskId));
+}
+
+/**
+ * Add a dependency to a task.
+ */
+export function addTaskDependency(taskId: string, dependsOnId: string): boolean {
+  const tasksResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'tasks',
+  });
+  if (!tasksResult.success || !tasksResult.path) return false;
+
+  // Find the task
+  const activeDir = path.join(tasksResult.path, 'active');
+  const filepath = path.join(activeDir, `${taskId}.json`);
+
+  if (!fs.existsSync(filepath)) return false;
+
+  try {
+    const task: Task = JSON.parse(fs.readFileSync(filepath, 'utf8'));
+
+    // Prevent circular dependencies
+    if (wouldCreateCycle(taskId, dependsOnId)) {
+      console.warn('[memory] Cannot add dependency: would create circular reference');
+      return false;
+    }
+
+    task.dependencies = task.dependencies || [];
+    if (!task.dependencies.includes(dependsOnId)) {
+      task.dependencies.push(dependsOnId);
+      task.updated = timestamp();
+      fs.writeFileSync(filepath, JSON.stringify(task, null, 2));
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Remove a dependency from a task.
+ */
+export function removeTaskDependency(taskId: string, dependsOnId: string): boolean {
+  const tasksResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'tasks',
+  });
+  if (!tasksResult.success || !tasksResult.path) return false;
+
+  const activeDir = path.join(tasksResult.path, 'active');
+  const filepath = path.join(activeDir, `${taskId}.json`);
+
+  if (!fs.existsSync(filepath)) return false;
+
+  try {
+    const task: Task = JSON.parse(fs.readFileSync(filepath, 'utf8'));
+
+    if (task.dependencies) {
+      task.dependencies = task.dependencies.filter(id => id !== dependsOnId);
+      task.updated = timestamp();
+      fs.writeFileSync(filepath, JSON.stringify(task, null, 2));
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if adding a dependency would create a cycle.
+ */
+function wouldCreateCycle(taskId: string, dependsOnId: string): boolean {
+  if (taskId === dependsOnId) return true;
+
+  const allTasks = listActiveTasks();
+  const taskMap = new Map(allTasks.map(t => [t.id, t]));
+
+  const visited = new Set<string>();
+  const stack = [dependsOnId];
+
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (currentId === taskId) return true;
+    if (visited.has(currentId)) continue;
+
+    visited.add(currentId);
+    const current = taskMap.get(currentId);
+    if (current?.dependencies) {
+      stack.push(...current.dependencies);
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Assign a task to a project.
+ */
+export function assignTaskToProject(taskId: string, projectId: string | null): boolean {
+  const tasksResult = storageClient.resolvePath({
+    category: 'memory',
+    subcategory: 'tasks',
+  });
+  if (!tasksResult.success || !tasksResult.path) return false;
+
+  // Find task in active or completed
+  const activeDir = path.join(tasksResult.path, 'active');
+  const completedDir = path.join(tasksResult.path, 'completed');
+
+  let filepath = path.join(activeDir, `${taskId}.json`);
+  if (!fs.existsSync(filepath)) {
+    filepath = path.join(completedDir, `${taskId}.json`);
+  }
+
+  if (!fs.existsSync(filepath)) return false;
+
+  try {
+    const task: Task = JSON.parse(fs.readFileSync(filepath, 'utf8'));
+    task.projectId = projectId || undefined;
+    task.updated = timestamp();
+    fs.writeFileSync(filepath, JSON.stringify(task, null, 2));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get next actionable tasks (no blocking dependencies).
+ */
+export function getActionableTasks(): Task[] {
+  const activeTasks = listActiveTasks();
+  return activeTasks.filter(t =>
+    t.status === 'todo' && areDependenciesMet(t)
+  );
+}
+
+/**
+ * Get blocked tasks (have incomplete dependencies).
+ */
+export function getBlockedTasks(): Task[] {
+  const activeTasks = listActiveTasks();
+  return activeTasks.filter(t =>
+    t.dependencies &&
+    t.dependencies.length > 0 &&
+    !areDependenciesMet(t)
+  );
 }
 
 export function searchMemory(query: string): string[] {

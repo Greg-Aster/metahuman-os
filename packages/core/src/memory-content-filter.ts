@@ -112,8 +112,9 @@ export function extractMemoryContent(memory: any, mode: ContentMode): string | n
 
     case 'user':
     default:
-      // User-only: skip system/action types
-      if (type === 'action' || type === 'system' || type === 'operator') {
+      // User-only: skip system/action types AND LLM-generated content
+      if (type === 'action' || type === 'system' || type === 'operator' ||
+          type === 'inner_dialogue' || type === 'reflection') {
         return null;
       }
 
@@ -124,10 +125,22 @@ export function extractMemoryContent(memory: any, mode: ContentMode): string | n
 
       // For conversations, extract only the user portion
       if (type === 'conversation') {
-        // Format 1: "User: <message>\n\nAssistant: <response>"
-        if (content.includes('\n\nAssistant:')) {
-          const userPart = content.split('\n\nAssistant:')[0];
-          return userPart.replace(/^User:\s*/i, '').trim();
+        // Try to detect and strip AI response - check all patterns
+        // Patterns are flexible to handle various newline formats (\n, \r\n, multiple spaces)
+        const assistantPatterns = [
+          /\n\s*\n\s*Assistant:/i,         // Double newline with optional whitespace
+          /\n\s*\n\s*A:/,                   // Short form "A:" after double newline
+          /\n\s*A:\s/,                      // Single newline before "A: " (note space after colon)
+          /\n\s*\n\s*(AI|Greg|MetaHuman):/i,
+          /\n\s*\n\s*---\s*\n/,
+          /\r\n\s*\r\n\s*A:/,               // Windows newlines
+        ];
+
+        for (const pattern of assistantPatterns) {
+          if (pattern.test(content)) {
+            const userPart = content.split(pattern)[0];
+            return userPart.replace(/^(Me|User):\s*/i, '').replace(/^"/, '').replace(/"$/, '').trim();
+          }
         }
 
         // Format 2: "Me: \"<message>\"" with separate response field
@@ -142,17 +155,6 @@ export function extractMemoryContent(memory: any, mode: ContentMode): string | n
         // If there's a separate response field, content is likely just user input
         if (response) {
           return content.replace(/^(Me|User):\s*/i, '').replace(/^"/, '').replace(/"$/, '').trim();
-        }
-
-        // Try to detect and strip AI response
-        const assistantPatterns = [
-          /\n\n(Assistant|AI|Greg|MetaHuman):/i,
-          /\n\n---\n/,
-        ];
-        for (const pattern of assistantPatterns) {
-          if (pattern.test(content)) {
-            return content.split(pattern)[0].trim();
-          }
         }
 
         return content;

@@ -8,10 +8,8 @@
  */
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
-import { streamResponse, errorResponse, badRequestResponse } from '../types.js';
+import { streamResponse, badRequestResponse } from '../types.js';
 import {
-  ROOT,
-  audit,
   getPersonaContext,
   getActiveFacet,
   loadPersonaWithFacet,
@@ -21,14 +19,12 @@ import {
   loadGraphForMode,
   checkCancellation,
   clearCancellation,
-  getProfilePaths,
 } from '../../index.js';
 import { loadCognitiveMode, canWriteMemory as modeAllowsMemoryWrites } from '../../cognitive-mode.js';
-import { loadChatSettings } from '../../chat-settings.js';
 import { scheduler } from '../../agent-scheduler.js';
-import { appendToUserBuffer } from '../../conversation-buffer.js';
-import fs from 'node:fs';
-import path from 'node:path';
+import { isActiveOperatorEnabled } from '../../active-operator/index.js';
+import { recordSystemActivity } from '../../system-activity.js';
+// Buffer persistence removed - handled by buffer_manager node in graph
 
 // ============================================================================
 // Types
@@ -50,6 +46,8 @@ interface GraphPipelineParams {
   allowMemoryWrites: boolean;
   useOperator: boolean;
   yoloMode: boolean;
+  replyToQuestionId?: string;
+  replyToContent?: string;
 }
 
 // ============================================================================
@@ -182,7 +180,7 @@ function initializeChat(mode: Mode, sessionId: string, includePersonaSummary = t
 // ============================================================================
 
 async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerator<string> {
-  const { mode, message, sessionId, cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator, yoloMode } = params;
+  const { mode, message, sessionId, cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator, yoloMode, replyToQuestionId, replyToContent } = params;
 
   const push = (type: string, data: any) => {
     return `data: ${JSON.stringify({ type, data })}\n\n`;
@@ -219,6 +217,9 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
       useOperator,
       yoloMode,
       timeoutMs,
+      // Reply-to context for responding to selected messages (curiosity questions, etc.)
+      replyToQuestionId,
+      replyToContent,
     };
 
     const startedAt = Date.now();
@@ -343,11 +344,8 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     pushMessage(mode, { role: 'user', content: message }, sessionId);
     pushMessage(mode, { role: 'assistant', content: responseText, meta: { graphPipeline: true } }, sessionId);
 
-    // Persist to on-disk buffer for UI display
-    if (userContext?.username) {
-      appendToUserBuffer(userContext.username, mode, { role: 'user', content: message });
-      appendToUserBuffer(userContext.username, mode, { role: 'assistant', content: responseText, meta: { graphPipeline: true } });
-    }
+    // NOTE: Buffer persistence is handled by buffer_manager node in the graph
+    // Don't double-write here - that causes duplicate messages in the UI
 
     // Send final answer
     const facet = getActiveFacet();
@@ -390,6 +388,9 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
   const newSession = params.newSession === 'true' || params.newSession === true;
   const sessionId = params.sessionId || `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const yolo = params.yolo === 'true' || params.yolo === true;
+  // Reply-to context for responding to selected messages (e.g., curiosity questions)
+  const replyToQuestionId = typeof params.replyToQuestionId === 'string' ? params.replyToQuestionId : undefined;
+  const replyToContent = typeof params.replyToContent === 'string' ? params.replyToContent : undefined;
   // stream=false returns complete JSON response instead of SSE (for mobile compatibility)
   const useStreaming = params.stream !== 'false' && params.stream !== false;
 
@@ -406,6 +407,12 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
   // Record user activity for agent scheduler (so agents know which user to run for)
   if (isAuthenticated && user.username) {
     scheduler.recordActivity(user.username);
+
+    // If Active Operator is enabled, record activity so it knows to pause background tasks
+    // and prioritize user interactions
+    if (isActiveOperatorEnabled()) {
+      recordSystemActivity(Date.now(), user.username);
+    }
   }
 
   // Initialize chat if needed
@@ -438,6 +445,8 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     allowMemoryWrites,
     useOperator,
     yoloMode: yolo,
+    replyToQuestionId,
+    replyToContent,
   });
 
   // Non-streaming mode: collect all events and return as JSON

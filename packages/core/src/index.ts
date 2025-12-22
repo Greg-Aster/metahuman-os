@@ -16,6 +16,11 @@ export * from './deployment';  // Deployment mode configuration (local vs server
 export * from './identity';
 export * from './memory';
 export * from './memory-content-filter';  // Content mode filtering for agent reflections
+export * from './reflection-to-task';  // Phase 4: Extract tasks from reflections
+export * from './preference-learner';  // Phase 4: Continual learning from preferences
+export * from './goal-review';  // Phase 4: Weekly goal reviews
+export * from './system-operator';  // Phase 5: System operator maintenance skills
+export * from './voice';  // Phase 5: Live voice loop foundation
 // Note: memory-validation and memory-cleanup are internal utilities, not exported
 export * from './memory-metrics-cache';
 export * from './recent-tools-cache';
@@ -72,6 +77,15 @@ export {
   queueForApproval as skillQueueForApproval,
   getPendingApprovals as skillGetPendingApprovals,
 } from './skills.js';
+
+// Skill Bootstrap
+export {
+  bootstrapSkills,
+  getRegisteredSkillManifests,
+  areSkillsBootstrapped,
+  getSkillCostEstimate,
+  isSkillWithinBudget,
+} from './skill-bootstrap.js';
 
 export * from './tool-catalog';
 export * from './reasoning';
@@ -378,6 +392,116 @@ export * from './plugin-system';
 // Agency System
 export * from './agency/index.js';
 
+// Active Operator System (LLM-controlled continuous thinking)
+// Note: loadMetrics/saveMetrics renamed to avoid conflict with agency module
+export {
+  // Types
+  type QueuedTask,
+  type TaskType,
+  type Priority,
+  type TaskPayload,
+  type TaskResult,
+  type OperatorMode,
+  type OperatorStatus,
+  type SystemState,
+  type TaskDecision,
+  type ActiveOperatorConfig,
+  type OperatorMetrics,
+  // Queue
+  UnifiedQueue,
+  createPersistentQueue,
+  // State persistence
+  type ScratchpadEntry,
+  type DecisionScratchpad,
+  loadScratchpad,
+  saveScratchpad,
+  addScratchpadEntry,
+  recordDecision,
+  recordExecutionStart,
+  recordTaskResult,
+  recordThought,
+  updateActivitySummary,
+  createFreshScratchpad,
+  clearScratchpad,
+  getScratchpadContext,
+  saveQueueState,
+  loadQueueState,
+  clearQueueState,
+  saveCurrentTask,
+  loadCurrentTask,
+  clearCurrentTask,
+  saveMetrics as saveActiveOperatorMetrics,
+  loadMetrics as loadActiveOperatorMetrics,
+  resetMetrics as resetActiveOperatorMetrics,
+  loadActiveOperatorConfig,
+  saveActiveOperatorConfig,
+  updateActiveOperatorConfig,
+  clearAllState as clearAllActiveOperatorState,
+  getStateDir as getActiveOperatorStateDir,
+  // Mode controller
+  ModeController,
+  getModeController,
+  isActiveOperatorEnabled,
+  getOperatorMode,
+  // System state gathering
+  gatherSystemState,
+  formatSystemStateForLLM,
+  getTaskRecommendations,
+  // Cost tracking
+  recordTokenUsage,
+  recordTaskExecution,
+  getTokensUsedThisHour,
+  isWithinBudget,
+  getRemainingBudget,
+  getBudgetUtilization,
+  getCostSummary,
+  shouldPauseDueToErrors,
+  getErrorStatus,
+  resetErrorCounter,
+  // Task execution
+  executeTask,
+  isTaskExecutable,
+  getAvailableTaskTypes,
+  // Self-healing
+  type TSError,
+  type FixProposal,
+  parseTscOutput,
+  runTypeCheck,
+  analyzeError,
+  saveProposal,
+  loadPendingProposals,
+  updateProposalStatus,
+  runSelfHealing,
+  getErrorCount,
+  // Lizard Brain
+  type Trigger,
+  type TriggerResult,
+  type CircadianWindow,
+  CIRCADIAN_WINDOWS,
+  TRIGGERS,
+  getCurrentCircadianWindow,
+  isTaskCircadianAppropriate,
+  getCircadianRecommendations,
+  evaluateTriggers,
+  evaluateTrigger,
+  getTriggerStatuses,
+  // Critic (Superego - review and approval)
+  type ProposedChange,
+  type CriticReview,
+  type ApprovalRequest as CriticApprovalRequest,
+  generateDiff,
+  formatDiffSummary,
+  assessRisk,
+  checkPolicies,
+  reviewProposal,
+  queueForApproval as criticQueueForApproval,
+  getPendingApprovals as criticGetPendingApprovals,
+  resolveApproval,
+  submitForReview,
+  proposeFileWrite,
+  proposeFileDelete,
+} from './active-operator/index.js';
+
 // Drift System (voice/style consistency monitoring)
 export * from './drift/index.js';
 
@@ -390,6 +514,14 @@ export * from './tool-executor-backends.js';
 export * from './tool-executor-compat.js';
 export * from './open-interpreter.js';
 export * from './legacy-cli-adapters.js';
+
+// Phase 3 Connectors (data ingestion)
+export * from './connectors/photo-ingestor.js';
+export * from './connectors/document-ingestor.js';
+export * from './connectors/calendar-connector.js';
+export * from './connectors/chat-ingestor.js';
+export * from './connectors/voice-memo-ingestor.js';
+export * from './connectors/clip-tagger.js';
 
 // Version
 export const VERSION = '0.1.0';

@@ -2449,6 +2449,18 @@
       "target": "node-1766097533902",
       "targetHandle": "data",
       "id": "xy-edge__19safetyResult-node-1766097533902data"
+    },
+    {
+      "id": "e-26-persisted-22-eventType",
+      "source": "26",
+      "target": "22",
+      "sourceHandle": "persisted",
+      "targetHandle": "eventType",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "comment": "Buffer Manager persisted → Audit Logger (ensures buffer_manager executes in graph)"
+      }
     }
   ]
 }

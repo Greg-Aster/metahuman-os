@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import GPUMonitor from './GPUMonitor.svelte';
+  import ActiveOperatorSettings from './ActiveOperatorSettings.svelte';
   import { apiFetch } from '../lib/client/api-config';
 
   // Welcome modal toggle
@@ -70,6 +71,16 @@
     agent: 'Agent only - reflects on AI responses, dreams, and system outputs'
   };
 
+  // Index content mode (what gets embedded for semantic search)
+  let indexContentMode: ContentMode = 'user';
+  let indexContentModeLoading = false;
+  let indexContentModeSaving = false;
+  const indexContentModeOptions: Record<ContentMode, string> = {
+    user: 'User only - indexes only user inputs (recommended, prevents LLM hallucinations in search)',
+    all: 'All content - indexes both user messages and AI responses',
+    agent: 'Agent only - indexes AI responses, dreams, and system outputs'
+  };
+
   onMount(async () => {
     loadWelcomeModalSetting();
     loadModelInfo();
@@ -80,6 +91,7 @@
     loadEmbeddingConfig();
     loadStorageStatus();
     loadReflectorContentMode();
+    loadIndexContentMode();
   });
 
   async function loadNodePipelineState() {
@@ -475,6 +487,55 @@
       reflectorContentModeSaving = false;
     }
   }
+
+  async function loadIndexContentMode() {
+    indexContentModeLoading = true;
+    try {
+      const res = await apiFetch('/api/embeddings');
+      if (res.ok) {
+        const data = await res.json();
+        const mode = data.indexContentMode;
+        if (mode && ['all', 'user', 'agent'].includes(mode)) {
+          indexContentMode = mode as ContentMode;
+        }
+      }
+    } catch (err) {
+      console.error('[SystemSettings] Error loading index content mode:', err);
+    } finally {
+      indexContentModeLoading = false;
+    }
+  }
+
+  async function handleIndexContentModeChange(event: Event) {
+    const target = event.target as HTMLSelectElement;
+    const newMode = target.value as ContentMode;
+
+    if (indexContentModeSaving) return;
+    indexContentModeSaving = true;
+
+    try {
+      const res = await apiFetch('/api/embeddings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          indexContentMode: newMode
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to update index content mode');
+      }
+
+      indexContentMode = newMode;
+    } catch (err) {
+      console.error('[SystemSettings] Error updating index content mode:', err);
+      // Revert on error
+      target.value = indexContentMode;
+      alert(`Failed to update index content mode: ${(err as Error).message}`);
+    } finally {
+      indexContentModeSaving = false;
+    }
+  }
 </script>
 
 <div class="system-settings">
@@ -547,6 +608,38 @@
       {/if}
     </div>
   </div>
+
+  <!-- Index Content Mode -->
+  <div class="setting-group">
+    <label class="setting-label">Memory Search Index</label>
+    <div class="lora-toggle-container">
+      <p class="lora-toggle-description" style="margin-bottom: 0.75rem;">
+        Controls what content is included in the semantic search index. Affects what memories can be found when searching.
+      </p>
+      <select
+        class="content-mode-select"
+        bind:value={indexContentMode}
+        on:change={handleIndexContentModeChange}
+        disabled={indexContentModeLoading || indexContentModeSaving}
+      >
+        {#each Object.entries(indexContentModeOptions) as [mode, description]}
+          <option value={mode}>{mode === 'user' ? '👤' : mode === 'agent' ? '🤖' : '📄'} {mode.charAt(0).toUpperCase() + mode.slice(1)}</option>
+        {/each}
+      </select>
+      <p class="content-mode-description">
+        {indexContentModeOptions[indexContentMode]}
+      </p>
+      {#if indexContentModeSaving}
+        <p class="saving-indicator">Saving...</p>
+      {/if}
+      <p class="content-mode-note">
+        Note: Changes require rebuilding the index to take effect.
+      </p>
+    </div>
+  </div>
+
+  <!-- Active Operator Settings -->
+  <ActiveOperatorSettings />
 
   <h3 class="section-title" style="margin-top: 2rem;">Developer Settings</h3>
 
@@ -1654,5 +1747,16 @@
 
   :global(.dark) .saving-indicator {
     color: #a78bfa;
+  }
+
+  .content-mode-note {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    margin: 0.5rem 0 0 0;
+    font-style: italic;
+  }
+
+  :global(.dark) .content-mode-note {
+    color: #6b7280;
   }
 </style>

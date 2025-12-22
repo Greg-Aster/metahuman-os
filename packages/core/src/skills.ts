@@ -573,7 +573,32 @@ export async function executeSkill(
     }
   }
 
-  // 5. Check if approval is required
+  // 5. Enforce directory permissions for file-based skills
+  if (manifest.allowedDirectories && manifest.allowedDirectories.length > 0) {
+    // Check path input against allowed directories
+    const pathInput = inputs.path || inputs.filepath || inputs.file;
+    if (pathInput && typeof pathInput === 'string') {
+      if (!isPathAllowed(pathInput, manifest.allowedDirectories)) {
+        audit({
+          level: 'warn',
+          category: 'security',
+          event: 'skill_execution_blocked_directory',
+          details: {
+            skillId,
+            path: pathInput,
+            allowedDirectories: manifest.allowedDirectories,
+          },
+          actor: 'operator',
+        });
+        return {
+          success: false,
+          error: `Skill '${skillId}' cannot access path '${pathInput}'. Allowed directories: ${manifest.allowedDirectories.join(', ')}`,
+        };
+      }
+    }
+  }
+
+  // 6. Check if approval is required
   const requiresApproval = manifest.requiresApproval && !autoApprove;
 
   if (requiresApproval) {
@@ -594,7 +619,7 @@ export async function executeSkill(
     };
   }
 
-  // 5. Execute skill
+  // 7. Execute skill
   const implementation = skillImplementations.get(skillId);
   if (!implementation) {
     return { success: false, error: `Skill '${skillId}' has no implementation` };

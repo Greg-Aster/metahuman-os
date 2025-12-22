@@ -8,6 +8,8 @@
  * Command line args:
  *   --limit=N      Only process N memories per user
  *   --single-user  Only process current user (not multi-user)
+ *   --reprocess    Clear existing tags/entities and regenerate from user content only
+ *                  Use this to fix LLM-polluted metadata
  *
  * Environment variables:
  *   MH_TRIGGER_USERNAME  When set (by API), automatically enables single-user mode
@@ -23,6 +25,7 @@ async function main() {
   const args = process.argv.slice(2);
   const limitArg = args.find(a => a.startsWith('--limit='));
   const limit = limitArg ? parseInt(limitArg.split('=')[1], 10) : undefined;
+  const reprocess = args.includes('--reprocess');
 
   // Check for trigger username from API (enables single-user mode automatically)
   const triggerUsername = process.env.MH_TRIGGER_USERNAME;
@@ -31,10 +34,12 @@ async function main() {
   const options: OrganizerOptions = {
     singleUser,
     limit,
+    reprocess,
   };
 
   console.log('[organizer] Running single cycle (managed by scheduler)...');
   if (limit) console.log(`[organizer]   Limit: ${limit} memories per user`);
+  if (reprocess) console.log('[organizer]   REPROCESS MODE: Regenerating all tags/entities from user content only');
 
   // If triggered by a specific user via API, only process that user's memories
   if (triggerUsername) {

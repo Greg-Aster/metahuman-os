@@ -33,7 +33,8 @@ export type NodeCategory =
   | 'safety'
   | 'emulation'
   | 'agency'
-  | 'cognitive';
+  | 'cognitive'
+  | 'active-operator';
 
 // ============================================================================
 // SLOT TYPES (for node inputs/outputs)
@@ -216,6 +217,7 @@ export const categoryColors: Record<NodeCategory, { color: string; bgColor: stri
   emulation: { color: '#a5b4fc', bgColor: '#3730a3' },  // Light Indigo
   agency: { color: '#f59e0b', bgColor: '#78350f' },     // Warm Amber (desires, autonomy)
   cognitive: { color: '#38bdf8', bgColor: '#0c4a6e' },  // Sky Blue (reasoning, planning)
+  'active-operator': { color: '#8b5cf6', bgColor: '#4c1d95' }, // Violet (autonomous operation)
 };
 
 // ============================================================================

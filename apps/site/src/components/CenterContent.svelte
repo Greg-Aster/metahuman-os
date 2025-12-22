@@ -42,6 +42,9 @@
       case 'TaskManager':
         module = await import('./TaskManager.svelte');
         break;
+      case 'ProjectDashboard':
+        module = await import('./ProjectDashboard.svelte');
+        break;
       case 'ApprovalQueue':
         module = await import('./ApprovalQueue.svelte');
         break;
@@ -129,6 +132,9 @@
       case 'AgencyDashboard':
         module = await import('./AgencyDashboard.svelte');
         break;
+      case 'ActiveOperatorDashboard':
+        module = await import('./ActiveOperatorDashboard.svelte');
+        break;
       case 'SystemCoderDashboard':
         module = await import('./SystemCoderDashboard.svelte');
         break;
@@ -186,7 +192,7 @@ let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' 
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'wizard' | 'datasets' | 'manage' | 'system' | 'monitor' | 'adapters' = 'wizard'
 let systemTab: 'chat' | 'lifeline' | 'settings' | 'security' | 'network' | 'storage' | 'addons' | 'scheduler' = 'settings'
-let dashboardTab: 'overview' | 'tasks' | 'approvals' = 'overview'
+let dashboardTab: 'overview' | 'tasks' | 'approvals' | 'operator' = 'overview'
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
 
 
@@ -568,6 +574,9 @@ async function loadMemoryContent(relPath: string) {
       case 'terminal':
         void loadComponent('TerminalManager');
         break;
+      case 'projects':
+        void loadComponent('ProjectDashboard');
+        break;
     }
   }
 
@@ -600,6 +609,7 @@ async function loadMemoryContent(relPath: string) {
           <button class="tab-button" class:active={dashboardTab === 'overview'} on:click={() => dashboardTab = 'overview'}>Overview</button>
           <button class="tab-button" class:active={dashboardTab === 'tasks'} on:click={() => dashboardTab = 'tasks'}>Tasks</button>
           <button class="tab-button" class:active={dashboardTab === 'approvals'} on:click={() => dashboardTab = 'approvals'}>Approvals</button>
+          <button class="tab-button" class:active={dashboardTab === 'operator'} on:click={() => dashboardTab = 'operator'}>Active Operator</button>
         </div>
         {#if dashboardTab === 'overview'}
           {#await loadComponent('Dashboard')}
@@ -616,6 +626,12 @@ async function loadMemoryContent(relPath: string) {
         {:else if dashboardTab === 'approvals'}
           {#await loadComponent('ApprovalQueue')}
             <div class="loading-placeholder">Loading approvals...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
+        {:else if dashboardTab === 'operator'}
+          {#await loadComponent('ActiveOperatorDashboard')}
+            <div class="loading-placeholder">Loading active operator...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
@@ -1481,6 +1497,14 @@ async function loadMemoryContent(relPath: string) {
           <svelte:component this={Component} />
         {/await}
       </div>
+    </div>
+  {:else if $activeView === 'projects'}
+    <div class="view-container">
+      {#await loadComponent('ProjectDashboard')}
+        <div class="loading-placeholder">Loading projects...</div>
+      {:then Component}
+        <svelte:component this={Component} />
+      {/await}
     </div>
   {:else if $activeView === 'agency'}
     <div class="view-container">

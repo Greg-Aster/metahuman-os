@@ -273,6 +273,122 @@ import {
   handleGetUserGuideChapter,
   handleSearchUserGuide,
 } from './handlers/user-guide.js';
+import {
+  handleIngestPhoto,
+  handleIngestDirectory,
+  handleExtractMetadata,
+} from './handlers/photo-ingestion.js';
+import {
+  handleIngestDocument,
+  handleIngestDocumentDirectory,
+  handleExtractDocument,
+} from './handlers/document-ingestion.js';
+import {
+  handleGetCalendarEvents,
+  handleGetFocusWindow,
+  handleGetCalendarSources,
+  handleAddCalendarSource,
+  handleRemoveCalendarSource,
+  handleUpdateCalendarSource,
+  handleSyncCalendars,
+  handleUpdateCalendarConfig,
+} from './handlers/calendar.js';
+import {
+  handleIngestChat,
+  handleIngestChatDirectory,
+  handleParseChat,
+  handleDetectPlatform,
+} from './handlers/chat-ingestion.js';
+import {
+  handleIngestVoiceMemo,
+  handleIngestVoiceMemoDirectory,
+  handleExtractVoiceMemoMetadata,
+  handleGetTranscriptionStatus,
+} from './handlers/voice-memo-ingestion.js';
+import {
+  handleTagImage,
+  handleTagImageDirectory,
+  handleGetClipStatus,
+  handleGetLabels,
+} from './handlers/clip-tagging.js';
+import {
+  handleCreateProject,
+  handleListProjects as handleListProjectsApi,
+  handleGetProject,
+  handleUpdateProject,
+  handleDeleteProject,
+  handleAssignTasksToProject,
+  handleGetProjectGraph,
+  handleAddDependency,
+  handleRemoveDependency,
+  handleGetActionableTasks,
+  handleGetBlockedTasks,
+  handleGetDependents,
+} from './handlers/projects.js';
+import {
+  handleExtractSuggestions,
+  handleListSuggestions,
+  handleGetSuggestion,
+  handleApproveSuggestion,
+  handleRejectSuggestion,
+  handleBulkApprove,
+  handleCleanupSuggestions,
+} from './handlers/task-suggestions.js';
+import {
+  handleLearnPreferences,
+  handleListPreferences,
+  handleGetPreferenceStats,
+  handleGetActivePreferences,
+  handleGetPreferencesByCategory,
+  handleGetPreference,
+  handleConfirmPreference,
+  handleRejectPreference,
+  handleModifyPreference,
+  handleFindContradictions,
+  handleCleanupPreferences,
+} from './handlers/preferences.js';
+import {
+  handleGenerateReview,
+  handleListReviews,
+  handleGetLatestReview,
+  handleGetGoalSummary,
+  handleCheckCurrentWeek,
+  handleGetReview,
+  handleDeleteReview,
+  handleCleanupReviews,
+} from './handlers/goal-reviews.js';
+import {
+  handleCreateBackup,
+  handleListBackups,
+  handleDeleteBackup,
+  handleRestoreBackup,
+  handleRunHousekeeping,
+  handleGetDiskUsage,
+  handleRunIndexMaintenance,
+  handleCheckIndexHealth,
+  handleGetIndexStats,
+  handleRunIngestionQA,
+  handleGetIngestionHealth,
+  handleCleanupDuplicates,
+  handleListRollbackPoints,
+  handleExecuteRollback,
+  handleGetRateLimits,
+  handleGetAnomalies,
+  handleAcknowledgeAnomaly,
+  handleGetSafetySummary,
+} from './handlers/system-operator.js';
+import {
+  handleVoiceStart,
+  handleVoiceStop,
+  handleVoiceStatus,
+  handleVoiceTranscript,
+  handleGetVoiceConfig,
+  handleUpdateVoiceConfig,
+  handleGetVoiceSession,
+  handleVoicePause,
+  handleVoiceResume,
+  handleVoiceBargeIn,
+} from './handlers/voice.js';
 // Note: Some complex routes (persona generator, kokoro-training, etc.) kept in Astro files
 
 // ============================================================================
@@ -319,6 +435,85 @@ const routes: RouteDefinition[] = [
   { method: 'PATCH', pattern: '/api/tasks', handler: handleUpdateTask, requiresAuth: true },  // taskId from body
   { method: ['PUT', 'PATCH'], pattern: /^\/api\/tasks\/[^\/]+$/, handler: handleUpdateTask, requiresAuth: true },
   { method: 'DELETE', pattern: /^\/api\/tasks\/[^\/]+$/, handler: handleDeleteTask, requiresAuth: true },
+  // Task dependencies (Phase 4)
+  { method: 'GET', pattern: '/api/tasks/actionable', handler: handleGetActionableTasks, requiresAuth: true },
+  { method: 'GET', pattern: '/api/tasks/blocked', handler: handleGetBlockedTasks, requiresAuth: true },
+  { method: 'POST', pattern: /^\/api\/tasks\/[^\/]+\/dependencies$/, handler: handleAddDependency, requiresAuth: true },
+  { method: 'DELETE', pattern: /^\/api\/tasks\/[^\/]+\/dependencies\/[^\/]+$/, handler: handleRemoveDependency, requiresAuth: true },
+  { method: 'GET', pattern: /^\/api\/tasks\/[^\/]+\/dependents$/, handler: handleGetDependents, requiresAuth: true },
+
+  // Projects (Phase 4: Task Graph)
+  { method: 'GET', pattern: '/api/projects', handler: handleListProjectsApi, requiresAuth: true },
+  { method: 'POST', pattern: '/api/projects', handler: handleCreateProject, requiresAuth: true },
+  { method: 'GET', pattern: /^\/api\/projects\/[^\/]+$/, handler: handleGetProject, requiresAuth: true },
+  { method: 'PUT', pattern: /^\/api\/projects\/[^\/]+$/, handler: handleUpdateProject, requiresAuth: true },
+  { method: 'DELETE', pattern: /^\/api\/projects\/[^\/]+$/, handler: handleDeleteProject, requiresAuth: true },
+  { method: 'POST', pattern: /^\/api\/projects\/[^\/]+\/tasks$/, handler: handleAssignTasksToProject, requiresAuth: true },
+  { method: 'GET', pattern: /^\/api\/projects\/[^\/]+\/graph$/, handler: handleGetProjectGraph, requiresAuth: true },
+
+  // Task Suggestions (Phase 4: Reflection-to-Task)
+  { method: 'POST', pattern: '/api/task-suggestions/extract', handler: handleExtractSuggestions, requiresAuth: true },
+  { method: 'GET', pattern: '/api/task-suggestions', handler: handleListSuggestions, requiresAuth: true },
+  { method: 'POST', pattern: '/api/task-suggestions/bulk-approve', handler: handleBulkApprove, requiresAuth: true },
+  { method: 'POST', pattern: '/api/task-suggestions/cleanup', handler: handleCleanupSuggestions, requiresAuth: true },
+  { method: 'GET', pattern: /^\/api\/task-suggestions\/[^\/]+$/, handler: handleGetSuggestion, requiresAuth: true },
+  { method: 'POST', pattern: /^\/api\/task-suggestions\/[^\/]+\/approve$/, handler: handleApproveSuggestion, requiresAuth: true },
+  { method: 'POST', pattern: /^\/api\/task-suggestions\/[^\/]+\/reject$/, handler: handleRejectSuggestion, requiresAuth: true },
+
+  // Preferences (Phase 4: Continual Learning)
+  { method: 'POST', pattern: '/api/preferences/learn', handler: handleLearnPreferences, requiresAuth: true },
+  { method: 'GET', pattern: '/api/preferences', handler: handleListPreferences, requiresAuth: true },
+  { method: 'GET', pattern: '/api/preferences/stats', handler: handleGetPreferenceStats, requiresAuth: true },
+  { method: 'GET', pattern: '/api/preferences/active', handler: handleGetActivePreferences, requiresAuth: true },
+  { method: 'GET', pattern: '/api/preferences/by-category', handler: handleGetPreferencesByCategory, requiresAuth: true },
+  { method: 'POST', pattern: '/api/preferences/contradictions', handler: handleFindContradictions, requiresAuth: true },
+  { method: 'POST', pattern: '/api/preferences/cleanup', handler: handleCleanupPreferences, requiresAuth: true },
+  { method: 'GET', pattern: /^\/api\/preferences\/[^\/]+$/, handler: handleGetPreference, requiresAuth: true },
+  { method: 'POST', pattern: /^\/api\/preferences\/[^\/]+\/confirm$/, handler: handleConfirmPreference, requiresAuth: true },
+  { method: 'POST', pattern: /^\/api\/preferences\/[^\/]+\/reject$/, handler: handleRejectPreference, requiresAuth: true },
+  { method: 'POST', pattern: /^\/api\/preferences\/[^\/]+\/modify$/, handler: handleModifyPreference, requiresAuth: true },
+
+  // Goal Reviews (Phase 4: Continual Learning)
+  { method: 'POST', pattern: '/api/goal-reviews/generate', handler: handleGenerateReview, requiresAuth: true },
+  { method: 'GET', pattern: '/api/goal-reviews', handler: handleListReviews, requiresAuth: true },
+  { method: 'GET', pattern: '/api/goal-reviews/latest', handler: handleGetLatestReview, requiresAuth: true },
+  { method: 'GET', pattern: '/api/goal-reviews/summary', handler: handleGetGoalSummary, requiresAuth: true },
+  { method: 'GET', pattern: '/api/goal-reviews/current-week', handler: handleCheckCurrentWeek, requiresAuth: true },
+  { method: 'POST', pattern: '/api/goal-reviews/cleanup', handler: handleCleanupReviews, requiresAuth: true },
+  { method: 'GET', pattern: /^\/api\/goal-reviews\/[^\/]+$/, handler: handleGetReview, requiresAuth: true },
+  { method: 'DELETE', pattern: /^\/api\/goal-reviews\/[^\/]+$/, handler: handleDeleteReview, requiresAuth: true },
+
+  // System Operator (Phase 5: Maintenance Skills)
+  { method: 'POST', pattern: '/api/system-operator/backup', handler: handleCreateBackup, requiresAuth: true },
+  { method: 'GET', pattern: '/api/system-operator/backups', handler: handleListBackups, requiresAuth: true },
+  { method: 'DELETE', pattern: '/api/system-operator/backups', handler: handleDeleteBackup, requiresAuth: true },
+  { method: 'POST', pattern: '/api/system-operator/backup/restore', handler: handleRestoreBackup, requiresAuth: true },
+  { method: 'POST', pattern: '/api/system-operator/housekeeping', handler: handleRunHousekeeping, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/system-operator/disk-usage', handler: handleGetDiskUsage, requiresAuth: true },
+  { method: 'POST', pattern: '/api/system-operator/index-maintenance', handler: handleRunIndexMaintenance, requiresAuth: true },
+  { method: 'GET', pattern: '/api/system-operator/index-health', handler: handleCheckIndexHealth, requiresAuth: true },
+  { method: 'GET', pattern: '/api/system-operator/index-stats', handler: handleGetIndexStats, requiresAuth: true },
+  { method: 'POST', pattern: '/api/system-operator/ingestion-qa', handler: handleRunIngestionQA, requiresAuth: true },
+  { method: 'GET', pattern: '/api/system-operator/ingestion-health', handler: handleGetIngestionHealth, requiresAuth: true },
+  { method: 'POST', pattern: '/api/system-operator/cleanup-duplicates', handler: handleCleanupDuplicates, requiresAuth: true },
+  { method: 'GET', pattern: '/api/system-operator/rollback-points', handler: handleListRollbackPoints, requiresAuth: true },
+  { method: 'POST', pattern: '/api/system-operator/rollback', handler: handleExecuteRollback, requiresAuth: true },
+  { method: 'GET', pattern: '/api/system-operator/rate-limits', handler: handleGetRateLimits, requiresAuth: true },
+  { method: 'GET', pattern: '/api/system-operator/anomalies', handler: handleGetAnomalies, requiresAuth: true },
+  { method: 'POST', pattern: /^\/api\/system-operator\/anomalies\/[^\/]+\/acknowledge$/, handler: handleAcknowledgeAnomaly, requiresAuth: true },
+  { method: 'GET', pattern: '/api/system-operator/safety-summary', handler: handleGetSafetySummary, requiresAuth: true },
+
+  // Voice Loop (Phase 5)
+  { method: 'POST', pattern: '/api/voice/start', handler: handleVoiceStart, requiresAuth: true },
+  { method: 'POST', pattern: '/api/voice/stop', handler: handleVoiceStop, requiresAuth: true },
+  { method: 'GET', pattern: '/api/voice/status', handler: handleVoiceStatus, requiresAuth: true },
+  { method: 'POST', pattern: '/api/voice/transcript', handler: handleVoiceTranscript, requiresAuth: true },
+  { method: 'GET', pattern: '/api/voice/config', handler: handleGetVoiceConfig, requiresAuth: true },
+  { method: 'POST', pattern: '/api/voice/config', handler: handleUpdateVoiceConfig, requiresAuth: true },
+  { method: 'GET', pattern: '/api/voice/session', handler: handleGetVoiceSession, requiresAuth: true },
+  { method: 'POST', pattern: '/api/voice/pause', handler: handleVoicePause, requiresAuth: true },
+  { method: 'POST', pattern: '/api/voice/resume', handler: handleVoiceResume, requiresAuth: true },
+  { method: 'POST', pattern: '/api/voice/barge-in', handler: handleVoiceBargeIn, requiresAuth: true },
 
   // Persona
   { method: 'GET', pattern: '/api/persona', handler: handleGetPersona, requiresAuth: true },
@@ -762,6 +957,44 @@ const routes: RouteDefinition[] = [
   // File Operations
   { method: 'GET', pattern: '/api/file_operations', handler: handleFileOperationsStatus },
   { method: 'POST', pattern: '/api/file_operations', handler: handleFileOperation },
+
+  // Photo Ingestion (Phase 3 Connectors)
+  { method: 'POST', pattern: '/api/photos/ingest', handler: handleIngestPhoto, requiresAuth: true },
+  { method: 'POST', pattern: '/api/photos/ingest-directory', handler: handleIngestDirectory, requiresAuth: true },
+  { method: 'POST', pattern: '/api/photos/metadata', handler: handleExtractMetadata, requiresAuth: true },
+
+  // Document Ingestion (Phase 3 Connectors)
+  { method: 'POST', pattern: '/api/documents/ingest', handler: handleIngestDocument, requiresAuth: true },
+  { method: 'POST', pattern: '/api/documents/ingest-directory', handler: handleIngestDocumentDirectory, requiresAuth: true },
+  { method: 'POST', pattern: '/api/documents/extract', handler: handleExtractDocument, requiresAuth: true },
+
+  // Calendar (Phase 3 Connectors)
+  { method: 'GET', pattern: '/api/calendar/events', handler: handleGetCalendarEvents, requiresAuth: true },
+  { method: 'GET', pattern: '/api/calendar/focus-window', handler: handleGetFocusWindow, requiresAuth: true },
+  { method: 'GET', pattern: '/api/calendar/sources', handler: handleGetCalendarSources, requiresAuth: true },
+  { method: 'POST', pattern: '/api/calendar/sources', handler: handleAddCalendarSource, requiresAuth: true },
+  { method: 'PUT', pattern: /^\/api\/calendar\/sources\/([^\/]+)$/, handler: handleUpdateCalendarSource, requiresAuth: true },
+  { method: 'DELETE', pattern: /^\/api\/calendar\/sources\/([^\/]+)$/, handler: handleRemoveCalendarSource, requiresAuth: true },
+  { method: 'POST', pattern: '/api/calendar/sync', handler: handleSyncCalendars, requiresAuth: true },
+  { method: 'PUT', pattern: '/api/calendar/config', handler: handleUpdateCalendarConfig, requiresAuth: true },
+
+  // Chat Ingestion (Phase 3 Connectors)
+  { method: 'POST', pattern: '/api/chats/ingest', handler: handleIngestChat, requiresAuth: true },
+  { method: 'POST', pattern: '/api/chats/ingest-directory', handler: handleIngestChatDirectory, requiresAuth: true },
+  { method: 'POST', pattern: '/api/chats/parse', handler: handleParseChat, requiresAuth: true },
+  { method: 'POST', pattern: '/api/chats/detect-platform', handler: handleDetectPlatform, requiresAuth: true },
+
+  // Voice Memo Ingestion (Phase 3 Connectors)
+  { method: 'POST', pattern: '/api/voice-memos/ingest', handler: handleIngestVoiceMemo, requiresAuth: true },
+  { method: 'POST', pattern: '/api/voice-memos/ingest-directory', handler: handleIngestVoiceMemoDirectory, requiresAuth: true },
+  { method: 'POST', pattern: '/api/voice-memos/metadata', handler: handleExtractVoiceMemoMetadata, requiresAuth: true },
+  { method: 'GET', pattern: '/api/voice-memos/transcription-status', handler: handleGetTranscriptionStatus, requiresAuth: true },
+
+  // CLIP Image Tagging (Phase 3 Connectors)
+  { method: 'POST', pattern: '/api/images/tag', handler: handleTagImage, requiresAuth: true },
+  { method: 'POST', pattern: '/api/images/tag-directory', handler: handleTagImageDirectory, requiresAuth: true },
+  { method: 'GET', pattern: '/api/images/clip-status', handler: handleGetClipStatus, requiresAuth: true },
+  { method: 'GET', pattern: '/api/images/labels', handler: handleGetLabels, requiresAuth: true },
 
   // Voice Samples
   { method: 'GET', pattern: /^\/api\/voice-samples\/([^\/]+)$/, handler: handleGetVoiceSample },

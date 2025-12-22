@@ -40,8 +40,13 @@ const execute: NodeExecutor = async (inputs, context) => {
       }
     } catch {}
 
-    // Get response from inputs[1]
-    const assistantResponse = inputs[1]?.response || inputs[1]?.content || inputs[1]?.text || inputs[1];
+    // Get response from named input first, then positional fallback
+    const rawResponse = inputs.response ?? inputs[1];
+    const assistantResponse = typeof rawResponse === 'string'
+      ? rawResponse
+      : rawResponse?.response || rawResponse?.content || rawResponse?.text || rawResponse;
+
+    console.log('[BufferManager] Received response:', assistantResponse ? `${String(assistantResponse).substring(0, 50)}...` : 'none');
 
     // Build updated message list
     const updatedMessages = [...existingMessages];

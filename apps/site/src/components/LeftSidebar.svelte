@@ -17,6 +17,7 @@
   const menuItems: MenuItem[] = [
     { id: 'chat', label: 'Chat', icon: '💬', description: 'Conversation interface' },
     { id: 'dashboard', label: 'Dashboard', icon: '📊', description: 'System overview' },
+    { id: 'projects', label: 'Projects', icon: '📁', description: 'Task graph & projects' },
     { id: 'agency', label: 'Agency', icon: '🎯', description: 'Autonomous desires' },
     { id: 'persona', label: 'Persona', icon: '👤', description: 'Identity & personality' },
     { id: 'voice', label: 'Voice', icon: '🎤', description: 'Audio & training' },

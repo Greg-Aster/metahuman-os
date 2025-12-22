@@ -7,5 +7,11 @@
   "localModels": {
     "endpoint": "http://127.0.0.1:4324",
     "model": "qwen3-embedding-0.6b"
+  },
+  "indexContentMode": "user",
+  "indexContentModeOptions": {
+    "user": "User only - indexes only user inputs (recommended, prevents LLM hallucinations in search)",
+    "all": "All content - indexes both user messages and AI responses",
+    "agent": "Agent only - indexes AI responses, dreams, and system outputs"
   }
 }

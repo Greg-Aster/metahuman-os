@@ -129,7 +129,7 @@ export const MemoryRouterNode: NodeDefinition = defineNode({
     { name: 'resultCount', type: 'number', description: 'Number of results found' },
   ],
   properties: {
-    topK: 8,
+    topK: 12,
     threshold: 0.5,
   },
   propertySchemas: {

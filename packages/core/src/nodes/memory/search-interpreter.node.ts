@@ -80,12 +80,12 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   }).join('\n\n');
 
   try {
-    const systemPrompt = `You are a memory interpreter. Review these search results and determine what information they contain that relates to the user's question.
+    const systemPrompt = `You are a memory interpreter for a personal memory system. These search results are first-person memories captured by the user about their own life, experiences, and preferences.
 
 User's question: "${userQuery}"
 
 Assess each memory's relevance: "high", "partial", "low", or "none".
-Write a summary expressing what you found, including any uncertainty about how it relates to the question.
+Write a summary expressing what you found, including any uncertainty.
 Set unknownSignal to true only if none of the memories contain any relevant information.
 
 Output JSON:
@@ -128,9 +128,10 @@ Output JSON:
       // Fallback parsing for malformed JSON
       console.warn('[search_interpreter] Failed to parse LLM response, using fallback');
       const unknownMatch = response.content.match(/unknownSignal[":]\s*(true|false)/i);
+      const unknownValue = unknownMatch?.[1]?.toLowerCase() !== 'false'; // default true if not explicitly false
       evaluation = {
         evaluations: [],
-        unknownSignal: unknownMatch?.[1]?.toLowerCase() === 'true' ?? true,
+        unknownSignal: unknownValue,
         summary: 'Failed to parse evaluation',
         confidence: 0.5,
       };
@@ -261,7 +262,7 @@ export const SearchInterpreterNode: NodeDefinition = defineNode({
   ],
   properties: {
     relevanceThreshold: 0.6,
-    maxResults: 5,
+    maxResults: 10,
   },
   propertySchemas: {
     relevanceThreshold: {
