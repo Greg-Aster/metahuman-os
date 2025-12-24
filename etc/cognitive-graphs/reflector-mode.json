@@ -40,7 +40,9 @@
             "idle-thought",
             "self-reflection",
             "inner"
-          ]
+          ],
+          "displayColor": "#eab308",
+          "dialogueSource": "reflector"
         }
       },
       "width": 220,
@@ -81,7 +83,9 @@
             "summary",
             "concise",
             "inner"
-          ]
+          ],
+          "displayColor": "#eab308",
+          "dialogueSource": "reflector"
         }
       },
       "width": 220,
@@ -122,7 +126,9 @@
             "summary",
             "extended",
             "inner"
-          ]
+          ],
+          "displayColor": "#eab308",
+          "dialogueSource": "reflector"
         }
       },
       "width": 220,
@@ -142,6 +148,24 @@
       },
       "width": 180,
       "height": 60
+    },
+    {
+      "id": "8",
+      "type": "outputNode",
+      "position": {
+        "x": 700,
+        "y": 200
+      },
+      "data": {
+        "label": "TTS Output",
+        "nodeType": "tts",
+        "properties": {
+          "source": "reflector",
+          "defaultMode": "inner"
+        }
+      },
+      "width": 180,
+      "height": 80
     }
   ],
   "edges": [
@@ -209,6 +233,17 @@
       "data": {
         "type": "string",
         "comment": "Reflection → Audit Logger"
+      }
+    },
+    {
+      "id": "e-1-response-8-innerDialogue",
+      "source": "1",
+      "target": "8",
+      "sourceHandle": "response",
+      "targetHandle": "innerDialogue",
+      "data": {
+        "type": "string",
+        "comment": "Reflection → TTS Output (speaks in inner dialogue mode)"
       }
     }
   ]

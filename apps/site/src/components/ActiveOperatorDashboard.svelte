@@ -8,6 +8,48 @@
     priority: string;
     queuedAt: string;
     payload?: unknown;
+    resourceLane?: string;
+  }
+
+  interface LaneTask {
+    id: string;
+    type: string;
+    priority: string;
+    queuedAt: string;
+    resourceLane: string;
+    username?: string;
+    startedAt?: string;
+  }
+
+  interface LaneStatus {
+    queued: number;
+    running: number;
+    maxConcurrent: number;
+    canExecute: boolean;
+    paused: boolean;
+  }
+
+  interface UnifiedQueueStatus {
+    running: boolean;
+    paused: boolean;
+    stats: {
+      totalQueued: number;
+      totalCompleted: number;
+      totalFailed: number;
+    };
+    tasksByLane: {
+      'local-llm': LaneTask[];
+      'vector-index': LaneTask[];
+      'remote-llm': LaneTask[];
+    };
+    lanes?: {
+      'local-llm': LaneStatus;
+      'vector-index': LaneStatus;
+      'remote-llm': LaneStatus;
+    };
+    inFlightRemote: Array<{ taskId: string; provider: string; startedAt: string }>;
+    nextTriggers: Array<{ agentId: string; nextRun: string }>;
+    lastActivity?: string;
   }
 
   interface ScratchpadEntry {
@@ -64,6 +106,7 @@
   }
 
   let status: OperatorStatus | null = null;
+  let queueStatus: UnifiedQueueStatus | null = null;
   let loading = true;
   let error = '';
   let actionLoading = false;
@@ -71,10 +114,18 @@
 
   // Collapsible sections
   let collapsed = {
-    queue: false,
+    lanes: false,
+    queue: true,
     scratchpad: true,
     metrics: true,
     config: true,
+  };
+
+  // Lane display config
+  const laneConfig = {
+    'local-llm': { name: 'Local LLM', icon: '🖥️', color: '#3b82f6' },
+    'vector-index': { name: 'Vector Index', icon: '🔍', color: '#22c55e' },
+    'remote-llm': { name: 'Remote LLM', icon: '☁️', color: '#8b5cf6' },
   };
 
   function formatTimestamp(ts: string): string {
@@ -136,9 +187,19 @@
 
   async function loadStatus() {
     try {
-      const res = await apiFetch('/api/active-operator/status');
-      if (!res.ok) throw new Error('Failed to load status');
-      status = await res.json();
+      // Fetch both operator status and unified queue status in parallel
+      const [operatorRes, queueRes] = await Promise.all([
+        apiFetch('/api/active-operator/status'),
+        apiFetch('/api/unified-queue'),
+      ]);
+
+      if (!operatorRes.ok) throw new Error('Failed to load operator status');
+      status = await operatorRes.json();
+
+      if (queueRes.ok) {
+        queueStatus = await queueRes.json();
+      }
+
       loading = false;
     } catch (e) {
       error = (e as Error).message;
@@ -162,6 +223,29 @@
     } finally {
       actionLoading = false;
     }
+  }
+
+  async function toggleLanePause(laneId: string, currentlyPaused: boolean) {
+    try {
+      const action = currentlyPaused ? 'resume' : 'pause';
+      const res = await apiFetch('/api/queue/lane-control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lane: laneId, action }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Lane control failed');
+      await loadStatus();
+    } catch (e) {
+      console.error('Lane control error:', e);
+      alert((e as Error).message);
+    }
+  }
+
+  function isLanePaused(laneId: string): boolean {
+    if (!queueStatus?.lanes) return false;
+    const laneStatus = queueStatus.lanes[laneId as keyof typeof queueStatus.lanes];
+    return laneStatus?.paused || false;
   }
 
   onMount(() => {
@@ -245,17 +329,85 @@
       </div>
     </div>
 
-    <!-- Queue Section -->
+    <!-- Resource Lanes Section -->
+    {#if queueStatus}
+      <div class="section">
+        <button class="section-header" on:click={() => collapsed.lanes = !collapsed.lanes}>
+          <span>Resource Lanes ({queueStatus.stats?.totalQueued || 0} tasks)</span>
+          <span class="chevron">{collapsed.lanes ? '▸' : '▾'}</span>
+        </button>
+        {#if !collapsed.lanes}
+          <div class="section-content lanes-content">
+            <div class="lanes-grid">
+              {#each Object.entries(laneConfig) as [laneId, config]}
+                {@const laneTasks = queueStatus.tasksByLane?.[laneId as keyof typeof queueStatus.tasksByLane] || []}
+                {@const paused = isLanePaused(laneId)}
+                <div class="lane-column" class:paused style="--lane-color: {config.color}">
+                  <div class="lane-header">
+                    <span class="lane-icon">{config.icon}</span>
+                    <span class="lane-name">{config.name}</span>
+                    {#if paused}
+                      <span class="paused-badge">PAUSED</span>
+                    {/if}
+                    <span class="lane-count">{laneTasks.length}</span>
+                    <button
+                      class="lane-throttle-btn"
+                      class:resume={paused}
+                      on:click|stopPropagation={() => toggleLanePause(laneId, paused)}
+                      title={paused ? 'Resume lane' : 'Pause lane'}
+                    >
+                      {paused ? '▶' : '⏸'}
+                    </button>
+                  </div>
+                  <div class="lane-tasks">
+                    {#if laneTasks.length > 0}
+                      {#each laneTasks.slice(0, 5) as task}
+                        <div class="lane-task">
+                          <span class="task-icon">{getTaskIcon(task.type)}</span>
+                          <span class="task-type">{task.type}</span>
+                          <span class="task-priority" style="color: {getPriorityColor(task.priority)}">{task.priority}</span>
+                        </div>
+                      {/each}
+                      {#if laneTasks.length > 5}
+                        <div class="lane-overflow">+{laneTasks.length - 5} more</div>
+                      {/if}
+                    {:else}
+                      <div class="lane-empty">Empty</div>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            </div>
+            {#if queueStatus.inFlightRemote?.length > 0}
+              <div class="in-flight-section">
+                <div class="subsection-label">In-Flight Remote Tasks</div>
+                <div class="in-flight-list">
+                  {#each queueStatus.inFlightRemote as remote}
+                    <div class="in-flight-item">
+                      <span class="provider">{remote.provider}</span>
+                      <span class="task-id">{remote.taskId.slice(0, 8)}...</span>
+                      <span class="started">{formatTimestamp(remote.startedAt)}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Queue Section (Legacy) -->
     <div class="section">
       <button class="section-header" on:click={() => collapsed.queue = !collapsed.queue}>
-        <span>Queue ({status.queue.length})</span>
+        <span>Queue Details ({status.queue.length})</span>
         <span class="chevron">{collapsed.queue ? '▸' : '▾'}</span>
       </button>
       {#if !collapsed.queue}
         <div class="section-content">
           {#if status.queue.tasks.length > 0}
             <div class="queue-list">
-              {#each status.queue.tasks as task}
+              {#each status.queue.tasks.slice(0, 10) as task}
                 <div class="queue-item">
                   <span class="task-icon">{getTaskIcon(task.type)}</span>
                   <span class="task-type">{task.type}</span>
@@ -264,6 +416,9 @@
                 </div>
               {/each}
             </div>
+            {#if status.queue.length > 10}
+              <div class="queue-overflow">+{status.queue.length - 10} more tasks in queue</div>
+            {/if}
           {:else}
             <div class="empty-message">Queue is empty</div>
           {/if}
@@ -291,7 +446,7 @@
           {/if}
           {#if status.scratchpad.recentEntries.length > 0}
             <div class="scratchpad-entries">
-              {#each status.scratchpad.recentEntries as entry}
+              {#each status.scratchpad.recentEntries.slice(0, 10) as entry}
                 <div class="scratchpad-entry" class:decision={entry.type === 'decision'} class:execution={entry.type === 'execution'}>
                   <span class="entry-type">{entry.type}</span>
                   <span class="entry-content">{entry.content}</span>
@@ -299,6 +454,9 @@
                 </div>
               {/each}
             </div>
+            {#if status.scratchpad.recentEntries.length > 10}
+              <div class="queue-overflow">+{status.scratchpad.recentEntries.length - 10} more entries</div>
+            {/if}
           {:else}
             <div class="empty-message">No recent activity</div>
           {/if}
@@ -653,6 +811,17 @@
     padding: 1rem;
   }
 
+  .queue-overflow {
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-muted, #9ca3af);
+    background: var(--bg-secondary, #1f2937);
+    border-radius: 0.375rem;
+    font-style: italic;
+  }
+
   .last-decision, .activity-summary {
     padding: 0.75rem;
     background: var(--bg-secondary, #1f2937);
@@ -766,5 +935,191 @@
     background: var(--bg-secondary, #1f2937);
     border-radius: 1rem;
     font-size: 0.8rem;
+  }
+
+  /* Resource Lanes Styles */
+  .lanes-content {
+    padding: 0.75rem;
+  }
+
+  .lanes-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+  }
+
+  .lane-column {
+    background: var(--bg-secondary, #1f2937);
+    border-radius: 0.5rem;
+    border-top: 3px solid var(--lane-color, #3b82f6);
+    overflow: hidden;
+    transition: opacity 0.2s;
+  }
+
+  .lane-column.paused {
+    opacity: 0.6;
+    border-top-color: #ef4444;
+  }
+
+  .lane-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-tertiary, #111827);
+    border-bottom: 1px solid var(--border-color, #374151);
+  }
+
+  .lane-icon {
+    font-size: 1rem;
+  }
+
+  .lane-name {
+    flex: 1;
+    font-weight: 500;
+    font-size: 0.85rem;
+  }
+
+  .lane-count {
+    background: var(--lane-color, #3b82f6);
+    color: white;
+    padding: 0.125rem 0.5rem;
+    border-radius: 1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .paused-badge {
+    background: #ef4444;
+    color: white;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+  }
+
+  .lane-throttle-btn {
+    background: transparent;
+    border: 1px solid var(--border-color, #374151);
+    border-radius: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.7rem;
+    cursor: pointer;
+    color: var(--text-muted, #9ca3af);
+    transition: all 0.15s;
+    margin-left: 0.25rem;
+  }
+
+  .lane-throttle-btn:hover {
+    background: var(--bg-hover, #374151);
+    color: var(--text-primary, #f3f4f6);
+    border-color: var(--text-muted, #6b7280);
+  }
+
+  .lane-throttle-btn.resume {
+    color: #22c55e;
+    border-color: #22c55e40;
+  }
+
+  .lane-throttle-btn.resume:hover {
+    background: #22c55e20;
+    border-color: #22c55e;
+  }
+
+  .lane-tasks {
+    padding: 0.5rem;
+    min-height: 80px;
+  }
+
+  .lane-task {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.5rem;
+    background: var(--bg-primary, #111827);
+    border-radius: 0.25rem;
+    margin-bottom: 0.375rem;
+    font-size: 0.8rem;
+  }
+
+  .lane-task:last-child {
+    margin-bottom: 0;
+  }
+
+  .lane-task .task-type {
+    flex: 1;
+    font-size: 0.8rem;
+  }
+
+  .lane-task .task-priority {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+
+  .lane-empty {
+    color: var(--text-muted, #6b7280);
+    font-style: italic;
+    text-align: center;
+    padding: 1rem;
+    font-size: 0.85rem;
+  }
+
+  .lane-overflow {
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--text-muted, #9ca3af);
+    padding: 0.25rem;
+    font-style: italic;
+  }
+
+  .in-flight-section {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-color, #374151);
+  }
+
+  .in-flight-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .in-flight-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem;
+    background: var(--bg-secondary, #1f2937);
+    border-radius: 0.375rem;
+    font-size: 0.85rem;
+  }
+
+  .in-flight-item .provider {
+    background: #8b5cf6;
+    color: white;
+    padding: 0.125rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .in-flight-item .task-id {
+    color: var(--text-muted, #9ca3af);
+    font-family: monospace;
+    font-size: 0.8rem;
+  }
+
+  .in-flight-item .started {
+    margin-left: auto;
+    color: var(--text-muted, #9ca3af);
+    font-size: 0.75rem;
+  }
+
+  @media (max-width: 768px) {
+    .lanes-grid {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

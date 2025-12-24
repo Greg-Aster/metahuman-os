@@ -13,7 +13,8 @@ import {
   loadQueueState,
   getCostSummary,
   getErrorStatus,
-} from '@metahuman/core';
+  getActiveOperatorServiceStatus,
+} from '@metahuman/core/active-operator';
 
 export const GET: APIRoute = async () => {
   try {
@@ -40,11 +41,17 @@ export const GET: APIRoute = async () => {
       };
     }
 
+    // Get live service status
+    const serviceStatus = getActiveOperatorServiceStatus();
+
     const status = {
       enabled: config.enabled,
+      isRunning: serviceStatus.isRunning,  // Live running state from service manager
       mode: modeStatus.mode,
       isExecuting: modeStatus.isExecuting,
-      currentTask: modeStatus.currentTask || null,
+      currentTask: serviceStatus.currentTask || modeStatus.currentTask || null,
+      consecutiveTasks: serviceStatus.consecutiveTasks,
+      username: serviceStatus.username,
       health: modeStatus.health,
       healthMessage: modeStatus.healthMessage,
 

@@ -10,7 +10,6 @@ import * as path from 'path';
 import { getProfilePaths } from '../paths.js';
 import { listEpisodicFiles } from '../memory.js';
 import { buildMemoryIndex, getIndexStatus, loadIndex, clearIndexCache } from '../vector-index.js';
-import { storageClient } from '../storage-router.js';
 import { audit } from '../audit.js';
 import type { IndexMaintenanceResult } from './types.js';
 

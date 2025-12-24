@@ -135,6 +135,9 @@
       case 'ActiveOperatorDashboard':
         module = await import('./ActiveOperatorDashboard.svelte');
         break;
+      case 'UnifiedQueueDashboard':
+        module = await import('./UnifiedQueueDashboard.svelte');
+        break;
       case 'SystemCoderDashboard':
         module = await import('./SystemCoderDashboard.svelte');
         break;
@@ -192,7 +195,7 @@ let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' 
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'wizard' | 'datasets' | 'manage' | 'system' | 'monitor' | 'adapters' = 'wizard'
 let systemTab: 'chat' | 'lifeline' | 'settings' | 'security' | 'network' | 'storage' | 'addons' | 'scheduler' = 'settings'
-let dashboardTab: 'overview' | 'tasks' | 'approvals' | 'operator' = 'overview'
+let dashboardTab: 'overview' | 'tasks' | 'approvals' | 'operator' | 'queue' = 'overview'
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
 
 
@@ -610,6 +613,7 @@ async function loadMemoryContent(relPath: string) {
           <button class="tab-button" class:active={dashboardTab === 'tasks'} on:click={() => dashboardTab = 'tasks'}>Tasks</button>
           <button class="tab-button" class:active={dashboardTab === 'approvals'} on:click={() => dashboardTab = 'approvals'}>Approvals</button>
           <button class="tab-button" class:active={dashboardTab === 'operator'} on:click={() => dashboardTab = 'operator'}>Active Operator</button>
+          <button class="tab-button" class:active={dashboardTab === 'queue'} on:click={() => dashboardTab = 'queue'}>Queue Lanes</button>
         </div>
         {#if dashboardTab === 'overview'}
           {#await loadComponent('Dashboard')}
@@ -632,6 +636,12 @@ async function loadMemoryContent(relPath: string) {
         {:else if dashboardTab === 'operator'}
           {#await loadComponent('ActiveOperatorDashboard')}
             <div class="loading-placeholder">Loading active operator...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
+        {:else if dashboardTab === 'queue'}
+          {#await loadComponent('UnifiedQueueDashboard')}
+            <div class="loading-placeholder">Loading queue lanes...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
@@ -914,6 +924,8 @@ async function loadMemoryContent(relPath: string) {
               {#each paginatedReflections as event}
                 {@const key = getEventKey(event)}
                 {@const isOpen = key ? !!expanded[key] : false}
+                {@const displayColor = event.metadata?.displayColor || ''}
+                {@const dialogueSource = event.metadata?.dialogueSource || ''}
                 <div class="event-card">
                   <div class="event-card-header">
                     <button
@@ -922,7 +934,10 @@ async function loadMemoryContent(relPath: string) {
                       on:click={() => toggleExpanded(event)}
                       aria-expanded={isOpen}
                     >
-                      <span class="event-card-title">{getPreview(event.content)}</span>
+                      {#if dialogueSource}
+                        <span class="dialogue-source-badge" style={displayColor ? `background-color: ${displayColor}` : ''}>{dialogueSource}</span>
+                      {/if}
+                      <span class="event-card-title" style={displayColor ? `color: ${displayColor}` : ''}>{getPreview(event.content)}</span>
                       <span class="event-toggle-icon" aria-hidden="true">{isOpen ? '▲' : '▼'}</span>
                       <span class="sr-only">{isOpen ? 'Collapse memory' : 'Expand memory'}</span>
                     </button>
@@ -1856,6 +1871,15 @@ async function loadMemoryContent(relPath: string) {
   .answered-badge {
     @apply text-xs px-2 py-1 rounded-full bg-green-100 text-green-700
            dark:bg-green-900/30 dark:text-green-400;
+  }
+
+  /* Dialogue Source Badge - color-coded inner dialogue sources */
+  .dialogue-source-badge {
+    @apply text-xs px-2 py-0.5 rounded-full font-medium mr-2;
+    background-color: #6b7280; /* Default gray if no color specified */
+    color: white;
+    text-transform: lowercase;
+    flex-shrink: 0;
   }
 
   /* Function Memory Styles */

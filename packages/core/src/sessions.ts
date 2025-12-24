@@ -57,6 +57,19 @@ function getSessionsFilePath(): string {
 const OWNER_SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hours
 const GUEST_SESSION_DURATION = 60 * 60 * 1000; // 1 hour
 
+// Maximum session age (absolute limit regardless of activity)
+// After this time from creation, session MUST be re-authenticated
+const MAX_SESSION_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+/**
+ * Check if session has exceeded maximum age
+ */
+function isSessionTooOld(session: Session): boolean {
+  const createdAt = new Date(session.createdAt);
+  const now = new Date();
+  return (now.getTime() - createdAt.getTime()) > MAX_SESSION_AGE;
+}
+
 /**
  * Load sessions from file
  */
@@ -155,7 +168,7 @@ export function getSession(sessionId: string): Session | null {
 }
 
 /**
- * Validate session (check expiration, update activity)
+ * Validate session (check expiration and max age, update activity)
  */
 export function validateSession(sessionId: string): Session | null {
   const store = loadSessions();
@@ -179,6 +192,22 @@ export function validateSession(sessionId: string): Session | null {
       category: 'security',
       event: 'session_expired',
       details: { sessionId, userId: session.userId },
+      actor: session.userId,
+    });
+
+    return null;
+  }
+
+  // Check if session exceeded maximum age (must re-authenticate after 7 days)
+  if (isSessionTooOld(session)) {
+    store.sessions = store.sessions.filter((s) => s.id !== sessionId);
+    saveSessions(store);
+
+    audit({
+      level: 'info',
+      category: 'security',
+      event: 'session_max_age_exceeded',
+      details: { sessionId, userId: session.userId, createdAt: session.createdAt },
       actor: session.userId,
     });
 
@@ -360,6 +389,11 @@ export function refreshSession(sessionId: string): Session | null {
     return null;
   }
 
+  // Check if session exceeded maximum age (don't refresh, force re-auth)
+  if (isSessionTooOld(session)) {
+    return null;
+  }
+
   // Extend expiration based on role
   let duration: number;
   switch (session.role) {
@@ -391,7 +425,7 @@ export function refreshSession(sessionId: string): Session | null {
  * Get all logged-in users (active, non-anonymous sessions)
  *
  * Returns users who have active sessions that haven't expired.
- * Excludes anonymous sessions.
+ * Excludes anonymous sessions and sessions exceeding max age.
  *
  * @returns Array of logged-in users with userId, username, and role
  */
@@ -404,7 +438,8 @@ export function getLoggedInUsers(): Array<{ userId: string; username: string; ro
   for (const session of store.sessions) {
     const expiresAt = new Date(session.expiresAt);
 
-    if (expiresAt > now) {
+    // Check both expiration and max age
+    if (expiresAt > now && !isSessionTooOld(session)) {
       // Use userId as key to deduplicate (same user can have multiple sessions)
       if (!activeUsers.has(session.userId)) {
         // Get username from user database
@@ -423,4 +458,77 @@ export function getLoggedInUsers(): Array<{ userId: string; username: string; ro
   }
 
   return Array.from(activeUsers.values());
+}
+
+/**
+ * Get the most recently active user
+ *
+ * Returns the single user with the most recent lastActivity timestamp.
+ * This should be used by background agents to avoid processing multiple users.
+ * Excludes sessions that have exceeded max age.
+ *
+ * @returns The most recently active user, or null if no active sessions
+ */
+export function getMostRecentlyActiveUser(): { userId: string; username: string; role: string } | null {
+  const store = loadSessions();
+  const now = new Date();
+  let mostRecent: { session: Session; user: any } | null = null;
+
+  for (const session of store.sessions) {
+    const expiresAt = new Date(session.expiresAt);
+
+    // Check both expiration and max age
+    if (expiresAt > now && !isSessionTooOld(session)) {
+      const lastActivity = new Date(session.lastActivity);
+
+      if (!mostRecent || lastActivity > new Date(mostRecent.session.lastActivity)) {
+        const { getUser } = require('./users.js');
+        const user = getUser(session.userId);
+
+        if (user) {
+          mostRecent = { session, user };
+        }
+      }
+    }
+  }
+
+  if (!mostRecent) return null;
+
+  return {
+    userId: mostRecent.session.userId,
+    username: mostRecent.user.username,
+    role: mostRecent.session.role
+  };
+}
+
+/**
+ * Get the target user for agent execution
+ *
+ * Priority order:
+ * 1. Explicit username option (from --user CLI arg)
+ * 2. MH_TRIGGER_USERNAME environment variable (set by API when user triggers agent)
+ * 3. getMostRecentlyActiveUser() fallback (for scheduler-triggered agents)
+ *
+ * This ensures that:
+ * - API-triggered agents ALWAYS process the authenticated user's data
+ * - Scheduler-triggered agents process the most recently active user
+ * - CLI can override with explicit --user flag
+ *
+ * @param options - Optional object with username property
+ * @returns User info or null if no user can be determined
+ */
+export function getTargetUser(options?: { username?: string }): { userId: string; username: string; role: string } | null {
+  // Priority 1: Explicit username from options (--user CLI arg)
+  if (options?.username) {
+    return { userId: options.username, username: options.username, role: 'owner' };
+  }
+
+  // Priority 2: MH_TRIGGER_USERNAME from API (user who clicked the button)
+  const triggerUsername = process.env.MH_TRIGGER_USERNAME;
+  if (triggerUsername) {
+    return { userId: triggerUsername, username: triggerUsername, role: 'owner' };
+  }
+
+  // Priority 3: Most recently active user (scheduler fallback)
+  return getMostRecentlyActiveUser();
 }

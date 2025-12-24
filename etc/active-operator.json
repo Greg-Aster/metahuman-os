@@ -8,7 +8,6 @@
   "enabledTaskTypes": [
     "user_message",
     "memory_curate",
-    "index_build",
     "reflect",
     "curiosity",
     "inner_curiosity",

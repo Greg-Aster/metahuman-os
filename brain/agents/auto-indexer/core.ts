@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import {
   storageClient,
   audit,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   buildMemoryIndex,
   getIndexStatus,
@@ -166,29 +166,29 @@ export async function runCycle(options: AutoIndexerOptions = {}): Promise<AutoIn
   };
 
   try {
-    const loggedInUsers = getLoggedInUsers();
+    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+    const activeUser = getTargetUser();
 
-    if (loggedInUsers.length === 0) {
-      console.log('[auto-indexer] No logged-in users found. Skipping cycle.');
+    if (!activeUser) {
+      console.log('[auto-indexer] No active users found. Skipping cycle.');
       audit({
         level: 'info',
         category: 'action',
         event: 'agent_cycle_skipped',
-        details: { agent: 'auto-indexer', reason: 'no_logged_in_users' },
+        details: { agent: 'auto-indexer', reason: 'no_active_users' },
         actor: 'agent',
       });
       result.success = true;
       return result;
     }
 
-    console.log(`[auto-indexer] Found ${loggedInUsers.length} logged-in user(s) to process`);
-    result.userCount = loggedInUsers.length;
+    console.log(`[auto-indexer] Processing user: ${activeUser.username}`);
+    result.userCount = 1;
 
-    // Check embedding service availability using first user's context
-    const firstUser = loggedInUsers[0];
+    // Check embedding service availability using active user's context
     const embeddingAvailable = await withUserContext(
-      { userId: firstUser.userId, username: firstUser.username, role: firstUser.role },
-      async () => isEmbeddingServiceAvailable(firstUser.username)
+      { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
+      async () => isEmbeddingServiceAvailable(activeUser.username)
     );
 
     if (!embeddingAvailable) {
@@ -205,28 +205,26 @@ export async function runCycle(options: AutoIndexerOptions = {}): Promise<AutoIn
       return result;
     }
 
-    for (const user of loggedInUsers) {
-      try {
-        const indexResult = await withUserContext(
-          { userId: user.userId, username: user.username, role: user.role },
-          async () => processUserIndex(user.username, options)
-        );
+    try {
+      const indexResult = await withUserContext(
+        { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
+        async () => processUserIndex(activeUser.username, options)
+      );
 
-        if (indexResult.skipped) {
-          result.skipped++;
-        } else if (indexResult.success) {
-          result.totalIndexed += indexResult.itemCount;
-        } else if (indexResult.error) {
-          result.errors.push(`User ${user.username}: ${indexResult.error}`);
-        }
-      } catch (error) {
-        const errorMsg = `User ${user.username}: ${(error as Error).message}`;
-        console.error(`[auto-indexer] Failed: ${errorMsg}`);
-        result.errors.push(errorMsg);
+      if (indexResult.skipped) {
+        result.skipped++;
+      } else if (indexResult.success) {
+        result.totalIndexed += indexResult.itemCount;
+      } else if (indexResult.error) {
+        result.errors.push(`User ${activeUser.username}: ${indexResult.error}`);
       }
+    } catch (error) {
+      const errorMsg = `User ${activeUser.username}: ${(error as Error).message}`;
+      console.error(`[auto-indexer] Failed: ${errorMsg}`);
+      result.errors.push(errorMsg);
     }
 
-    console.log(`[auto-indexer] Cycle finished. Indexed ${result.totalIndexed} items, skipped ${result.skipped} users.`);
+    console.log(`[auto-indexer] Cycle finished. Indexed ${result.totalIndexed} items for user ${activeUser.username}.`);
 
     audit({
       level: 'info',

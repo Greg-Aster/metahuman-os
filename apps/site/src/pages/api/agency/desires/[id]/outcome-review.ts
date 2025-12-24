@@ -52,8 +52,22 @@ async function verifyOutcomeWithOperator(
   const evidence: string[] = [];
   const errors: string[] = [];
 
-  // Check if Big Brother delegation mode is enabled
-  const operatorConfig = loadOperatorConfig();
+  // Check if Big Brother delegation mode is enabled (requires authenticated user)
+  const { getUserContext } = await import('@metahuman/core/context');
+  const userContext = getUserContext();
+
+  // Return failure if no authenticated user (all configs are user-specific)
+  if (!userContext?.username) {
+    return {
+      verified: false,
+      confidence: 0,
+      evidence: [],
+      errors: ['No authenticated user context available'],
+      recommendations: ['Please log in to verify desire outcomes'],
+    };
+  }
+
+  const operatorConfig = loadOperatorConfig(userContext.username);
   const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
   const delegateAll = operatorConfig.bigBrotherMode?.delegateAll === true;
 

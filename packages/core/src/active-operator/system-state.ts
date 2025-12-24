@@ -23,7 +23,16 @@ import {
 import type { SystemState, TaskType } from './types.js';
 
 /**
- * Get count of unprocessed memories for a user.
+ * Generic/system tags that don't count as "meaningful" semantic tags.
+ * Must match the organizer's logic exactly to avoid infinite loops.
+ */
+const GENERIC_TAGS = new Set(['ingested', 'inbox', 'ai', 'curated', 'audio', 'transcript']);
+
+/**
+ * Get count of memories that actually need processing.
+ * IMPORTANT: This logic must match organizer/core.ts findUnprocessedMemories()
+ * to avoid counting memories the organizer will skip.
+ * Searches the full YYYY/MM/DD directory structure.
  */
 async function getUnprocessedMemoryCount(username: string): Promise<number> {
   const profilePaths = getProfilePaths(username);
@@ -38,19 +47,49 @@ async function getUnprocessedMemoryCount(username: string): Promise<number> {
 
   for (const year of years) {
     const yearDir = path.join(episodicDir, year);
-    const files = fs.readdirSync(yearDir).filter((f) => f.endsWith('.json'));
+    if (!fs.statSync(yearDir).isDirectory()) continue;
 
-    for (const file of files) {
-      try {
-        const filePath = path.join(yearDir, file);
-        const content = fs.readFileSync(filePath, 'utf-8');
-        const memory = JSON.parse(content);
+    // Get months
+    const months = fs.readdirSync(yearDir)
+      .filter((f) => /^\d{2}$/.test(f) && fs.statSync(path.join(yearDir, f)).isDirectory());
 
-        if (!memory.metadata?.processed) {
-          count++;
+    for (const month of months) {
+      const monthDir = path.join(yearDir, month);
+
+      // Get days
+      const days = fs.readdirSync(monthDir)
+        .filter((f) => /^\d{2}$/.test(f) && fs.statSync(path.join(monthDir, f)).isDirectory());
+
+      for (const day of days) {
+        const dayDir = path.join(monthDir, day);
+        const files = fs.readdirSync(dayDir).filter((f) => f.endsWith('.json'));
+
+        for (const file of files) {
+          try {
+            const filePath = path.join(dayDir, file);
+            const content = fs.readFileSync(filePath, 'utf-8');
+            const memory = JSON.parse(content);
+
+            // Check if memory has only generic tags (no semantic enrichment)
+            const hasOnlyGenericTags = memory.tags && memory.tags.length > 0 &&
+              memory.tags.every((tag: string) => GENERIC_TAGS.has(tag.toLowerCase()));
+
+            // Memory needs processing if:
+            // NOT already processed AND (has no tags OR only generic tags) AND has no entities
+            // This logic MUST match organizer/core.ts to avoid infinite loops
+            const needsProcessing = (
+              !memory.metadata?.processed &&
+              (!memory.tags || memory.tags.length === 0 || hasOnlyGenericTags) &&
+              (!memory.entities || memory.entities.length === 0)
+            );
+
+            if (needsProcessing) {
+              count++;
+            }
+          } catch {
+            // Skip malformed files
+          }
         }
-      } catch {
-        // Skip malformed files
       }
     }
   }
@@ -63,7 +102,7 @@ async function getUnprocessedMemoryCount(username: string): Promise<number> {
  */
 async function getIndexAgeHours(username: string): Promise<number> {
   try {
-    const status = await getIndexStatus(username);
+    const status = await getIndexStatus(undefined, username);
     if (!status.exists || !status.createdAt) {
       return 999; // Never built
     }
@@ -94,6 +133,7 @@ async function getPendingDesireCount(username: string): Promise<number> {
 
 /**
  * Get hours since last event of a specific type.
+ * Searches the full YYYY/MM/DD directory structure.
  */
 async function getHoursSinceEventType(
   username: string,
@@ -113,39 +153,59 @@ async function getHoursSinceEventType(
     .sort()
     .reverse(); // Most recent first
 
+  yearLoop:
   for (const year of years) {
     const yearDir = path.join(episodicDir, year);
-    const files = fs.readdirSync(yearDir)
-      .filter((f) => f.endsWith('.json'))
+    if (!fs.statSync(yearDir).isDirectory()) continue;
+
+    // Get months, sorted in reverse (most recent first)
+    const months = fs.readdirSync(yearDir)
+      .filter((f) => /^\d{2}$/.test(f) && fs.statSync(path.join(yearDir, f)).isDirectory())
       .sort()
       .reverse();
 
-    for (const file of files) {
-      try {
-        const filePath = path.join(yearDir, file);
-        const content = fs.readFileSync(filePath, 'utf-8');
-        const memory = JSON.parse(content);
+    for (const month of months) {
+      const monthDir = path.join(yearDir, month);
 
-        if (memory.type !== eventType) continue;
+      // Get days, sorted in reverse (most recent first)
+      const days = fs.readdirSync(monthDir)
+        .filter((f) => /^\d{2}$/.test(f) && fs.statSync(path.join(monthDir, f)).isDirectory())
+        .sort()
+        .reverse();
 
-        if (tags && tags.length > 0) {
-          const memoryTags = memory.tags || [];
-          if (!tags.some((t) => memoryTags.includes(t))) continue;
+      for (const day of days) {
+        const dayDir = path.join(monthDir, day);
+        const files = fs.readdirSync(dayDir)
+          .filter((f) => f.endsWith('.json'))
+          .sort()
+          .reverse();
+
+        for (const file of files) {
+          try {
+            const filePath = path.join(dayDir, file);
+            const content = fs.readFileSync(filePath, 'utf-8');
+            const memory = JSON.parse(content);
+
+            if (memory.type !== eventType) continue;
+
+            if (tags && tags.length > 0) {
+              const memoryTags = memory.tags || [];
+              if (!tags.some((t) => memoryTags.includes(t))) continue;
+            }
+
+            const timestamp = new Date(memory.timestamp);
+            if (!latestTimestamp || timestamp > latestTimestamp) {
+              latestTimestamp = timestamp;
+            }
+
+            // Found one in most recent day, we can stop
+            break yearLoop;
+          } catch {
+            // Skip malformed files
+          }
         }
-
-        const timestamp = new Date(memory.timestamp);
-        if (!latestTimestamp || timestamp > latestTimestamp) {
-          latestTimestamp = timestamp;
-        }
-
-        // Found one, we can stop checking older files
-        break;
-      } catch {
-        // Skip malformed files
       }
     }
-
-    if (latestTimestamp) break;
   }
 
   if (!latestTimestamp) {
@@ -158,31 +218,57 @@ async function getHoursSinceEventType(
 }
 
 /**
- * Get idle time in minutes from conversation buffer.
+ * Get the most recent message timestamp from a conversation buffer file.
+ * Returns null if file doesn't exist or has no messages.
  */
-function getIdleMinutes(username: string): number {
-  const profilePaths = getProfilePaths(username);
-  const bufferFile = path.join(profilePaths.state, `conversation-buffer-${username}.json`);
-
-  if (!fs.existsSync(bufferFile)) {
-    return 999; // Never active
+function getLastActivityFromBuffer(bufferPath: string): Date | null {
+  if (!fs.existsSync(bufferPath)) {
+    return null;
   }
 
   try {
-    const content = fs.readFileSync(bufferFile, 'utf-8');
+    const content = fs.readFileSync(bufferPath, 'utf-8');
     const buffer = JSON.parse(content);
     const lastMessage = buffer.messages?.[buffer.messages.length - 1];
 
     if (!lastMessage?.timestamp) {
-      return 999;
+      return null;
     }
 
-    const lastActivity = new Date(lastMessage.timestamp);
-    const now = new Date();
-    return (now.getTime() - lastActivity.getTime()) / (1000 * 60);
+    return new Date(lastMessage.timestamp);
   } catch {
-    return 999;
+    return null;
   }
+}
+
+/**
+ * Get idle time in minutes from conversation buffers.
+ * Checks both conversation and inner dialogue buffers, using the most recent activity.
+ */
+function getIdleMinutes(username: string): number {
+  const profilePaths = getProfilePaths(username);
+
+  // Check both buffer files and use the most recent activity
+  const conversationBuffer = path.join(profilePaths.state, 'conversation-buffer-conversation.json');
+  const innerBuffer = path.join(profilePaths.state, 'conversation-buffer-inner.json');
+
+  const conversationActivity = getLastActivityFromBuffer(conversationBuffer);
+  const innerActivity = getLastActivityFromBuffer(innerBuffer);
+
+  // Find the most recent activity across both buffers
+  let lastActivity: Date | null = null;
+  if (conversationActivity && innerActivity) {
+    lastActivity = conversationActivity > innerActivity ? conversationActivity : innerActivity;
+  } else {
+    lastActivity = conversationActivity || innerActivity;
+  }
+
+  if (!lastActivity) {
+    return 999; // Never active
+  }
+
+  const now = new Date();
+  return (now.getTime() - lastActivity.getTime()) / (1000 * 60);
 }
 
 /**
@@ -357,13 +443,8 @@ export function getTaskRecommendations(state: SystemState): {
     });
   }
 
-  if (state.indexAgeHours > 24) {
-    recommendations.push({
-      task: 'index_build',
-      reason: `Vector index is ${state.indexAgeHours.toFixed(0)} hours old`,
-      urgency: 'high',
-    });
-  }
+  // NOTE: index_build removed from automatic recommendations - user-triggered only
+  // Index updates happen incrementally via appendEventToIndex when memories are saved
 
   if (state.codeErrors && state.codeErrors > 0) {
     recommendations.push({

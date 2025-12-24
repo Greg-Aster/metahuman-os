@@ -1909,6 +1909,24 @@
       },
       "selected": false,
       "dragging": false
+    },
+    {
+      "id": "tts-out",
+      "type": "outputNode",
+      "position": {
+        "x": 3030,
+        "y": 120
+      },
+      "width": 180,
+      "height": 80,
+      "data": {
+        "nodeType": "tts",
+        "properties": {
+          "source": "dual-mode",
+          "defaultMode": "conversation"
+        },
+        "title": "TTS Output"
+      }
     }
   ],
   "edges": [
@@ -2460,6 +2478,18 @@
       "data": {
         "type": "boolean",
         "comment": "Buffer Manager persisted → Audit Logger (ensures buffer_manager executes in graph)"
+      }
+    },
+    {
+      "id": "e-35-output-tts-conversation",
+      "source": "35",
+      "target": "tts-out",
+      "sourceHandle": "output",
+      "targetHandle": "conversation",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Gateway output → TTS Output (speaks conversation response)"
       }
     }
   ]

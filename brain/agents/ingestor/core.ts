@@ -19,7 +19,7 @@ import {
   audit,
   auditAction,
   captureEvent,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
 } from '@metahuman/core';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
@@ -226,34 +226,38 @@ export async function runCycle(options: IngestorOptions = {}): Promise<IngestorR
       level: 'info',
       category: 'action',
       event: 'agent_cycle_started',
-      details: { agent: 'ingestor', mode: 'multi-user' },
+      details: { agent: 'ingestor', mode: 'single-active-user' },
       actor: 'agent',
     });
 
-    // Get all logged-in users
-    const users = getLoggedInUsers();
-    console.log(`[ingestor] Found ${users.length} logged-in users to process`);
-    result.userCount = users.length;
+    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+    const activeUser = getTargetUser();
 
-    // Process each user with isolated context
-    for (const user of users) {
-      try {
-        const processed = await withUserContext(
-          { userId: user.userId, username: user.username, role: user.role },
-          async () => {
-            return await ingestUserFiles(user.username, options);
-          }
-        );
-
-        result.filesProcessed += processed;
-      } catch (error) {
-        const errorMsg = `User ${user.username}: ${(error as Error).message}`;
-        console.error(`[ingestor] Failed: ${errorMsg}`);
-        result.errors.push(errorMsg);
-      }
+    if (!activeUser) {
+      console.log('[ingestor] No active users found, skipping cycle.');
+      result.success = true;
+      return result;
     }
 
-    console.log(`[ingestor] Cycle finished. Processed ${result.filesProcessed} files across ${users.length} users.`);
+    console.log(`[ingestor] Processing user: ${activeUser.username}`);
+    result.userCount = 1;
+
+    try {
+      const processed = await withUserContext(
+        { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
+        async () => {
+          return await ingestUserFiles(activeUser.username, options);
+        }
+      );
+
+      result.filesProcessed += processed;
+    } catch (error) {
+      const errorMsg = `User ${activeUser.username}: ${(error as Error).message}`;
+      console.error(`[ingestor] Failed: ${errorMsg}`);
+      result.errors.push(errorMsg);
+    }
+
+    console.log(`[ingestor] Cycle finished. Processed ${result.filesProcessed} files for user ${activeUser.username}.`);
 
     // Audit completion (system-level)
     audit({
@@ -262,9 +266,9 @@ export async function runCycle(options: IngestorOptions = {}): Promise<IngestorR
       event: 'agent_cycle_completed',
       details: {
         agent: 'ingestor',
-        mode: 'multi-user',
+        mode: 'single-active-user',
         totalProcessed: result.filesProcessed,
-        userCount: users.length,
+        username: activeUser.username,
       },
       actor: 'agent',
     });

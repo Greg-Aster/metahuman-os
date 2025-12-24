@@ -17,7 +17,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {
   audit,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   getUserContext,
 } from '@metahuman/core';
@@ -418,24 +418,33 @@ export async function runCycle(options: PrunerOptions = {}): Promise<{
   };
 
   try {
-    let users: string[];
+    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+    let username: string | null = null;
 
     if (options.username) {
-      users = [options.username];
+      username = options.username;
     } else {
-      users = getLoggedInUsers().map(u => u.username);
+      const activeUser = getTargetUser();
+      if (activeUser) {
+        username = activeUser.username;
+      }
     }
 
-    for (const username of users) {
-      try {
-        const userResult = await runPrunerForUser(username, options);
-        result.results[username] = userResult;
-        result.usersProcessed++;
-      } catch (error) {
-        const errorMsg = `Error processing ${username}: ${(error as Error).message}`;
-        result.errors.push(errorMsg);
-        console.error(`[memory-pruner] ${errorMsg}`);
-      }
+    if (!username) {
+      console.log('[memory-pruner] No active user found');
+      return result;
+    }
+
+    console.log(`[memory-pruner] Processing user: ${username}`);
+
+    try {
+      const userResult = await runPrunerForUser(username, options);
+      result.results[username] = userResult;
+      result.usersProcessed++;
+    } catch (error) {
+      const errorMsg = `Error processing ${username}: ${(error as Error).message}`;
+      result.errors.push(errorMsg);
+      console.error(`[memory-pruner] ${errorMsg}`);
     }
   } catch (error) {
     result.success = false;

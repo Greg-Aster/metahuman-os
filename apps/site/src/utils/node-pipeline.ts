@@ -1,13 +1,16 @@
 import { loadUserConfig, saveUserConfig } from '@metahuman/core/config';
+import { getUserContext } from '@metahuman/core/context';
 
 type RuntimeConfig = Record<string, any>;
 
-function loadRuntimeConfig(): RuntimeConfig {
-  return loadUserConfig<RuntimeConfig>('runtime.json', {});
+function loadRuntimeConfig(username?: string): RuntimeConfig {
+  const effectiveUsername = username || getUserContext()?.username;
+  return loadUserConfig<RuntimeConfig>('runtime.json', {}, effectiveUsername);
 }
 
-function saveRuntimeConfig(config: RuntimeConfig): void {
-  saveUserConfig<RuntimeConfig>('runtime.json', config);
+function saveRuntimeConfig(config: RuntimeConfig, username?: string): void {
+  const effectiveUsername = username || getUserContext()?.username;
+  saveUserConfig<RuntimeConfig>('runtime.json', config, effectiveUsername);
 }
 
 export function getNodePipelineEnvOverride():
@@ -38,13 +41,14 @@ export function writeNodePipelineRuntime(
   enabled: boolean,
   actor: string
 ): void {
-  const runtime = loadRuntimeConfig();
+  const userContext = getUserContext();
+  const runtime = loadRuntimeConfig(userContext?.username);
   const cognitive = runtime.cognitive || {};
   cognitive.useNodePipeline = enabled;
   cognitive.changedAt = new Date().toISOString();
   cognitive.changedBy = actor;
   runtime.cognitive = cognitive;
-  saveRuntimeConfig(runtime);
+  saveRuntimeConfig(runtime, userContext?.username);
 }
 
 export function resolveNodePipelineFlag(): boolean {

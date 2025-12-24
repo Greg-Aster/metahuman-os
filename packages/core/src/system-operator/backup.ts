@@ -11,7 +11,6 @@ import { createGzip } from 'zlib';
 import { pipeline } from 'stream/promises';
 import { createWriteStream, createReadStream } from 'fs';
 import { getProfilePaths, systemPaths } from '../paths.js';
-import { storageClient } from '../storage-router.js';
 import { audit } from '../audit.js';
 import type { BackupResult } from './types.js';
 

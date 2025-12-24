@@ -14,7 +14,7 @@ import path from 'node:path';
 import {
   ROOT,
   audit,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   loadCuriosityConfig,
   loadTrustLevel,
@@ -196,50 +196,45 @@ export async function runCycle(options: CuriosityServiceOptions = {}): Promise<C
   });
 
   try {
-    // Get all logged-in users (active sessions only)
-    const loggedInUsers = getLoggedInUsers();
+    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+    const activeUser = getTargetUser();
 
-    if (loggedInUsers.length === 0) {
-      console.log('[curiosity-service] No logged-in users found, exiting.');
+    if (!activeUser) {
+      console.log('[curiosity-service] No active users found, exiting.');
       result.success = true;
       return result;
     }
 
-    console.log(`[curiosity-service] Processing ${loggedInUsers.length} logged-in user(s)...`);
-    result.userCount = loggedInUsers.length;
+    console.log(`[curiosity-service] Processing user: ${activeUser.username}`);
+    result.userCount = 1;
 
-    // Process each logged-in user sequentially with isolated context
-    for (const user of loggedInUsers) {
-      console.log(`[curiosity-service] Processing user: ${user.username}`);
+    try {
+      // SECURITY: withUserContext ensures user-specific path resolution
+      const asked = await withUserContext(
+        { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
+        async () => {
+          return await generateUserQuestion(activeUser.username);
+        }
+      );
 
-      try {
-        // SECURITY: withUserContext ensures user-specific path resolution
-        const asked = await withUserContext(
-          { userId: user.userId, username: user.username, role: user.role },
-          async () => {
-            return await generateUserQuestion(user.username);
-          }
-        );
-
-        if (asked) result.questionsAsked++;
-      } catch (error) {
-        const errorMsg = `User ${user.username}: ${(error as Error).message}`;
-        console.error(`[curiosity-service] Failed: ${errorMsg}`);
-        result.errors.push(errorMsg);
-        audit({
-          category: 'system',
-          level: 'error',
-          event: 'curiosity_service_user_error',
-          details: {
-            error: (error as Error).message,
-            username: user.username
-          },
-          actor: 'curiosity-service'
-        });
-      }
+      if (asked) result.questionsAsked++;
+    } catch (error) {
+      const errorMsg = `User ${activeUser.username}: ${(error as Error).message}`;
+      console.error(`[curiosity-service] Failed: ${errorMsg}`);
+      result.errors.push(errorMsg);
+      audit({
+        category: 'system',
+        level: 'error',
+        event: 'curiosity_service_user_error',
+        details: {
+          error: (error as Error).message,
+          username: activeUser.username
+        },
+        actor: 'curiosity-service'
+      });
     }
 
-    console.log(`[curiosity-service] Cycle complete. Asked ${result.questionsAsked} questions across ${loggedInUsers.length} user(s).`);
+    console.log(`[curiosity-service] Cycle complete. Asked ${result.questionsAsked} questions for user ${activeUser.username}.`);
 
     audit({
       category: 'action',
@@ -247,7 +242,7 @@ export async function runCycle(options: CuriosityServiceOptions = {}): Promise<C
       event: 'curiosity_service_complete',
       details: {
         questionsAsked: result.questionsAsked,
-        usersProcessed: loggedInUsers.length
+        username: activeUser.username
       },
       actor: 'curiosity-service'
     });

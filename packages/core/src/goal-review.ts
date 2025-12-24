@@ -14,7 +14,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { storageClient } from './storage-router.js';
+import { storageClient } from './storage-client.js';
 import { callLLM } from './model-router.js';
 import { audit } from './audit.js';
 import {
@@ -233,11 +233,11 @@ async function generateInsights(
       },
     });
 
-    if (!response.success || !response.text) {
+    if (!response.content) {
       return defaultInsights;
     }
 
-    const parsed = JSON.parse(response.text);
+    const parsed = JSON.parse(response.content);
     return {
       insights: parsed.insights || [],
       recommendations: parsed.recommendations || [],

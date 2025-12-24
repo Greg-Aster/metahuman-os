@@ -20,7 +20,7 @@ import {
   auditAction,
   callLLM,
   type RouterMessage,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   extractMemoryContent,
 } from '@metahuman/core';
@@ -340,39 +340,38 @@ export async function runCycle(options: OrganizerOptions = {}): Promise<Organize
   };
 
   try {
-    const loggedInUsers = getLoggedInUsers();
+    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+    const activeUser = getTargetUser();
 
-    if (loggedInUsers.length === 0) {
-      console.log('[organizer] No logged-in users found. Skipping cycle.');
+    if (!activeUser) {
+      console.log('[organizer] No active users found. Skipping cycle.');
       audit({
         level: 'info',
         category: 'action',
         event: 'agent_cycle_skipped',
-        details: { agent: 'organizer', reason: 'no_logged_in_users' },
+        details: { agent: 'organizer', reason: 'no_active_users' },
         actor: 'agent',
       });
       result.success = true;
       return result;
     }
 
-    console.log(`[organizer] Found ${loggedInUsers.length} logged-in user(s) to process`);
-    result.userCount = loggedInUsers.length;
+    console.log(`[organizer] Processing user: ${activeUser.username}`);
+    result.userCount = 1;
 
-    for (const user of loggedInUsers) {
-      try {
-        const processed = await withUserContext(
-          { userId: user.userId, username: user.username, role: user.role },
-          async () => processUserMemories(user.username, options)
-        );
-        result.totalProcessed += processed;
-      } catch (error) {
-        const errorMsg = `User ${user.username}: ${(error as Error).message}`;
-        console.error(`[organizer] Failed: ${errorMsg}`);
-        result.errors.push(errorMsg);
-      }
+    try {
+      const processed = await withUserContext(
+        { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
+        async () => processUserMemories(activeUser.username, options)
+      );
+      result.totalProcessed += processed;
+    } catch (error) {
+      const errorMsg = `User ${activeUser.username}: ${(error as Error).message}`;
+      console.error(`[organizer] Failed: ${errorMsg}`);
+      result.errors.push(errorMsg);
     }
 
-    console.log(`[organizer] Cycle finished. Processed ${result.totalProcessed} memories.`);
+    console.log(`[organizer] Cycle finished. Processed ${result.totalProcessed} memories for user ${activeUser.username}.`);
 
     audit({
       level: 'info',
@@ -380,9 +379,9 @@ export async function runCycle(options: OrganizerOptions = {}): Promise<Organize
       event: 'agent_cycle_completed',
       details: {
         agent: 'organizer',
-        mode: options.singleUser ? 'single-user' : 'multi-user',
+        mode: options.singleUser ? 'single-user' : 'single-active-user',
         totalProcessed: result.totalProcessed,
-        userCount: result.userCount,
+        username: activeUser.username,
       },
       actor: 'agent',
     });

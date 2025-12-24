@@ -55,6 +55,9 @@
   - ✅ Self-healing code analysis (TypeScript error detection).
   - ✅ Active Operator Dashboard UI.
   - ✅ Scratchpad for decision history.
+  - ✅ Service manager for API control (start/stop/toggle decision loop).
+  - ✅ Trigger integration in decision loop (evaluateTriggers called each cycle).
+  - ✅ Focus constraints (calendar pause/wrap-up handled as constraints, not tasks).
 
 ### Phase 3 — Massive Greg-Centric Grounding [Complete]
 - Connectors (with explicit consent):

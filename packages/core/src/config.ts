@@ -33,7 +33,9 @@ const ROOT = process.cwd().includes('/apps/site')
 
 /**
  * Helper to resolve etc directory path via storage router
- * Falls back to system etc/ if user context unavailable
+ *
+ * ALL configs are user-specific. No fallback to system etc/.
+ * Throws error if username cannot be resolved.
  */
 function resolveEtcPath(username?: string): string {
   const result = storageClient.resolvePath({
@@ -46,9 +48,8 @@ function resolveEtcPath(username?: string): string {
     return result.path;
   }
 
-  // Fall back to system etc/ for anonymous users or when storage router fails
-  const systemEtcPath = path.join(ROOT, 'etc');
-  return systemEtcPath;
+  // No fallback to system etc/ - all configs are user-specific
+  throw new Error(`Cannot resolve config path: ${result.error || 'No authenticated user context'}`);
 }
 
 /**
@@ -250,16 +251,20 @@ export interface OperatorConfig {
   };
 }
 
-let operatorConfigCache: OperatorConfig | null = null;
+// Per-user cache for operator config
+const operatorConfigCache = new Map<string, OperatorConfig>();
 
 /**
- * Load operator configuration from etc/operator.json
+ * Load operator configuration for a user
+ *
+ * @param username - REQUIRED: Username to load config for. All configs are user-specific.
  */
-export function loadOperatorConfig(): OperatorConfig {
-  if (operatorConfigCache) return operatorConfigCache;
+export function loadOperatorConfig(username: string): OperatorConfig {
+  const cached = operatorConfigCache.get(username);
+  if (cached) return cached;
 
-  const config = loadUserConfig<OperatorConfig>('operator.json', getDefaultOperatorConfig());
-  operatorConfigCache = config;
+  const config = loadUserConfig<OperatorConfig>('operator.json', getDefaultOperatorConfig(), username);
+  operatorConfigCache.set(username, config);
   return config;
 }
 
@@ -312,8 +317,12 @@ export function getDefaultOperatorConfig(): OperatorConfig {
 /**
  * Invalidate operator config cache (for testing)
  */
-export function invalidateOperatorConfig(): void {
-  operatorConfigCache = null;
+export function invalidateOperatorConfig(username?: string): void {
+  if (username) {
+    operatorConfigCache.delete(username);
+  } else {
+    operatorConfigCache.clear();
+  }
 }
 
 // ============================================================================
@@ -330,18 +339,22 @@ export interface RuntimeConfig {
 }
 
 /**
- * Load runtime configuration from etc/runtime.json
+ * Load runtime configuration for a user
+ *
+ * @param username - REQUIRED: Username to load config for. All configs are user-specific.
  */
-export function loadRuntimeConfig(): RuntimeConfig {
-  return loadUserConfig<RuntimeConfig>('runtime.json', {});
+export function loadRuntimeConfig(username: string): RuntimeConfig {
+  return loadUserConfig<RuntimeConfig>('runtime.json', {}, username);
 }
 
 /**
- * Check if ReAct V2 is enabled
+ * Check if ReAct V2 is enabled for a user
+ *
+ * @param username - REQUIRED: Username to check config for.
  */
-export function isReactV2Enabled(): boolean {
+export function isReactV2Enabled(username: string): boolean {
   try {
-    const runtime = loadRuntimeConfig();
+    const runtime = loadRuntimeConfig(username);
     return runtime.operator?.reactV2 === true;
   } catch {
     return false; // Default to v1 if config missing
@@ -350,10 +363,12 @@ export function isReactV2Enabled(): boolean {
 
 /**
  * Check if Reasoning Service should be used instead of inline V2
+ *
+ * @param username - REQUIRED: Username to check config for.
  */
-export function useReasoningService(): boolean {
+export function useReasoningService(username: string): boolean {
   try {
-    const runtime = loadUserConfig<any>('runtime.json', {});
+    const runtime = loadRuntimeConfig(username);
     return runtime.operator?.useReasoningService === true;
   } catch {
     return false; // Default to inline V2 if config missing
@@ -395,24 +410,29 @@ export interface CuriosityConfig {
 
 const curiosityConfigCache = new Map<string, CuriosityConfig>();
 
-function getCuriosityCacheKey(username?: string): string {
-  // Cache per-user by etc path so multi-user contexts stay isolated
-  return path.join(resolveEtcPath(username), 'curiosity.json');
-}
-
-export function loadCuriosityConfig(username?: string): CuriosityConfig {
-  const cacheKey = getCuriosityCacheKey(username);
-  const cached = curiosityConfigCache.get(cacheKey);
+/**
+ * Load curiosity configuration for a user
+ *
+ * @param username - REQUIRED: Username to load config for. All configs are user-specific.
+ */
+export function loadCuriosityConfig(username: string): CuriosityConfig {
+  const cached = curiosityConfigCache.get(username);
   if (cached) return cached;
 
   const config = loadUserConfig<CuriosityConfig>('curiosity.json', getDefaultCuriosityConfig(), username);
-  curiosityConfigCache.set(cacheKey, config);
+  curiosityConfigCache.set(username, config);
   return config;
 }
 
-export function saveCuriosityConfig(config: CuriosityConfig, username?: string): void {
+/**
+ * Save curiosity configuration for a user
+ *
+ * @param config - Configuration to save
+ * @param username - REQUIRED: Username to save config for. All configs are user-specific.
+ */
+export function saveCuriosityConfig(config: CuriosityConfig, username: string): void {
   saveUserConfig('curiosity.json', config, username);
-  curiosityConfigCache.set(getCuriosityCacheKey(username), config);
+  curiosityConfigCache.set(username, config);
 }
 
 /**
@@ -438,10 +458,10 @@ export function getDefaultCuriosityConfig(): CuriosityConfig {
 /**
  * Invalidate curiosity config cache (for testing)
  */
-export function invalidateCuriosityConfig(targetPath?: string): void {
-  if (targetPath) {
-    curiosityConfigCache.delete(targetPath);
-    return;
+export function invalidateCuriosityConfig(username?: string): void {
+  if (username) {
+    curiosityConfigCache.delete(username);
+  } else {
+    curiosityConfigCache.clear();
   }
-  curiosityConfigCache.clear();
 }

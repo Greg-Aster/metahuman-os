@@ -13,7 +13,7 @@ import path from 'node:path';
 import {
   audit,
   auditAction,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   getProfilePaths,
 } from '@metahuman/core';
@@ -355,24 +355,29 @@ export async function runMemorySync(options: MemorySyncOptions = {}): Promise<{
     totalConflicts = result.conflicts;
     allErrors.push(...result.errors);
   } else {
-    const users = getLoggedInUsers();
-    console.log(`[memory-sync] Found ${users.length} logged-in users to sync`);
+    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+    const activeUser = getTargetUser();
 
-    for (const user of users) {
-      try {
-        const result = await withUserContext(
-          { userId: user.userId, username: user.username, role: user.role },
-          async () => syncUserMemories(user.username, options)
-        );
+    if (!activeUser) {
+      console.log('[memory-sync] No active users found');
+      return { totalPulled, totalPushed, totalConflicts, errors: allErrors };
+    }
 
-        totalPulled += result.pulled;
-        totalPushed += result.pushed;
-        totalConflicts += result.conflicts;
-        allErrors.push(...result.errors);
-      } catch (e) {
-        console.error(`[memory-sync] Failed to sync ${user.username}:`, e);
-        allErrors.push(`User ${user.username}: ${(e as Error).message}`);
-      }
+    console.log(`[memory-sync] Processing user: ${activeUser.username}`);
+
+    try {
+      const result = await withUserContext(
+        { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
+        async () => syncUserMemories(activeUser.username, options)
+      );
+
+      totalPulled += result.pulled;
+      totalPushed += result.pushed;
+      totalConflicts += result.conflicts;
+      allErrors.push(...result.errors);
+    } catch (e) {
+      console.error(`[memory-sync] Failed to sync ${activeUser.username}:`, e);
+      allErrors.push(`User ${activeUser.username}: ${(e as Error).message}`);
     }
   }
 

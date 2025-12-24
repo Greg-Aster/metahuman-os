@@ -16,7 +16,7 @@ import * as path from 'path';
 import { getProfilePaths, systemPaths } from '../paths.js';
 import { audit } from '../audit.js';
 import { getFocusWindow } from '../connectors/calendar-connector.js';
-import type { TaskType, Priority, QueuedTask } from './types.js';
+import type { TaskType, Priority, QueuedTask, TaskDecision } from './types.js';
 
 // ============================================================================
 // Types
@@ -76,7 +76,7 @@ export const CIRCADIAN_WINDOWS: CircadianWindow[] = [
     name: 'morning',
     startHour: 9,
     endHour: 12,
-    tasks: ['memory_curate', 'index_build', 'code_analyze'],
+    tasks: ['memory_curate', 'code_analyze'],
     description: 'Productive work hours - organization and maintenance',
   },
   {
@@ -107,43 +107,69 @@ export const CIRCADIAN_WINDOWS: CircadianWindow[] = [
 // ============================================================================
 
 /**
- * Check if user has been idle for a specified duration.
+ * Get the most recent message timestamp from a conversation buffer file.
+ * Returns null if file doesn't exist or has no messages.
  */
-async function checkIdle(username: string, idleThresholdMinutes: number = 15): Promise<TriggerResult> {
-  const profilePaths = getProfilePaths(username);
-  const bufferFile = path.join(profilePaths.state, `conversation-buffer-${username}.json`);
-
-  if (!fs.existsSync(bufferFile)) {
-    return { shouldTrigger: true, reason: 'No conversation history found', urgency: 'whenever' };
+function getLastActivityFromBuffer(bufferPath: string): Date | null {
+  if (!fs.existsSync(bufferPath)) {
+    return null;
   }
 
   try {
-    const content = fs.readFileSync(bufferFile, 'utf-8');
+    const content = fs.readFileSync(bufferPath, 'utf-8');
     const buffer = JSON.parse(content);
     const messages = buffer.messages || [];
 
     if (messages.length === 0) {
-      return { shouldTrigger: true, reason: 'No messages in buffer', urgency: 'whenever' };
+      return null;
     }
 
     const lastMessage = messages[messages.length - 1];
-    const lastActivity = new Date(lastMessage.timestamp);
-    const now = new Date();
-    const idleMinutes = (now.getTime() - lastActivity.getTime()) / (1000 * 60);
-
-    if (idleMinutes >= idleThresholdMinutes) {
-      return {
-        shouldTrigger: true,
-        reason: `User idle for ${Math.round(idleMinutes)} minutes`,
-        urgency: idleMinutes > 60 ? 'whenever' : 'soon',
-        data: { idleMinutes: Math.round(idleMinutes) },
-      };
-    }
-
-    return { shouldTrigger: false };
+    return new Date(lastMessage.timestamp);
   } catch {
-    return { shouldTrigger: false };
+    return null;
   }
+}
+
+/**
+ * Check if user has been idle for a specified duration.
+ * Checks both conversation and inner dialogue buffers, using the most recent activity.
+ */
+async function checkIdle(username: string, idleThresholdMinutes: number = 15): Promise<TriggerResult> {
+  const profilePaths = getProfilePaths(username);
+
+  // Check both buffer files and use the most recent activity
+  const conversationBuffer = path.join(profilePaths.state, 'conversation-buffer-conversation.json');
+  const innerBuffer = path.join(profilePaths.state, 'conversation-buffer-inner.json');
+
+  const conversationActivity = getLastActivityFromBuffer(conversationBuffer);
+  const innerActivity = getLastActivityFromBuffer(innerBuffer);
+
+  // Find the most recent activity across both buffers
+  let lastActivity: Date | null = null;
+  if (conversationActivity && innerActivity) {
+    lastActivity = conversationActivity > innerActivity ? conversationActivity : innerActivity;
+  } else {
+    lastActivity = conversationActivity || innerActivity;
+  }
+
+  if (!lastActivity) {
+    return { shouldTrigger: true, reason: 'No conversation history found', urgency: 'whenever' };
+  }
+
+  const now = new Date();
+  const idleMinutes = (now.getTime() - lastActivity.getTime()) / (1000 * 60);
+
+  if (idleMinutes >= idleThresholdMinutes) {
+    return {
+      shouldTrigger: true,
+      reason: `User idle for ${Math.round(idleMinutes)} minutes`,
+      urgency: idleMinutes > 60 ? 'whenever' : 'soon',
+      data: { idleMinutes: Math.round(idleMinutes) },
+    };
+  }
+
+  return { shouldTrigger: false };
 }
 
 // ============================================================================
@@ -369,51 +395,8 @@ async function checkFailedAgents(username: string): Promise<TriggerResult> {
   }
 }
 
-// ============================================================================
-// Index Staleness
-// ============================================================================
-
-/**
- * Check if vector index needs rebuilding.
- */
-async function checkIndexStaleness(username: string): Promise<TriggerResult> {
-  const profilePaths = getProfilePaths(username);
-  const indexDir = path.join(profilePaths.root, 'memory', 'index');
-  const metaFile = path.join(indexDir, 'meta.json');
-
-  if (!fs.existsSync(metaFile)) {
-    return {
-      shouldTrigger: true,
-      reason: 'Vector index has never been built',
-      urgency: 'immediate',
-    };
-  }
-
-  try {
-    const content = fs.readFileSync(metaFile, 'utf-8');
-    const meta = JSON.parse(content);
-    const lastBuilt = new Date(meta.createdAt || meta.lastUpdated);
-    const now = new Date();
-    const hoursSince = (now.getTime() - lastBuilt.getTime()) / (1000 * 60 * 60);
-
-    if (hoursSince > 24) {
-      return {
-        shouldTrigger: true,
-        reason: `Vector index is ${Math.round(hoursSince)} hours old`,
-        urgency: hoursSince > 48 ? 'immediate' : 'soon',
-        data: { hoursSince: Math.round(hoursSince) },
-      };
-    }
-
-    return { shouldTrigger: false };
-  } catch {
-    return {
-      shouldTrigger: true,
-      reason: 'Could not read index metadata',
-      urgency: 'soon',
-    };
-  }
-}
+// NOTE: Index staleness check removed - index_build is now user-triggered only
+// Incremental index updates happen via appendEventToIndex when memories are saved
 
 // ============================================================================
 // Calendar Focus Window
@@ -538,15 +521,8 @@ export const TRIGGERS: Trigger[] = [
     checkInterval: 60000, // 1 minute
     condition: checkMemoryStaleness,
   },
-  {
-    id: 'index_staleness',
-    name: 'Index Staleness',
-    description: 'Rebuild stale vector index',
-    taskType: 'index_build',
-    priority: 'normal',
-    checkInterval: 300000, // 5 minutes
-    condition: checkIndexStaleness,
-  },
+  // NOTE: index_build removed from automatic triggers - user-triggered only
+  // Index updates happen incrementally via appendEventToIndex when memories are saved
   {
     id: 'failed_agent_retry',
     name: 'Failed Agent Retry',
@@ -572,13 +548,109 @@ export const TRIGGERS: Trigger[] = [
 // ============================================================================
 
 /**
- * Evaluate all triggers and return tasks that should be queued.
+ * Check if we're in a focus window that should pause autonomous tasks.
+ * Returns constraint info if active, null otherwise.
  */
-export async function evaluateTriggers(username: string): Promise<QueuedTask[]> {
-  const tasks: QueuedTask[] = [];
-  const now = new Date().toISOString();
+export async function checkFocusConstraints(username: string): Promise<{
+  shouldPause: boolean;
+  quickTasksOnly: boolean;
+  reason: string;
+  minutesUntilEvent?: number;
+} | null> {
+  try {
+    const result = await checkCalendarFocusWindow(username);
+    if (!result.shouldTrigger) {
+      return null;
+    }
+
+    const data = result.data as any;
+    if (data?.recommendation === 'pause') {
+      return {
+        shouldPause: true,
+        quickTasksOnly: false,
+        reason: result.reason || 'In focus window',
+      };
+    } else if (data?.recommendation === 'wrap_up') {
+      return {
+        shouldPause: true,
+        quickTasksOnly: false,
+        reason: result.reason || 'Event approaching',
+        minutesUntilEvent: data?.minutesUntil,
+      };
+    } else if (data?.recommendation === 'quick_tasks_only') {
+      return {
+        shouldPause: false,
+        quickTasksOnly: true,
+        reason: result.reason || 'Event soon, prefer quick tasks',
+        minutesUntilEvent: data?.minutesUntil,
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Candidate trigger info for LLM filtering.
+ */
+interface TriggerCandidate {
+  triggerId: string;
+  triggerName: string;
+  taskType: TaskType;
+  priority: Priority;
+  reason: string;
+  urgency: string;
+  data?: unknown;
+}
+
+/**
+ * Task descriptions for unified LLM decision prompt.
+ */
+const TASK_DESCRIPTIONS: Record<TaskType, string> = {
+  user_message: 'Process a user chat message (highest priority)',
+  memory_curate: 'Run organizer to enrich memories with tags and entities',
+  index_build: 'Build/update vector embeddings index for semantic search',
+  reflect: 'Generate internal reflections using associative memory chains',
+  curiosity: 'Generate user-facing curiosity questions',
+  inner_curiosity: 'Generate and answer internal curiosity questions',
+  dream: 'Create surreal dreams from memory fragments',
+  desire_generate: 'Generate new desires from goals, tasks, and memories',
+  desire_execute: 'Execute a pending desire that reached activation threshold',
+  psychoanalyze: 'Run psychoanalyzer to update persona based on memories',
+  code_analyze: 'Analyze codebase for TypeScript errors (self-healing)',
+};
+
+// Tasks that are considered "quick" and can run when an event is approaching
+const QUICK_TASKS: TaskType[] = ['reflect', 'inner_curiosity', 'memory_curate'];
+
+/**
+ * Unified LLM decision - evaluates triggers + queue + system state and decides what to execute.
+ * This is the "merged" lizard brain that handles both trigger filtering AND task selection.
+ */
+export async function makeUnifiedDecision(
+  username: string,
+  currentQueue: readonly QueuedTask[],
+  systemState: {
+    unprocessedMemories: number;
+    indexAgeHours: number;
+    pendingDesires: number;
+    hoursSinceReflection: number;
+    userActive: boolean;
+  },
+  enabledTaskTypes: TaskType[],
+  quickTasksOnly: boolean = false
+): Promise<TaskDecision | null> {
+  // Collect trigger candidates first
+  const candidates: TriggerCandidate[] = [];
 
   for (const trigger of TRIGGERS) {
+    // Skip calendar_focus_window - it's a constraint, not a task generator
+    if (trigger.id === 'calendar_focus_window') {
+      continue;
+    }
+
     try {
       const result = await trigger.condition(username);
 
@@ -600,32 +672,14 @@ export async function evaluateTriggers(username: string): Promise<QueuedTask[]> 
           priority = 'background';
         }
 
-        tasks.push({
-          id: `trigger-${trigger.id}-${Date.now()}`,
-          type: taskType,
+        candidates.push({
+          triggerId: trigger.id,
+          triggerName: trigger.name,
+          taskType,
           priority,
-          queuedAt: now,
-          username,
-          payload: {
-            type: 'trigger',
-            triggerId: trigger.id,
-            reason: result.reason,
-            data: result.data,
-          },
-        });
-
-        audit({
-          category: 'system',
-          level: 'info',
-          event: 'lizard_brain_trigger',
-          actor: 'active-operator',
-          details: {
-            triggerId: trigger.id,
-            taskType,
-            priority,
-            reason: result.reason,
-            username,
-          },
+          reason: result.reason || 'Condition met',
+          urgency: result.urgency || 'soon',
+          data: result.data,
         });
       }
     } catch (error) {
@@ -633,7 +687,153 @@ export async function evaluateTriggers(username: string): Promise<QueuedTask[]> 
     }
   }
 
-  return tasks;
+  // Get recent activity context
+  const { getScratchpadContext } = await import('./state-persister.js');
+  const recentActivity = getScratchpadContext(10);
+
+  // Filter task types based on quick mode constraint
+  let allowedTaskTypes = enabledTaskTypes.filter(
+    (t: TaskType) => t !== 'user_message' && TASK_DESCRIPTIONS[t]
+  );
+
+  if (quickTasksOnly) {
+    allowedTaskTypes = allowedTaskTypes.filter((t: TaskType) => QUICK_TASKS.includes(t));
+    if (allowedTaskTypes.length === 0) {
+      return null;
+    }
+  }
+
+  // Format trigger list
+  const triggerList = candidates.length > 0
+    ? candidates.map((c) => `- [${c.urgency.toUpperCase()}] ${c.triggerName} → ${c.taskType}: ${c.reason}`).join('\n')
+    : '(No triggers fired this cycle)';
+
+  // Format queue list
+  const queueList = currentQueue.length > 0
+    ? currentQueue.slice(0, 5).map((t) => `- [${t.priority}] ${t.type}: queued ${Math.round((Date.now() - new Date(t.queuedAt).getTime()) / 60000)}m ago`).join('\n')
+    : '(Queue is empty)';
+
+  // Format task options
+  const taskOptions = allowedTaskTypes
+    .map((t: TaskType) => `- ${t}: ${TASK_DESCRIPTIONS[t]}`)
+    .join('\n');
+
+  // Build unified decision prompt
+  const { callLLM } = await import('../model-router.js');
+
+  const messages = [
+    {
+      role: 'system' as const,
+      content: `You are the Lizard Brain for MetaHuman OS - the unified decision maker for autonomous behavior.
+
+Your job is to look at:
+1. Triggers that just fired (conditions detected)
+2. Tasks already in queue
+3. System state
+4. Recent activity
+
+And decide: What ONE task should I execute next?
+
+Available Tasks:
+${taskOptions}
+
+Guidelines:
+1. IMMEDIATE urgency triggers usually warrant action
+2. Don't repeat tasks that ran recently (check recent activity)
+3. Prioritize HIGH urgency items, but don't neglect maintenance
+4. If queue has items, consider executing those before adding more
+5. Balance reactive (triggers) with proactive (recommendations)
+6. Consider system state - high unprocessed memories → memory_curate
+
+Respond with JSON only: {"task": "<type>", "reasoning": "<why>"}
+If nothing should run, respond: {"task": null, "reasoning": "<why waiting>"}`,
+    },
+    {
+      role: 'user' as const,
+      content: `=== TRIGGERS FIRED ===
+${triggerList}
+
+=== CURRENT QUEUE ===
+${queueList}
+
+=== SYSTEM STATE ===
+- Unprocessed memories: ${systemState.unprocessedMemories}
+- Index age: ${systemState.indexAgeHours.toFixed(1)} hours
+- Pending desires: ${systemState.pendingDesires}
+- Last reflection: ${systemState.hoursSinceReflection.toFixed(1)} hours ago
+- User active: ${systemState.userActive ? 'Yes' : 'No'}
+
+=== RECENT ACTIVITY ===
+${recentActivity}
+
+What should I do next?`,
+    },
+  ];
+
+  try {
+    const response = await callLLM({
+      role: 'orchestrator', // Use orchestrator for decision routing
+      messages,
+      userId: username,
+      options: {
+        maxTokens: 256,
+        temperature: 0.2,
+      },
+    });
+
+    // Parse response
+    const jsonMatch = response.content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+
+      // Log the unified decision
+      audit({
+        category: 'system',
+        level: 'info',
+        event: 'lizard_brain_unified_decision',
+        actor: 'active-operator',
+        details: {
+          triggerCount: candidates.length,
+          queueLength: currentQueue.length,
+          task: parsed.task,
+          reasoning: parsed.reasoning,
+          triggers: candidates.map((c) => c.triggerId),
+        },
+      });
+
+      if (parsed.task && TASK_DESCRIPTIONS[parsed.task as TaskType]) {
+        const { recordDecision } = await import('./state-persister.js');
+        const decision: TaskDecision = {
+          task: parsed.task as TaskType,
+          reasoning: parsed.reasoning || 'No reasoning provided',
+        };
+        recordDecision(decision);
+        return decision;
+      }
+
+      // Explicit null means wait
+      if (parsed.task === null) {
+        return null;
+      }
+    }
+
+    // Fallback: if immediate triggers exist, run the first one
+    const immediateTrigger = candidates.find((c) => c.urgency === 'immediate');
+    if (immediateTrigger && allowedTaskTypes.includes(immediateTrigger.taskType)) {
+      const { recordDecision } = await import('./state-persister.js');
+      const decision: TaskDecision = {
+        task: immediateTrigger.taskType,
+        reasoning: `Fallback: ${immediateTrigger.reason}`,
+      };
+      recordDecision(decision);
+      return decision;
+    }
+
+    return null;
+  } catch (error) {
+    console.error('[lizard-brain] Unified decision error:', error);
+    return null;
+  }
 }
 
 /**

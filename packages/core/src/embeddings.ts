@@ -22,7 +22,7 @@ import { embedWithLocalService, isLocalModelServiceRunning, loadLocalModel } fro
 import { callEmbeddings, isEmbeddingServiceAvailable as checkEmbeddingAvailable } from './model-router.js'
 import { getUserContext } from './context.js'
 import { loadBackendConfig } from './llm-backend.js'
-import { getLoggedInUsers } from './sessions.js'
+import { getTargetUser } from './sessions.js'
 
 export type EmbeddingProvider = 'local-models'
 
@@ -154,11 +154,11 @@ export async function embedText(
   const ctx = getUserContext();
   let username = ctx?.username || opts.userId;
 
-  // If no user context, try to get from logged-in users
+  // If no user context, try to get target user (API trigger or most recently active)
   if (!username) {
-    const loggedInUsers = getLoggedInUsers();
-    if (loggedInUsers.length > 0) {
-      username = loggedInUsers[0].username;
+    const activeUser = getTargetUser();
+    if (activeUser) {
+      username = activeUser.username;
     }
   }
 

@@ -30,6 +30,9 @@
   let claudeSessionChecking = false;
   let chatResponseStream: EventSource | null = null;
   let innerDialogueStream: EventSource | null = null;
+  let ttsQueueStream: EventSource | null = null; // TTS queue from node editor
+  let lastInnerMessageCount = 0; // Track previous message count for inner dialogue TTS detection
+  let lastConversationMessageCount = 0; // Track previous message count for conversation TTS detection
   let mode: 'conversation' | 'inner' = 'conversation';
   let lengthMode: 'auto' | 'concise' | 'detailed' = 'auto';
   let messagesContainer: HTMLDivElement;
@@ -46,6 +49,9 @@
   let curiosityQuestions: any[] = [];
   let lastQuestionCheck = 0;
   let yoloMode = false;
+  // Active Operator toggle
+  let activeOperatorEnabled = false;
+  let activeOperatorLoading = false;
   // Synchronous guard to prevent double/triple submit race condition
   let sendInProgress = false;
 
@@ -259,6 +265,7 @@
   onMount(async () => {
     loadChatPrefs();
     loadThinkingMode(); // Load vLLM thinking mode setting
+    loadActiveOperatorStatus(); // Load active operator status
     mic.loadVADSettings(); // Load VAD settings from voice config
 
     // Enable hardware button capture only if user opted in via Voice Settings
@@ -325,6 +332,9 @@
     // Uses fs.watch on server, no polling needed
     connectBufferStream(mode);
     console.log(`[ChatInterface] Connected to ${mode} buffer stream`);
+
+    // Connect to TTS queue stream - watches for TTS items from cognitive graph nodes
+    connectTTSQueueStream();
 
     scrollObserver = new IntersectionObserver(
       (entries) => {
@@ -438,11 +448,41 @@
         }
         if (data.type === 'connected') {
           console.log(`[chat] Buffer stream connected, watching: ${data.bufferPath}`);
+          // Reset message count to current messages to avoid TTS on reconnect
+          const currentCount = get(messages).length;
+          if (streamMode === 'inner') {
+            lastInnerMessageCount = currentCount;
+            console.log(`[chat-tts] Reset inner message count to ${lastInnerMessageCount} on connect`);
+          } else {
+            lastConversationMessageCount = currentCount;
+            console.log(`[chat-tts] Reset conversation message count to ${lastConversationMessageCount} on connect`);
+          }
           return;
         }
         if (data.type === 'update' && Array.isArray(data.messages)) {
-          console.log(`[chat] Buffer update (${streamMode}): ${data.messages.length} messages`);
-          // Update messages store with new data
+          // SIMPLE TTS LOGIC (same approach as conversation TTS):
+          // 1. Get previous count
+          // 2. If we have new messages and TTS enabled, speak the last new one
+          // 3. Update count
+          // 4. Update messages store
+
+          const prevCount = streamMode === 'inner' ? lastInnerMessageCount : lastConversationMessageCount;
+          const newCount = data.messages.length;
+          const hasNewMessages = newCount > prevCount && prevCount > 0; // prevCount > 0 means we've seen first load
+
+          console.log(`[chat-tts] Buffer update: mode=${streamMode}, prev=${prevCount}, new=${newCount}, hasNew=${hasNewMessages}`);
+
+          // LEGACY TTS REMOVED - TTS now handled via unified TTS queue stream from cognitive graph nodes
+          // Inner dialogue (dreams/reflections) and conversation (curiosity) TTS now go through TTS nodes
+
+          // Update counts for next comparison
+          if (streamMode === 'inner') {
+            lastInnerMessageCount = newCount;
+          } else {
+            lastConversationMessageCount = newCount;
+          }
+
+          // Update messages store
           messages.set(data.messages);
         }
       } catch (err) {
@@ -475,7 +515,74 @@
     }
   }
 
+  /**
+   * Connect to TTS queue stream
+   * Watches for TTS items queued by cognitive graph nodes
+   * Speaks them if the appropriate toggle is enabled
+   */
+  function connectTTSQueueStream() {
+    if (ttsQueueStream) {
+      ttsQueueStream.close();
+    }
 
+    console.log('[chat-tts] Connecting to TTS queue stream...');
+    ttsQueueStream = apiEventSource('/api/tts-queue-stream');
+
+    ttsQueueStream.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'connected') {
+          console.log('[chat-tts] TTS queue stream connected');
+          return;
+        }
+
+        if (data.type === 'error') {
+          console.error('[chat-tts] TTS queue stream error:', data.error);
+          return;
+        }
+
+        if (data.type === 'tts' && Array.isArray(data.items)) {
+          // Process queued TTS items
+          for (const item of data.items) {
+            console.log(`[chat-tts] TTS queue item: mode=${item.mode}, source=${item.source}, text=${item.text?.substring(0, 50)}`);
+
+            // Check if we should speak based on mode and toggles
+            if (item.mode === 'conversation' && ttsEnabled) {
+              console.log('[chat-tts] SPEAKING conversation TTS from queue');
+              void ttsApi.speak(item.text);
+            } else if (item.mode === 'inner' && boredomTtsEnabled) {
+              console.log('[chat-tts] SPEAKING inner dialogue TTS from queue');
+              void ttsApi.speak(item.text);
+            } else {
+              console.log(`[chat-tts] Skipping TTS (mode=${item.mode}, ttsEnabled=${ttsEnabled}, boredomTtsEnabled=${boredomTtsEnabled})`);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[chat-tts] TTS queue stream parse error:', err);
+      }
+    };
+
+    ttsQueueStream.onerror = (err) => {
+      console.error('[chat-tts] TTS queue stream error:', err);
+      // Attempt reconnection after a delay
+      setTimeout(() => {
+        if (isComponentMounted) {
+          console.log('[chat-tts] Attempting TTS queue stream reconnection...');
+          connectTTSQueueStream();
+        }
+      }, 5000);
+    };
+  }
+
+  function disconnectTTSQueueStream() {
+    if (ttsQueueStream) {
+      console.log('[chat-tts] Disconnecting TTS queue stream');
+      ttsQueueStream.close();
+      ttsQueueStream = null;
+    }
+  }
 
   onDestroy(() => {
     // Mark component as unmounted to stop animation loops
@@ -485,6 +592,7 @@
     visibilityCleanup?.();
     chatResponseStream?.close();
     disconnectBufferStream();
+    disconnectTTSQueueStream();
     activityApi.clearActivity();
     ttsApi.cleanup();
     thinkingTraceApi.cleanup();
@@ -551,10 +659,8 @@
         meta: { tier: result.tier, model: result.model },
       });
 
-      // TTS if enabled - uses streaming for slow providers like RVC
-      if (ttsEnabled && result.response) {
-        void ttsApi.speak(result.response);
-      }
+      // LEGACY TTS REMOVED - TTS handled via unified TTS queue stream from cognitive graph nodes
+      // Note: Offline mode may need TTS node integration in the future if offline graphs are added
 
       thinkingTraceApi.stop();
     } catch (err) {
@@ -765,15 +871,8 @@
             }
             messagesApi.pushMessage('assistant', data.response, data?.saved?.assistantRelPath, { facet: data.facet });
 
-            // Auto-TTS: Speak assistant responses when TTS toggle is enabled
-            // Uses streaming for slow providers (RVC) to reduce latency
-            console.log('[chat-tts] Auto-TTS check - ttsEnabled:', ttsEnabled, 'hasResponse:', !!data.response, 'responseLength:', data.response?.length || 0);
-            if (ttsEnabled && data.response) {
-              console.log('[chat-tts] Auto-TTS FIRING - speaking response:', data.response.substring(0, 50));
-              void ttsApi.speak(data.response);
-            } else {
-              console.log('[chat-tts] Auto-TTS SKIPPED - enabled:', ttsEnabled, 'mode:', mode, 'hasResponse:', !!data.response);
-            }
+            // LEGACY TTS REMOVED - TTS now handled via unified TTS queue stream from cognitive graph nodes
+            // Conversation responses are queued by TTS nodes in dual-mode, agent-mode, emulation-mode graphs
 
             loading = false;
             chatResponseStream?.close();
@@ -1008,6 +1107,48 @@
     }
   }
 
+  async function toggleActiveOperator() {
+    if (activeOperatorLoading) return;
+
+    activeOperatorLoading = true;
+    const wasEnabled = activeOperatorEnabled;
+
+    try {
+      const res = await apiFetch('/api/active-operator/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'toggle' }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        console.error('[active-operator] Failed to toggle:', data.error);
+        return;
+      }
+
+      const data = await res.json();
+      activeOperatorEnabled = data.mode === 'active';
+      console.log('[active-operator] Toggled to:', data.mode);
+    } catch (error) {
+      console.error('[active-operator] Error toggling:', error);
+    } finally {
+      activeOperatorLoading = false;
+    }
+  }
+
+  async function loadActiveOperatorStatus() {
+    try {
+      const res = await apiFetch('/api/active-operator/status');
+      if (res.ok) {
+        const status = await res.json();
+        // Use isRunning for actual live state, not config.enabled
+        activeOperatorEnabled = status.isRunning ?? false;
+      }
+    } catch (error) {
+      console.error('[active-operator] Failed to load status:', error);
+    }
+  }
+
   async function handleValidate(relPath: string, status: 'correct' | 'incorrect') {
     try {
       const res = await apiFetch('/api/memories/validate', {
@@ -1150,6 +1291,22 @@
         {:else}
           <span class="big-brother-badge">BB</span>
         {/if}
+      {/if}
+    </button>
+
+    <!-- Active Operator Toggle -->
+    <button
+      class="active-operator-toggle {activeOperatorEnabled ? 'active' : ''}"
+      class:loading={activeOperatorLoading}
+      title={activeOperatorEnabled
+        ? 'Active Operator ON - Continuous autonomous thinking (click to disable)'
+        : 'Active Operator OFF - Click to enable autonomous operation'}
+      on:click={toggleActiveOperator}
+      disabled={activeOperatorLoading}
+    >
+      <span class="active-operator-icon">⚡</span>
+      {#if activeOperatorEnabled}
+        <span class="active-operator-badge">On</span>
       {/if}
     </button>
 

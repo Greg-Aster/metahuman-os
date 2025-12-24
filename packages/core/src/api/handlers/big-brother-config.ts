@@ -45,7 +45,7 @@ export async function handleGetBigBrotherConfig(req: UnifiedRequest): Promise<Un
       });
     }
 
-    const config = loadOperatorConfig();
+    const config = loadOperatorConfig(user.isAuthenticated ? user.username : 'anonymous');
 
     return successResponse({
       success: true,
@@ -93,7 +93,7 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
     } = body || {};
 
     // Load current config
-    const config = loadOperatorConfig();
+    const config = loadOperatorConfig(user.username);
 
     // Update Big Brother mode settings
     config.bigBrotherMode = {

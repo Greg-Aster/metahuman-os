@@ -16,7 +16,7 @@ import * as path from 'path';
 import { listEpisodicFiles, createTask, createProject, type Task, type Project } from './memory.js';
 import { callLLM } from './model-router.js';
 import { audit } from './audit.js';
-import { storageClient } from './storage-router.js';
+import { storageClient } from './storage-client.js';
 
 // ============================================================================
 // Types

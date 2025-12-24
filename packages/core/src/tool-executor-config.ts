@@ -206,7 +206,7 @@ export function getDefaultToolExecutorConfig(): ToolExecutorConfig {
       enabled: true,
       endpoint: '/api/llm/proxy',
       modelId: 'default.coder',
-      fallbackModelId: 'default.fallback',
+      fallbackModelId: 'default.orchestrator',
       temperature: 0.0,
       maxTokens: 4096,
     },

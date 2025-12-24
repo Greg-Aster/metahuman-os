@@ -2,6 +2,9 @@
  * Active Operator Control API
  *
  * POST: Control the active operator (start, stop, toggle, emergency-stop)
+ *
+ * This endpoint controls the actual decision loop service, not just
+ * the mode controller state.
  */
 
 import type { APIRoute } from 'astro';
@@ -11,9 +14,11 @@ import {
   clearScratchpad,
   resetActiveOperatorMetrics,
   resetErrorCounter,
-  getAuthenticatedUser,
-  audit,
-} from '@metahuman/core';
+  startActiveOperatorService,
+  stopActiveOperatorService,
+  toggleActiveOperatorService,
+} from '@metahuman/core/active-operator';
+import { getAuthenticatedUser, audit } from '@metahuman/core';
 
 type ControlAction = 'start' | 'stop' | 'toggle' | 'emergency-stop' | 'reset';
 
@@ -40,47 +45,46 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       );
     }
 
-    const controller = getModeController();
     let result: { success: boolean; mode: string; message: string };
 
     switch (action) {
-      case 'start':
-        await controller.activateActiveMode();
-        controller.start();
-        updateActiveOperatorConfig({ enabled: true });
+      case 'start': {
+        const startResult = await startActiveOperatorService(user.username);
+        updateActiveOperatorConfig({ enabled: startResult.success });
         result = {
-          success: true,
-          mode: 'active',
-          message: 'Active Operator started',
+          success: startResult.success,
+          mode: startResult.success ? 'active' : 'passive',
+          message: startResult.message,
         };
         break;
+      }
 
-      case 'stop':
-        controller.stop();
-        await controller.activatePassiveMode();
+      case 'stop': {
+        const stopResult = await stopActiveOperatorService();
         updateActiveOperatorConfig({ enabled: false });
         result = {
-          success: true,
+          success: stopResult.success,
           mode: 'passive',
-          message: 'Active Operator stopped',
+          message: stopResult.message,
         };
         break;
+      }
 
-      case 'toggle':
-        const newMode = await controller.toggleMode();
-        updateActiveOperatorConfig({ enabled: newMode === 'active' });
-        if (newMode === 'active') {
-          controller.start();
-        }
+      case 'toggle': {
+        const toggleResult = await toggleActiveOperatorService(user.username);
+        updateActiveOperatorConfig({ enabled: toggleResult.mode === 'active' });
         result = {
-          success: true,
-          mode: newMode,
-          message: `Active Operator switched to ${newMode} mode`,
+          success: toggleResult.success,
+          mode: toggleResult.mode,
+          message: toggleResult.message,
         };
         break;
+      }
 
-      case 'emergency-stop':
+      case 'emergency-stop': {
+        const controller = getModeController();
         controller.emergencyStop();
+        await stopActiveOperatorService();
         updateActiveOperatorConfig({ enabled: false });
         result = {
           success: true,
@@ -88,10 +92,10 @@ export const POST: APIRoute = async ({ cookies, request }) => {
           message: 'Active Operator emergency stopped',
         };
         break;
+      }
 
-      case 'reset':
-        controller.stop();
-        await controller.activatePassiveMode();
+      case 'reset': {
+        await stopActiveOperatorService();
         clearScratchpad();
         resetActiveOperatorMetrics();
         resetErrorCounter();
@@ -102,11 +106,12 @@ export const POST: APIRoute = async ({ cookies, request }) => {
           message: 'Active Operator reset to initial state',
         };
         break;
+      }
 
       default:
         result = {
           success: false,
-          mode: controller.mode,
+          mode: 'passive',
           message: 'Unknown action',
         };
     }

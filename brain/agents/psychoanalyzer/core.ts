@@ -33,7 +33,7 @@ import {
   storageClient,
   systemPaths,
   ROOT,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   audit,
 } from '@metahuman/core';
@@ -1515,17 +1515,28 @@ export async function runCycle(options: PsychoanalyzerOptions = {}): Promise<Psy
   };
 
   try {
-    let users: string[];
+    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+    let username: string | null = null;
 
     if (options.username) {
-      users = [options.username];
+      username = options.username;
     } else if (options.singleUser) {
-      users = ['default'];
+      username = 'default';
     } else {
-      users = getLoggedInUsers().map(u => u.username);
+      const activeUser = getTargetUser();
+      if (activeUser) {
+        username = activeUser.username;
+      }
     }
 
-    for (const username of users) {
+    if (!username) {
+      console.log('[psychoanalyzer] No active user found');
+      return result;
+    }
+
+    console.log(`[psychoanalyzer] Processing user: ${username}`);
+
+    {
       try {
         const stats = await runPsychoanalysis(username);
         result.stats[username] = stats;

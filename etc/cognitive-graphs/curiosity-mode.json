@@ -89,6 +89,40 @@
       "height": 60
     },
     {
+      "id": "8",
+      "type": "outputNode",
+      "position": {
+        "x": 1300,
+        "y": 220
+      },
+      "data": {
+        "label": "Inner Dialogue",
+        "nodeType": "inner_dialogue_capture",
+        "schema": {
+          "id": "inner_dialogue_capture",
+          "name": "Inner Dialogue",
+          "category": "output",
+          "inputs": [
+            { "name": "text", "type": "string", "description": "The content to save as inner dialogue" }
+          ],
+          "outputs": [
+            { "name": "saved", "type": "boolean", "description": "Whether the inner dialogue was saved" }
+          ],
+          "description": "Saves curiosity questions as inner dialogue (visible in Inner Dialogue tab)",
+          "color": "#a855f7",
+          "bgColor": "#6b21a8"
+        },
+        "properties": {
+          "tags": ["curiosity", "question", "exploration", "inner"],
+          "displayColor": "#a855f7",
+          "dialogueSource": "curiosity"
+        },
+        "title": "Inner Dialogue"
+      },
+      "width": 220,
+      "height": 80
+    },
+    {
       "id": "6",
       "type": "personaNode",
       "position": {
@@ -120,6 +154,24 @@
         }
       },
       "width": 200,
+      "height": 80
+    },
+    {
+      "id": "9",
+      "type": "outputNode",
+      "position": {
+        "x": 1300,
+        "y": 340
+      },
+      "data": {
+        "label": "TTS Output",
+        "nodeType": "tts",
+        "properties": {
+          "source": "curiosity",
+          "defaultMode": "conversation"
+        }
+      },
+      "width": 180,
       "height": 80
     }
   ],
@@ -199,6 +251,28 @@
       "data": {
         "type": "string",
         "comment": "Formatted persona → Question Generator (for persona voice)"
+      }
+    },
+    {
+      "id": "e-3-question-8-text",
+      "source": "3",
+      "target": "8",
+      "sourceHandle": "question",
+      "targetHandle": "text",
+      "data": {
+        "type": "string",
+        "comment": "Generated question → Inner Dialogue (purple color)"
+      }
+    },
+    {
+      "id": "e-3-question-9-conversation",
+      "source": "3",
+      "target": "9",
+      "sourceHandle": "question",
+      "targetHandle": "conversation",
+      "data": {
+        "type": "string",
+        "comment": "Generated question → TTS Output (speaks in conversation mode)"
       }
     }
   ]

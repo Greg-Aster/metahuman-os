@@ -139,16 +139,22 @@ export async function loadGraphForMode(graphKey: string): Promise<LoadedGraph | 
   let useBigBrotherGraph = false;
   if (normalizedKey === 'dual') {
     try {
-      const { loadOperatorConfig } = await import('./config.js');
-      const { isClaudeSessionReady } = await import('./claude-session.js');
-      const operatorConfig = loadOperatorConfig();
-      const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
+      const { getUserContext } = await import('./context.js');
+      const userContext = getUserContext();
 
-      if (bigBrotherEnabled) {
-        const claudeSessionReady = isClaudeSessionReady();
-        if (claudeSessionReady) {
-          useBigBrotherGraph = true;
-          console.log('[graph-streaming] Big Brother Mode active');
+      // Skip Big Brother check if no authenticated user (all configs are user-specific)
+      if (userContext?.username) {
+        const { loadOperatorConfig } = await import('./config.js');
+        const { isClaudeSessionReady } = await import('./claude-session.js');
+        const operatorConfig = loadOperatorConfig(userContext.username);
+        const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
+
+        if (bigBrotherEnabled) {
+          const claudeSessionReady = isClaudeSessionReady();
+          if (claudeSessionReady) {
+            useBigBrotherGraph = true;
+            console.log('[graph-streaming] Big Brother Mode active');
+          }
         }
       }
     } catch (error) {

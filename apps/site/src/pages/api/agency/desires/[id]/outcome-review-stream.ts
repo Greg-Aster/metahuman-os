@@ -110,7 +110,7 @@ export const GET: APIRoute = async ({ params, cookies, request }) => {
         sendSSE(controller, { type: 'phase', phase: '🔍 Running verification...' });
         sendSSE(controller, { type: 'log', message: 'Checking Big Brother configuration...' });
 
-        const operatorConfig = loadOperatorConfig();
+        const operatorConfig = loadOperatorConfig(user.username);
         const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
         const delegateAll = operatorConfig.bigBrotherMode?.delegateAll === true;
 

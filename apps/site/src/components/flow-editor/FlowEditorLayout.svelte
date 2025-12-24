@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import FlowEditor from './FlowEditor.svelte';
   import NodePalette from '../NodePalette.svelte';
+  import PropertyInspector from './PropertyInspector.svelte';
   import { nodeEditorMode } from '../../stores/navigation';
   import { apiFetch } from '../../lib/client/api-config';
   import type { SvelteFlowGraph } from '../../lib/client/flow-editor/template-converter';
@@ -26,6 +27,8 @@
   let backupGraphs = $state<Array<{ name: string; title: string; originalName?: string }>>([]);
   let graphsLoading = $state(false);
   let schemas = $state<any[]>([]);
+  let selectedNode = $state<Node | null>(null);
+  let showPropertyInspector = $state(true);
 
   // Load saved graphs list (including backups)
   async function refreshSavedGraphs() {
@@ -34,7 +37,9 @@
       const res = await apiFetch('/api/cognitive-graphs?includeBackups=true');
       if (res.ok) {
         const data = await res.json();
-        savedGraphs = data.graphs?.filter((g: any) => g.scope === 'custom') || [];
+        // Show all graphs (builtin + custom), exclude the 3 main modes already hardcoded
+        const excludeHardcoded = ['dual-mode', 'agent-mode', 'emulation-mode'];
+        savedGraphs = data.graphs?.filter((g: any) => !excludeHardcoded.includes(g.name)) || [];
         backupGraphs = data.backups || [];
       }
     } catch (e) {
@@ -351,6 +356,14 @@
 
     flowEditorRef.addNode(newNode);
   }
+
+  function handleSelectionChange(node: Node | null) {
+    selectedNode = node;
+  }
+
+  function togglePropertyInspector() {
+    showPropertyInspector = !showPropertyInspector;
+  }
 </script>
 
 <div class="flow-editor-layout">
@@ -404,7 +417,7 @@
 
             {#if savedGraphs.length > 0}
               <div class="dropdown-divider"></div>
-              <div class="dropdown-header">Custom Graphs</div>
+              <div class="dropdown-header">All Graphs</div>
               {#each savedGraphs as graph}
                 <button class="dropdown-item" onclick={() => loadGraph(graph.name)}>
                   {graph.title || graph.name}
@@ -451,6 +464,18 @@
         </svg>
         Save
       </button>
+
+      <button
+        class="action-button"
+        class:active={showPropertyInspector}
+        onclick={togglePropertyInspector}
+        title="Toggle Property Inspector"
+      >
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+        </svg>
+        Props
+      </button>
     </div>
   </header>
 
@@ -467,8 +492,19 @@
     <NodePalette onNodeSelected={handleNodeSelected} />
 
     <div class="editor-area">
-      <FlowEditor bind:this={flowEditorRef} {cognitiveMode} onGraphChange={handleGraphChange} />
+      <FlowEditor
+        bind:this={flowEditorRef}
+        {cognitiveMode}
+        onGraphChange={handleGraphChange}
+        onSelectionChange={handleSelectionChange}
+      />
     </div>
+
+    {#if showPropertyInspector}
+      <div class="property-panel">
+        <PropertyInspector {selectedNode} />
+      </div>
+    {/if}
   </div>
 
   <!-- Save Dialog -->
@@ -720,6 +756,18 @@
   .editor-area {
     flex: 1;
     overflow: hidden;
+  }
+
+  .property-panel {
+    width: 280px;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .action-button.active {
+    background: #3b82f6;
+    border-color: #3b82f6;
+    color: #fff;
   }
 
   .modal-overlay {

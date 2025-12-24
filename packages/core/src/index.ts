@@ -111,6 +111,15 @@ export {
   getAllowedSkills,
 } from './policy.js';
 export * from './tts';
+export {
+  queueTTS,
+  popTTSQueue,
+  peekTTSQueue,
+  getTTSQueuePath,
+  getTTSNotificationPath,
+  type TTSQueueItem,
+  type TTSQueue,
+} from './nodes/output/tts.node.js';
 export * from './stt';
 export * from './voice-training';
 export * from './audio-manager';
@@ -392,6 +401,66 @@ export * from './plugin-system';
 // Agency System
 export * from './agency/index.js';
 
+// Unified Queue System (resource-aware task scheduling)
+// Note: Types renamed to avoid conflict with active-operator
+export {
+  // Facade
+  QueueSystem,
+  getQueueSystem,
+  resetQueueSystem,
+  // Components
+  UnifiedQueueManager,
+  getQueueManager,
+  resetQueueManager,
+  ExecutionEngine,
+  TriggerManager,
+  RemoteDispatcher,
+  // Types (renamed to avoid conflicts)
+  type ResourceLaneId,
+  type QueuedTask as UnifiedQueueTask,
+  type TaskType as UnifiedTaskType,
+  type Priority as UnifiedPriority,
+  type TaskInput,
+  type LaneConfig,
+  type ResourceLane,
+  type RemoteTaskHandle,
+  type RemoteResult,
+  type TriggerConfig,
+  type QueueConfig,
+  type QueueState,
+  type QueueEvent,
+  type QueueEventType,
+  type QueueEventListener,
+  type TriggerType as QueueTriggerType,
+  type AgentTriggerConfig,
+  type TriggerManagerConfig,
+  TASK_LANE_MAP,
+  DEFAULT_PRIORITIES,
+  PRIORITY_VALUES,
+  // Persistence
+  loadQueueState as loadUnifiedQueueState,
+  persistQueueState,
+  saveCurrentTask as saveUnifiedCurrentTask,
+  loadCurrentTask as loadUnifiedCurrentTask,
+  clearCurrentTask as clearUnifiedCurrentTask,
+  shouldRestoreState,
+  getQueueStateDir,
+  // Lane Metrics
+  type HourlyMetrics,
+  type LaneMetrics,
+  type QueueMetrics,
+  loadLaneMetrics,
+  clearLaneMetrics,
+  recordTaskComplete,
+  recordTaskFailed,
+  recordTaskFromTask,
+  getAllLaneMetrics,
+  getLaneMetrics,
+  getThroughputHistory,
+  getLastHourSummary,
+  getLastHourAvgDuration,
+} from './queue/index.js';
+
 // Active Operator System (LLM-controlled continuous thinking)
 // Note: loadMetrics/saveMetrics renamed to avoid conflict with agency module
 export {
@@ -482,9 +551,16 @@ export {
   getCurrentCircadianWindow,
   isTaskCircadianAppropriate,
   getCircadianRecommendations,
-  evaluateTriggers,
   evaluateTrigger,
   getTriggerStatuses,
+  checkFocusConstraints,
+  makeUnifiedDecision,
+  // Service Manager (lifecycle control)
+  startActiveOperatorService,
+  stopActiveOperatorService,
+  toggleActiveOperatorService,
+  getActiveOperatorServiceStatus,
+  enqueueUserMessage,
   // Critic (Superego - review and approval)
   type ProposedChange,
   type CriticReview,

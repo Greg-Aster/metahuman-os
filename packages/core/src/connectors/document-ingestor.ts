@@ -9,11 +9,15 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import pdfParse from 'pdf-parse';
-import mammoth from 'mammoth';
+import * as pdfParseModule from 'pdf-parse';
+import * as mammothModule from 'mammoth';
 import { getProfilePaths } from '../paths.js';
 import { audit } from '../audit.js';
 import { captureEvent } from '../memory.js';
+
+// Handle ESM/CJS compatibility
+const pdfParse = (pdfParseModule as any).default || pdfParseModule;
+const mammoth = (mammothModule as any).default || mammothModule;
 
 // ============================================================================
 // Types

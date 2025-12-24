@@ -27,10 +27,12 @@
     cognitiveMode = null,
     onExecute = null,
     onGraphChange = null,
+    onSelectionChange = null,
   }: {
     cognitiveMode?: string | null;
     onExecute?: ((graph: SvelteFlowGraph) => Promise<void>) | null;
     onGraphChange?: ((graph: SvelteFlowGraph) => void) | null;
+    onSelectionChange?: ((node: Node | null) => void) | null;
   } = $props();
 
   // State - use regular $state for two-way binding with Svelte Flow
@@ -169,6 +171,17 @@
     );
 
     notifyGraphChange();
+  }
+
+  /**
+   * Handle selection changes - notify parent of selected node
+   */
+  function handleSelectionChange({ nodes: selectedNodes }: { nodes: Node[]; edges: Edge[] }) {
+    const selectedNode = selectedNodes.length === 1 ? selectedNodes[0] : null;
+
+    if (onSelectionChange) {
+      onSelectionChange(selectedNode);
+    }
   }
 
   /**
@@ -469,6 +482,7 @@
       onconnect={handleConnect}
       onedgesdelete={handleEdgesDelete}
       onnodesdelete={handleNodesDelete}
+      onselectionchange={handleSelectionChange}
     >
       <Background variant={BackgroundVariant.Dots} gap={20} color="#333" />
       <Controls />

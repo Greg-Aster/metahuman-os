@@ -10,7 +10,7 @@ import path from 'node:path';
 import { getProfilePaths } from './path-builder.js';
 import { loadBackendConfig, type BackendType } from './llm-backend.js';
 
-export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'fallback' | 'embedder';
+export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'embedder';
 export type ModelProvider = 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm' | 'remote-server' | 'local-models';
 
 export interface ModelDefinition {
@@ -313,25 +313,18 @@ export function resolveModelForCognitiveMode(
     }
 
     // Role exists in mapping but has no value (undefined, not null)
-    // This is a configuration issue - warn loudly
-    console.warn(
-      `[model-resolver] ⚠️ MISSING CONFIG: Role '${role}' has no model assigned in cognitive mode '${cognitiveMode}'.` +
-      `\n  → Falling back to default: ${registry.defaults[role] || 'NONE'}` +
-      `\n  → Fix: Add "${role}": "vllm.active" to cognitiveModeMappings.${cognitiveMode} in models.json`
+    // This is a configuration error - fail loudly
+    throw new Error(
+      `MISSING CONFIG: Role '${role}' has no model assigned in cognitive mode '${cognitiveMode}'.\n` +
+      `Fix: Add "${role}": "vllm.active" to cognitiveModeMappings.${cognitiveMode} in your profile's models.json`
     );
   } else {
     // No cognitive mode mapping exists at all for this mode
-    console.warn(
-      `[model-resolver] ⚠️ MISSING CONFIG: Cognitive mode '${cognitiveMode}' has no mappings defined.` +
-      `\n  → Falling back to defaults for role '${role}': ${registry.defaults[role] || 'NONE'}` +
-      `\n  → Fix: Add cognitiveModeMappings.${cognitiveMode} section to models.json`
+    throw new Error(
+      `MISSING CONFIG: Cognitive mode '${cognitiveMode}' has no mappings defined.\n` +
+      `Fix: Add cognitiveModeMappings.${cognitiveMode} section to your profile's models.json`
     );
   }
-
-  // Fall back to default role resolution (with warning already logged above)
-  const resolved = resolveModel(role, undefined, username);
-  // Apply backend override to ensure correct model for active backend
-  return applyBackendOverride(resolved, registry);
 }
 
 /**

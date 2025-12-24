@@ -211,19 +211,26 @@ export async function handleHttpRequest(params: {
     throw error;
   }
 
-  // Route to handler WITH user context set
-  // This ensures getUserContext() works in downstream code (e.g., bridge.ts, model-router.ts)
+  // Route to handler - only set user context for AUTHENTICATED users
+  // This prevents profile directories from being created for unauthenticated requests
+  // Handlers check req.user.isAuthenticated directly, so they don't need context for auth
   let response: UnifiedResponse;
   try {
-    // Wrap handler in user context so getUserContext() returns the authenticated user
-    response = await withUserContext(
-      {
-        userId: request.user.userId,
-        username: request.user.username,
-        role: request.user.role,
-      },
-      () => routeRequest(request)
-    );
+    if (request.user.isAuthenticated) {
+      // Wrap handler in user context so getUserContext() returns the authenticated user
+      response = await withUserContext(
+        {
+          userId: request.user.userId,
+          username: request.user.username,
+          role: request.user.role,
+        },
+        () => routeRequest(request)
+      );
+    } else {
+      // Unauthenticated requests - route WITHOUT user context
+      // getUserContext() will return undefined, storage router will use system paths
+      response = await routeRequest(request);
+    }
   } catch (error) {
     console.error('[http-adapter] Handler error:', error);
     response = {

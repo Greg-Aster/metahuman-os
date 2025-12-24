@@ -23,7 +23,7 @@ import {
   audit,
   recordSystemActivity,
   scheduler,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   executeGraph,
   validateSvelteFlowGraph,
@@ -292,7 +292,7 @@ export async function runCycle(options: DreamerOptions = {}): Promise<DreamerRes
       return result;
     }
 
-    console.log('[dreamer] Drifting into a dream (multi-user)...');
+    console.log('[dreamer] Drifting into a dream...');
 
     // Audit cycle start (system-level)
     audit({
@@ -301,54 +301,55 @@ export async function runCycle(options: DreamerOptions = {}): Promise<DreamerRes
       event: 'sleep_started',
       details: {
         agent: 'dreamer',
-        mode: manualTriggerProfile ? 'manual-single' : 'multi-user',
+        mode: manualTriggerProfile ? 'manual-single' : 'single-active-user',
         usedGraph: true,
       },
       actor: 'dreamer',
     });
 
-    // Get all logged-in users (or targeted user if manual trigger)
-    const allUsers = getLoggedInUsers();
-    const users = manualTriggerProfile
-      ? allUsers.filter(u => u.username === manualTriggerProfile || u.userId === manualTriggerProfile)
-      : allUsers;
+    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+    const activeUser = getTargetUser();
 
-    if (manualTriggerProfile && users.length === 0) {
-      console.warn(`[dreamer] Manual trigger requested for ${manualTriggerProfile} but no matching user found.`);
-      result.errors.push(`No matching user found for ${manualTriggerProfile}`);
+    // Handle manual trigger override - verify it matches the target user
+    if (manualTriggerProfile) {
+      if (!activeUser || (activeUser.username !== manualTriggerProfile && activeUser.userId !== manualTriggerProfile)) {
+        console.warn(`[dreamer] Manual trigger requested for ${manualTriggerProfile} but user is not the active user.`);
+        result.errors.push(`User ${manualTriggerProfile} is not the currently active user`);
+        return result;
+      }
+    }
+
+    if (!activeUser) {
+      console.log('[dreamer] No active users found');
+      result.userCount = 0;
+      result.success = true;
       return result;
     }
 
-    console.log(`[dreamer] Found ${users.length} logged-in users to process`);
-    result.userCount = users.length;
+    console.log(`[dreamer] Processing most recently active user: ${activeUser.username}`);
+    result.userCount = 1;
 
-    // Process each user with isolated context
-    for (const user of users) {
-      try {
-        const stats = await withUserContext(
-          { userId: user.userId, username: user.username, role: user.role },
-          async () => generateUserDreams(user.username, {
-            forceRun: !!manualTriggerProfile || options.forceRun,
-            config: globalConfig,
-          })
-        );
+    // Process only the active user
+    try {
+      const stats = await withUserContext(
+        { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
+        async () => generateUserDreams(activeUser.username, {
+          forceRun: !!manualTriggerProfile || options.forceRun,
+          config: globalConfig,
+        })
+      );
 
-        result.dreamsGenerated += stats.dreamsGenerated;
-        result.memoriesCurated += stats.memoriesCurated;
-        result.preferencesExtracted += stats.preferencesExtracted;
-        result.heuristicsExtracted += stats.heuristicsExtracted;
-      } catch (error) {
-        const errorMsg = `User ${user.username}: ${(error as Error).message}`;
-        console.error(`[dreamer] Failed to process: ${errorMsg}`);
-        result.errors.push(errorMsg);
-      }
-
-      if (manualTriggerProfile) {
-        break; // manual run processes only the triggering profile
-      }
+      result.dreamsGenerated += stats.dreamsGenerated;
+      result.memoriesCurated += stats.memoriesCurated;
+      result.preferencesExtracted += stats.preferencesExtracted;
+      result.heuristicsExtracted += stats.heuristicsExtracted;
+    } catch (error) {
+      const errorMsg = `User ${activeUser.username}: ${(error as Error).message}`;
+      console.error(`[dreamer] Failed to process: ${errorMsg}`);
+      result.errors.push(errorMsg);
     }
 
-    console.log(`[dreamer] Cycle finished. Generated ${result.dreamsGenerated} dreams across ${users.length} users.`);
+    console.log(`[dreamer] Cycle finished. Generated ${result.dreamsGenerated} dreams for user ${activeUser.username}.`);
 
     // Audit completion (system-level)
     audit({
@@ -357,12 +358,12 @@ export async function runCycle(options: DreamerOptions = {}): Promise<DreamerRes
       event: 'sleep_cycle_completed',
       details: {
         agent: 'dreamer',
-        mode: manualTriggerProfile ? 'manual-single' : 'multi-user',
+        mode: manualTriggerProfile ? 'manual-single' : 'single-active-user',
         totalDreams: result.dreamsGenerated,
         totalMemories: result.memoriesCurated,
         totalPreferences: result.preferencesExtracted,
         totalHeuristics: result.heuristicsExtracted,
-        userCount: users.length,
+        username: activeUser.username,
         usedGraph: true,
       },
       actor: 'dreamer',

@@ -27,7 +27,7 @@ import {
   addCatchphrase,
   updateFrequentFact,
   getProfilePaths,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
 } from '@metahuman/core';
 
@@ -304,36 +304,49 @@ export async function runCycle(options: DigestOptions = {}): Promise<DigestResul
   const days = options.days ?? 14;
 
   try {
-    // Get users to process
-    const users = options.singleUser ? ['default'] : getLoggedInUsers().map(u => u.username);
+    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+    let username: string | null = null;
+    if (options.singleUser) {
+      username = 'default';
+    } else {
+      const activeUser = getTargetUser();
+      if (activeUser) {
+        username = activeUser.username;
+      }
+    }
+
+    if (!username) {
+      console.log('[digest] No active user found');
+      return result;
+    }
 
     auditAction({
       event: 'digest_started',
       details: {
         timestamp: new Date().toISOString(),
-        userCount: users.length,
+        username,
         days,
       },
     });
 
-    for (const username of users) {
-      try {
-        const stats = await generateUserDigest(username, days);
-        result.stats[username] = stats;
-        result.usersProcessed++;
+    console.log(`[digest] Processing user: ${username}`);
 
-        audit({
-          category: 'system',
-          level: 'info',
-          message: `Digest completed for ${username}: ${stats.memoriesAnalyzed} memories analyzed`,
-          actor: 'digest',
-          metadata: stats,
-        });
-      } catch (error) {
-        const errorMsg = `Error processing ${username}: ${(error as Error).message}`;
-        result.errors.push(errorMsg);
-        console.error(`[digest] ${errorMsg}`);
-      }
+    try {
+      const stats = await generateUserDigest(username, days);
+      result.stats[username] = stats;
+      result.usersProcessed++;
+
+      audit({
+        category: 'system',
+        level: 'info',
+        message: `Digest completed for ${username}: ${stats.memoriesAnalyzed} memories analyzed`,
+        actor: 'digest',
+        metadata: stats,
+      });
+    } catch (error) {
+      const errorMsg = `Error processing ${username}: ${(error as Error).message}`;
+      result.errors.push(errorMsg);
+      console.error(`[digest] ${errorMsg}`);
     }
 
     auditAction({

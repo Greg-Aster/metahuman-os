@@ -19,6 +19,7 @@ export const InnerDialogueCaptureNode: NodeDefinition = defineNode({
   inputs: [
     { name: 'text', type: 'string', description: 'Reflection or thought text' },
     { name: 'metadata', type: 'object', optional: true },
+    { name: 'displayColor', type: 'string', optional: true, description: 'Color for UI display (e.g., #22c55e)' },
   ],
   outputs: [
     { name: 'saved', type: 'boolean', description: 'Whether dialogue was saved' },
@@ -26,6 +27,8 @@ export const InnerDialogueCaptureNode: NodeDefinition = defineNode({
   ],
   properties: {
     tags: ['idle-thought', 'self-reflection', 'inner'],
+    displayColor: '',
+    dialogueSource: '',
   },
   propertySchemas: {
     tags: {
@@ -33,6 +36,18 @@ export const InnerDialogueCaptureNode: NodeDefinition = defineNode({
       default: ['idle-thought', 'self-reflection', 'inner'],
       label: 'Tags',
       description: 'Tags to apply to the inner dialogue',
+    },
+    displayColor: {
+      type: 'color',
+      default: '',
+      label: 'Display Color',
+      description: 'Color for text display in Inner Dialogue tab (e.g., #22c55e for green)',
+    },
+    dialogueSource: {
+      type: 'text',
+      default: '',
+      label: 'Source',
+      description: 'Source identifier (e.g., lizard-brain, dreamer, reflector)',
     },
   },
   description: 'Saves inner dialogue to episodic memory (never shown in main chat)',
@@ -62,10 +77,21 @@ export const InnerDialogueCaptureNode: NodeDefinition = defineNode({
     try {
       // Access metadata by handle name, not index
       const metadataInput = inputs['metadata'] || inputs.metadata;
+      const displayColorInput = inputs['displayColor'] || inputs.displayColor;
+
+      // Get displayColor from input, properties, or metadata (in order of priority)
+      const displayColor = displayColorInput || properties?.displayColor || metadataInput?.displayColor || '';
+      const dialogueSource = properties?.dialogueSource || metadataInput?.dialogueSource || '';
+
       const options = {
         type: 'inner_dialogue' as const,
         tags: metadataInput?.tags || properties?.tags || ['idle-thought', 'self-reflection', 'inner'],
         links: metadataInput?.links || undefined,
+        metadata: {
+          ...(metadataInput || {}),
+          ...(displayColor ? { displayColor } : {}),
+          ...(dialogueSource ? { dialogueSource } : {}),
+        },
       };
 
       const result: CaptureResult = captureEventWithDetails(reflectionText, options);

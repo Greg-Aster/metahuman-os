@@ -71,8 +71,17 @@ async function executeStep(
 ): Promise<{ success: boolean; result?: unknown; error?: string; operatorResponse?: OperatorResponse }> {
   console.log(`${LOG_PREFIX} 🔧 Executing step ${step.order}: ${step.action}`);
 
-  // Check if Big Brother delegation mode is enabled
-  const operatorConfig = loadOperatorConfig();
+  // Check if Big Brother delegation mode is enabled (requires authenticated user)
+  // Note: _username parameter contains the authenticated user's username
+  if (!_username) {
+    console.log(`${LOG_PREFIX} ⚠️ No authenticated user, skipping Big Brother delegation`);
+    return {
+      success: false,
+      error: 'No authenticated user for executing desire steps',
+    };
+  }
+
+  const operatorConfig = loadOperatorConfig(_username);
   const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
   const delegateAll = operatorConfig.bigBrotherMode?.delegateAll === true;
 

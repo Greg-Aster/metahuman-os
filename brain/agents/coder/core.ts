@@ -15,7 +15,7 @@ import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-run
 import {
   ROOT,
   audit,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   getProfilePaths,
   listErrors,
@@ -140,22 +140,8 @@ async function loadConfig(): Promise<SystemCoderConfig> {
   }
 }
 
-async function loadOperatorConfig(): Promise<OperatorConfig> {
-  const configPath = path.join(ROOT, 'etc', 'operator.json');
-  try {
-    const raw = await fs.readFile(configPath, 'utf-8');
-    return JSON.parse(raw);
-  } catch (error) {
-    return {
-      version: '2.0',
-      scratchpad: { maxSteps: 10, trimToLastN: 10 },
-      models: { useSingleModel: false, planningModel: 'default.coder', responseModel: 'persona' },
-      logging: { enableScratchpadDump: false },
-      performance: { cacheCatalog: true },
-      bigBrotherMode: { enabled: false, provider: 'claude-code' }
-    };
-  }
-}
+// Use centralized loadOperatorConfig from @metahuman/core
+// Import removed - will import dynamically in processError function
 
 async function findRelatedFiles(error: CapturedError): Promise<string[]> {
   const relatedFiles: string[] = [];
@@ -233,7 +219,8 @@ async function processError(username: string, errorId: string, config: SystemCod
     actor: AGENT_NAME
   });
 
-  const operatorConfig = await loadOperatorConfig();
+  const { loadOperatorConfig } = await import('@metahuman/core/config');
+  const operatorConfig = loadOperatorConfig(username);
 
   if (!config.bigBrother.useForFixes || !operatorConfig.bigBrotherMode?.enabled) {
     console.log('[coder] Big Brother not enabled, cannot generate fix');
@@ -407,46 +394,44 @@ export async function runCycle(options: CoderOptions = {}): Promise<CoderResult>
     actor: AGENT_NAME
   });
 
-  let users: Array<{ userId: string; username: string; role: string }>;
-  if (options.username) {
-    users = [{ userId: options.username, username: options.username, role: 'owner' }];
-  } else if (options.singleUser) {
-    users = [{ userId: 'default', username: 'default', role: 'owner' }];
-  } else {
-    users = getLoggedInUsers();
+  // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+  let user = getTargetUser(options);
+  if (!user && options.singleUser) {
+    user = { userId: 'default', username: 'default', role: 'owner' };
   }
 
-  for (const user of users) {
-    if (!user.username) continue;
+  if (!user || !user.username) {
+    console.log('[coder] No active user found');
+    return result;
+  }
 
-    console.log(`[coder] Processing user: ${user.username}`);
+  console.log(`[coder] Processing user: ${user.username}`);
 
-    try {
-      await withUserContext(user.username, async () => {
-        if (!options.maintenanceOnly) {
-          const processed = await processNewErrors(user.username, config);
-          result.errorsProcessed += processed;
-          result.fixesGenerated += processed;
-          console.log(`[coder] Processed ${processed} errors for ${user.username}`);
-        }
+  try {
+    await withUserContext(user.username, async () => {
+      if (!options.maintenanceOnly) {
+        const processed = await processNewErrors(user!.username, config);
+        result.errorsProcessed += processed;
+        result.fixesGenerated += processed;
+        console.log(`[coder] Processed ${processed} errors for ${user!.username}`);
+      }
 
-        const profilePaths = getProfilePaths(user.username);
-        const maintenanceDir = path.join(profilePaths.state, 'coder', 'maintenance');
-        const reportDate = new Date().toISOString().split('T')[0];
-        const reportPath = path.join(maintenanceDir, `${reportDate}.json`);
+      const profilePaths = getProfilePaths(user!.username);
+      const maintenanceDir = path.join(profilePaths.state, 'coder', 'maintenance');
+      const reportDate = new Date().toISOString().split('T')[0];
+      const reportPath = path.join(maintenanceDir, `${reportDate}.json`);
 
-        try {
-          await fs.access(reportPath);
-          console.log(`[coder] Maintenance already run today for ${user.username}`);
-        } catch {
-          await runMaintenance(user.username, config);
-          result.maintenanceRun = true;
-        }
-      });
-      result.usersProcessed++;
-    } catch (error) {
-      result.errors.push(`Error processing ${user.username}: ${(error as Error).message}`);
-    }
+      try {
+        await fs.access(reportPath);
+        console.log(`[coder] Maintenance already run today for ${user!.username}`);
+      } catch {
+        await runMaintenance(user!.username, config);
+        result.maintenanceRun = true;
+      }
+    });
+    result.usersProcessed++;
+  } catch (error) {
+    result.errors.push(`Error processing ${user.username}: ${(error as Error).message}`);
   }
 
   audit({

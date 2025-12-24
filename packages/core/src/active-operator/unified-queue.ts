@@ -205,6 +205,14 @@ export class UnifiedQueue {
   }
 
   /**
+   * Check if a task of the given type already exists in the queue.
+   * Used for deduplication to prevent queueing the same task type repeatedly.
+   */
+  hasTaskOfType(type: TaskType): boolean {
+    return this.queue.some((t) => t.type === type);
+  }
+
+  /**
    * Get tasks by priority.
    */
   getByPriority(priority: Priority): QueuedTask[] {

@@ -95,10 +95,20 @@ function detectRunPodAvailability(): { available: boolean; configured: boolean }
 /**
  * Detect Big Brother configuration availability
  * Big Brother requires terminal access, so it's only "available" on desktop
+ * Requires authenticated username - returns defaults if not authenticated
  */
-function detectBigBrotherAvailability(): { available: boolean; enabled: boolean; provider?: string } {
+function detectBigBrotherAvailability(username?: string): { available: boolean; enabled: boolean; provider?: string } {
+  // Return defaults if no authenticated user (all configs are user-specific)
+  if (!username) {
+    return {
+      available: true,
+      enabled: false,
+      provider: 'claude-code',
+    };
+  }
+
   try {
-    const config = loadOperatorConfig();
+    const config = loadOperatorConfig(username);
     const bigBrotherConfig = config.bigBrotherMode || { enabled: false, provider: 'claude-code' };
 
     // Big Brother is available if we're not on mobile (mobile has no terminal)
@@ -561,7 +571,7 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
       // Build backend availability for status widget icons
       // availableBackends already declared above for availableProviders check
       const runpodStatus = detectRunPodAvailability();
-      const bigBrotherStatus = detectBigBrotherAvailability();
+      const bigBrotherStatus = detectBigBrotherAvailability(isAuthenticated ? user.username : undefined);
       const localModelsStatus = await detectLocalModelsAvailability();
       // remoteServerStatus already defined above for fetching models
 
@@ -670,7 +680,8 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
     // Curiosity stats (simplified)
     let curiosityConfig: any = { maxOpenQuestions: 0, researchMode: 'off' };
     try {
-      curiosityConfig = loadCuriosityConfig(isAuthenticated ? user.username : undefined);
+      const username = isAuthenticated ? user.username : undefined;
+      curiosityConfig = loadCuriosityConfig(username);
     } catch {}
 
     // Runtime mode

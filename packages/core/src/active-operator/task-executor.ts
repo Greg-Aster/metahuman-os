@@ -55,7 +55,12 @@ async function runAgentProcess(
   username?: string
 ): Promise<{ success: boolean; exitCode: number; error?: string }> {
   return new Promise((resolve) => {
-    const agentPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
+    // Try subdirectory structure first (brain/agents/name/cli.ts)
+    let agentPath = path.join(systemPaths.brain, 'agents', agentName, 'cli.ts');
+    if (!fs.existsSync(agentPath)) {
+      // Fall back to flat structure (brain/agents/name.ts)
+      agentPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
+    }
 
     if (!fs.existsSync(agentPath)) {
       console.warn(`[task-executor] Agent not found: ${agentPath}`);

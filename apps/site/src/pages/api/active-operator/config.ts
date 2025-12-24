@@ -10,8 +10,8 @@ import {
   loadActiveOperatorConfig,
   saveActiveOperatorConfig,
   updateActiveOperatorConfig,
-  getAuthenticatedUser,
-} from '@metahuman/core';
+} from '@metahuman/core/active-operator';
+import { getAuthenticatedUser } from '@metahuman/core';
 
 export const GET: APIRoute = async () => {
   try {

@@ -36,7 +36,6 @@ export {
   runCycle,
   processUserResearch,
   researchQuestion,
-  getMostRecentlyActiveUser,
   type CuriosityResearcherOptions,
   type CuriosityResearcherResult,
 } from './core.js';

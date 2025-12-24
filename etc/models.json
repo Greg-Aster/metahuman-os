@@ -27,7 +27,6 @@
     "planner": "default.planner",
     "summarizer": "default.summarizer",
     "psychotherapist": "default.psychotherapist",
-    "fallback": "default.fallback",
     "embedder": "default.embedder"
   },
   "models": {
@@ -185,27 +184,6 @@
         "specialization": "summarization"
       }
     },
-    "default.fallback": {
-      "provider": "ollama",
-      "model": "qwen3:14b",
-      "adapters": [],
-      "roles": [
-        "fallback",
-        "general"
-      ],
-      "description": "Fallback model when primary models unavailable",
-      "options": {
-        "contextWindow": 8192,
-        "temperature": 0.7,
-        "topP": 0.9
-      },
-      "metadata": {
-        "priority": "low",
-        "alwaysLoaded": true,
-        "estimatedLatency": "fast",
-        "sizeGB": 9.3
-      }
-    },
     "default.psychotherapist": {
       "provider": "ollama",
       "model": "qwen3:14b",
@@ -330,8 +308,7 @@
       "roles": [
         "orchestrator",
         "persona",
-        "summarizer",
-        "fallback"
+        "summarizer"
       ],
       "description": "Cloud-hosted Qwen3 14B via RunPod Serverless - balanced performance model",
       "options": {
@@ -398,38 +375,28 @@
   },
   "roleHierarchy": {
     "orchestrator": [
-      "default.orchestrator",
-      "default.fallback"
+      "default.orchestrator"
     ],
     "persona": [
       "default.persona",
-      "persona.with-lora",
-      "default.fallback"
+      "persona.with-lora"
     ],
     "curator": [
-      "default.curator",
-      "default.fallback"
+      "default.curator"
     ],
     "coder": [
-      "default.coder",
-      "default.fallback"
+      "default.coder"
     ],
     "planner": [
-      "default.planner",
-      "default.fallback"
+      "default.planner"
     ],
     "summarizer": [
       "default.summarizer",
-      "default.curator",
-      "default.fallback"
+      "default.curator"
     ],
     "psychotherapist": [
       "default.psychotherapist",
-      "default.persona",
-      "default.fallback"
-    ],
-    "fallback": [
-      "default.fallback"
+      "default.persona"
     ],
     "embedder": [
       "default.embedder"

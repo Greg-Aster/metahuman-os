@@ -20,7 +20,7 @@ import {
   ROOT,
   audit,
   listActiveTasks,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   executeGraph,
   validateSvelteFlowGraph,
@@ -651,25 +651,32 @@ export async function runCycle(options: ReflectorOptions = {}): Promise<Reflecto
   }
 
   try {
-    const users = getLoggedInUsers();
-    console.log(`[reflector] Found ${users.length} logged-in users to process`);
-    result.userCount = users.length;
+    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+    const activeUser = getTargetUser();
 
-    for (const user of users) {
-      try {
-        const success = await withUserContext(
-          { userId: user.userId, username: user.username, role: user.role },
-          async () => generateUserReflection(user.username, options)
-        );
+    if (!activeUser) {
+      console.log('[reflector] No active users found');
+      result.userCount = 0;
+      result.success = true;
+      return result;
+    }
 
-        if (success) {
-          result.reflectionsGenerated++;
-        }
-      } catch (error) {
-        const errorMsg = `User ${user.username}: ${(error as Error).message}`;
-        console.error(`[reflector] Failed: ${errorMsg}`);
-        result.errors.push(errorMsg);
+    console.log(`[reflector] Processing user: ${activeUser.username}`);
+    result.userCount = 1;
+
+    try {
+      const success = await withUserContext(
+        { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
+        async () => generateUserReflection(activeUser.username, options)
+      );
+
+      if (success) {
+        result.reflectionsGenerated++;
       }
+    } catch (error) {
+      const errorMsg = `User ${activeUser.username}: ${(error as Error).message}`;
+      console.error(`[reflector] Failed: ${errorMsg}`);
+      result.errors.push(errorMsg);
     }
 
     console.log(`[reflector] Cycle finished. Generated ${result.reflectionsGenerated} reflections.`);

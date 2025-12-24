@@ -27,7 +27,7 @@ import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-run
 import {
   ROOT,
   audit,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   captureEvent,
   loadPersonaCore,
@@ -1425,34 +1425,32 @@ export async function runCycle(options: DesireGeneratorOptions = {}): Promise<De
       console.log(`${LOG_PREFIX} Using model router (backend auto-selected)`);
     }
 
-    // Determine users to process
-    let users: Array<{ userId: string; username: string; role: string }>;
-
-    if (options.username) {
-      users = [{ userId: options.username, username: options.username, role: 'owner' }];
-    } else if (options.singleUser) {
-      users = [{ userId: 'default', username: 'default', role: 'owner' }];
-    } else {
-      users = getLoggedInUsers();
+    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+    let user = getTargetUser(options);
+    if (!user && options.singleUser) {
+      user = { userId: 'default', username: 'default', role: 'owner' };
     }
 
-    console.log(`${LOG_PREFIX} Processing ${users.length} user(s)`);
+    if (!user) {
+      console.log(`${LOG_PREFIX} No active user found`);
+      return result;
+    }
 
-    for (const user of users) {
-      try {
-        const created = await withUserContext(
-          { userId: user.userId, username: user.username, role: user.role },
-          async () => generateDesiresForUser(user.username)
-        );
+    console.log(`${LOG_PREFIX} Processing user: ${user.username}`);
 
-        result.stats[user.username] = created;
-        result.totalGenerated += created;
-        result.usersProcessed++;
-      } catch (error) {
-        const errorMsg = `Error processing ${user.username}: ${(error as Error).message}`;
-        result.errors.push(errorMsg);
-        console.error(`${LOG_PREFIX} ${errorMsg}`);
-      }
+    try {
+      const created = await withUserContext(
+        { userId: user.userId, username: user.username, role: user.role },
+        async () => generateDesiresForUser(user!.username)
+      );
+
+      result.stats[user.username] = created;
+      result.totalGenerated += created;
+      result.usersProcessed++;
+    } catch (error) {
+      const errorMsg = `Error processing ${user.username}: ${(error as Error).message}`;
+      result.errors.push(errorMsg);
+      console.error(`${LOG_PREFIX} ${errorMsg}`);
     }
 
     audit({

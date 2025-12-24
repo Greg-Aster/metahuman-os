@@ -5,17 +5,22 @@
  * MetaHuman OS from passive response generation into active cognition.
  *
  * Key components:
- * - UnifiedQueue: Priority-based task queue with user message priority
- * - StatePersister: Disk persistence for crash recovery
- * - ModeController: Switch between passive/active modes
- * - DecisionEngine: LLM-based task selection (Phase 2)
- * - TaskExecutor: Execute tasks via existing agents (Phase 3)
+ * - Service Manager: Lifecycle control for the decision loop
+ * - Lizard Brain: Autonomous decision making with triggers
+ * - Task Executor: Execute tasks via existing agents
+ * - Mode Controller: Switch between passive/active modes
+ * - State Persister: Disk persistence for crash recovery
+ *
+ * NOTE: The Active Operator now uses the unified lane-based queue system
+ * from packages/core/src/queue/ for task management. The legacy UnifiedQueue
+ * is kept for backwards compatibility but is no longer used internally.
  */
 
 // Types
 export * from './types.js';
 
-// Queue
+// Queue (DEPRECATED: Use packages/core/src/queue/ instead)
+// Kept for backwards compatibility - internal code uses lane-based queue
 export { UnifiedQueue, createPersistentQueue } from './unified-queue.js';
 
 // State persistence
@@ -107,7 +112,7 @@ export {
   getErrorCount,
 } from './self-healing.js';
 
-// Lizard Brain (autonomous triggers)
+// Lizard Brain (autonomous triggers + unified decision)
 export {
   type Trigger,
   type TriggerResult,
@@ -117,10 +122,20 @@ export {
   getCurrentCircadianWindow,
   isTaskCircadianAppropriate,
   getCircadianRecommendations,
-  evaluateTriggers,
   evaluateTrigger,
   getTriggerStatuses,
+  checkFocusConstraints,
+  makeUnifiedDecision,
 } from './lizard-brain.js';
+
+// Service Manager (lifecycle control)
+export {
+  startActiveOperatorService,
+  stopActiveOperatorService,
+  toggleActiveOperatorService,
+  getActiveOperatorServiceStatus,
+  enqueueUserMessage,
+} from './service-manager.js';
 
 // Critic (Superego - review and approval)
 export {

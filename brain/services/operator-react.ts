@@ -2118,8 +2118,15 @@ function detectStuckState(state: ReactState): {
   }
 
   // Check 3: Approaching max iterations (within 2 steps of limit)
-  const config = loadOperatorConfig();
-  const maxSteps = config.scratchpad?.maxSteps || 10;
+  // Use already-imported getUserContext (no dynamic import in sync function)
+  const userContext = getUserContext();
+
+  // Default max steps if no authenticated user (all configs are user-specific)
+  let maxSteps = 10;
+  if (userContext?.username) {
+    const config = loadOperatorConfig(userContext.username);
+    maxSteps = config.scratchpad?.maxSteps || 10;
+  }
 
   if (state.currentStep >= maxSteps - 2) {
     const successRate = state.scratchpad.filter(
@@ -2285,8 +2292,25 @@ async function runReActLoopV2(
         step: state.currentStep
       });
 
-      // Try Big Brother mode escalation if enabled
-      const operatorConfig = loadOperatorConfig();
+      // Try Big Brother mode escalation if enabled (requires authenticated user)
+      const { getUserContext } = await import('@metahuman/core/context');
+      const userContext = getUserContext();
+
+      // Skip Big Brother if no authenticated user (all configs are user-specific)
+      if (!userContext?.username) {
+        // No authenticated user - skip Big Brother and return stuck response
+        return {
+          success: false,
+          action: 'give_up',
+          response: `I got stuck: ${stuckCheck.reason}. No authenticated user for Big Brother escalation.`,
+          metadata: {
+            stuckReason: stuckCheck.reason,
+            errorType: stuckCheck.errorType,
+          },
+        };
+      }
+
+      const operatorConfig = loadOperatorConfig(userContext.username);
       const { escalateToBigBrother, shouldEscalateToBigBrother } = await import('@metahuman/core/big-brother');
 
       // Track retry count (stored in metadata or state)
@@ -2876,8 +2900,10 @@ export async function runOperatorWithFeatureFlag(
 ): Promise<any> {
   const { isReactV2Enabled, useReasoningService: checkReasoningService } = await import('@metahuman/core/config');
 
-  const useV2 = isReactV2Enabled();
-  const useService = checkReasoningService();
+  // Get username from userContext - defaults to V1 if no authenticated user (all configs are user-specific)
+  const username = userContext?.userId;
+  const useV2 = username ? isReactV2Enabled(username) : false;
+  const useService = username ? checkReasoningService(username) : false;
 
   audit({
     level: 'info',

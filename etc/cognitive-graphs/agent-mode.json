@@ -317,6 +317,24 @@
       },
       "width": 180,
       "height": 60
+    },
+    {
+      "id": "tts-out",
+      "type": "outputNode",
+      "position": {
+        "x": 2000,
+        "y": 340
+      },
+      "data": {
+        "label": "TTS Output",
+        "nodeType": "tts",
+        "properties": {
+          "source": "agent-mode",
+          "defaultMode": "conversation"
+        }
+      },
+      "width": 180,
+      "height": 80
     }
   ],
   "edges": [
@@ -575,6 +593,17 @@
       "data": {
         "type": "string",
         "comment": "Formatted persona → Response Synthesizer (for persona voice synthesis)"
+      }
+    },
+    {
+      "id": "e-16-response-tts-conversation",
+      "source": "16",
+      "target": "tts-out",
+      "sourceHandle": "response",
+      "targetHandle": "conversation",
+      "data": {
+        "type": "string",
+        "comment": "Thinking Stripper output → TTS Output (speaks conversation response)"
       }
     }
   ]

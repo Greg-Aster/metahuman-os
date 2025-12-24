@@ -1,151 +1,18 @@
 /**
  * Global Astro Middleware
  *
- * Automatically applies user context to ALL API routes
- * Also handles Big Brother auto-start on server boot
+ * Automatically applies user context to ALL API routes.
+ *
+ * NOTE: Startup config loading removed (2025-12-23)
+ * All configs are user-specific and only loaded within authenticated user context.
+ * Auto-start features (Open Interpreter, Big Brother) are triggered by user requests,
+ * not server startup.
  */
 
 import { defineMiddleware } from 'astro:middleware';
 import { withUserContext as runWithUserContext } from '@metahuman/core/context';
 import { validateSession } from '@metahuman/core/sessions';
 import { getUser } from '@metahuman/core/users';
-
-// ============================================================================
-// Tool Executor / Open Interpreter Auto-Start (runs once on module load = server start)
-// ============================================================================
-let toolExecutorInitialized = false;
-
-async function initializeToolExecutor(): Promise<void> {
-  if (toolExecutorInitialized) return;
-  toolExecutorInitialized = true;
-
-  try {
-    const { loadToolExecutorConfig } = await import('@metahuman/core');
-    const config = loadToolExecutorConfig();
-
-    // Check if Open Interpreter autoStart is true (independent of enabled flag)
-    // The 'enabled' flag controls whether it's the active backend, not whether to auto-start
-    const interpreterConfig = config.backends['open-interpreter'];
-    if (interpreterConfig?.autoStart) {
-      console.log('[middleware] 🐍 Open Interpreter auto-start enabled - starting server...');
-
-      const { isInterpreterServerRunning, startInterpreterServer } = await import('@metahuman/core');
-
-      if (!(await isInterpreterServerRunning(interpreterConfig.endpoint))) {
-        const result = await startInterpreterServer({ endpoint: interpreterConfig.endpoint });
-        if (result.success) {
-          console.log('[middleware] ✅ Open Interpreter server started automatically');
-        } else {
-          console.warn('[middleware] ⚠️ Failed to start Open Interpreter server:', result.error);
-        }
-      } else {
-        console.log('[middleware] ✅ Open Interpreter server already running');
-      }
-    }
-
-    // Legacy Big Brother support (deprecated but kept for backward compatibility)
-    const { loadOperatorConfig } = await import('@metahuman/core/config');
-    const operatorConfig = loadOperatorConfig();
-    const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
-
-    if (bigBrotherEnabled && config.activeBackend === 'local-skills') {
-      console.log('[middleware] 🤖 Big Brother mode enabled (legacy) - auto-starting Claude session...');
-
-      const { startClaudeSession, isClaudeSessionReady } = await import('@metahuman/core/claude-session');
-
-      if (!isClaudeSessionReady()) {
-        const started = await startClaudeSession(true);
-        if (started) {
-          console.log('[middleware] ✅ Claude session started automatically');
-          await spawnBigBrotherTerminal();
-        } else {
-          console.warn('[middleware] ⚠️ Failed to start Claude session - Claude CLI may not be installed');
-        }
-      } else {
-        console.log('[middleware] ✅ Claude session already running');
-      }
-    }
-  } catch (err) {
-    console.error('[middleware] ⚠️ Failed to auto-start tool executor:', err);
-  }
-}
-
-// Legacy function name for backward compatibility
-async function initializeBigBrother(): Promise<void> {
-  return initializeToolExecutor();
-}
-
-async function spawnBigBrotherTerminal(): Promise<void> {
-  try {
-    const { spawn, execSync } = await import('child_process');
-    const fs = await import('fs');
-    const path = await import('path');
-
-    const REPO_ROOT = process.cwd().includes('/apps/site')
-      ? path.resolve(process.cwd(), '../..')
-      : process.cwd();
-    const LOG_DIR = path.join(REPO_ROOT, 'logs/run');
-    const TTYD_BIN = path.join(REPO_ROOT, 'bin/ttyd');
-    const CLAUDE_PORT = 3099;
-
-    // Check if ttyd is already running on this port
-    try {
-      const result = execSync(`ss -tlnp 2>/dev/null | grep :${CLAUDE_PORT}`, { encoding: 'utf8' });
-      if (result.includes('ttyd')) {
-        console.log('[middleware] ✅ Big Brother terminal already running on port', CLAUDE_PORT);
-        return;
-      }
-    } catch {
-      // Port not in use, continue to spawn
-    }
-
-    // Ensure log directory exists
-    if (!fs.existsSync(LOG_DIR)) {
-      fs.mkdirSync(LOG_DIR, { recursive: true });
-    }
-
-    // Create/clear the session log file
-    const sessionLogPath = path.join(LOG_DIR, 'big-brother-session.log');
-    fs.writeFileSync(sessionLogPath, `
-════════════════════════════════════════════════════════════════════════════════
-🤖 BIG BROTHER MODE - Claude Code Session Log
-════════════════════════════════════════════════════════════════════════════════
-Started: ${new Date().toISOString()}
-
-This terminal shows all Big Brother escalations in real-time.
-When the operator gets stuck, it will send prompts to Claude Code for guidance.
-
-Waiting for escalations...
-════════════════════════════════════════════════════════════════════════════════
-
-`);
-
-    // Spawn ttyd (note: --title-format not supported in ttyd 1.7.x)
-    const logFile = path.join(LOG_DIR, 'big-brother-terminal.log');
-    const ttydProcess = spawn(TTYD_BIN, [
-      '--port', CLAUDE_PORT.toString(),
-      '--writable',
-      '--cwd', REPO_ROOT,
-      '/usr/bin/tail', '-f', sessionLogPath
-    ], {
-      detached: true,
-      stdio: ['ignore', fs.openSync(logFile, 'a'), fs.openSync(logFile, 'a')]
-    });
-
-    ttydProcess.unref();
-
-    // Save PID file
-    const pidFile = path.join(LOG_DIR, 'big-brother-terminal.pid');
-    fs.writeFileSync(pidFile, ttydProcess.pid!.toString());
-
-    console.log('[middleware] ✅ Big Brother terminal spawned on port', CLAUDE_PORT);
-  } catch (err) {
-    console.error('[middleware] ⚠️ Failed to spawn Big Brother terminal:', err);
-  }
-}
-
-// Initialize Big Brother on module load (server start)
-initializeBigBrother();
 
 // CORS headers for mobile app cross-origin requests
 // When the mobile app loads from file:// and calls https://mh.dndiy.org/api/*
@@ -243,31 +110,6 @@ async function processRequest(context: any, next: any) {
     const session = validateSession(sessionCookie.value);
 
     if (session) {
-      // Handle anonymous sessions
-      if (session.role === 'anonymous') {
-        // All anonymous users use the 'guest' profile
-        const activeProfile = session.metadata?.activeProfile || undefined;
-
-        // Set anonymous context in locals
-        context.locals.userContext = {
-          userId: 'anonymous',
-          username: 'anonymous', // Always 'anonymous' for anonymous users
-          role: 'anonymous',
-          activeProfile: activeProfile, // The selected profile ('guest')
-        };
-
-        // Run request with anonymous user context
-        return await runWithUserContext(
-          {
-            userId: 'anonymous',
-            username: 'anonymous', // Always 'anonymous' for anonymous users
-            role: 'anonymous',
-            activeProfile, // The selected profile ('guest')
-          },
-          () => next()
-        );
-      }
-
       // Get CURRENT user details from database (not cached in session)
       // This ensures role changes are immediately reflected
       const user = getUser(session.userId);
@@ -289,19 +131,13 @@ async function processRequest(context: any, next: any) {
     }
   }
 
-  // SECURITY: No session - run with anonymous context
+  // SECURITY: No session - run WITHOUT user context
   // NOTE: Dev auto-login removed for security (2025-11-20)
   // Use scripts/dev-session.ts to create auth session in development
-  // Set anonymous context in locals
-  context.locals.userContext = {
-    userId: 'anonymous',
-    username: 'anonymous',
-    role: 'anonymous',
-  };
-
-  // This prevents fallback to root paths and protects owner data
-  return await runWithUserContext(
-    { userId: 'anonymous', username: 'anonymous', role: 'anonymous' },
-    () => next()
-  );
+  //
+  // By not setting user context, getUserContext() returns undefined, which:
+  // 1. Prevents storage router from creating profile directories
+  // 2. Causes config loading to fall back to system etc/ paths
+  // 3. Handlers check req.user.isAuthenticated to reject unauthenticated requests
+  return await next();
 }

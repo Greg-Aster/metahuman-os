@@ -883,6 +883,31 @@
     }
   }
 
+  /* Active Operator Toggle */
+  .active-operator-toggle {
+    @apply inline-flex items-center gap-1 px-2 py-1.5 border border-black/15 dark:border-white/20 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 rounded-md cursor-pointer transition-all;
+  }
+
+  .active-operator-toggle:hover {
+    @apply bg-gray-50 dark:bg-gray-800;
+  }
+
+  .active-operator-toggle.active {
+    @apply bg-amber-500 dark:bg-amber-400 text-white dark:text-gray-900 border-amber-500 dark:border-amber-400;
+  }
+
+  .active-operator-toggle.loading {
+    @apply opacity-60 cursor-wait;
+  }
+
+  .active-operator-icon {
+    @apply text-base;
+  }
+
+  .active-operator-badge {
+    @apply text-xs bg-amber-600 dark:bg-amber-500 text-white dark:text-gray-900 rounded px-1 font-bold;
+  }
+
   .icon-btn {
     @apply inline-flex items-center gap-1 px-2 py-1.5 border border-black/15 dark:border-white/20 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 rounded-md cursor-pointer;
   }

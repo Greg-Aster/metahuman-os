@@ -26,7 +26,7 @@ import {
   searchMemory,
   storageClient,
   audit,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   loadCuriosityConfig,
   loadPersonaCore,
@@ -368,33 +368,32 @@ export async function runCycle(options: InnerCuriosityOptions = {}): Promise<Inn
   };
 
   try {
-    const loggedInUsers = getLoggedInUsers();
+    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+    const activeUser = getTargetUser();
 
-    if (loggedInUsers.length === 0) {
-      console.log('[inner-curiosity] No logged-in users found, exiting.');
+    if (!activeUser) {
+      console.log('[inner-curiosity] No active users found, exiting.');
       result.success = true;
       return result;
     }
 
-    console.log(`[inner-curiosity] Processing ${loggedInUsers.length} logged-in user(s)...`);
-    result.userCount = loggedInUsers.length;
+    console.log(`[inner-curiosity] Processing user: ${activeUser.username}`);
+    result.userCount = 1;
 
-    for (const user of loggedInUsers) {
-      try {
-        const success = await withUserContext(
-          { userId: user.userId, username: user.username, role: user.role },
-          async () => generateInnerQuestion(user.username)
-        );
+    try {
+      const success = await withUserContext(
+        { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
+        async () => generateInnerQuestion(activeUser.username)
+      );
 
-        if (success) result.questionsGenerated++;
-      } catch (error) {
-        const errorMsg = `User ${user.username}: ${(error as Error).message}`;
-        console.error(`[inner-curiosity] Failed: ${errorMsg}`);
-        result.errors.push(errorMsg);
-      }
+      if (success) result.questionsGenerated++;
+    } catch (error) {
+      const errorMsg = `User ${activeUser.username}: ${(error as Error).message}`;
+      console.error(`[inner-curiosity] Failed: ${errorMsg}`);
+      result.errors.push(errorMsg);
     }
 
-    console.log(`[inner-curiosity] Cycle complete. Generated ${result.questionsGenerated} inner questions.`);
+    console.log(`[inner-curiosity] Cycle complete. Generated ${result.questionsGenerated} inner questions for user ${activeUser.username}.`);
 
     audit({
       category: 'action',
@@ -403,7 +402,7 @@ export async function runCycle(options: InnerCuriosityOptions = {}): Promise<Inn
       actor: 'inner-curiosity',
       details: {
         questionsGenerated: result.questionsGenerated,
-        usersProcessed: loggedInUsers.length
+        username: activeUser.username
       }
     });
 

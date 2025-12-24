@@ -16,7 +16,7 @@ import {
   listEpisodicFiles,
   audit,
   loadPersonaCore,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   getUserContext,
   loadCognitiveMode,
@@ -489,23 +489,28 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
         durationMs: Date.now() - startTime,
       };
     } else if (autoMode) {
-      const users = getLoggedInUsers();
-      let totalSummarized = 0;
-      const allErrors: string[] = [];
+      // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+      const activeUser = getTargetUser();
 
-      for (const user of users) {
-        const result = await withUserContext(
-          { userId: user.userId, username: user.username, role: user.role },
-          async () => autoSummarize()
-        );
-        totalSummarized += result.summarized;
-        allErrors.push(...result.errors);
+      if (!activeUser) {
+        return {
+          success: true,
+          data: { summarized: 0, errors: [], message: 'No active user found' },
+          durationMs: Date.now() - startTime,
+        };
       }
 
+      console.log(`[summarizer] Processing user: ${activeUser.username}`);
+
+      const result = await withUserContext(
+        { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
+        async () => autoSummarize()
+      );
+
       return {
-        success: allErrors.length === 0,
-        data: { summarized: totalSummarized, errors: allErrors },
-        errors: allErrors.length > 0 ? allErrors : undefined,
+        success: result.errors.length === 0,
+        data: { summarized: result.summarized, errors: result.errors },
+        errors: result.errors.length > 0 ? result.errors : undefined,
         durationMs: Date.now() - startTime,
       };
     } else {

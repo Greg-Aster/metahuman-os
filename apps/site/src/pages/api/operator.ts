@@ -108,7 +108,7 @@ const postHandler: APIRoute = async (context) => {
     });
 
     // Check feature flag for context integration (Phase 0)
-    const runtimeConfig = loadRuntimeConfig();
+    const runtimeConfig = loadRuntimeConfig(policy.username);
     const useContextPackage = runtimeConfig.operator?.useContextPackage ?? true;
 
     let enrichedContext;

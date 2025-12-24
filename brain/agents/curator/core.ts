@@ -23,7 +23,7 @@ import {
   executeGraph,
   validateCognitiveGraph,
   audit,
-  getLoggedInUsers,
+  getTargetUser,
   systemPaths,
   type CognitiveGraph,
 } from '@metahuman/core';
@@ -120,49 +120,58 @@ export async function runCycle(options: CuratorOptions = {}): Promise<CuratorRes
   };
 
   try {
-    // Get users to process
-    let users: string[];
+    // Get user to process
+    let username: string | null = null;
 
     if (options.username) {
-      users = [options.username];
+      username = options.username;
     } else if (options.singleUser) {
-      users = ['default'];
+      username = 'default';
     } else {
-      users = getLoggedInUsers().map(u => u.username);
+      // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+      const activeUser = getTargetUser();
+      if (activeUser) {
+        username = activeUser.username;
+      }
     }
 
-    for (const username of users) {
-      try {
-        const stats = await runCuratorForUser(username);
-        result.stats[username] = stats;
-        result.usersProcessed++;
+    if (!username) {
+      console.log('[curator] No active user found');
+      return result;
+    }
 
-        audit({
-          category: 'action',
-          level: 'info',
-          event: 'curator_completed',
-          actor: 'curator',
-          details: {
-            username,
-            memoriesProcessed: stats.memoriesProcessed,
-          },
-        });
-      } catch (error) {
-        const errorMsg = `Error processing ${username}: ${(error as Error).message}`;
-        result.errors.push(errorMsg);
-        console.error(`[curator] ${errorMsg}`);
+    console.log(`[curator] Processing user: ${username}`);
 
-        audit({
-          category: 'action',
-          level: 'error',
-          event: 'curator_failed',
-          actor: 'curator',
-          details: {
-            username,
-            error: (error as Error).message,
-          },
-        });
-      }
+    try {
+      const stats = await runCuratorForUser(username);
+      result.stats[username] = stats;
+      result.usersProcessed++;
+
+      audit({
+        category: 'action',
+        level: 'info',
+        event: 'curator_completed',
+        actor: 'curator',
+        details: {
+          username,
+          memoriesProcessed: stats.memoriesProcessed,
+        },
+      });
+    } catch (error) {
+      const errorMsg = `Error processing ${username}: ${(error as Error).message}`;
+      result.errors.push(errorMsg);
+      console.error(`[curator] ${errorMsg}`);
+
+      audit({
+        category: 'action',
+        level: 'error',
+        event: 'curator_failed',
+        actor: 'curator',
+        details: {
+          username,
+          error: (error as Error).message,
+        },
+      });
     }
   } catch (error) {
     result.success = false;

@@ -22,7 +22,7 @@ import path from 'node:path';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 import {
   audit,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   executeGraph,
   validateSvelteFlowGraph,
@@ -286,34 +286,35 @@ export async function runCycle(options: TrainOfThoughtOptions = {}): Promise<Tra
 
   try {
     // Get users to process
-    let users: string[];
+    let username: string | null = null;
 
     if (options.username) {
-      users = [options.username];
+      username = options.username;
     } else if (options.singleUser) {
-      users = ['default'];
+      username = 'default';
     } else {
-      const allUsers = getLoggedInUsers();
-      users = allUsers.map(u => u.username);
+      // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+      const activeUser = getTargetUser();
+      if (activeUser) {
+        username = activeUser.username;
+      }
     }
 
-    if (users.length === 0) {
-      console.log('[train-of-thought] No users found');
+    if (!username) {
+      console.log('[train-of-thought] No active user found');
       return result;
     }
 
-    console.log(`[train-of-thought] Processing ${users.length} user(s)...`);
+    console.log(`[train-of-thought] Processing user: ${username}`);
 
-    for (const username of users) {
-      try {
-        const stats = await executeTrainOfThoughtForUser(username);
-        result.stats[username] = stats;
-        result.usersProcessed++;
-      } catch (error) {
-        const errorMsg = `Error processing ${username}: ${(error as Error).message}`;
-        result.errors.push(errorMsg);
-        console.error(`[train-of-thought] ${errorMsg}`);
-      }
+    try {
+      const stats = await executeTrainOfThoughtForUser(username);
+      result.stats[username] = stats;
+      result.usersProcessed++;
+    } catch (error) {
+      const errorMsg = `Error processing ${username}: ${(error as Error).message}`;
+      result.errors.push(errorMsg);
+      console.error(`[train-of-thought] ${errorMsg}`);
     }
 
     console.log('[train-of-thought] Cycle complete.');

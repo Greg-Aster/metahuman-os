@@ -23,7 +23,7 @@ import {
   type RouterMessage,
   storageClient,
   audit,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   loadCuriosityConfig,
   loadTrustLevel,
@@ -251,23 +251,6 @@ export async function processUserResearch(username: string): Promise<number> {
   });
 }
 
-/**
- * Find a logged-in user to process (returns first logged-in user or null)
- */
-export function getMostRecentlyActiveUser(): { userId: string; username: string; role: string } | null {
-  const users = getLoggedInUsers();
-  if (users.length === 0) return null;
-
-  // Prefer owner if logged in
-  const owner = users.find(u => u.role === 'owner');
-  if (owner) {
-    return owner;
-  }
-
-  // Return first logged-in user
-  return users[0];
-}
-
 // ─────────────────────────────────────────────────────────────
 // CLI Entry Point
 // ─────────────────────────────────────────────────────────────
@@ -292,8 +275,8 @@ export async function runCycle(options: CuriosityResearcherOptions = {}): Promis
     } else if (options.singleUser) {
       targetUser = { username: 'default' };
     } else {
-      // Default: process most recently active user only
-      const activeUser = getMostRecentlyActiveUser();
+      // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+      const activeUser = getTargetUser();
       if (activeUser) {
         targetUser = { username: activeUser.username };
       }

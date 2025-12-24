@@ -29,7 +29,7 @@ import {
   acquireLock,
   isLocked,
   initGlobalLogger,
-  getLoggedInUsers,
+  getTargetUser,
   withUserContext,
   captureEvent,
   llm,
@@ -727,33 +727,33 @@ export async function runCycle(options: DesireOutcomeReviewerOptions = {}): Prom
   };
 
   try {
-    let users: Array<{ userId: string; username: string; role: string }>;
-    if (options.username) {
-      users = [{ userId: options.username, username: options.username, role: 'owner' }];
-    } else if (options.singleUser) {
-      users = [{ userId: 'default', username: 'default', role: 'owner' }];
-    } else {
-      users = getLoggedInUsers();
+    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
+    let user = getTargetUser(options);
+    if (!user && options.singleUser) {
+      user = { userId: 'default', username: 'default', role: 'owner' };
     }
 
-    console.log(`${LOG_PREFIX} Processing ${users.length} user(s)`);
+    if (!user) {
+      console.log(`${LOG_PREFIX} No active user found`);
+      return result;
+    }
 
-    for (const user of users) {
-      try {
-        console.log(`${LOG_PREFIX} --- Processing user: ${user.username} ---`);
-        await withUserContext(user, async () => {
-          const r = await processDesires(user.username);
-          result.stats.reviewed += r.reviewed;
-          result.stats.completed += r.completed;
-          result.stats.retried += r.retried;
-          result.stats.abandoned += r.abandoned;
-          result.stats.escalated += r.escalated;
-          result.stats.continued += r.continued;
-        });
-        result.usersProcessed++;
-      } catch (error) {
-        result.errors.push(`Error processing ${user.username}: ${(error as Error).message}`);
-      }
+    console.log(`${LOG_PREFIX} Processing user: ${user.username}`);
+
+    try {
+      console.log(`${LOG_PREFIX} --- Processing user: ${user.username} ---`);
+      await withUserContext(user, async () => {
+        const r = await processDesires(user!.username);
+        result.stats.reviewed += r.reviewed;
+        result.stats.completed += r.completed;
+        result.stats.retried += r.retried;
+        result.stats.abandoned += r.abandoned;
+        result.stats.escalated += r.escalated;
+        result.stats.continued += r.continued;
+      });
+      result.usersProcessed++;
+    } catch (error) {
+      result.errors.push(`Error processing ${user.username}: ${(error as Error).message}`);
     }
 
     console.log(`${LOG_PREFIX} Outcome review complete:`);

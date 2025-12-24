@@ -64,27 +64,21 @@ function loadUserConfig(username?: string): VoiceConfig {
   // Check if we have user context (e.g., guest viewing another profile)
   const userContext = getUserContext();
 
-  // DEBUG: Log context state for troubleshooting
-  console.log('[TTS loadUserConfig] Context state:', {
-    username,
-    hasUserContext: !!userContext,
-    userContextUsername: userContext?.username,
-    userContextActiveProfile: userContext?.activeProfile,
-    hasProfilePaths: !!userContext?.profilePaths,
-    profilePathsRoot: userContext?.profilePaths?.root,
-    voiceConfigPath: userContext?.profilePaths?.voiceConfig,
-  });
-
   // Use context's profilePaths if available (for guest users viewing other profiles)
   // Otherwise construct from username parameter
   const userConfigPath = userContext?.profilePaths?.voiceConfig ||
     (username && username !== 'anonymous' ? getProfilePaths(username).voiceConfig : null);
 
-  console.log('[TTS loadUserConfig] Selected config path:', userConfigPath);
+  log.debug('loadUserConfig:', {
+    username,
+    hasUserContext: !!userContext,
+    userContextUsername: userContext?.username,
+    configPath: userConfigPath,
+  });
 
   // If no config path or username is anonymous with no context, return global config
   if (!userConfigPath) {
-    console.log('[TTS loadUserConfig] No config path, using global config');
+    log.debug('loadUserConfig: No config path, using global config');
     return globalConfig;
   }
 

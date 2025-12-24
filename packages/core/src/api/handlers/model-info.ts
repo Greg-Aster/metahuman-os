@@ -18,13 +18,13 @@ export async function handleGetModelInfo(req: UnifiedRequest): Promise<UnifiedRe
 
   try {
     // Get base model from model registry (user-specific if authenticated)
-    let baseModel = 'phi3:mini';
+    let baseModel = 'qwen3:14b';
     try {
       const username = user.isAuthenticated ? user.username : undefined;
       const registry = loadModelRegistry(false, username);
-      const fallbackId = registry.defaults?.fallback || 'default.fallback';
-      const fallbackModel = registry.models?.[fallbackId];
-      baseModel = fallbackModel?.model || 'phi3:mini';
+      const defaultId = registry.defaults?.orchestrator || 'default.orchestrator';
+      const defaultModel = registry.models?.[defaultId];
+      baseModel = defaultModel?.model || 'qwen3:14b';
     } catch {
       // Use default if config not found
     }

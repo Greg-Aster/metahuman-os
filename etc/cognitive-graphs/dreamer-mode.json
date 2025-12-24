@@ -133,6 +133,40 @@
       "height": 60
     },
     {
+      "id": "10",
+      "type": "outputNode",
+      "position": {
+        "x": 1000,
+        "y": 220
+      },
+      "data": {
+        "label": "Inner Dialogue",
+        "nodeType": "inner_dialogue_capture",
+        "schema": {
+          "id": "inner_dialogue_capture",
+          "name": "Inner Dialogue",
+          "category": "output",
+          "inputs": [
+            { "name": "text", "type": "string", "description": "The content to save as inner dialogue" }
+          ],
+          "outputs": [
+            { "name": "saved", "type": "boolean", "description": "Whether the inner dialogue was saved" }
+          ],
+          "description": "Saves dream thoughts as inner dialogue (visible in Inner Dialogue tab)",
+          "color": "#a855f7",
+          "bgColor": "#6b21a8"
+        },
+        "properties": {
+          "tags": ["dream", "subconscious", "inner"],
+          "displayColor": "#3b82f6",
+          "dialogueSource": "dreamer"
+        },
+        "title": "Inner Dialogue"
+      },
+      "width": 220,
+      "height": 80
+    },
+    {
       "id": "8",
       "type": "personaNode",
       "position": {
@@ -164,6 +198,24 @@
         }
       },
       "width": 200,
+      "height": 80
+    },
+    {
+      "id": "11",
+      "type": "outputNode",
+      "position": {
+        "x": 1000,
+        "y": 340
+      },
+      "data": {
+        "label": "TTS Output",
+        "nodeType": "tts",
+        "properties": {
+          "source": "dreamer",
+          "defaultMode": "inner"
+        }
+      },
+      "width": 180,
       "height": 80
     }
   ],
@@ -276,6 +328,28 @@
       "data": {
         "type": "string",
         "comment": "Formatted persona -> Dream Generator (for persona voice)"
+      }
+    },
+    {
+      "id": "e-2-dream-10-text",
+      "source": "2",
+      "target": "10",
+      "sourceHandle": "dream",
+      "targetHandle": "text",
+      "data": {
+        "type": "string",
+        "comment": "Dream narrative -> Inner Dialogue (blue color)"
+      }
+    },
+    {
+      "id": "e-2-dream-11-innerDialogue",
+      "source": "2",
+      "target": "11",
+      "sourceHandle": "dream",
+      "targetHandle": "innerDialogue",
+      "data": {
+        "type": "string",
+        "comment": "Dream narrative -> TTS Output (speaks in inner dialogue mode)"
       }
     }
   ]

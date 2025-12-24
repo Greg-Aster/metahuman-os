@@ -72,7 +72,7 @@ export async function handleBigBrotherEscalate(req: UnifiedRequest): Promise<Uni
     }
 
     // Load operator config
-    const config = loadOperatorConfig();
+    const config = loadOperatorConfig(user.username);
 
     // Build escalation request
     const escalationRequest: EscalationRequest = {

@@ -31,52 +31,37 @@ export interface LLMOptions {
   format?: 'text' | 'json';
 }
 
+// Imports for VLLMProvider config reading (system-wide backend config, not per-user)
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT } from './path-builder.js';
 
 /**
  * Ollama Provider - Local LLM via Ollama
+ *
+ * IMPORTANT: This is a low-level provider. Model selection should happen at the
+ * callLLM/model-router level, not here. Always specify options.model when calling
+ * generate(). This provider does NOT read user config - use callLLM() for that.
  */
 export class OllamaProvider implements LLMProvider {
   name = 'ollama';
   private endpoint: string;
-  private defaultModel: string;
-  private activeAdapter: string | null = null;
 
   constructor(endpoint = 'http://localhost:11434') {
     this.endpoint = endpoint;
-
-    // Read model registry for ALL LLM settings
-    try {
-      const configPath = path.join(ROOT, 'etc', 'models.json');
-      const registry = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-
-      // Get fallback/default model from registry
-      const fallbackModelId = registry.defaults?.fallback || 'default.fallback';
-      const fallbackModel = registry.models?.[fallbackModelId];
-      this.defaultModel = fallbackModel?.model || 'phi3:mini';
-
-      // Adapter (optional) - only use if explicitly enabled in globalSettings
-      if (registry.globalSettings?.useAdapter && registry.globalSettings?.activeAdapter) {
-        const activeAdapter = registry.globalSettings.activeAdapter;
-        this.activeAdapter = activeAdapter;
-        // Don't log - let the provider bridge handle logging based on active backend
-      } else {
-        this.activeAdapter = null;
-        // Don't log - let the provider bridge handle logging based on active backend
-      }
-    } catch (error) {
-      console.error('Error reading model registry, falling back to defaults:', error);
-      this.defaultModel = 'phi3:mini';
-      this.activeAdapter = null;
-    }
+    // No config loading here - model must be specified via options.model
+    // Use callLLM() from model-router.ts for user-specific model selection
   }
 
   async generate(messages: LLMMessage[], options: LLMOptions = {}): Promise<LLMResponse> {
+    if (!options.model) {
+      throw new Error(
+        'MISSING MODEL: OllamaProvider.generate() requires options.model to be specified.\n' +
+        'Use callLLM() from model-router.ts for automatic user-specific model selection.'
+      );
+    }
     const url = `${this.endpoint}/api/chat`;
-    // Use active adapter if available, otherwise fall back to default model
-    const model = this.activeAdapter || options.model || this.defaultModel;
+    const model = options.model;
 
     try {
       const body: any = {
@@ -120,9 +105,14 @@ export class OllamaProvider implements LLMProvider {
   }
 
   async generateJSON<T = any>(messages: LLMMessage[], options: LLMOptions = {}): Promise<T> {
+    if (!options.model) {
+      throw new Error(
+        'MISSING MODEL: OllamaProvider.generateJSON() requires options.model to be specified.\n' +
+        'Use callLLM() from model-router.ts for automatic user-specific model selection.'
+      );
+    }
     const url = `${this.endpoint}/api/chat`;
-    // Use active adapter if available, otherwise fall back to default model
-    const model = this.activeAdapter || options.model || this.defaultModel;
+    const model = options.model;
 
     try {
       const response = await fetch(url, {

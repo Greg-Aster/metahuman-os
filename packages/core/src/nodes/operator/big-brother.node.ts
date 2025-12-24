@@ -24,10 +24,23 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
 
     console.log(`[BigBrother] Escalating stuck state for goal: "${goal.substring(0, 50)}..."`);
 
+    const { getUserContext } = await import('../../context.js');
+    const userContext = getUserContext();
+
+    // Big Brother requires authenticated user (all configs are user-specific)
+    if (!userContext?.username) {
+      console.warn('[BigBrother] No authenticated user context, skipping escalation');
+      return {
+        suggestions: [],
+        reasoning: 'No authenticated user context available',
+        alternativeApproach: undefined,
+        success: false,
+      };
+    }
+
     const { loadOperatorConfig } = await import('../../config.js');
     const { escalateToBigBrother } = await import('../../big-brother.js');
-
-    const operatorConfig = loadOperatorConfig();
+    const operatorConfig = loadOperatorConfig(userContext.username);
 
     const request = {
       goal,
