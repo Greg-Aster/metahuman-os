@@ -555,9 +555,9 @@ export async function listFiles(request: StorageRequest): Promise<{
     }
 
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-    const files = entries
-      .filter(e => e.isFile())
-      .map(e => e.name);
+    // Return both files and directories - callers can filter as needed
+    // This is required for listDesireFolders() which needs to list folder names
+    const files = entries.map(e => e.name);
 
     return {
       success: true,

@@ -266,6 +266,18 @@
   }
 
   /**
+   * Update node data (used by PropertyInspector)
+   */
+  export function updateNodeData(nodeId: string, data: Record<string, any>) {
+    nodes = nodes.map((n) =>
+      n.id === nodeId
+        ? { ...n, data: { ...n.data, ...data } }
+        : n
+    );
+    notifyGraphChange();
+  }
+
+  /**
    * Update execution state for a node
    */
   export function setNodeExecutionState(

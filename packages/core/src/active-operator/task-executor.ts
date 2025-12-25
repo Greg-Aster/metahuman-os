@@ -160,13 +160,17 @@ async function executeUserMessage(
 }
 
 /**
- * Handle desire_execute task with specific desire ID.
+ * Handle desire_execute task.
+ * If a specific desireId is provided, pass it to the executor.
+ * Otherwise, the executor will process all approved desires.
  */
 async function executeDesire(
-  payload: DesireExecutePayload,
+  payload: DesireExecutePayload | undefined,
   username: string
 ): Promise<{ success: boolean; error?: string }> {
-  const result = await runAgentProcess('desire-executor', [payload.desireId], username);
+  // Only pass desireId as arg if it's actually provided
+  const args = payload?.desireId ? [payload.desireId] : [];
+  const result = await runAgentProcess('desire-executor', args, username);
   return {
     success: result.success,
     error: result.error,

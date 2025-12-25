@@ -333,23 +333,29 @@ export function appendToUserBuffer(
 /**
  * Append a reflection to a user's inner dialogue buffer
  * Convenience function for agents
+ * @param userId - The user ID to append to
+ * @param content - The reflection content
+ * @param extraMeta - Optional additional metadata (e.g., { dialogueSource: 'lizard-brain' })
  */
-export function appendReflectionToBuffer(userId: string, content: string): boolean {
+export function appendReflectionToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): boolean {
   return appendToUserBuffer(userId, 'inner', {
     role: 'reflection',
     content,
-    meta: { type: 'reflection', source: 'agent' },
+    meta: { type: 'reflection', source: 'agent', ...extraMeta },
   });
 }
 
 /**
  * Append a dream to a user's inner dialogue buffer
  * Convenience function for agents
+ * @param userId - The user ID to append to
+ * @param content - The dream content
+ * @param extraMeta - Optional additional metadata
  */
-export function appendDreamToBuffer(userId: string, content: string): boolean {
+export function appendDreamToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): boolean {
   return appendToUserBuffer(userId, 'inner', {
     role: 'dream',
     content,
-    meta: { type: 'dream', source: 'agent' },
+    meta: { type: 'dream', source: 'agent', ...extraMeta },
   });
 }

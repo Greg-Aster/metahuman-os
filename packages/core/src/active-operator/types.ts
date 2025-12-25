@@ -282,8 +282,14 @@ export interface SystemState {
   /** Hours since last index build */
   indexAgeHours: number;
 
-  /** Number of pending desires */
+  /** Number of pending desires (waiting for activation threshold) */
   pendingDesires: number;
+
+  /** Number of active desires (evaluating, planning, reviewing, executing) */
+  activeDesires: number;
+
+  /** Number of desires awaiting user approval */
+  awaitingApprovalDesires: number;
 
   /** Hours since last reflection */
   hoursSinceReflection: number;
@@ -318,6 +324,44 @@ export interface SystemState {
 
   /** Number of files in inbox awaiting ingestion */
   inboxFileCount?: number;
+
+  // ============================================================================
+  // Task Metrics (from memory/tasks/active/)
+  // ============================================================================
+
+  /** Total number of active tasks */
+  activeTasks?: number;
+
+  /** Number of high-priority tasks (P0, P1) */
+  highPriorityTasks?: number;
+
+  /** Number of overdue tasks */
+  overdueTasks?: number;
+
+  /** Number of tasks in progress */
+  inProgressTasks?: number;
+
+  /** Number of blocked tasks */
+  blockedTasks?: number;
+
+  // ============================================================================
+  // Goal Metrics (from persona/core.json goals)
+  // ============================================================================
+
+  /** Number of short-term goals */
+  shortTermGoals?: number;
+
+  /** Number of mid-term goals */
+  midTermGoals?: number;
+
+  /** Number of long-term goals */
+  longTermGoals?: number;
+
+  /** Number of proposed goals awaiting approval */
+  proposedGoals?: number;
+
+  /** Number of active goals */
+  activeGoals?: number;
 }
 
 /**

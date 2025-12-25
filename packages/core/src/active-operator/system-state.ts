@@ -21,6 +21,8 @@ import {
   isTaskCircadianAppropriate,
 } from './lizard-brain.js';
 import type { SystemState, TaskType } from './types.js';
+import { listActiveTasks } from '../memory.js';
+import { loadPersonaCore } from '../identity.js';
 
 /**
  * Generic/system tags that don't count as "meaningful" semantic tags.
@@ -117,18 +119,215 @@ async function getIndexAgeHours(username: string): Promise<number> {
 }
 
 /**
- * Get count of pending desires.
+ * Get desire counts from the folder-based storage system.
+ * This reads from the same source as the Agency UI (folders/[id]/manifest.json).
+ *
+ * Counts are categorized as:
+ * - pending: nascent, pending (not yet ready for execution)
+ * - active: evaluating, planning, reviewing, executing (in progress)
+ * - awaitingApproval: awaiting_approval (needs user action)
+ *
+ * @param username - The user profile to query (required for multi-user support)
+ */
+async function getDesireCounts(username: string): Promise<{
+  pending: number;
+  active: number;
+  awaitingApproval: number;
+}> {
+  try {
+    // Use folder-based storage (same as Agency UI)
+    const { listDesiresFromFolders } = await import('../agency/storage.js');
+    const allDesires = await listDesiresFromFolders(username);
+
+    let pending = 0;
+    let active = 0;
+    let awaitingApproval = 0;
+
+    for (const desire of allDesires) {
+      switch (desire.status) {
+        case 'pending':
+        case 'nascent':
+          pending++;
+          break;
+        case 'evaluating':
+        case 'planning':
+        case 'executing':
+          active++;
+          break;
+        case 'reviewing':
+        case 'awaiting_approval':
+          // 'reviewing' desires are waiting for the review process to complete
+          // and will transition to awaiting_approval - count them together
+          awaitingApproval++;
+          break;
+        // completed, abandoned, rejected are not counted as actionable
+      }
+    }
+
+    return { pending, active, awaitingApproval };
+  } catch (error) {
+    console.warn('[system-state] Failed to get desire counts:', error);
+    return { pending: 0, active: 0, awaitingApproval: 0 };
+  }
+}
+
+// Cache desire counts within a single gatherSystemState call
+// This prevents multiple queries to the storage system
+let cachedDesireCounts: { pending: number; active: number; awaitingApproval: number } | null = null;
+let cacheUsername: string | null = null;
+
+/**
+ * Get count of pending desires (nascent + pending status).
  */
 async function getPendingDesireCount(username: string): Promise<number> {
-  const profilePaths = getProfilePaths(username);
-  const pendingDir = path.join(profilePaths.persona, 'desires', 'pending');
-
-  if (!fs.existsSync(pendingDir)) {
-    return 0;
+  if (!cachedDesireCounts || cacheUsername !== username) {
+    cachedDesireCounts = await getDesireCounts(username);
+    cacheUsername = username;
   }
+  return cachedDesireCounts.pending;
+}
 
-  const files = fs.readdirSync(pendingDir).filter((f) => f.endsWith('.json'));
-  return files.length;
+/**
+ * Get count of active desires (evaluating, planning, reviewing, executing).
+ */
+async function getActiveDesireCount(username: string): Promise<number> {
+  if (!cachedDesireCounts || cacheUsername !== username) {
+    cachedDesireCounts = await getDesireCounts(username);
+    cacheUsername = username;
+  }
+  return cachedDesireCounts.active;
+}
+
+/**
+ * Get count of desires awaiting user approval.
+ */
+async function getAwaitingApprovalDesireCount(username: string): Promise<number> {
+  if (!cachedDesireCounts || cacheUsername !== username) {
+    cachedDesireCounts = await getDesireCounts(username);
+    cacheUsername = username;
+  }
+  return cachedDesireCounts.awaitingApproval;
+}
+
+// ============================================================================
+// Task Metrics
+// ============================================================================
+
+/**
+ * Get task metrics for the Lizard Brain.
+ * Returns counts of active, high-priority, and overdue tasks.
+ */
+function getTaskMetrics(): {
+  activeTasks: number;
+  highPriorityTasks: number;
+  overdueTasks: number;
+  inProgressTasks: number;
+  blockedTasks: number;
+} {
+  try {
+    const tasks = listActiveTasks();
+    const now = new Date();
+
+    let highPriority = 0;
+    let overdue = 0;
+    let inProgress = 0;
+    let blocked = 0;
+
+    for (const task of tasks) {
+      // High priority: P0 or P1
+      if (task.priority === 'P0' || task.priority === 'P1') {
+        highPriority++;
+      }
+
+      // Overdue: has due date in the past
+      if (task.due) {
+        const dueDate = new Date(task.due);
+        if (dueDate < now && task.status !== 'done' && task.status !== 'cancelled') {
+          overdue++;
+        }
+      }
+
+      // Status counts
+      if (task.status === 'in_progress') {
+        inProgress++;
+      } else if (task.status === 'blocked') {
+        blocked++;
+      }
+    }
+
+    return {
+      activeTasks: tasks.length,
+      highPriorityTasks: highPriority,
+      overdueTasks: overdue,
+      inProgressTasks: inProgress,
+      blockedTasks: blocked,
+    };
+  } catch (error) {
+    console.warn('[system-state] Failed to get task metrics:', error);
+    return {
+      activeTasks: 0,
+      highPriorityTasks: 0,
+      overdueTasks: 0,
+      inProgressTasks: 0,
+      blockedTasks: 0,
+    };
+  }
+}
+
+// ============================================================================
+// Goal Metrics
+// ============================================================================
+
+/**
+ * Get persona goal metrics for the Lizard Brain.
+ * Returns counts of goals by tier and status.
+ */
+function getGoalMetrics(): {
+  shortTermGoals: number;
+  midTermGoals: number;
+  longTermGoals: number;
+  proposedGoals: number;
+  activeGoals: number;
+} {
+  try {
+    const persona = loadPersonaCore();
+    const goals = persona?.goals || {};
+
+    const shortTerm = goals.shortTerm || [];
+    const midTerm = goals.midTerm || [];
+    const longTerm = goals.longTerm || [];
+
+    // Count proposed goals (awaiting user approval)
+    let proposed = 0;
+    let active = 0;
+
+    for (const tier of [shortTerm, midTerm, longTerm]) {
+      for (const goal of tier) {
+        if (goal.status === 'proposed') {
+          proposed++;
+        } else if (goal.status === 'active' || goal.status === 'planning') {
+          active++;
+        }
+      }
+    }
+
+    return {
+      shortTermGoals: shortTerm.length,
+      midTermGoals: midTerm.length,
+      longTermGoals: longTerm.length,
+      proposedGoals: proposed,
+      activeGoals: active,
+    };
+  } catch (error) {
+    console.warn('[system-state] Failed to get goal metrics:', error);
+    return {
+      shortTermGoals: 0,
+      midTermGoals: 0,
+      longTermGoals: 0,
+      proposedGoals: 0,
+      activeGoals: 0,
+    };
+  }
 }
 
 /**
@@ -335,6 +534,8 @@ export async function gatherSystemState(
     unprocessedMemories,
     indexAgeHours,
     pendingDesires,
+    activeDesires,
+    awaitingApprovalDesires,
     hoursSinceReflection,
     hoursSinceDream,
     hoursSincePsychoanalysis,
@@ -343,6 +544,8 @@ export async function gatherSystemState(
     getUnprocessedMemoryCount(username),
     getIndexAgeHours(username),
     getPendingDesireCount(username),
+    getActiveDesireCount(username),
+    getAwaitingApprovalDesireCount(username),
     getHoursSinceEventType(username, 'inner_dialogue', ['idle-thought']),
     getHoursSinceEventType(username, 'dream'),
     getHoursSinceEventType(username, 'inner_dialogue', ['psychoanalysis']),
@@ -353,11 +556,17 @@ export async function gatherSystemState(
   const idleMinutes = getIdleMinutes(username);
   const inboxFileCount = getInboxFileCount(username);
 
+  // Get task and goal metrics
+  const taskMetrics = getTaskMetrics();
+  const goalMetrics = getGoalMetrics();
+
   return {
     gatheredAt: new Date().toISOString(),
     unprocessedMemories,
     indexAgeHours,
     pendingDesires,
+    activeDesires,
+    awaitingApprovalDesires,
     hoursSinceReflection,
     hoursSinceDream,
     hoursSincePsychoanalysis,
@@ -373,6 +582,18 @@ export async function gatherSystemState(
     },
     idleMinutes: Math.round(idleMinutes),
     inboxFileCount,
+    // Task metrics
+    activeTasks: taskMetrics.activeTasks,
+    highPriorityTasks: taskMetrics.highPriorityTasks,
+    overdueTasks: taskMetrics.overdueTasks,
+    inProgressTasks: taskMetrics.inProgressTasks,
+    blockedTasks: taskMetrics.blockedTasks,
+    // Goal metrics
+    shortTermGoals: goalMetrics.shortTermGoals,
+    midTermGoals: goalMetrics.midTermGoals,
+    longTermGoals: goalMetrics.longTermGoals,
+    proposedGoals: goalMetrics.proposedGoals,
+    activeGoals: goalMetrics.activeGoals,
   };
 }
 
@@ -386,6 +607,8 @@ export function formatSystemStateForLLM(state: SystemState): string {
     `📝 Unprocessed memories: ${state.unprocessedMemories}`,
     `🔍 Vector index age: ${state.indexAgeHours.toFixed(1)} hours`,
     `💭 Pending desires: ${state.pendingDesires}`,
+    `⚡ Active desires: ${state.activeDesires}`,
+    `🔔 Awaiting approval: ${state.awaitingApprovalDesires}`,
     `🪞 Last reflection: ${state.hoursSinceReflection.toFixed(1)} hours ago`,
     `💤 Last dream: ${state.hoursSinceDream.toFixed(1)} hours ago`,
     `🧠 Last psychoanalysis: ${state.hoursSincePsychoanalysis.toFixed(1)} hours ago`,
@@ -473,15 +696,33 @@ export function getTaskRecommendations(state: SystemState): {
     });
   }
 
-  if (state.pendingDesires > 0) {
+  // Desire system recommendations
+  if (state.activeDesires > 0) {
     recommendations.push({
       task: 'desire_execute',
-      reason: `${state.pendingDesires} desires pending execution`,
+      reason: `${state.activeDesires} desires actively being processed`,
+      urgency: 'high', // Active desires should be prioritized
+    });
+  } else if (state.pendingDesires > 0) {
+    recommendations.push({
+      task: 'desire_execute',
+      reason: `${state.pendingDesires} desires ready for execution`,
       urgency: 'medium',
     });
   }
 
-  if (state.unprocessedMemories > 0 && state.unprocessedMemories <= 10) {
+  if (state.awaitingApprovalDesires > 0) {
+    // Don't recommend execution, but note it for the LLM
+    recommendations.push({
+      task: 'desire_execute',
+      reason: `${state.awaitingApprovalDesires} desires awaiting user approval (requires user action)`,
+      urgency: 'low', // Can't proceed without user
+    });
+  }
+
+  // Only recommend memory_curate at medium if there are at least 5 unprocessed
+  // (1-4 is too few to warrant attention - batch them up)
+  if (state.unprocessedMemories >= 5 && state.unprocessedMemories <= 10) {
     recommendations.push({
       task: 'memory_curate',
       reason: `${state.unprocessedMemories} memories need curation`,
@@ -544,11 +785,31 @@ export function getTaskRecommendations(state: SystemState): {
     }
   }
 
-  recommendations.push({
-    task: 'desire_generate',
-    reason: 'Regular desire generation cycle',
-    urgency: 'low',
-  });
+  // Desire generation - the system should actively create goals!
+  // Priority based on whether the system has any desires at all
+  const totalDesires = state.pendingDesires + state.activeDesires + state.awaitingApprovalDesires;
+  if (totalDesires === 0) {
+    // No desires at all - system has no goals! This is high priority.
+    recommendations.push({
+      task: 'desire_generate',
+      reason: 'System has no active desires - needs goals to be proactive',
+      urgency: 'high',
+    });
+  } else if (state.pendingDesires < 2 && state.activeDesires === 0) {
+    // Few desires and none being worked on - generate more
+    recommendations.push({
+      task: 'desire_generate',
+      reason: `Only ${state.pendingDesires} pending desires, should generate more goals`,
+      urgency: 'medium',
+    });
+  } else {
+    // Has some desires, regular cycle
+    recommendations.push({
+      task: 'desire_generate',
+      reason: 'Regular desire generation cycle to maintain goal pipeline',
+      urgency: 'low',
+    });
+  }
 
   // Sort by urgency
   const urgencyOrder = { high: 0, medium: 1, low: 2 };

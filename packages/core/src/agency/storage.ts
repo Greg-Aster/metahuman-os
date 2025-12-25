@@ -110,19 +110,6 @@ export async function loadDesire(desireId: string, username?: string): Promise<D
     }
   }
 
-  // Check legacy double-nested path (backwards compatibility)
-  const legacyResult = await storageClient.read({
-    username,
-    category: CATEGORY,
-    subcategory: SUBCATEGORY,
-    relativePath: `desires/pending/${desireId}.json`,
-    encoding: 'utf8',
-  });
-
-  if (legacyResult.success && legacyResult.data) {
-    return JSON.parse(legacyResult.data as string) as Desire;
-  }
-
   // Fallback: Try folder-based storage (manifest.json)
   const folderResult = await storageClient.read({
     username,
@@ -154,6 +141,7 @@ export async function deleteDesire(desire: Desire, username?: string): Promise<v
 
 /**
  * Move a desire to a new status directory.
+ * Handles both file-based and folder-based storage.
  */
 export async function moveDesire(
   desire: Desire,
@@ -164,6 +152,29 @@ export async function moveDesire(
   const oldDir = getDesireDir(oldStatus);
   const newDir = getDesireDir(newStatus);
 
+  // Check if desire exists in folder-based storage (folders/desire-xxx/manifest.json)
+  const folderManifestPath = `folders/${desire.id}/manifest.json`;
+  const folderExists = storageClient.exists({
+    username,
+    category: CATEGORY,
+    subcategory: SUBCATEGORY,
+    relativePath: folderManifestPath,
+  });
+
+  if (folderExists) {
+    // Update the manifest in folder-based storage
+    await storageClient.write({
+      username,
+      category: CATEGORY,
+      subcategory: SUBCATEGORY,
+      relativePath: folderManifestPath,
+      data: JSON.stringify(desire, null, 2),
+      encoding: 'utf8',
+    });
+    return; // Done - folder-based storage doesn't use status directories
+  }
+
+  // Fall back to file-based storage (status directories)
   // Only move if directories are different
   if (oldDir !== newDir) {
     // Delete from old location
@@ -230,37 +241,7 @@ export async function listDesiresByStatus(
     }
   }
 
-  // 2. Check legacy double-nested path (backwards compatibility)
-  const legacyResult = await storageClient.list({
-    username,
-    category: CATEGORY,
-    subcategory: SUBCATEGORY,
-    relativePath: 'desires/pending',
-  });
-
-  if (legacyResult.success && legacyResult.files) {
-    for (const file of legacyResult.files) {
-      if (!file.endsWith('.json')) continue;
-
-      const readResult = await storageClient.read({
-        username,
-        category: CATEGORY,
-        subcategory: SUBCATEGORY,
-        relativePath: `desires/pending/${file}`,
-        encoding: 'utf8',
-      });
-
-      if (readResult.success && readResult.data) {
-        const desire = JSON.parse(readResult.data as string) as Desire;
-        if (desire.status === status && !seenIds.has(desire.id)) {
-          desires.push(desire);
-          seenIds.add(desire.id);
-        }
-      }
-    }
-  }
-
-  // 3. Check folder-based storage (folders/{id}/manifest.json)
+  // 2. Check folder-based storage (folders/{id}/manifest.json)
   const foldersResult = await storageClient.list({
     username,
     category: CATEGORY,

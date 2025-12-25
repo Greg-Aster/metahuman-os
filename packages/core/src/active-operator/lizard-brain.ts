@@ -9,14 +9,34 @@
  *
  * These triggers suggest tasks to the Active Operator decision engine
  * rather than executing directly.
+ *
+ * ============================================================================
+ * ARCHITECTURE NOTE (2024-12-23):
+ * ============================================================================
+ * The Lizard Brain is now executed via the cognitive graph system.
+ * See: etc/cognitive-graphs/lizard-brain.json
+ *
+ * STILL IN USE (imported by graph nodes):
+ * - TRIGGERS array → trigger-candidates.node.ts
+ * - TriggerResult type → trigger-candidates.node.ts
+ * - checkFocusConstraints() → service-manager.ts
+ * - CIRCADIAN_WINDOWS, circadian helpers → various
+ * - evaluateTrigger(), getTriggerStatuses() → API endpoints
+ *
+ * DEPRECATED (replaced by graph nodes):
+ * - makeUnifiedDecision() → unified-decision-llm.node.ts
+ * - TASK_DESCRIPTIONS → unified-decision-llm.node.ts
+ * - QUICK_TASKS → not needed (graph handles this)
+ * - TriggerCandidate interface → trigger-candidates.node.ts
+ * ============================================================================
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { getProfilePaths, systemPaths } from '../paths.js';
-import { audit } from '../audit.js';
+import { getProfilePaths } from '../paths.js';
 import { getFocusWindow } from '../connectors/calendar-connector.js';
-import type { TaskType, Priority, QueuedTask, TaskDecision } from './types.js';
+import type { TaskType, Priority } from './types.js';
+// Note: QueuedTask, TaskDecision, SystemState, audit were used by makeUnifiedDecision (now deprecated)
 
 // ============================================================================
 // Types
@@ -315,12 +335,15 @@ async function checkMemoryStaleness(username: string): Promise<TriggerResult> {
       }
     }
 
-    if (unprocessedCount > 0) {
+    // Require at least 5 unprocessed memories before triggering curation
+    // This prevents constant triggering for every single new memory
+    const CURATION_THRESHOLD = 5;
+    if (unprocessedCount >= CURATION_THRESHOLD) {
       return {
         shouldTrigger: true,
-        reason: `${unprocessedCount} unprocessed memories need curation`,
+        reason: `${unprocessedCount} unprocessed memories need curation (threshold: ${CURATION_THRESHOLD})`,
         urgency: unprocessedCount > 10 ? 'immediate' : 'soon',
-        data: { unprocessedCount },
+        data: { unprocessedCount, threshold: CURATION_THRESHOLD },
       };
     }
 
@@ -469,6 +492,107 @@ async function checkCalendarFocusWindow(username: string): Promise<TriggerResult
 }
 
 // ============================================================================
+// Desire System Triggers
+// ============================================================================
+
+/**
+ * Check if there are desires ready for execution.
+ * Uses folder-based storage (same as Agency UI).
+ */
+async function checkDesiresReady(username: string): Promise<TriggerResult> {
+  try {
+    const { listDesiresFromFolders } = await import('../agency/storage.js');
+    const allDesires = await listDesiresFromFolders(username);
+
+    // Count by status
+    const activeStatuses = ['evaluating', 'planning', 'reviewing', 'executing'];
+    const pendingStatuses = ['pending', 'nascent'];
+
+    const activeDesires = allDesires.filter(d => activeStatuses.includes(d.status));
+    const pendingDesires = allDesires.filter(d => pendingStatuses.includes(d.status));
+    const awaitingApproval = allDesires.filter(d => d.status === 'awaiting_approval');
+
+    // Check for active desires (currently being processed)
+    if (activeDesires.length > 0) {
+      return {
+        shouldTrigger: true,
+        reason: `${activeDesires.length} desire(s) actively being processed`,
+        urgency: 'immediate',
+        data: { activeCount: activeDesires.length, desireIds: activeDesires.map(d => d.id) },
+      };
+    }
+
+    // Check for pending desires (ready for activation)
+    if (pendingDesires.length > 0) {
+      return {
+        shouldTrigger: true,
+        reason: `${pendingDesires.length} pending desire(s) ready for execution`,
+        urgency: 'soon',
+        data: { pendingCount: pendingDesires.length, desireIds: pendingDesires.map(d => d.id) },
+      };
+    }
+
+    // Check for desires awaiting approval (inform LLM but don't execute)
+    if (awaitingApproval.length > 0) {
+      return {
+        shouldTrigger: true,
+        reason: `${awaitingApproval.length} desire(s) awaiting user approval`,
+        urgency: 'whenever', // Low urgency - requires user action
+        data: { awaitingCount: awaitingApproval.length, requiresUserAction: true },
+      };
+    }
+
+    return { shouldTrigger: false };
+  } catch {
+    return { shouldTrigger: false };
+  }
+}
+
+/**
+ * Check if the system needs to generate new desires.
+ * Uses folder-based storage (same as Agency UI).
+ */
+async function checkNeedsDesireGeneration(username: string): Promise<TriggerResult> {
+  try {
+    const { listDesiresFromFolders } = await import('../agency/storage.js');
+    const allDesires = await listDesiresFromFolders(username);
+
+    // Count actionable desires (not completed/abandoned/rejected)
+    const activeStatuses = ['evaluating', 'planning', 'reviewing', 'executing'];
+    const pendingStatuses = ['pending', 'nascent'];
+
+    const activeDesires = allDesires.filter(d => activeStatuses.includes(d.status));
+    const pendingDesires = allDesires.filter(d => pendingStatuses.includes(d.status));
+    const awaitingApproval = allDesires.filter(d => d.status === 'awaiting_approval');
+
+    const totalActionable = activeDesires.length + pendingDesires.length + awaitingApproval.length;
+
+    if (totalActionable === 0) {
+      return {
+        shouldTrigger: true,
+        reason: 'No active desires - system needs goals to be proactive',
+        urgency: 'soon',
+        data: { totalDesires: 0, needsGeneration: true },
+      };
+    }
+
+    // If we have very few pending desires, suggest generating more
+    if (pendingDesires.length < 2 && activeDesires.length === 0) {
+      return {
+        shouldTrigger: true,
+        reason: `Only ${pendingDesires.length} pending desire(s) - should generate more goals`,
+        urgency: 'whenever',
+        data: { pendingCount: pendingDesires.length, needsGeneration: true },
+      };
+    }
+
+    return { shouldTrigger: false };
+  } catch {
+    return { shouldTrigger: false };
+  }
+}
+
+// ============================================================================
 // Trigger Registry
 // ============================================================================
 
@@ -541,6 +665,25 @@ export const TRIGGERS: Trigger[] = [
     checkInterval: 60000, // 1 minute
     condition: checkCalendarFocusWindow,
   },
+  // === DESIRE SYSTEM TRIGGERS ===
+  {
+    id: 'desire_execution',
+    name: 'Desire Execution',
+    description: 'Execute pending or active desires',
+    taskType: 'desire_execute',
+    priority: 'normal',
+    checkInterval: 60000, // 1 minute
+    condition: checkDesiresReady,
+  },
+  {
+    id: 'desire_generation',
+    name: 'Desire Generation',
+    description: 'Generate new desires when none exist',
+    taskType: 'desire_generate',
+    priority: 'low',
+    checkInterval: 300000, // 5 minutes
+    condition: checkNeedsDesireGeneration,
+  },
 ];
 
 // ============================================================================
@@ -592,9 +735,20 @@ export async function checkFocusConstraints(username: string): Promise<{
   }
 }
 
-/**
- * Candidate trigger info for LLM filtering.
- */
+// ============================================================================
+// DEPRECATED CODE - Now handled by lizard-brain.json graph
+// ============================================================================
+// The following code has been replaced by graph nodes:
+// - TriggerCandidate → trigger-candidates.node.ts
+// - TASK_DESCRIPTIONS → unified-decision-llm.node.ts
+// - QUICK_TASKS → graph handles quickTasksOnly via focus constraints
+// - makeUnifiedDecision() → unified-decision-llm.node.ts + task-execution.node.ts
+//
+// Keeping commented out for reference during transition period.
+// Can be fully removed once graph-based system is verified stable.
+// ============================================================================
+
+/*
 interface TriggerCandidate {
   triggerId: string;
   triggerName: string;
@@ -605,9 +759,6 @@ interface TriggerCandidate {
   data?: unknown;
 }
 
-/**
- * Task descriptions for unified LLM decision prompt.
- */
 const TASK_DESCRIPTIONS: Record<TaskType, string> = {
   user_message: 'Process a user chat message (highest priority)',
   memory_curate: 'Run organizer to enrich memories with tags and entities',
@@ -622,219 +773,27 @@ const TASK_DESCRIPTIONS: Record<TaskType, string> = {
   code_analyze: 'Analyze codebase for TypeScript errors (self-healing)',
 };
 
-// Tasks that are considered "quick" and can run when an event is approaching
 const QUICK_TASKS: TaskType[] = ['reflect', 'inner_curiosity', 'memory_curate'];
 
-/**
- * Unified LLM decision - evaluates triggers + queue + system state and decides what to execute.
- * This is the "merged" lizard brain that handles both trigger filtering AND task selection.
- */
 export async function makeUnifiedDecision(
   username: string,
   currentQueue: readonly QueuedTask[],
-  systemState: {
-    unprocessedMemories: number;
-    indexAgeHours: number;
-    pendingDesires: number;
-    hoursSinceReflection: number;
-    userActive: boolean;
-  },
+  systemState: SystemState,
   enabledTaskTypes: TaskType[],
   quickTasksOnly: boolean = false
 ): Promise<TaskDecision | null> {
-  // Collect trigger candidates first
-  const candidates: TriggerCandidate[] = [];
-
-  for (const trigger of TRIGGERS) {
-    // Skip calendar_focus_window - it's a constraint, not a task generator
-    if (trigger.id === 'calendar_focus_window') {
-      continue;
-    }
-
-    try {
-      const result = await trigger.condition(username);
-
-      if (result.shouldTrigger) {
-        // Determine task type (circadian may override)
-        let taskType = trigger.taskType;
-        if (trigger.id === 'circadian_activity' && result.data) {
-          const recommended = (result.data as any).recommendedTasks;
-          if (recommended && recommended.length > 0) {
-            taskType = recommended[0];
-          }
-        }
-
-        // Determine priority based on urgency
-        let priority = trigger.priority;
-        if (result.urgency === 'immediate') {
-          priority = 'high';
-        } else if (result.urgency === 'whenever') {
-          priority = 'background';
-        }
-
-        candidates.push({
-          triggerId: trigger.id,
-          triggerName: trigger.name,
-          taskType,
-          priority,
-          reason: result.reason || 'Condition met',
-          urgency: result.urgency || 'soon',
-          data: result.data,
-        });
-      }
-    } catch (error) {
-      console.error(`[lizard-brain] Error evaluating trigger ${trigger.id}:`, error);
-    }
-  }
-
-  // Get recent activity context
-  const { getScratchpadContext } = await import('./state-persister.js');
-  const recentActivity = getScratchpadContext(10);
-
-  // Filter task types based on quick mode constraint
-  let allowedTaskTypes = enabledTaskTypes.filter(
-    (t: TaskType) => t !== 'user_message' && TASK_DESCRIPTIONS[t]
-  );
-
-  if (quickTasksOnly) {
-    allowedTaskTypes = allowedTaskTypes.filter((t: TaskType) => QUICK_TASKS.includes(t));
-    if (allowedTaskTypes.length === 0) {
-      return null;
-    }
-  }
-
-  // Format trigger list
-  const triggerList = candidates.length > 0
-    ? candidates.map((c) => `- [${c.urgency.toUpperCase()}] ${c.triggerName} → ${c.taskType}: ${c.reason}`).join('\n')
-    : '(No triggers fired this cycle)';
-
-  // Format queue list
-  const queueList = currentQueue.length > 0
-    ? currentQueue.slice(0, 5).map((t) => `- [${t.priority}] ${t.type}: queued ${Math.round((Date.now() - new Date(t.queuedAt).getTime()) / 60000)}m ago`).join('\n')
-    : '(Queue is empty)';
-
-  // Format task options
-  const taskOptions = allowedTaskTypes
-    .map((t: TaskType) => `- ${t}: ${TASK_DESCRIPTIONS[t]}`)
-    .join('\n');
-
-  // Build unified decision prompt
-  const { callLLM } = await import('../model-router.js');
-
-  const messages = [
-    {
-      role: 'system' as const,
-      content: `You are the Lizard Brain for MetaHuman OS - the unified decision maker for autonomous behavior.
-
-Your job is to look at:
-1. Triggers that just fired (conditions detected)
-2. Tasks already in queue
-3. System state
-4. Recent activity
-
-And decide: What ONE task should I execute next?
-
-Available Tasks:
-${taskOptions}
-
-Guidelines:
-1. IMMEDIATE urgency triggers usually warrant action
-2. Don't repeat tasks that ran recently (check recent activity)
-3. Prioritize HIGH urgency items, but don't neglect maintenance
-4. If queue has items, consider executing those before adding more
-5. Balance reactive (triggers) with proactive (recommendations)
-6. Consider system state - high unprocessed memories → memory_curate
-
-Respond with JSON only: {"task": "<type>", "reasoning": "<why>"}
-If nothing should run, respond: {"task": null, "reasoning": "<why waiting>"}`,
-    },
-    {
-      role: 'user' as const,
-      content: `=== TRIGGERS FIRED ===
-${triggerList}
-
-=== CURRENT QUEUE ===
-${queueList}
-
-=== SYSTEM STATE ===
-- Unprocessed memories: ${systemState.unprocessedMemories}
-- Index age: ${systemState.indexAgeHours.toFixed(1)} hours
-- Pending desires: ${systemState.pendingDesires}
-- Last reflection: ${systemState.hoursSinceReflection.toFixed(1)} hours ago
-- User active: ${systemState.userActive ? 'Yes' : 'No'}
-
-=== RECENT ACTIVITY ===
-${recentActivity}
-
-What should I do next?`,
-    },
-  ];
-
-  try {
-    const response = await callLLM({
-      role: 'orchestrator', // Use orchestrator for decision routing
-      messages,
-      userId: username,
-      options: {
-        maxTokens: 256,
-        temperature: 0.2,
-      },
-    });
-
-    // Parse response
-    const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-
-      // Log the unified decision
-      audit({
-        category: 'system',
-        level: 'info',
-        event: 'lizard_brain_unified_decision',
-        actor: 'active-operator',
-        details: {
-          triggerCount: candidates.length,
-          queueLength: currentQueue.length,
-          task: parsed.task,
-          reasoning: parsed.reasoning,
-          triggers: candidates.map((c) => c.triggerId),
-        },
-      });
-
-      if (parsed.task && TASK_DESCRIPTIONS[parsed.task as TaskType]) {
-        const { recordDecision } = await import('./state-persister.js');
-        const decision: TaskDecision = {
-          task: parsed.task as TaskType,
-          reasoning: parsed.reasoning || 'No reasoning provided',
-        };
-        recordDecision(decision);
-        return decision;
-      }
-
-      // Explicit null means wait
-      if (parsed.task === null) {
-        return null;
-      }
-    }
-
-    // Fallback: if immediate triggers exist, run the first one
-    const immediateTrigger = candidates.find((c) => c.urgency === 'immediate');
-    if (immediateTrigger && allowedTaskTypes.includes(immediateTrigger.taskType)) {
-      const { recordDecision } = await import('./state-persister.js');
-      const decision: TaskDecision = {
-        task: immediateTrigger.taskType,
-        reasoning: `Fallback: ${immediateTrigger.reason}`,
-      };
-      recordDecision(decision);
-      return decision;
-    }
-
-    return null;
-  } catch (error) {
-    console.error('[lizard-brain] Unified decision error:', error);
-    return null;
-  }
+  // ... implementation moved to unified-decision-llm.node.ts
+  // The graph now handles:
+  // 1. trigger_candidates node - evaluates TRIGGERS
+  // 2. current_queue node - gets queue state
+  // 3. system_state node - gathers metrics
+  // 4. scratchpad_context node - loads recent activity
+  // 5. unified_decision_llm node - LLM decision
+  // 6. task_execution node - runs the task
+  // 7. audit_logger, inner_dialogue_capture, tts nodes - side effects
+  throw new Error('makeUnifiedDecision is deprecated - use lizard-brain.json graph via service-manager');
 }
+*/
 
 /**
  * Evaluate a specific trigger by ID.

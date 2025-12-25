@@ -32,6 +32,9 @@ import {
   type SvelteFlowGraph,
   type Desire,
   listDesiresByStatus,
+  listPendingDesires,
+  moveDesire,
+  saveDesire,
   isAgencyEnabled,
 } from '@metahuman/core';
 
@@ -259,6 +262,69 @@ async function processDesire(
 }
 
 /**
+ * Promote pending desires to planning status.
+ *
+ * Pending desires have crossed the activation threshold and are ready for plan generation.
+ * This moves them to 'planning' status so they can be picked up by processPlanningDesires.
+ */
+export async function promotePendingDesires(
+  username: string,
+  maxToPromote: number = 3
+): Promise<number> {
+  if (!await isAgencyEnabled(username)) {
+    return 0;
+  }
+
+  const pendingDesires = await listPendingDesires(username);
+  console.log(`${LOG_PREFIX} Found ${pendingDesires.length} pending desires ready for planning`);
+
+  if (pendingDesires.length === 0) {
+    return 0;
+  }
+
+  // Sort by strength descending (strongest desires get planned first)
+  pendingDesires.sort((a, b) => (b.strength || 0) - (a.strength || 0));
+
+  // Promote up to maxToPromote desires
+  const toPromote = pendingDesires.slice(0, maxToPromote);
+  let promoted = 0;
+
+  for (const desire of toPromote) {
+    const now = new Date().toISOString();
+    const updatedDesire: Desire = {
+      ...desire,
+      status: 'planning',
+      updatedAt: now,
+    };
+
+    try {
+      await moveDesire(updatedDesire, 'pending', 'planning', username);
+      promoted++;
+
+      audit({
+        category: 'agent',
+        level: 'info',
+        event: 'desire_promoted_to_planning',
+        actor: 'desire-planner',
+        details: {
+          desireId: desire.id,
+          title: desire.title,
+          strength: desire.strength,
+          reinforcements: desire.reinforcements,
+          username,
+        },
+      });
+
+      console.log(`${LOG_PREFIX} ⬆ Promoted "${desire.title}" to planning (strength: ${(desire.strength || 0).toFixed(2)})`);
+    } catch (error) {
+      console.error(`${LOG_PREFIX} Failed to promote desire ${desire.id}:`, error);
+    }
+  }
+
+  return promoted;
+}
+
+/**
  * Process all desires in 'planning' status for a user
  */
 export async function processPlanningDesires(
@@ -411,6 +477,13 @@ export async function runCycle(options: DesirePlannerOptions = {}): Promise<Desi
     try {
       console.log(`${LOG_PREFIX} --- Processing user: ${user.username} ---`);
       await withUserContext(user, async () => {
+        // Step 1: Promote pending desires to planning
+        const promoted = await promotePendingDesires(user!.username, config.processing?.batchSize || 3);
+        if (promoted > 0) {
+          console.log(`${LOG_PREFIX} Promoted ${promoted} pending desire(s) to planning`);
+        }
+
+        // Step 2: Process desires in planning status
         const r = await processPlanningDesires(user!.username, config);
         result.stats.planned += r.planned;
         result.stats.approved += r.approved;

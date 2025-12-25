@@ -112,12 +112,17 @@ export const InnerDialogueCaptureNode: NodeDefinition = defineNode({
       });
 
       // Write to conversation buffer for immediate UI access
+      // Pass dialogueSource and displayColor for proper UI labeling
       if (context.userId) {
+        const extraMeta = {
+          ...(dialogueSource ? { dialogueSource } : {}),
+          ...(displayColor ? { displayColor } : {}),
+        };
         const isDream = options.tags?.includes('dream') || options.tags?.includes('lucid');
         if (isDream) {
-          appendDreamToBuffer(context.userId, reflectionText);
+          appendDreamToBuffer(context.userId, reflectionText, extraMeta);
         } else {
-          appendReflectionToBuffer(context.userId, reflectionText);
+          appendReflectionToBuffer(context.userId, reflectionText, extraMeta);
         }
       }
 

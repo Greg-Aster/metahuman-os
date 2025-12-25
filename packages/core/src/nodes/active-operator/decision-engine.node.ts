@@ -130,10 +130,10 @@ const execute: NodeExecutor = async (inputs, context) => {
   const systemState: SystemState = await gatherSystemState(username, queueLength);
   const stateText = formatSystemStateForLLM(systemState);
 
-  // Get task recommendations
+  // Get task recommendations - show more options so LLM sees diverse tasks
   const recommendations = getTaskRecommendations(systemState);
   const recommendationsText = recommendations
-    .slice(0, 5)
+    .slice(0, 8) // Show top 8 to include more task variety
     .map((r) => `- [${r.urgency.toUpperCase()}] ${r.task}: ${r.reason}`)
     .join('\n');
 
@@ -192,7 +192,8 @@ What should I focus on next? Respond with JSON only.`,
         modelRole = 'persona';
         break;
       case 'fast':
-        modelRole = 'fallback';
+        // 'fast' uses orchestrator role (typically maps to a fast model)
+        modelRole = 'orchestrator';
         break;
       default:
         modelRole = 'orchestrator';

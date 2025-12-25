@@ -138,6 +138,7 @@
           class="message message-{message.role}"
           class:message-selected={selectedMessageIndex === i}
           data-facet={message.meta?.facet || 'default'}
+          style={message.meta?.displayColor ? `--message-accent-color: ${message.meta.displayColor}` : ''}
           on:click={() => handleMessageClick(message, i)}
           role="button"
           tabindex="0"
@@ -153,7 +154,11 @@
                   MetaHuman{#if message.meta?.facet && message.meta.facet !== 'default'}<span class="facet-indicator" title="Speaking as {message.meta.facet} facet"> · {message.meta.facet}</span>{/if}
                 {/if}
               {:else if message.role === 'reflection'}
-                💭 Idle Thought
+                {#if message.meta?.dialogueSource === 'lizard-brain'}
+                  ⚡ Lizard Brain
+                {:else}
+                  💭 Idle Thought
+                {/if}
               {:else if message.role === 'dream'}
                 🌙 Dream
               {:else}

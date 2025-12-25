@@ -2,9 +2,8 @@
   "version": "2.0",
   "format": "svelte-flow",
   "name": "Lizard Brain - Unified Decision Engine",
-  "description": "Single LLM-based decision engine that evaluates triggers, queue state, and system context to decide what task to execute next. Replaces separate trigger filtering + task selection LLMs.",
-  "cognitiveMode": "active-operator",
-  "last_modified": "2025-12-22T00:00:00.000Z",
+  "description": "Single LLM-based decision engine that evaluates triggers, queue state, and system context to decide what task to execute next. System utility graph - runs agents autonomously.",
+  "last_modified": "2025-12-25T00:00:00.000Z",
   "nodes": [
     {
       "id": "1",
@@ -67,9 +66,22 @@
           "outputs": [
             { "name": "unprocessedMemories", "type": "number", "description": "Count of unprocessed memories" },
             { "name": "indexAgeHours", "type": "number", "description": "Hours since last index build" },
-            { "name": "pendingDesires", "type": "number", "description": "Count of pending desires" },
+            { "name": "pendingDesires", "type": "number", "description": "Count of pending desires (waiting for activation)" },
+            { "name": "activeDesires", "type": "number", "description": "Count of active desires (evaluating/planning/reviewing/executing)" },
+            { "name": "awaitingApprovalDesires", "type": "number", "description": "Count of desires awaiting user approval" },
             { "name": "hoursSinceReflection", "type": "number", "description": "Hours since last reflection" },
-            { "name": "userActive", "type": "boolean", "description": "Whether user is currently active" }
+            { "name": "userActive", "type": "boolean", "description": "Whether user is currently active" },
+            { "name": "activeTasks", "type": "number", "description": "Total active tasks from task manager" },
+            { "name": "highPriorityTasks", "type": "number", "description": "Count of P0/P1 priority tasks" },
+            { "name": "overdueTasks", "type": "number", "description": "Count of overdue tasks" },
+            { "name": "inProgressTasks", "type": "number", "description": "Count of tasks in progress" },
+            { "name": "blockedTasks", "type": "number", "description": "Count of blocked tasks" },
+            { "name": "shortTermGoals", "type": "number", "description": "Count of short-term persona goals" },
+            { "name": "midTermGoals", "type": "number", "description": "Count of mid-term persona goals" },
+            { "name": "longTermGoals", "type": "number", "description": "Count of long-term persona goals" },
+            { "name": "proposedGoals", "type": "number", "description": "Count of proposed goals awaiting approval" },
+            { "name": "activeGoals", "type": "number", "description": "Count of active persona goals" },
+            { "name": "systemState", "type": "object", "description": "Full system state object for LLM context" }
           ],
           "description": "Provides current system state metrics for context-aware decisions",
           "color": "#60a5fa",
@@ -288,7 +300,7 @@
         },
         "properties": {
           "title": "Lizard Brain - Unified Decision Engine",
-          "content": "PURPOSE: Single LLM makes ALL autonomous decisions (no separate filter + selector)\n\nFLOW:\n1. Trigger Candidates - All triggers that passed their condition check\n2. Current Queue - Tasks already waiting to be executed\n3. System State - Metrics like unprocessed memories, index age, etc.\n4. Recent Activity - What ran recently (to avoid repetition)\n5. Unified LLM - ONE call decides what to execute next\n6. Task Execution - Chosen task is executed immediately\n\nKEY PRINCIPLE: One brain, one decision - no queue bloat, no redundancy.",
+          "content": "PURPOSE: Single LLM makes ALL autonomous decisions (no separate filter + selector)\n\nFLOW:\n1. Trigger Candidates - All triggers that passed their condition check\n2. Current Queue - Tasks already waiting to be executed\n3. System State - Metrics including memories, desires, user tasks, and persona goals\n4. Recent Activity - What ran recently (to avoid repetition)\n5. Unified LLM - ONE call decides what to execute next\n6. Task Execution - Chosen task is executed immediately\n\nKEY PRINCIPLE: One brain, one decision - task/goal aware, no queue bloat.",
           "style": "info"
         },
         "title": "Documentation"
@@ -318,10 +330,10 @@
       "id": "e-3-state-5-state",
       "source": "3",
       "target": "5",
-      "sourceHandle": "unprocessedMemories",
+      "sourceHandle": "systemState",
       "targetHandle": "systemState",
       "type": "default",
-      "data": { "comment": "System state -> Unified LLM" }
+      "data": { "comment": "System state -> Unified LLM (full object with desire counts)" }
     },
     {
       "id": "e-4-activity-5-activity",

@@ -554,7 +554,7 @@ export {
   evaluateTrigger,
   getTriggerStatuses,
   checkFocusConstraints,
-  makeUnifiedDecision,
+  // makeUnifiedDecision - DEPRECATED: now handled by lizard-brain.json graph
   // Service Manager (lifecycle control)
   startActiveOperatorService,
   stopActiveOperatorService,

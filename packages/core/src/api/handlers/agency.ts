@@ -27,7 +27,7 @@ import {
 import { audit } from '../../audit.js';
 
 const ALL_STATUSES: DesireStatus[] = [
-  'nascent', 'pending', 'evaluating', 'planning', 'reviewing',
+  'nascent', 'pending', 'evaluating', 'planning', 'reviewing', 'awaiting_approval',
   'approved', 'executing', 'awaiting_review', 'completed', 'rejected', 'abandoned', 'failed'
 ];
 
@@ -35,7 +35,7 @@ const ALL_STATUSES: DesireStatus[] = [
  * GET /api/agency/desires - List desires
  *
  * Query params:
- *   - status: filter by status ('all', 'active', 'pending', or specific status)
+ *   - status: filter by status ('all', 'active', 'pending', or comma-separated list)
  */
 export async function handleListDesires(req: UnifiedRequest): Promise<UnifiedResponse> {
   const { user, params } = req;
@@ -48,21 +48,32 @@ export async function handleListDesires(req: UnifiedRequest): Promise<UnifiedRes
   }
 
   try {
-    const status = params?.status || 'all';
+    const statusParam = params?.status || 'all';
     let desires: Desire[];
 
-    if (status === 'all') {
+    if (statusParam === 'all') {
+      // Load all statuses
       desires = [];
       for (const s of ALL_STATUSES) {
         const d = await listDesiresByStatus(s, user.username);
         desires.push(...d);
       }
-    } else if (status === 'active') {
+    } else if (statusParam.includes(',')) {
+      // Comma-separated list of statuses
+      const statuses = statusParam.split(',').map(s => s.trim()) as DesireStatus[];
+      desires = [];
+      for (const s of statuses) {
+        if (ALL_STATUSES.includes(s)) {
+          const d = await listDesiresByStatus(s, user.username);
+          desires.push(...d);
+        }
+      }
+    } else if (statusParam === 'active') {
       desires = await listActiveDesires(user.username);
-    } else if (status === 'pending') {
+    } else if (statusParam === 'pending') {
       desires = await listPendingDesires(user.username);
     } else {
-      desires = await listDesiresByStatus(status as DesireStatus, user.username);
+      desires = await listDesiresByStatus(statusParam as DesireStatus, user.username);
     }
 
     // Sort by createdAt descending

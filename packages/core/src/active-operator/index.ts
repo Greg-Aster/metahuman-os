@@ -125,7 +125,7 @@ export {
   evaluateTrigger,
   getTriggerStatuses,
   checkFocusConstraints,
-  makeUnifiedDecision,
+  // makeUnifiedDecision - DEPRECATED: now handled by lizard-brain.json graph
 } from './lizard-brain.js';
 
 // Service Manager (lifecycle control)

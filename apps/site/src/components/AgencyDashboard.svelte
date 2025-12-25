@@ -159,7 +159,7 @@
 
   let loading = true;
   let error = '';
-  let statusFilter: string = 'all';
+  let statusFilter: string = 'active';  // Default to showing active/in-progress work
   let processingId: string | null = null;
 
   // New desire form
@@ -519,11 +519,31 @@
     }
   }
 
+  // Map grouped filter options to actual status values
+  function getStatusesForFilter(filter: string): string[] {
+    switch (filter) {
+      case 'active':
+        // Everything that's being worked on (not finished)
+        return ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved', 'executing', 'awaiting_review'];
+      case 'needs_action':
+        // User needs to do something
+        return ['awaiting_approval', 'awaiting_review'];
+      case 'completed':
+        return ['completed', 'failed'];
+      case 'archived':
+        return ['rejected', 'abandoned'];
+      case 'all':
+      default:
+        return []; // Empty means all
+    }
+  }
+
   async function loadDesires() {
     try {
       const params = new URLSearchParams();
-      if (statusFilter !== 'all') {
-        params.set('status', statusFilter);
+      const statuses = getStatusesForFilter(statusFilter);
+      if (statuses.length > 0) {
+        params.set('status', statuses.join(','));
       }
       const url = params.size ? `/api/agency/desires?${params}` : '/api/agency/desires?status=all';
       const res = await fetch(url);
@@ -1160,18 +1180,11 @@
     <div class="controls mt-4">
       <div class="flex items-center gap-2">
         <select bind:value={statusFilter} on:change={loadDesires} class="select-input">
-          <option value="all">All Status</option>
-          <option value="nascent">Nascent (Growing)</option>
-          <option value="pending">Pending</option>
-          <option value="planning">Planning</option>
-          <option value="reviewing">Reviewing</option>
-          <option value="awaiting_approval">⭐ Awaiting Approval</option>
-          <option value="approved">Approved</option>
-          <option value="executing">Executing</option>
-          <option value="awaiting_review">🔍 Awaiting Review</option>
-          <option value="completed">Completed</option>
-          <option value="rejected">Rejected</option>
-          <option value="abandoned">Abandoned</option>
+          <option value="active">🔄 Active (In Progress)</option>
+          <option value="needs_action">⚠️ Needs Your Action</option>
+          <option value="completed">✅ Completed</option>
+          <option value="archived">📦 Archived</option>
+          <option value="all">All</option>
         </select>
         <button class="btn-secondary" on:click={() => loadAll(true, true)}>Refresh</button>
       </div>
@@ -1213,6 +1226,52 @@
             </select>
           </label>
           <button class="btn-primary" on:click={handleCreateDesire}>Create</button>
+        </div>
+      </div>
+    {/if}
+
+    <!-- GROWING DESIRES - Nascent desires building strength -->
+    {#if desires.filter(d => d.status === 'nascent').length > 0}
+      <div class="growing-desires-section mt-4">
+        <div class="growing-header">
+          <h2 class="growing-title">🌱 Growing Desires</h2>
+          <span class="growing-count">{desires.filter(d => d.status === 'nascent').length} desire(s) building strength</span>
+        </div>
+        <p class="growing-description">These desires are being reinforced through your conversations. When they reach sufficient strength, they'll move to planning.</p>
+
+        <div class="growing-grid">
+          {#each desires.filter(d => d.status === 'nascent').sort((a, b) => (b.strength || 0) - (a.strength || 0)) as desire}
+            <div class="growing-card">
+              <div class="growing-card-header">
+                <span class="source-icon">{getSourceIcon(desire.source)}</span>
+                <span class="growing-card-title">{desire.title}</span>
+              </div>
+              <div class="growing-progress">
+                <div class="progress-bar-bg">
+                  <div
+                    class="progress-bar-fill"
+                    style="width: {Math.min(100, ((desire.strength || 0) / (desire.threshold || 0.7)) * 100)}%"
+                  ></div>
+                </div>
+                <div class="progress-stats">
+                  <span class="strength-stat">Strength: {((desire.strength || 0) * 100).toFixed(0)}%</span>
+                  <span class="threshold-stat">Threshold: {((desire.threshold || 0.7) * 100).toFixed(0)}%</span>
+                </div>
+              </div>
+              <div class="growing-meta">
+                <span class="reinforcement-count">💪 {desire.reinforcements || 0} reinforcements</span>
+                {#if desire.metrics?.netReinforcement !== undefined}
+                  {#if desire.metrics.netReinforcement > 0}
+                    <span class="trend-up">📈 Growing</span>
+                  {:else if desire.metrics.netReinforcement < 0}
+                    <span class="trend-down">📉 Decaying</span>
+                  {:else}
+                    <span class="trend-stable">⚖️ Stable</span>
+                  {/if}
+                {/if}
+              </div>
+            </div>
+          {/each}
         </div>
       </div>
     {/if}
@@ -1397,7 +1456,7 @@
           <p class="text-sm muted mt-1">Desires will be generated automatically by the agency system</p>
         </div>
       {:else}
-        {#each desires as desire}
+        {#each desires.sort((a, b) => (b.strength || 0) - (a.strength || 0)) as desire}
           <div class="desire-card" style="border-left: 4px solid {getNatureColor(desire.metrics)};">
             <!-- Header with title and status badges -->
             <div class="desire-header">
@@ -1406,6 +1465,25 @@
                 <h4 class="desire-title">{desire.title}</h4>
               </div>
               <div class="flex items-center gap-2">
+                <!-- Compact strength indicator with trend -->
+                <div class="strength-compact">
+                  <div class="strength-compact-bar">
+                    <div
+                      class="strength-compact-fill"
+                      style="width: {Math.min(100, ((desire.strength || 0) / (desire.threshold || 0.7)) * 100)}%; background: {(desire.strength || 0) >= (desire.threshold || 0.7) ? '#22c55e' : '#f59e0b'};"
+                    ></div>
+                  </div>
+                  <span class="strength-compact-text">
+                    {#if desire.metrics?.netReinforcement !== undefined && desire.metrics.netReinforcement > 0}
+                      <span class="trend-arrow up">↑</span>
+                    {:else if desire.metrics?.netReinforcement !== undefined && desire.metrics.netReinforcement < 0}
+                      <span class="trend-arrow down">↓</span>
+                    {:else}
+                      <span class="trend-arrow stable">→</span>
+                    {/if}
+                    {((desire.strength || 0) * 100).toFixed(0)}%
+                  </span>
+                </div>
                 <span class={`badge ${getStatusColor(desire.status)}`}>{desire.status}</span>
                 <span class={`badge ${getRiskColor(desire.risk)}`}>{desire.risk}</span>
               </div>
@@ -2207,6 +2285,61 @@
     border-color: #374151;
   }
 
+  /* Compact strength indicator in header */
+  .strength-compact {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 80px;
+  }
+
+  .strength-compact-bar {
+    width: 50px;
+    height: 6px;
+    background: #e5e7eb;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  :global(.dark) .strength-compact-bar {
+    background: #374151;
+  }
+
+  .strength-compact-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+  }
+
+  .strength-compact-text {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #374151;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  :global(.dark) .strength-compact-text {
+    color: #d1d5db;
+  }
+
+  .trend-arrow {
+    font-weight: bold;
+  }
+
+  .trend-arrow.up {
+    color: #22c55e;
+  }
+
+  .trend-arrow.down {
+    color: #ef4444;
+  }
+
+  .trend-arrow.stable {
+    color: #6b7280;
+  }
+
   .desire-header {
     display: flex;
     justify-content: space-between;
@@ -2739,6 +2872,153 @@
 
   :global(.dark) .muted {
     color: #9ca3af;
+  }
+
+  /* ========== GROWING DESIRES SECTION ========== */
+  .growing-desires-section {
+    background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+    border: 2px solid #22c55e;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  :global(.dark) .growing-desires-section {
+    background: linear-gradient(135deg, #14532d 0%, #166534 100%);
+    border-color: #22c55e;
+  }
+
+  .growing-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+  }
+
+  .growing-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #166534;
+  }
+
+  :global(.dark) .growing-title {
+    color: #86efac;
+  }
+
+  .growing-count {
+    background: #22c55e;
+    color: white;
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .growing-description {
+    font-size: 0.8rem;
+    color: #166534;
+    margin-bottom: 1rem;
+  }
+
+  :global(.dark) .growing-description {
+    color: #a7f3d0;
+  }
+
+  .growing-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+  }
+
+  .growing-card {
+    background: white;
+    border-radius: 8px;
+    padding: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+
+  :global(.dark) .growing-card {
+    background: #1f2937;
+  }
+
+  .growing-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .growing-card-title {
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: #1f2937;
+  }
+
+  :global(.dark) .growing-card-title {
+    color: #f3f4f6;
+  }
+
+  .growing-progress {
+    margin-bottom: 0.75rem;
+  }
+
+  .progress-bar-bg {
+    height: 8px;
+    background: #e5e7eb;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  :global(.dark) .progress-bar-bg {
+    background: #374151;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #22c55e, #16a34a);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+  }
+
+  .progress-stats {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.25rem;
+  }
+
+  .strength-stat, .threshold-stat {
+    font-size: 0.7rem;
+    color: #6b7280;
+  }
+
+  :global(.dark) .strength-stat, :global(.dark) .threshold-stat {
+    color: #9ca3af;
+  }
+
+  .growing-meta {
+    display: flex;
+    gap: 0.75rem;
+    font-size: 0.75rem;
+  }
+
+  .reinforcement-count {
+    color: #059669;
+  }
+
+  :global(.dark) .reinforcement-count {
+    color: #34d399;
+  }
+
+  .trend-up {
+    color: #16a34a;
+  }
+
+  .trend-down {
+    color: #dc2626;
+  }
+
+  .trend-stable {
+    color: #6b7280;
   }
 
   /* ========== PROMINENT REVIEW SECTION ========== */

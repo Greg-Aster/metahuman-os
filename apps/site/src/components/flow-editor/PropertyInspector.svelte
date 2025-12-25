@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { useSvelteFlow } from '@xyflow/svelte';
   import type { Node } from '@xyflow/svelte';
 
   interface PropertySchema {
@@ -13,9 +12,13 @@
     step?: number;
   }
 
-  let { selectedNode }: { selectedNode: Node | null } = $props();
-
-  const { updateNodeData } = useSvelteFlow();
+  let {
+    selectedNode,
+    onUpdateNodeData,
+  }: {
+    selectedNode: Node | null;
+    onUpdateNodeData?: (nodeId: string, data: Record<string, any>) => void;
+  } = $props();
 
   // Get property schemas from node data
   const propertySchemas = $derived(
@@ -31,14 +34,14 @@
 
   // Update a property value
   function updateProperty(key: string, value: any) {
-    if (!selectedNode) return;
+    if (!selectedNode || !onUpdateNodeData) return;
 
     const newProperties = {
       ...selectedNode.data.properties,
       [key]: value
     };
 
-    updateNodeData(selectedNode.id, {
+    onUpdateNodeData(selectedNode.id, {
       properties: newProperties
     });
   }

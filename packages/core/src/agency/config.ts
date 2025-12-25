@@ -9,6 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type {
   AgencyConfig,
+  Desire,
+  DesireMetrics,
   DesireSource,
   DesireSourceConfig,
 } from './types.js';
@@ -340,12 +342,131 @@ const TRUST_LEVEL_ORDER: Record<string, number> = {
 };
 
 /**
+ * Reverse lookup: order number to trust level name.
+ */
+const TRUST_LEVEL_NAMES: Record<number, string> = {
+  0: 'observe',
+  1: 'suggest',
+  2: 'supervised_auto',
+  3: 'bounded_auto',
+  4: 'adaptive_auto',
+};
+
+/**
  * Check if current trust level meets minimum required.
  */
 function meetsMinTrustLevel(current: string, required: string): boolean {
   const currentLevel = TRUST_LEVEL_ORDER[current] ?? 0;
   const requiredLevel = TRUST_LEVEL_ORDER[required] ?? 0;
   return currentLevel >= requiredLevel;
+}
+
+// ============================================================================
+// Trust Degradation - Maturity Lowers Required Trust
+// ============================================================================
+
+/**
+ * Thresholds for trust level reduction based on desire maturity.
+ * A desire can earn up to 2 levels of trust reduction.
+ */
+export interface TrustDegradationConfig {
+  /** Reinforcements needed for 1st trust level reduction */
+  reinforcementsForLevel1: number;
+  /** Successful cycles needed for 1st trust level reduction */
+  cyclesForLevel1: number;
+  /** User approvals needed for 1st trust level reduction */
+  approvalsForLevel1: number;
+  /** Reinforcements needed for 2nd trust level reduction */
+  reinforcementsForLevel2: number;
+  /** Combined score (reinforcements + cycles + approvals) for 2nd reduction */
+  combinedScoreForLevel2: number;
+  /** Floor - never reduce below this level */
+  minimumTrustLevel: string;
+}
+
+/**
+ * Default trust degradation thresholds.
+ */
+const DEFAULT_TRUST_DEGRADATION: TrustDegradationConfig = {
+  reinforcementsForLevel1: 3,    // 3+ reinforcements = drop 1 level
+  cyclesForLevel1: 2,            // 2+ successful cycles = drop 1 level
+  approvalsForLevel1: 2,         // 2+ user approvals = drop 1 level
+  reinforcementsForLevel2: 8,    // 8+ reinforcements = drop 2nd level
+  combinedScoreForLevel2: 10,    // 10+ combined score = drop 2nd level
+  minimumTrustLevel: 'suggest',  // Never drop below 'suggest'
+};
+
+/**
+ * Calculate the effective trust level required for a desire based on its maturity.
+ *
+ * As desires prove themselves through reinforcements, successful executions,
+ * and user approvals, they earn trust and require less oversight.
+ *
+ * @param desire - The desire to evaluate
+ * @param config - Optional custom degradation config
+ * @returns The effective (potentially lower) trust level required
+ */
+export function calculateEffectiveTrustLevel(
+  desire: Desire,
+  config: TrustDegradationConfig = DEFAULT_TRUST_DEGRADATION
+): { effectiveLevel: string; reduction: number; reason: string } {
+  const baseLevel = desire.requiredTrustLevel || 'supervised_auto';
+  const baseLevelOrder = TRUST_LEVEL_ORDER[baseLevel] ?? 2;
+  const minLevelOrder = TRUST_LEVEL_ORDER[config.minimumTrustLevel] ?? 1;
+
+  // Get metrics (with safe defaults)
+  const metrics: DesireMetrics = desire.metrics || {
+    reinforcementCount: 0,
+    cycleCount: 0,
+    userApprovalCount: 0,
+    executionSuccessCount: 0,
+  } as DesireMetrics;
+
+  const reinforcements = metrics.reinforcementCount || 0;
+  const cycles = metrics.cycleCount || 0;
+  const approvals = metrics.userApprovalCount || 0;
+  const successRate = metrics.executionSuccessCount > 0
+    ? metrics.executionSuccessCount / (metrics.executionAttemptCount || 1)
+    : 0;
+
+  // Calculate trust reduction (0, 1, or 2 levels)
+  let reduction = 0;
+  const reasons: string[] = [];
+
+  // First level reduction: any one of these conditions
+  if (reinforcements >= config.reinforcementsForLevel1) {
+    reduction = Math.max(reduction, 1);
+    reasons.push(`${reinforcements} reinforcements`);
+  }
+  if (cycles >= config.cyclesForLevel1 && successRate >= 0.5) {
+    reduction = Math.max(reduction, 1);
+    reasons.push(`${cycles} successful cycles`);
+  }
+  if (approvals >= config.approvalsForLevel1) {
+    reduction = Math.max(reduction, 1);
+    reasons.push(`${approvals} user approvals`);
+  }
+
+  // Second level reduction: requires more maturity
+  const combinedScore = reinforcements + cycles + approvals;
+  if (reinforcements >= config.reinforcementsForLevel2) {
+    reduction = Math.max(reduction, 2);
+    reasons.push(`high reinforcement (${reinforcements})`);
+  }
+  if (combinedScore >= config.combinedScoreForLevel2 && successRate >= 0.7) {
+    reduction = Math.max(reduction, 2);
+    reasons.push(`mature desire (score: ${combinedScore})`);
+  }
+
+  // Apply reduction but respect minimum
+  const effectiveLevelOrder = Math.max(minLevelOrder, baseLevelOrder - reduction);
+  const effectiveLevel = TRUST_LEVEL_NAMES[effectiveLevelOrder] || baseLevel;
+
+  const reason = reduction > 0
+    ? `Trust reduced by ${reduction} level(s): ${reasons.join(', ')}`
+    : 'No trust reduction (desire not yet mature)';
+
+  return { effectiveLevel, reduction, reason };
 }
 
 /**
@@ -355,14 +476,16 @@ function meetsMinTrustLevel(current: string, required: string): boolean {
  * @param strength - Strength of the desire
  * @param currentTrustLevel - Current user trust level (from identity kernel)
  * @param username - Optional username for user-specific config
+ * @param desire - Optional desire for trust degradation calculation
  * @returns Whether the desire can skip the approval queue
  */
 export async function canAutoApprove(
   risk: string,
   strength: number,
   currentTrustLevel?: string,
-  username?: string
-): Promise<{ autoApprove: boolean; reason: string }> {
+  username?: string,
+  desire?: Desire
+): Promise<{ autoApprove: boolean; reason: string; trustDegradation?: { effectiveLevel: string; reduction: number; degradationReason: string } }> {
   const config = await loadConfig(username);
 
   // Check review bypass setting
@@ -375,6 +498,8 @@ export async function canAutoApprove(
   }
 
   // Trust-based logic
+  const trustLevel = currentTrustLevel || 'supervised_auto';
+
   // Check if risk is in auto-approve list
   const riskAllowed = config.riskPolicy.autoApproveRisk.includes(
     risk as typeof config.riskPolicy.autoApproveRisk[number]
@@ -384,29 +509,68 @@ export async function canAutoApprove(
     return { autoApprove: false, reason: `Risk level "${risk}" requires manual approval` };
   }
 
-  // Check strength threshold
-  if (strength < config.thresholds.autoApprove) {
+  // Trust level affects strength threshold:
+  // - adaptive_auto: 50% (most trusting - low bar)
+  // - bounded_auto: 65%
+  // - supervised_auto: 85% (default config threshold)
+  // - suggest/observe: no auto-approve
+  const trustStrengthThresholds: Record<string, number> = {
+    adaptive_auto: 0.50,
+    bounded_auto: 0.65,
+    supervised_auto: config.thresholds.autoApprove, // default 0.85
+  };
+
+  const effectiveThreshold = trustStrengthThresholds[trustLevel];
+
+  // If trust level doesn't allow auto-approve at all (suggest, observe)
+  if (effectiveThreshold === undefined) {
     return {
       autoApprove: false,
-      reason: `Strength ${strength.toFixed(2)} below auto-approve threshold ${config.thresholds.autoApprove}`,
+      reason: `Trust level "${trustLevel}" requires manual approval for all desires`,
     };
   }
 
-  // Check trust level
-  const trustLevel = currentTrustLevel || 'supervised_auto';
-  const requiredTrust = config.riskPolicy.autoApproveTrustLevel;
+  // Check strength threshold (adjusted by trust level)
+  if (strength < effectiveThreshold) {
+    return {
+      autoApprove: false,
+      reason: `Strength ${strength.toFixed(2)} below threshold ${effectiveThreshold.toFixed(2)} for trust "${trustLevel}"`,
+    };
+  }
+
+  // Calculate effective required trust level (with degradation from maturity)
+  let requiredTrust: string = config.riskPolicy.autoApproveTrustLevel;
+  let trustDegradation: { effectiveLevel: string; reduction: number; degradationReason: string } | undefined;
+
+  if (desire) {
+    const degradation = calculateEffectiveTrustLevel(desire);
+    if (degradation.reduction > 0) {
+      // Use the degraded (lower) trust level
+      requiredTrust = degradation.effectiveLevel;
+      trustDegradation = {
+        effectiveLevel: degradation.effectiveLevel,
+        reduction: degradation.reduction,
+        degradationReason: degradation.reason,
+      };
+    }
+  }
 
   if (!meetsMinTrustLevel(trustLevel, requiredTrust)) {
     return {
       autoApprove: false,
       reason: `Trust level "${trustLevel}" below required "${requiredTrust}"`,
+      trustDegradation,
     };
   }
 
   // All checks passed
+  const degradationNote = trustDegradation
+    ? ` (trust degraded: ${trustDegradation.degradationReason})`
+    : '';
   return {
     autoApprove: true,
-    reason: `Auto-approved: risk=${risk}, strength=${strength.toFixed(2)}, trust=${trustLevel}`,
+    reason: `Auto-approved: risk=${risk}, strength=${strength.toFixed(2)}, trust=${trustLevel}${degradationNote}`,
+    trustDegradation,
   };
 }
 

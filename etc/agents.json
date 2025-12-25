@@ -139,14 +139,14 @@
       "id": "desire-generator",
       "enabled": true,
       "type": "activity",
-      "priority": "low",
+      "priority": "normal",
       "agentPath": "desire-generator.ts",
       "usesLLM": true,
-      "inactivityThreshold": 1800,
+      "inactivityThreshold": 600,
       "runOnBoot": false,
       "autoRestart": false,
       "maxRetries": 2,
-      "comment": "Agency: Synthesizes desires from persona goals, tasks, memories, and service outputs. Now includes decay, reinforcement, and activation checking (merged from evaluator). Runs after 30 minutes of inactivity."
+      "comment": "Agency: Synthesizes desires from persona goals, tasks, memories, and conversation patterns. Reinforces existing desires when user expresses similar wants. Runs after 10 min of inactivity to process recent conversations."
     },
     "desire-executor": {
       "id": "desire-executor",

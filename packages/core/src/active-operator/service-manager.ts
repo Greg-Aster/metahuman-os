@@ -9,28 +9,139 @@
 // Import directly from modules to avoid circular imports
 import { getModeController } from './mode-controller.js';
 import { loadConfig as loadActiveOperatorConfig } from './state-persister.js';
-import { gatherSystemState } from './system-state.js';
+// gatherSystemState is now called by the graph's system_state node
 import {
   recordThought,
   updateActivitySummary,
-  saveQueueState,
   loadQueueState,
 } from './state-persister.js';
 import { isWithinBudget, shouldPauseDueToErrors } from './cost-tracker.js';
-import { makeUnifiedDecision, checkFocusConstraints } from './lizard-brain.js';
+import { checkFocusConstraints } from './lizard-brain.js';
 import type { QueuedTask } from './types.js';
 import { executeTask } from './task-executor.js';
 import { audit } from '../audit.js';
 import { getUsers, type SafeUser } from '../users.js';
+// Graph executor imports for Lizard Brain graph
+import { executeGraph } from '../graph-executor.js';
+import { validateSvelteFlowGraph, type SvelteFlowGraph } from '../cognitive-graph-schema.js';
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { ROOT } from '../path-builder.js';
 
 // Import the new unified queue system with resource lanes
 import { getQueueSystem, getQueueManager } from '../queue/index.js';
 import type { TaskType as LaneTaskType } from '../queue/types.js';
-import { captureEvent } from '../memory.js';
+// captureEvent and appendReflectionToBuffer are now handled by the graph's inner_dialogue_capture node
 import { setUserContext } from '../context.js';
-import { appendReflectionToBuffer } from '../conversation-buffer.js';
 
 const LOG_PREFIX = '[active-operator]';
+
+// Lizard Brain graph cache
+let lizardBrainGraph: SvelteFlowGraph | null = null;
+let lizardBrainGraphMtime: number = 0;
+
+/**
+ * Load the Lizard Brain cognitive graph.
+ * Caches the graph and reloads if file changed.
+ */
+async function loadLizardBrainGraph(): Promise<SvelteFlowGraph | null> {
+  const graphPath = `${ROOT}/etc/cognitive-graphs/lizard-brain.json`;
+
+  try {
+    if (!existsSync(graphPath)) {
+      console.error(`${LOG_PREFIX} Lizard Brain graph not found: ${graphPath}`);
+      return null;
+    }
+
+    const { stat } = await import('node:fs/promises');
+    const stats = await stat(graphPath);
+
+    // Use cached graph if unchanged
+    if (lizardBrainGraph && stats.mtimeMs === lizardBrainGraphMtime) {
+      return lizardBrainGraph;
+    }
+
+    // Load and validate graph
+    const raw = await readFile(graphPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    const validated = validateSvelteFlowGraph(parsed);
+
+    lizardBrainGraph = validated;
+    lizardBrainGraphMtime = stats.mtimeMs;
+
+    console.log(`${LOG_PREFIX} Loaded Lizard Brain graph: ${validated.nodes.length} nodes, ${validated.edges.length} edges`);
+    return validated;
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Failed to load Lizard Brain graph:`, error);
+    return null;
+  }
+}
+
+/**
+ * Execute the Lizard Brain graph for autonomous decision making.
+ * The graph handles: trigger evaluation, queue check, LLM decision, task execution, audit, TTS.
+ */
+async function executeLizardBrainGraph(username: string): Promise<{
+  executed: boolean;
+  task?: string;
+  success?: boolean;
+  error?: string;
+}> {
+  const graph = await loadLizardBrainGraph();
+  if (!graph) {
+    return { executed: false, error: 'Failed to load Lizard Brain graph' };
+  }
+
+  // Build context for graph execution
+  // NOTE: No cognitiveMode here - the lizard brain is a system utility that runs
+  // agents autonomously. It should NOT be tied to any cognitive mode mapping.
+  // The unified_decision_llm node uses role: 'orchestrator' directly.
+  const context = {
+    userId: username,
+    username,
+    sessionId: `active-operator-${Date.now()}`,
+    environment: 'server', // Force server execution for real node executors
+    allowMemoryWrites: true, // Enable inner_dialogue_capture to save decisions
+  };
+
+  try {
+    console.log(`${LOG_PREFIX} Executing Lizard Brain graph for ${username}`);
+
+    const graphState = await executeGraph(graph, context, (event) => {
+      // Log graph execution events
+      if (event.type === 'node_start') {
+        console.log(`${LOG_PREFIX} [Graph] Node started: ${event.nodeId}`);
+      } else if (event.type === 'node_error') {
+        console.error(`${LOG_PREFIX} [Graph] Node error: ${event.nodeId}`, event.data);
+      }
+    });
+
+    if (graphState.status === 'failed') {
+      console.error(`${LOG_PREFIX} Lizard Brain graph execution failed`);
+      return { executed: false, error: 'Graph execution failed' };
+    }
+
+    // Extract results from graph output
+    // The task_execution node (id: 6) provides the execution result
+    const taskExecutionState = graphState.nodes.get('6');
+    const decisionState = graphState.nodes.get('5');
+
+    const task = decisionState?.outputs?.task;
+    const executed = taskExecutionState?.outputs?.executed ?? false;
+    const success = taskExecutionState?.outputs?.success ?? false;
+
+    console.log(`${LOG_PREFIX} Graph execution complete: task=${task}, executed=${executed}, success=${success}`);
+
+    return {
+      executed,
+      task,
+      success,
+    };
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Lizard Brain graph execution error:`, error);
+    return { executed: false, error: (error as Error).message };
+  }
+}
 
 // Service state
 let isRunning = false;
@@ -129,86 +240,25 @@ async function runDecisionLoop(username: string): Promise<void> {
         continue;
       }
 
-      // Get queue stats from the new lane-based system
-      const queueStats = queueManager.getStats();
+      // Execute the Lizard Brain graph
+      // The graph handles: trigger evaluation, queue check, LLM decision, task execution, audit, TTS
+      const graphResult = await executeLizardBrainGraph(username);
 
-      // Gather system state for unified decision
-      const systemState = await gatherSystemState(username, queueStats.totalQueued);
-
-      // Get all tasks from the queue for decision making
-      const allTasks = queueManager.getAllTasks();
-      const tasksForDecision: QueuedTask[] = allTasks.map(t => ({
-        id: t.id,
-        type: t.type as any,
-        priority: t.priority as any,
-        queuedAt: t.queuedAt,
-        payload: t.payload as any,
-        username: t.username,
-      }));
-
-      // Unified decision: evaluates triggers + queue + state in ONE LLM call
-      const decision = await makeUnifiedDecision(
-        username,
-        tasksForDecision,
-        systemState,
-        config.enabledTaskTypes,
-        quickTasksOnly
-      );
-
-      if (!decision) {
-        // No decision made, wait and retry
+      if (!graphResult.executed) {
+        // No task was executed (either no decision made or graph error)
+        if (graphResult.error) {
+          console.warn(`${LOG_PREFIX} Graph execution issue: ${graphResult.error}`);
+        }
         await sleep(config.cooldownMs * 2);
         continue;
       }
 
-      // Execute the chosen task via the lane-based queue system
-      console.log(`${LOG_PREFIX} Executing: ${decision.task} - ${decision.reasoning}`);
-
-      // Capture lizard brain reasoning as inner dialogue
-      const innerDialogueText = `🧠 Lizard Brain Decision: ${decision.task}\n\n${decision.reasoning}`;
-      captureEvent(innerDialogueText, {
-        type: 'inner_dialogue',
-        tags: ['lizard-brain', 'autonomous-decision', 'inner', decision.task],
-        metadata: {
-          source: 'active-operator',
-          taskType: decision.task,
-          actor: username,
-        },
-      });
-      // Also append to inner buffer for immediate UI display
-      appendReflectionToBuffer(username, innerDialogueText);
-
-      // Enqueue to the new unified queue system - it will route to the appropriate lane
-      const laneTask = queueManager.enqueue({
-        type: decision.task as LaneTaskType,
-        payload: { type: decision.task },
-        username,
-        priority: 'normal',
-      });
-
-      // For local-llm tasks, we execute directly since we're the decision loop
-      // The queue tracks state, but we handle execution here
-      const aoTask: QueuedTask = {
-        id: laneTask.id,
-        type: decision.task,
-        priority: 'normal',
-        queuedAt: new Date().toISOString(),
-        payload: { type: decision.task } as any,
-        username,
-      };
-
-      currentTask = aoTask;
-      const result = await executeTask(aoTask);
-      currentTask = null;
-
-      // Mark task complete in the lane queue
-      queueManager.complete(laneTask.id, result.success, result.error);
-
-      if (result.success) {
+      // Track the execution for cooldown management
+      if (graphResult.success) {
         consecutiveTasks++;
-        console.log(`${LOG_PREFIX} Task completed successfully in ${result.durationMs}ms`);
+        console.log(`${LOG_PREFIX} Task ${graphResult.task} completed successfully`);
       } else {
-        console.warn(`${LOG_PREFIX} Task failed: ${result.error}`);
+        console.warn(`${LOG_PREFIX} Task ${graphResult.task} failed`);
       }
 
       // Cooldown between tasks
@@ -243,9 +293,12 @@ export async function startActiveOperatorService(username?: string): Promise<{
   shouldStop = false;
   consecutiveTasks = 0;
 
-  // Initialize the unified queue system with resource lanes
+  // Initialize and start the unified queue system with resource lanes
+  // Use startTriggersOnly() so TriggerManager enqueues tasks from agents.json,
+  // but the Lizard Brain handles actual execution (replaces old AgentScheduler)
   const queueSystem = getQueueSystem();
   await queueSystem.initialize();
+  await queueSystem.startTriggersOnly();
   queueSystemStarted = true;
 
   // Restore any persisted queue state to the new system

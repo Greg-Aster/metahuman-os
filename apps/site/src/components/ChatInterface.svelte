@@ -4,6 +4,7 @@
   import Thinking from './Thinking.svelte';
   import InputArea from './chat/InputArea.svelte';
   import MessageList from './chat/MessageList.svelte';
+  import ApprovalPrompt from './ApprovalPrompt.svelte';
   import { canUseOperator, currentMode } from '../stores/security-policy';
   import { triggerClearAuditStream } from '../stores/clear-events';
   import { yoloModeStore } from '../stores/navigation';
@@ -170,7 +171,11 @@
   function loadChatPrefs() {
     try {
       const raw = localStorage.getItem('chatPrefs');
-      if (!raw) { ttsEnabled = false; return; }
+      if (!raw) {
+        console.log('[chat-prefs] No chatPrefs in localStorage, using defaults');
+        ttsEnabled = false;
+        return;
+      }
       const p = JSON.parse(raw);
       if (typeof p.ttsEnabled === 'boolean') ttsEnabled = p.ttsEnabled;
       if (typeof p.reasoningDepth === 'number') {
@@ -180,7 +185,10 @@
       }
       if (typeof p.boredomTtsEnabled === 'boolean') boredomTtsEnabled = p.boredomTtsEnabled;
       if (typeof p.bigBrotherEnabled === 'boolean') bigBrotherEnabled = p.bigBrotherEnabled;
-    } catch {}
+      console.log('[chat-prefs] Loaded:', { ttsEnabled, boredomTtsEnabled, reasoningDepth });
+    } catch (e) {
+      console.error('[chat-prefs] Error loading:', e);
+    }
   }
   function saveChatPrefs() {
     try {
@@ -193,6 +201,18 @@
       };
       localStorage.setItem('chatPrefs', JSON.stringify(prefs));
     } catch {}
+  }
+
+  /** Get current inner dialogue TTS preference (reads from localStorage to ensure fresh value) */
+  function getInnerTtsEnabled(): boolean {
+    try {
+      const raw = localStorage.getItem('chatPrefs');
+      if (raw) {
+        const p = JSON.parse(raw);
+        return p.boredomTtsEnabled === true;
+      }
+    } catch {}
+    return boredomTtsEnabled;
   }
 
   // persistToInnerBuffer removed - agents now write directly to buffer via appendReflectionToBuffer/appendDreamToBuffer
@@ -548,14 +568,16 @@
             console.log(`[chat-tts] TTS queue item: mode=${item.mode}, source=${item.source}, text=${item.text?.substring(0, 50)}`);
 
             // Check if we should speak based on mode and toggles
+            // Use getter to ensure we read the latest preference value
+            const innerTtsOn = getInnerTtsEnabled();
             if (item.mode === 'conversation' && ttsEnabled) {
               console.log('[chat-tts] SPEAKING conversation TTS from queue');
               void ttsApi.speak(item.text);
-            } else if (item.mode === 'inner' && boredomTtsEnabled) {
+            } else if (item.mode === 'inner' && innerTtsOn) {
               console.log('[chat-tts] SPEAKING inner dialogue TTS from queue');
               void ttsApi.speak(item.text);
             } else {
-              console.log(`[chat-tts] Skipping TTS (mode=${item.mode}, ttsEnabled=${ttsEnabled}, boredomTtsEnabled=${boredomTtsEnabled})`);
+              console.log(`[chat-tts] Skipping TTS (mode=${item.mode}, ttsEnabled=${ttsEnabled}, innerTtsEnabled=${innerTtsOn})`);
             }
           }
         }
@@ -1330,8 +1352,12 @@
       {#if mode === 'inner'}
         <button
           class="icon-btn {boredomTtsEnabled ? 'active' : ''}"
-          title={boredomTtsEnabled ? 'Disable inner dialog voice (boredom service)' : 'Enable inner dialog voice (boredom service)'}
-          on:click={() => { boredomTtsEnabled = !boredomTtsEnabled; saveChatPrefs(); }}
+          title={boredomTtsEnabled ? 'Disable inner dialogue TTS' : 'Enable inner dialogue TTS (lizard brain, reflections, dreams)'}
+          on:click={() => {
+            boredomTtsEnabled = !boredomTtsEnabled;
+            console.log('[chat-tts] Inner dialogue TTS toggled:', boredomTtsEnabled);
+            saveChatPrefs();
+          }}
         >
           <!-- Thought bubble icon for inner dialog -->
           <span style="font-size: 18px; line-height: 1;">💭</span>
@@ -1439,6 +1465,13 @@
       <div bind:this={scrollSentinel} class="scroll-sentinel"></div>
     {/if}
   </div>
+  <!-- Approval Prompt - appears above input when desires need approval -->
+  {#if mode === 'conversation'}
+    <ApprovalPrompt onApprovalChange={() => {
+      console.log('[chat] Approval change detected');
+    }} />
+  {/if}
+
   <!-- Input Area -->
   <div class="input-container">
     <InputArea

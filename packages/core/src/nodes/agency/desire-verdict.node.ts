@@ -20,6 +20,7 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import type { Desire, DesirePlan, DesireReview } from '../../agency/types.js';
 import { generateReviewId } from '../../agency/types.js';
 import { canAutoApprove, isRiskBlocked } from '../../agency/config.js';
+import { loadDecisionRules } from '../../identity.js';
 
 interface AlignmentReviewInput {
   alignmentScore: number;
@@ -135,11 +136,22 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
   let autoApproveReason = '';
 
   if (verdict === 'approve') {
-    // Get user's current trust level (from desire or default)
-    const currentTrustLevel = desire.requiredTrustLevel || 'supervised_auto';
-    const result = await canAutoApprove(plan.estimatedRisk, desire.strength, currentTrustLevel, username);
+    // Get user's CURRENT trust level from persona (not desire's required level)
+    let currentTrustLevel = 'supervised_auto'; // default fallback
+    try {
+      const rules = loadDecisionRules();
+      currentTrustLevel = rules.trustLevel;
+    } catch (err) {
+      console.warn('[desire-verdict] Could not load decision rules, using default trust level');
+    }
+    // Pass desire for maturity-based trust degradation calculation
+    const result = await canAutoApprove(plan.estimatedRisk, desire.strength, currentTrustLevel, username, desire);
     autoApprove = result.autoApprove;
     autoApproveReason = result.reason;
+    const degradationInfo = result.trustDegradation
+      ? ` [trust degraded: ${result.trustDegradation.reduction} level(s)]`
+      : '';
+    console.log(`[desire-verdict] Auto-approve check: trust=${currentTrustLevel}, risk=${plan.estimatedRisk}, strength=${desire.strength.toFixed(2)}${degradationInfo} → ${autoApprove ? 'AUTO' : 'MANUAL'}: ${autoApproveReason}`);
   }
 
   return {

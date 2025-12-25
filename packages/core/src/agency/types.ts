@@ -987,16 +987,23 @@ export function getSourceWeight(source: DesireSource): number {
 
 /**
  * Calculate effective strength with source weight.
+ * Handles corrupted baseWeight values (objects, NaN, undefined) by defaulting to 1.0
  */
 export function calculateEffectiveStrength(strength: number, sourceWeight: number): number {
-  return Math.min(1.0, strength * sourceWeight);
+  // Handle corrupted sourceWeight (objects like {}, NaN, undefined)
+  const validWeight = typeof sourceWeight === 'number' && !isNaN(sourceWeight) ? sourceWeight : 1.0;
+  return Math.min(1.0, strength * validWeight);
 }
 
 /**
  * Check if a desire has crossed the activation threshold.
  */
 export function isAboveThreshold(desire: Desire): boolean {
-  const effectiveStrength = calculateEffectiveStrength(desire.strength, desire.baseWeight);
+  // Handle corrupted baseWeight values
+  const baseWeight = typeof desire.baseWeight === 'number' && !isNaN(desire.baseWeight)
+    ? desire.baseWeight
+    : 1.0;
+  const effectiveStrength = calculateEffectiveStrength(desire.strength, baseWeight);
   return effectiveStrength >= desire.threshold;
 }
 

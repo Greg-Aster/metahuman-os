@@ -22,6 +22,7 @@ interface EpisodicItem {
   links?: Array<{ type: string; target: string }>;
   relPath: string;
   validation?: { status?: 'correct' | 'incorrect'; by?: string; timestamp?: string };
+  metadata?: Record<string, any>; // For displayColor, dialogueSource, etc.
 }
 
 interface TaskItem {
@@ -422,6 +423,7 @@ function scanDirectoryForMemories(
               links: Array.isArray(obj.links) ? obj.links : [],
               relPath,
               validation: obj.validation || undefined,
+              metadata: obj.metadata || undefined, // Include metadata for displayColor, dialogueSource, etc.
             });
           }
         } catch {

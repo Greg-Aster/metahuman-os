@@ -38,9 +38,12 @@ export {
   isSourceEnabled,
   getEnabledSources,
   canAutoApprove,
+  calculateEffectiveTrustLevel,
   isRiskBlocked,
   DEFAULT_AGENCY_CONFIG,
 } from './config.js';
+
+export type { TrustDegradationConfig } from './config.js';
 
 export {
   // Original status-based storage

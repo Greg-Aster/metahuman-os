@@ -231,7 +231,7 @@
       <div
         class="progress-fill"
         style="width: {((currentQuestion + 1) / questions.length) * 100}%"
-      />
+      ></div>
     </div>
   </div>
 

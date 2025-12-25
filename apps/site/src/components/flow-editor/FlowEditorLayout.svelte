@@ -361,6 +361,12 @@
     selectedNode = node;
   }
 
+  function handleUpdateNodeData(nodeId: string, data: Record<string, any>) {
+    if (flowEditorRef) {
+      flowEditorRef.updateNodeData(nodeId, data);
+    }
+  }
+
   function togglePropertyInspector() {
     showPropertyInspector = !showPropertyInspector;
   }
@@ -502,7 +508,10 @@
 
     {#if showPropertyInspector}
       <div class="property-panel">
-        <PropertyInspector {selectedNode} />
+        <PropertyInspector
+          {selectedNode}
+          onUpdateNodeData={handleUpdateNodeData}
+        />
       </div>
     {/if}
   </div>

@@ -277,6 +277,50 @@ export class QueueSystem extends EventEmitter {
   }
 
   /**
+   * Start only the TriggerManager (not ExecutionEngine).
+   * Use this when another component (e.g., Active Operator) handles execution.
+   * TriggerManager will enqueue tasks, but won't execute them.
+   */
+  async startTriggersOnly(): Promise<boolean> {
+    if (this.running) {
+      console.warn('[QueueSystem] Already running');
+      return false;
+    }
+
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    if (this.queueConfig && !this.queueConfig.enabled) {
+      console.log('[QueueSystem] Disabled in config, not starting');
+      return false;
+    }
+
+    try {
+      // Only start TriggerManager, NOT ExecutionEngine
+      // This allows external execution loops (like Active Operator) to handle tasks
+      this.triggerManager.start();
+
+      this.running = true;
+
+      audit({
+        level: 'info',
+        category: 'system',
+        event: 'queue_system_triggers_started',
+        actor: 'queue_system',
+        details: { mode: 'triggers-only' },
+      });
+
+      console.log('[QueueSystem] Started (triggers only - execution handled externally)');
+      this.emit('started', { mode: 'triggers-only' });
+      return true;
+    } catch (error) {
+      console.error('[QueueSystem] Failed to start triggers:', error);
+      return false;
+    }
+  }
+
+  /**
    * Pause processing (queue still accepts tasks)
    */
   pause(): void {

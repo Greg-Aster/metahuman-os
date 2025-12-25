@@ -389,6 +389,15 @@
   .message-reflection .message-content {
     @apply bg-violet-400/10 text-violet-700 dark:text-violet-300 border border-violet-400/30 max-w-[85%] italic;
   }
+  /* Use custom accent color from metadata (e.g., lizard-brain uses green) */
+  .message[style*="--message-accent-color"] .message-content {
+    color: var(--message-accent-color);
+    border-color: color-mix(in srgb, var(--message-accent-color) 50%, transparent);
+    background-color: color-mix(in srgb, var(--message-accent-color) 10%, transparent);
+  }
+  .message[style*="--message-accent-color"] .message-role {
+    color: var(--message-accent-color);
+  }
 
   /* Input area */
   .input-container {

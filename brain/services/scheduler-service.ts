@@ -2,13 +2,19 @@
 /**
  * Scheduler Service
  *
- * Background service that runs the AgentScheduler.
- * Manages all agent triggers (interval, time-of-day, event, activity).
+ * Background service for system maintenance tasks.
+ *
+ * NOTE: Agent scheduling is now handled by TriggerManager in the unified queue system.
+ * The old AgentScheduler is deprecated - TriggerManager starts automatically when
+ * Active Operator starts via service-manager.ts → queueSystem.startTriggersOnly().
+ *
+ * This service now only handles:
+ * - Health checks (stale lock cleanup)
+ * - Daily log cleanup
+ * - Embedding model preload
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { scheduler, systemPaths, audit, acquireLock, cleanupStaleLocks, initGlobalLogger, purgeOldAuditLogs } from '@metahuman/core';
+import { audit, acquireLock, cleanupStaleLocks, initGlobalLogger, purgeOldAuditLogs } from '@metahuman/core';
 import { getAgentStatuses } from '@metahuman/core/agent-monitor';
 import { preloadEmbeddingModel } from '@metahuman/core/embeddings';
 
@@ -72,20 +78,10 @@ async function main() {
     return;
   }
 
-  // Load configuration
-  const configLoaded = scheduler.loadConfig();
-  if (!configLoaded) {
-    console.warn('[scheduler-service] No configuration found, using defaults');
-  }
-
-  // Start scheduler
-  const started = scheduler.start();
-  if (!started) {
-    console.error('[scheduler-service] Failed to start scheduler');
-    process.exit(1);
-  }
-
-  console.log('[scheduler-service] Started successfully');
+  // NOTE: Old AgentScheduler is deprecated
+  // Agent scheduling is now handled by TriggerManager in the unified queue system
+  // TriggerManager starts automatically when Active Operator starts
+  console.log('[scheduler-service] Started (maintenance mode - agent triggers handled by TriggerManager)');
 
   // Start periodic health check
   healthCheckTimer = setInterval(performHealthCheck, HEALTH_CHECK_INTERVAL_MS);
@@ -106,21 +102,8 @@ async function main() {
     console.error('[scheduler-service] Failed to preload embedding model:', err);
   });
 
-  // Watch configuration file for changes
-  const configPath = path.join(systemPaths.etc, 'agents.json');
-  fs.watch(configPath, (eventType) => {
-    if (eventType === 'change') {
-      console.log('[scheduler-service] Configuration changed, reloading...');
-      scheduler.loadConfig();
-
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'scheduler_config_reloaded',
-        actor: 'scheduler-service',
-      });
-    }
-  });
+  // NOTE: Config file watching is now handled by TriggerManager
+  // in the unified queue system (packages/core/src/queue/trigger-manager.ts)
 
   // Graceful shutdown
   const shutdown = () => {
@@ -133,7 +116,6 @@ async function main() {
       clearInterval(logCleanupTimer);
       logCleanupTimer = null;
     }
-    scheduler.stop();
     process.exit(0);
   };
 

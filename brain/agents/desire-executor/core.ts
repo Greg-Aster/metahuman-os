@@ -31,6 +31,8 @@ import {
   incrementMetric,
   createTask,
   updateTaskStatus,
+  canAutoApprove,
+  loadDecisionRules,
 } from '@metahuman/core';
 
 const LOCK_NAME = 'desire-executor';
@@ -325,6 +327,152 @@ export async function processApprovedDesires(username?: string): Promise<{
   return { executed, succeeded, failed };
 }
 
+/**
+ * Process desires stuck in 'reviewing' status
+ * Checks trust level to determine: auto-approve (high trust) vs await approval (low trust)
+ */
+export async function processReviewingDesires(username?: string): Promise<{
+  transitioned: number;
+  autoApproved: number;
+}> {
+  if (!await isAgencyEnabled(username)) {
+    return { transitioned: 0, autoApproved: 0 };
+  }
+
+  const reviewingDesires = await listDesiresByStatus('reviewing', username);
+  console.log(`${LOG_PREFIX} Found ${reviewingDesires.length} desires stuck in reviewing status`);
+
+  let transitioned = 0;
+  let autoApproved = 0;
+
+  // Get user's current trust level
+  let currentTrustLevel = 'supervised_auto';
+  try {
+    const rules = loadDecisionRules();
+    currentTrustLevel = rules.trustLevel;
+  } catch (err) {
+    console.warn(`${LOG_PREFIX} Could not load decision rules, using default trust level`);
+  }
+  console.log(`${LOG_PREFIX} Current trust level: ${currentTrustLevel}`);
+
+  for (const desire of reviewingDesires) {
+    const risk = desire.plan?.estimatedRisk || 'medium';
+    const strength = desire.strength || 0.5;
+
+    // Check if trust allows auto-approval (pass desire for maturity-based trust degradation)
+    const approvalResult = await canAutoApprove(risk, strength, currentTrustLevel, username, desire);
+    const degradationInfo = approvalResult.trustDegradation
+      ? ` (trust degraded: ${approvalResult.trustDegradation.reduction} levels)`
+      : '';
+    console.log(`${LOG_PREFIX} Auto-approve check for "${desire.title}": risk=${risk}, strength=${strength.toFixed(2)}, trust=${currentTrustLevel}${degradationInfo} → ${approvalResult.autoApprove ? 'AUTO' : 'MANUAL'}`);
+
+    const now = new Date().toISOString();
+
+    if (approvalResult.autoApprove) {
+      // Trust level allows auto-approval - move directly to 'approved'
+      const updatedDesire = {
+        ...desire,
+        status: 'approved' as const,
+        approvedAt: now,
+        updatedAt: now,
+        autoApproved: true,
+        autoApproveReason: approvalResult.reason,
+      };
+
+      try {
+        await moveDesire(updatedDesire, 'reviewing', 'approved', username);
+        autoApproved++;
+
+        audit({
+          category: 'agent',
+          level: 'info',
+          event: 'desire_auto_approved',
+          actor: 'desire-executor',
+          details: {
+            desireId: desire.id,
+            title: desire.title,
+            from: 'reviewing',
+            to: 'approved',
+            reason: approvalResult.reason,
+            trustLevel: currentTrustLevel,
+            risk,
+            username,
+          },
+        });
+
+        // Log to inner dialogue
+        await captureEvent(
+          `Auto-approved "${desire.title}" based on trust level (${currentTrustLevel}). Reason: ${approvalResult.reason}`,
+          {
+            type: 'inner_dialogue',
+            tags: ['agency', 'auto-approval', 'trust', 'inner'],
+            metadata: {
+              desireId: desire.id,
+              source: 'desire-executor',
+              trustLevel: currentTrustLevel,
+              risk,
+            },
+          }
+        );
+
+        console.log(`${LOG_PREFIX}   ✓ Auto-approved: ${desire.title}`);
+      } catch (error) {
+        console.error(`${LOG_PREFIX} Failed to auto-approve desire ${desire.id}:`, error);
+      }
+    } else {
+      // Trust level requires manual approval - move to 'awaiting_approval'
+      const updatedDesire = {
+        ...desire,
+        status: 'awaiting_approval' as const,
+        updatedAt: now,
+      };
+
+      try {
+        await moveDesire(updatedDesire, 'reviewing', 'awaiting_approval', username);
+        transitioned++;
+
+        audit({
+          category: 'agent',
+          level: 'info',
+          event: 'desire_status_transition',
+          actor: 'desire-executor',
+          details: {
+            desireId: desire.id,
+            title: desire.title,
+            from: 'reviewing',
+            to: 'awaiting_approval',
+            reason: approvalResult.reason,
+            trustLevel: currentTrustLevel,
+            risk,
+            username,
+          },
+        });
+
+        // Log to inner dialogue
+        await captureEvent(
+          `I need your approval for "${desire.title}". ${approvalResult.reason}. Please review it in the Agency tab.`,
+          {
+            type: 'inner_dialogue',
+            tags: ['agency', 'approval-request', 'inner'],
+            metadata: {
+              desireId: desire.id,
+              source: 'desire-executor',
+              trustLevel: currentTrustLevel,
+              risk,
+            },
+          }
+        );
+
+        console.log(`${LOG_PREFIX}   → Needs approval: ${desire.title} (${approvalResult.reason})`);
+      } catch (error) {
+        console.error(`${LOG_PREFIX} Failed to transition desire ${desire.id}:`, error);
+      }
+    }
+  }
+
+  return { transitioned, autoApproved };
+}
+
 // ============================================================================
 // Agent Runtime Entry Points
 // ============================================================================
@@ -357,6 +505,16 @@ export async function runCycle(options: DesireExecutorOptions = {}): Promise<Des
     try {
       console.log(`${LOG_PREFIX} --- Processing user: ${user.username} ---`);
       await withUserContext(user, async () => {
+        // First, check reviewing desires - auto-approve if trust allows, else queue for approval
+        const reviewResult = await processReviewingDesires(user!.username);
+        if (reviewResult.autoApproved > 0) {
+          console.log(`${LOG_PREFIX} Auto-approved ${reviewResult.autoApproved} desires (trust-based)`);
+        }
+        if (reviewResult.transitioned > 0) {
+          console.log(`${LOG_PREFIX} Transitioned ${reviewResult.transitioned} desires to awaiting_approval`);
+        }
+
+        // Then, execute approved desires
         const r = await processApprovedDesires(user!.username);
         result.stats.executed += r.executed;
         result.stats.succeeded += r.succeeded;
