@@ -13,7 +13,7 @@ const execute: NodeExecutor = async (inputs, context) => {
 
   const state = await gatherSystemState(username, queueLength);
 
-  console.log(`[SystemState] Gathered state: unprocessed=${state.unprocessedMemories}, indexAge=${state.indexAgeHours.toFixed(1)}h, desires(pending=${state.pendingDesires}, active=${state.activeDesires}, awaiting=${state.awaitingApprovalDesires}), tasks=${state.activeTasks || 0}(high=${state.highPriorityTasks || 0}), goals=${state.activeGoals || 0}`);
+  console.log(`[SystemState] Gathered state: unprocessed=${state.unprocessedMemories}, indexAge=${state.indexAgeHours.toFixed(1)}h, desires(pending=${state.pendingDesires}, active=${state.activeDesires}, awaiting=${state.awaitingApprovalDesires}, approved=${state.approvedDesires}), tasks=${state.activeTasks || 0}(high=${state.highPriorityTasks || 0}), goals=${state.activeGoals || 0}`);
 
   return {
     unprocessedMemories: state.unprocessedMemories,
@@ -21,6 +21,7 @@ const execute: NodeExecutor = async (inputs, context) => {
     pendingDesires: state.pendingDesires,
     activeDesires: state.activeDesires,
     awaitingApprovalDesires: state.awaitingApprovalDesires,
+    approvedDesires: state.approvedDesires,
     hoursSinceReflection: state.hoursSinceReflection,
     userActive: state.userActive,
     // Task metrics
@@ -53,6 +54,7 @@ export const SystemStateNode: NodeDefinition = defineNode({
     { name: 'pendingDesires', type: 'number', description: 'Count of pending desires (waiting for activation)' },
     { name: 'activeDesires', type: 'number', description: 'Count of active desires (evaluating/planning/reviewing/executing)' },
     { name: 'awaitingApprovalDesires', type: 'number', description: 'Count of desires awaiting user approval' },
+    { name: 'approvedDesires', type: 'number', description: 'Count of approved desires ready for autonomous execution' },
     { name: 'hoursSinceReflection', type: 'number', description: 'Hours since last reflection' },
     { name: 'userActive', type: 'boolean', description: 'Whether user is currently active' },
     // Task metrics

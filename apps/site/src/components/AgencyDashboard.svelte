@@ -95,6 +95,7 @@
     reviewedAt: string;
     notifyUser: boolean;
     userMessage?: string;
+    executionSummary?: string;
   }
 
   interface Desire {
@@ -185,6 +186,7 @@
   let scratchpadLoading = false;
   let scratchpadOffset = 0;
   const scratchpadLimit = 10;
+  let expandedEntryIndex: number | null = null;
 
   // Plan browser state
   let planVersions: string[] = [];
@@ -546,10 +548,12 @@
         params.set('status', statuses.join(','));
       }
       const url = params.size ? `/api/agency/desires?${params}` : '/api/agency/desires?status=all';
-      const res = await fetch(url);
+      console.log(`[AgencyDashboard] Loading desires with filter: "${statusFilter}" → statuses: ${statuses.join(',') || 'all'}`);
+      const res = await apiFetch(url);
       if (!res.ok) throw new Error('Failed to load desires');
       const data = await res.json();
       desires = data.desires || [];
+      console.log(`[AgencyDashboard] Loaded ${desires.length} desires. Statuses: ${[...new Set(desires.map((d: any) => d.status))].join(', ')}`);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -574,6 +578,7 @@
   async function loadScratchpadEntries(desireId: string, offset = 0) {
     scratchpadLoading = true;
     scratchpadOffset = offset;
+    expandedEntryIndex = null; // Reset expanded entry when paginating
     try {
       const params = new URLSearchParams({
         desireId,
@@ -637,6 +642,7 @@
    * Toggle scratchpad viewer and load entries
    */
   async function toggleScratchpadWithLoad(desireId: string) {
+    expandedEntryIndex = null; // Reset expanded entry when switching
     if (showScratchpadFor === desireId) {
       showScratchpadFor = null;
       scratchpadEntries = [];
@@ -727,6 +733,47 @@
       }
 
       console.log(`[AgencyDashboard] 🔄 ${data.message}`);
+      await loadAll(true, true);
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      processingId = null;
+    }
+  }
+
+  async function handleArchive(id: string) {
+    if (!confirm('Archive this desire? It will become dormant but can be revived later.')) return;
+    processingId = id;
+    try {
+      const res = await apiFetch(`/api/agency/desires/${id}/advance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newStatus: 'abandoned' }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to archive desire');
+      }
+      await loadAll(true, true);
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      processingId = null;
+    }
+  }
+
+  async function handleRevive(id: string) {
+    processingId = id;
+    try {
+      const res = await apiFetch(`/api/agency/desires/${id}/advance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newStatus: 'pending' }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to revive desire');
+      }
       await loadAll(true, true);
     } catch (e) {
       error = (e as Error).message;
@@ -928,38 +975,128 @@
   }
 
   /**
-   * Execute a desire's plan inline (calls the agent directly)
-   * Shows cheeky loading messages while processing
+   * Execute a desire's plan inline with SSE streaming for real-time progress
+   * Shows step-by-step execution progress in the UI
    */
   async function handleExecute(id: string) {
-    if (!confirm('Execute this desire now? This will run the plan through the operator.')) return;
+    if (!confirm('Execute this desire now? This will run the plan through Big Brother.')) return;
 
     agentProcessingId = id;
     processingId = id;
-    startLoadingMessages('executing');
+    agentOperation = 'executing';
+    streamingOutput = '';
+    streamingPhase = 'Starting execution...';
+    currentLoadingMessage = 'Initializing...';
 
     try {
-      // Use the /run endpoint for inline execution (not just status change)
-      const res = await apiFetch(`/api/agency/desires/${id}/run`, { method: 'POST' });
-      const data = await res.json();
+      // Use streaming endpoint with POST for real-time progress
+      // (EventSource is GET-only, so we use fetch with manual SSE parsing)
+      const res = await apiFetch(`/api/agency/desires/${id}/run-stream`, {
+        method: 'POST',
+      });
 
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to execute desire');
+      if (!res.body) {
+        throw new Error('No response body');
       }
 
-      // Show result message
-      if (data.success) {
-        console.log(`[AgencyDashboard] ✅ Execution succeeded: ${data.message}`);
-      } else {
-        console.log(`[AgencyDashboard] ⚠️ Execution failed: ${data.message}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from buffer
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+        let currentEvent = '';
+        let currentData = '';
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7);
+          } else if (line.startsWith('data: ')) {
+            currentData = line.slice(6);
+          } else if (line === '' && currentEvent && currentData) {
+            // Complete event received
+            try {
+              const data = JSON.parse(currentData);
+              handleExecutionEvent(currentEvent, data);
+            } catch (parseError) {
+              console.warn('[AgencyDashboard] Failed to parse SSE data:', parseError);
+            }
+            currentEvent = '';
+            currentData = '';
+          }
+        }
       }
 
       await loadAll(true, true);
     } catch (e) {
       error = (e as Error).message;
+      streamingPhase = `Error: ${error}`;
     } finally {
       stopLoadingMessages();
       processingId = null;
+      agentProcessingId = null;
+      streamEventSource = null;
+    }
+  }
+
+  /**
+   * Handle SSE events from execution stream
+   */
+  function handleExecutionEvent(eventType: string, data: any) {
+    console.log(`[AgencyDashboard] Execution event: ${eventType}`, data);
+
+    switch (eventType) {
+      case 'phase':
+        streamingPhase = data.message || data.phase;
+        currentLoadingMessage = data.message || data.phase;
+        break;
+
+      case 'desire_loaded':
+        streamingPhase = `Loaded: "${data.title}" (${data.totalSteps} steps)`;
+        streamingSteps = data.totalSteps;
+        break;
+
+      case 'progress':
+        // Handle step-by-step progress
+        if (data.type === 'step_start') {
+          streamingPhase = `Step ${data.stepNumber}/${data.totalSteps}: ${data.action}`;
+          currentLoadingMessage = data.message;
+        } else if (data.type === 'step_complete') {
+          streamingOutput += (streamingOutput ? '\n' : '') + data.message;
+          streamingPhase = `Step ${data.stepNumber}/${data.totalSteps} completed`;
+        } else if (data.type === 'step_error') {
+          streamingOutput += (streamingOutput ? '\n' : '') + data.message;
+          streamingPhase = `Step ${data.stepNumber} failed`;
+        } else if (data.type === 'claude_working') {
+          streamingPhase = data.message;
+          currentLoadingMessage = data.message;
+        } else if (data.type === 'execution_start') {
+          streamingPhase = data.message;
+        } else if (data.type === 'execution_complete' || data.type === 'execution_error') {
+          streamingOutput += (streamingOutput ? '\n' : '') + data.message;
+        }
+        break;
+
+      case 'complete':
+        streamingPhase = data.success ? '✅ Execution Complete!' : '⚠️ Execution Had Issues';
+        if (data.message) {
+          streamingOutput += (streamingOutput ? '\n' : '') + data.message;
+        }
+        break;
+
+      case 'error':
+        streamingPhase = 'Error';
+        error = data.error;
+        streamingOutput += (streamingOutput ? '\n' : '') + `❌ ${data.error}`;
+        break;
     }
   }
 
@@ -1230,225 +1367,7 @@
       </div>
     {/if}
 
-    <!-- GROWING DESIRES - Nascent desires building strength -->
-    {#if desires.filter(d => d.status === 'nascent').length > 0}
-      <div class="growing-desires-section mt-4">
-        <div class="growing-header">
-          <h2 class="growing-title">🌱 Growing Desires</h2>
-          <span class="growing-count">{desires.filter(d => d.status === 'nascent').length} desire(s) building strength</span>
-        </div>
-        <p class="growing-description">These desires are being reinforced through your conversations. When they reach sufficient strength, they'll move to planning.</p>
-
-        <div class="growing-grid">
-          {#each desires.filter(d => d.status === 'nascent').sort((a, b) => (b.strength || 0) - (a.strength || 0)) as desire}
-            <div class="growing-card">
-              <div class="growing-card-header">
-                <span class="source-icon">{getSourceIcon(desire.source)}</span>
-                <span class="growing-card-title">{desire.title}</span>
-              </div>
-              <div class="growing-progress">
-                <div class="progress-bar-bg">
-                  <div
-                    class="progress-bar-fill"
-                    style="width: {Math.min(100, ((desire.strength || 0) / (desire.threshold || 0.7)) * 100)}%"
-                  ></div>
-                </div>
-                <div class="progress-stats">
-                  <span class="strength-stat">Strength: {((desire.strength || 0) * 100).toFixed(0)}%</span>
-                  <span class="threshold-stat">Threshold: {((desire.threshold || 0.7) * 100).toFixed(0)}%</span>
-                </div>
-              </div>
-              <div class="growing-meta">
-                <span class="reinforcement-count">💪 {desire.reinforcements || 0} reinforcements</span>
-                {#if desire.metrics?.netReinforcement !== undefined}
-                  {#if desire.metrics.netReinforcement > 0}
-                    <span class="trend-up">📈 Growing</span>
-                  {:else if desire.metrics.netReinforcement < 0}
-                    <span class="trend-down">📉 Decaying</span>
-                  {:else}
-                    <span class="trend-stable">⚖️ Stable</span>
-                  {/if}
-                {/if}
-              </div>
-            </div>
-          {/each}
-        </div>
-      </div>
-    {/if}
-
-    <!-- PLANS AWAITING YOUR REVIEW - Prominent Section -->
-    {#if desires.filter(d => ['awaiting_approval', 'reviewing'].includes(d.status) && d.plan).length > 0}
-      <div class="pending-review-section mt-4">
-        <div class="pending-review-header">
-          <h2 class="pending-review-title">⭐ Plans Awaiting Your Review</h2>
-          <span class="pending-review-count">{desires.filter(d => ['awaiting_approval', 'reviewing'].includes(d.status) && d.plan).length} plan(s)</span>
-        </div>
-
-        {#each desires.filter(d => ['awaiting_approval', 'reviewing'].includes(d.status) && d.plan) as desire}
-          <div class="review-card" style="border-left: 4px solid {getNatureColor(desire.metrics)};">
-            <div class="review-card-header">
-              <div class="flex items-center gap-2">
-                <span class="source-icon text-2xl">{getSourceIcon(desire.source)}</span>
-                <div>
-                  <h3 class="review-card-title">{desire.title}</h3>
-                  <p class="text-xs muted">{desire.description}</p>
-                </div>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="review-nature-badge" style="background: {getNatureColor(desire.metrics)};">
-                  {getNatureIcon(desire.metrics)} {getNatureLabel(desire.metrics)}
-                </div>
-                <span class={`badge ${getStatusColor(desire.status)}`}>{desire.status}</span>
-                <span class={`badge ${getRiskColor(desire.plan?.estimatedRisk || desire.risk)}`}>{desire.plan?.estimatedRisk || desire.risk} risk</span>
-              </div>
-            </div>
-
-            <!-- Mini Metrics for Review -->
-            <div class="review-metrics-row">
-              <span class="review-metric">🔁 {desire.metrics?.cycleCount ?? 0} cycles</span>
-              <span class="review-metric">✅ {desire.metrics?.completionCount ?? 0} completions</span>
-              <span class="review-metric">⚡ {desire.metrics?.executionAttemptCount ?? 0} attempts</span>
-              <span class="review-metric">📋 v{desire.metrics?.planVersionCount ?? 1} plan</span>
-              <span class="review-metric">💪 {(desire.strength * 100).toFixed(0)}% strength</span>
-            </div>
-
-            <!-- Plan Details ALWAYS VISIBLE -->
-            {#if desire.plan}
-              <div class="review-plan-details">
-                <div class="plan-header-row">
-                  <span class="text-sm font-bold">📋 Plan v{desire.plan.version || 1}</span>
-                  <span class="text-xs muted">{desire.plan.steps.length} steps</span>
-                </div>
-
-                {#if desire.plan.operatorGoal}
-                  <p class="plan-goal-text">🎯 Goal: {desire.plan.operatorGoal}</p>
-                {/if}
-
-                <div class="review-plan-steps">
-                  {#each desire.plan.steps as step, i}
-                    <div class="review-step">
-                      <span class="review-step-number">{step.order || i + 1}</span>
-                      <div class="review-step-content">
-                        <span class="review-step-action">{step.action}</span>
-                        {#if step.skill}
-                          <span class="review-step-skill">→ {step.skill}</span>
-                        {/if}
-                        <span class={`badge tiny ${getRiskColor(step.risk)}`}>{step.risk}</span>
-                      </div>
-                    </div>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-
-            <!-- Review Info if present -->
-            {#if desire.review}
-              <div class="review-verdict-box">
-                <span class="text-xs font-semibold">Alignment Score: {(desire.review.alignmentScore * 100).toFixed(0)}%</span>
-                {#if desire.review.reasoning}
-                  <p class="text-xs muted">{desire.review.reasoning}</p>
-                {/if}
-              </div>
-            {/if}
-
-            <!-- CRITIQUE SECTION - Always visible for review -->
-            <div class="review-critique-section">
-              <h4 class="critique-section-title">✏️ Your Feedback</h4>
-              <p class="text-xs muted mb-2">Not satisfied? Tell us what to change and we'll revise the plan.</p>
-              <textarea
-                class="review-critique-input"
-                placeholder="What would you like changed? (e.g., 'Use a different approach', 'Add more steps for X', 'Skip step 3')"
-                bind:value={critiqueText[desire.id]}
-                rows="3"
-              ></textarea>
-              <div class="review-action-buttons">
-                <button
-                  class="btn-revise-large"
-                  disabled={revisingId === desire.id || !critiqueText[desire.id]?.trim()}
-                  on:click={() => handleRevise(desire.id)}
-                >
-                  {revisingId === desire.id ? '⏳ Sending...' : '🔄 Request Revision'}
-                </button>
-                <button
-                  class="btn-approve-large"
-                  disabled={processingId === desire.id}
-                  on:click={() => handleApprove(desire.id)}
-                >
-                  ✅ Approve Plan
-                </button>
-                <button
-                  class="btn-reject-large"
-                  disabled={processingId === desire.id}
-                  on:click={() => handleReject(desire.id)}
-                >
-                  ❌ Reject
-                </button>
-              </div>
-            </div>
-          </div>
-        {/each}
-      </div>
-    {/if}
-
-    <!-- AWAITING OUTCOME REVIEW - Post-Execution Review Section -->
-    {#if desires.filter(d => d.status === 'awaiting_review').length > 0}
-      <div class="pending-review-section mt-4" style="border-left-color: #6366f1;">
-        <div class="pending-review-header">
-          <h2 class="pending-review-title">🔍 Awaiting Outcome Review</h2>
-          <span class="pending-review-count">{desires.filter(d => d.status === 'awaiting_review').length} task(s) completed</span>
-        </div>
-
-        {#each desires.filter(d => d.status === 'awaiting_review') as desire}
-          <div class="review-card" style="border-left: 4px solid #6366f1;">
-            <div class="review-card-header">
-              <div class="flex items-center gap-2">
-                <span class="source-icon text-2xl">{getSourceIcon(desire.source)}</span>
-                <div>
-                  <h3 class="review-card-title">{desire.title}</h3>
-                  <p class="text-xs muted">{desire.description}</p>
-                </div>
-              </div>
-              <div class="flex items-center gap-2">
-                <span class="badge bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">awaiting_review</span>
-              </div>
-            </div>
-
-            <!-- Execution Summary -->
-            {#if desire.execution}
-              <div class="execution-summary-box">
-                <div class="execution-summary-header">
-                  <span class="text-sm font-semibold">⚡ Execution Complete</span>
-                  <span class="text-xs muted">
-                    {desire.execution.stepsCompleted || 0}/{desire.execution.stepsTotal || 0} steps
-                  </span>
-                </div>
-                {#if desire.execution.completedAt}
-                  <p class="text-xs muted">Completed: {formatTimestamp(desire.execution.completedAt)}</p>
-                {/if}
-              </div>
-            {/if}
-
-            <!-- Action Buttons -->
-            <div class="review-action-buttons">
-              <button
-                class="btn-approve-large"
-                disabled={processingId === desire.id || agentProcessingId === desire.id}
-                on:click={() => handleOutcomeReview(desire.id)}
-              >
-                {#if agentProcessingId === desire.id}
-                  <span class="loading-spinner"></span>
-                  {currentLoadingMessage || 'Reviewing outcome...'}
-                {:else}
-                  🔍 Run Outcome Review
-                {/if}
-              </button>
-            </div>
-          </div>
-        {/each}
-      </div>
-    {/if}
-
-    <!-- Desire List -->
+    <!-- Consolidated Desire List - All desires in one place -->
     <div class="desire-list mt-4">
       {#if desires.length === 0}
         <div class="empty-state">
@@ -1761,6 +1680,12 @@
                   </span>
                 </div>
                 <p class="outcome-reasoning text-xs">{desire.outcomeReview.reasoning}</p>
+                {#if desire.outcomeReview.executionSummary}
+                  <div class="execution-summary">
+                    <span class="text-xs font-semibold">📋 What was done:</span>
+                    <pre class="summary-content text-xs">{desire.outcomeReview.executionSummary}</pre>
+                  </div>
+                {/if}
                 {#if desire.outcomeReview.lessonsLearned && desire.outcomeReview.lessonsLearned.length > 0}
                   <div class="outcome-lessons">
                     <span class="text-xs font-semibold">Lessons:</span>
@@ -1854,14 +1779,30 @@
                       <p class="text-xs muted">Loading events...</p>
                     {:else if scratchpadEntries.length > 0}
                       <div class="scratchpad-entries">
-                        {#each scratchpadEntries as entry}
-                          <div class="scratchpad-entry">
+                        {#each scratchpadEntries as entry, idx}
+                          <div
+                            class="scratchpad-entry {entry.data ? 'clickable' : ''} {expandedEntryIndex === idx ? 'expanded' : ''}"
+                            on:click={() => entry.data && (expandedEntryIndex = expandedEntryIndex === idx ? null : idx)}
+                            on:keydown={(e) => e.key === 'Enter' && entry.data && (expandedEntryIndex = expandedEntryIndex === idx ? null : idx)}
+                            tabindex={entry.data ? 0 : -1}
+                            role={entry.data ? 'button' : undefined}
+                          >
                             <span class="entry-icon">{getScratchpadEntryIcon(entry.type)}</span>
                             <div class="entry-content">
-                              <span class="entry-description">{entry.description}</span>
+                              <div class="entry-header">
+                                <span class="entry-description">{entry.description}</span>
+                                {#if entry.data}
+                                  <span class="entry-expand-hint text-xs">{expandedEntryIndex === idx ? '▲' : '▼'}</span>
+                                {/if}
+                              </div>
                               <span class="entry-meta text-xs muted">
                                 {formatTimestamp(entry.timestamp)} by {entry.agentName || entry.actor}
                               </span>
+                              {#if expandedEntryIndex === idx && entry.data}
+                                <div class="entry-data">
+                                  <pre class="entry-data-json">{JSON.stringify(entry.data, null, 2)}</pre>
+                                </div>
+                              {/if}
                             </div>
                           </div>
                         {/each}
@@ -1967,13 +1908,13 @@
                   </button>
                 {/if}
               {/if}
-              {#if desire.status === 'reviewing'}
+              {#if desire.status === 'reviewing' || desire.status === 'awaiting_approval'}
                 <button
-                  class="btn-stage"
+                  class="btn-approve"
                   disabled={processingId === desire.id}
-                  on:click={() => handleAdvanceStage(desire.id, 'approved')}
+                  on:click={() => handleApprove(desire.id)}
                 >
-                  → Approve
+                  ✅ Approve Plan
                 </button>
               {/if}
               {#if desire.status === 'approved'}
@@ -2037,35 +1978,59 @@
                 </button>
               {/if}
 
-              <!-- Quick approve (skip to approved) -->
-              {#if ['nascent', 'pending', 'planning', 'reviewing'].includes(desire.status)}
+              <!-- Quick approve (skip to approved) - for early stages only -->
+              {#if ['nascent', 'pending', 'planning'].includes(desire.status)}
                 <button
-                  class="btn-approve"
+                  class="btn-stage"
                   disabled={processingId === desire.id}
                   on:click={() => handleApprove(desire.id)}
                   title="Skip to approved status"
                 >
-                  Fast Approve
+                  ⏩ Fast Approve
                 </button>
               {/if}
 
               <!-- Reject -->
-              {#if ['nascent', 'pending', 'planning', 'reviewing', 'approved'].includes(desire.status)}
+              {#if ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved'].includes(desire.status)}
                 <button
                   class="btn-reject"
                   disabled={processingId === desire.id}
                   on:click={() => handleReject(desire.id)}
                 >
-                  Reject
+                  ❌ Reject
                 </button>
               {/if}
+              <!-- Archive - for active desires (send to dormant state) -->
+              {#if ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved', 'completed'].includes(desire.status)}
+                <button
+                  class="btn-archive"
+                  disabled={processingId === desire.id}
+                  on:click={() => handleArchive(desire.id)}
+                  title="Archive this desire (can be revived later)"
+                >
+                  📦 Archive
+                </button>
+              {/if}
+
+              <!-- Revive - for archived desires (bring back to active) -->
+              {#if ['rejected', 'abandoned', 'failed'].includes(desire.status)}
+                <button
+                  class="btn-revive"
+                  disabled={processingId === desire.id}
+                  on:click={() => handleRevive(desire.id)}
+                  title="Revive this desire back to pending"
+                >
+                  🔄 Revive
+                </button>
+              {/if}
+
               {#if ['nascent', 'pending', 'rejected', 'abandoned', 'failed', 'completed', 'awaiting_review'].includes(desire.status)}
                 <button
                   class="btn-delete"
                   disabled={processingId === desire.id}
                   on:click={() => handleDelete(desire.id)}
                 >
-                  Delete
+                  🗑️ Delete
                 </button>
               {/if}
             </div>
@@ -2803,6 +2768,42 @@
 
   .btn-delete:hover:not(:disabled) {
     background: #4b5563;
+  }
+
+  .btn-archive {
+    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+    color: white;
+    padding: 0.375rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .btn-archive:hover:not(:disabled) {
+    background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+  }
+
+  .btn-revive {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: white;
+    padding: 0.375rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .btn-revive:hover:not(:disabled) {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%);
   }
 
   .btn-stage {
@@ -3719,6 +3720,30 @@
     margin: 0.25rem 0 0 0;
   }
 
+  .execution-summary {
+    margin-top: 0.75rem;
+    padding: 0.5rem;
+    background: rgba(59, 130, 246, 0.1);
+    border-radius: 4px;
+    border-left: 3px solid #3b82f6;
+  }
+
+  .execution-summary .summary-content {
+    margin: 0.25rem 0 0 0;
+    white-space: pre-wrap;
+    font-family: inherit;
+    color: #94a3b8;
+    line-height: 1.4;
+  }
+
+  :global(.light) .execution-summary {
+    background: rgba(59, 130, 246, 0.08);
+  }
+
+  :global(.light) .execution-summary .summary-content {
+    color: #64748b;
+  }
+
   /* Journey Log Button - Enhanced */
   .btn-journey-log {
     width: 100%;
@@ -3893,6 +3918,75 @@
 
   .entry-meta {
     font-size: 0.625rem;
+  }
+
+  .entry-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .entry-expand-hint {
+    color: #6b7280;
+    flex-shrink: 0;
+  }
+
+  :global(.dark) .entry-expand-hint {
+    color: #9ca3af;
+  }
+
+  .scratchpad-entry.clickable {
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+
+  .scratchpad-entry.clickable:hover {
+    background: #f3f4f6;
+  }
+
+  :global(.dark) .scratchpad-entry.clickable:hover {
+    background: #374151;
+  }
+
+  .scratchpad-entry.expanded {
+    background: #f0fdf4;
+    border-color: #22c55e;
+  }
+
+  :global(.dark) .scratchpad-entry.expanded {
+    background: #14532d;
+    border-color: #22c55e;
+  }
+
+  .entry-data {
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px dashed #d1d5db;
+  }
+
+  :global(.dark) .entry-data {
+    border-top-color: #4b5563;
+  }
+
+  .entry-data-json {
+    font-size: 0.75rem;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    background: #f9fafb;
+    padding: 0.75rem;
+    border-radius: 4px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+    margin: 0;
+    color: #374151;
+  }
+
+  :global(.dark) .entry-data-json {
+    background: #111827;
+    color: #e5e7eb;
   }
 
   /* Scratchpad Browser */

@@ -258,14 +258,31 @@ const operatorConfigCache = new Map<string, OperatorConfig>();
  * Load operator configuration for a user
  *
  * @param username - REQUIRED: Username to load config for. All configs are user-specific.
+ * @param skipCache - If true, bypass cache and reload from disk
  */
-export function loadOperatorConfig(username: string): OperatorConfig {
-  const cached = operatorConfigCache.get(username);
-  if (cached) return cached;
+export function loadOperatorConfig(username: string, skipCache = false): OperatorConfig {
+  if (!skipCache) {
+    const cached = operatorConfigCache.get(username);
+    if (cached) return cached;
+  }
 
   const config = loadUserConfig<OperatorConfig>('operator.json', getDefaultOperatorConfig(), username);
   operatorConfigCache.set(username, config);
   return config;
+}
+
+/**
+ * Invalidate operator config cache for a user (or all users)
+ * Call this after config file changes to ensure fresh config is loaded
+ */
+export function invalidateOperatorConfigCache(username?: string): void {
+  if (username) {
+    operatorConfigCache.delete(username);
+    console.log(`[config] Cache invalidated for user: ${username}`);
+  } else {
+    operatorConfigCache.clear();
+    console.log(`[config] All operator config caches cleared`);
+  }
 }
 
 /**
@@ -330,10 +347,8 @@ export function invalidateOperatorConfig(username?: string): void {
 // ============================================================================
 
 export interface RuntimeConfig {
-  operator?: {
-    reactV2?: boolean;
-    useReasoningService?: boolean;
-    useContextPackage?: boolean;
+  cognitive?: {
+    useNodePipeline?: boolean;
   };
   [key: string]: any;
 }
@@ -345,34 +360,6 @@ export interface RuntimeConfig {
  */
 export function loadRuntimeConfig(username: string): RuntimeConfig {
   return loadUserConfig<RuntimeConfig>('runtime.json', {}, username);
-}
-
-/**
- * Check if ReAct V2 is enabled for a user
- *
- * @param username - REQUIRED: Username to check config for.
- */
-export function isReactV2Enabled(username: string): boolean {
-  try {
-    const runtime = loadRuntimeConfig(username);
-    return runtime.operator?.reactV2 === true;
-  } catch {
-    return false; // Default to v1 if config missing
-  }
-}
-
-/**
- * Check if Reasoning Service should be used instead of inline V2
- *
- * @param username - REQUIRED: Username to check config for.
- */
-export function useReasoningService(username: string): boolean {
-  try {
-    const runtime = loadRuntimeConfig(username);
-    return runtime.operator?.useReasoningService === true;
-  } catch {
-    return false; // Default to inline V2 if config missing
-  }
 }
 
 /**

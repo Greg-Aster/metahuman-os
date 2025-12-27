@@ -1,9 +1,10 @@
 /**
  * Desire Outcome Reviewer Agent — Core Logic
  *
- * Post-execution review of desires:
+ * Post-execution review of desires using the node graph pipeline:
  * - Reviews completed/failed desires that haven't been reviewed
  * - Uses LLM to assess whether the desire was truly satisfied
+ * - Graph handles: outcome review → inner dialogue → TTS output
  * - Determines next action based on behavioral metrics (not hardcoded types):
  *   - High cycle count with returns = recurring nature (reset for next cycle)
  *   - Single completion, low cycles = achievable nature (archive)
@@ -42,10 +43,15 @@ import {
   updateScratchpadSummary,
   initializeScratchpadSummary,
   initializeDesireMetrics,
+  // Graph-based review (single source of truth from @metahuman/core)
+  reviewOutcomeViaGraph,
 } from '@metahuman/core';
 
 const LOCK_NAME = 'desire-outcome-reviewer';
 const LOG_PREFIX = '[AGENCY:outcome-reviewer]';
+
+// Note: reviewOutcomeViaGraph is now imported from @metahuman/core
+// This is the single source of truth for graph-based outcome review
 
 // Strength adjustments for post-review actions
 const CYCLE_RESET_STRENGTH = 0.3; // Start low after a cycle completes, builds up again
@@ -632,13 +638,21 @@ export async function processDesires(username?: string): Promise<{
       desire.metrics = initializeDesireMetrics();
     }
 
-    // Get LLM review
-    const review = await reviewOutcome(desire);
+    // Get outcome review via graph pipeline (handles inner dialogue + TTS output)
+    const graphResult = await reviewOutcomeViaGraph(desire, username!);
+
+    if (!graphResult.success || !graphResult.outcomeReview) {
+      console.error(`${LOG_PREFIX}   ❌ Review failed:`, graphResult.error);
+      continue;
+    }
+
+    const review = graphResult.outcomeReview;
     stats.reviewed++;
 
     console.log(`${LOG_PREFIX}   Verdict: ${review.verdict} (score: ${review.successScore})`);
 
     // Handle based on verdict
+    // Note: Inner dialogue and TTS are now handled by the graph pipeline
     let updatedDesire: Desire;
     switch (review.verdict) {
       case 'completed':
@@ -678,34 +692,26 @@ export async function processDesires(username?: string): Promise<{
         successScore: review.successScore,
         newStatus: updatedDesire.status,
         username,
+        usedGraphPipeline: true,
       },
     });
 
-    // Notify user if needed
+    // Note: Inner dialogue and TTS are now handled by the graph pipeline
+    // The inner_dialogue_capture and tts nodes in the graph handle this automatically
+
+    // Special user notifications are still captured separately if needed
     if (review.notifyUser && review.userMessage) {
       await captureEvent(review.userMessage, {
         type: 'inner_dialogue',
-        tags: ['agency', 'outcome', 'notification'],
+        tags: ['agency', 'outcome', 'notification', 'user-alert'],
         metadata: {
           desireId: desire.id,
           verdict: review.verdict,
           source: 'desire-outcome-reviewer',
+          isUserNotification: true,
         },
       });
     }
-
-    // Log to inner dialogue
-    const dialogueText = `Reviewed outcome for "${desire.title}": ${review.verdict}. ${review.reasoning}`;
-    await captureEvent(dialogueText, {
-      type: 'inner_dialogue',
-      tags: ['agency', 'outcome-review', 'inner'],
-      metadata: {
-        desireId: desire.id,
-        verdict: review.verdict,
-        successScore: review.successScore,
-        source: 'desire-outcome-reviewer',
-      },
-    });
   }
 
   return stats;

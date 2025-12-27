@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { getAuthenticatedUser, audit, captureEvent } from '@metahuman/core';
+import { getAuthenticatedUser, audit, captureEvent, queueTTS } from '@metahuman/core';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
 import {
   loadDesire,
@@ -13,8 +13,19 @@ import {
 import { callLLM, type RouterMessage } from '@metahuman/core/model-router';
 import { loadOperatorConfig } from '@metahuman/core/config';
 import { isClaudeSessionReady, sendPrompt, startClaudeSession } from '@metahuman/core/claude-session';
+import { executeWithInterpreter, isInterpreterServerRunning } from '@metahuman/core';
 
 const LOG_PREFIX = '[API:agency/outcome-review]';
+
+// ============================================================================
+// MANUAL OUTCOME REVIEW PATH (API endpoint for UI "Review" button)
+// ============================================================================
+// This is the MANUAL outcome review path triggered by user clicking "Review" in UI.
+// The AUTONOMOUS path (scheduler) uses the graph pipeline in:
+//   brain/agents/desire-outcome-reviewer/core.ts → reviewOutcomeViaGraph()
+//
+// Both paths output to: inner dialogue + TTS
+// ============================================================================
 
 // Server-side API base URL for internal calls
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:4321';
@@ -41,8 +52,7 @@ interface VerificationResult {
  * Use Claude CLI to VERIFY outcomes before trusting self-reported success.
  * This is critical - the executor might claim success without actually doing anything!
  *
- * When Big Brother delegateAll is enabled, uses Claude CLI directly.
- * Otherwise falls back to operator API.
+ * Priority: Big Brother (if enabled) → Open Interpreter (if running) → Error
  */
 async function verifyOutcomeWithOperator(
   desire: Desire,
@@ -69,7 +79,6 @@ async function verifyOutcomeWithOperator(
 
   const operatorConfig = loadOperatorConfig(userContext.username);
   const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
-  const delegateAll = operatorConfig.bigBrotherMode?.delegateAll === true;
 
   // Build verification goal based on what the plan was supposed to do
   const operatorGoal = plan?.operatorGoal || desire.description;
@@ -104,7 +113,7 @@ async function verifyOutcomeWithOperator(
   // =========================================================================
   // BIG BROTHER MODE: Use Claude CLI directly for verification
   // =========================================================================
-  if (bigBrotherEnabled && delegateAll) {
+  if (bigBrotherEnabled) {
     console.log(`${LOG_PREFIX}    🤖 Using Claude CLI for verification`);
 
     try {
@@ -198,67 +207,61 @@ Please verify now and report your findings.`;
   }
 
   // =========================================================================
-  // FALLBACK: Use operator API (local skills)
+  // FALLBACK: Try Open Interpreter if available
   // =========================================================================
-  console.log(`${LOG_PREFIX}    📡 Routing verification to operator API...`);
+  const interpreterRunning = await isInterpreterServerRunning();
+  if (interpreterRunning) {
+    console.log(`${LOG_PREFIX}    🐍 Using Open Interpreter for verification`);
 
-  try {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (cookieHeader) {
-      headers['Cookie'] = cookieHeader;
-    }
+    try {
+      const response = await executeWithInterpreter(
+        { task: verificationPrompt },
+        undefined,
+        userContext.username
+      );
 
-    const response = await fetch(`${API_BASE_URL}/api/operator`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        goal: verificationPrompt,
-        context: `Verifying outcome of desire: ${desire.title}\nOriginal goal: ${operatorGoal}\nExecution status: ${desire.execution?.status}`,
-        autoApprove: true,
-        allowMemoryWrites: false,
-        mode: 'strict',
-      }),
-    });
+      if (response.success && response.finalOutput) {
+        evidence.push(`Interpreter verification: ${response.finalOutput.substring(0, 500)}${response.finalOutput.length > 500 ? '...' : ''}`);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      errors.push(`Verification API error: ${response.status} - ${errorText}`);
+        // Analyze response for success indicators
+        const outputLower = response.finalOutput.toLowerCase();
+        const hasPositiveIndicators = outputLower.includes('exists') ||
+          outputLower.includes('found') ||
+          outputLower.includes('created') ||
+          outputLower.includes('success') ||
+          outputLower.includes('verified');
+
+        const hasNegativeIndicators = outputLower.includes('not found') ||
+          outputLower.includes('does not exist') ||
+          outputLower.includes('error') ||
+          outputLower.includes('failed') ||
+          outputLower.includes('no such');
+
+        const verified = hasPositiveIndicators && !hasNegativeIndicators;
+
+        return {
+          verified,
+          evidence,
+          errors,
+        };
+      } else {
+        errors.push(`Interpreter verification failed: ${response.error || 'Unknown error'}`);
+        return { verified: false, evidence, errors };
+      }
+    } catch (error) {
+      errors.push(`Interpreter verification error: ${(error as Error).message}`);
       return { verified: false, evidence, errors };
     }
-
-    const operatorResult = await response.json();
-
-    if (operatorResult.success && operatorResult.result) {
-      evidence.push(`Operator verification: ${operatorResult.result}`);
-
-      if (operatorResult.scratchpad) {
-        const actionSkills = operatorResult.scratchpad.filter(
-          (s: { action: string }) => !['conversational_response', 'think', 'plan'].includes(s.action)
-        );
-        if (actionSkills.length > 0) {
-          evidence.push(`Skills used: ${actionSkills.map((s: { action: string }) => s.action).join(', ')}`);
-        }
-      }
-
-      return {
-        verified: true,
-        evidence,
-        errors,
-        operatorResponse: operatorResult
-      };
-    } else {
-      errors.push(`Verification failed: ${operatorResult.error?.message || 'Unknown error'}`);
-      return {
-        verified: false,
-        evidence,
-        errors,
-        operatorResponse: operatorResult
-      };
-    }
-  } catch (error) {
-    errors.push(`Verification exception: ${(error as Error).message}`);
-    return { verified: false, evidence, errors };
   }
+
+  // =========================================================================
+  // NO EXECUTION BACKEND AVAILABLE
+  // =========================================================================
+  console.log(`${LOG_PREFIX}    ❌ No verification backend available`);
+  console.log(`${LOG_PREFIX}    📝 Enable Big Brother mode or start Open Interpreter server`);
+
+  errors.push('No verification backend available. Enable Big Brother mode or start Open Interpreter server.');
+  return { verified: false, evidence, errors };
 }
 
 const SYSTEM_PROMPT = `You are the Outcome Review module of MetaHuman OS. Your job is to evaluate whether an executed desire actually achieved its goal.
@@ -361,11 +364,19 @@ Respond with JSON:
   ];
 
   try {
-    const response = await callLLM({
-      role: 'persona',
-      messages,
-      options: { temperature: 0.3, responseFormat: 'json' },
-    });
+    // Add timeout to prevent indefinite hangs (60 seconds)
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('LLM call timed out after 60 seconds')), 60000)
+    );
+
+    const response = await Promise.race([
+      callLLM({
+        role: 'persona',
+        messages,
+        options: { temperature: 0.3, responseFormat: 'json' },
+      }),
+      timeoutPromise,
+    ]);
 
     if (!response.content) {
       return {
@@ -504,6 +515,41 @@ export const POST: APIRoute = async ({ params, cookies, request }) => {
     console.log(`${LOG_PREFIX}    Success Score: ${reviewResult.successScore}`);
     console.log(`${LOG_PREFIX}    Notify User: ${reviewResult.notifyUser}`);
 
+    // =========================================================================
+    // Generate execution summary from step results
+    // =========================================================================
+    let executionSummary = '';
+    const execution = desire.execution;
+    const plan = desire.plan;
+
+    if (execution?.stepResults && Array.isArray(execution.stepResults)) {
+      const summaryParts: string[] = [];
+
+      for (const stepResult of execution.stepResults) {
+        const stepIndex = (stepResult as { stepOrder?: number }).stepOrder || 0;
+        const stepAction = plan?.steps?.[stepIndex - 1]?.action || `Step ${stepIndex}`;
+        const result = stepResult as { success?: boolean; result?: { claudeResponse?: string; interpreterResponse?: string } };
+
+        if (result.success && result.result) {
+          // Extract the key accomplishment from Claude/Interpreter response
+          const response = result.result.claudeResponse || result.result.interpreterResponse || '';
+          // Get first meaningful line or first 150 chars
+          const firstLine = response.split('\n').find(line =>
+            line.trim() && !line.startsWith('#') && !line.startsWith('*')
+          ) || response.substring(0, 150);
+
+          summaryParts.push(`✅ ${stepAction}: ${firstLine.substring(0, 100)}${firstLine.length > 100 ? '...' : ''}`);
+        } else {
+          const error = (stepResult as { error?: string }).error || 'Failed';
+          summaryParts.push(`❌ ${stepAction}: ${error.substring(0, 80)}`);
+        }
+      }
+
+      executionSummary = summaryParts.join('\n');
+    }
+
+    console.log(`${LOG_PREFIX}    Execution summary generated: ${executionSummary.length} chars`);
+
     // Create the outcome review object
     const outcomeReview: DesireOutcomeReview = {
       id: `outcome-${desire.id}-${Date.now()}`,
@@ -516,6 +562,7 @@ export const POST: APIRoute = async ({ params, cookies, request }) => {
       reviewedAt: new Date().toISOString(),
       notifyUser: reviewResult.notifyUser,
       userMessage: reviewResult.userMessage,
+      executionSummary,
     };
 
     // Determine new status based on verdict
@@ -628,23 +675,25 @@ export const POST: APIRoute = async ({ params, cookies, request }) => {
       },
     });
 
-    // Log to inner dialogue
+    // Log to inner dialogue with execution summary
     let dialogueText: string;
+    const summarySection = executionSummary ? `\n\n**What I did:**\n${executionSummary}` : '';
+
     switch (reviewResult.verdict) {
       case 'completed':
-        dialogueText = `I've completed my desire "${desire.title}"! ${reviewResult.reasoning}`;
+        dialogueText = `I've completed my desire "${desire.title}"! ${reviewResult.reasoning}${summarySection}`;
         break;
       case 'continue':
-        dialogueText = `My desire "${desire.title}" is ongoing. ${reviewResult.reasoning} I'll continue pursuing it.`;
+        dialogueText = `My desire "${desire.title}" is ongoing. ${reviewResult.reasoning} I'll continue pursuing it.${summarySection}`;
         break;
       case 'retry':
-        dialogueText = `I need to retry "${desire.title}". ${reviewResult.reasoning}`;
+        dialogueText = `I need to retry "${desire.title}". ${reviewResult.reasoning}${summarySection}`;
         break;
       case 'escalate':
-        dialogueText = `I need help with "${desire.title}". ${reviewResult.userMessage || reviewResult.reasoning}`;
+        dialogueText = `I need help with "${desire.title}". ${reviewResult.userMessage || reviewResult.reasoning}${summarySection}`;
         break;
       case 'abandon':
-        dialogueText = `I'm letting go of "${desire.title}". ${reviewResult.reasoning}`;
+        dialogueText = `I'm letting go of "${desire.title}". ${reviewResult.reasoning}${summarySection}`;
         break;
     }
 
@@ -656,8 +705,31 @@ export const POST: APIRoute = async ({ params, cookies, request }) => {
         desireId: id,
         verdict: reviewResult.verdict,
         successScore: reviewResult.successScore,
+        executionSummary,
       },
     });
+
+    // Queue TTS for inner dialogue (speaks the outcome announcement)
+    // Uses a shorter version without the full execution summary for TTS
+    const ttsText = (() => {
+      switch (reviewResult.verdict) {
+        case 'completed':
+          return `I've completed my desire: ${desire.title}. ${reviewResult.reasoning}`;
+        case 'continue':
+          return `My desire "${desire.title}" is ongoing. I'll continue pursuing it.`;
+        case 'retry':
+          return `I need to retry "${desire.title}". ${reviewResult.reasoning}`;
+        case 'escalate':
+          return `I need help with "${desire.title}". ${reviewResult.userMessage || reviewResult.reasoning}`;
+        case 'abandon':
+          return `I'm letting go of "${desire.title}". ${reviewResult.reasoning}`;
+        default:
+          return `Desire "${desire.title}" review complete.`;
+      }
+    })();
+
+    queueTTS(user.username, ttsText, 'inner', 'outcome-reviewer');
+    console.log(`${LOG_PREFIX} 🔊 TTS queued for inner dialogue`);
 
     // Build response message
     const verificationStatus = verification.verified ? '✅ Verified' : '⚠️ Not Verified';

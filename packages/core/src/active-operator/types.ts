@@ -291,6 +291,9 @@ export interface SystemState {
   /** Number of desires awaiting user approval */
   awaitingApprovalDesires: number;
 
+  /** Number of approved desires ready for autonomous execution */
+  approvedDesires: number;
+
   /** Hours since last reflection */
   hoursSinceReflection: number;
 

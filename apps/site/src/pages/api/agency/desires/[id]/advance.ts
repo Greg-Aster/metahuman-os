@@ -7,14 +7,21 @@ const LOG_PREFIX = '[API:agency/advance]';
 
 // Valid stage transitions
 // NOTE: 'approved' can go back to 'planning' if no plan exists (edge case recovery)
+// NOTE: All active stages can be archived (abandoned), and archived stages can be revived (pending)
 const VALID_TRANSITIONS: Record<string, string[]> = {
-  nascent: ['pending', 'planning', 'reviewing', 'approved'],
-  pending: ['planning', 'reviewing', 'approved'],
-  evaluating: ['planning', 'reviewing', 'approved'],
-  planning: ['reviewing', 'approved'],
-  reviewing: ['planning', 'approved'], // Allow re-planning from review
-  approved: ['executing', 'planning'],  // Allow re-planning if no plan exists
-  awaiting_approval: ['approved', 'planning'], // Allow re-planning
+  nascent: ['pending', 'planning', 'reviewing', 'approved', 'abandoned'],
+  pending: ['planning', 'reviewing', 'approved', 'abandoned'],
+  evaluating: ['planning', 'reviewing', 'approved', 'abandoned'],
+  planning: ['reviewing', 'approved', 'abandoned'],
+  reviewing: ['planning', 'approved', 'abandoned'], // Allow re-planning from review
+  approved: ['executing', 'planning', 'abandoned'],  // Allow re-planning if no plan exists
+  awaiting_approval: ['approved', 'planning', 'abandoned'], // Allow re-planning
+  executing: ['abandoned'], // Can archive stuck executions
+  awaiting_review: ['abandoned'], // Can archive pending reviews
+  completed: ['abandoned'], // Archive completed desires
+  failed: ['pending', 'abandoned'], // Revive or archive failed desires
+  rejected: ['pending'], // Revive rejected desires
+  abandoned: ['pending'], // Revive archived desires
 };
 
 /**

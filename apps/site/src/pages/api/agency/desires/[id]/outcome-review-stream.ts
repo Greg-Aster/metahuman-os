@@ -13,6 +13,7 @@ import {
 import { callLLM, type RouterMessage } from '@metahuman/core/model-router';
 import { loadOperatorConfig } from '@metahuman/core/config';
 import { isClaudeSessionReady, sendPrompt, startClaudeSession } from '@metahuman/core/claude-session';
+import { executeWithInterpreter, isInterpreterServerRunning } from '@metahuman/core';
 
 const LOG_PREFIX = '[API:agency/outcome-review-stream]';
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:4321';
@@ -112,7 +113,6 @@ export const GET: APIRoute = async ({ params, cookies, request }) => {
 
         const operatorConfig = loadOperatorConfig(user.username);
         const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
-        const delegateAll = operatorConfig.bigBrotherMode?.delegateAll === true;
 
         const plan = desire.plan;
         const operatorGoal = plan?.operatorGoal || desire.description;
@@ -138,7 +138,7 @@ export const GET: APIRoute = async ({ params, cookies, request }) => {
 
         let verification: VerificationResult = { verified: false, evidence: [], errors: [] };
 
-        if (bigBrotherEnabled && delegateAll) {
+        if (bigBrotherEnabled) {
           sendSSE(controller, { type: 'log', message: '🤖 Using Claude CLI for verification' });
 
           if (!isClaudeSessionReady()) {
@@ -197,42 +197,46 @@ Please verify now and report your findings.`;
             }
           }
         } else {
-          sendSSE(controller, { type: 'log', message: '📡 Using operator API for verification' });
+          // Try Open Interpreter as fallback
+          const interpreterRunning = await isInterpreterServerRunning();
+          if (interpreterRunning) {
+            sendSSE(controller, { type: 'log', message: '🐍 Using Open Interpreter for verification' });
 
-          try {
-            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-            const cookieHeader = request.headers.get('cookie');
-            if (cookieHeader) headers['Cookie'] = cookieHeader;
+            try {
+              const response = await executeWithInterpreter(
+                { task: verificationPrompt },
+                undefined,
+                user.username
+              );
 
-            const response = await fetch(`${API_BASE_URL}/api/operator`, {
-              method: 'POST',
-              headers,
-              body: JSON.stringify({
-                goal: verificationPrompt,
-                context: `Verifying outcome of desire: ${desire.title}`,
-                autoApprove: true,
-                allowMemoryWrites: false,
-                mode: 'strict',
-              }),
-            });
+              if (response.success && response.finalOutput) {
+                verification.evidence.push(`Interpreter verification: ${response.finalOutput.substring(0, 500)}${response.finalOutput.length > 500 ? '...' : ''}`);
 
-            if (response.ok) {
-              const operatorResult = await response.json();
-              if (operatorResult.success && operatorResult.result) {
-                verification.evidence.push(`Operator verification: ${operatorResult.result}`);
-                verification.verified = true;
-                sendSSE(controller, { type: 'log', message: '✅ Operator verification passed' });
+                const outputLower = response.finalOutput.toLowerCase();
+                const hasPositiveIndicators = outputLower.includes('exists') ||
+                  outputLower.includes('found') ||
+                  outputLower.includes('created') ||
+                  outputLower.includes('success');
+                const hasNegativeIndicators = outputLower.includes('not found') ||
+                  outputLower.includes('does not exist') ||
+                  outputLower.includes('error') ||
+                  outputLower.includes('failed');
+
+                verification.verified = hasPositiveIndicators && !hasNegativeIndicators;
+                sendSSE(controller, { type: 'log', message: verification.verified ? '✅ Verification passed' : '❌ Verification failed' });
               } else {
-                verification.errors.push(`Verification failed: ${operatorResult.error?.message || 'Unknown'}`);
-                sendSSE(controller, { type: 'log', message: '❌ Operator verification failed' });
+                verification.errors.push(`Interpreter verification failed: ${response.error || 'Unknown error'}`);
+                sendSSE(controller, { type: 'log', message: `❌ Interpreter error: ${response.error}` });
               }
-            } else {
-              verification.errors.push(`API error: ${response.status}`);
-              sendSSE(controller, { type: 'log', message: `❌ API error: ${response.status}` });
+            } catch (error) {
+              verification.errors.push(`Interpreter exception: ${(error as Error).message}`);
+              sendSSE(controller, { type: 'log', message: `❌ Error: ${(error as Error).message}` });
             }
-          } catch (error) {
-            verification.errors.push(`Exception: ${(error as Error).message}`);
-            sendSSE(controller, { type: 'log', message: `❌ Error: ${(error as Error).message}` });
+          } else {
+            // No execution backend available
+            sendSSE(controller, { type: 'log', message: '❌ No verification backend available' });
+            sendSSE(controller, { type: 'log', message: '📝 Enable Big Brother mode or start Open Interpreter server' });
+            verification.errors.push('No verification backend available. Enable Big Brother mode or start Open Interpreter.');
           }
         }
 

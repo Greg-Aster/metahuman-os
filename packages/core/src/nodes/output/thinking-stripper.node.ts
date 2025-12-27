@@ -18,8 +18,9 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 
 /**
  * Extract <think>...</think> blocks and return both parts
+ * Exported for reuse in operator-react.ts and other modules
  */
-function parseThinkingBlocks(content: string): { thinking: string | null; stripped: string } {
+export function parseThinkingBlocks(content: string): { thinking: string | null; stripped: string } {
   if (!content) return { thinking: null, stripped: '' };
 
   const thinkPattern = /<think>([\s\S]*?)<\/think>/gi;

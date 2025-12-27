@@ -159,15 +159,25 @@ Respond with JSON:
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  // Inputs from graph:
-  // slot 0: desire from desire_loader or executor output
-  // slot 1: execution results from desire_executor (optional, may be on desire)
-  const slot0 = inputs[0] as { desire?: Desire; execution?: DesireExecution } | undefined;
-  const slot1 = inputs[1] as { execution?: DesireExecution } | undefined;
+  // Inputs from graph - graph executor maps by handle name (string keys)
+  // Edge uses slot_0/slot_1 handles, so we access by those keys
+  // Also check context.desire for direct injection from reviewOutcomeViaGraph
+  const slot0 = (inputs['slot_0'] || inputs[0]) as { desire?: Desire; execution?: DesireExecution } | Desire | undefined;
+  const slot1 = (inputs['slot_1'] || inputs[1]) as { execution?: DesireExecution } | undefined;
   const username = context.userId || context.username;
 
-  const desire = slot0?.desire;
-  const execution = slot1?.execution || slot0?.execution || desire?.execution;
+  // Handle both wrapped { desire } format and direct Desire object
+  // Also check context.desire for cases where desire is injected directly
+  let desire: Desire | undefined;
+  if (context.desire) {
+    desire = context.desire as Desire;
+  } else if (slot0) {
+    desire = (slot0 as { desire?: Desire }).desire || (slot0 as Desire);
+  }
+  // Get execution from various sources - slot1, slot0 (if wrapped), or desire itself
+  const execution = slot1?.execution ||
+    (slot0 as { execution?: DesireExecution })?.execution ||
+    desire?.execution;
 
   if (!desire) {
     return {
@@ -223,11 +233,18 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       },
     });
 
+    // Generate human-readable summary for inner dialogue and TTS
+    let summary = `Reviewed "${desire.title}" — verdict: ${reviewResult.verdict}. ${reviewResult.reasoning}`;
+    if (reviewResult.lessonsLearned?.length) {
+      summary += ` Lessons: ${reviewResult.lessonsLearned.slice(0, 2).join('; ')}`;
+    }
+
     return {
       outcomeReview,
       verdict: reviewResult.verdict,
       success: true,
       desire, // Pass through for downstream nodes
+      summary, // Human-readable summary for inner dialogue and TTS
     };
   } catch (error) {
     console.error(`[outcome-reviewer] ❌ Error:`, error);
@@ -255,6 +272,7 @@ export const OutcomeReviewerNode: NodeDefinition = defineNode({
     { name: 'success', type: 'boolean', description: 'Whether review completed' },
     { name: 'desire', type: 'object', description: 'Pass-through desire' },
     { name: 'error', type: 'string', optional: true, description: 'Error message if failed' },
+    { name: 'summary', type: 'string', description: 'Human-readable summary for inner dialogue and TTS' },
   ],
   properties: {
     temperature: 0.3,

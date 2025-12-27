@@ -26,21 +26,6 @@
       "height": 80
     },
     {
-      "id": "2",
-      "type": "genericNode",
-      "position": {
-        "x": 100,
-        "y": 280
-      },
-      "data": {
-        "label": "Load User Context",
-        "nodeType": "user_context_loader",
-        "properties": {}
-      },
-      "width": 200,
-      "height": 80
-    },
-    {
       "id": "3",
       "type": "genericNode",
       "position": {
@@ -112,6 +97,42 @@
       },
       "width": 180,
       "height": 60
+    },
+    {
+      "id": "7",
+      "type": "outputNode",
+      "position": {
+        "x": 950,
+        "y": 280
+      },
+      "data": {
+        "label": "Save to Inner Dialogue",
+        "nodeType": "inner_dialogue_capture",
+        "properties": {
+          "tags": ["agency", "execution", "inner"],
+          "dialogueSource": "desire-executor"
+        }
+      },
+      "width": 200,
+      "height": 80
+    },
+    {
+      "id": "8",
+      "type": "outputNode",
+      "position": {
+        "x": 950,
+        "y": 400
+      },
+      "data": {
+        "label": "TTS Output",
+        "nodeType": "tts",
+        "properties": {
+          "source": "desire-executor",
+          "defaultMode": "inner"
+        }
+      },
+      "width": 180,
+      "height": 60
     }
   ],
   "edges": [
@@ -124,17 +145,6 @@
       "data": {
         "type": "object",
         "comment": "Desire → Executor"
-      }
-    },
-    {
-      "id": "e-2-slot_0-3-slot_1",
-      "source": "2",
-      "target": "3",
-      "sourceHandle": "slot_0",
-      "targetHandle": "slot_1",
-      "data": {
-        "type": "object",
-        "comment": "User Context → Executor"
       }
     },
     {
@@ -179,6 +189,28 @@
       "data": {
         "type": "object",
         "comment": "Updated Desire → Audit"
+      }
+    },
+    {
+      "id": "e-3-summary-7-text",
+      "source": "3",
+      "target": "7",
+      "sourceHandle": "summary",
+      "targetHandle": "text",
+      "data": {
+        "type": "string",
+        "comment": "Execution Summary → Inner Dialogue"
+      }
+    },
+    {
+      "id": "e-3-summary-8-innerDialogue",
+      "source": "3",
+      "target": "8",
+      "sourceHandle": "summary",
+      "targetHandle": "innerDialogue",
+      "data": {
+        "type": "string",
+        "comment": "Execution Summary → TTS Output"
       }
     }
   ]

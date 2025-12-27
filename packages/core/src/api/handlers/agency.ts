@@ -38,7 +38,7 @@ const ALL_STATUSES: DesireStatus[] = [
  *   - status: filter by status ('all', 'active', 'pending', or comma-separated list)
  */
 export async function handleListDesires(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user, params } = req;
+  const { user, query } = req;
 
   if (!user.isAuthenticated) {
     return {
@@ -48,7 +48,7 @@ export async function handleListDesires(req: UnifiedRequest): Promise<UnifiedRes
   }
 
   try {
-    const statusParam = params?.status || 'all';
+    const statusParam = query?.status || 'all';
     let desires: Desire[];
 
     if (statusParam === 'all') {

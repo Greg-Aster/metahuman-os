@@ -124,8 +124,9 @@ async function getIndexAgeHours(username: string): Promise<number> {
  *
  * Counts are categorized as:
  * - pending: nascent, pending (not yet ready for execution)
- * - active: evaluating, planning, reviewing, executing (in progress)
- * - awaitingApproval: awaiting_approval (needs user action)
+ * - active: evaluating, planning, executing (in progress)
+ * - awaitingApproval: awaiting_approval (needs user action before approval)
+ * - approved: approved (ready for autonomous execution!)
  *
  * @param username - The user profile to query (required for multi-user support)
  */
@@ -133,6 +134,7 @@ async function getDesireCounts(username: string): Promise<{
   pending: number;
   active: number;
   awaitingApproval: number;
+  approved: number;
 }> {
   try {
     // Use folder-based storage (same as Agency UI)
@@ -142,6 +144,7 @@ async function getDesireCounts(username: string): Promise<{
     let pending = 0;
     let active = 0;
     let awaitingApproval = 0;
+    let approved = 0;
 
     for (const desire of allDesires) {
       switch (desire.status) {
@@ -160,20 +163,24 @@ async function getDesireCounts(username: string): Promise<{
           // and will transition to awaiting_approval - count them together
           awaitingApproval++;
           break;
+        case 'approved':
+          // READY FOR EXECUTION! These have been approved and can be run autonomously
+          approved++;
+          break;
         // completed, abandoned, rejected are not counted as actionable
       }
     }
 
-    return { pending, active, awaitingApproval };
+    return { pending, active, awaitingApproval, approved };
   } catch (error) {
     console.warn('[system-state] Failed to get desire counts:', error);
-    return { pending: 0, active: 0, awaitingApproval: 0 };
+    return { pending: 0, active: 0, awaitingApproval: 0, approved: 0 };
   }
 }
 
 // Cache desire counts within a single gatherSystemState call
 // This prevents multiple queries to the storage system
-let cachedDesireCounts: { pending: number; active: number; awaitingApproval: number } | null = null;
+let cachedDesireCounts: { pending: number; active: number; awaitingApproval: number; approved: number } | null = null;
 let cacheUsername: string | null = null;
 
 /**
@@ -207,6 +214,17 @@ async function getAwaitingApprovalDesireCount(username: string): Promise<number>
     cacheUsername = username;
   }
   return cachedDesireCounts.awaitingApproval;
+}
+
+/**
+ * Get count of approved desires ready for autonomous execution.
+ */
+async function getApprovedDesireCount(username: string): Promise<number> {
+  if (!cachedDesireCounts || cacheUsername !== username) {
+    cachedDesireCounts = await getDesireCounts(username);
+    cacheUsername = username;
+  }
+  return cachedDesireCounts.approved;
 }
 
 // ============================================================================
@@ -536,6 +554,7 @@ export async function gatherSystemState(
     pendingDesires,
     activeDesires,
     awaitingApprovalDesires,
+    approvedDesires,
     hoursSinceReflection,
     hoursSinceDream,
     hoursSincePsychoanalysis,
@@ -546,6 +565,7 @@ export async function gatherSystemState(
     getPendingDesireCount(username),
     getActiveDesireCount(username),
     getAwaitingApprovalDesireCount(username),
+    getApprovedDesireCount(username),
     getHoursSinceEventType(username, 'inner_dialogue', ['idle-thought']),
     getHoursSinceEventType(username, 'dream'),
     getHoursSinceEventType(username, 'inner_dialogue', ['psychoanalysis']),
@@ -567,6 +587,7 @@ export async function gatherSystemState(
     pendingDesires,
     activeDesires,
     awaitingApprovalDesires,
+    approvedDesires,
     hoursSinceReflection,
     hoursSinceDream,
     hoursSincePsychoanalysis,
@@ -697,6 +718,15 @@ export function getTaskRecommendations(state: SystemState): {
   }
 
   // Desire system recommendations
+  // HIGHEST PRIORITY: Approved desires ready for execution!
+  if (state.approvedDesires > 0) {
+    recommendations.push({
+      task: 'desire_execute',
+      reason: `🚀 ${state.approvedDesires} APPROVED desire(s) ready for autonomous execution!`,
+      urgency: 'high', // Approved = user has blessed this, execute now!
+    });
+  }
+
   if (state.activeDesires > 0) {
     recommendations.push({
       task: 'desire_execute',

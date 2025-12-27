@@ -29,6 +29,9 @@ export * as agencyStorage from './storage.js';
 // Config
 export * as agencyConfig from './config.js';
 
+// Executor (graph-based execution)
+export * from './executor.js';
+
 // Re-export common functions at top level for convenience
 export {
   loadConfig,

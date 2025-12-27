@@ -11,6 +11,7 @@ import { recordDecision } from '../../active-operator/state-persister.js';
 import { loadConfig } from '../../active-operator/state-persister.js';
 import { audit } from '../../audit.js';
 import type { TaskType, TaskDecision } from '../../active-operator/types.js';
+import { parseThinkingBlocks } from '../output/thinking-stripper.node.js';
 
 /**
  * Task descriptions for the LLM prompt.
@@ -86,9 +87,10 @@ Guidelines:
 5. Balance reactive (triggers) with proactive (recommendations)
 6. Consider system state - high unprocessed memories → memory_curate
 7. DESIRE SYSTEM:
-   - If no desires exist (0 pending, 0 active), run desire_generate to create goals
+   - 🚀 APPROVED desires = HIGHEST PRIORITY! User approved these - execute immediately via desire_execute
+   - If no desires exist (0 pending, 0 active, 0 approved), run desire_generate to create goals
    - If desires are pending/active, run desire_execute to process them
-   - Desires awaiting approval: check trust level - high trust = auto-approve, low trust = wait for user
+   - Desires awaiting approval: wait for user to approve (don't auto-approve unless high trust)
 8. TRUST LEVELS:
    - observe/suggest: desires need user approval before execution
    - supervised_auto: low-risk desires auto-approved, medium/high need user approval
@@ -118,6 +120,7 @@ ${queueList}
 - Pending desires: ${systemState.pendingDesires || 0}
 - Active desires: ${systemState.activeDesires || 0}
 - Desires awaiting approval: ${systemState.awaitingApprovalDesires || 0}
+- 🚀 APPROVED desires (ready to execute!): ${systemState.approvedDesires || 0}
 - Last reflection: ${(systemState.hoursSinceReflection || 0).toFixed(1)} hours ago
 - User active: ${systemState.userActive ? 'Yes' : 'No'}
 
@@ -144,25 +147,42 @@ What should I do next?`,
       messages,
       userId: username,
       options: {
-        maxTokens: properties?.maxTokens || 256,
+        // Increased from 256 to 512 to accommodate Qwen3's <think> blocks
+        // before the actual JSON output
+        maxTokens: properties?.maxTokens || 512,
         temperature: properties?.temperature || 0.2,
       },
     });
 
+    // Strip <think> blocks before parsing JSON (Qwen3 reasoning mode support)
+    const { stripped, thinking } = parseThinkingBlocks(response.content);
+    if (thinking) {
+      console.log(`[UnifiedDecisionLLM] Model reasoning: ${thinking.substring(0, 200)}...`);
+    }
+
     // Parse response
-    const jsonMatch = response.content.match(/\{[\s\S]*\}/);
+    const jsonMatch = stripped.match(/\{[\s\S]*\}/);
     let decision: TaskDecision | null = null;
-    let reasoning = '';
+    // Always ensure reasoning has content for inner dialogue output
+    // Priority: explicit JSON reasoning > thinking block > default message
+    let reasoning = thinking || 'Evaluating system state and triggers...';
 
     if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      reasoning = parsed.reasoning || 'No reasoning provided';
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        // Override with explicit reasoning if provided
+        if (parsed.reasoning) {
+          reasoning = parsed.reasoning;
+        }
 
-      if (parsed.task && TASK_DESCRIPTIONS[parsed.task as TaskType]) {
-        decision = {
-          task: parsed.task as TaskType,
-          reasoning,
-        };
+        if (parsed.task && TASK_DESCRIPTIONS[parsed.task as TaskType]) {
+          decision = {
+            task: parsed.task as TaskType,
+            reasoning,
+          };
+        }
+      } catch (parseError) {
+        console.warn(`[UnifiedDecisionLLM] JSON parse error, using thinking as reasoning`);
       }
     }
 
@@ -237,10 +257,10 @@ export const UnifiedDecisionLLMNode: NodeDefinition = defineNode({
     },
     maxTokens: {
       type: 'slider',
-      default: 256,
+      default: 512,
       label: 'Max Tokens',
-      min: 64,
-      max: 512,
+      min: 128,
+      max: 1024,
       step: 64,
     },
   },

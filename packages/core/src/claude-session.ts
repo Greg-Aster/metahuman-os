@@ -223,7 +223,8 @@ export function getSessionStatus(): {
 /**
  * Send a prompt to Claude and get a response
  *
- * Uses --print mode for reliable execution, but logs to terminal for visibility
+ * Uses async spawn for reliable execution without blocking the event loop.
+ * This prevents ETIMEDOUT errors that can occur with synchronous execSync.
  */
 export async function sendPrompt(prompt: string, timeoutMs: number = 30000): Promise<string> {
   if (!currentSession || !currentSession.ready) {
@@ -259,15 +260,8 @@ export async function sendPrompt(prompt: string, timeoutMs: number = 30000): Pro
   });
 
   try {
-    // Use print mode with permissions bypass for full tool access
-    // This allows Claude to use Write, Bash, and other tools without prompting
-    const response = execSync('claude --print --dangerously-skip-permissions', {
-      input: prompt,
-      encoding: 'utf8',
-      timeout: timeoutMs,
-      maxBuffer: 10 * 1024 * 1024, // 10MB buffer for large responses
-      cwd: '/home/greggles/metahuman', // Set working directory
-    });
+    // Use async spawn instead of execSync to prevent ETIMEDOUT on spawn
+    const response = await spawnClaudeAsync(prompt, timeoutMs);
 
     // Write response to terminal log
     if (currentSession.terminalPort) {
@@ -312,6 +306,96 @@ export async function sendPrompt(prompt: string, timeoutMs: number = 30000): Pro
     });
     throw new Error(`Claude CLI request failed: ${errorMsg}`);
   }
+}
+
+/**
+ * Spawn Claude CLI asynchronously to avoid blocking and ETIMEDOUT errors
+ */
+async function spawnClaudeAsync(prompt: string, timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const errorChunks: Buffer[] = [];
+    let timedOut = false;
+
+    console.log(`[claude-session] 🚀 Spawning Claude CLI (timeout: ${timeoutMs}ms)...`);
+
+    const child = spawn('claude', ['--print', '--dangerously-skip-permissions'], {
+      cwd: '/home/greggles/metahuman',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+
+    // Set up timeout
+    const timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      console.log(`[claude-session] ⏰ Claude CLI timed out after ${timeoutMs}ms`);
+
+      // Give it a moment to terminate gracefully, then force kill
+      setTimeout(() => {
+        if (!child.killed) {
+          child.kill('SIGKILL');
+        }
+      }, 5000);
+
+      reject(new Error(`Claude CLI timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    // Write prompt to stdin
+    if (child.stdin) {
+      child.stdin.write(prompt);
+      child.stdin.end();
+    }
+
+    // Collect stdout
+    if (child.stdout) {
+      child.stdout.on('data', (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
+    }
+
+    // Collect stderr
+    if (child.stderr) {
+      child.stderr.on('data', (chunk: Buffer) => {
+        errorChunks.push(chunk);
+        // Log stderr in real-time for debugging
+        const text = chunk.toString();
+        if (text.trim()) {
+          console.log(`[claude-session] stderr: ${text.trim()}`);
+        }
+      });
+    }
+
+    // Handle spawn errors
+    child.on('error', (error) => {
+      clearTimeout(timeoutHandle);
+      if (!timedOut) {
+        console.log(`[claude-session] ❌ Spawn error: ${error.message}`);
+        reject(new Error(`Failed to spawn Claude CLI: ${error.message}`));
+      }
+    });
+
+    // Handle process exit
+    child.on('close', (code) => {
+      clearTimeout(timeoutHandle);
+
+      if (timedOut) {
+        return; // Already rejected
+      }
+
+      const stdout = Buffer.concat(chunks).toString('utf8');
+      const stderr = Buffer.concat(errorChunks).toString('utf8');
+
+      if (code === 0) {
+        console.log(`[claude-session] ✅ Claude CLI completed (${stdout.length} chars)`);
+        resolve(stdout);
+      } else {
+        const errorDetail = stderr || `Exit code ${code}`;
+        console.log(`[claude-session] ❌ Claude CLI failed: ${errorDetail}`);
+        reject(new Error(`Claude CLI exited with code ${code}: ${errorDetail}`));
+      }
+    });
+  });
 }
 
 /**

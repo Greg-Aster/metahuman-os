@@ -46,7 +46,7 @@ export const POST: APIRoute = async ({ params, cookies, request }) => {
     }
 
     // Allow rejecting from multiple statuses
-    const rejectableStatuses = ['reviewing', 'approved', 'pending', 'evaluating', 'planning'];
+    const rejectableStatuses = ['reviewing', 'awaiting_approval', 'approved', 'pending', 'evaluating', 'planning', 'nascent'];
     if (!rejectableStatuses.includes(desire.status)) {
       return new Response(
         JSON.stringify({ error: `Cannot reject desire in '${desire.status}' status.` }),

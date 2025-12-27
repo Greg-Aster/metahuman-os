@@ -508,37 +508,49 @@ async function checkDesiresReady(username: string): Promise<TriggerResult> {
     const activeStatuses = ['evaluating', 'planning', 'reviewing', 'executing'];
     const pendingStatuses = ['pending', 'nascent'];
 
+    // APPROVED desires are the ones READY for execution via Big Brother!
+    const approvedDesires = allDesires.filter(d => d.status === 'approved');
     const activeDesires = allDesires.filter(d => activeStatuses.includes(d.status));
     const pendingDesires = allDesires.filter(d => pendingStatuses.includes(d.status));
     const awaitingApproval = allDesires.filter(d => d.status === 'awaiting_approval');
 
-    // Check for active desires (currently being processed)
+    // HIGHEST PRIORITY: Check for approved desires (user-approved, ready for execution!)
+    if (approvedDesires.length > 0) {
+      return {
+        shouldTrigger: true,
+        reason: `🚀 ${approvedDesires.length} APPROVED desire(s) ready for execution!`,
+        urgency: 'immediate',
+        data: { approvedCount: approvedDesires.length, desireIds: approvedDesires.map(d => d.id) },
+      };
+    }
+
+    // Check for active desires (currently being processed by planner/reviewer)
     if (activeDesires.length > 0) {
       return {
         shouldTrigger: true,
         reason: `${activeDesires.length} desire(s) actively being processed`,
-        urgency: 'immediate',
+        urgency: 'soon',
         data: { activeCount: activeDesires.length, desireIds: activeDesires.map(d => d.id) },
       };
     }
 
-    // Check for pending desires (ready for activation)
-    if (pendingDesires.length > 0) {
+    // Check for desires awaiting approval (inform LLM but can't execute)
+    if (awaitingApproval.length > 0) {
       return {
-        shouldTrigger: true,
-        reason: `${pendingDesires.length} pending desire(s) ready for execution`,
-        urgency: 'soon',
-        data: { pendingCount: pendingDesires.length, desireIds: pendingDesires.map(d => d.id) },
+        shouldTrigger: false, // Don't trigger - requires user action first
+        reason: `${awaitingApproval.length} desire(s) awaiting user approval`,
+        urgency: 'whenever',
+        data: { awaitingCount: awaitingApproval.length, requiresUserAction: true },
       };
     }
 
-    // Check for desires awaiting approval (inform LLM but don't execute)
-    if (awaitingApproval.length > 0) {
+    // Low priority: Check for pending desires (need to be activated first)
+    if (pendingDesires.length > 0) {
       return {
-        shouldTrigger: true,
-        reason: `${awaitingApproval.length} desire(s) awaiting user approval`,
-        urgency: 'whenever', // Low urgency - requires user action
-        data: { awaitingCount: awaitingApproval.length, requiresUserAction: true },
+        shouldTrigger: false, // Don't trigger execution - these need activation first
+        reason: `${pendingDesires.length} pending desire(s) need activation`,
+        urgency: 'whenever',
+        data: { pendingCount: pendingDesires.length },
       };
     }
 

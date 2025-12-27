@@ -369,6 +369,8 @@ export interface DesireOutcomeReview {
   notifyUser: boolean;
   /** Message for user (if notifyUser is true) */
   userMessage?: string;
+  /** Human-readable summary of what was accomplished during execution */
+  executionSummary?: string;
 }
 
 // ============================================================================

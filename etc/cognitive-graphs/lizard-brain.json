@@ -69,6 +69,7 @@
             { "name": "pendingDesires", "type": "number", "description": "Count of pending desires (waiting for activation)" },
             { "name": "activeDesires", "type": "number", "description": "Count of active desires (evaluating/planning/reviewing/executing)" },
             { "name": "awaitingApprovalDesires", "type": "number", "description": "Count of desires awaiting user approval" },
+            { "name": "approvedDesires", "type": "number", "description": "Count of approved desires ready for autonomous execution" },
             { "name": "hoursSinceReflection", "type": "number", "description": "Hours since last reflection" },
             { "name": "userActive", "type": "boolean", "description": "Whether user is currently active" },
             { "name": "activeTasks", "type": "number", "description": "Total active tasks from task manager" },

@@ -77,16 +77,6 @@ export {
   queueForApproval as skillQueueForApproval,
   getPendingApprovals as skillGetPendingApprovals,
 } from './skills.js';
-
-// Skill Bootstrap
-export {
-  bootstrapSkills,
-  getRegisteredSkillManifests,
-  areSkillsBootstrapped,
-  getSkillCostEstimate,
-  isSkillWithinBudget,
-} from './skill-bootstrap.js';
-
 export * from './tool-catalog';
 export * from './reasoning';
 

@@ -28,61 +28,55 @@ import type {
 const CATEGORY = 'config' as const;
 const SUBCATEGORY = 'desires' as const;
 
-// Status-based subdirectories within persona/desires/
-const DESIRE_DIRS: Record<string, string> = {
-  nascent: 'nascent',
-  pending: 'pending',
-  evaluating: 'active',
-  planning: 'active',
-  reviewing: 'active',
-  awaiting_approval: 'awaiting_approval',  // Separate directory for user review
-  approved: 'active',
-  executing: 'active',
-  awaiting_review: 'awaiting_review',  // Post-execution, waiting for outcome review
-  completed: 'completed',
-  rejected: 'rejected',
-  abandoned: 'abandoned',
-  failed: 'completed',
-};
+// Folder-based storage: each desire has its own folder at folders/{id}/
+const FOLDER_BASE = 'folders';
 
 // ============================================================================
-// Desire Storage
+// Desire Storage (Folder-Based)
 // ============================================================================
 
 /**
- * Get the directory for a desire based on its status.
+ * Get the folder path for a desire.
  */
-function getDesireDir(status: DesireStatus): string {
-  return DESIRE_DIRS[status] || 'pending';
+export function getDesireFolderPath(desireId: string): string {
+  return `${FOLDER_BASE}/${desireId}`;
+}
+
+/**
+ * Ensure desire folder exists.
+ */
+async function ensureDesireFolder(desireId: string, username?: string): Promise<void> {
+  const folderPath = getDesireFolderPath(desireId);
+  const subdirs = ['scratchpad', 'plans', 'reviews', 'executions'];
+
+  for (const subdir of subdirs) {
+    await storageClient.write({
+      username,
+      category: CATEGORY,
+      subcategory: SUBCATEGORY,
+      relativePath: `${folderPath}/${subdir}/.gitkeep`,
+      data: '',
+      encoding: 'utf8',
+    });
+  }
 }
 
 /**
  * Save a desire to storage.
- * Handles status transitions by deleting old file from previous directory.
+ * Uses folder-based storage: folders/{id}/manifest.json
  */
 export async function saveDesire(desire: Desire, username?: string): Promise<void> {
-  const newDir = getDesireDir(desire.status);
+  const folderPath = getDesireFolderPath(desire.id);
 
-  // Delete old file from any other directory (handles status transitions)
-  const dirs = [...new Set(Object.values(DESIRE_DIRS))];
-  for (const dir of dirs) {
-    if (dir !== newDir) {
-      // Try to delete from other directories (ignore errors)
-      await storageClient.delete({
-        username,
-        category: CATEGORY,
-        subcategory: SUBCATEGORY,
-        relativePath: `${dir}/${desire.id}.json`,
-      }).catch(() => {});
-    }
-  }
+  // Ensure folder exists
+  await ensureDesireFolder(desire.id, username);
 
-  // Save to new location
+  // Save manifest
   await storageClient.write({
     username,
     category: CATEGORY,
     subcategory: SUBCATEGORY,
-    relativePath: `${newDir}/${desire.id}.json`,
+    relativePath: `${folderPath}/manifest.json`,
     data: JSON.stringify(desire, null, 2),
     encoding: 'utf8',
   });
@@ -90,37 +84,21 @@ export async function saveDesire(desire: Desire, username?: string): Promise<voi
 
 /**
  * Load a desire by ID.
- * Searches across all status directories, then folder-based storage.
+ * Loads from folder-based storage: folders/{id}/manifest.json
  */
 export async function loadDesire(desireId: string, username?: string): Promise<Desire | null> {
-  // First, search in all status directories (file-based storage)
-  const dirs = [...new Set(Object.values(DESIRE_DIRS))];
+  const folderPath = getDesireFolderPath(desireId);
 
-  for (const dir of dirs) {
-    const result = await storageClient.read({
-      username,
-      category: CATEGORY,
-      subcategory: SUBCATEGORY,
-      relativePath: `${dir}/${desireId}.json`,
-      encoding: 'utf8',
-    });
-
-    if (result.success && result.data) {
-      return JSON.parse(result.data as string) as Desire;
-    }
-  }
-
-  // Fallback: Try folder-based storage (manifest.json)
-  const folderResult = await storageClient.read({
+  const result = await storageClient.read({
     username,
     category: CATEGORY,
     subcategory: SUBCATEGORY,
-    relativePath: `folders/${desireId}/manifest.json`,
+    relativePath: `${folderPath}/manifest.json`,
     encoding: 'utf8',
   });
 
-  if (folderResult.success && folderResult.data) {
-    return JSON.parse(folderResult.data as string) as Desire;
+  if (result.success && result.data) {
+    return JSON.parse(result.data as string) as Desire;
   }
 
   return null;
@@ -128,186 +106,59 @@ export async function loadDesire(desireId: string, username?: string): Promise<D
 
 /**
  * Delete a desire from storage.
+ * Removes the entire folder.
  */
 export async function deleteDesire(desire: Desire, username?: string): Promise<void> {
-  const dir = getDesireDir(desire.status);
+  const folderPath = getDesireFolderPath(desire.id);
+
+  // Delete manifest
   await storageClient.delete({
     username,
     category: CATEGORY,
     subcategory: SUBCATEGORY,
-    relativePath: `${dir}/${desire.id}.json`,
+    relativePath: `${folderPath}/manifest.json`,
   });
+
+  // Note: Subdirectories and their contents remain for audit trail
+  // A full cleanup would require recursive deletion
 }
 
 /**
- * Move a desire to a new status directory.
- * Handles both file-based and folder-based storage.
+ * Move a desire to a new status.
+ * With folder-based storage, this just updates the manifest - no file moving needed.
  */
 export async function moveDesire(
   desire: Desire,
-  oldStatus: DesireStatus,
-  newStatus: DesireStatus,
+  _oldStatus: DesireStatus,
+  _newStatus: DesireStatus,
   username?: string
 ): Promise<void> {
-  const oldDir = getDesireDir(oldStatus);
-  const newDir = getDesireDir(newStatus);
-
-  // Check if desire exists in folder-based storage (folders/desire-xxx/manifest.json)
-  const folderManifestPath = `folders/${desire.id}/manifest.json`;
-  const folderExists = storageClient.exists({
-    username,
-    category: CATEGORY,
-    subcategory: SUBCATEGORY,
-    relativePath: folderManifestPath,
-  });
-
-  if (folderExists) {
-    // Update the manifest in folder-based storage
-    await storageClient.write({
-      username,
-      category: CATEGORY,
-      subcategory: SUBCATEGORY,
-      relativePath: folderManifestPath,
-      data: JSON.stringify(desire, null, 2),
-      encoding: 'utf8',
-    });
-    return; // Done - folder-based storage doesn't use status directories
-  }
-
-  // Fall back to file-based storage (status directories)
-  // Only move if directories are different
-  if (oldDir !== newDir) {
-    // Delete from old location
-    await storageClient.delete({
-      username,
-      category: CATEGORY,
-      subcategory: SUBCATEGORY,
-      relativePath: `${oldDir}/${desire.id}.json`,
-    });
-  }
-
-  // Save to new location
-  await storageClient.write({
-    username,
-    category: CATEGORY,
-    subcategory: SUBCATEGORY,
-    relativePath: `${newDir}/${desire.id}.json`,
-    data: JSON.stringify(desire, null, 2),
-    encoding: 'utf8',
-  });
+  // With folder-based storage, status is just a field in the manifest
+  // No file moving needed - just save the updated desire
+  await saveDesire(desire, username);
 }
 
 /**
  * List desires by status.
- * Checks both file-based and folder-based storage.
+ * Uses folder-based storage only.
  */
 export async function listDesiresByStatus(
   status: DesireStatus,
   username?: string
 ): Promise<Desire[]> {
-  const desires: Desire[] = [];
-  const seenIds = new Set<string>();
-
-  // 1. Check file-based storage (status directories)
-  const dir = getDesireDir(status);
-
-  const result = await storageClient.list({
-    username,
-    category: CATEGORY,
-    subcategory: SUBCATEGORY,
-    relativePath: dir,
-  });
-
-  if (result.success && result.files) {
-    for (const file of result.files) {
-      if (!file.endsWith('.json')) continue;
-
-      const readResult = await storageClient.read({
-        username,
-        category: CATEGORY,
-        subcategory: SUBCATEGORY,
-        relativePath: `${dir}/${file}`,
-        encoding: 'utf8',
-      });
-
-      if (readResult.success && readResult.data) {
-        const desire = JSON.parse(readResult.data as string) as Desire;
-        // Filter by exact status since multiple statuses share directories
-        if (desire.status === status && !seenIds.has(desire.id)) {
-          desires.push(desire);
-          seenIds.add(desire.id);
-        }
-      }
-    }
-  }
-
-  // 2. Check folder-based storage (folders/{id}/manifest.json)
-  const foldersResult = await storageClient.list({
-    username,
-    category: CATEGORY,
-    subcategory: SUBCATEGORY,
-    relativePath: 'folders',
-  });
-
-  if (foldersResult.success && foldersResult.files) {
-    for (const folder of foldersResult.files) {
-      // Skip if already found
-      if (seenIds.has(folder)) continue;
-
-      const manifestResult = await storageClient.read({
-        username,
-        category: CATEGORY,
-        subcategory: SUBCATEGORY,
-        relativePath: `folders/${folder}/manifest.json`,
-        encoding: 'utf8',
-      });
-
-      if (manifestResult.success && manifestResult.data) {
-        const desire = JSON.parse(manifestResult.data as string) as Desire;
-        if (desire.status === status && !seenIds.has(desire.id)) {
-          desires.push(desire);
-          seenIds.add(desire.id);
-        }
-      }
-    }
-  }
-
-  return desires;
+  // Get all desires from folders, filter by status
+  const allDesires = await listAllDesires(username);
+  return allDesires.filter(d => d.status === status);
 }
 
 /**
  * List all active desires (in evaluation, planning, reviewing, etc.).
+ * Uses folder-based storage only.
  */
 export async function listActiveDesires(username?: string): Promise<Desire[]> {
-  const result = await storageClient.list({
-    username,
-    category: CATEGORY,
-    subcategory: SUBCATEGORY,
-    relativePath: 'active',
-  });
-
-  if (!result.success || !result.files) {
-    return [];
-  }
-
-  const desires: Desire[] = [];
-  for (const file of result.files) {
-    if (!file.endsWith('.json')) continue;
-
-    const readResult = await storageClient.read({
-      username,
-      category: CATEGORY,
-      subcategory: SUBCATEGORY,
-      relativePath: `active/${file}`,
-      encoding: 'utf8',
-    });
-
-    if (readResult.success && readResult.data) {
-      desires.push(JSON.parse(readResult.data as string) as Desire);
-    }
-  }
-
-  return desires;
+  const activeStatuses: DesireStatus[] = ['evaluating', 'planning', 'reviewing', 'approved', 'executing', 'awaiting_review'];
+  const allDesires = await listDesiresFromFolders(username);
+  return allDesires.filter(d => activeStatuses.includes(d.status));
 }
 
 /**
@@ -326,37 +177,12 @@ export async function listNascentDesires(username?: string): Promise<Desire[]> {
 
 /**
  * List all desires awaiting user approval.
+ * Uses folder-based storage only.
  */
 export async function listDesiresPendingApproval(username?: string): Promise<Desire[]> {
-  const result = await storageClient.list({
-    username,
-    category: CATEGORY,
-    subcategory: SUBCATEGORY,
-    relativePath: 'awaiting_approval',
-  });
-
-  if (!result.success || !result.files) {
-    return [];
-  }
-
-  const desires: Desire[] = [];
-  for (const file of result.files) {
-    if (!file.endsWith('.json')) continue;
-
-    const readResult = await storageClient.read({
-      username,
-      category: CATEGORY,
-      subcategory: SUBCATEGORY,
-      relativePath: `awaiting_approval/${file}`,
-      encoding: 'utf8',
-    });
-
-    if (readResult.success && readResult.data) {
-      desires.push(JSON.parse(readResult.data as string) as Desire);
-    }
-  }
-
-  return desires;
+  const approvalStatuses: DesireStatus[] = ['awaiting_approval', 'reviewing'];
+  const allDesires = await listDesiresFromFolders(username);
+  return allDesires.filter(d => approvalStatuses.includes(d.status));
 }
 
 /**
@@ -607,20 +433,17 @@ export function agencyStorageExists(username?: string): boolean {
 
 /**
  * Initialize agency storage directories.
- * Creates subdirectories under persona/desires/
+ * Creates folder-based storage structure under persona/desires/folders/
+ *
+ * NOTE: Legacy status-based directories (nascent/, pending/, active/, etc.)
+ * are no longer created. All desires now use folder-based storage at:
+ *   folders/<desire-id>/manifest.json
  */
 export async function initializeAgencyStorage(username?: string): Promise<void> {
+  // Only create folder-based storage structure
   const dirs = [
-    'nascent',
-    'pending',
-    'active',
-    'awaiting_approval',
-    'completed',
-    'rejected',
-    'abandoned',
-    'plans',
-    'reviews',
-    'metrics',
+    'folders',   // Main folder-based storage
+    'metrics',   // Global metrics
   ];
 
   // Create a placeholder file in each directory to ensure they exist
@@ -645,46 +468,11 @@ export async function initializeAgencyStorage(username?: string): Promise<void> 
 }
 
 /**
- * Get all desires (across all statuses) for cleanup/migration.
+ * Get all desires (across all statuses).
+ * Uses folder-based storage.
  */
 export async function listAllDesires(username?: string): Promise<Desire[]> {
-  const allDesires: Desire[] = [];
-  const dirs = [...new Set(Object.values(DESIRE_DIRS))];
-
-  for (const dir of dirs) {
-    const result = await storageClient.list({
-      username,
-      category: CATEGORY,
-      subcategory: SUBCATEGORY,
-      relativePath: dir,
-    });
-
-    if (!result.success || !result.files) continue;
-
-    for (const file of result.files) {
-      if (!file.endsWith('.json')) continue;
-
-      const readResult = await storageClient.read({
-        username,
-        category: CATEGORY,
-        subcategory: SUBCATEGORY,
-        relativePath: `${dir}/${file}`,
-        encoding: 'utf8',
-      });
-
-      if (readResult.success && readResult.data) {
-        allDesires.push(JSON.parse(readResult.data as string) as Desire);
-      }
-    }
-  }
-
-  // Deduplicate by ID
-  const seen = new Set<string>();
-  return allDesires.filter(d => {
-    if (seen.has(d.id)) return false;
-    seen.add(d.id);
-    return true;
-  });
+  return listDesiresFromFolders(username);
 }
 
 // ============================================================================
@@ -710,15 +498,6 @@ import {
   updateScratchpadSummary,
   initializeScratchpadSummary,
 } from './types.js';
-
-const FOLDER_BASE = 'folders';
-
-/**
- * Get the folder path for a desire
- */
-export function getDesireFolderPath(desireId: string): string {
-  return `${FOLDER_BASE}/${desireId}`;
-}
 
 /**
  * Create desire folder structure
@@ -783,7 +562,9 @@ export async function loadDesireFromFolder(desireId: string, username?: string):
 }
 
 /**
- * Add a scratchpad entry to a desire's folder
+ * Add a scratchpad entry to a desire's folder.
+ * If the desire exists in file-based storage but not folder-based,
+ * it will be migrated to folder-based storage first.
  */
 export async function addScratchpadEntryToFolder(
   desireId: string,
@@ -793,9 +574,20 @@ export async function addScratchpadEntryToFolder(
   const folderPath = getDesireFolderPath(desireId);
 
   // Load current manifest to get scratchpad summary
-  const desire = await loadDesireFromFolder(desireId, username);
+  let desire = await loadDesireFromFolder(desireId, username);
+
+  // If not found in folder-based storage, check file-based storage and migrate
   if (!desire) {
-    throw new Error(`Desire ${desireId} not found`);
+    const fileBased = await loadDesire(desireId, username);
+    if (fileBased) {
+      // Migrate to folder-based storage
+      console.log(`[agency:storage] Migrating desire ${desireId} to folder-based storage`);
+      await createDesireFolder(desireId, username);
+      await saveDesireManifest(fileBased, username);
+      desire = fileBased;
+    } else {
+      throw new Error(`Desire ${desireId} not found`);
+    }
   }
 
   // Update scratchpad summary

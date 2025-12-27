@@ -1,9 +1,10 @@
 /**
  * Desire Executor Agent — Core Logic
  *
- * Executes approved desires:
+ * Executes approved desires using the node graph pipeline:
  * - Polls for desires in 'approved' status
- * - Runs their plans through the operator system
+ * - Runs their plans through the desire-executor graph
+ * - Graph handles: execution → inner dialogue → TTS output
  * - Updates status based on execution results
  * - Logs all activity to audit and inner dialogue
  *
@@ -25,7 +26,6 @@ import {
   captureEvent,
   loadConfig,
   isAgencyEnabled,
-  saveDesire,
   moveDesire,
   listDesiresByStatus,
   incrementMetric,
@@ -33,10 +33,21 @@ import {
   updateTaskStatus,
   canAutoApprove,
   loadDecisionRules,
+  isClaudeSessionReady,
+  sendPrompt,
+  startClaudeSession,
+  loadOperatorConfig,
+  executeWithInterpreter,
+  isInterpreterServerRunning,
+  // Graph-based execution (single source of truth from @metahuman/core)
+  executeDesireViaGraph,
 } from '@metahuman/core';
 
 const LOCK_NAME = 'desire-executor';
 const LOG_PREFIX = '[AGENCY:executor]';
+
+// Note: executeDesireViaGraph is now imported from @metahuman/core
+// This is the single source of truth for graph-based desire execution
 
 // ============================================================================
 // Types
@@ -63,38 +74,169 @@ export interface DesireExecutorResult {
 // ============================================================================
 
 /**
- * Execute a single plan step
- *
- * This is a simplified execution - in a full implementation,
- * this would call the actual skill/operator system.
+ * Build task prompt for execution
+ */
+function buildTaskPrompt(step: PlanStep, desire: Desire): string {
+  return `You are executing a task for MetaHuman OS Agency system.
+
+## Desire Context
+**Title**: ${desire.title}
+**Description**: ${desire.description}
+**Reason**: ${desire.reason || 'Not specified'}
+
+## Current Step (${step.order} of ${desire.plan?.steps?.length || '?'})
+**Action**: ${step.action}
+**Expected Outcome**: ${step.expectedOutcome || 'Complete successfully'}
+**Risk Level**: ${step.risk}
+${step.skill ? `**Suggested Approach**: ${step.skill}` : ''}
+${step.inputs ? `**Inputs**: ${JSON.stringify(step.inputs, null, 2)}` : ''}
+${step.requiresApproval ? '**⚠️ This step requires careful execution**' : ''}
+
+## Instructions
+1. Execute this step to completion
+2. Be thorough and verify your work
+3. Report what you accomplished
+
+Please execute this step now.`;
+}
+
+/**
+ * Execute step via Big Brother (Claude CLI)
+ */
+async function executeStepViaClaude(
+  step: PlanStep,
+  desire: Desire,
+  username: string
+): Promise<{ success: boolean; result?: unknown; error?: string }> {
+  const prompt = buildTaskPrompt(step, desire);
+
+  try {
+    if (!isClaudeSessionReady()) {
+      console.log(`${LOG_PREFIX}   ⏳ Starting Claude session...`);
+      const started = await startClaudeSession();
+      if (!started) {
+        return { success: false, error: 'Failed to start Claude CLI session' };
+      }
+    }
+
+    const response = await sendPrompt(prompt, 300000);
+
+    audit({
+      level: 'info',
+      category: 'agent',
+      event: 'desire_step_executed',
+      actor: 'desire-executor',
+      details: {
+        desireId: desire.id,
+        stepOrder: step.order,
+        action: step.action,
+        success: true,
+        executedVia: 'claude-cli',
+        responseLength: response.length,
+        username,
+      },
+    });
+
+    return {
+      success: true,
+      result: { claudeResponse: response, executedVia: 'claude-cli', timestamp: new Date().toISOString() },
+    };
+  } catch (error) {
+    audit({
+      level: 'error',
+      category: 'agent',
+      event: 'desire_step_failed',
+      actor: 'desire-executor',
+      details: { desireId: desire.id, stepOrder: step.order, action: step.action, error: (error as Error).message, username },
+    });
+    return { success: false, error: `Claude CLI execution failed: ${(error as Error).message}` };
+  }
+}
+
+/**
+ * Execute step via Open Interpreter
+ */
+async function executeStepViaInterpreter(
+  step: PlanStep,
+  desire: Desire,
+  username: string
+): Promise<{ success: boolean; result?: unknown; error?: string }> {
+  const task = buildTaskPrompt(step, desire);
+
+  try {
+    const response = await executeWithInterpreter({ task }, undefined, username);
+
+    if (!response.success) {
+      return { success: false, error: response.error || 'Interpreter execution failed' };
+    }
+
+    audit({
+      level: 'info',
+      category: 'agent',
+      event: 'desire_step_executed',
+      actor: 'desire-executor',
+      details: {
+        desireId: desire.id,
+        stepOrder: step.order,
+        action: step.action,
+        success: true,
+        executedVia: 'open-interpreter',
+        username,
+      },
+    });
+
+    return {
+      success: true,
+      result: { interpreterResponse: response.finalOutput, messages: response.messages, executedVia: 'open-interpreter', timestamp: new Date().toISOString() },
+    };
+  } catch (error) {
+    audit({
+      level: 'error',
+      category: 'agent',
+      event: 'desire_step_failed',
+      actor: 'desire-executor',
+      details: { desireId: desire.id, stepOrder: step.order, action: step.action, error: (error as Error).message, username },
+    });
+    return { success: false, error: `Interpreter execution failed: ${(error as Error).message}` };
+  }
+}
+
+/**
+ * Execute a single plan step using the best available backend
+ * Priority: Big Brother (if enabled) → Open Interpreter → Error
  */
 export async function executeStep(
   step: PlanStep,
   desire: Desire,
   username?: string
 ): Promise<{ success: boolean; result?: unknown; error?: string }> {
-  console.log(`${LOG_PREFIX} Executing step ${step.order}: ${step.action}`);
+  console.log(`${LOG_PREFIX} 🔧 Executing step ${step.order}: ${step.action}`);
 
-  // For now, simulate execution
-  // In a full implementation, this would:
-  // 1. Look up the skill by step.skill
-  // 2. Call executeSkill(skillId, step.inputs)
-  // 3. Return the actual result
-
-  // If the step requires approval, check approval status
-  if (step.requiresApproval) {
-    console.log(`${LOG_PREFIX}   Step requires approval - checking...`);
-    // In full implementation, check if this specific step was approved
+  if (!username) {
+    console.log(`${LOG_PREFIX}   ⚠️ No username provided, cannot execute`);
+    return { success: false, error: 'No authenticated user for executing desire steps' };
   }
 
-  // Simulate some work
-  await new Promise(resolve => setTimeout(resolve, 100));
+  // Check Big Brother configuration
+  const operatorConfig = loadOperatorConfig(username);
+  const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
 
-  // For now, always succeed (real implementation would handle errors)
-  return {
-    success: true,
-    result: { completed: step.action },
-  };
+  // Try Big Brother first if enabled
+  if (bigBrotherEnabled) {
+    console.log(`${LOG_PREFIX}   🤖 Using Big Brother (Claude CLI)...`);
+    return executeStepViaClaude(step, desire, username);
+  }
+
+  // Try Open Interpreter if available
+  const interpreterRunning = await isInterpreterServerRunning();
+  if (interpreterRunning) {
+    console.log(`${LOG_PREFIX}   🐍 Using Open Interpreter...`);
+    return executeStepViaInterpreter(step, desire, username);
+  }
+
+  // No execution backend available
+  console.log(`${LOG_PREFIX}   ❌ No execution backend available`);
+  return { success: false, error: 'No execution backend available. Enable Big Brother mode or start Open Interpreter server.' };
 }
 
 /**
@@ -120,8 +262,8 @@ export async function executePlan(
     stepResults: [],
   };
 
-  console.log(`${LOG_PREFIX} Executing plan with ${plan.steps.length} steps`);
-  console.log(`${LOG_PREFIX}   Goal: ${plan.operatorGoal}`);
+  console.log(`${LOG_PREFIX} 🚀 Executing plan with ${plan.steps.length} steps via Claude CLI`);
+  console.log(`${LOG_PREFIX}    Goal: ${plan.operatorGoal}`);
 
   for (const step of plan.steps) {
     try {
@@ -225,8 +367,9 @@ export async function processApprovedDesires(username?: string): Promise<{
       console.warn(`${LOG_PREFIX}   ⚠ Failed to create linked task:`, taskError);
     }
 
-    // Execute the plan
-    const execution = await executePlan(executingDesire, username);
+    // Execute the plan via graph pipeline (handles inner dialogue + TTS output)
+    const graphResult = await executeDesireViaGraph(executingDesire, username!);
+    const execution = graphResult.execution;
     executed++;
 
     // Update desire with execution results
@@ -241,7 +384,7 @@ export async function processApprovedDesires(username?: string): Promise<{
       }
     }
 
-    if (execution.status === 'completed') {
+    if (graphResult.success && execution?.status === 'completed') {
       const finalDesire: Desire = {
         ...executingDesire,
         status: 'completed',
@@ -266,10 +409,15 @@ export async function processApprovedDesires(username?: string): Promise<{
 
       console.log(`${LOG_PREFIX}   ✓ Completed successfully`);
     } else {
+      const errorMessage = graphResult.error || execution?.error || 'Unknown error';
       const finalDesire: Desire = {
         ...executingDesire,
         status: 'failed',
-        execution,
+        execution: execution || {
+          startedAt: now,
+          status: 'failed',
+          error: errorMessage,
+        },
         completedAt: now,
         updatedAt: now,
       };
@@ -288,40 +436,30 @@ export async function processApprovedDesires(username?: string): Promise<{
         }
       }
 
-      console.log(`${LOG_PREFIX}   ✗ Failed: ${execution.error}`);
+      console.log(`${LOG_PREFIX}   ✗ Failed: ${errorMessage}`);
     }
 
     // Audit the execution
+    const executionStatus = execution?.status || 'failed';
     audit({
       category: 'agent',
-      level: execution.status === 'completed' ? 'info' : 'warn',
+      level: executionStatus === 'completed' ? 'info' : 'warn',
       event: 'desire_executed',
       actor: 'desire-executor',
       details: {
         desireId: desire.id,
         title: desire.title,
-        status: execution.status,
-        stepsCompleted: execution.stepsCompleted,
+        status: executionStatus,
+        stepsCompleted: execution?.stepsCompleted || 0,
         totalSteps: desire.plan?.steps.length || 0,
-        error: execution.error,
+        error: graphResult.error || execution?.error,
         username,
+        usedGraphPipeline: true,
       },
     });
 
-    // Log to inner dialogue
-    const dialogueText = execution.status === 'completed'
-      ? `I completed my desire "${desire.title}". ${desire.plan?.operatorGoal || ''}`
-      : `I tried to execute "${desire.title}" but it failed: ${execution.error}`;
-
-    await captureEvent(dialogueText, {
-      type: 'inner_dialogue',
-      tags: ['agency', 'execution', 'inner'],
-      metadata: {
-        desireId: desire.id,
-        executionStatus: execution.status,
-        source: 'desire-executor',
-      },
-    });
+    // Note: Inner dialogue and TTS are now handled by the graph pipeline
+    // The inner_dialogue_capture and tts nodes in the graph handle this automatically
   }
 
   return { executed, succeeded, failed };

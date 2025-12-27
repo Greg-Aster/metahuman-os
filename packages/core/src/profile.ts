@@ -697,11 +697,6 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
     lastChangedBy: 'system',
     changedAt: new Date().toISOString(),
     claimedBy: null,
-    operator: {
-      reactV2: true,
-      useReasoningService: false,
-      useContextPackage: true,
-    },
     cognitive: {
       useNodePipeline: true,
       changedAt: new Date().toISOString(),
