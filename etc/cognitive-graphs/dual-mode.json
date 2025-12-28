@@ -2195,15 +2195,15 @@
       }
     },
     {
-      "id": "e-23-output-21-assistantResponse",
-      "source": "23",
+      "id": "e-31-stripped-21-assistantResponse",
+      "source": "31",
       "target": "21",
-      "sourceHandle": "output",
+      "sourceHandle": "stripped",
       "targetHandle": "assistantResponse",
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Final output → Memory Capture (only after loop completes)"
+        "comment": "Thinking Stripper stripped output → Memory Capture (clean memory without thinking)"
       }
     },
     {
@@ -2227,7 +2227,7 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Gateway output → Stream Writer (only when gate is open/loop exits)"
+        "comment": "Gateway output → Stream Writer (raw content for client-side thinking parsing)"
       }
     },
     {
@@ -2481,15 +2481,15 @@
       }
     },
     {
-      "id": "e-35-output-tts-conversation",
-      "source": "35",
+      "id": "e-31-stripped-tts-conversation",
+      "source": "31",
       "target": "tts-out",
-      "sourceHandle": "output",
+      "sourceHandle": "stripped",
       "targetHandle": "conversation",
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Gateway output → TTS Output (speaks conversation response)"
+        "comment": "Thinking Stripper stripped output → TTS Output (speaks conversation response without thinking)"
       }
     }
   ]

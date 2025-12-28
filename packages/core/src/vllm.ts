@@ -55,6 +55,8 @@ export interface VLLMConfig {
   gpuMemoryUtilization: number;
   /** Maximum model context length */
   maxModelLen?: number;
+  /** Maximum output tokens per response (default: 2048). Increase when thinking is enabled. */
+  maxTokens?: number;
   /** Number of GPUs for tensor parallelism */
   tensorParallelSize?: number;
   /** Data type: auto, float16, bfloat16 */

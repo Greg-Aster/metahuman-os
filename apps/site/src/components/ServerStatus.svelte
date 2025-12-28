@@ -371,6 +371,7 @@
   // Start/stop polling based on visibility
   function startPolling() {
     if (!refreshInterval) {
+      console.log('[ServerStatus] Starting polling (10s interval)');
       fetchServerStatus();
       refreshInterval = setInterval(fetchServerStatus, 10000);
     }
@@ -378,6 +379,7 @@
 
   function stopPolling() {
     if (refreshInterval) {
+      console.log('[ServerStatus] Stopping polling');
       clearInterval(refreshInterval);
       refreshInterval = null;
     }

@@ -16,7 +16,8 @@
     "quantization": "awq",
     "enforceEager": true,
     "autoUtilization": false,
-    "enableThinking": false
+    "maxTokens": 2048,
+    "enableThinking": true
   },
   "localModels": {
     "enabled": true,

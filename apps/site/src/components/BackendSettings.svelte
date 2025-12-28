@@ -77,6 +77,7 @@
   let vllmEnforceEager = true;
   let vllmAutoUtilization = false;
   let vllmMaxModelLen = 4096;
+  let vllmMaxTokens = 2048; // Output token limit (thinking + response)
   let vllmEnableThinking = true; // Qwen3 thinking mode (shows <think> tags)
 
   // Ollama config
@@ -281,6 +282,7 @@
         vllmEnforceEager = data.config.vllm?.enforceEager ?? true;
         vllmAutoUtilization = data.config.vllm?.autoUtilization ?? false;
         vllmMaxModelLen = data.config.vllm?.maxModelLen || 4096;
+        vllmMaxTokens = data.config.vllm?.maxTokens || 2048;
         vllmEnableThinking = data.config.vllm?.enableThinking ?? true;
 
         // Ollama config
@@ -567,6 +569,7 @@
             enforceEager: vllmEnforceEager,
             autoUtilization: vllmAutoUtilization,
             maxModelLen: vllmMaxModelLen,
+            maxTokens: vllmMaxTokens,
             enableThinking: vllmEnableThinking,
           },
         }),
@@ -1253,6 +1256,22 @@
             <span class="slider-value">{vllmMaxModelLen.toLocaleString()}</span>
           </div>
           <span class="config-hint">Lower = less KV cache memory. 4096 saves ~3GB vs 8192.</span>
+        </div>
+
+        <div class="config-row">
+          <label for="vllm-maxtokens">Max Output Tokens</label>
+          <div class="slider-row">
+            <input
+              id="vllm-maxtokens"
+              type="range"
+              min="512"
+              max="8192"
+              step="256"
+              bind:value={vllmMaxTokens}
+            />
+            <span class="slider-value">{vllmMaxTokens.toLocaleString()}</span>
+          </div>
+          <span class="config-hint">Max tokens per response. {vllmEnableThinking ? 'With thinking enabled, increase this to prevent cutoff (4096+ recommended).' : 'Higher = longer responses possible.'}</span>
         </div>
 
         <div class="config-row checkbox-row">

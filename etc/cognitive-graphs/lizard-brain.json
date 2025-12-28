@@ -150,8 +150,7 @@
           ],
           "properties": {
             "model": "orchestrator",
-            "temperature": 0.2,
-            "maxTokens": 256
+            "temperature": 0.3
           },
           "propertySchemas": {
             "model": {
@@ -162,19 +161,11 @@
             },
             "temperature": {
               "type": "slider",
-              "default": 0.2,
+              "default": 0.3,
               "label": "Temperature",
               "min": 0,
               "max": 1,
               "step": 0.1
-            },
-            "maxTokens": {
-              "type": "slider",
-              "default": 256,
-              "label": "Max Tokens",
-              "min": 64,
-              "max": 512,
-              "step": 64
             }
           },
           "size": [320, 220],
@@ -184,8 +175,7 @@
         },
         "properties": {
           "model": "orchestrator",
-          "temperature": 0.2,
-          "maxTokens": 256,
+          "temperature": 0.3,
           "systemPrompt": "You are the Lizard Brain for MetaHuman OS - the unified decision maker for autonomous behavior.\n\nYour job is to look at:\n1. Triggers that just fired (conditions detected)\n2. Tasks already in queue\n3. System state\n4. Recent activity\n\nAnd decide: What ONE task should I execute next?\n\nGuidelines:\n1. IMMEDIATE urgency triggers usually warrant action\n2. Don't repeat tasks that ran recently (check recent activity)\n3. Prioritize HIGH urgency items, but don't neglect maintenance\n4. If queue has items, consider executing those before adding more\n5. Balance reactive (triggers) with proactive (recommendations)\n6. Consider system state - high unprocessed memories -> memory_curate\n\nRespond with JSON only: {\"task\": \"<type>\", \"reasoning\": \"<why>\"}\nIf nothing should run, respond: {\"task\": null, \"reasoning\": \"<why waiting>\"}"
         },
         "title": "Unified Decision LLM"
@@ -371,15 +361,6 @@
       "targetHandle": "details",
       "type": "default",
       "data": { "comment": "Decision -> Audit Logger" }
-    },
-    {
-      "id": "e-5-reasoning-8-text",
-      "source": "5",
-      "target": "8",
-      "sourceHandle": "reasoning",
-      "targetHandle": "text",
-      "type": "default",
-      "data": { "comment": "Decision reasoning -> Inner Dialogue" }
     },
     {
       "id": "e-5-reasoning-9-innerDialogue",

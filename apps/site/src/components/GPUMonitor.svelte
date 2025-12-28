@@ -55,12 +55,14 @@
 
   function startPolling() {
     if (refreshInterval) return;
+    console.log('[GPUMonitor] Starting polling (5s interval)');
     loadGPUStatus();
     refreshInterval = setInterval(loadGPUStatus, 5000);
   }
 
   function stopPolling() {
     if (refreshInterval) {
+      console.log('[GPUMonitor] Stopping polling');
       clearInterval(refreshInterval);
       refreshInterval = null;
     }

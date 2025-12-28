@@ -22,6 +22,7 @@ import {
   saveDesireManifest,
   addScratchpadEntryToFolder,
 } from '../../agency/storage.js';
+import { appendExecutionProgressToBuffer } from '../../conversation-buffer.js';
 import {
   isClaudeSessionReady,
   sendPrompt,
@@ -185,15 +186,27 @@ async function executeStep(
   if (bigBrotherEnabled) {
     console.log(`[desire-executor] 🤖 Using Big Brother (Claude CLI)...`);
 
+    const workingMsg = `🤖 Big Brother is working on: ${step.action}`;
+
     // Emit "Claude working" progress
     onProgress?.({
       type: 'claude_working',
       stepNumber: step.order,
       totalSteps: desire.plan?.steps?.length || 0,
       action: step.action,
-      message: `🤖 Big Brother is working on: ${step.action}`,
+      message: workingMsg,
       timestamp: Date.now(),
     });
+
+    // Write to inner dialogue buffer
+    if (username) {
+      appendExecutionProgressToBuffer(username, workingMsg, {
+        desireId: desire.id,
+        stepNumber: step.order,
+        action: step.action,
+        backend: 'claude-cli',
+      });
+    }
 
     return executeStepViaClaude(step, desire);
   }
@@ -203,15 +216,27 @@ async function executeStep(
   if (interpreterRunning) {
     console.log(`[desire-executor] 🐍 Using Open Interpreter...`);
 
+    const interpreterMsg = `🐍 Open Interpreter is working on: ${step.action}`;
+
     // Emit "interpreter working" progress
     onProgress?.({
       type: 'claude_working',
       stepNumber: step.order,
       totalSteps: desire.plan?.steps?.length || 0,
       action: step.action,
-      message: `🐍 Open Interpreter is working on: ${step.action}`,
+      message: interpreterMsg,
       timestamp: Date.now(),
     });
+
+    // Write to inner dialogue buffer
+    if (username) {
+      appendExecutionProgressToBuffer(username, interpreterMsg, {
+        desireId: desire.id,
+        stepNumber: step.order,
+        action: step.action,
+        backend: 'open-interpreter',
+      });
+    }
 
     return executeStepViaInterpreter(step, desire, username);
   }
@@ -287,15 +312,26 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
     execution.currentStep = step.order;
 
     // Emit step start progress
+    const stepStartMsg = `Step ${step.order}/${plan.steps.length}: ${step.action}`;
     onProgress?.({
       type: 'step_start',
       stepNumber: step.order,
       totalSteps: plan.steps.length,
       action: step.action,
-      message: `Step ${step.order}/${plan.steps.length}: ${step.action}`,
+      message: stepStartMsg,
       timestamp: Date.now(),
       data: { expectedOutcome: step.expectedOutcome, risk: step.risk },
     });
+
+    // Write to inner dialogue buffer for real-time visibility
+    if (username) {
+      appendExecutionProgressToBuffer(username, `🎯 ${stepStartMsg}`, {
+        desireId: desire.id,
+        stepNumber: step.order,
+        totalSteps: plan.steps.length,
+        action: step.action,
+      });
+    }
 
     try {
       const result = await executeStep(step, desire, username, onProgress);
@@ -315,30 +351,55 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
         console.log(`[desire-executor]    ✅ Step ${step.order} completed`);
 
         // Emit step complete progress
+        const stepCompleteMsg = `✅ Step ${step.order}/${plan.steps.length} completed`;
         onProgress?.({
           type: 'step_complete',
           stepNumber: step.order,
           totalSteps: plan.steps.length,
           action: step.action,
-          message: `✅ Step ${step.order}/${plan.steps.length} completed`,
+          message: stepCompleteMsg,
           timestamp: Date.now(),
           data: { result: result.result },
         });
+
+        // Write completion to inner dialogue buffer
+        if (username) {
+          appendExecutionProgressToBuffer(username, stepCompleteMsg, {
+            desireId: desire.id,
+            stepNumber: step.order,
+            totalSteps: plan.steps.length,
+            action: step.action,
+            success: true,
+          });
+        }
       } else {
         execution.status = 'failed';
         execution.error = `Step ${step.order} failed: ${result.error}`;
         console.log(`[desire-executor]    ❌ Step ${step.order} failed: ${result.error}`);
 
         // Emit step error progress
+        const stepErrorMsg = `❌ Step ${step.order} failed: ${result.error}`;
         onProgress?.({
           type: 'step_error',
           stepNumber: step.order,
           totalSteps: plan.steps.length,
           action: step.action,
-          message: `❌ Step ${step.order} failed: ${result.error}`,
+          message: stepErrorMsg,
           timestamp: Date.now(),
           data: { error: result.error },
         });
+
+        // Write error to inner dialogue buffer
+        if (username) {
+          appendExecutionProgressToBuffer(username, stepErrorMsg, {
+            desireId: desire.id,
+            stepNumber: step.order,
+            totalSteps: plan.steps.length,
+            action: step.action,
+            success: false,
+            error: result.error,
+          });
+        }
         break;
       }
     } catch (error) {
@@ -347,15 +408,28 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
       console.log(`[desire-executor]    ❌ Step ${step.order} error: ${(error as Error).message}`);
 
       // Emit step error progress
+      const exceptionMsg = `❌ Step ${step.order} error: ${(error as Error).message}`;
       onProgress?.({
         type: 'step_error',
         stepNumber: step.order,
         totalSteps: plan.steps.length,
         action: step.action,
-        message: `❌ Step ${step.order} error: ${(error as Error).message}`,
+        message: exceptionMsg,
         timestamp: Date.now(),
         data: { error: (error as Error).message },
       });
+
+      // Write exception to inner dialogue buffer
+      if (username) {
+        appendExecutionProgressToBuffer(username, exceptionMsg, {
+          desireId: desire.id,
+          stepNumber: step.order,
+          totalSteps: plan.steps.length,
+          action: step.action,
+          success: false,
+          error: (error as Error).message,
+        });
+      }
       break;
     }
   }

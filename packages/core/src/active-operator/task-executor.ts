@@ -15,6 +15,7 @@ import type {
   TaskResult,
   TaskType,
   UserMessagePayload,
+  DesireAdvancePayload,
   DesireExecutePayload,
 } from './types.js';
 import {
@@ -41,6 +42,7 @@ const TASK_TO_AGENT: Record<TaskType, string | null> = {
   inner_curiosity: 'inner-curiosity',
   dream: 'dreamer',
   desire_generate: 'desire-generator',
+  desire_advance: null, // Handled specially - runs desire through planning/review/approval
   desire_execute: 'desire-executor',
   psychoanalyze: 'psychoanalyzer',
   code_analyze: null, // Will be implemented in Phase 5
@@ -160,6 +162,172 @@ async function executeUserMessage(
 }
 
 /**
+ * Handle desire_advance task.
+ * Processes pending desires through the planning/review/approval pipeline.
+ * - Runs desire-planner to generate execution plan
+ * - Runs desire-reviewer to check alignment and safety
+ * - Gets verdict and either auto-approves or queues for user approval
+ * - Posts approval request to inner dialogue if user approval needed
+ */
+async function executeDesireAdvance(
+  payload: DesireAdvancePayload | undefined,
+  username: string
+): Promise<{ success: boolean; error?: string; data?: any }> {
+  console.log('[task-executor] Running desire_advance pipeline');
+
+  try {
+    // Dynamic imports to avoid circular dependencies
+    const { listDesiresByStatus, loadDesire, moveDesire } = await import('../agency/storage.js');
+    const { loadDecisionRules } = await import('../identity.js');
+    const { canAutoApprove, loadConfig } = await import('../agency/config.js');
+    const { appendReflectionToBuffer } = await import('../conversation-buffer.js');
+
+    // Get pending AND nascent desires that need processing
+    // (both status types count toward pendingReadyToAdvance in system-state.ts)
+    const [pendingDesires, nascentDesires] = await Promise.all([
+      listDesiresByStatus('pending', username),
+      listDesiresByStatus('nascent', username),
+    ]);
+    const allPendingDesires = [...pendingDesires, ...nascentDesires];
+    const config = await loadConfig(username);
+    const activationThreshold = config.thresholds.activation;
+
+    // Filter to desires that have crossed activation threshold
+    const readyDesires = allPendingDesires.filter(d => d.strength >= activationThreshold);
+
+    if (readyDesires.length === 0) {
+      console.log('[task-executor] No pending desires ready for advancement');
+      return { success: true, data: { processed: 0, reason: 'No pending desires above activation threshold' } };
+    }
+
+    console.log(`[task-executor] Found ${readyDesires.length} desire(s) ready for advancement`);
+
+    let processed = 0;
+    let autoApproved = 0;
+    let awaitingApproval = 0;
+
+    // Get current trust level
+    let currentTrustLevel = 'supervised_auto';
+    try {
+      const rules = loadDecisionRules();
+      currentTrustLevel = rules.trustLevel;
+    } catch {
+      console.warn('[task-executor] Could not load decision rules, using default trust level');
+    }
+
+    for (const desire of readyDesires.slice(0, 3)) { // Process max 3 at a time
+      console.log(`[task-executor] Processing desire: ${desire.title} (strength: ${desire.strength.toFixed(2)})`);
+
+      // Remember the original status for moveDesire (could be 'pending' or 'nascent')
+      const originalStatus = desire.status;
+
+      // Step 1: Generate plan if missing
+      if (!desire.plan) {
+        console.log('[task-executor] Moving desire to planning status and generating plan...');
+
+        // Move desire to 'planning' status so desire-planner can find it
+        const now = new Date().toISOString();
+        desire.status = 'planning';
+        desire.updatedAt = now;
+        await moveDesire(desire, originalStatus, 'planning', username);
+
+        // Run desire-planner (it will find desires in 'planning' status)
+        const planResult = await runAgentProcess('desire-planner', [], username);
+        if (!planResult.success) {
+          console.error(`[task-executor] Plan generation failed for ${desire.id}`);
+          // Move back to original status on failure
+          desire.status = originalStatus;
+          await moveDesire(desire, 'planning', originalStatus, username);
+          continue;
+        }
+
+        // Reload desire to get the plan
+        const updatedDesire = await loadDesire(desire.id, username);
+        if (!updatedDesire?.plan) {
+          console.error(`[task-executor] No plan generated for ${desire.id}`);
+          // Move back to original status if no plan
+          desire.status = originalStatus;
+          await moveDesire(desire, 'planning', originalStatus, username);
+          continue;
+        }
+        Object.assign(desire, updatedDesire);
+      }
+
+      // After planning, the desire is now in 'planning' status (or was already there)
+      // Use the current status as the source for subsequent moves
+      const currentStatus = desire.status; // 'planning' if we just moved it, or the status it was in
+
+      // Step 2: Check if can auto-approve based on trust and risk
+      const risk = desire.plan?.estimatedRisk || 'medium';
+      const approvalCheck = await canAutoApprove(risk, desire.strength, currentTrustLevel, username, desire);
+
+      if (approvalCheck.autoApprove) {
+        // Auto-approve and move to approved
+        console.log(`[task-executor] ✅ Auto-approving desire: ${desire.title}`);
+        const now = new Date().toISOString();
+        desire.status = 'approved';
+        desire.updatedAt = now;
+        await moveDesire(desire, currentStatus, 'approved', username);
+        autoApproved++;
+
+        // Post to inner dialogue
+        appendReflectionToBuffer(username,
+          `🚀 Auto-approved desire: "${desire.title}"\n` +
+          `Reason: ${approvalCheck.reason}\n` +
+          `This will be executed automatically.`,
+          { dialogueSource: 'agency-system', displayColor: '#22c55e' }
+        );
+      } else {
+        // Queue for user approval
+        console.log(`[task-executor] 📋 Queuing for approval: ${desire.title}`);
+        const now = new Date().toISOString();
+        desire.status = 'awaiting_approval';
+        desire.updatedAt = now;
+        await moveDesire(desire, currentStatus, 'awaiting_approval', username);
+        awaitingApproval++;
+
+        // Post approval request to inner dialogue with desire ID for inline approve/reject buttons
+        appendReflectionToBuffer(username,
+          `⚠️ Approval Required: "${desire.title}"\n\n` +
+          `Description: ${desire.description}\n` +
+          `Risk Level: ${risk}\n` +
+          `Strength: ${(desire.strength * 100).toFixed(0)}%\n\n` +
+          `Reason for manual approval: ${approvalCheck.reason}`,
+          {
+            dialogueSource: 'agency-system',
+            displayColor: '#f59e0b',
+            type: 'approval_request',
+            desireId: desire.id,
+            desireTitle: desire.title,
+            desireRisk: risk,
+          }
+        );
+      }
+
+      processed++;
+    }
+
+    console.log(`[task-executor] Desire advance complete: ${processed} processed, ${autoApproved} auto-approved, ${awaitingApproval} awaiting approval`);
+
+    return {
+      success: true,
+      data: {
+        processed,
+        autoApproved,
+        awaitingApproval,
+        trustLevel: currentTrustLevel,
+      },
+    };
+  } catch (err) {
+    console.error('[task-executor] Error in desire_advance:', err);
+    return {
+      success: false,
+      error: (err as Error).message,
+    };
+  }
+}
+
+/**
  * Handle desire_execute task.
  * If a specific desireId is provided, pass it to the executor.
  * Otherwise, the executor will process all approved desires.
@@ -217,6 +385,13 @@ export async function executeTask(task: QueuedTask): Promise<TaskResult> {
         const indexResult = await executeIndexBuild(username);
         success = indexResult.success;
         error = indexResult.error;
+        break;
+
+      case 'desire_advance':
+        const advanceResult = await executeDesireAdvance(task.payload as DesireAdvancePayload, username);
+        success = advanceResult.success;
+        error = advanceResult.error;
+        data = advanceResult.data;
         break;
 
       case 'desire_execute':

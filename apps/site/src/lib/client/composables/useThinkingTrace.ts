@@ -110,6 +110,23 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
    * Format audit trace event for display
    */
   function formatAuditTrace(event: AuditStreamEvent): string {
+    // Special formatting for Big Brother reasoning steps
+    if (event.event === 'big_brother_reasoning_step') {
+      const details = event.details || {};
+      const stepType = details.stepType || 'thought';
+      const toolName = details.toolName;
+      const content = details.content || '';
+
+      // Format based on step type
+      if (stepType === 'tool_use' && toolName) {
+        return `🔧 ${toolName}: ${content}`;
+      } else if (stepType === 'thought') {
+        return `💭 ${content}`;
+      } else {
+        return `🤖 ${content}`;
+      }
+    }
+
     const eventLabel = humanizeEventName(event.event);
     const detailsText = summarizeDetails(event.details || {});
     return detailsText ? `${eventLabel} ${detailsText}` : eventLabel;
@@ -145,6 +162,10 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
       'outputs',
       'message',
       'status',
+      // Big Brother reasoning keys
+      'content',
+      'stepType',
+      'toolName',
     ];
 
     const lines: string[] = [];

@@ -23,32 +23,48 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 export function parseThinkingBlocks(content: string): { thinking: string | null; stripped: string } {
   if (!content) return { thinking: null, stripped: '' };
 
+  // First try to match complete <think>...</think> blocks
   const thinkPattern = /<think>([\s\S]*?)<\/think>/gi;
   const matches = content.match(thinkPattern);
 
-  if (!matches || matches.length === 0) {
-    return { thinking: null, stripped: content.trim() };
-  }
-
-  // Extract all thinking content (may have multiple blocks)
-  let thinking = '';
-  for (const match of matches) {
-    const inner = match.replace(/<\/?think>/gi, '').trim();
-    if (inner) {
-      thinking += (thinking ? '\n\n' : '') + inner;
+  if (matches && matches.length > 0) {
+    // Extract all thinking content (may have multiple blocks)
+    let thinking = '';
+    for (const match of matches) {
+      const inner = match.replace(/<\/?think>/gi, '').trim();
+      if (inner) {
+        thinking += (thinking ? '\n\n' : '') + inner;
+      }
     }
+
+    // Strip thinking blocks from content
+    const stripped = content
+      .replace(thinkPattern, '')
+      .replace(/^\s*\n+/, '') // Remove leading newlines after stripping
+      .trim();
+
+    return {
+      thinking: thinking || null,
+      stripped,
+    };
   }
 
-  // Strip thinking blocks from content
-  const stripped = content
-    .replace(thinkPattern, '')
-    .replace(/^\s*\n+/, '') // Remove leading newlines after stripping
-    .trim();
+  // Handle incomplete thinking blocks (model ran out of tokens mid-thinking)
+  // Match <think> at start without closing tag
+  const incompletePattern = /^<think>([\s\S]*)$/i;
+  const incompleteMatch = content.match(incompletePattern);
 
-  return {
-    thinking: thinking || null,
-    stripped,
-  };
+  if (incompleteMatch) {
+    const thinking = incompleteMatch[1].trim();
+    // Response was cut off during thinking - no final answer available
+    return {
+      thinking: thinking ? `${thinking}\n\n[Thinking was cut off - response limit reached]` : null,
+      stripped: '[Response incomplete - thinking exceeded token limit]',
+    };
+  }
+
+  // No thinking blocks found
+  return { thinking: null, stripped: content.trim() };
 }
 
 const execute: NodeExecutor = async (inputs) => {

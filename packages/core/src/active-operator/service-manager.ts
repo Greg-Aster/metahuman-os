@@ -293,12 +293,16 @@ export async function startActiveOperatorService(username?: string): Promise<{
   shouldStop = false;
   consecutiveTasks = 0;
 
-  // Initialize and start the unified queue system with resource lanes
-  // Use startTriggersOnly() so TriggerManager enqueues tasks from agents.json,
-  // but the Lizard Brain handles actual execution (replaces old AgentScheduler)
+  // Initialize the unified queue system with resource lanes
+  // IMPORTANT: Do NOT start TriggerManager when Active Operator is enabled!
+  // The Lizard Brain cognitive graph has its own trigger system in lizard-brain.ts
+  // that handles all scheduling decisions (checkIdleReflection, checkIdleCuriosity, etc.)
+  // Starting TriggerManager would cause duplicate agent triggers (e.g., 3 reflections at once)
   const queueSystem = getQueueSystem();
   await queueSystem.initialize();
-  await queueSystem.startTriggersOnly();
+  // NOTE: We intentionally skip queueSystem.startTriggersOnly() here.
+  // The old TriggerManager reads agents.json and fires activity-based triggers,
+  // but when Active Operator is running, the Lizard Brain makes ALL scheduling decisions.
   queueSystemStarted = true;
 
   // Restore any persisted queue state to the new system

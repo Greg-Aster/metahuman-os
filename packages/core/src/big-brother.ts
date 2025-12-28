@@ -43,6 +43,8 @@ export interface EscalationRequest {
   scratchpad: BigBrotherScratchpadEntry[];
   context: any;
   suggestions: string[];
+  /** Session ID for streaming correlation with UI */
+  sessionId?: string;
 }
 
 export interface EscalationResponse {
@@ -119,9 +121,8 @@ Please analyze what went wrong and provide:
 Please be specific and actionable. I need concrete steps I can take.`;
 
   try {
-    // Use Claude Code CLI to get guidance
-    // For now, we'll use a simpler approach: spawn a child process with the prompt
-    const response = await callClaudeCLI(prompt);
+    // Use Claude Code CLI to get guidance with streaming for UI reasoning display
+    const response = await callClaudeCLI(prompt, request.sessionId);
 
     // Parse the response to extract actionable suggestions
     const suggestions = extractSuggestions(response);
@@ -136,6 +137,7 @@ Please be specific and actionable. I need concrete steps I can take.`;
         goal: request.goal,
         suggestionsCount: suggestions.length,
         hasAlternativeApproach: !!alternativeApproach,
+        sessionId: request.sessionId,
       },
       actor: 'big-brother',
     });
@@ -154,6 +156,7 @@ Please be specific and actionable. I need concrete steps I can take.`;
       details: {
         goal: request.goal,
         error: (error as Error).message,
+        sessionId: request.sessionId,
       },
       actor: 'big-brother',
     });
@@ -169,8 +172,10 @@ Please be specific and actionable. I need concrete steps I can take.`;
 
 /**
  * Call Claude CLI with a prompt using persistent session
+ * @param prompt - The prompt to send
+ * @param sessionId - Optional session ID for streaming correlation
  */
-async function callClaudeCLI(prompt: string): Promise<string> {
+async function callClaudeCLI(prompt: string, sessionId?: string): Promise<string> {
   const { isClaudeSessionReady, sendPrompt, startClaudeSession } = await import('./claude-session.js');
 
   // Ensure session is ready
@@ -190,8 +195,18 @@ async function callClaudeCLI(prompt: string): Promise<string> {
   }
 
   try {
-    // Send prompt and get response
-    const response = await sendPrompt(prompt, 60000); // 60 second timeout for complex analysis
+    // Enable streaming for reasoning display in chat interface
+    const streamingOptions = sessionId ? {
+      sessionId,
+      onReasoningStep: (step: { type: string; content: string; toolName?: string }) => {
+        // Log reasoning steps for debugging
+        const label = step.toolName ? `${step.type}(${step.toolName})` : step.type;
+        console.log(`[big-brother] 🧠 ${label}: ${step.content.substring(0, 80)}`);
+      },
+    } : undefined;
+
+    // Send prompt and get response with streaming
+    const response = await sendPrompt(prompt, 60000, streamingOptions); // 60 second timeout for complex analysis
 
     audit({
       level: 'info',
@@ -200,6 +215,7 @@ async function callClaudeCLI(prompt: string): Promise<string> {
       details: {
         promptLength: prompt.length,
         responseLength: response.length,
+        sessionId,
       },
       actor: 'big-brother',
     });
@@ -212,6 +228,7 @@ async function callClaudeCLI(prompt: string): Promise<string> {
       event: 'claude_call_failed',
       details: {
         error: (error as Error).message,
+        sessionId,
       },
       actor: 'big-brother',
     });

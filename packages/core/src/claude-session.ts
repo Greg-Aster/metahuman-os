@@ -24,6 +24,23 @@ interface ClaudeSession {
   terminalPid?: number;  // PID of the ttyd process
 }
 
+export interface StreamingOptions {
+  /** Called when a reasoning step is detected in Claude's output */
+  onReasoningStep?: (step: ReasoningStep) => void;
+  /** Called on each raw output chunk (for terminal display) */
+  onChunk?: (chunk: string) => void;
+  /** Session ID for correlating audit events */
+  sessionId?: string;
+}
+
+export interface ReasoningStep {
+  type: 'thought' | 'action' | 'observation' | 'result' | 'tool_use';
+  content: string;
+  timestamp: string;
+  toolName?: string;
+  success?: boolean;
+}
+
 // ============================================================================
 // Session State
 // ============================================================================
@@ -225,8 +242,16 @@ export function getSessionStatus(): {
  *
  * Uses async spawn for reliable execution without blocking the event loop.
  * This prevents ETIMEDOUT errors that can occur with synchronous execSync.
+ *
+ * @param prompt - The prompt to send to Claude
+ * @param timeoutMs - Timeout in milliseconds (default: 30000)
+ * @param streaming - Optional streaming options for real-time reasoning display
  */
-export async function sendPrompt(prompt: string, timeoutMs: number = 30000): Promise<string> {
+export async function sendPrompt(
+  prompt: string,
+  timeoutMs: number = 30000,
+  streaming?: StreamingOptions
+): Promise<string> {
   if (!currentSession || !currentSession.ready) {
     throw new Error('Claude session not ready. Call startClaudeSession() first.');
   }
@@ -261,7 +286,7 @@ export async function sendPrompt(prompt: string, timeoutMs: number = 30000): Pro
 
   try {
     // Use async spawn instead of execSync to prevent ETIMEDOUT on spawn
-    const response = await spawnClaudeAsync(prompt, timeoutMs);
+    const response = await spawnClaudeAsync(prompt, timeoutMs, streaming);
 
     // Write response to terminal log
     if (currentSession.terminalPort) {
@@ -278,6 +303,7 @@ export async function sendPrompt(prompt: string, timeoutMs: number = 30000): Pro
       event: 'claude_response_received',
       details: {
         responseLength: response.length,
+        sessionId: streaming?.sessionId,
       },
       actor: 'claude-session',
     });
@@ -309,13 +335,106 @@ export async function sendPrompt(prompt: string, timeoutMs: number = 30000): Pro
 }
 
 /**
+ * Parse Claude CLI output for reasoning steps
+ * Claude Code outputs structured text with tool uses and thinking
+ */
+function parseReasoningFromChunk(
+  buffer: string,
+  streaming?: StreamingOptions
+): { remainingBuffer: string; stepsEmitted: number } {
+  let stepsEmitted = 0;
+  let remainingBuffer = buffer;
+
+  // Pattern: Tool use blocks - Claude Code shows tool calls
+  const toolUsePattern = /⏺\s*(Read|Write|Edit|Bash|Glob|Grep|Task|WebFetch|WebSearch)[^\n]*\n([^⏺]*?)(?=⏺|$)/gs;
+  let toolMatch;
+  while ((toolMatch = toolUsePattern.exec(buffer)) !== null) {
+    const toolName = toolMatch[1];
+    const toolContent = toolMatch[2].trim();
+
+    if (streaming?.onReasoningStep) {
+      streaming.onReasoningStep({
+        type: 'tool_use',
+        toolName,
+        content: toolContent.substring(0, 500),
+        timestamp: new Date().toISOString(),
+      });
+      stepsEmitted++;
+    }
+
+    // Emit audit event for UI pickup
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'big_brother_reasoning_step',
+      details: {
+        stepType: 'tool_use',
+        toolName,
+        content: toolContent.substring(0, 200),
+        sessionId: streaming?.sessionId,
+      },
+      actor: 'big-brother',
+    });
+  }
+
+  // Pattern: Thinking/reasoning text (lines that look like reasoning)
+  const thinkingPatterns = [
+    /(?:^|\n)(?:Thinking|Let me|I'll|I need to|First,|Next,|Now|Looking at|Checking|Searching|Reading|The)[^.\n]*\./g,
+    /(?:^|\n)(?:I found|I see|This shows|Based on|According to)[^.\n]*\./g,
+  ];
+
+  for (const pattern of thinkingPatterns) {
+    let thoughtMatch;
+    while ((thoughtMatch = pattern.exec(buffer)) !== null) {
+      const thought = thoughtMatch[0].trim();
+      if (thought.length > 20 && thought.length < 500) {
+        if (streaming?.onReasoningStep) {
+          streaming.onReasoningStep({
+            type: 'thought',
+            content: thought,
+            timestamp: new Date().toISOString(),
+          });
+          stepsEmitted++;
+        }
+
+        // Emit audit event
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'big_brother_reasoning_step',
+          details: {
+            stepType: 'thought',
+            content: thought.substring(0, 200),
+            sessionId: streaming?.sessionId,
+          },
+          actor: 'big-brother',
+        });
+      }
+    }
+  }
+
+  // Keep last 500 chars as buffer for incomplete patterns
+  if (buffer.length > 500) {
+    remainingBuffer = buffer.slice(-500);
+  }
+
+  return { remainingBuffer, stepsEmitted };
+}
+
+/**
  * Spawn Claude CLI asynchronously to avoid blocking and ETIMEDOUT errors
  */
-async function spawnClaudeAsync(prompt: string, timeoutMs: number): Promise<string> {
+async function spawnClaudeAsync(
+  prompt: string,
+  timeoutMs: number,
+  streaming?: StreamingOptions
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     const errorChunks: Buffer[] = [];
     let timedOut = false;
+    let streamBuffer = '';
+    let totalStepsEmitted = 0;
 
     console.log(`[claude-session] 🚀 Spawning Claude CLI (timeout: ${timeoutMs}ms)...`);
 
@@ -347,10 +466,24 @@ async function spawnClaudeAsync(prompt: string, timeoutMs: number): Promise<stri
       child.stdin.end();
     }
 
-    // Collect stdout
+    // Collect stdout with streaming
     if (child.stdout) {
       child.stdout.on('data', (chunk: Buffer) => {
         chunks.push(chunk);
+
+        // Stream the chunk
+        const text = chunk.toString();
+        if (streaming?.onChunk) {
+          streaming.onChunk(text);
+        }
+
+        // Parse for reasoning steps
+        if (streaming) {
+          streamBuffer += text;
+          const { remainingBuffer, stepsEmitted } = parseReasoningFromChunk(streamBuffer, streaming);
+          streamBuffer = remainingBuffer;
+          totalStepsEmitted += stepsEmitted;
+        }
       });
     }
 
@@ -385,6 +518,11 @@ async function spawnClaudeAsync(prompt: string, timeoutMs: number): Promise<stri
 
       const stdout = Buffer.concat(chunks).toString('utf8');
       const stderr = Buffer.concat(errorChunks).toString('utf8');
+
+      // Log streaming stats
+      if (streaming && totalStepsEmitted > 0) {
+        console.log(`[claude-session] 📊 Streamed ${totalStepsEmitted} reasoning steps`);
+      }
 
       if (code === 0) {
         console.log(`[claude-session] ✅ Claude CLI completed (${stdout.length} chars)`);

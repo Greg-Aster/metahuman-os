@@ -359,3 +359,18 @@ export function appendDreamToBuffer(userId: string, content: string, extraMeta?:
     meta: { type: 'dream', source: 'agent', ...extraMeta },
   });
 }
+
+/**
+ * Append execution progress to a user's inner dialogue buffer
+ * Used by desire executor to show Big Brother execution steps in real-time
+ * @param userId - The user ID to append to
+ * @param content - The progress message
+ * @param extraMeta - Optional additional metadata (e.g., { stepNumber, action, desireId })
+ */
+export function appendExecutionProgressToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): boolean {
+  return appendToUserBuffer(userId, 'inner', {
+    role: 'execution',
+    content,
+    meta: { type: 'execution_progress', source: 'big-brother', dialogueSource: 'big-brother', displayColor: '#f59e0b', ...extraMeta },
+  });
+}

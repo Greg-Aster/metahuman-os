@@ -149,7 +149,6 @@ export function loadUserConfig<T = any>(filename: string, defaultValue: T, usern
   // Now load from user's profile (which is guaranteed to exist)
   try {
     const raw = fs.readFileSync(configPath, 'utf8');
-    console.log(`[config] ✓ Loaded config from: ${configPath}`);
     return JSON.parse(raw) as T;
   } catch (error) {
     // This should rarely happen now, but handle gracefully

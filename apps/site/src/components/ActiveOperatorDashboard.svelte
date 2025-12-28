@@ -110,7 +110,8 @@
   let loading = true;
   let error = '';
   let actionLoading = false;
-  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let eventSource: EventSource | null = null;
+  let connected = false;
 
   // Collapsible sections
   let collapsed = {
@@ -249,12 +250,46 @@
   }
 
   onMount(() => {
+    // Initial load
     loadStatus();
-    pollInterval = setInterval(loadStatus, 5000); // Poll every 5 seconds
+
+    // Connect to queue event stream
+    eventSource = new EventSource('/api/queue-stream');
+
+    eventSource.onopen = () => {
+      console.log('[ActiveOperatorDashboard] Connected to queue stream');
+      connected = true;
+    };
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'error') {
+          console.error('[ActiveOperatorDashboard] Stream error:', data.error);
+          return;
+        }
+        if (data.type === 'connected') {
+          return;
+        }
+        // Queue event received - refresh status
+        console.log('[ActiveOperatorDashboard] Event received:', data.type);
+        loadStatus();
+      } catch (e) {
+        console.error('[ActiveOperatorDashboard] Failed to parse event:', e);
+      }
+    };
+
+    eventSource.onerror = () => {
+      console.warn('[ActiveOperatorDashboard] Stream connection error');
+      connected = false;
+    };
   });
 
   onDestroy(() => {
-    if (pollInterval) clearInterval(pollInterval);
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
   });
 </script>
 

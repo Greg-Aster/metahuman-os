@@ -22,7 +22,8 @@ export type TaskType =
   | 'inner_curiosity' // Run inner curiosity (self-directed Q&A)
   | 'dream' // Generate dreams via dreamer agent
   | 'desire_generate' // Run desire generator
-  | 'desire_execute' // Execute a pending desire
+  | 'desire_advance' // Process pending desires through planning/review/approval
+  | 'desire_execute' // Execute an APPROVED desire (not pending!)
   | 'psychoanalyze' // Run psychoanalyzer to update persona
   | 'code_analyze'; // Self-healing: analyze codebase for errors
 
@@ -49,6 +50,7 @@ export const PRIORITY_VALUES: Record<Priority, number> = {
 export const DEFAULT_TASK_PRIORITIES: Record<TaskType, Priority> = {
   user_message: 'critical',
   desire_execute: 'high',
+  desire_advance: 'normal', // Process pending desires through approval pipeline
   memory_curate: 'normal',
   index_build: 'normal',
   reflect: 'normal',
@@ -104,6 +106,7 @@ export type TaskPayload =
   | CuriosityPayload
   | DreamPayload
   | DesireGeneratePayload
+  | DesireAdvancePayload
   | DesireExecutePayload
   | PsychoanalyzePayload
   | CodeAnalyzePayload
@@ -144,9 +147,14 @@ export interface DesireGeneratePayload {
   type: 'desire_generate';
 }
 
+export interface DesireAdvancePayload {
+  type: 'desire_advance';
+  desireId?: string; // Optional: specific desire to advance, or process all pending
+}
+
 export interface DesireExecutePayload {
   type: 'desire_execute';
-  desireId: string;
+  desireId?: string; // Optional: specific approved desire to execute
 }
 
 export interface PsychoanalyzePayload {
@@ -255,6 +263,7 @@ export const DEFAULT_CONFIG: ActiveOperatorConfig = {
     'inner_curiosity',
     'dream',
     'desire_generate',
+    'desire_advance',
     'desire_execute',
     'psychoanalyze',
   ],
@@ -284,6 +293,9 @@ export interface SystemState {
 
   /** Number of pending desires (waiting for activation threshold) */
   pendingDesires: number;
+
+  /** Number of pending desires ABOVE activation threshold (can be processed by desire_advance) */
+  pendingDesiresReadyToAdvance: number;
 
   /** Number of active desires (evaluating, planning, reviewing, executing) */
   activeDesires: number;

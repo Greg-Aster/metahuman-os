@@ -496,25 +496,17 @@ async function checkCalendarFocusWindow(username: string): Promise<TriggerResult
 // ============================================================================
 
 /**
- * Check if there are desires ready for execution.
- * Uses folder-based storage (same as Agency UI).
+ * Check if any APPROVED desires are ready for execution.
+ * Only fires for desires that have been approved (by user or auto-approval).
  */
-async function checkDesiresReady(username: string): Promise<TriggerResult> {
+async function checkDesiresReadyForExecution(username: string): Promise<TriggerResult> {
   try {
     const { listDesiresFromFolders } = await import('../agency/storage.js');
     const allDesires = await listDesiresFromFolders(username);
 
-    // Count by status
-    const activeStatuses = ['evaluating', 'planning', 'reviewing', 'executing'];
-    const pendingStatuses = ['pending', 'nascent'];
-
-    // APPROVED desires are the ones READY for execution via Big Brother!
+    // APPROVED desires are the ONLY ones ready for execution via Big Brother!
     const approvedDesires = allDesires.filter(d => d.status === 'approved');
-    const activeDesires = allDesires.filter(d => activeStatuses.includes(d.status));
-    const pendingDesires = allDesires.filter(d => pendingStatuses.includes(d.status));
-    const awaitingApproval = allDesires.filter(d => d.status === 'awaiting_approval');
 
-    // HIGHEST PRIORITY: Check for approved desires (user-approved, ready for execution!)
     if (approvedDesires.length > 0) {
       return {
         shouldTrigger: true,
@@ -524,33 +516,51 @@ async function checkDesiresReady(username: string): Promise<TriggerResult> {
       };
     }
 
-    // Check for active desires (currently being processed by planner/reviewer)
-    if (activeDesires.length > 0) {
-      return {
-        shouldTrigger: true,
-        reason: `${activeDesires.length} desire(s) actively being processed`,
-        urgency: 'soon',
-        data: { activeCount: activeDesires.length, desireIds: activeDesires.map(d => d.id) },
-      };
-    }
+    return { shouldTrigger: false };
+  } catch {
+    return { shouldTrigger: false };
+  }
+}
 
-    // Check for desires awaiting approval (inform LLM but can't execute)
-    if (awaitingApproval.length > 0) {
-      return {
-        shouldTrigger: false, // Don't trigger - requires user action first
-        reason: `${awaitingApproval.length} desire(s) awaiting user approval`,
-        urgency: 'whenever',
-        data: { awaitingCount: awaitingApproval.length, requiresUserAction: true },
-      };
-    }
+/**
+ * Check if any pending desires need to be advanced through the approval pipeline.
+ * Fires for pending desires that have crossed the activation threshold.
+ */
+async function checkDesiresNeedAdvancement(username: string): Promise<TriggerResult> {
+  try {
+    const { listDesiresFromFolders } = await import('../agency/storage.js');
+    const { loadConfig } = await import('../agency/config.js');
+    const allDesires = await listDesiresFromFolders(username);
+    const config = await loadConfig(username);
 
-    // Low priority: Check for pending desires (need to be activated first)
+    // Get pending desires that are above the activation threshold
+    const pendingDesires = allDesires.filter(d =>
+      d.status === 'pending' && d.strength >= config.thresholds.activation
+    );
+
+    // Check for desires awaiting approval (info only, don't trigger)
+    const awaitingApproval = allDesires.filter(d => d.status === 'awaiting_approval');
+
     if (pendingDesires.length > 0) {
       return {
-        shouldTrigger: false, // Don't trigger execution - these need activation first
-        reason: `${pendingDesires.length} pending desire(s) need activation`,
+        shouldTrigger: true,
+        reason: `📋 ${pendingDesires.length} pending desire(s) ready for planning/review/approval`,
+        urgency: 'soon',
+        data: {
+          pendingCount: pendingDesires.length,
+          desireIds: pendingDesires.map(d => d.id),
+          activationThreshold: config.thresholds.activation,
+        },
+      };
+    }
+
+    // Info about desires awaiting approval (don't trigger, but inform)
+    if (awaitingApproval.length > 0) {
+      return {
+        shouldTrigger: false,
+        reason: `⏳ ${awaitingApproval.length} desire(s) awaiting user approval`,
         urgency: 'whenever',
-        data: { pendingCount: pendingDesires.length },
+        data: { awaitingCount: awaitingApproval.length, requiresUserAction: true },
       };
     }
 
@@ -631,6 +641,15 @@ export const TRIGGERS: Trigger[] = [
     condition: (username) => checkIdle(username, 30),
   },
   {
+    id: 'idle_inner_curiosity',
+    name: 'Inner Curiosity',
+    description: 'Trigger inner curiosity (self-directed questions) when user is idle',
+    taskType: 'inner_curiosity',
+    priority: 'low',
+    checkInterval: 180000, // 3 minutes
+    condition: (username) => checkIdle(username, 45), // 45 min idle threshold
+  },
+  {
     id: 'inbox_ingestion',
     name: 'Inbox Ingestion',
     description: 'Process new files in inbox',
@@ -679,13 +698,22 @@ export const TRIGGERS: Trigger[] = [
   },
   // === DESIRE SYSTEM TRIGGERS ===
   {
-    id: 'desire_execution',
-    name: 'Desire Execution',
-    description: 'Execute pending or active desires',
-    taskType: 'desire_execute',
+    id: 'desire_advancement',
+    name: 'Desire Advancement',
+    description: 'Advance pending desires through planning/review/approval',
+    taskType: 'desire_advance',
     priority: 'normal',
     checkInterval: 60000, // 1 minute
-    condition: checkDesiresReady,
+    condition: checkDesiresNeedAdvancement,
+  },
+  {
+    id: 'desire_execution',
+    name: 'Desire Execution',
+    description: 'Execute APPROVED desires only',
+    taskType: 'desire_execute',
+    priority: 'high', // Higher priority than advancement
+    checkInterval: 60000, // 1 minute
+    condition: checkDesiresReadyForExecution,
   },
   {
     id: 'desire_generation',

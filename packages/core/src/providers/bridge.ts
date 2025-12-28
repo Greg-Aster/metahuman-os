@@ -607,7 +607,7 @@ async function callVLLMProvider(
       {
         model,
         temperature: options.temperature,
-        maxTokens: options.maxTokens,
+        maxTokens: options.maxTokens ?? backendConfig.vllm.maxTokens,
         topP: options.topP,
         enableThinking: backendConfig.vllm.enableThinking,
       }

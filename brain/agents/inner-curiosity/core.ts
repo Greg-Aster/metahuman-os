@@ -30,6 +30,7 @@ import {
   withUserContext,
   loadCuriosityConfig,
   loadPersonaCore,
+  appendReflectionToBuffer,
 } from '@metahuman/core';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 
@@ -314,6 +315,7 @@ What insights can I draw from this? What patterns emerge?
   const innerDialogue = `🤔 ${question}\n\n💭 ${answer}`;
 
   try {
+    // Save to episodic memory
     captureEvent(innerDialogue, {
       type: 'inner_dialogue',
       tags: ['inner-curiosity', 'self-directed-question', 'inner'],
@@ -326,6 +328,13 @@ What insights can I draw from this? What patterns emerge?
           searchResults: searchResults.length
         }
       }
+    });
+
+    // Also append to conversation buffer so it appears in Inner Dialogue tab
+    appendReflectionToBuffer(username, innerDialogue, {
+      dialogueSource: 'inner-curiosity',
+      displayColor: '#8b5cf6', // Purple for inner curiosity
+      type: 'inner_question',
     });
 
     audit({
@@ -341,7 +350,7 @@ What insights can I draw from this? What patterns emerge?
       }
     });
 
-    console.log(`[inner-curiosity] Saved inner Q&A to inner dialogue`);
+    console.log(`[inner-curiosity] Saved inner Q&A to inner dialogue and buffer`);
     return true;
 
   } catch (error) {

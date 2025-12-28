@@ -13,12 +13,13 @@ const execute: NodeExecutor = async (inputs, context) => {
 
   const state = await gatherSystemState(username, queueLength);
 
-  console.log(`[SystemState] Gathered state: unprocessed=${state.unprocessedMemories}, indexAge=${state.indexAgeHours.toFixed(1)}h, desires(pending=${state.pendingDesires}, active=${state.activeDesires}, awaiting=${state.awaitingApprovalDesires}, approved=${state.approvedDesires}), tasks=${state.activeTasks || 0}(high=${state.highPriorityTasks || 0}), goals=${state.activeGoals || 0}`);
+  console.log(`[SystemState] Gathered state: unprocessed=${state.unprocessedMemories}, indexAge=${state.indexAgeHours.toFixed(1)}h, desires(pending=${state.pendingDesires}, readyToAdvance=${state.pendingDesiresReadyToAdvance}, active=${state.activeDesires}, awaiting=${state.awaitingApprovalDesires}, approved=${state.approvedDesires}), tasks=${state.activeTasks || 0}(high=${state.highPriorityTasks || 0}), goals=${state.activeGoals || 0}`);
 
   return {
     unprocessedMemories: state.unprocessedMemories,
     indexAgeHours: state.indexAgeHours,
     pendingDesires: state.pendingDesires,
+    pendingDesiresReadyToAdvance: state.pendingDesiresReadyToAdvance,
     activeDesires: state.activeDesires,
     awaitingApprovalDesires: state.awaitingApprovalDesires,
     approvedDesires: state.approvedDesires,
@@ -52,6 +53,7 @@ export const SystemStateNode: NodeDefinition = defineNode({
     { name: 'unprocessedMemories', type: 'number', description: 'Count of unprocessed memories' },
     { name: 'indexAgeHours', type: 'number', description: 'Hours since last index build' },
     { name: 'pendingDesires', type: 'number', description: 'Count of pending desires (waiting for activation)' },
+    { name: 'pendingDesiresReadyToAdvance', type: 'number', description: 'Count of pending desires ABOVE activation threshold (can be processed by desire_advance)' },
     { name: 'activeDesires', type: 'number', description: 'Count of active desires (evaluating/planning/reviewing/executing)' },
     { name: 'awaitingApprovalDesires', type: 'number', description: 'Count of desires awaiting user approval' },
     { name: 'approvedDesires', type: 'number', description: 'Count of approved desires ready for autonomous execution' },

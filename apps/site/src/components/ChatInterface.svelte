@@ -1466,11 +1466,10 @@
     {/if}
   </div>
   <!-- Approval Prompt - appears above input when desires need approval -->
-  {#if mode === 'conversation'}
-    <ApprovalPrompt onApprovalChange={() => {
-      console.log('[chat] Approval change detected');
-    }} />
-  {/if}
+  <!-- Shows in BOTH conversation AND inner dialogue modes - users need to see approval requests regardless of view -->
+  <ApprovalPrompt onApprovalChange={() => {
+    console.log('[chat] Approval change detected');
+  }} />
 
   <!-- Input Area -->
   <div class="input-container">

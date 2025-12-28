@@ -101,6 +101,9 @@ Return ONLY a JSON object in this format:
 
 Do NOT try to execute any tools yourself. Just provide the content.`;
 
+    // Get session ID from context for streaming correlation
+    const sessionId = (_context as any)?.sessionId || `bb-${Date.now()}`;
+
     audit({
       level: 'info',
       category: 'action',
@@ -109,12 +112,22 @@ Do NOT try to execute any tools yourself. Just provide the content.`;
         skillName,
         args: skillInputs,
         promptLength: prompt.length,
+        sessionId,
       },
       actor: 'big-brother',
     });
 
     const timeoutMs = properties?.timeout || 60000;
-    const response = await sendPrompt(prompt, timeoutMs);
+
+    // Enable streaming for reasoning display in chat interface
+    const streamingOptions = {
+      sessionId,
+      onReasoningStep: (step: { type: string; content: string }) => {
+        console.log(`[BigBrotherExecutor] 🧠 ${step.type}: ${step.content.substring(0, 100)}`);
+      },
+    };
+
+    const response = await sendPrompt(prompt, timeoutMs, streamingOptions);
 
     // Parse JSON response
     const jsonMatch = response.match(/\{[\s\S]*\}/);

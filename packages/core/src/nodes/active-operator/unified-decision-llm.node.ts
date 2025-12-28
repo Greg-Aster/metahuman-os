@@ -12,6 +12,7 @@ import { loadConfig } from '../../active-operator/state-persister.js';
 import { audit } from '../../audit.js';
 import type { TaskType, TaskDecision } from '../../active-operator/types.js';
 import { parseThinkingBlocks } from '../output/thinking-stripper.node.js';
+import { appendReflectionToBuffer } from '../../conversation-buffer.js';
 
 /**
  * Task descriptions for the LLM prompt.
@@ -25,7 +26,8 @@ const TASK_DESCRIPTIONS: Record<TaskType, string> = {
   inner_curiosity: 'Generate and answer internal curiosity questions',
   dream: 'Create surreal dreams from memory fragments',
   desire_generate: 'Generate new desires from goals, tasks, and memories',
-  desire_execute: 'Execute a pending desire that has reached activation threshold',
+  desire_advance: 'Process PENDING desires through planning/review/approval (before they can execute)',
+  desire_execute: 'Execute APPROVED desires only (after user or auto-approval)',
   psychoanalyze: 'Run psychoanalyzer to update persona based on recent memories',
   code_analyze: 'Analyze codebase for TypeScript errors (self-healing)',
 };
@@ -86,11 +88,15 @@ Guidelines:
 4. If queue has items, consider executing those before adding more
 5. Balance reactive (triggers) with proactive (recommendations)
 6. Consider system state - high unprocessed memories → memory_curate
-7. DESIRE SYSTEM:
-   - 🚀 APPROVED desires = HIGHEST PRIORITY! User approved these - execute immediately via desire_execute
-   - If no desires exist (0 pending, 0 active, 0 approved), run desire_generate to create goals
-   - If desires are pending/active, run desire_execute to process them
-   - Desires awaiting approval: wait for user to approve (don't auto-approve unless high trust)
+7. DESIRE SYSTEM (IMPORTANT - three-step flow):
+   - desire_generate: Create new desires (when 0 pending, 0 active, 0 approved)
+   - desire_advance: Process PENDING desires through planning/review/approval pipeline (ONLY if pendingReadyToAdvance > 0!)
+   - desire_execute: Execute APPROVED desires ONLY (after approval granted)
+   - FLOW: pending → (build strength) → desire_advance → (approved OR awaiting_approval) → desire_execute
+   - 🚀 If approved > 0: run desire_execute immediately!
+   - 📋 If pendingReadyToAdvance > 0: run desire_advance to process them
+   - ⚠️ If pending > 0 but pendingReadyToAdvance = 0: desires are below activation threshold, they need reinforcement - DO NOT run desire_advance!
+   - ⏳ If awaiting_approval > 0: wait for user (these need manual approval) - DO NOT run desire_advance!
 8. TRUST LEVELS:
    - observe/suggest: desires need user approval before execution
    - supervised_auto: low-risk desires auto-approved, medium/high need user approval
@@ -102,6 +108,27 @@ Guidelines:
 10. GOAL AWARENESS:
    - If user has active goals but no desires, run desire_generate to make progress
    - Proposed goals need user review - don't wait indefinitely for them
+11. CONTENT GENERATION CYCLE (CRITICAL):
+   - You are a DYNAMIC thinking backend - keep the mind active!
+   - When desires are stable (pending below threshold, nothing to execute), run these tasks:
+     * curiosity: Asks user questions → user replies create NEW MEMORIES → feeds desire_generate
+     * memory_curate: Enriches memories with tags/entities → makes them findable for reflection
+     * index_build: Updates vector index → enables semantic search for memory retrieval
+     * reflect: Creates reflections from memory associations → feeds desire_generate
+     * dream: Creates dreams from memory fragments → feeds desire_generate
+     * psychoanalyze: Updates persona understanding → shapes desire priorities
+     * inner_curiosity: Generates self-directed Q&A → deepens understanding
+   - These tasks CREATE and PROCESS the raw material that desire_generate uses!
+   - FULL CYCLE: curiosity → memory_curate → index_build → reflect/dream/psychoanalyze → desire_generate → desire_advance → desire_execute
+   - curiosity is especially valuable - it engages the user and generates fresh memory content!
+   - If unprocessed memories > 0, run memory_curate to process them
+   - If index is stale (> 2 hours), run index_build
+   - If you've run desire tasks but nothing is ready, DO NOT repeat them - run content generators instead!
+   - Check recent activity: if you just ran desire_advance with 0 processed, run something DIFFERENT next
+12. AVOID REPETITION:
+   - Look at RECENT ACTIVITY section carefully
+   - If a task just ran and returned "processed=0" or similar, DO NOT run it again immediately
+   - Cycle through different task types to keep the system evolving
 
 Respond with JSON only: {"task": "<type>", "reasoning": "<why>"}
 If nothing should run, respond: {"task": null, "reasoning": "<why waiting>"}`,
@@ -117,7 +144,8 @@ ${queueList}
 === SYSTEM STATE ===
 - Unprocessed memories: ${systemState.unprocessedMemories || 0}
 - Index age: ${(systemState.indexAgeHours || 0).toFixed(1)} hours
-- Pending desires: ${systemState.pendingDesires || 0}
+- Pending desires (total): ${systemState.pendingDesires || 0}
+- 📋 Pending desires READY to advance (above threshold): ${systemState.pendingDesiresReadyToAdvance || 0}
 - Active desires: ${systemState.activeDesires || 0}
 - Desires awaiting approval: ${systemState.awaitingApprovalDesires || 0}
 - 🚀 APPROVED desires (ready to execute!): ${systemState.approvedDesires || 0}
@@ -147,10 +175,14 @@ What should I do next?`,
       messages,
       userId: username,
       options: {
-        // Increased from 256 to 512 to accommodate Qwen3's <think> blocks
-        // before the actual JSON output
-        maxTokens: properties?.maxTokens || 512,
-        temperature: properties?.temperature || 0.2,
+        // Enable extended thinking/reasoning for better decision making
+        enableThinking: true,
+        // Temperature for decision making - slightly higher for thoughtful reasoning
+        temperature: properties?.temperature || 0.3,
+        // Limit output tokens to leave room for input in context window
+        // Model context is 4096, input is ~1200-1500 tokens, so max output ~2500
+        // Setting to 2048 to be safe while allowing extended thinking
+        maxTokens: 2048,
       },
     });
 
@@ -208,9 +240,27 @@ What should I do next?`,
       console.log(`[UnifiedDecisionLLM] No task selected: ${reasoning}`);
     }
 
+    // Format reasoning for inner dialogue output
+    // Only show the explicit JSON reasoning if different from thinking (avoid duplication)
+    const explicitReasoning = decision?.reasoning && decision.reasoning !== thinking
+      ? `\n**Reason:** ${decision.reasoning}`
+      : '';
+
+    const formattedReasoning = thinking
+      ? `🧠 **Lizard Brain Reasoning**\n\n${thinking}\n\n---\n**Decision:** ${decision?.task || 'Wait (no task needed)'}${explicitReasoning}`
+      : `🧠 **Lizard Brain Decision**\n\n**Task:** ${decision?.task || 'None'}\n**Reason:** ${reasoning}`;
+
+    // Output to inner dialogue (direct call - graph edge removed to prevent duplicates)
+    appendReflectionToBuffer(username, formattedReasoning, {
+      dialogueSource: 'lizard-brain',
+      displayColor: '#8b5cf6', // Purple for Lizard Brain
+      type: 'lizard_brain_decision',
+      task: decision?.task || null,
+    });
+
     return {
       task: decision?.task || null,
-      reasoning,
+      reasoning: formattedReasoning,
       decision,
     };
 
@@ -237,8 +287,8 @@ export const UnifiedDecisionLLMNode: NodeDefinition = defineNode({
   ],
   properties: {
     model: 'orchestrator',
-    temperature: 0.2,
-    maxTokens: 256,
+    temperature: 0.3,
+    // maxTokens comes from backend config (etc/llm-backend.json)
   },
   propertySchemas: {
     model: {
@@ -249,19 +299,11 @@ export const UnifiedDecisionLLMNode: NodeDefinition = defineNode({
     },
     temperature: {
       type: 'slider',
-      default: 0.2,
+      default: 0.3,
       label: 'Temperature',
       min: 0,
       max: 1,
       step: 0.1,
-    },
-    maxTokens: {
-      type: 'slider',
-      default: 512,
-      label: 'Max Tokens',
-      min: 128,
-      max: 1024,
-      step: 64,
     },
   },
   description: 'Single LLM that evaluates triggers + queue + state and decides what ONE task to execute next',

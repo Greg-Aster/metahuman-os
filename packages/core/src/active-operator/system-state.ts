@@ -124,6 +124,7 @@ async function getIndexAgeHours(username: string): Promise<number> {
  *
  * Counts are categorized as:
  * - pending: nascent, pending (not yet ready for execution)
+ * - pendingReadyToAdvance: pending desires ABOVE activation threshold (can be processed by desire_advance)
  * - active: evaluating, planning, executing (in progress)
  * - awaitingApproval: awaiting_approval (needs user action before approval)
  * - approved: approved (ready for autonomous execution!)
@@ -132,6 +133,7 @@ async function getIndexAgeHours(username: string): Promise<number> {
  */
 async function getDesireCounts(username: string): Promise<{
   pending: number;
+  pendingReadyToAdvance: number;
   active: number;
   awaitingApproval: number;
   approved: number;
@@ -139,9 +141,15 @@ async function getDesireCounts(username: string): Promise<{
   try {
     // Use folder-based storage (same as Agency UI)
     const { listDesiresFromFolders } = await import('../agency/storage.js');
+    const { loadConfig } = await import('../agency/config.js');
     const allDesires = await listDesiresFromFolders(username);
 
+    // Get activation threshold from config
+    const agencyConfig = await loadConfig(username);
+    const activationThreshold = agencyConfig.thresholds.activation;
+
     let pending = 0;
+    let pendingReadyToAdvance = 0;
     let active = 0;
     let awaitingApproval = 0;
     let approved = 0;
@@ -151,6 +159,10 @@ async function getDesireCounts(username: string): Promise<{
         case 'pending':
         case 'nascent':
           pending++;
+          // Check if this pending desire is ABOVE activation threshold
+          if (desire.strength >= activationThreshold) {
+            pendingReadyToAdvance++;
+          }
           break;
         case 'evaluating':
         case 'planning':
@@ -171,16 +183,16 @@ async function getDesireCounts(username: string): Promise<{
       }
     }
 
-    return { pending, active, awaitingApproval, approved };
+    return { pending, pendingReadyToAdvance, active, awaitingApproval, approved };
   } catch (error) {
     console.warn('[system-state] Failed to get desire counts:', error);
-    return { pending: 0, active: 0, awaitingApproval: 0, approved: 0 };
+    return { pending: 0, pendingReadyToAdvance: 0, active: 0, awaitingApproval: 0, approved: 0 };
   }
 }
 
 // Cache desire counts within a single gatherSystemState call
 // This prevents multiple queries to the storage system
-let cachedDesireCounts: { pending: number; active: number; awaitingApproval: number; approved: number } | null = null;
+let cachedDesireCounts: { pending: number; pendingReadyToAdvance: number; active: number; awaitingApproval: number; approved: number } | null = null;
 let cacheUsername: string | null = null;
 
 /**
@@ -192,6 +204,18 @@ async function getPendingDesireCount(username: string): Promise<number> {
     cacheUsername = username;
   }
   return cachedDesireCounts.pending;
+}
+
+/**
+ * Get count of pending desires that are ABOVE activation threshold.
+ * These are the ones that desire_advance can actually process.
+ */
+async function getPendingReadyToAdvanceCount(username: string): Promise<number> {
+  if (!cachedDesireCounts || cacheUsername !== username) {
+    cachedDesireCounts = await getDesireCounts(username);
+    cacheUsername = username;
+  }
+  return cachedDesireCounts.pendingReadyToAdvance;
 }
 
 /**
@@ -552,6 +576,7 @@ export async function gatherSystemState(
     unprocessedMemories,
     indexAgeHours,
     pendingDesires,
+    pendingDesiresReadyToAdvance,
     activeDesires,
     awaitingApprovalDesires,
     approvedDesires,
@@ -563,6 +588,7 @@ export async function gatherSystemState(
     getUnprocessedMemoryCount(username),
     getIndexAgeHours(username),
     getPendingDesireCount(username),
+    getPendingReadyToAdvanceCount(username),
     getActiveDesireCount(username),
     getAwaitingApprovalDesireCount(username),
     getApprovedDesireCount(username),
@@ -585,6 +611,7 @@ export async function gatherSystemState(
     unprocessedMemories,
     indexAgeHours,
     pendingDesires,
+    pendingDesiresReadyToAdvance,
     activeDesires,
     awaitingApprovalDesires,
     approvedDesires,

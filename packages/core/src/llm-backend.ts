@@ -68,6 +68,8 @@ export interface VLLMBackendConfig {
   model: string;
   gpuMemoryUtilization: number;
   maxModelLen?: number;
+  /** Maximum output tokens per response (default: 2048). Increase when thinking is enabled. */
+  maxTokens?: number;
   tensorParallelSize?: number;
   dtype?: string;
   quantization?: string | null;

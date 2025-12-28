@@ -154,16 +154,42 @@ export function recordExecutionStart(task: QueuedTask): void {
 
 /**
  * Record task result in the scratchpad.
+ * Includes detailed outcome data so the LLM knows what actually happened.
  */
 export function recordTaskResult(result: TaskResult): void {
   const scratchpad = loadScratchpad();
   scratchpad.lastResult = result;
+
+  // Build a detailed observation message
+  let content: string;
+  if (result.success) {
+    // Include key outcome data if available
+    const data = result.data as Record<string, unknown> | undefined;
+    if (data) {
+      // Format outcome based on common result patterns
+      const details: string[] = [];
+      if ('processed' in data) details.push(`processed=${data.processed}`);
+      if ('autoApproved' in data) details.push(`auto-approved=${data.autoApproved}`);
+      if ('awaitingApproval' in data) details.push(`awaiting-approval=${data.awaitingApproval}`);
+      if ('reason' in data) details.push(`reason: ${data.reason}`);
+      if ('memoriesProcessed' in data) details.push(`memories=${data.memoriesProcessed}`);
+      if ('entriesAdded' in data) details.push(`entries=${data.entriesAdded}`);
+      if ('questionsGenerated' in data) details.push(`questions=${data.questionsGenerated}`);
+
+      content = details.length > 0
+        ? `Task completed (${result.durationMs}ms): ${details.join(', ')}`
+        : `Task completed successfully in ${result.durationMs}ms`;
+    } else {
+      content = `Task completed successfully in ${result.durationMs}ms`;
+    }
+  } else {
+    content = `Task FAILED: ${result.error}`;
+  }
+
   scratchpad.entries.push({
     timestamp: new Date().toISOString(),
     type: 'observation',
-    content: result.success
-      ? `Task ${result.taskId} completed successfully in ${result.durationMs}ms`
-      : `Task ${result.taskId} failed: ${result.error}`,
+    content,
     data: result,
   });
   saveScratchpad(scratchpad);

@@ -12,12 +12,110 @@
   export let thinkingSteps: string = '';
   export let thinkingStatusLabel: string = '';
 
+  import { apiFetch } from '../../lib/client/api-config';
+
   const dispatch = createEventDispatcher<{
     messageClick: { message: ChatMessage; index: number };
     deleteMessage: { relPath: string };
     validateMessage: { relPath: string; status: 'correct' | 'incorrect' };
     speakMessage: { content: string };
+    desireApproved: { desireId: string };
+    desireRejected: { desireId: string };
+    desireFeedback: { desireId: string; feedback: string };
   }>();
+
+  // Track which desires are being processed
+  let processingDesireId: string | null = null;
+  let approvalError: string | null = null;
+
+  // Track feedback input state
+  let feedbackDesireId: string | null = null;
+  let feedbackText: string = '';
+
+  async function handleApproveDesire(desireId: string) {
+    if (processingDesireId) return;
+    processingDesireId = desireId;
+    approvalError = null;
+    try {
+      const res = await apiFetch(`/api/agency/desires/${desireId}/approve`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to approve');
+      }
+      dispatch('desireApproved', { desireId });
+    } catch (err) {
+      approvalError = (err as Error).message;
+      setTimeout(() => { approvalError = null; }, 5000);
+    } finally {
+      processingDesireId = null;
+    }
+  }
+
+  async function handleRejectDesire(desireId: string) {
+    if (processingDesireId) return;
+    processingDesireId = desireId;
+    approvalError = null;
+    try {
+      const res = await apiFetch(`/api/agency/desires/${desireId}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'User rejected via chat' }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to reject');
+      }
+      dispatch('desireRejected', { desireId });
+    } catch (err) {
+      approvalError = (err as Error).message;
+      setTimeout(() => { approvalError = null; }, 5000);
+    } finally {
+      processingDesireId = null;
+    }
+  }
+
+  function handleFeedbackClick(desireId: string) {
+    if (feedbackDesireId === desireId) {
+      // Toggle off
+      feedbackDesireId = null;
+      feedbackText = '';
+    } else {
+      // Toggle on for this desire
+      feedbackDesireId = desireId;
+      feedbackText = '';
+    }
+  }
+
+  async function handleSubmitFeedback(desireId: string) {
+    if (processingDesireId || !feedbackText.trim()) return;
+    processingDesireId = desireId;
+    approvalError = null;
+    try {
+      const res = await apiFetch(`/api/agency/desires/${desireId}/revise`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ critique: feedbackText.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to submit feedback');
+      }
+      dispatch('desireFeedback', { desireId, feedback: feedbackText.trim() });
+      // Reset state
+      feedbackDesireId = null;
+      feedbackText = '';
+    } catch (err) {
+      approvalError = (err as Error).message;
+      setTimeout(() => { approvalError = null; }, 5000);
+    } finally {
+      processingDesireId = null;
+    }
+  }
+
+  function handleCancelFeedback() {
+    feedbackDesireId = null;
+    feedbackText = '';
+  }
 
   /**
    * Parse <think> blocks from message content
@@ -27,33 +125,48 @@
     // Guard against null, undefined, or non-string content
     if (!content || typeof content !== 'string') return { thinking: null, content: String(content || '') };
 
-    // Match <think>...</think> blocks (case insensitive, multiline)
+    // First try to match complete <think>...</think> blocks (case insensitive, multiline)
     const thinkPattern = /<think>([\s\S]*?)<\/think>/gi;
     const matches = content.match(thinkPattern);
 
-    if (!matches || matches.length === 0) {
-      return { thinking: null, content: content.trim() };
-    }
-
-    // Extract thinking content (combine multiple blocks if present)
-    let thinking = '';
-    for (const match of matches) {
-      const inner = match.replace(/<\/?think>/gi, '').trim();
-      if (inner) {
-        thinking += (thinking ? '\n\n' : '') + inner;
+    if (matches && matches.length > 0) {
+      // Extract thinking content (combine multiple blocks if present)
+      let thinking = '';
+      for (const match of matches) {
+        const inner = match.replace(/<\/?think>/gi, '').trim();
+        if (inner) {
+          thinking += (thinking ? '\n\n' : '') + inner;
+        }
       }
+
+      // Remove thinking blocks from content
+      const strippedContent = content
+        .replace(thinkPattern, '')
+        .replace(/^\s*\n+/, '') // Remove leading newlines
+        .trim();
+
+      return {
+        thinking: thinking || null,
+        content: strippedContent
+      };
     }
 
-    // Remove thinking blocks from content
-    const strippedContent = content
-      .replace(thinkPattern, '')
-      .replace(/^\s*\n+/, '') // Remove leading newlines
-      .trim();
+    // Handle incomplete thinking blocks (model ran out of tokens mid-thinking)
+    // Match <think> at start without closing tag
+    const incompletePattern = /^<think>([\s\S]*)$/i;
+    const incompleteMatch = content.match(incompletePattern);
 
-    return {
-      thinking: thinking || null,
-      content: strippedContent
-    };
+    if (incompleteMatch) {
+      const thinking = incompleteMatch[1].trim();
+      // Response was cut off during thinking - no final answer available
+      return {
+        thinking: thinking ? `${thinking}\n\n[Thinking was cut off - response limit reached]` : null,
+        content: '[Response incomplete - thinking exceeded token limit]'
+      };
+    }
+
+    // No thinking blocks found
+    return { thinking: null, content: content.trim() };
   }
 
   /**
@@ -183,6 +296,62 @@
               </svg>
             </button>
           </div>
+          <!-- Inline approval buttons for approval_request messages -->
+          {#if message.meta?.type === 'approval_request' && message.meta?.desireId}
+            <div class="approval-buttons">
+              <button
+                class="approval-btn approve"
+                disabled={processingDesireId === message.meta.desireId}
+                on:click|stopPropagation={() => handleApproveDesire(message.meta.desireId)}
+              >
+                {processingDesireId === message.meta.desireId ? '...' : '✓ Approve'}
+              </button>
+              <button
+                class="approval-btn reject"
+                disabled={processingDesireId === message.meta.desireId}
+                on:click|stopPropagation={() => handleRejectDesire(message.meta.desireId)}
+              >
+                {processingDesireId === message.meta.desireId ? '...' : '✗ Reject'}
+              </button>
+              <button
+                class="approval-btn feedback"
+                class:active={feedbackDesireId === message.meta.desireId}
+                disabled={processingDesireId === message.meta.desireId}
+                on:click|stopPropagation={() => handleFeedbackClick(message.meta.desireId)}
+              >
+                ✎ Feedback
+              </button>
+              {#if approvalError}
+                <span class="approval-error">{approvalError}</span>
+              {/if}
+            </div>
+            <!-- Feedback input form -->
+            {#if feedbackDesireId === message.meta.desireId}
+              <div class="feedback-form" on:click|stopPropagation>
+                <textarea
+                  class="feedback-input"
+                  placeholder="What should be changed? Provide feedback to revise the plan..."
+                  bind:value={feedbackText}
+                  rows="3"
+                ></textarea>
+                <div class="feedback-actions">
+                  <button
+                    class="feedback-submit"
+                    disabled={!feedbackText.trim() || processingDesireId === message.meta.desireId}
+                    on:click={() => handleSubmitFeedback(message.meta.desireId)}
+                  >
+                    {processingDesireId === message.meta.desireId ? 'Submitting...' : 'Submit Feedback'}
+                  </button>
+                  <button
+                    class="feedback-cancel"
+                    on:click={handleCancelFeedback}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            {/if}
+          {/if}
         </div>
       {/if}
     {/if}
@@ -219,3 +388,144 @@
     </div>
   {/if}
 </div>
+
+<style>
+  /* Inline approval buttons for desire approval requests */
+  .approval-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .approval-btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: none;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .approval-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .approval-btn.approve {
+    background: #22c55e;
+    color: white;
+  }
+
+  .approval-btn.approve:hover:not(:disabled) {
+    background: #16a34a;
+  }
+
+  .approval-btn.reject {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+  }
+
+  .approval-btn.reject:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.3);
+  }
+
+  .approval-error {
+    color: #f87171;
+    font-size: 12px;
+    margin-left: 8px;
+    align-self: center;
+  }
+
+  .approval-btn.feedback {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+  }
+
+  .approval-btn.feedback:hover:not(:disabled) {
+    background: rgba(59, 130, 246, 0.3);
+  }
+
+  .approval-btn.feedback.active {
+    background: rgba(59, 130, 246, 0.4);
+    border-color: #3b82f6;
+  }
+
+  .feedback-form {
+    margin-top: 12px;
+    padding: 12px;
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 8px;
+  }
+
+  .feedback-input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.3);
+    color: inherit;
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 60px;
+  }
+
+  .feedback-input:focus {
+    outline: none;
+    border-color: #3b82f6;
+  }
+
+  .feedback-input::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+  }
+
+  .feedback-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    justify-content: flex-end;
+  }
+
+  .feedback-submit {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: none;
+    background: #3b82f6;
+    color: white;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .feedback-submit:hover:not(:disabled) {
+    background: #2563eb;
+  }
+
+  .feedback-submit:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .feedback-cancel {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: transparent;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .feedback-cancel:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+  }
+</style>
