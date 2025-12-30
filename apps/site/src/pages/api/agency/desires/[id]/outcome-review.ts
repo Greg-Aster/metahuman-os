@@ -11,9 +11,12 @@ import {
   type OutcomeVerdict,
 } from '@metahuman/core';
 import { callLLM, type RouterMessage } from '@metahuman/core/model-router';
-import { loadOperatorConfig } from '@metahuman/core/config';
-import { isClaudeSessionReady, sendPrompt, startClaudeSession } from '@metahuman/core/claude-session';
-import { executeWithInterpreter, isInterpreterServerRunning } from '@metahuman/core';
+import {
+  getActiveBackend,
+  escalate,
+  isEscalationReady,
+  ensureBackendsInitialized,
+} from '@metahuman/core/escalation-backend';
 
 const LOG_PREFIX = '[API:agency/outcome-review]';
 
@@ -77,9 +80,6 @@ async function verifyOutcomeWithOperator(
     };
   }
 
-  const operatorConfig = loadOperatorConfig(userContext.username);
-  const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
-
   // Build verification goal based on what the plan was supposed to do
   const operatorGoal = plan?.operatorGoal || desire.description;
 
@@ -111,23 +111,28 @@ async function verifyOutcomeWithOperator(
   console.log(`${LOG_PREFIX} 🔍 Running verification...`);
 
   // =========================================================================
-  // BIG BROTHER MODE: Use Claude CLI directly for verification
+  // USE UNIFIED ESCALATION BACKEND FOR VERIFICATION
   // =========================================================================
-  if (bigBrotherEnabled) {
-    console.log(`${LOG_PREFIX}    🤖 Using Claude CLI for verification`);
+  await ensureBackendsInitialized();
+  const backend = getActiveBackend(userContext.username);
 
-    try {
-      // Ensure Claude session is ready
-      if (!isClaudeSessionReady()) {
-        console.log(`${LOG_PREFIX}    ⏳ Starting Claude session...`);
-        const started = await startClaudeSession();
-        if (!started) {
-          errors.push('Failed to start Claude CLI session for verification');
-          return { verified: false, evidence, errors };
-        }
-      }
+  if (!backend) {
+    console.log(`${LOG_PREFIX}    ❌ No escalation backend configured`);
+    errors.push('No escalation backend configured. Enable one in Settings.');
+    return { verified: false, evidence, errors };
+  }
 
-      const prompt = `You are verifying whether a task was actually completed for MetaHuman OS.
+  const backendReady = isEscalationReady(userContext.username);
+  if (!backendReady) {
+    console.log(`${LOG_PREFIX}    ❌ Backend ${backend.name} is not ready`);
+    errors.push(`Backend ${backend.name} is not ready. Start it first.`);
+    return { verified: false, evidence, errors };
+  }
+
+  console.log(`${LOG_PREFIX}    🤖 Using ${backend.name} for verification`);
+
+  try {
+    const prompt = `You are verifying whether a task was actually completed for MetaHuman OS.
 
 ## Desire Being Verified
 **Title**: ${desire.title}
@@ -147,121 +152,75 @@ ${verificationPrompt}
 
 Please verify now and report your findings.`;
 
-      audit({
-        level: 'info',
-        category: 'action',
-        event: 'big_brother_verification_started',
-        actor: 'outcome-review',
-        details: {
-          desireId: desire.id,
-          title: desire.title,
-        },
-      });
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'big_brother_verification_started',
+      actor: 'outcome-review',
+      details: {
+        desireId: desire.id,
+        title: desire.title,
+        backend: backend.id,
+      },
+    });
 
-      const response = await sendPrompt(prompt, 90000); // 90 second timeout
+    const result = await escalate(prompt, {
+      timeout: 90000,
+      username: userContext.username,
+    });
 
-      audit({
-        level: 'info',
-        category: 'action',
-        event: 'big_brother_verification_completed',
-        actor: 'outcome-review',
-        details: {
-          desireId: desire.id,
-          responseLength: response.length,
-        },
-      });
-
-      console.log(`${LOG_PREFIX}    ✅ Claude CLI verification completed`);
-
-      // Parse Claude's response to determine verification status
-      const responseLower = response.toLowerCase();
-      const hasPositiveIndicators = responseLower.includes('exists') ||
-        responseLower.includes('found') ||
-        responseLower.includes('confirmed') ||
-        responseLower.includes('successfully') ||
-        responseLower.includes('content:') ||
-        responseLower.includes('verified');
-      const hasNegativeIndicators = responseLower.includes('not found') ||
-        responseLower.includes('does not exist') ||
-        responseLower.includes('no such file') ||
-        responseLower.includes('failed') ||
-        responseLower.includes('error:') ||
-        responseLower.includes('could not');
-
-      evidence.push(`Claude CLI verification: ${response.substring(0, 500)}${response.length > 500 ? '...' : ''}`);
-
-      // Determine verification status
-      const verified = hasPositiveIndicators && !hasNegativeIndicators;
-
-      return {
-        verified,
-        evidence,
-        errors,
-        operatorResponse: { claudeResponse: response, executedVia: 'claude-cli' }
-      };
-    } catch (error) {
-      console.log(`${LOG_PREFIX}    ❌ Claude CLI verification error: ${(error as Error).message}`);
-      errors.push(`Claude CLI verification failed: ${(error as Error).message}`);
+    if (!result.success) {
+      errors.push(`Verification failed: ${result.error}`);
       return { verified: false, evidence, errors };
     }
+
+    const response = result.output;
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'big_brother_verification_completed',
+      actor: 'outcome-review',
+      details: {
+        desireId: desire.id,
+        responseLength: response.length,
+        backend: backend.id,
+      },
+    });
+
+    console.log(`${LOG_PREFIX}    ✅ ${backend.name} verification completed`);
+
+    // Parse response to determine verification status
+    const responseLower = response.toLowerCase();
+    const hasPositiveIndicators = responseLower.includes('exists') ||
+      responseLower.includes('found') ||
+      responseLower.includes('confirmed') ||
+      responseLower.includes('successfully') ||
+      responseLower.includes('content:') ||
+      responseLower.includes('verified');
+    const hasNegativeIndicators = responseLower.includes('not found') ||
+      responseLower.includes('does not exist') ||
+      responseLower.includes('no such file') ||
+      responseLower.includes('failed') ||
+      responseLower.includes('error:') ||
+      responseLower.includes('could not');
+
+    evidence.push(`${backend.name} verification: ${response.substring(0, 500)}${response.length > 500 ? '...' : ''}`);
+
+    // Determine verification status
+    const verified = hasPositiveIndicators && !hasNegativeIndicators;
+
+    return {
+      verified,
+      evidence,
+      errors,
+      operatorResponse: { response, executedVia: backend.id }
+    };
+  } catch (error) {
+    console.log(`${LOG_PREFIX}    ❌ ${backend.name} verification error: ${(error as Error).message}`);
+    errors.push(`${backend.name} verification failed: ${(error as Error).message}`);
+    return { verified: false, evidence, errors };
   }
-
-  // =========================================================================
-  // FALLBACK: Try Open Interpreter if available
-  // =========================================================================
-  const interpreterRunning = await isInterpreterServerRunning();
-  if (interpreterRunning) {
-    console.log(`${LOG_PREFIX}    🐍 Using Open Interpreter for verification`);
-
-    try {
-      const response = await executeWithInterpreter(
-        { task: verificationPrompt },
-        undefined,
-        userContext.username
-      );
-
-      if (response.success && response.finalOutput) {
-        evidence.push(`Interpreter verification: ${response.finalOutput.substring(0, 500)}${response.finalOutput.length > 500 ? '...' : ''}`);
-
-        // Analyze response for success indicators
-        const outputLower = response.finalOutput.toLowerCase();
-        const hasPositiveIndicators = outputLower.includes('exists') ||
-          outputLower.includes('found') ||
-          outputLower.includes('created') ||
-          outputLower.includes('success') ||
-          outputLower.includes('verified');
-
-        const hasNegativeIndicators = outputLower.includes('not found') ||
-          outputLower.includes('does not exist') ||
-          outputLower.includes('error') ||
-          outputLower.includes('failed') ||
-          outputLower.includes('no such');
-
-        const verified = hasPositiveIndicators && !hasNegativeIndicators;
-
-        return {
-          verified,
-          evidence,
-          errors,
-        };
-      } else {
-        errors.push(`Interpreter verification failed: ${response.error || 'Unknown error'}`);
-        return { verified: false, evidence, errors };
-      }
-    } catch (error) {
-      errors.push(`Interpreter verification error: ${(error as Error).message}`);
-      return { verified: false, evidence, errors };
-    }
-  }
-
-  // =========================================================================
-  // NO EXECUTION BACKEND AVAILABLE
-  // =========================================================================
-  console.log(`${LOG_PREFIX}    ❌ No verification backend available`);
-  console.log(`${LOG_PREFIX}    📝 Enable Big Brother mode or start Open Interpreter server`);
-
-  errors.push('No verification backend available. Enable Big Brother mode or start Open Interpreter server.');
-  return { verified: false, evidence, errors };
 }
 
 const SYSTEM_PROMPT = `You are the Outcome Review module of MetaHuman OS. Your job is to evaluate whether an executed desire actually achieved its goal.

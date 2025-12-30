@@ -57,11 +57,11 @@ All data and AI processing happens on your infrastructure. You control where you
 
 ## System Requirements
 
-- **Linux** (primary environment), Android — other systems untested but possible
+- **Linux** is the primary environment (macOS via `start.sh`, Windows via `start.py` or `start.bat`, but these are less tested)
+- **Node.js 18+**, **pnpm**, and **Python 3** for the main server scripts
 - **GPU optional** — required only for local model training
-- **CPU and VRAM requirements** vary based on your LLM backend choice
+- **CPU/VRAM requirements** vary based on your LLM backend choice
 - **Disk space** varies based on models and memory storage
-- **Node.js 18+** required for server installations
 
 ---
 

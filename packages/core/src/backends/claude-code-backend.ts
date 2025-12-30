@@ -1,14 +1,28 @@
 /**
- * Claude CLI Session Manager
+ * Claude Code Backend
  *
- * Manages a persistent Claude Code CLI session in a pseudo-terminal.
- * Keeps Claude "hot" and ready to respond to escalation requests.
+ * Escalation backend using Anthropic's Claude Code CLI.
+ * Manages a persistent CLI session with terminal visibility.
+ *
+ * Features:
+ * - PTY-based session management
+ * - Streaming output with reasoning step parsing
+ * - Terminal log visibility
+ * - Auto-restart on idle timeout
  */
 
 import { spawn, execSync, type ChildProcess } from 'child_process';
-import { audit } from './audit.js';
 import * as path from 'path';
 import * as fs from 'fs';
+import { audit } from '../audit.js';
+import {
+  type EscalationBackend,
+  type EscalationOptions,
+  type EscalationResult,
+  type ReasoningStep,
+  registerBackend,
+} from '../escalation-backend.js';
+import { BACKEND_IDS } from '../escalation-constants.js';
 
 // ============================================================================
 // Types
@@ -20,25 +34,8 @@ interface ClaudeSession {
   buffer: string;
   responseCallback?: (response: string) => void;
   startTime: Date;
-  terminalPort?: number; // Port of the ttyd terminal showing Claude
-  terminalPid?: number;  // PID of the ttyd process
-}
-
-export interface StreamingOptions {
-  /** Called when a reasoning step is detected in Claude's output */
-  onReasoningStep?: (step: ReasoningStep) => void;
-  /** Called on each raw output chunk (for terminal display) */
-  onChunk?: (chunk: string) => void;
-  /** Session ID for correlating audit events */
-  sessionId?: string;
-}
-
-export interface ReasoningStep {
-  type: 'thought' | 'action' | 'observation' | 'result' | 'tool_use';
-  content: string;
-  timestamp: string;
-  toolName?: string;
-  success?: boolean;
+  terminalPort?: number;
+  terminalPid?: number;
 }
 
 // ============================================================================
@@ -49,7 +46,140 @@ let currentSession: ClaudeSession | null = null;
 const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes idle timeout
 
 // ============================================================================
-// Session Management
+// Claude Code Backend Implementation
+// ============================================================================
+
+class ClaudeCodeBackendImpl implements EscalationBackend {
+  readonly id = BACKEND_IDS.CLAUDE_CODE;
+  readonly name = 'Claude Code CLI';
+  readonly description = "Anthropic's official Claude Code command-line interface";
+  readonly supportsStreaming = true;
+
+  /**
+   * Check if Claude Code CLI is installed
+   */
+  async isAvailable(): Promise<boolean> {
+    return isClaudeInstalled();
+  }
+
+  /**
+   * Check if session is ready
+   */
+  isReady(): boolean {
+    return currentSession?.ready ?? false;
+  }
+
+  /**
+   * Start Claude session
+   */
+  async start(): Promise<boolean> {
+    return startClaudeSession(true);
+  }
+
+  /**
+   * Stop Claude session
+   */
+  stop(): void {
+    stopClaudeSession();
+  }
+
+  /**
+   * Execute a prompt using Claude CLI
+   */
+  async execute(prompt: string, options?: EscalationOptions): Promise<EscalationResult> {
+    const startTime = Date.now();
+
+    try {
+      // Ensure session is ready
+      if (!this.isReady()) {
+        const started = await this.start();
+        if (!started) {
+          return {
+            success: false,
+            output: '',
+            error: 'Failed to start Claude Code session',
+            executionTime: Date.now() - startTime,
+          };
+        }
+      }
+
+      // Send prompt and get response
+      const output = await sendPrompt(prompt, options?.timeout || 30000, {
+        onReasoningStep: options?.onReasoningStep,
+        onChunk: options?.onChunk,
+        sessionId: options?.sessionId,
+      });
+
+      return {
+        success: true,
+        output,
+        executionTime: Date.now() - startTime,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        output: '',
+        error: (error as Error).message,
+        executionTime: Date.now() - startTime,
+      };
+    }
+  }
+
+  /**
+   * Execute with streaming output
+   */
+  async *executeStreaming(
+    prompt: string,
+    options?: EscalationOptions
+  ): AsyncGenerator<string, EscalationResult, unknown> {
+    const startTime = Date.now();
+    const chunks: string[] = [];
+
+    try {
+      // Ensure session is ready
+      if (!this.isReady()) {
+        const started = await this.start();
+        if (!started) {
+          return {
+            success: false,
+            output: '',
+            error: 'Failed to start Claude Code session',
+            executionTime: Date.now() - startTime,
+          };
+        }
+      }
+
+      // Use streaming execution
+      const streamPromise = spawnClaudeAsyncStreaming(prompt, options?.timeout || 30000, {
+        onReasoningStep: options?.onReasoningStep,
+        onChunk: (chunk) => {
+          chunks.push(chunk);
+          options?.onChunk?.(chunk);
+        },
+        sessionId: options?.sessionId,
+      });
+
+      // Wait for completion
+      const output = await streamPromise;
+
+      return {
+        success: true,
+        output,
+        executionTime: Date.now() - startTime,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        output: chunks.join(''),
+        error: (error as Error).message,
+        executionTime: Date.now() - startTime,
+      };
+    }
+  }
+}
+
+// ============================================================================
+// Helper Functions (moved from claude-session.ts)
 // ============================================================================
 
 /**
@@ -57,7 +187,6 @@ const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes idle timeout
  */
 export function isClaudeInstalled(): boolean {
   try {
-    // Check common installation paths
     const commonPaths = [
       '/usr/local/bin/claude',
       '/usr/bin/claude',
@@ -71,23 +200,19 @@ export function isClaudeInstalled(): boolean {
       }
     }
 
-    // Try which command as fallback
     try {
       const result = execSync('which claude 2>/dev/null', { encoding: 'utf8' });
       return result.trim().length > 0;
     } catch {
       return false;
     }
-  } catch (error) {
+  } catch {
     return false;
   }
 }
 
 /**
  * Start a Claude CLI session with terminal visibility
- *
- * This spawns Claude in an interactive terminal (via ttyd) so users can see
- * all interactions in real-time while still allowing programmatic access.
  */
 export async function startClaudeSession(spawnTerminal: boolean = true): Promise<boolean> {
   if (currentSession?.ready) {
@@ -97,9 +222,9 @@ export async function startClaudeSession(spawnTerminal: boolean = true): Promise
       event: 'claude_session_already_running',
       details: {
         terminalPort: currentSession.terminalPort,
-        hasTerminal: !!currentSession.terminalPort
+        hasTerminal: !!currentSession.terminalPort,
       },
-      actor: 'claude-session',
+      actor: 'claude-code-backend',
     });
     return true;
   }
@@ -112,7 +237,7 @@ export async function startClaudeSession(spawnTerminal: boolean = true): Promise
       details: {
         message: 'Claude Code CLI not found. Install from https://claude.com/code',
       },
-      actor: 'claude-session',
+      actor: 'claude-code-backend',
     });
     return false;
   }
@@ -121,11 +246,8 @@ export async function startClaudeSession(spawnTerminal: boolean = true): Promise
     let terminalPort: number | undefined;
     let terminalPid: number | undefined;
 
-    // Spawn terminal if requested (via API endpoint)
     if (spawnTerminal) {
       try {
-        // Terminal spawning is handled by the API endpoint
-        // We just track that a terminal should exist
         terminalPort = 3099; // Big Brother dedicated port
 
         audit({
@@ -133,7 +255,7 @@ export async function startClaudeSession(spawnTerminal: boolean = true): Promise
           category: 'system',
           event: 'claude_session_terminal_mode',
           details: { terminalPort },
-          actor: 'claude-session',
+          actor: 'claude-code-backend',
         });
       } catch (error) {
         audit({
@@ -141,9 +263,8 @@ export async function startClaudeSession(spawnTerminal: boolean = true): Promise
           category: 'system',
           event: 'claude_terminal_spawn_failed_fallback_to_print',
           details: { error: (error as Error).message },
-          actor: 'claude-session',
+          actor: 'claude-code-backend',
         });
-        // Fall back to non-terminal mode
       }
     }
 
@@ -153,14 +274,13 @@ export async function startClaudeSession(spawnTerminal: boolean = true): Promise
       event: 'claude_session_ready',
       details: {
         hasTerminal: !!terminalPort,
-        terminalPort
+        terminalPort,
       },
-      actor: 'claude-session',
+      actor: 'claude-code-backend',
     });
 
-    // Mark as ready
     currentSession = {
-      process: null, // No direct process handle (ttyd manages it)
+      process: null,
       ready: true,
       buffer: '',
       startTime: new Date(),
@@ -175,7 +295,7 @@ export async function startClaudeSession(spawnTerminal: boolean = true): Promise
       category: 'system',
       event: 'claude_session_start_failed',
       details: { error: (error as Error).message },
-      actor: 'claude-session',
+      actor: 'claude-code-backend',
     });
     return false;
   }
@@ -183,9 +303,6 @@ export async function startClaudeSession(spawnTerminal: boolean = true): Promise
 
 /**
  * Stop the Claude CLI session
- *
- * Note: With --print mode, there's no persistent process to stop.
- * This just clears the session state.
  */
 export function stopClaudeSession(): void {
   if (!currentSession) {
@@ -198,7 +315,7 @@ export function stopClaudeSession(): void {
       category: 'system',
       event: 'claude_session_stopped',
       details: {},
-      actor: 'claude-session',
+      actor: 'claude-code-backend',
     });
 
     currentSession = null;
@@ -208,7 +325,7 @@ export function stopClaudeSession(): void {
       category: 'system',
       event: 'claude_session_stop_failed',
       details: { error: (error as Error).message },
-      actor: 'claude-session',
+      actor: 'claude-code-backend',
     });
   }
 }
@@ -238,14 +355,16 @@ export function getSessionStatus(): {
 }
 
 /**
+ * Streaming options for sendPrompt
+ */
+interface StreamingOptions {
+  onReasoningStep?: (step: ReasoningStep) => void;
+  onChunk?: (chunk: string) => void;
+  sessionId?: string;
+}
+
+/**
  * Send a prompt to Claude and get a response
- *
- * Uses async spawn for reliable execution without blocking the event loop.
- * This prevents ETIMEDOUT errors that can occur with synchronous execSync.
- *
- * @param prompt - The prompt to send to Claude
- * @param timeoutMs - Timeout in milliseconds (default: 30000)
- * @param streaming - Optional streaming options for real-time reasoning display
  */
 export async function sendPrompt(
   prompt: string,
@@ -261,13 +380,12 @@ export async function sendPrompt(
     try {
       await writeToTerminalLog(prompt, 'prompt');
     } catch (error) {
-      // Non-critical - terminal logging is best-effort
       audit({
         level: 'warn',
         category: 'action',
         event: 'terminal_log_write_failed',
         details: { error: (error as Error).message },
-        actor: 'claude-session',
+        actor: 'claude-code-backend',
       });
     }
   }
@@ -281,18 +399,16 @@ export async function sendPrompt(
       promptPreview: prompt.substring(0, 100),
       hasTerminal: !!currentSession.terminalPort,
     },
-    actor: 'claude-session',
+    actor: 'claude-code-backend',
   });
 
   try {
-    // Use async spawn instead of execSync to prevent ETIMEDOUT on spawn
     const response = await spawnClaudeAsync(prompt, timeoutMs, streaming);
 
-    // Write response to terminal log
     if (currentSession.terminalPort) {
       try {
         await writeToTerminalLog(response, 'response');
-      } catch (error) {
+      } catch {
         // Non-critical
       }
     }
@@ -305,14 +421,13 @@ export async function sendPrompt(
         responseLength: response.length,
         sessionId: streaming?.sessionId,
       },
-      actor: 'claude-session',
+      actor: 'claude-code-backend',
     });
 
     return response;
   } catch (error) {
     const errorMsg = (error as Error).message;
 
-    // Log error to terminal
     if (currentSession.terminalPort) {
       try {
         await writeToTerminalLog(`ERROR: ${errorMsg}`, 'error');
@@ -328,7 +443,7 @@ export async function sendPrompt(
       details: {
         error: errorMsg,
       },
-      actor: 'claude-session',
+      actor: 'claude-code-backend',
     });
     throw new Error(`Claude CLI request failed: ${errorMsg}`);
   }
@@ -336,7 +451,6 @@ export async function sendPrompt(
 
 /**
  * Parse Claude CLI output for reasoning steps
- * Claude Code outputs structured text with tool uses and thinking
  */
 function parseReasoningFromChunk(
   buffer: string,
@@ -345,8 +459,9 @@ function parseReasoningFromChunk(
   let stepsEmitted = 0;
   let remainingBuffer = buffer;
 
-  // Pattern: Tool use blocks - Claude Code shows tool calls
-  const toolUsePattern = /⏺\s*(Read|Write|Edit|Bash|Glob|Grep|Task|WebFetch|WebSearch)[^\n]*\n([^⏺]*?)(?=⏺|$)/gs;
+  // Pattern: Tool use blocks
+  const toolUsePattern =
+    /⏺\s*(Read|Write|Edit|Bash|Glob|Grep|Task|WebFetch|WebSearch)[^\n]*\n([^⏺]*?)(?=⏺|$)/gs;
   let toolMatch;
   while ((toolMatch = toolUsePattern.exec(buffer)) !== null) {
     const toolName = toolMatch[1];
@@ -362,7 +477,6 @@ function parseReasoningFromChunk(
       stepsEmitted++;
     }
 
-    // Emit audit event for UI pickup
     audit({
       level: 'info',
       category: 'action',
@@ -373,11 +487,11 @@ function parseReasoningFromChunk(
         content: toolContent.substring(0, 200),
         sessionId: streaming?.sessionId,
       },
-      actor: 'big-brother',
+      actor: 'claude-code-backend',
     });
   }
 
-  // Pattern: Thinking/reasoning text (lines that look like reasoning)
+  // Pattern: Thinking/reasoning text
   const thinkingPatterns = [
     /(?:^|\n)(?:Thinking|Let me|I'll|I need to|First,|Next,|Now|Looking at|Checking|Searching|Reading|The)[^.\n]*\./g,
     /(?:^|\n)(?:I found|I see|This shows|Based on|According to)[^.\n]*\./g,
@@ -397,7 +511,6 @@ function parseReasoningFromChunk(
           stepsEmitted++;
         }
 
-        // Emit audit event
         audit({
           level: 'info',
           category: 'action',
@@ -407,13 +520,12 @@ function parseReasoningFromChunk(
             content: thought.substring(0, 200),
             sessionId: streaming?.sessionId,
           },
-          actor: 'big-brother',
+          actor: 'claude-code-backend',
         });
       }
     }
   }
 
-  // Keep last 500 chars as buffer for incomplete patterns
   if (buffer.length > 500) {
     remainingBuffer = buffer.slice(-500);
   }
@@ -422,9 +534,20 @@ function parseReasoningFromChunk(
 }
 
 /**
- * Spawn Claude CLI asynchronously to avoid blocking and ETIMEDOUT errors
+ * Spawn Claude CLI asynchronously
  */
 async function spawnClaudeAsync(
+  prompt: string,
+  timeoutMs: number,
+  streaming?: StreamingOptions
+): Promise<string> {
+  return spawnClaudeAsyncStreaming(prompt, timeoutMs, streaming);
+}
+
+/**
+ * Spawn Claude CLI with streaming support
+ */
+async function spawnClaudeAsyncStreaming(
   prompt: string,
   timeoutMs: number,
   streaming?: StreamingOptions
@@ -436,7 +559,7 @@ async function spawnClaudeAsync(
     let streamBuffer = '';
     let totalStepsEmitted = 0;
 
-    console.log(`[claude-session] 🚀 Spawning Claude CLI (timeout: ${timeoutMs}ms)...`);
+    console.log(`[claude-code-backend] 🚀 Spawning Claude CLI (timeout: ${timeoutMs}ms)...`);
 
     const child = spawn('claude', ['--print', '--dangerously-skip-permissions'], {
       cwd: '/home/greggles/metahuman',
@@ -444,13 +567,11 @@ async function spawnClaudeAsync(
       env: { ...process.env },
     });
 
-    // Set up timeout
     const timeoutHandle = setTimeout(() => {
       timedOut = true;
       child.kill('SIGTERM');
-      console.log(`[claude-session] ⏰ Claude CLI timed out after ${timeoutMs}ms`);
+      console.log(`[claude-code-backend] ⏰ Claude CLI timed out after ${timeoutMs}ms`);
 
-      // Give it a moment to terminate gracefully, then force kill
       setTimeout(() => {
         if (!child.killed) {
           child.kill('SIGKILL');
@@ -460,24 +581,20 @@ async function spawnClaudeAsync(
       reject(new Error(`Claude CLI timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
-    // Write prompt to stdin
     if (child.stdin) {
       child.stdin.write(prompt);
       child.stdin.end();
     }
 
-    // Collect stdout with streaming
     if (child.stdout) {
       child.stdout.on('data', (chunk: Buffer) => {
         chunks.push(chunk);
 
-        // Stream the chunk
         const text = chunk.toString();
         if (streaming?.onChunk) {
           streaming.onChunk(text);
         }
 
-        // Parse for reasoning steps
         if (streaming) {
           streamBuffer += text;
           const { remainingBuffer, stepsEmitted } = parseReasoningFromChunk(streamBuffer, streaming);
@@ -487,49 +604,44 @@ async function spawnClaudeAsync(
       });
     }
 
-    // Collect stderr
     if (child.stderr) {
       child.stderr.on('data', (chunk: Buffer) => {
         errorChunks.push(chunk);
-        // Log stderr in real-time for debugging
         const text = chunk.toString();
         if (text.trim()) {
-          console.log(`[claude-session] stderr: ${text.trim()}`);
+          console.log(`[claude-code-backend] stderr: ${text.trim()}`);
         }
       });
     }
 
-    // Handle spawn errors
     child.on('error', (error) => {
       clearTimeout(timeoutHandle);
       if (!timedOut) {
-        console.log(`[claude-session] ❌ Spawn error: ${error.message}`);
+        console.log(`[claude-code-backend] ❌ Spawn error: ${error.message}`);
         reject(new Error(`Failed to spawn Claude CLI: ${error.message}`));
       }
     });
 
-    // Handle process exit
     child.on('close', (code) => {
       clearTimeout(timeoutHandle);
 
       if (timedOut) {
-        return; // Already rejected
+        return;
       }
 
       const stdout = Buffer.concat(chunks).toString('utf8');
       const stderr = Buffer.concat(errorChunks).toString('utf8');
 
-      // Log streaming stats
       if (streaming && totalStepsEmitted > 0) {
-        console.log(`[claude-session] 📊 Streamed ${totalStepsEmitted} reasoning steps`);
+        console.log(`[claude-code-backend] 📊 Streamed ${totalStepsEmitted} reasoning steps`);
       }
 
       if (code === 0) {
-        console.log(`[claude-session] ✅ Claude CLI completed (${stdout.length} chars)`);
+        console.log(`[claude-code-backend] ✅ Claude CLI completed (${stdout.length} chars)`);
         resolve(stdout);
       } else {
         const errorDetail = stderr || `Exit code ${code}`;
-        console.log(`[claude-session] ❌ Claude CLI failed: ${errorDetail}`);
+        console.log(`[claude-code-backend] ❌ Claude CLI failed: ${errorDetail}`);
         reject(new Error(`Claude CLI exited with code ${code}: ${errorDetail}`));
       }
     });
@@ -539,7 +651,10 @@ async function spawnClaudeAsync(
 /**
  * Write to the Big Brother terminal log for visibility
  */
-async function writeToTerminalLog(content: string, type: 'prompt' | 'response' | 'error'): Promise<void> {
+async function writeToTerminalLog(
+  content: string,
+  type: 'prompt' | 'response' | 'error'
+): Promise<void> {
   const logPath = path.join(process.cwd(), '../../logs/run/big-brother-session.log');
 
   const timestamp = new Date().toISOString();
@@ -549,15 +664,15 @@ async function writeToTerminalLog(content: string, type: 'prompt' | 'response' |
   switch (type) {
     case 'prompt':
       prefix = '🔵 PROMPT';
-      color = '\x1b[34m'; // Blue
+      color = '\x1b[34m';
       break;
     case 'response':
       prefix = '🟢 RESPONSE';
-      color = '\x1b[32m'; // Green
+      color = '\x1b[32m';
       break;
     case 'error':
       prefix = '🔴 ERROR';
-      color = '\x1b[31m'; // Red
+      color = '\x1b[31m';
       break;
   }
 
@@ -576,7 +691,7 @@ ${color}${separator}${reset}
 }
 
 /**
- * Restart the Claude session (useful if it becomes unresponsive)
+ * Restart the Claude session
  */
 export async function restartClaudeSession(): Promise<boolean> {
   stopClaudeSession();
@@ -584,15 +699,10 @@ export async function restartClaudeSession(): Promise<boolean> {
   return startClaudeSession();
 }
 
-// ============================================================================
-// Session Lifecycle
-// ============================================================================
-
 /**
  * Start session monitoring (auto-restart on failure, idle timeout)
  */
 export function startSessionMonitoring(): void {
-  // Check session health every 5 minutes
   setInterval(() => {
     if (!currentSession) {
       return;
@@ -600,16 +710,24 @@ export function startSessionMonitoring(): void {
 
     const uptime = Date.now() - currentSession.startTime.getTime();
 
-    // Auto-restart if session is too old (30 min idle)
     if (uptime > SESSION_TIMEOUT) {
       audit({
         level: 'info',
         category: 'system',
         event: 'claude_session_timeout_restart',
         details: { uptime },
-        actor: 'claude-session',
+        actor: 'claude-code-backend',
       });
       restartClaudeSession();
     }
   }, 5 * 60 * 1000);
 }
+
+// ============================================================================
+// Export Singleton and Register
+// ============================================================================
+
+export const claudeCodeBackend = new ClaudeCodeBackendImpl();
+
+// Auto-register when imported
+registerBackend(claudeCodeBackend);

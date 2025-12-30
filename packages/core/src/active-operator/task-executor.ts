@@ -115,6 +115,13 @@ async function runAgentProcess(
         if (stderr) console.error(`[task-executor] stderr: ${stderr.slice(0, 500)}`);
       } else {
         console.log(`[task-executor] ${agentName} completed successfully`);
+        // Log stdout so user can see agent output (desires generated, etc.)
+        if (stdout && stdout.trim()) {
+          const lines = stdout.trim().split('\n');
+          for (const line of lines.slice(-10)) { // Last 10 lines
+            console.log(`[${agentName}] ${line}`);
+          }
+        }
       }
       resolve({
         success: exitCode === 0,
@@ -173,7 +180,16 @@ async function executeDesireAdvance(
   payload: DesireAdvancePayload | undefined,
   username: string
 ): Promise<{ success: boolean; error?: string; data?: any }> {
-  console.log('[task-executor] Running desire_advance pipeline');
+  console.log('[task-executor] Running desire_advance pipeline for user:', username);
+
+  // Import appendReflectionToBuffer at the top of this function scope
+  const { appendReflectionToBuffer } = await import('../conversation-buffer.js');
+
+  // Output to Inner Dialogue that we're starting
+  appendReflectionToBuffer(username,
+    `⚙️ **Running desire_advance task...**`,
+    { dialogueSource: 'agency-system', displayColor: '#6b7280', type: 'task_start' }
+  );
 
   try {
     // Dynamic imports to avoid circular dependencies
@@ -192,15 +208,44 @@ async function executeDesireAdvance(
     const config = await loadConfig(username);
     const activationThreshold = config.thresholds.activation;
 
+    // DIAGNOSTIC: Log what we found
+    console.log(`[task-executor] Found ${pendingDesires.length} pending + ${nascentDesires.length} nascent = ${allPendingDesires.length} total`);
+    console.log(`[task-executor] Activation threshold: ${activationThreshold}`);
+    for (const d of allPendingDesires) {
+      const status = d.strength >= activationThreshold ? '✓ READY' : '○ building';
+      console.log(`[task-executor]   ${status} "${d.title}" (strength: ${(d.strength * 100).toFixed(0)}%, status: ${d.status})`);
+    }
+
     // Filter to desires that have crossed activation threshold
     const readyDesires = allPendingDesires.filter(d => d.strength >= activationThreshold);
 
     if (readyDesires.length === 0) {
       console.log('[task-executor] No pending desires ready for advancement');
+
+      // Output detailed status to inner dialogue
+      const totalDesires = allPendingDesires.length;
+      if (totalDesires > 0) {
+        const sortedByStrength = [...allPendingDesires].sort((a, b) => b.strength - a.strength);
+        const top3 = sortedByStrength.slice(0, 3);
+        const desireList = top3.map(d =>
+          `  • "${d.title}" (${(d.strength * 100).toFixed(0)}%)`
+        ).join('\n');
+
+        appendReflectionToBuffer(username,
+          `💭 **Agency Status**: ${totalDesires} desire(s) building strength toward ${(activationThreshold * 100).toFixed(0)}% threshold:\n${desireList}\n\n_Desires grow through reinforcement from related experiences._`,
+          { dialogueSource: 'agency-system', displayColor: '#6b7280', type: 'desire_status' }
+        );
+      } else {
+        appendReflectionToBuffer(username,
+          `💭 **Agency Status**: No desires in the pipeline. The desire generator will create new ones based on goals, tasks, and experiences.`,
+          { dialogueSource: 'agency-system', displayColor: '#6b7280', type: 'desire_status' }
+        );
+      }
+
       return { success: true, data: { processed: 0, reason: 'No pending desires above activation threshold' } };
     }
 
-    console.log(`[task-executor] Found ${readyDesires.length} desire(s) ready for advancement`);
+    console.log(`[task-executor] Found ${readyDesires.length} desire(s) ready for advancement:`, readyDesires.map(d => d.title));
 
     let processed = 0;
     let autoApproved = 0;
@@ -225,6 +270,12 @@ async function executeDesireAdvance(
       if (!desire.plan) {
         console.log('[task-executor] Moving desire to planning status and generating plan...');
 
+        // Output to Inner Dialogue so user knows what's happening
+        appendReflectionToBuffer(username,
+          `📋 **Planning desire:** "${desire.title}"\n\nGenerating execution plan...`,
+          { dialogueSource: 'agency-system', displayColor: '#3b82f6', type: 'desire_planning_start' }
+        );
+
         // Move desire to 'planning' status so desire-planner can find it
         const now = new Date().toISOString();
         desire.status = 'planning';
@@ -235,6 +286,14 @@ async function executeDesireAdvance(
         const planResult = await runAgentProcess('desire-planner', [], username);
         if (!planResult.success) {
           console.error(`[task-executor] Plan generation failed for ${desire.id}`);
+          console.error(`[task-executor] Error: ${planResult.error}`);
+
+          // Output failure to Inner Dialogue
+          appendReflectionToBuffer(username,
+            `❌ **Plan generation failed:** "${desire.title}"\n\nError: ${planResult.error || 'Unknown error'}\n\nDesire returned to ${originalStatus} status.`,
+            { dialogueSource: 'agency-system', displayColor: '#ef4444', type: 'desire_planning_failed' }
+          );
+
           // Move back to original status on failure
           desire.status = originalStatus;
           await moveDesire(desire, 'planning', originalStatus, username);
@@ -245,12 +304,25 @@ async function executeDesireAdvance(
         const updatedDesire = await loadDesire(desire.id, username);
         if (!updatedDesire?.plan) {
           console.error(`[task-executor] No plan generated for ${desire.id}`);
+
+          // Output to Inner Dialogue
+          appendReflectionToBuffer(username,
+            `⚠️ **No plan generated:** "${desire.title}"\n\nThe desire-planner did not produce a plan. Desire returned to ${originalStatus} status.`,
+            { dialogueSource: 'agency-system', displayColor: '#f59e0b', type: 'desire_no_plan' }
+          );
+
           // Move back to original status if no plan
           desire.status = originalStatus;
           await moveDesire(desire, 'planning', originalStatus, username);
           continue;
         }
         Object.assign(desire, updatedDesire);
+
+        // Output success to Inner Dialogue
+        appendReflectionToBuffer(username,
+          `✅ **Plan generated:** "${desire.title}"\n\nPlan: ${updatedDesire.plan?.summary || updatedDesire.plan?.description || 'No summary'}\nSteps: ${updatedDesire.plan?.steps?.length || 0}\nRisk: ${updatedDesire.plan?.estimatedRisk || 'unknown'}`,
+          { dialogueSource: 'agency-system', displayColor: '#22c55e', type: 'desire_plan_complete' }
+        );
       }
 
       // After planning, the desire is now in 'planning' status (or was already there)

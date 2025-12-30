@@ -439,6 +439,18 @@ function getPreview(content = '', limit = 160): string {
   return content.length > limit ? `${content.slice(0, limit)}…` : content;
 }
 
+// Map dialogueSource identifiers to friendly display labels
+function formatDialogueSource(source: string): string {
+  const labels: Record<string, string> = {
+    'lizard-brain': '⚡ Lizard Brain',
+    'agency-system': '📋 Agency',
+    'reflector': '💭 Reflection',
+    'curiosity': '❓ Curiosity',
+    'dreamer': '🌙 Dream',
+  };
+  return labels[source] || source;
+}
+
 function openMemoryEditor(relPath: string, type: string = 'Memory') {
   editorRelPath = relPath
   editorMemoryType = type
@@ -935,7 +947,7 @@ async function loadMemoryContent(relPath: string) {
                       aria-expanded={isOpen}
                     >
                       {#if dialogueSource}
-                        <span class="dialogue-source-badge" style={displayColor ? `background-color: ${displayColor}` : ''}>{dialogueSource}</span>
+                        <span class="dialogue-source-badge" style={displayColor ? `background-color: ${displayColor}` : ''}>{formatDialogueSource(dialogueSource)}</span>
                       {/if}
                       <span class="event-card-title" style={displayColor ? `color: ${displayColor}` : ''}>{getPreview(event.content)}</span>
                       <span class="event-toggle-icon" aria-hidden="true">{isOpen ? '▲' : '▼'}</span>

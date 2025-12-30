@@ -306,6 +306,16 @@ export interface SystemState {
   /** Number of approved desires ready for autonomous execution */
   approvedDesires: number;
 
+  /** Desire summaries for transparency - shows actual desire names and strengths */
+  desireSummaries?: {
+    id: string;
+    title: string;
+    strength: number;
+    status: string;
+    source?: string;
+    readyToAdvance: boolean;
+  }[];
+
   /** Hours since last reflection */
   hoursSinceReflection: number;
 

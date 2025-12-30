@@ -67,21 +67,28 @@ function determineRequiredTrust(risk: string): TrustLevel {
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  // Inputs come via slot positions from graph links:
-  // slot 0: {desire, found} from desire_loader
-  // slot 1: {catalog, toolCount, entries} from tool_catalog_builder
-  // slot 2: {formatted, rules, ...} from policy_loader
-  // slot 3: {memories, query} from semantic_search
-  const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | undefined;
-  const slot1 = inputs[1] as { catalog?: string } | undefined;
-  const slot2 = inputs[2] as { formatted?: string } | undefined;
-  const slot3 = inputs[3] as { memories?: unknown[] } | undefined;
+  // Inputs come via NAMED handles from graph links (not positional indices!)
+  // The graph executor maps edge.targetHandle -> inputs[handle]
+  //
+  // In desire-planner.json:
+  //   inputs.slot_0 = {desire, found} from desire_loader (edge e-1-slot_0-5-slot_0)
+  //   inputs.slot_1 = {catalog, toolCount, entries} from tool_catalog_builder (edge e-2-slot_0-5-slot_1)
+  //   inputs.slot_2 = {formatted, rules, ...} from policy_loader (edge e-3-slot_0-5-slot_2)
+  //   inputs.slot_3 = {memories, query} from semantic_search (edge e-4-memories-5-slot_3)
+  //
+  // IMPORTANT: Graph executor uses named properties, not array indices!
+
+  // Try named properties first (slot_X), then fall back to positional for legacy compatibility
+  const loaderOutput = (inputs.slot_0 || inputs[0]) as { desire?: Desire; found?: boolean } | undefined;
+  const catalogOutput = (inputs.slot_1 || inputs[1]) as { catalog?: string } | undefined;
+  const policyOutput = (inputs.slot_2 || inputs[2]) as { formatted?: string } | undefined;
+  const searchOutput = (inputs.slot_3 || inputs[3]) as { memories?: unknown[] } | undefined;
   const username = context.userId || context.username;
 
-  const desire = slot0?.desire;
-  const toolCatalog = slot1?.catalog || '';
-  const decisionRules = slot2?.formatted || '';
-  const relevantMemories = JSON.stringify(slot3?.memories || [], null, 2);
+  const desire = loaderOutput?.desire;
+  const toolCatalog = catalogOutput?.catalog || '';
+  const decisionRules = policyOutput?.formatted || '';
+  const relevantMemories = JSON.stringify(searchOutput?.memories || [], null, 2);
   const temperature = (properties?.temperature as number) || 0.3;
 
   if (!desire) {

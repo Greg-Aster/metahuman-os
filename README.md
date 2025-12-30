@@ -74,7 +74,7 @@ These scripts will automatically:
 - Initialize MetaHuman OS if not already set up
 - Start the web interface
 
-For detailed information about all startup options, see [STARTUP_OPTIONS_SUMMARY.md](STARTUP_OPTIONS_SUMMARY.md).
+For detailed information about all startup options, see [STARTUP.md](STARTUP.md).
 
 ### Manual Installation
 If you prefer manual setup:
@@ -163,11 +163,15 @@ MetaHuman OS requires a Python virtual environment for its extensive ML/AI depen
 - **Cognitive Modes**: Switch between three operational modes (`Dual Consciousness`, `Agent`, `Emulation`) to control system behavior, learning, and memory capture. Each mode uses different cognitive layer configurations for optimal performance.
 - **Voice Consistency & LoRA Adapters**: Dual-adapter system (historical + recent training) with automatic voice consistency tracking and graceful fallback to base models. Supports snapshot-based emulation for frozen personality states.
 - **Response Validation & Refinement**: Multi-level validation (value alignment, consistency, safety) with automatic response refinement when validation thresholds aren't met. Configurable per cognitive mode.
+- **Desire & Curiosity Engine**: An advanced autonomous goal-setting framework where the system generates its own desires and curiosities based on gaps in knowledge or long-term goals.
 - **Self-Healing Coder Agent**: A specialized agent that can write and modify the OS's own source code, with all changes requiring user approval via a dedicated UI.
-- **Local-First & Privacy-Focused**: All data, reasoning, and AI processing (via Ollama) happens on your local infrastructure.
+- **Local-First & Privacy-Focused**: All data, reasoning, and AI processing (via Ollama or vLLM) happens on your local infrastructure.
+- **High-Performance Inference**: Native support for **vLLM** for high-throughput, low-latency inference on supported GPUs.
+- **Passive Voice Cloning**: A sophisticated voice subsystem that collects samples from conversations to build datasets for custom TTS training.
 - **Continuous Learning via LoRA**: A "rolling merge" LoRA adaptation system to continuously learn from your memories and evolve the persona model over time. Includes automated training pipelines and quality evaluation.
 - **Comprehensive CLI & Web UI**: Interact with the system via a powerful CLI or a modern, real-time web interface with a dashboard, chat, task management, and more.
 - **Unified Security Policy**: A centralized security model with trust levels, directory boundaries, and a secure read-only "Emulation" mode.
+- **Multi-User Isolation**: Full support for multiple isolated user profiles with distinct memories, personas, and settings.
 - **Audio Ingestion Pipeline**: A fully local pipeline to transcribe and process audio recordings into structured memories using `whisper.cpp`.
 - **Transparent & Auditable**: A complete, human-readable audit trail of all system decisions and actions.
 - **Memory Continuity Enhancements**: Context-aware session IDs, conversation buffer persistence, automatic summarization, and per-role memory policies keep long-running chats coherent without overwhelming the LLM context window.
@@ -281,7 +285,7 @@ MetaHuman OS features a sophisticated **3-layer cognitive pipeline** that proces
 - Live audit stream
 - Agent monitor with statistics
 - Boredom control (reflection frequency)
-- Model selector (switch Ollama models)
+- Model selector (switch Ollama/vLLM models)
 
 ### Three Ways to Interact
 1. **Web UI (Recommended)** - Interactive interface with real-time updates.
@@ -290,70 +294,61 @@ MetaHuman OS features a sophisticated **3-layer cognitive pipeline** that proces
 
 ## Command Line Interface
 
-### System Commands
+Use `./bin/mh` from the repo root, or `mh` if `bin/` is on your `PATH`. For the full reference, see `docs/user-guide/reference/cli-reference.md`.
+
+### Core Commands
 - `./bin/mh init` - Initialize directory structure
 - `./bin/mh status` - Show system status
-- `./bin/mh start` - Start background services
+- `./bin/mh start [--restart|-r] [--force|-f]` - Start background services
+- `./bin/mh chat` - Persona-aware terminal chat
+- `./bin/mh sync` - Sync state and show identity/trust
+- `./bin/mh guide` - Show local guide location
 - `./bin/mh help` - Display help
-- `./bin/mh guide` - Show path to user guide
 
-### Memory Commands
+### Memory & Capture
 - `./bin/mh capture "text"` - Capture observation
 - `./bin/mh remember <query>` - Search memory
 - `./bin/mh find <description>` - AI-powered file search
+- `./bin/mh ingest <file-or-directory>` - Copy files to the ingest inbox
 
-### Task Commands
+### Tasks
 - `./bin/mh task` - List active tasks
 - `./bin/mh task add "title"` - Create task
 - `./bin/mh task start <id>` - Start task
 - `./bin/mh task done <id>` - Complete task
-- `./bin/mh task lists` - List all task lists
-- `./bin/mh task new-list "<name>"` - Create a new task list
 
-### Calendar Commands
-- `./bin/mh calendar list` - List calendar events for the upcoming week
-- `./bin/mh calendar create "<title>"` - Create a new calendar event
-
-### Agent Commands
+### Agents
 - `./bin/mh agent list` - List available agents
-- `./bin/mh agent run <name>` - Execute agent
+- `./bin/mh agent run <name>` - Run an agent
 - `./bin/mh agent status [name]` - Show agent statistics
 - `./bin/mh agent logs [name]` - View recent logs
-- `./bin/mh agent monitor` - Show processing status
-- `./bin/mh agent ps` - List running agent processes
-- `./bin/mh agent stop <name>` - Stop running agent
+- `./bin/mh agent ps` - List running agents
+- `./bin/mh agent stop <name>|--all [--force]` - Stop agents
 
-### Ollama Commands
-- `./bin/mh ollama status` - Check if Ollama is running
-- `./bin/mh ollama list` - List installed models
-- `./bin/mh ollama pull <model>` - Install model
-- `./bin/mh ollama delete <model>` - Remove model
-- `./bin/mh ollama info <model>` - Show model details
-- `./bin/mh ollama chat <model>` - Interactive chat with model
-- `./bin/mh ollama ask <model> "question"` - One-shot question
-- `./bin/mh ollama doctor` - Diagnose Ollama setup
+### LLM Backends
+- `./bin/mh ollama <subcommand>` - Manage Ollama
+- `./bin/mh vllm <subcommand>` - Control vLLM server
+- `./bin/mh backend <subcommand>` - Switch active backend
 
-### Semantic Index Commands
-- `./bin/mh index build` - Build embeddings index
+### Indexing
+- `./bin/mh index build` - Build embeddings index (requires `--user`)
 - `./bin/mh index query "text"` - Semantic search
 
-### Trust & Identity
-- `./bin/mh trust` - Show current trust level
-- `./bin/mh trust <level>` - Set trust level
+### Audio & Voice
+- `./bin/mh audio <subcommand>` - Audio ingestion and status
+- `./bin/mh voice <subcommand>` - Voice sample collection
+- `./bin/mh rvc <subcommand>` - RVC management
+- `./bin/mh sovits <subcommand>` - GPT-SoVITS server management
+- `./bin/mh kokoro <subcommand>` - Kokoro TTS management
 
-### File Ingestion
-- `./bin/mh ingest <file-or-dir>` - Copy files to inbox
+### Users & Profiles
+- `./bin/mh user <subcommand>` - List users, reset passwords, inspect accounts
+- `./bin/mh profile <subcommand>` - Manage profile storage path
+- `./bin/mh --user <name> <command>` - Run as a specific user
 
-### Audio Commands
-- `./bin/mh audio ingest <file-or-dir>` - Copy audio files to the inbox for transcription
-
-### Chat
-- `./bin/mh chat` - Interactive persona chat
-
-### LoRA Training Commands (Advanced)
-- `./bin/mh-dataset-builder` - Build a training dataset from recent memories.
-- `./bin/mh-train-local` - Train a LoRA adapter on your local GPU.
-- `./bin/mh-train-remote` - Train a LoRA adapter remotely on RunPod.
+### System Setup
+- `./bin/mh setup status` - Check setup status
+- `./bin/mh setup encryption` - Configure passwordless encryption
 
 ## Skills System
 
@@ -454,6 +449,10 @@ MetaHuman OS runs several autonomous agents, powered by a multi-model architectu
 - **Operator Agent**: Executes complex multi-step tasks using skills.
 - **Curator Agent**: Curates and prepares memories for training dataset generation.
 - **Digest Agent**: Generates daily/weekly summaries of your activities and memories.
+- **Curiosity Service**: autonomously explores gaps in knowledge and generates new learning goals.
+- **Desire Generator**: Creates autonomous goals and desires for the system to pursue.
+- **Psychoanalyzer**: Analyzes memory patterns to update the persona's psychological profile.
+- **Memory Pruner**: Automatically manages and optimizes the memory database.
 
 ### Specialized Agents
 - **Coder Agent (Self-Healing)**: A specialized agent that can write and modify the OS's own source code, with all changes requiring user approval.
@@ -509,7 +508,7 @@ MetaHuman OS is under active development. Key upcoming features include:
 - **Phase 5: Full Autonomy**: Bounded autonomous operation and cross-skill orchestration.
 - **Mobile App**: A dedicated mobile app for iOS and Android for on-the-go interaction.
 
-For more details, see the full roadmap in the [user guide](docs/user-guide/16-whats-next.md).
+For more details, see the full roadmap in the [user guide](docs/user-guide/appendix/roadmap.md).
 
 ## Development
 
@@ -520,15 +519,15 @@ This project uses a monorepo structure with pnpm workspaces:
 
 ## Contributing
 
-We welcome contributions! Please see the [ARCHITECTURE.md](docs/dev/ARCHITECTURE.md) and [DESIGN.md](docs/dev/DESIGN.md) files for technical details about the system architecture.
+We welcome contributions! Please see [docs/technical/ARCHITECTURE.md](docs/technical/ARCHITECTURE.md) and [docs/technical/ROADMAP.md](docs/technical/ROADMAP.md) for technical details.
 
 ## Documentation
 
 - Comprehensive User Guide: [docs/user-guide/index.md]
-- Design: [docs/dev/DESIGN.md]
-- Architecture: [ARCHITECTURE.md]
+- CLI Reference: [docs/user-guide/reference/cli-reference.md]
+- Architecture: [docs/technical/ARCHITECTURE.md]
+- Technical Roadmap: [docs/technical/ROADMAP.md]
 - Agents overview: [brain/agents/README.md]
-- Memory schema: [memory/README.md]
 
 ## License
 
@@ -540,13 +539,13 @@ This project is licensed under the Creative Commons Attribution 4.0 Internationa
 - Check the audit logs in `logs/audit/` for operation details
 - Review agent logs with `./bin/mh agent logs <name>`
 - Inspect memory and config files directly (they're just JSON)
-- Check the [Troubleshooting](docs/user-guide/12-troubleshooting.md) section in the user guide
+- Check the [Troubleshooting](docs/user-guide/reference/troubleshooting.md) section in the user guide
 
 ## Further Reading
 
 For a deeper dive into the MetaHuman OS, please refer to the comprehensive user guide:
 
--   **[Overview](docs/user-guide/01-overview.md)**: Introduction and core principles.
--   **[Quick Start](docs/user-guide/02-quick-start.md)**: Installation and initial setup.
--   **[Core Concepts](docs/user-guide/04-core-concepts.md)**: Identity, memory, agents, and the decision engine.
+-   **[Overview](docs/user-guide/getting-started/01-overview.md)**: Introduction and core principles.
+-   **[Installation](docs/user-guide/getting-started/02-installation.md)**: Installation and initial setup.
+-   **[Setup & Login](docs/user-guide/getting-started/03-setup-and-login.md)**: Accounts and onboarding.
 -   **[Full User Guide](docs/user-guide/index.md)**: The complete user guide.

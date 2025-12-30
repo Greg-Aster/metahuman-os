@@ -207,28 +207,31 @@ Important guidelines:
 }
 
 /**
- * Call Claude CLI to generate a fix
+ * Call escalation backend to generate a fix
  */
 async function callClaudeForFix(prompt: string): Promise<string> {
-  const { isClaudeSessionReady, sendPrompt, startClaudeSession, isClaudeInstalled } = await import('../claude-session.js');
+  const { escalate, getActiveBackend } = await import('../escalation-backend.js');
 
-  // Check if Claude CLI is available
-  const installed = await isClaudeInstalled();
-  if (!installed) {
-    throw new Error('Claude CLI is not installed. Please install it with: npm install -g @anthropic-ai/claude-code');
+  // Get active backend
+  const backend = getActiveBackend();
+  if (!backend) {
+    throw new Error('No escalation backend configured. Enable one in Settings.');
   }
 
-  // Ensure session is ready
-  if (!isClaudeSessionReady()) {
-    const started = await startClaudeSession();
-    if (!started) {
-      throw new Error('Failed to start Claude CLI session');
-    }
+  // Check if backend is available
+  const available = await backend.isAvailable();
+  if (!available) {
+    throw new Error(`Backend ${backend.name} is not available. Check installation.`);
   }
 
-  // Send prompt and get response (2 minute timeout for complex analysis)
-  const response = await sendPrompt(prompt, 120000);
-  return response;
+  // Execute via backend (2 minute timeout for complex analysis)
+  const result = await escalate(prompt, { timeout: 120000 });
+
+  if (!result.success) {
+    throw new Error(result.error || 'Fix generation failed');
+  }
+
+  return result.output;
 }
 
 /**

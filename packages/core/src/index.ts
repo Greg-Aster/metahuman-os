@@ -372,9 +372,15 @@ export {
 } from './encryption-manager.js';
 export type { EncryptionStatus, UnlockResult, EncryptionCapabilities } from './encryption-manager.js';
 
-// Big Brother Mode - CLI LLM Escalation
+// Big Brother Mode - Escalation Backend Abstraction
 export * from './big-brother';
-export * from './claude-session';
+export * from './escalation-backend';
+// Export backends (auto-register on import)
+export * from './backends/claude-code-backend';
+export * from './backends/open-interpreter-backend';
+export * from './backends/aider-backend';
+export * from './backends/gemini-cli-backend';
+export * from './backends/qwen-code-backend';
 
 // Node Editor - Graph Execution
 export * from './cognitive-graph-schema';

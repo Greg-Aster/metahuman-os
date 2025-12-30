@@ -21,8 +21,10 @@ interface Plan {
 }
 
 const execute: NodeExecutor = async (inputs, _context, properties) => {
-  // Input slot 0 contains {plan, success, error} from plan generator
-  const slot0 = inputs[0] as { plan?: Plan; success?: boolean } | Plan | undefined;
+  // Input comes via NAMED handle from graph links (not positional index!)
+  // In desire-planner.json: edge e-5-slot_0-6-slot_0 -> inputs.slot_0
+  // The plan generator outputs {plan, success, error} via fallback (entire output object)
+  const slot0 = (inputs.slot_0 || inputs[0]) as { plan?: Plan; success?: boolean } | Plan | undefined;
 
   const plan = (slot0 && 'plan' in slot0 ? slot0.plan : slot0) as Plan | undefined;
   const checkSkillAvailability = properties?.checkSkillAvailability ?? true;

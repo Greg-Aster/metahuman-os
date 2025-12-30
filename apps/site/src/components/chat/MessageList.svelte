@@ -27,10 +27,15 @@
   // Track which desires are being processed
   let processingDesireId: string | null = null;
   let approvalError: string | null = null;
+  let approvalSuccess: string | null = null;
 
   // Track feedback input state
   let feedbackDesireId: string | null = null;
   let feedbackText: string = '';
+
+  // Track plan regeneration state
+  let regeneratingDesireId: string | null = null;
+  let regenerationProgress: string = '';
 
   async function handleApproveDesire(desireId: string) {
     if (processingDesireId) return;
@@ -43,6 +48,9 @@
         throw new Error(data.error || 'Failed to approve');
       }
       dispatch('desireApproved', { desireId });
+      // Show success notification
+      approvalSuccess = '✓ Desire approved! Will execute soon.';
+      setTimeout(() => { approvalSuccess = null; }, 4000);
     } catch (err) {
       approvalError = (err as Error).message;
       setTimeout(() => { approvalError = null; }, 5000);
@@ -66,6 +74,9 @@
         throw new Error(data.error || 'Failed to reject');
       }
       dispatch('desireRejected', { desireId });
+      // Show success notification
+      approvalSuccess = '✓ Desire rejected.';
+      setTimeout(() => { approvalSuccess = null; }, 4000);
     } catch (err) {
       approvalError = (err as Error).message;
       setTimeout(() => { approvalError = null; }, 5000);
@@ -87,28 +98,103 @@
   }
 
   async function handleSubmitFeedback(desireId: string) {
-    if (processingDesireId || !feedbackText.trim()) return;
+    if (processingDesireId || regeneratingDesireId || !feedbackText.trim()) return;
     processingDesireId = desireId;
     approvalError = null;
+    const critique = feedbackText.trim();
+
     try {
-      const res = await apiFetch(`/api/agency/desires/${desireId}/revise`, {
+      // Step 1: Save critique and move to planning status
+      const reviseRes = await apiFetch(`/api/agency/desires/${desireId}/revise`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ critique: feedbackText.trim() }),
+        body: JSON.stringify({ critique }),
       });
-      if (!res.ok) {
-        const data = await res.json();
+      if (!reviseRes.ok) {
+        const data = await reviseRes.json();
         throw new Error(data.error || 'Failed to submit feedback');
       }
-      dispatch('desireFeedback', { desireId, feedback: feedbackText.trim() });
-      // Reset state
+
+      dispatch('desireFeedback', { desireId, feedback: critique });
+
+      // Reset feedback form immediately
       feedbackDesireId = null;
       feedbackText = '';
+      processingDesireId = null;
+
+      // Step 2: Immediately trigger plan regeneration with streaming
+      regeneratingDesireId = desireId;
+      regenerationProgress = 'Generating revised plan...';
+      approvalSuccess = '⏳ Regenerating plan based on your feedback...';
+
+      const streamRes = await apiFetch(`/api/agency/desires/${desireId}/generate-plan-stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ critique }),
+      });
+
+      if (!streamRes.ok) {
+        const data = await streamRes.json();
+        throw new Error(data.error || 'Failed to start plan generation');
+      }
+
+      // Process SSE stream
+      const reader = streamRes.body?.getReader();
+      if (!reader) throw new Error('No response stream');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              // Handle SSE events by type
+              if (currentEvent === 'phase') {
+                regenerationProgress = data.message || 'Processing...';
+                approvalSuccess = `⏳ ${data.message || 'Generating...'}`;
+              } else if (currentEvent === 'llm_started') {
+                approvalSuccess = '⏳ LLM is generating plan...';
+              } else if (currentEvent === 'plan_parsed') {
+                approvalSuccess = `⏳ Plan with ${data.stepCount} steps parsed...`;
+              } else if (currentEvent === 'complete') {
+                regenerationProgress = '';
+                approvalSuccess = `✓ Plan revised with ${data.plan?.steps?.length || '?'} steps! Check the Agency tab.`;
+                setTimeout(() => { approvalSuccess = null; }, 5000);
+              } else if (currentEvent === 'error') {
+                throw new Error(data.error || 'Plan generation failed');
+              }
+
+              currentEvent = ''; // Reset after processing
+            } catch (parseErr) {
+              if (currentEvent === 'error') {
+                throw parseErr;
+              }
+              // Ignore JSON parse errors for malformed SSE data
+            }
+          }
+        }
+      }
     } catch (err) {
       approvalError = (err as Error).message;
+      approvalSuccess = null;
+      regenerationProgress = '';
       setTimeout(() => { approvalError = null; }, 5000);
     } finally {
       processingDesireId = null;
+      regeneratingDesireId = null;
     }
   }
 
@@ -269,6 +355,8 @@
               {:else if message.role === 'reflection'}
                 {#if message.meta?.dialogueSource === 'lizard-brain'}
                   ⚡ Lizard Brain
+                {:else if message.meta?.dialogueSource === 'agency-system'}
+                  📋 Agency System
                 {:else}
                   💭 Idle Thought
                 {/if}
@@ -301,14 +389,14 @@
             <div class="approval-buttons">
               <button
                 class="approval-btn approve"
-                disabled={processingDesireId === message.meta.desireId}
+                disabled={processingDesireId === message.meta.desireId || regeneratingDesireId === message.meta.desireId}
                 on:click|stopPropagation={() => handleApproveDesire(message.meta.desireId)}
               >
                 {processingDesireId === message.meta.desireId ? '...' : '✓ Approve'}
               </button>
               <button
                 class="approval-btn reject"
-                disabled={processingDesireId === message.meta.desireId}
+                disabled={processingDesireId === message.meta.desireId || regeneratingDesireId === message.meta.desireId}
                 on:click|stopPropagation={() => handleRejectDesire(message.meta.desireId)}
               >
                 {processingDesireId === message.meta.desireId ? '...' : '✗ Reject'}
@@ -316,13 +404,16 @@
               <button
                 class="approval-btn feedback"
                 class:active={feedbackDesireId === message.meta.desireId}
-                disabled={processingDesireId === message.meta.desireId}
+                disabled={processingDesireId === message.meta.desireId || regeneratingDesireId === message.meta.desireId}
                 on:click|stopPropagation={() => handleFeedbackClick(message.meta.desireId)}
               >
-                ✎ Feedback
+                {regeneratingDesireId === message.meta.desireId ? '⏳ Regenerating...' : '✎ Feedback'}
               </button>
               {#if approvalError}
                 <span class="approval-error">{approvalError}</span>
+              {/if}
+              {#if approvalSuccess}
+                <span class="approval-success">{approvalSuccess}</span>
               {/if}
             </div>
             <!-- Feedback input form -->
@@ -438,6 +529,14 @@
     font-size: 12px;
     margin-left: 8px;
     align-self: center;
+  }
+
+  .approval-success {
+    color: #22c55e;
+    font-size: 12px;
+    margin-left: 8px;
+    align-self: center;
+    font-weight: 500;
   }
 
   .approval-btn.feedback {

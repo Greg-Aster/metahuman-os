@@ -13,10 +13,7 @@ Open your MetaHuman server in a browser:
 - **Remote server:** Use the URL provided by your server admin
 - **Mobile app:** The app connects automatically or prompts for server URL
 
-You'll see the welcome screen with three options:
-- **Login** — Sign in to an existing account
-- **Create Account** — Set up a new account
-- **Continue as Guest** — Read-only access to view a profile
+You'll see the welcome screen with options to log in, create an account, or continue as a guest (read-only).
 
 ---
 
@@ -44,7 +41,7 @@ After registration, you'll choose between:
 
 ### Option 1: Setup Wizard (Recommended)
 
-A 6-step guided process (10-15 minutes):
+A guided process (about 10-15 minutes) that walks through identity, personality, context, and goals.
 
 1. **Welcome** — Overview of what you'll set up
 2. **Identity** — Your name, traits, and core identity
@@ -60,7 +57,7 @@ The wizard helps MetaHuman understand you better for more accurate emulation.
 Jump directly into the app. You can add data later through:
 - **Chat Interface** — Conversations are automatically saved
 - **Memory Capture** — CLI: `./bin/mh capture "text"`
-- **File Ingestion** — Drop files in `memory/inbox/` or use the Upload tab
+- **File Ingestion** — CLI: `./bin/mh ingest <file-or-directory>`
 - **Persona Editor** — Settings → Persona to edit directly
 
 ---
@@ -138,10 +135,10 @@ For semantic memory search, you need an embedding model:
 
 ### For vLLM Users
 
-Models are downloaded automatically when you start the vLLM server. Specify the model in the serve command:
+Models are downloaded automatically when you start the vLLM server. Specify the model in the CLI command:
 
 ```bash
-vllm serve Qwen/Qwen2.5-7B-Instruct --port 8000
+./bin/mh vllm start --model Qwen/Qwen2.5-7B-Instruct
 ```
 
 ### For Remote/Mobile Users
@@ -187,7 +184,7 @@ Or use the **Tasks** tab in the web UI.
 
 ### 4. Watch the Agents Work
 
-Open the **Agent Monitor** (right sidebar) to see autonomous agents:
+Open the **Agent Monitor** to see autonomous agents:
 - **Organizer**: Enriches memories with tags and entities
 - **Reflector**: Generates internal thoughts
 - **Curator**: Prepares training data

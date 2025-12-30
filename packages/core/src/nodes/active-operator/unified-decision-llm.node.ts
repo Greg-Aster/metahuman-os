@@ -44,10 +44,23 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   console.log(`[UnifiedDecisionLLM] Starting decision with ${candidates.length} triggers, ${queuedTasks.length} queued tasks`);
 
+  // Extract desire summaries for transparency
+  const desireSummaries = systemState.desireSummaries || [];
+
   // Format trigger list
   const triggerList = candidates.length > 0
     ? candidates.map((c: any) => `- [${c.urgency?.toUpperCase() || 'SOON'}] ${c.triggerName} → ${c.taskType}: ${c.reason}`).join('\n')
     : '(No triggers fired this cycle)';
+
+  // Format desire details for the LLM to reason about
+  const desireDetails = desireSummaries.length > 0
+    ? desireSummaries.map((d: any) => {
+        const strengthPct = (d.strength * 100).toFixed(0);
+        const ready = d.readyToAdvance ? '✓ READY' : '';
+        const status = d.status.toUpperCase();
+        return `- "${d.title}" [${status}] ${strengthPct}% strength ${ready}`;
+      }).join('\n')
+    : '(No desires in pipeline)';
 
   // Format queue list
   const queueList = queuedTasks.length > 0
@@ -152,6 +165,9 @@ ${queueList}
 - Last reflection: ${(systemState.hoursSinceReflection || 0).toFixed(1)} hours ago
 - User active: ${systemState.userActive ? 'Yes' : 'No'}
 
+=== DESIRE PIPELINE (what I'm considering) ===
+${desireDetails}
+
 === USER TASKS ===
 - Active tasks: ${systemState.activeTasks || 0} (${systemState.highPriorityTasks || 0} high priority, ${systemState.overdueTasks || 0} overdue)
 - In progress: ${systemState.inProgressTasks || 0}, Blocked: ${systemState.blockedTasks || 0}
@@ -240,6 +256,15 @@ What should I do next?`,
       console.log(`[UnifiedDecisionLLM] No task selected: ${reasoning}`);
     }
 
+    // Format desire summary for transparency
+    const desireSummaryText = desireSummaries.length > 0
+      ? '\n\n**Active Desires:**\n' + desireSummaries.slice(0, 5).map((d: any) => {
+          const pct = (d.strength * 100).toFixed(0);
+          const statusIcon = d.readyToAdvance ? '🟢' : (d.status === 'approved' ? '🚀' : (d.status === 'awaiting_approval' ? '⏳' : '○'));
+          return `${statusIcon} "${d.title}" (${pct}%, ${d.status})`;
+        }).join('\n')
+      : '';
+
     // Format reasoning for inner dialogue output
     // Only show the explicit JSON reasoning if different from thinking (avoid duplication)
     const explicitReasoning = decision?.reasoning && decision.reasoning !== thinking
@@ -247,8 +272,8 @@ What should I do next?`,
       : '';
 
     const formattedReasoning = thinking
-      ? `🧠 **Lizard Brain Reasoning**\n\n${thinking}\n\n---\n**Decision:** ${decision?.task || 'Wait (no task needed)'}${explicitReasoning}`
-      : `🧠 **Lizard Brain Decision**\n\n**Task:** ${decision?.task || 'None'}\n**Reason:** ${reasoning}`;
+      ? `🧠 **Lizard Brain Reasoning**\n\n${thinking}\n\n---\n**Decision:** ${decision?.task || 'Wait (no task needed)'}${explicitReasoning}${desireSummaryText}`
+      : `🧠 **Lizard Brain Decision**\n\n**Task:** ${decision?.task || 'None'}\n**Reason:** ${reasoning}${desireSummaryText}`;
 
     // Output to inner dialogue (direct call - graph edge removed to prevent duplicates)
     appendReflectionToBuffer(username, formattedReasoning, {

@@ -190,9 +190,22 @@ async function getDesireCounts(username: string): Promise<{
   }
 }
 
+/**
+ * Desire summary for transparency in Inner Dialogue
+ */
+export interface DesireSummary {
+  id: string;
+  title: string;
+  strength: number;
+  status: string;
+  source?: string;
+  readyToAdvance: boolean;
+}
+
 // Cache desire counts within a single gatherSystemState call
 // This prevents multiple queries to the storage system
 let cachedDesireCounts: { pending: number; pendingReadyToAdvance: number; active: number; awaitingApproval: number; approved: number } | null = null;
+let cachedDesireSummaries: DesireSummary[] | null = null;
 let cacheUsername: string | null = null;
 
 /**
@@ -249,6 +262,49 @@ async function getApprovedDesireCount(username: string): Promise<number> {
     cacheUsername = username;
   }
   return cachedDesireCounts.approved;
+}
+
+/**
+ * Get summaries of all active desires for transparency in Inner Dialogue.
+ * Returns up to 10 desires sorted by strength (highest first).
+ */
+export async function getDesireSummaries(username: string): Promise<DesireSummary[]> {
+  // Return cached summaries if available
+  if (cachedDesireSummaries && cacheUsername === username) {
+    return cachedDesireSummaries;
+  }
+
+  try {
+    const { listDesiresFromFolders } = await import('../agency/storage.js');
+    const { loadConfig } = await import('../agency/config.js');
+
+    const allDesires = await listDesiresFromFolders(username);
+    const agencyConfig = await loadConfig(username);
+    const activationThreshold = agencyConfig.thresholds.activation;
+
+    // Filter to actionable desires (not completed/abandoned/rejected)
+    const actionableStatuses = ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved', 'executing'];
+    const actionableDesires = allDesires.filter(d => actionableStatuses.includes(d.status));
+
+    // Sort by strength descending
+    actionableDesires.sort((a, b) => b.strength - a.strength);
+
+    // Take top 10 and convert to summaries
+    cachedDesireSummaries = actionableDesires.slice(0, 10).map(d => ({
+      id: d.id,
+      title: d.title,
+      strength: d.strength,
+      status: d.status,
+      source: d.source,
+      readyToAdvance: (d.status === 'pending' || d.status === 'nascent') && d.strength >= activationThreshold,
+    }));
+
+    cacheUsername = username;
+    return cachedDesireSummaries;
+  } catch (error) {
+    console.warn('[system-state] Failed to get desire summaries:', error);
+    return [];
+  }
 }
 
 // ============================================================================
@@ -563,6 +619,12 @@ export async function gatherSystemState(
   username: string,
   queueLength: number = 0
 ): Promise<SystemState> {
+  // CRITICAL: Clear desire caches to ensure fresh data on each decision cycle
+  // Without this, stale cached counts cause the Lizard Brain to make bad decisions
+  cachedDesireCounts = null;
+  cachedDesireSummaries = null;
+  cacheUsername = null;
+
   const metrics = loadMetrics();
 
   // Get current hour for token tracking
@@ -580,6 +642,7 @@ export async function gatherSystemState(
     activeDesires,
     awaitingApprovalDesires,
     approvedDesires,
+    desireSummaries,
     hoursSinceReflection,
     hoursSinceDream,
     hoursSincePsychoanalysis,
@@ -592,6 +655,7 @@ export async function gatherSystemState(
     getActiveDesireCount(username),
     getAwaitingApprovalDesireCount(username),
     getApprovedDesireCount(username),
+    getDesireSummaries(username),
     getHoursSinceEventType(username, 'inner_dialogue', ['idle-thought']),
     getHoursSinceEventType(username, 'dream'),
     getHoursSinceEventType(username, 'inner_dialogue', ['psychoanalysis']),
@@ -615,6 +679,7 @@ export async function gatherSystemState(
     activeDesires,
     awaitingApprovalDesires,
     approvedDesires,
+    desireSummaries,
     hoursSinceReflection,
     hoursSinceDream,
     hoursSincePsychoanalysis,

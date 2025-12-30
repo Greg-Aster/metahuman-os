@@ -17,7 +17,7 @@
     "enforceEager": true,
     "autoUtilization": false,
     "maxTokens": 2048,
-    "enableThinking": true
+    "enableThinking": false
   },
   "localModels": {
     "enabled": true,

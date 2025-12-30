@@ -7,10 +7,9 @@ Welcome to **MetaHuman OS** — an autonomous digital personality extension oper
 ## Table of Contents
 
 ### 🚀 1. Getting Started
-- [Overview & Philosophy](getting-started/overview.md) - What is MetaHuman OS?
-- [Installation & Setup](getting-started/installation-setup.md) - Get up and running
-- [Quick Start Guide](getting-started/quick-start.md) - Your first 5 minutes
-- [Core Concepts](getting-started/core-concepts.md) - Understanding the system
+- [Overview & Philosophy](getting-started/01-overview.md) - What is MetaHuman OS?
+- [Installation](getting-started/02-installation.md) - Install the system
+- [Setup & Login](getting-started/03-setup-and-login.md) - Accounts and onboarding
 
 ### 💬 2. Using MetaHuman
 - [Chat Interface](using-metahuman/chat-interface.md) - Conversation and cognitive modes
@@ -27,6 +26,7 @@ Welcome to **MetaHuman OS** — an autonomous digital personality extension oper
 - [Cognitive Modes](training-personalization/cognitive-modes.md) - Dual, Agent, and Emulation modes
 
 ### 🎓 4. Advanced Features
+- [Architecture](advanced-features/architecture.md) - System design and cognitive layers
 - [Node Editor](advanced-features/node-editor.md) - Visual workflow design
 - [Autonomous Agents](advanced-features/autonomous-agents.md) - Background processing agents
 - [Agency System](advanced-features/agency-system.md) - Desires, goals, and autonomous goal pursuit
@@ -37,7 +37,9 @@ Welcome to **MetaHuman OS** — an autonomous digital personality extension oper
 ### ⚙️ 5. Configuration & Administration
 - [Configuration Files](configuration-admin/configuration-files.md) - System configuration reference
 - [Security & Trust](configuration-admin/security-trust.md) - Trust levels and safety
-- [Authentication Setup](configuration-admin/authentication.md) - User accounts and access
+- [Authentication](configuration-admin/authentication.md) - User accounts and access
+- [Accounts & Security](configuration-admin/accounts-security.md) - Account lifecycle and recovery
+- [LLM Backend](configuration-admin/llm-backend.md) - Ollama, vLLM, and switching
 - [Deployment Guide](configuration-admin/deployment.md) - Cloudflare tunnels and hosting
 - [Special States](configuration-admin/special-states.md) - Deceased mode and high security
 
@@ -56,4 +58,4 @@ Welcome to **MetaHuman OS** — an autonomous digital personality extension oper
 ---
 
 **Version**: 2.0 (User-Journey Oriented)
-**Last Updated**: 2025-11-25
+**Last Updated**: 2025-12-28

@@ -24,15 +24,10 @@ import {
 } from '../../agency/storage.js';
 import { appendExecutionProgressToBuffer } from '../../conversation-buffer.js';
 import {
-  isClaudeSessionReady,
-  sendPrompt,
-  startClaudeSession,
-} from '../../claude-session.js';
-import {
-  executeWithInterpreter,
-  isInterpreterServerRunning,
-} from '../../open-interpreter.js';
-import { loadOperatorConfig } from '../../config.js';
+  escalate,
+  getActiveBackend,
+  ensureBackendsInitialized,
+} from '../../escalation-backend.js';
 
 interface StepResult {
   stepOrder: number;
@@ -69,104 +64,8 @@ Please execute this step now.`;
 }
 
 /**
- * Execute a step via Big Brother (Claude CLI)
- */
-async function executeStepViaClaude(
-  step: PlanStep,
-  desire: Desire
-): Promise<{ success: boolean; result?: unknown; error?: string }> {
-  const prompt = buildTaskPrompt(step, desire);
-
-  console.log(`[desire-executor] 📤 Sending to Claude CLI:`);
-  console.log(`[desire-executor]    Action: ${step.action}`);
-  console.log(`[desire-executor]    Expected: ${step.expectedOutcome || 'Complete successfully'}`);
-
-  try {
-    // Ensure Claude session is ready
-    if (!isClaudeSessionReady()) {
-      console.log(`[desire-executor] ⏳ Starting Claude session...`);
-      const started = await startClaudeSession();
-      if (!started) {
-        console.log(`[desire-executor] ❌ Failed to start Claude session`);
-        return {
-          success: false,
-          error: 'Failed to start Claude CLI session',
-        };
-      }
-      console.log(`[desire-executor] ✅ Claude session started`);
-    }
-
-    console.log(`[desire-executor] ⏳ Waiting for Claude response (5 min timeout)...`);
-    // 5 minute timeout for complex tasks
-    const response = await sendPrompt(prompt, 300000);
-
-    // Log Claude's response summary
-    const responseLines = response.split('\n').filter((l: string) => l.trim());
-    const responseSummary = responseLines.slice(0, 5).join('\n   ');
-    console.log(`[desire-executor] 📥 Claude response (${response.length} chars):`);
-    console.log(`[desire-executor]    ${responseSummary}${responseLines.length > 5 ? '\n   ...(truncated)' : ''}`);
-
-    return {
-      success: true,
-      result: {
-        claudeResponse: response,
-        executedVia: 'claude-cli',
-        timestamp: new Date().toISOString(),
-      },
-    };
-  } catch (error) {
-    console.log(`[desire-executor] ❌ Claude CLI error: ${(error as Error).message}`);
-    return {
-      success: false,
-      error: `Claude CLI execution failed: ${(error as Error).message}`,
-    };
-  }
-}
-
-/**
- * Execute a step via Open Interpreter
- */
-async function executeStepViaInterpreter(
-  step: PlanStep,
-  desire: Desire,
-  username?: string
-): Promise<{ success: boolean; result?: unknown; error?: string }> {
-  const task = buildTaskPrompt(step, desire);
-
-  try {
-    const response = await executeWithInterpreter(
-      { task },
-      undefined,
-      username
-    );
-
-    if (!response.success) {
-      return {
-        success: false,
-        error: response.error || 'Interpreter execution failed',
-      };
-    }
-
-    return {
-      success: true,
-      result: {
-        interpreterResponse: response.finalOutput,
-        messages: response.messages,
-        executedVia: 'open-interpreter',
-        timestamp: new Date().toISOString(),
-      },
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: `Interpreter execution failed: ${(error as Error).message}`,
-    };
-  }
-}
-
-/**
- * Execute a step using the best available backend
- * Priority: Big Brother (if enabled) → Open Interpreter → Error
+ * Execute a step using the configured escalation backend
+ * Uses the unified backend abstraction to route to the user's preferred backend
  */
 async function executeStep(
   step: PlanStep,
@@ -174,79 +73,96 @@ async function executeStep(
   username?: string,
   onProgress?: DesireProgressCallback
 ): Promise<{ success: boolean; result?: unknown; error?: string }> {
+  const prompt = buildTaskPrompt(step, desire);
 
-  // Check Big Brother configuration
-  let bigBrotherEnabled = false;
+  // Ensure backends are loaded before checking
+  await ensureBackendsInitialized();
+
+  // Get the active backend
+  const backend = getActiveBackend(username);
+
+  if (!backend) {
+    console.log(`[desire-executor] ❌ No execution backend configured`);
+    return {
+      success: false,
+      error: 'No execution backend configured. Enable one in Settings.',
+    };
+  }
+
+  // Check if backend is available
+  const available = await backend.isAvailable();
+  if (!available) {
+    console.log(`[desire-executor] ❌ Backend ${backend.name} is not available`);
+    return {
+      success: false,
+      error: `Backend ${backend.name} is not available. Check installation.`,
+    };
+  }
+
+  console.log(`[desire-executor] 🤖 Using ${backend.name}...`);
+  console.log(`[desire-executor]    Action: ${step.action}`);
+  console.log(`[desire-executor]    Expected: ${step.expectedOutcome || 'Complete successfully'}`);
+
+  const workingMsg = `🤖 ${backend.name} is working on: ${step.action}`;
+
+  // Emit working progress
+  onProgress?.({
+    type: 'claude_working',
+    stepNumber: step.order,
+    totalSteps: desire.plan?.steps?.length || 0,
+    action: step.action,
+    message: workingMsg,
+    timestamp: Date.now(),
+  });
+
+  // Write to inner dialogue buffer
   if (username) {
-    const operatorConfig = loadOperatorConfig(username);
-    bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
+    appendExecutionProgressToBuffer(username, workingMsg, {
+      desireId: desire.id,
+      stepNumber: step.order,
+      action: step.action,
+      backend: backend.id,
+    });
   }
 
-  // Try Big Brother first if enabled
-  if (bigBrotherEnabled) {
-    console.log(`[desire-executor] 🤖 Using Big Brother (Claude CLI)...`);
-
-    const workingMsg = `🤖 Big Brother is working on: ${step.action}`;
-
-    // Emit "Claude working" progress
-    onProgress?.({
-      type: 'claude_working',
-      stepNumber: step.order,
-      totalSteps: desire.plan?.steps?.length || 0,
-      action: step.action,
-      message: workingMsg,
-      timestamp: Date.now(),
+  try {
+    // Execute via unified backend abstraction
+    console.log(`[desire-executor] ⏳ Waiting for response (5 min timeout)...`);
+    const result = await escalate(prompt, {
+      timeout: 300000, // 5 minute timeout for complex tasks
+      username,
     });
 
-    // Write to inner dialogue buffer
-    if (username) {
-      appendExecutionProgressToBuffer(username, workingMsg, {
-        desireId: desire.id,
-        stepNumber: step.order,
-        action: step.action,
-        backend: 'claude-cli',
-      });
+    if (!result.success) {
+      console.log(`[desire-executor] ❌ Execution failed: ${result.error}`);
+      return {
+        success: false,
+        error: result.error || 'Execution failed',
+      };
     }
 
-    return executeStepViaClaude(step, desire);
+    // Log response summary
+    const responseLines = result.output.split('\n').filter((l: string) => l.trim());
+    const responseSummary = responseLines.slice(0, 5).join('\n   ');
+    console.log(`[desire-executor] 📥 Response (${result.output.length} chars):`);
+    console.log(`[desire-executor]    ${responseSummary}${responseLines.length > 5 ? '\n   ...(truncated)' : ''}`);
+
+    return {
+      success: true,
+      result: {
+        response: result.output,
+        executedVia: backend.id,
+        executionTime: result.executionTime,
+        timestamp: new Date().toISOString(),
+      },
+    };
+  } catch (error) {
+    console.log(`[desire-executor] ❌ Execution error: ${(error as Error).message}`);
+    return {
+      success: false,
+      error: `Execution failed: ${(error as Error).message}`,
+    };
   }
-
-  // Try Open Interpreter if available
-  const interpreterRunning = await isInterpreterServerRunning();
-  if (interpreterRunning) {
-    console.log(`[desire-executor] 🐍 Using Open Interpreter...`);
-
-    const interpreterMsg = `🐍 Open Interpreter is working on: ${step.action}`;
-
-    // Emit "interpreter working" progress
-    onProgress?.({
-      type: 'claude_working',
-      stepNumber: step.order,
-      totalSteps: desire.plan?.steps?.length || 0,
-      action: step.action,
-      message: interpreterMsg,
-      timestamp: Date.now(),
-    });
-
-    // Write to inner dialogue buffer
-    if (username) {
-      appendExecutionProgressToBuffer(username, interpreterMsg, {
-        desireId: desire.id,
-        stepNumber: step.order,
-        action: step.action,
-        backend: 'open-interpreter',
-      });
-    }
-
-    return executeStepViaInterpreter(step, desire, username);
-  }
-
-  // No execution backend available
-  console.log(`[desire-executor] ❌ No execution backend available`);
-  return {
-    success: false,
-    error: 'No execution backend available. Enable Big Brother mode or start Open Interpreter server.',
-  };
 }
 
 const execute: NodeExecutor = async (inputs, context, _properties) => {

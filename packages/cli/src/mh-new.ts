@@ -2417,10 +2417,9 @@ async function main() {
       case 'backend':
         await backendCmd(args);
         break;
-      case 'guide':
-        console.log(`User Guide: ${systemPaths.root}/docs/USER_GUIDE.md`);
-        break;
-      case 'sync':
+          case 'guide':
+            console.log(`User Guide: ${systemPaths.root}/docs/user-guide/index.md`);
+            break;      case 'sync':
         sync();
         break;
       case 'index':

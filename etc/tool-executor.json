@@ -111,5 +111,14 @@
     "logAllExecutions": true,
     "logToolOutputs": true,
     "redactSensitiveData": true
+  },
+
+  "escalation": {
+    "description": "Big Brother escalation - when the local system needs a more capable agent",
+    "enabled": true,
+    "defaultBackend": "claude-code",
+    "escalateOnStuck": true,
+    "escalateOnRepeatedFailures": true,
+    "maxRetries": 1
   }
 }

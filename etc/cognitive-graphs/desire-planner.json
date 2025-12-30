@@ -16,7 +16,9 @@
       "data": {
         "label": "Load Desire",
         "nodeType": "desire_loader",
-        "properties": {}
+        "properties": {
+          "filterStatus": "planning"
+        }
       },
       "width": 200,
       "height": 80

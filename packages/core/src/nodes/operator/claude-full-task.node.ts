@@ -37,27 +37,50 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
     console.log(`[ClaudeFullTask] Delegating entire task to Claude Code: "${messageText.substring(0, 60)}..."`);
 
     const { audit } = await import('../../audit.js');
-    const { isClaudeSessionReady, sendPrompt, startClaudeSession } = await import('../../claude-session.js');
+    const { escalate, getActiveBackend, ensureBackendsInitialized } = await import('../../escalation-backend.js');
 
-    if (!isClaudeSessionReady()) {
-      console.log('[ClaudeFullTask] Claude session not ready, starting...');
-      const started = await startClaudeSession();
-      if (!started) {
-        throw new Error('Claude session not available and auto-start failed');
-      }
+    // Ensure backends are loaded before checking
+    await ensureBackendsInitialized();
+
+    const backend = getActiveBackend();
+    if (!backend) {
+      throw new Error('No escalation backend configured');
     }
 
+    const available = await backend.isAvailable();
+    if (!available) {
+      throw new Error(`Backend ${backend.name} is not available`);
+    }
+
+    console.log(`[ClaudeFullTask] Using ${backend.name} for task execution`);
+
     const skillsList = 'File operations (read/write/list/delete), shell commands, task management, WebSearch (for real-time info like weather, news, current events), git operations, etc.';
+
+    // Build conversation history context
+    let conversationContext = '';
+    const conversationHistory = contextPackage.conversationHistory || _context?.conversationHistory || [];
+    if (Array.isArray(conversationHistory) && conversationHistory.length > 0) {
+      // Take last 10 messages for context
+      const recentHistory = conversationHistory.slice(-10);
+      const historyLines = recentHistory
+        .filter((msg: any) => msg.role !== 'system')
+        .map((msg: any) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
+        .join('\n\n');
+      if (historyLines) {
+        conversationContext = `\n\n**Recent Conversation:**\n${historyLines}`;
+        console.log(`[ClaudeFullTask] Including ${recentHistory.length} messages of conversation history`);
+      }
+    }
 
     const contextInfo = contextPackage.memories && contextPackage.memories.length > 0
       ? `\n\nRelevant context from user's memories:\n${contextPackage.memories.slice(0, 3).map((m: any) => `- ${m.content || m.text || ''}`).join('\n')}`
       : '';
 
     const prompt = `You are an autonomous AI operator with FULL PERMISSIONS to execute any task. You have been granted complete access to all tools and should execute tasks WITHOUT asking for permission.
-
-**User Request:**
+${conversationContext}
+**Current User Request:**
 ${messageText}
-
+${contextInfo}
 **Your Capabilities:**
 ${skillsList}
 
@@ -67,10 +90,11 @@ ${skillsList}
 3. DO NOT say "I need permission" - you already have it
 4. DO NOT explain what you WOULD do - just DO IT
 5. Complete the task fully, then report what you accomplished
-6. For questions about weather, news, current events, or anything requiring real-time data - USE the WebSearch tool FIRST${contextInfo}
+6. For questions about weather, news, current events, or anything requiring real-time data - USE the WebSearch tool FIRST
+7. Use the conversation history above to understand context from previous messages
 
 **Your Task:**
-1. Understand what the user wants
+1. Understand what the user wants (considering conversation history if relevant)
 2. If the request needs real-time information (weather, news, prices, etc.) - USE WebSearch
 3. Execute it IMMEDIATELY using your tools
 4. Return a clear response explaining what you DID (past tense, not future)
@@ -89,8 +113,15 @@ Execute now and report results.`;
     });
 
     const timeoutMs = _properties?.timeout || 300000; // 5 minutes default
-    console.log('[ClaudeFullTask] Sending request to Claude Code...');
-    const response = await sendPrompt(prompt, timeoutMs);
+    console.log(`[ClaudeFullTask] Sending request to ${backend.name}...`);
+
+    const result = await escalate(prompt, { timeout: timeoutMs });
+
+    if (!result.success) {
+      throw new Error(result.error || 'Task execution failed');
+    }
+
+    const response = result.output;
 
     audit({
       level: 'info',

@@ -336,6 +336,21 @@
       },
       "width": 200,
       "height": 80
+    },
+    {
+      "id": "31",
+      "type": "outputNode",
+      "position": {
+        "x": 4050,
+        "y": 340
+      },
+      "data": {
+        "label": "Buffer Manager",
+        "nodeType": "buffer_manager",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 80
     }
   ],
   "edges": [
@@ -711,6 +726,28 @@
       "data": {
         "type": "string",
         "comment": "Formatted persona → Response Synthesizer (for Big Brother voice synthesis)"
+      }
+    },
+    {
+      "id": "e-7-history-31-conversationHistory",
+      "source": "7",
+      "target": "31",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "data": {
+        "type": "array",
+        "comment": "Conversation history → Buffer Manager"
+      }
+    },
+    {
+      "id": "e-18-stripped-31-response",
+      "source": "18",
+      "target": "31",
+      "sourceHandle": "stripped",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Stripped response → Buffer Manager (persist to conversation buffer)"
       }
     }
   ]

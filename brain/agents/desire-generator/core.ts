@@ -30,6 +30,7 @@ import {
   getTargetUser,
   withUserContext,
   captureEvent,
+  appendReflectionToBuffer,
   loadPersonaCore,
   listActiveTasks,
   searchMemory,
@@ -846,8 +847,14 @@ function createDesire(candidate: DesireCandidate, config: Awaited<ReturnType<typ
   const sourceConfig = config.sources[candidate.source];
   const sourceWeight = sourceConfig?.enabled ? sourceConfig.weight : (DESIRE_SOURCE_WEIGHTS[candidate.source] ?? 0.5);
 
-  // Use config's initial strength, not candidate's - desires must grow organically
-  const initialStrength = config.thresholds.decay.initialStrength;
+  // Calculate initial strength based on source weight:
+  // - Base strength from config (0.15 default)
+  // - Source weight adds up to 0.5 boost for highest-priority sources
+  // - This allows persona_goals (weight 1.0) to start at 0.65, one reinforcement from activation
+  // - Low-priority sources (dreams, weight 0.3) start at 0.30, needing more reinforcement
+  const baseStrength = config.thresholds.decay.initialStrength;
+  const sourceBoost = sourceWeight * 0.5;
+  const initialStrength = Math.min(0.80, baseStrength + sourceBoost);
 
   return {
     id: generateDesireId(),
@@ -1350,7 +1357,9 @@ export async function generateDesiresForUser(username: string): Promise<number> 
   }
 
   // Log to inner dialogue if enabled
-  if (config.logging.logToInnerDialogue && (created > 0 || nurtureResult.reinforced > 0 || activatedCount > 0 || nurtureResult.goalsProposed > 0)) {
+  const anyActivity = created > 0 || nurtureResult.reinforced > 0 || activatedCount > 0 || nurtureResult.goalsProposed > 0 || nurtureResult.decayed > 0 || nurtureResult.abandoned > 0;
+
+  if (config.logging.logToInnerDialogue) {
     const parts: string[] = [];
 
     // Report on nurtured desires
@@ -1368,6 +1377,9 @@ export async function generateDesiresForUser(username: string): Promise<number> 
     }
     if (nurtureResult.goalsProposed > 0) {
       parts.push(`🎯 ${nurtureResult.goalsProposed} desire(s) promoted to proposed goals!`);
+    }
+    if (!anyActivity) {
+      parts.push(`No changes - system is content or waiting for new experiences`);
     }
 
     // Report on new desires
@@ -1394,6 +1406,13 @@ export async function generateDesiresForUser(username: string): Promise<number> 
         goalsProposed: nurtureResult.goalsProposed,
         sources: [...new Set(uniqueCandidates.map(c => c.source))],
       },
+    });
+
+    // Also append to live chat buffer for immediate display in Inner Dialogue tab
+    appendReflectionToBuffer(username, innerDialogue, {
+      dialogueSource: 'agency-system',
+      displayColor: '#10b981', // Emerald for agency
+      type: 'desire_generation',
     });
   }
 

@@ -31,30 +31,43 @@ interface RejectionInput {
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  // Inputs come via slot positions from graph links:
-  // In planner graph:
-  //   slot 0: {desire, found} from desire_loader
-  //   slot 1: {valid, plan, errors, warnings, stepCount} from plan_validator
-  // In reviewer graph:
-  //   slot 0: {desire, found} from desire_loader
-  //   slot 2: {verdict, review, autoApprove, reasoning} from verdict node
-  const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | undefined;
-  const slot1 = inputs[1] as { valid?: boolean; plan?: DesirePlan } | undefined;
-  const slot2 = inputs[2] as { review?: DesireReview; verdict?: string } | undefined;
+  // Inputs come via NAMED handles from graph links (not positional indices!)
+  // The graph executor maps edge.targetHandle -> inputs[handle]
+  //
+  // In planner graph (desire-planner.json):
+  //   inputs.desire = {desire, found} from desire_loader (edge e-1-slot_0-7-desire)
+  //   inputs.newStatus = {valid, plan, errors, warnings} from plan_validator (edge e-6-slot_0-7-newStatus)
+  //
+  // In reviewer graph (desire-reviewer.json):
+  //   inputs.desire = {desire, found} from desire_loader
+  //   inputs.review = {verdict, review, ...} from verdict node
+  //
+  // IMPORTANT: Graph executor uses named properties, not array indices!
+  // inputs[0], inputs[1] etc. will be undefined - always use named properties.
 
-  // Extract desire from slot 0 OR from context (desire-planner agent passes desire in context)
+  // Try named properties first, then fall back to positional for legacy compatibility
+  const loaderOutput = (inputs.desire || inputs.slot_0 || inputs[0]) as { desire?: Desire; found?: boolean } | undefined;
+  const validatorOutput = (inputs.newStatus || inputs.slot_1 || inputs[1]) as { valid?: boolean; plan?: DesirePlan } | undefined;
+  const reviewerOutput = (inputs.review || inputs.slot_2 || inputs[2]) as { review?: DesireReview; verdict?: string } | undefined;
+
+  // Extract desire from loader output OR from context (desire-planner agent passes desire in context)
   const contextDesire = (context as { desire?: Desire }).desire;
-  const desire = slot0?.desire || contextDesire;
+  const desire = loaderOutput?.desire || contextDesire;
 
-  // Extract plan from slot 1 (planner graph) or from desire itself
-  const plan = slot1?.plan || desire?.plan;
+  // Extract plan from validator output (planner graph) or from desire itself
+  const plan = validatorOutput?.plan || desire?.plan;
 
-  // Extract review from slot 2 (reviewer graph) or named input
-  const review = slot2?.review || (inputs.review as DesireReview | undefined) || (inputs[2] as DesireReview | undefined);
-  const rejection = (inputs.rejection || inputs[3]) as RejectionInput | undefined;
+  // Extract review from reviewer output or named input
+  const review = reviewerOutput?.review || (inputs.review as DesireReview | undefined);
+  const rejection = inputs.rejection as RejectionInput | undefined;
 
-  // Status can come from properties (in graph definition) or inputs
-  const newStatus = (properties?.newStatus || inputs.newStatus) as DesireStatus | undefined;
+  // Status can come from:
+  // 1. properties?.newStatus (set in the graph node definition)
+  // 2. inputs.status (explicit status input)
+  // 3. NOT from inputs.newStatus - that's used for validator output in current graphs
+  // Note: inputs.newStatus is an object {valid, plan, ...} from plan_validator, not a status string
+  const statusInput = typeof inputs.status === 'string' ? inputs.status : undefined;
+  const newStatus = (properties?.newStatus || statusInput) as DesireStatus | undefined;
   const username = context.userId;
 
   if (!desire) {

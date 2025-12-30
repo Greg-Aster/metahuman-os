@@ -1,25 +1,41 @@
 /**
- * Big Brother Mode - CLI LLM Escalation
+ * Big Brother Mode - Escalation to External Agents
  *
  * When the operator gets stuck or encounters repeated failures, escalate to
- * a more capable LLM provider (Claude, Gemini, Codex, Qwen, etc.) for guidance.
+ * a more capable agent (Claude Code, Open Interpreter, Aider, Gemini, etc.)
+ * for guidance and assistance.
  *
- * This provides a safety net when the local operator cannot resolve issues
- * independently, allowing for human-level problem solving intervention.
- * The provider is configurable via etc/operator.json.
+ * "Big Brother" is a concept, not a specific tool. The actual backend used
+ * is configurable per-user via tool-executor.json or operator.json.
+ *
+ * Supported backends:
+ * - claude-code: Anthropic's Claude Code CLI
+ * - open-interpreter: LLM-agnostic Python code interpreter
+ * - aider: AI pair programming with git integration
+ * - gemini-cli: Google Gemini CLI
+ * - qwen-code: Local Qwen model CLI
  */
 
-import { spawn } from 'child_process';
 import { audit } from './audit.js';
 import type { OperatorConfig } from './config.js';
-// Internal ScratchpadEntry type for big-brother module (not exported to avoid conflict with reasoning module)
+import {
+  getActiveBackend,
+  escalate as escalateViaBackend,
+  ensureBackendsInitialized,
+  type EscalationResult,
+} from './escalation-backend.js';
+
+// ============================================================================
+// Types
+// ============================================================================
+
+// Internal ScratchpadEntry type for big-brother module
 interface BigBrotherScratchpadEntry {
   type: 'thought' | 'action' | 'observation';
   content: string;
   timestamp: string;
   success?: boolean;
   stepNumber?: number;
-  // Additional properties used by operator-react
   step?: number;
   thought?: string;
   action?: {
@@ -32,10 +48,6 @@ interface BigBrotherScratchpadEntry {
   };
 }
 
-// ============================================================================
-// Types
-// ============================================================================
-
 export interface EscalationRequest {
   goal: string;
   stuckReason: string;
@@ -45,6 +57,8 @@ export interface EscalationRequest {
   suggestions: string[];
   /** Session ID for streaming correlation with UI */
   sessionId?: string;
+  /** Optional preferred backend to use */
+  preferredBackend?: string;
 }
 
 export interface EscalationResponse {
@@ -53,32 +67,20 @@ export interface EscalationResponse {
   reasoning: string;
   alternativeApproach?: string;
   error?: string;
+  /** Which backend was used */
+  backend?: string;
 }
 
 // ============================================================================
-// CLI LLM Integration
+// Prompt Building
 // ============================================================================
 
 /**
- * Escalate to Claude Code CLI for guidance
+ * Build the escalation prompt from the request
  */
-async function escalateToClaudeCode(request: EscalationRequest): Promise<EscalationResponse> {
-  audit({
-    level: 'info',
-    category: 'action',
-    event: 'big_brother_escalation_claude_code',
-    details: {
-      goal: request.goal,
-      stuckReason: request.stuckReason,
-      errorType: request.errorType,
-      scratchpadSteps: request.scratchpad.length,
-    },
-    actor: 'big-brother',
-  });
-
-  // Build the escalation prompt
+function buildEscalationPrompt(request: EscalationRequest): string {
   const scratchpadSummary = request.scratchpad
-    .map((entry, i) => {
+    .map((entry) => {
       let text = `Step ${entry.step}: ${entry.thought}`;
       if (entry.action) {
         text += `\n  Action: ${entry.action.tool}(${JSON.stringify(entry.action.args)})`;
@@ -91,7 +93,7 @@ async function escalateToClaudeCode(request: EscalationRequest): Promise<Escalat
     })
     .join('\n\n');
 
-  const prompt = `I'm an AI operator that has gotten stuck trying to help a user. I need your guidance on how to proceed.
+  return `I'm an AI operator that has gotten stuck trying to help a user. I need your guidance on how to proceed.
 
 **User's Goal:**
 ${request.goal}
@@ -119,138 +121,18 @@ Please analyze what went wrong and provide:
 4. **Lessons Learned:** What should I do differently next time?
 
 Please be specific and actionable. I need concrete steps I can take.`;
-
-  try {
-    // Use Claude Code CLI to get guidance with streaming for UI reasoning display
-    const response = await callClaudeCLI(prompt, request.sessionId);
-
-    // Parse the response to extract actionable suggestions
-    const suggestions = extractSuggestions(response);
-    const reasoning = extractReasoning(response);
-    const alternativeApproach = extractAlternativeApproach(response);
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'big_brother_escalation_success',
-      details: {
-        goal: request.goal,
-        suggestionsCount: suggestions.length,
-        hasAlternativeApproach: !!alternativeApproach,
-        sessionId: request.sessionId,
-      },
-      actor: 'big-brother',
-    });
-
-    return {
-      success: true,
-      suggestions,
-      reasoning,
-      alternativeApproach,
-    };
-  } catch (error) {
-    audit({
-      level: 'error',
-      category: 'action',
-      event: 'big_brother_escalation_failed',
-      details: {
-        goal: request.goal,
-        error: (error as Error).message,
-        sessionId: request.sessionId,
-      },
-      actor: 'big-brother',
-    });
-
-    return {
-      success: false,
-      suggestions: request.suggestions, // Fall back to original suggestions
-      reasoning: 'Escalation failed - using original suggestions',
-      error: (error as Error).message,
-    };
-  }
 }
 
-/**
- * Call Claude CLI with a prompt using persistent session
- * @param prompt - The prompt to send
- * @param sessionId - Optional session ID for streaming correlation
- */
-async function callClaudeCLI(prompt: string, sessionId?: string): Promise<string> {
-  const { isClaudeSessionReady, sendPrompt, startClaudeSession } = await import('./claude-session.js');
-
-  // Ensure session is ready
-  if (!isClaudeSessionReady()) {
-    audit({
-      level: 'warn',
-      category: 'action',
-      event: 'claude_session_not_ready_auto_start',
-      details: {},
-      actor: 'big-brother',
-    });
-
-    const started = await startClaudeSession();
-    if (!started) {
-      throw new Error('Failed to start Claude CLI session');
-    }
-  }
-
-  try {
-    // Enable streaming for reasoning display in chat interface
-    const streamingOptions = sessionId ? {
-      sessionId,
-      onReasoningStep: (step: { type: string; content: string; toolName?: string }) => {
-        // Log reasoning steps for debugging
-        const label = step.toolName ? `${step.type}(${step.toolName})` : step.type;
-        console.log(`[big-brother] 🧠 ${label}: ${step.content.substring(0, 80)}`);
-      },
-    } : undefined;
-
-    // Send prompt and get response with streaming
-    const response = await sendPrompt(prompt, 60000, streamingOptions); // 60 second timeout for complex analysis
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'claude_response_received',
-      details: {
-        promptLength: prompt.length,
-        responseLength: response.length,
-        sessionId,
-      },
-      actor: 'big-brother',
-    });
-
-    return response;
-  } catch (error) {
-    audit({
-      level: 'error',
-      category: 'action',
-      event: 'claude_call_failed',
-      details: {
-        error: (error as Error).message,
-        sessionId,
-      },
-      actor: 'big-brother',
-    });
-    throw error;
-  }
-}
+// ============================================================================
+// Response Parsing
+// ============================================================================
 
 /**
- * Check if Claude CLI is available
- */
-async function checkClaudeCLIAvailable(): Promise<boolean> {
-  const { isClaudeInstalled } = await import('./claude-session.js');
-  return isClaudeInstalled();
-}
-
-/**
- * Extract suggestions from Claude's response
+ * Extract suggestions from the response
  */
 function extractSuggestions(response: string): string[] {
   const suggestions: string[] = [];
 
-  // Look for numbered lists or bullet points
   const lines = response.split('\n');
   for (const line of lines) {
     // Match numbered items like "1. ", "2. ", etc.
@@ -261,31 +143,29 @@ function extractSuggestions(response: string): string[] {
 
     // Match bullet points like "- ", "* ", etc.
     const bulletMatch = line.match(/^\s*[-*]\s+(.+)/);
-    if (bulletMatch && !line.match(/^\s*[-*]+\s*$/)) { // Ignore separator lines
+    if (bulletMatch && !line.match(/^\s*[-*]+\s*$/)) {
       suggestions.push(bulletMatch[1].trim());
     }
   }
 
-  return suggestions.slice(0, 5); // Return top 5 suggestions
+  return suggestions.slice(0, 5);
 }
 
 /**
- * Extract reasoning from Claude's response
+ * Extract reasoning from the response
  */
 function extractReasoning(response: string): string {
-  // Look for "Root Cause" or "Analysis" sections
   const rootCauseMatch = response.match(/# Root Cause[^\n]*\n\n([^#]+)/i);
   if (rootCauseMatch) {
     return rootCauseMatch[1].trim();
   }
 
-  // Fall back to first paragraph
   const paragraphs = response.split('\n\n');
   return paragraphs[0].replace(/^#+ /, '').trim();
 }
 
 /**
- * Extract alternative approach from Claude's response
+ * Extract alternative approach from the response
  */
 function extractAlternativeApproach(response: string): string | undefined {
   const altMatch = response.match(/# Alternative Approach[^\n]*\n\n([^#]+)/i);
@@ -295,54 +175,12 @@ function extractAlternativeApproach(response: string): string | undefined {
   return undefined;
 }
 
-/**
- * Escalate to Ollama for guidance
- */
-async function escalateToOllama(request: EscalationRequest, config: OperatorConfig): Promise<EscalationResponse> {
-  // TODO: Implement Ollama escalation
-  audit({
-    level: 'warn',
-    category: 'action',
-    event: 'big_brother_ollama_not_implemented',
-    details: { goal: request.goal },
-    actor: 'big-brother',
-  });
-
-  return {
-    success: false,
-    suggestions: request.suggestions,
-    reasoning: 'Ollama escalation not yet implemented',
-    error: 'Provider not implemented',
-  };
-}
-
-/**
- * Escalate to OpenAI for guidance
- */
-async function escalateToOpenAI(request: EscalationRequest, config: OperatorConfig): Promise<EscalationResponse> {
-  // TODO: Implement OpenAI escalation
-  audit({
-    level: 'warn',
-    category: 'action',
-    event: 'big_brother_openai_not_implemented',
-    details: { goal: request.goal },
-    actor: 'big-brother',
-  });
-
-  return {
-    success: false,
-    suggestions: request.suggestions,
-    reasoning: 'OpenAI escalation not yet implemented',
-    error: 'Provider not implemented',
-  };
-}
-
 // ============================================================================
 // Public API
 // ============================================================================
 
 /**
- * Escalate a stuck state to Big Brother (CLI LLM) for guidance
+ * Escalate a stuck state to Big Brother (configurable backend) for guidance
  */
 export async function escalateToBigBrother(
   request: EscalationRequest,
@@ -367,21 +205,117 @@ export async function escalateToBigBrother(
     };
   }
 
-  // Route to appropriate provider
-  switch (bigBrotherConfig.provider) {
-    case 'claude-code':
-      return escalateToClaudeCode(request);
-    case 'ollama':
-      return escalateToOllama(request, config);
-    case 'openai':
-      return escalateToOpenAI(request, config);
-    default:
+  // Determine which backend to use
+  // Priority: request.preferredBackend > config.provider > tool-executor config > default
+  let backendId = request.preferredBackend || bigBrotherConfig.provider;
+
+  // If using legacy provider names, map them
+  if (backendId === 'ollama' || backendId === 'openai') {
+    // These are now handled via open-interpreter with appropriate LLM proxy config
+    backendId = 'open-interpreter';
+  }
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'big_brother_escalation_started',
+    details: {
+      goal: request.goal,
+      stuckReason: request.stuckReason,
+      errorType: request.errorType,
+      scratchpadSteps: request.scratchpad.length,
+      backend: backendId,
+      sessionId: request.sessionId,
+    },
+    actor: 'big-brother',
+  });
+
+  // Build the escalation prompt
+  const prompt = buildEscalationPrompt(request);
+
+  try {
+    // Execute via backend abstraction
+    const result: EscalationResult = await escalateViaBackend(prompt, {
+      timeout: 60000,
+      sessionId: request.sessionId,
+      preferredBackend: backendId,
+      onReasoningStep: (step) => {
+        const label = step.toolName ? `${step.type}(${step.toolName})` : step.type;
+        console.log(`[big-brother] 🧠 ${label}: ${step.content.substring(0, 80)}`);
+      },
+    });
+
+    if (!result.success) {
+      audit({
+        level: 'warn',
+        category: 'action',
+        event: 'big_brother_escalation_failed',
+        details: {
+          goal: request.goal,
+          error: result.error,
+          backend: backendId,
+          sessionId: request.sessionId,
+        },
+        actor: 'big-brother',
+      });
+
       return {
         success: false,
         suggestions: request.suggestions,
-        reasoning: `Unknown provider: ${bigBrotherConfig.provider}`,
-        error: 'Invalid provider',
+        reasoning: result.error || 'Escalation failed',
+        error: result.error,
+        backend: backendId,
       };
+    }
+
+    // Parse the response
+    const suggestions = extractSuggestions(result.output);
+    const reasoning = extractReasoning(result.output);
+    const alternativeApproach = extractAlternativeApproach(result.output);
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'big_brother_escalation_success',
+      details: {
+        goal: request.goal,
+        suggestionsCount: suggestions.length,
+        hasAlternativeApproach: !!alternativeApproach,
+        backend: backendId,
+        executionTime: result.executionTime,
+        sessionId: request.sessionId,
+      },
+      actor: 'big-brother',
+    });
+
+    return {
+      success: true,
+      suggestions: suggestions.length > 0 ? suggestions : request.suggestions,
+      reasoning,
+      alternativeApproach,
+      backend: backendId,
+    };
+  } catch (error) {
+    audit({
+      level: 'error',
+      category: 'action',
+      event: 'big_brother_escalation_error',
+      details: {
+        goal: request.goal,
+        error: (error as Error).message,
+        backend: backendId,
+        sessionId: request.sessionId,
+      },
+      actor: 'big-brother',
+    });
+
+    return {
+      success: false,
+      suggestions: request.suggestions,
+      reasoning: 'Escalation failed - using original suggestions',
+      error: (error as Error).message,
+      backend: backendId,
+    };
   }
 }
 
@@ -399,12 +333,10 @@ export function shouldEscalateToBigBrother(
     return false;
   }
 
-  // Check if we've exceeded max retries
   if (retryCount >= (bigBrotherConfig.maxRetries || 1)) {
-    return false; // Already tried escalation
+    return false;
   }
 
-  // Check escalation conditions
   if (errorType === 'repeated_failures' && bigBrotherConfig.escalateOnRepeatedFailures) {
     return true;
   }
@@ -430,18 +362,32 @@ export function shouldEscalateForError(
     return false;
   }
 
-  // Critical errors that should escalate immediately
   const criticalErrors = ['FILE_NOT_FOUND', 'PERMISSION_DENIED', 'NETWORK_ERROR', 'SKILL_NOT_FOUND'];
 
-  // Escalate if error occurred multiple times (3+)
   if (errorCount >= 3 && bigBrotherConfig.escalateOnRepeatedFailures) {
     return true;
   }
 
-  // Escalate critical errors after 2 occurrences
   if (criticalErrors.includes(errorCode) && errorCount >= 2) {
     return true;
   }
 
   return false;
+}
+
+/**
+ * Get the currently active escalation backend
+ */
+export function getActiveEscalationBackend(username?: string) {
+  return getActiveBackend(username);
+}
+
+/**
+ * Check if escalation is available
+ */
+export async function isEscalationAvailable(username?: string): Promise<boolean> {
+  await ensureBackendsInitialized();
+  const backend = getActiveBackend(username);
+  if (!backend) return false;
+  return backend.isAvailable();
 }

@@ -11,9 +11,12 @@ import {
   type OutcomeVerdict,
 } from '@metahuman/core';
 import { callLLM, type RouterMessage } from '@metahuman/core/model-router';
-import { loadOperatorConfig } from '@metahuman/core/config';
-import { isClaudeSessionReady, sendPrompt, startClaudeSession } from '@metahuman/core/claude-session';
-import { executeWithInterpreter, isInterpreterServerRunning } from '@metahuman/core';
+import {
+  getActiveBackend,
+  escalate,
+  isEscalationReady,
+  ensureBackendsInitialized,
+} from '@metahuman/core/escalation-backend';
 
 const LOG_PREFIX = '[API:agency/outcome-review-stream]';
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:4321';
@@ -109,10 +112,7 @@ export const GET: APIRoute = async ({ params, cookies, request }) => {
         // STEP 1: Verification
         // =========================================================================
         sendSSE(controller, { type: 'phase', phase: '🔍 Running verification...' });
-        sendSSE(controller, { type: 'log', message: 'Checking Big Brother configuration...' });
-
-        const operatorConfig = loadOperatorConfig(user.username);
-        const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
+        sendSSE(controller, { type: 'log', message: 'Checking escalation backend...' });
 
         const plan = desire.plan;
         const operatorGoal = plan?.operatorGoal || desire.description;
@@ -138,21 +138,21 @@ export const GET: APIRoute = async ({ params, cookies, request }) => {
 
         let verification: VerificationResult = { verified: false, evidence: [], errors: [] };
 
-        if (bigBrotherEnabled) {
-          sendSSE(controller, { type: 'log', message: '🤖 Using Claude CLI for verification' });
+        await ensureBackendsInitialized();
+        const backend = getActiveBackend(user.username);
+        const backendReady = isEscalationReady(user.username);
 
-          if (!isClaudeSessionReady()) {
-            sendSSE(controller, { type: 'log', message: '⏳ Starting Claude session...' });
-            const started = await startClaudeSession();
-            if (!started) {
-              verification.errors.push('Failed to start Claude CLI session');
-              sendSSE(controller, { type: 'log', message: '❌ Failed to start Claude session' });
-            }
-          }
+        if (!backend) {
+          sendSSE(controller, { type: 'log', message: '❌ No escalation backend configured' });
+          verification.errors.push('No escalation backend configured. Enable one in Settings.');
+        } else if (!backendReady) {
+          sendSSE(controller, { type: 'log', message: `❌ Backend ${backend.name} is not ready` });
+          verification.errors.push(`Backend ${backend.name} is not ready. Start it first.`);
+        } else {
+          sendSSE(controller, { type: 'log', message: `🤖 Using ${backend.name} for verification` });
 
-          if (verification.errors.length === 0) {
-            try {
-              const prompt = `You are verifying whether a task was actually completed for MetaHuman OS.
+          try {
+            const prompt = `You are verifying whether a task was actually completed for MetaHuman OS.
 
 ## Desire Being Verified
 **Title**: ${desire.title}
@@ -172,9 +172,18 @@ ${verificationPrompt}
 
 Please verify now and report your findings.`;
 
-              sendSSE(controller, { type: 'log', message: 'Sending prompt to Claude CLI...' });
-              const response = await sendPrompt(prompt, 90000);
-              sendSSE(controller, { type: 'log', message: `Claude response received (${response.length} chars)` });
+            sendSSE(controller, { type: 'log', message: `Sending prompt to ${backend.name}...` });
+            const result = await escalate(prompt, {
+              timeout: 90000,
+              username: user.username,
+            });
+
+            if (!result.success) {
+              verification.errors.push(`Verification failed: ${result.error}`);
+              sendSSE(controller, { type: 'log', message: `❌ Verification failed: ${result.error}` });
+            } else {
+              const response = result.output;
+              sendSSE(controller, { type: 'log', message: `Response received (${response.length} chars)` });
 
               const responseLower = response.toLowerCase();
               const hasPositiveIndicators = responseLower.includes('exists') ||
@@ -187,56 +196,14 @@ Please verify now and report your findings.`;
                 responseLower.includes('no such file') ||
                 responseLower.includes('failed');
 
-              verification.evidence.push(`Claude CLI verification: ${response.substring(0, 500)}${response.length > 500 ? '...' : ''}`);
+              verification.evidence.push(`${backend.name} verification: ${response.substring(0, 500)}${response.length > 500 ? '...' : ''}`);
               verification.verified = hasPositiveIndicators && !hasNegativeIndicators;
 
               sendSSE(controller, { type: 'log', message: verification.verified ? '✅ Verification passed' : '❌ Verification failed' });
-            } catch (error) {
-              verification.errors.push(`Claude CLI error: ${(error as Error).message}`);
-              sendSSE(controller, { type: 'log', message: `❌ Error: ${(error as Error).message}` });
             }
-          }
-        } else {
-          // Try Open Interpreter as fallback
-          const interpreterRunning = await isInterpreterServerRunning();
-          if (interpreterRunning) {
-            sendSSE(controller, { type: 'log', message: '🐍 Using Open Interpreter for verification' });
-
-            try {
-              const response = await executeWithInterpreter(
-                { task: verificationPrompt },
-                undefined,
-                user.username
-              );
-
-              if (response.success && response.finalOutput) {
-                verification.evidence.push(`Interpreter verification: ${response.finalOutput.substring(0, 500)}${response.finalOutput.length > 500 ? '...' : ''}`);
-
-                const outputLower = response.finalOutput.toLowerCase();
-                const hasPositiveIndicators = outputLower.includes('exists') ||
-                  outputLower.includes('found') ||
-                  outputLower.includes('created') ||
-                  outputLower.includes('success');
-                const hasNegativeIndicators = outputLower.includes('not found') ||
-                  outputLower.includes('does not exist') ||
-                  outputLower.includes('error') ||
-                  outputLower.includes('failed');
-
-                verification.verified = hasPositiveIndicators && !hasNegativeIndicators;
-                sendSSE(controller, { type: 'log', message: verification.verified ? '✅ Verification passed' : '❌ Verification failed' });
-              } else {
-                verification.errors.push(`Interpreter verification failed: ${response.error || 'Unknown error'}`);
-                sendSSE(controller, { type: 'log', message: `❌ Interpreter error: ${response.error}` });
-              }
-            } catch (error) {
-              verification.errors.push(`Interpreter exception: ${(error as Error).message}`);
-              sendSSE(controller, { type: 'log', message: `❌ Error: ${(error as Error).message}` });
-            }
-          } else {
-            // No execution backend available
-            sendSSE(controller, { type: 'log', message: '❌ No verification backend available' });
-            sendSSE(controller, { type: 'log', message: '📝 Enable Big Brother mode or start Open Interpreter server' });
-            verification.errors.push('No verification backend available. Enable Big Brother mode or start Open Interpreter.');
+          } catch (error) {
+            verification.errors.push(`${backend.name} error: ${(error as Error).message}`);
+            sendSSE(controller, { type: 'log', message: `❌ Error: ${(error as Error).message}` });
           }
         }
 

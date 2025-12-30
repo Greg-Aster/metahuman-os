@@ -274,12 +274,16 @@ export function appendToUserBuffer(
   if (!user) {
     user = getUserByUsername(userIdOrUsername);
   }
-  if (!user) {
-    console.warn(`[conversation-buffer] Cannot append: user ${userIdOrUsername} not found`);
+
+  // Determine the username to use for buffer path
+  // Fall back to the input if no user found (allows agents to write even if user not in users.json)
+  const usernameForBuffer = user?.username || userIdOrUsername;
+  if (!usernameForBuffer || usernameForBuffer === 'anonymous') {
+    console.warn(`[conversation-buffer] Cannot append: no valid username (got: ${userIdOrUsername})`);
     return false;
   }
 
-  const bufferPath = getBufferPathForUser(user.username, mode);
+  const bufferPath = getBufferPathForUser(usernameForBuffer, mode);
 
   try {
     // Load existing buffer
@@ -320,9 +324,9 @@ export function appendToUserBuffer(
     fs.writeFileSync(bufferPath, JSON.stringify(buffer, null, 2));
 
     // Touch notification file on local disk to trigger SSE updates
-    touchBufferNotification(user.username, mode);
+    touchBufferNotification(usernameForBuffer, mode);
 
-    console.log(`[conversation-buffer] ✅ Appended ${message.role} to ${mode} buffer for ${user.username}`);
+    console.log(`[conversation-buffer] ✅ Appended ${message.role} to ${mode} buffer for ${usernameForBuffer}`);
     return true;
   } catch (error) {
     console.error(`[conversation-buffer] Failed to append to ${mode} buffer:`, error);

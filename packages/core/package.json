@@ -55,7 +55,7 @@
     "./nodes/types": "./src/nodes/types.ts",
     "./nodes": "./src/nodes/index.ts",
     "./big-brother": "./src/big-brother.ts",
-    "./claude-session": "./src/claude-session.ts",
+    "./escalation-backend": "./src/escalation-backend.ts",
     "./graph-error-handler": "./src/graph-error-handler.ts",
     "./graph-streaming": "./src/graph-streaming.ts",
     "./path-security": "./src/path-security.ts",

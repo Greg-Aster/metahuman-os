@@ -145,13 +145,13 @@ export async function loadGraphForMode(graphKey: string): Promise<LoadedGraph | 
       // Skip Big Brother check if no authenticated user (all configs are user-specific)
       if (userContext?.username) {
         const { loadOperatorConfig } = await import('./config.js');
-        const { isClaudeSessionReady } = await import('./claude-session.js');
+        const { isEscalationReady } = await import('./escalation-backend.js');
         const operatorConfig = loadOperatorConfig(userContext.username);
         const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
 
         if (bigBrotherEnabled) {
-          const claudeSessionReady = isClaudeSessionReady();
-          if (claudeSessionReady) {
+          const backendReady = isEscalationReady(userContext.username);
+          if (backendReady) {
             useBigBrotherGraph = true;
             console.log('[graph-streaming] Big Brother Mode active');
           }

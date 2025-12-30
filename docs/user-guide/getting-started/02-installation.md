@@ -11,14 +11,14 @@ Install MetaHuman OS on your Linux server.
 ### Required
 - **Node.js 18+** — JavaScript runtime
 - **pnpm** — Package manager (`npm install -g pnpm`)
+- **Python 3** — Required by `./start.sh` (creates a virtual env and installs deps)
 - **Git** — Version control
 
 ### Required for AI Features
-- **Ollama** OR **vLLM** — Local LLM backend (choose one)
+- **Ollama** or **vLLM** — Local LLM backend (choose one)
 - At least 8GB RAM (16GB+ recommended for larger models)
 
 ### Optional (for Training & Voice)
-- **Python 3.10+** — Only needed for LoRA training or audio transcription
 - **NVIDIA GPU** — Required for local training (or use RunPod cloud)
 
 ---
@@ -26,13 +26,13 @@ Install MetaHuman OS on your Linux server.
 ## 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-org/metahuman-os.git
+git clone https://github.com/Greg-Aster/metahuman-os.git
 cd metahuman-os
 ```
 
 ---
 
-## 2. Install an LLM Backend
+## 2. Install an LLM Backend (Optional but Recommended)
 
 MetaHuman needs an LLM backend for AI capabilities. Install **Ollama** (recommended for most users):
 
@@ -52,7 +52,8 @@ Ollama runs as a background service and auto-starts on boot.
 
 The startup script handles everything automatically:
 - Installs Node.js dependencies (`pnpm install`)
-- Sets up Python environment (if Python 3 is available)
+- Sets up the Python virtual environment (`venv/`)
+- Installs Python dependencies (`requirements.txt`)
 - Initializes the system (creates directories, config files)
 - Starts all services and agents
 

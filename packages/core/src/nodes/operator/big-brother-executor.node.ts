@@ -68,20 +68,22 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
     console.log(`[BigBrotherExecutor] Executing skill: ${skillName} via Claude CLI`);
 
     const { audit } = await import('../../audit.js');
-    const { isClaudeSessionReady, sendPrompt, startClaudeSession } = await import('../../claude-session.js');
+    const { escalate, getActiveBackend, ensureBackendsInitialized } = await import('../../escalation-backend.js');
 
-    if (!isClaudeSessionReady()) {
-      const autoStart = properties?.autoStartSession !== false;
-      if (autoStart) {
-        console.log('[BigBrotherExecutor] Claude session not ready, starting...');
-        const started = await startClaudeSession();
-        if (!started) {
-          throw new Error('Claude session not available and auto-start failed');
-        }
-      } else {
-        throw new Error('Claude session not available');
-      }
+    // Ensure backends are loaded before checking
+    await ensureBackendsInitialized();
+
+    const backend = getActiveBackend();
+    if (!backend) {
+      throw new Error('No escalation backend configured');
     }
+
+    const available = await backend.isAvailable();
+    if (!available) {
+      throw new Error(`Backend ${backend.name} is not available`);
+    }
+
+    console.log(`[BigBrotherExecutor] Using ${backend.name} for skill execution`);
 
     const prompt = `I need you to help me prepare content for a skill execution.
 
@@ -119,15 +121,20 @@ Do NOT try to execute any tools yourself. Just provide the content.`;
 
     const timeoutMs = properties?.timeout || 60000;
 
-    // Enable streaming for reasoning display in chat interface
-    const streamingOptions = {
+    // Execute via unified backend abstraction
+    const result = await escalate(prompt, {
+      timeout: timeoutMs,
       sessionId,
-      onReasoningStep: (step: { type: string; content: string }) => {
+      onReasoningStep: (step) => {
         console.log(`[BigBrotherExecutor] 🧠 ${step.type}: ${step.content.substring(0, 100)}`);
       },
-    };
+    });
 
-    const response = await sendPrompt(prompt, timeoutMs, streamingOptions);
+    if (!result.success) {
+      throw new Error(result.error || 'Escalation failed');
+    }
+
+    const response = result.output;
 
     // Parse JSON response
     const jsonMatch = response.match(/\{[\s\S]*\}/);

@@ -99,6 +99,25 @@ export interface AuditConfig {
   redactSensitiveData: boolean;
 }
 
+/**
+ * Escalation configuration for Big Brother mode
+ * Controls when and how to escalate to external agents
+ */
+export interface EscalationConfig {
+  /** Whether escalation is enabled */
+  enabled: boolean;
+  /** Default backend to use for escalation */
+  defaultBackend: 'claude-code' | 'open-interpreter' | 'aider' | 'gemini-cli' | 'qwen-code';
+  /** Escalate when operator gets stuck (no progress) */
+  escalateOnStuck: boolean;
+  /** Escalate on repeated failures */
+  escalateOnRepeatedFailures: boolean;
+  /** Maximum retry attempts before giving up */
+  maxRetries: number;
+  /** Include full scratchpad in escalation request */
+  includeFullScratchpad: boolean;
+}
+
 export interface ToolExecutorConfig {
   version: string;
   activeBackend: string;
@@ -115,6 +134,8 @@ export interface ToolExecutorConfig {
   llmProxy: LLMProxyConfig;
   terminal: TerminalConfig;
   audit: AuditConfig;
+  /** Escalation configuration for Big Brother mode */
+  escalation?: EscalationConfig;
 }
 
 // ============================================================================
@@ -223,6 +244,15 @@ export function getDefaultToolExecutorConfig(): ToolExecutorConfig {
       logToolOutputs: true,
       redactSensitiveData: true,
     },
+
+    escalation: {
+      enabled: true,
+      defaultBackend: 'claude-code',
+      escalateOnStuck: true,
+      escalateOnRepeatedFailures: true,
+      maxRetries: 2,
+      includeFullScratchpad: true,
+    },
   };
 }
 
@@ -243,6 +273,8 @@ const configCache = new Map<string, CacheEntry>();
  *
  * Uses a 5-second per-user cache to avoid repeated disk reads
  * during polling operations. Cache is invalidated on save.
+ *
+ * If no username is provided, falls back to system-wide config (etc/tool-executor.json)
  */
 export function loadToolExecutorConfig(username?: string): ToolExecutorConfig {
   const cacheKey = username || '__system__';
@@ -254,11 +286,26 @@ export function loadToolExecutorConfig(username?: string): ToolExecutorConfig {
     return cached.config;
   }
 
-  const config = loadUserConfig<ToolExecutorConfig>(
-    'tool-executor.json',
-    getDefaultToolExecutorConfig(),
-    username
-  );
+  let config: ToolExecutorConfig;
+
+  if (username) {
+    // Load user-specific config
+    config = loadUserConfig<ToolExecutorConfig>(
+      'tool-executor.json',
+      getDefaultToolExecutorConfig(),
+      username
+    );
+  } else {
+    // Fall back to system-wide config for contexts without user (CLI, agents, etc.)
+    try {
+      const systemConfigPath = path.join(process.cwd(), 'etc', 'tool-executor.json');
+      const raw = fs.readFileSync(systemConfigPath, 'utf8');
+      config = JSON.parse(raw) as ToolExecutorConfig;
+    } catch {
+      // If system config doesn't exist, use defaults
+      config = getDefaultToolExecutorConfig();
+    }
+  }
 
   // Cache the result
   configCache.set(cacheKey, { config, timestamp: now });

@@ -363,7 +363,7 @@ export async function executeWithInterpreter(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        task: request.task,
+        prompt: request.task,  // Server expects 'prompt' field
         context: request.context,
       }),
       signal: AbortSignal.timeout(timeout),
@@ -374,7 +374,9 @@ export async function executeWithInterpreter(
       let error: string;
       try {
         const errorJson = JSON.parse(errorText);
-        error = errorJson.detail || errorJson.error || errorText;
+        // Ensure we always get a string, even if error is an object
+        const rawError = errorJson.detail || errorJson.error || errorText;
+        error = typeof rawError === 'string' ? rawError : JSON.stringify(rawError);
       } catch {
         error = errorText;
       }
@@ -405,12 +407,24 @@ export async function executeWithInterpreter(
       ? assistantMessages[assistantMessages.length - 1].content
       : undefined;
 
+    // Ensure error is always a string
+    let errorMsg: string | undefined;
+    if (data.error) {
+      if (typeof data.error === 'string') {
+        errorMsg = data.error;
+      } else if (typeof data.error === 'object') {
+        errorMsg = data.error.detail || data.error.message || JSON.stringify(data.error);
+      } else {
+        errorMsg = String(data.error);
+      }
+    }
+
     const result: InterpreterResponse = {
       success: data.success !== false,
       taskId: data.task_id || taskId,
       messages,
       finalOutput,
-      error: data.error,
+      error: errorMsg,
       executionTime: Date.now() - startTime,
       metadata: {
         iterations: data.iterations,
@@ -498,7 +512,7 @@ export async function* executeWithInterpreterStream(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        task: request.task,
+        prompt: request.task,  // Server expects 'prompt' field
         context: request.context,
       }),
       signal: AbortSignal.timeout(timeout),
