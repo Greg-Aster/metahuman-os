@@ -610,6 +610,9 @@ async function callVLLMProvider(
         maxTokens: options.maxTokens ?? backendConfig.vllm.maxTokens,
         topP: options.topP,
         enableThinking: backendConfig.vllm.enableThinking,
+        frequencyPenalty: backendConfig.vllm.frequencyPenalty,
+        presencePenalty: backendConfig.vllm.presencePenalty,
+        repetitionPenalty: backendConfig.vllm.repetitionPenalty ?? options.repeatPenalty,
       }
     );
 

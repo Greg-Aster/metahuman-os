@@ -106,21 +106,34 @@ export async function handleUpdateTrainingConfig(req: UnifiedRequest): Promise<U
 
 /**
  * GET /api/training-data - Get training data configuration
+ * NOTE: Now reads from unified etc/training.json and extracts data section
  */
 export async function handleGetTrainingData(req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
-    const trainingDataPath = path.join(systemPaths.etc, 'training-data.json');
+    const trainingConfigPath = path.join(systemPaths.etc, 'training.json');
 
     // Return default config if file doesn't exist
-    if (!fs.existsSync(trainingDataPath)) {
+    if (!fs.existsSync(trainingConfigPath)) {
       return successResponse({
         success: true,
         config: getDefaultTrainingDataConfig(),
       });
     }
 
-    const content = fs.readFileSync(trainingDataPath, 'utf-8');
-    const config = JSON.parse(content);
+    const content = fs.readFileSync(trainingConfigPath, 'utf-8');
+    const unified = JSON.parse(content);
+
+    // Convert unified format to legacy format for backwards compatibility
+    const config = {
+      curator: unified.curator || getDefaultTrainingDataConfig().curator,
+      collection: {
+        maxDays: unified.data?.maxDays || 999999,
+        maxSamplesPerSource: unified.data?.maxSamplesPerSource || 3000,
+        includePersona: unified.data?.includePersona ?? true,
+      },
+      memoryTypes: unified.data?.memoryTypes || getDefaultTrainingDataConfig().memoryTypes,
+      phases: unified.phases || getDefaultTrainingDataConfig().phases,
+    };
 
     return successResponse({
       success: true,
@@ -137,6 +150,7 @@ export async function handleGetTrainingData(req: UnifiedRequest): Promise<Unifie
 
 /**
  * POST /api/training-data - Update training data configuration (owner only)
+ * NOTE: Now writes to unified etc/training.json, preserving other sections
  */
 export async function handleUpdateTrainingData(req: UnifiedRequest): Promise<UnifiedResponse> {
   const { body } = req;
@@ -146,47 +160,88 @@ export async function handleUpdateTrainingData(req: UnifiedRequest): Promise<Uni
   }
 
   try {
-    const trainingDataPath = path.join(systemPaths.etc, 'training-data.json');
-    
-    // Load current config or use defaults
-    let config = getDefaultTrainingDataConfig();
-    if (fs.existsSync(trainingDataPath)) {
-      config = JSON.parse(fs.readFileSync(trainingDataPath, 'utf-8'));
+    const trainingConfigPath = path.join(systemPaths.etc, 'training.json');
+
+    // Load current unified config or create empty
+    let unified: Record<string, any> = {};
+    if (fs.existsSync(trainingConfigPath)) {
+      unified = JSON.parse(fs.readFileSync(trainingConfigPath, 'utf-8'));
+    }
+
+    // Initialize data section if missing
+    if (!unified.data) {
+      unified.data = {
+        maxDays: 999999,
+        maxSamplesPerSource: 3000,
+        max_samples: 3000,
+        monthly_training: true,
+        days_recent: 30,
+        old_samples: 3000,
+        includePersona: true,
+        memoryTypes: getDefaultTrainingDataConfig().memoryTypes,
+      };
     }
 
     // Update curator settings if provided
     if (body.curator) {
+      unified.curator = unified.curator || {};
       if (typeof body.curator.batchSize === 'number' && body.curator.batchSize > 0) {
-        config.curator.batchSize = body.curator.batchSize;
+        unified.curator.batchSize = body.curator.batchSize;
       }
       if (typeof body.curator.qualityThreshold === 'number') {
-        config.curator.qualityThreshold = Math.max(0, Math.min(10, body.curator.qualityThreshold));
+        unified.curator.qualityThreshold = Math.max(0, Math.min(10, body.curator.qualityThreshold));
       }
       if (typeof body.curator.temperature === 'number') {
-        config.curator.temperature = Math.max(0, Math.min(2, body.curator.temperature));
+        unified.curator.temperature = Math.max(0, Math.min(2, body.curator.temperature));
       }
     }
 
-    // Update collection settings if provided
+    // Update collection settings (mapped to data section)
     if (body.collection) {
       if (typeof body.collection.maxDays === 'number' && body.collection.maxDays > 0) {
-        config.collection.maxDays = body.collection.maxDays;
+        unified.data.maxDays = body.collection.maxDays;
       }
       if (typeof body.collection.maxSamplesPerSource === 'number' && body.collection.maxSamplesPerSource > 0) {
-        config.collection.maxSamplesPerSource = body.collection.maxSamplesPerSource;
+        unified.data.maxSamplesPerSource = body.collection.maxSamplesPerSource;
+      }
+      if (typeof body.collection.includePersona === 'boolean') {
+        unified.data.includePersona = body.collection.includePersona;
       }
     }
 
-    // Update memory types if provided
+    // Update memory types (mapped to data.memoryTypes)
     if (body.memoryTypes?.enabled && Array.isArray(body.memoryTypes.enabled)) {
-      config.memoryTypes.enabled = body.memoryTypes.enabled;
+      unified.data.memoryTypes = unified.data.memoryTypes || {};
+      unified.data.memoryTypes.enabled = body.memoryTypes.enabled;
+    }
+
+    if (body.memoryTypes?.percentages && typeof body.memoryTypes.percentages === 'object') {
+      unified.data.memoryTypes = unified.data.memoryTypes || {};
+      unified.data.memoryTypes.percentages = unified.data.memoryTypes.percentages || {};
+      for (const [type, value] of Object.entries(body.memoryTypes.percentages)) {
+        if (typeof value === 'number') {
+          unified.data.memoryTypes.percentages[type] = Math.max(0, Math.min(100, value));
+        }
+      }
     }
 
     // Ensure directory exists
-    fs.mkdirSync(path.dirname(trainingDataPath), { recursive: true });
-    
-    // Save updated config
-    fs.writeFileSync(trainingDataPath, JSON.stringify(config, null, 2), 'utf-8');
+    fs.mkdirSync(path.dirname(trainingConfigPath), { recursive: true });
+
+    // Save updated unified config
+    fs.writeFileSync(trainingConfigPath, JSON.stringify(unified, null, 2), 'utf-8');
+
+    // Return legacy format for backwards compatibility
+    const config = {
+      curator: unified.curator || getDefaultTrainingDataConfig().curator,
+      collection: {
+        maxDays: unified.data?.maxDays || 999999,
+        maxSamplesPerSource: unified.data?.maxSamplesPerSource || 3000,
+        includePersona: unified.data?.includePersona ?? true,
+      },
+      memoryTypes: unified.data?.memoryTypes || getDefaultTrainingDataConfig().memoryTypes,
+      phases: unified.phases || getDefaultTrainingDataConfig().phases,
+    };
 
     return successResponse({
       success: true,

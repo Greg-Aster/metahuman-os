@@ -106,7 +106,7 @@ async function getCurrentAppInfo(): Promise<AppInfo> {
   // React Native: Get app info from Node.js backend via HTTP
   if (isReactNativeWebView()) {
     try {
-      const response = await fetch('http://127.0.0.1:4322/app-info');
+      const response = await apiFetch('/api/app-info');
       if (response.ok) {
         return await response.json();
       }

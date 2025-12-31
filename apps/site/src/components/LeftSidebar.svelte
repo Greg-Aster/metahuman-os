@@ -23,7 +23,6 @@
     { id: 'voice', label: 'Voice', icon: '🎤', description: 'Audio & training' },
     { id: 'training', label: 'AI Training', icon: '🧠', description: 'LoRA adapters' },
     { id: 'system-coder', label: 'System Coder', icon: '🔧', description: 'Self-healing agent' },
-    { id: 'terminal', label: 'Terminal', icon: '💻', description: 'Command line' },
     { id: 'system', label: 'System', icon: '⚙️', description: 'Settings & tools' },
   ];
 

@@ -59,48 +59,54 @@ export async function handleGetTrainingDatasetStats(req: UnifiedRequest): Promis
     const now = Date.now();
     const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
 
-    // 1. Count episodic memories
+    // 1. Count episodic memories (recursively scan YYYY/MM/DD structure)
     const episodicPath = path.join(profilePaths.root, 'memory', 'episodic');
     if (existsSync(episodicPath)) {
-      const years = readdirSync(episodicPath).filter(name => /^\d{4}$/.test(name));
+      function scanMemoriesRecursive(dir: string): void {
+        const entries = readdirSync(dir);
 
-      for (const year of years) {
-        const yearPath = path.join(episodicPath, year);
-        if (!statSync(yearPath).isDirectory()) continue;
+        for (const entry of entries) {
+          const entryPath = path.join(dir, entry);
+          const entryStat = statSync(entryPath);
 
-        const files = readdirSync(yearPath).filter(f => f.endsWith('.json'));
+          if (entryStat.isDirectory()) {
+            // Recurse into subdirectories (years, months, days)
+            scanMemoriesRecursive(entryPath);
+          } else if (entry.endsWith('.json')) {
+            // Process memory file
+            try {
+              const content = readFileSync(entryPath, 'utf-8');
+              const memory = JSON.parse(content);
 
-        for (const file of files) {
-          try {
-            const content = readFileSync(path.join(yearPath, file), 'utf-8');
-            const memory = JSON.parse(content);
+              stats.episodicMemories++;
 
-            stats.episodicMemories++;
+              // Track cognitive mode
+              const mode = memory.metadata?.cognitiveMode || 'emulation';
+              if (mode in stats.cognitiveModeCounts) {
+                stats.cognitiveModeCounts[mode as keyof typeof stats.cognitiveModeCounts]++;
+              }
 
-            // Track cognitive mode
-            const mode = memory.metadata?.cognitiveMode || 'emulation';
-            if (mode in stats.cognitiveModeCounts) {
-              stats.cognitiveModeCounts[mode as keyof typeof stats.cognitiveModeCounts]++;
+              // Track timestamps
+              const timestamp = new Date(memory.timestamp).getTime();
+              if (!stats.oldestMemory || timestamp < new Date(stats.oldestMemory).getTime()) {
+                stats.oldestMemory = memory.timestamp;
+              }
+              if (!stats.newestMemory || timestamp > new Date(stats.newestMemory).getTime()) {
+                stats.newestMemory = memory.timestamp;
+              }
+
+              // Count recent memories
+              if (timestamp > thirtyDaysAgo) {
+                stats.recentMemories++;
+              }
+            } catch {
+              // Skip invalid files
             }
-
-            // Track timestamps
-            const timestamp = new Date(memory.timestamp).getTime();
-            if (!stats.oldestMemory || timestamp < new Date(stats.oldestMemory).getTime()) {
-              stats.oldestMemory = memory.timestamp;
-            }
-            if (!stats.newestMemory || timestamp > new Date(stats.newestMemory).getTime()) {
-              stats.newestMemory = memory.timestamp;
-            }
-
-            // Count recent memories
-            if (timestamp > thirtyDaysAgo) {
-              stats.recentMemories++;
-            }
-          } catch {
-            // Skip invalid files
           }
         }
       }
+
+      scanMemoriesRecursive(episodicPath);
     }
 
     // 2. Count therapy sessions

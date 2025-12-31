@@ -12,7 +12,7 @@ echo "========================================="
 echo ""
 
 # Check Python version
-echo "[1/6] Checking Python version..."
+echo "[1/7] Checking Python version..."
 PYTHON_CMD=""
 for cmd in python3.11 python3.10 python3.9 python3 python; do
     if command -v "$cmd" &> /dev/null; then
@@ -35,7 +35,7 @@ fi
 
 # Check CUDA availability
 echo ""
-echo "[2/6] Checking CUDA availability..."
+echo "[2/7] Checking CUDA availability..."
 if command -v nvidia-smi &> /dev/null; then
     CUDA_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
     if [ -n "$CUDA_VERSION" ]; then
@@ -50,13 +50,13 @@ fi
 
 # Create external directory
 echo ""
-echo "[3/6] Setting up directories..."
+echo "[3/7] Setting up directories..."
 mkdir -p "$METAHUMAN_ROOT/external"
 mkdir -p "$METAHUMAN_ROOT/out/voices/rvc"
 
 # Clone Applio RVC repository
 echo ""
-echo "[4/6] Cloning Applio RVC repository..."
+echo "[4/7] Cloning Applio RVC repository..."
 if [ -d "$RVC_DIR" ]; then
     echo "⚠ RVC directory already exists, skipping clone"
     echo "  To reinstall, remove: $RVC_DIR"
@@ -67,7 +67,7 @@ fi
 
 # Create virtual environment
 echo ""
-echo "[5/6] Creating Python virtual environment..."
+echo "[5/7] Creating Python virtual environment..."
 cd "$RVC_DIR"
 if [ ! -d "venv" ]; then
     "$PYTHON_CMD" -m venv venv
@@ -78,7 +78,7 @@ fi
 
 # Install Python dependencies
 echo ""
-echo "[6/6] Installing Python dependencies..."
+echo "[6/7] Installing Python dependencies..."
 ./venv/bin/pip install --upgrade pip > /dev/null 2>&1
 
 # Install core RVC dependencies with compatible versions
@@ -166,9 +166,8 @@ def convert_voice(input_path, output_path, model_path, pitch_shift=0, index_path
             audio = signal.resample(audio, int(len(audio) * 16000 / sr))
             sr = 16000
 
-        # TODO: Load RVC model and perform inference
-        # For now, this is a placeholder that applies pitch shifting
-        # Real implementation would load the .pth model and run RVC inference
+        # Placeholder: this script does not perform real RVC inference yet.
+        # It only applies a pitch shift to demonstrate the flow.
 
         # Apply pitch shift using simple resampling (placeholder)
         if pitch_shift != 0:

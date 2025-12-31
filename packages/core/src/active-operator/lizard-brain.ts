@@ -650,6 +650,15 @@ export const TRIGGERS: Trigger[] = [
     condition: (username) => checkIdle(username, 45), // 45 min idle threshold
   },
   {
+    id: 'idle_curation',
+    name: 'Idle Training Curation',
+    description: 'Curate memories for training data when user is idle',
+    taskType: 'training_curate',
+    priority: 'low',
+    checkInterval: 600000, // 10 minutes (matches agents.json inactivityThreshold)
+    condition: (username) => checkIdle(username, 10), // 10 min idle threshold
+  },
+  {
     id: 'inbox_ingestion',
     name: 'Inbox Ingestion',
     description: 'Process new files in inbox',
@@ -802,6 +811,7 @@ interface TriggerCandidate {
 const TASK_DESCRIPTIONS: Record<TaskType, string> = {
   user_message: 'Process a user chat message (highest priority)',
   memory_curate: 'Run organizer to enrich memories with tags and entities',
+  training_curate: 'Run curator to prepare memories for LoRA training data',
   index_build: 'Build/update vector embeddings index for semantic search',
   reflect: 'Generate internal reflections using associative memory chains',
   curiosity: 'Generate user-facing curiosity questions',

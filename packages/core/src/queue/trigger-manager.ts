@@ -91,7 +91,7 @@ interface TriggerState {
 // Map agent IDs to task types
 const AGENT_TASK_MAP: Record<string, TaskType> = {
   organizer: 'memory_curate',
-  curator: 'memory_curate',
+  curator: 'training_curate',
   reflector: 'reflect',
   curiosity: 'curiosity',
   'curiosity-researcher': 'inner_curiosity',

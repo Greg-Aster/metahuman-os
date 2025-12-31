@@ -79,6 +79,12 @@ export interface VLLMBackendConfig {
   autoUtilization?: boolean;
   /** Enable thinking mode for Qwen3 models (default: true, set false to disable <think> tags) */
   enableThinking?: boolean;
+  /** Penalize tokens based on frequency (0.0-2.0, higher = less repetition) */
+  frequencyPenalty?: number;
+  /** Penalize tokens that have appeared at all (0.0-2.0, higher = more variety) */
+  presencePenalty?: number;
+  /** Repetition penalty (1.0 = no penalty, >1.0 = less repetition) */
+  repetitionPenalty?: number;
 }
 
 export interface RemoteBackendConfig {

@@ -9,23 +9,25 @@
   export let disabled: boolean = false;
 
   // Memory type categories for grouping in UI
+  // PRIMARY types are 100% included (user voice - most valuable)
+  // SECONDARY types are added as a % OF the primary data (LLM-generated supplement)
   const memoryTypeGroups = {
-    'User Input (High Priority)': [
-      { key: 'conversation', label: 'Conversations', description: 'Direct chat messages and responses' },
-      { key: 'observation', label: 'Observations', description: 'User-captured notes and observations' },
-      { key: 'therapy_session', label: 'Therapy Sessions', description: 'In-depth personality Q&A sessions' },
+    'Primary Data (100% Included)': [
+      { key: 'conversation', label: 'Conversations', description: 'Direct chat messages - YOUR voice', isPrimary: true },
+      { key: 'observation', label: 'Observations', description: 'User-captured notes and ingested content', isPrimary: true },
+      { key: 'therapy_session', label: 'Therapy Sessions', description: 'In-depth personality Q&A sessions', isPrimary: true },
+      { key: 'journal', label: 'Journal', description: 'Journal entries - YOUR writing', isPrimary: true },
     ],
-    'Self-Generated (Lower by Default)': [
-      { key: 'reflection', label: 'Reflections', description: 'AI-generated insights about experiences' },
+    'Secondary Data (% of Primary)': [
+      { key: 'reflection', label: 'Reflections', description: 'AI-generated insights (% of primary data)' },
       { key: 'reflection_summary', label: 'Reflection Summaries', description: 'Condensed reflection themes' },
       { key: 'inner_dialogue', label: 'Inner Dialogue', description: 'Internal thought processes' },
       { key: 'dream', label: 'Dreams', description: 'Dream narratives and symbols' },
       { key: 'curiosity_question', label: 'Curiosity Q&A', description: 'Self-directed questions and answers' },
     ],
-    'Other': [
+    'Other Secondary': [
       { key: 'decision', label: 'Decisions', description: 'Decision-making records' },
-      { key: 'journal', label: 'Journal', description: 'Journal entries' },
-      { key: 'summary', label: 'Summaries', description: 'Generated summaries' },
+      { key: 'summary', label: 'Summaries', description: 'Generated summaries (usually 0%)' },
     ],
   };
 
@@ -50,9 +52,10 @@
     ...percentages,
   };
 
-  // Calculate total percentage
+  // Note: With new "pie chart" logic, percentages for secondary types mean
+  // "% of primary data to include", not a slice of total. No 100% validation needed.
   $: totalPercentage = Object.values(mergedPercentages).reduce((sum, val) => sum + val, 0);
-  $: isValid = totalPercentage === 100;
+  $: isValid = true; // No longer need 100% total - secondary % are relative to primary
 
   // Handle slider change
   function handleSliderChange(key: string, event: Event) {
@@ -171,11 +174,8 @@
   <div class="control-section">
     <div class="section-header">
       <h4>Memory Type Weights</h4>
-      <span class="total-badge" class:invalid={!isValid}>
-        Total: {totalPercentage}%
-        {#if !isValid}
-          <span class="warning">(should be 100%)</span>
-        {/if}
+      <span class="total-badge info">
+        Primary = 100% | Secondary = % of primary
       </span>
     </div>
 
@@ -215,14 +215,17 @@
 
   <!-- Info Box -->
   <div class="info-box">
-    <strong>How weights work:</strong> These percentages determine what proportion of each memory type
-    is sampled during training data collection. Higher percentages mean more samples of that type
-    will be included. The total should equal 100%.
-    <br/><br/>
-    <strong>User-focused training</strong> (default) produces AI that sounds more like you in conversations.
+    <strong>How it works (Pie Chart Model):</strong>
     <br/>
-    <strong>Self-growth focus</strong> includes more AI-generated reflections and dreams, which can
-    lead to more introspective and creative responses.
+    <em>Primary data</em> (conversations, observations, journals) = <strong>100% included</strong> — this is YOUR voice.
+    <br/>
+    <em>Secondary data</em> (reflections, dreams, etc.) = added as a <strong>% of primary</strong>.
+    <br/><br/>
+    <strong>Example:</strong> If you have 800 conversations + observations, and inner_dialogue is set to 3%,
+    you get 800 + (800 × 3% = 24) = 824 total samples.
+    <br/><br/>
+    <strong>Tip:</strong> Ingest more of your writing (notes, journals, blog posts) to increase primary data.
+    The more primary data you have, the more supplemental data gets included proportionally.
   </div>
 </div>
 
@@ -382,6 +385,17 @@
   :global(.dark) .total-badge.invalid {
     background: #7f1d1d;
     color: #fca5a5;
+  }
+
+  .total-badge.info {
+    background: #e0f2fe;
+    color: #0369a1;
+    font-size: 0.7rem;
+  }
+
+  :global(.dark) .total-badge.info {
+    background: #0c4a6e;
+    color: #7dd3fc;
   }
 
   .total-badge .warning {

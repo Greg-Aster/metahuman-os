@@ -351,6 +351,24 @@
       },
       "width": 180,
       "height": 80
+    },
+    {
+      "id": "32",
+      "type": "outputNode",
+      "position": {
+        "x": 3550,
+        "y": 320
+      },
+      "data": {
+        "label": "TTS Output",
+        "nodeType": "tts",
+        "properties": {
+          "source": "bigbrother-mode",
+          "defaultMode": "conversation"
+        }
+      },
+      "width": 180,
+      "height": 80
     }
   ],
   "edges": [
@@ -748,6 +766,17 @@
       "data": {
         "type": "string",
         "comment": "Stripped response → Buffer Manager (persist to conversation buffer)"
+      }
+    },
+    {
+      "id": "e-18-cleaned-32-conversation",
+      "source": "18",
+      "target": "32",
+      "sourceHandle": "cleaned",
+      "targetHandle": "conversation",
+      "data": {
+        "type": "string",
+        "comment": "CoT-stripped response → TTS Output (speaks Big Brother response)"
       }
     }
   ]

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
-  import { formatFileSize, updateState, downloadUpdate } from '../lib/client/app-update';
+  import { get } from 'svelte/store';
+  import { formatFileSize, updateState, checkForUpdates, downloadAndInstall } from '../lib/client/app-updater';
   import {
     configureRemoteSyncServer,
     testRemoteServerConnection,
@@ -38,21 +39,6 @@
       }
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'Network error' };
-    }
-  }
-
-  /**
-   * Read update state from agent's output file
-   */
-  async function readUpdateState(): Promise<any | null> {
-    try {
-      const res = await apiFetch('/api/update-state');
-      if (res.ok) {
-        return await res.json();
-      }
-      return null;
-    } catch {
-      return null;
     }
   }
 
@@ -160,6 +146,22 @@
     downloadStarted: false,
     error: null,
   };
+
+  function getLatestUpdateVersion(): string | null {
+    const state = get(updateState);
+    if (state.platform === 'mobile') {
+      return state.latestMobileVersion?.version || null;
+    }
+    if (state.platform === 'server') {
+      return state.serverUpdateInfo?.latestVersion || null;
+    }
+    return null;
+  }
+
+  function getCurrentUpdateVersion(): string | null {
+    const state = get(updateState);
+    return state.currentVersion || null;
+  }
 
   // Memory date range options
   interface DateRangeOption {
@@ -519,43 +521,29 @@
     try {
       // === CASE 1: Only update selected ===
       if (onlyUpdateSelected) {
-        remoteSyncMessage = 'Triggering update-check agent...';
+        remoteSyncMessage = 'Checking for app updates...';
         remoteSyncPhase = 'downloading';
 
-        console.log('[SyncManager] Triggering update-check agent');
-        const agentResult = await triggerAgent('update-check', serverUrl ? [`--server=${serverUrl}`] : []);
-
-        if (agentResult.success) {
-          remoteSyncMessage = `Update agent started (PID: ${agentResult.pid}). Waiting for result...`;
-          console.log('[SyncManager] Update agent started:', agentResult.pid);
-
-          // Wait a bit for agent to complete, then check result
-          await new Promise(resolve => setTimeout(resolve, 3000));
-
-          const state = await readUpdateState();
+        try {
+          const updateAvailable = await checkForUpdates();
           updateResult.checked = true;
 
-          if (state?.updateAvailable) {
+          if (updateAvailable) {
             updateResult.available = true;
-            updateResult.version = state.latestVersion;
-            remoteSyncMessage = `Update ${state.latestVersion} found! Starting download...`;
+            updateResult.version = getLatestUpdateVersion();
+            remoteSyncMessage = `Update ${updateResult.version || ''} found! Starting update...`;
 
-            // Download the update
-            const downloadResult = await downloadUpdate();
-            if (downloadResult.success) {
-              updateResult.downloadStarted = true;
-              remoteSyncMessage = 'Download started - check your browser/downloads';
-            } else {
-              updateResult.error = downloadResult.error || 'Download failed';
-              remoteSyncMessage = updateResult.error;
-            }
+            await downloadAndInstall();
+            updateResult.downloadStarted = true;
+            remoteSyncMessage = 'Update started - check your device for progress';
           } else {
             updateResult.available = false;
-            updateResult.version = state?.currentVersion || 'unknown';
+            updateResult.version = getCurrentUpdateVersion() || 'unknown';
             remoteSyncMessage = `Already up to date (v${updateResult.version})`;
           }
-        } else {
-          updateResult.error = agentResult.error || 'Failed to start update agent';
+        } catch (err) {
+          updateResult.error = err instanceof Error ? err.message : 'Update failed';
+          remoteSyncMessage = updateResult.error;
           errors.push(updateResult.error);
         }
 
@@ -599,30 +587,23 @@
             // Check for app updates if requested
             if (wantUpdate) {
               remoteSyncMessage = 'Checking for app updates...';
-              console.log('[SyncManager] Triggering update-check agent');
-
-              const updateAgentResult = await triggerAgent('update-check', serverUrl ? [`--server=${serverUrl}`] : []);
-              if (updateAgentResult.success) {
-                await new Promise(resolve => setTimeout(resolve, 3000));
-
-                const state = await readUpdateState();
+              try {
+                const updateAvailable = await checkForUpdates();
                 updateResult.checked = true;
 
-                if (state?.updateAvailable) {
+                if (updateAvailable) {
                   updateResult.available = true;
-                  updateResult.version = state.latestVersion;
-                  remoteSyncMessage = `Update ${state.latestVersion} found! Starting download...`;
+                  updateResult.version = getLatestUpdateVersion();
+                  remoteSyncMessage = `Update ${updateResult.version || ''} found! Starting update...`;
 
-                  const downloadResult = await downloadUpdate();
-                  if (downloadResult.success) {
-                    updateResult.downloadStarted = true;
-                  } else {
-                    updateResult.error = downloadResult.error || 'Download failed';
-                  }
+                  await downloadAndInstall();
+                  updateResult.downloadStarted = true;
                 } else {
                   updateResult.available = false;
-                  updateResult.version = state?.currentVersion;
+                  updateResult.version = getCurrentUpdateVersion();
                 }
+              } catch (err) {
+                updateResult.error = err instanceof Error ? err.message : 'Update failed';
               }
             }
 
@@ -1155,7 +1136,7 @@
               <div class="stat-item update-downloading">
                 <span class="stat-icon">⬇️</span>
                 <span class="stat-value">{updateResult.version}</span>
-                <span class="stat-label">download started!</span>
+                <span class="stat-label">update started!</span>
               </div>
             {:else if updateResult.available}
               <div class="stat-item update-available">
@@ -1189,18 +1170,30 @@
 
         <p class="complete-message">
           {#if updateResult.downloadStarted}
-            APK download started. Check your browser or system downloads to install.
-          {:else if updateResult.available && $updateState.downloadUrl}
+            {#if $updateState.platform === 'mobile'}
+              APK download started. Check your browser or system downloads to install.
+            {:else}
+              Update started. Monitor server logs for completion.
+            {/if}
+          {:else if updateResult.available && $updateState.platform === 'mobile' && $updateState.latestMobileVersion?.downloadUrl}
             Update available! Click below to download.
+          {:else if updateResult.available && $updateState.platform === 'server'}
+            Update available! Click below to apply.
           {:else}
             Your local device is now up to date with your server.
           {/if}
         </p>
 
-        {#if updateResult.available && !updateResult.downloadStarted && $updateState.downloadUrl}
-          <button class="update-btn" on:click={() => downloadUpdate()}>
-            ⬇ Download Update ({updateResult.version})
-          </button>
+        {#if updateResult.available && !updateResult.downloadStarted}
+          {#if $updateState.platform === 'mobile' && $updateState.latestMobileVersion?.downloadUrl}
+            <button class="update-btn" on:click={() => downloadAndInstall()}>
+              ⬇ Download Update ({updateResult.version})
+            </button>
+          {:else if $updateState.platform === 'server'}
+            <button class="update-btn" on:click={() => downloadAndInstall()}>
+              ⬆ Apply Update ({updateResult.version || 'latest'})
+            </button>
+          {/if}
         {/if}
       {:else}
         <div class="error-details">

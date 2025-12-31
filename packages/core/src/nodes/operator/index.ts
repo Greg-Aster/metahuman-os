@@ -15,7 +15,6 @@ export { ErrorRecoveryNode } from './error-recovery.node.js';
 export { StuckDetectorNode } from './stuck-detector.node.js';
 export { BigBrotherNode } from './big-brother.node.js';
 export { BigBrotherExecutorNode } from './big-brother-executor.node.js';
-export { ToolExecutorNode } from './tool-executor.node.js';
 export { ClaudeFullTaskNode } from './claude-full-task.node.js';
 export { IterationCounterNode } from './iteration-counter.node.js';
 export { ScratchpadCompletionCheckerNode } from './scratchpad-completion-checker.node.js';

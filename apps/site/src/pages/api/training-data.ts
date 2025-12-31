@@ -3,6 +3,9 @@
  *
  * GET: Retrieve current training data configuration
  * POST: Update training data configuration
+ *
+ * NOTE: This endpoint reads from/writes to the unified etc/training.json
+ * The data section contains collection settings and memory type configurations
  */
 
 import type { APIRoute } from 'astro';
@@ -11,8 +14,64 @@ import path from 'node:path';
 import { getAuthenticatedUser, systemPaths } from '@metahuman/core';
 import { requireOwner } from '../../middleware/cognitiveModeGuard';
 
-const CONFIG_PATH = path.join(systemPaths.etc, 'training-data.json');
+const CONFIG_PATH = path.join(systemPaths.etc, 'training.json');
 
+/**
+ * Full unified training config structure (etc/training.json v2.0)
+ */
+interface UnifiedTrainingConfig {
+  $schema?: string;
+  description?: string;
+  version?: string;
+  model?: {
+    base_model: string;
+    trainingTarget: string;
+    lora_rank: number;
+    lora_alpha: number;
+    learning_rate: number;
+    num_train_epochs: number;
+    per_device_train_batch_size: number;
+    gradient_accumulation_steps: number;
+    max_seq_length: number;
+  };
+  output?: {
+    quantization: string;
+    skipGguf: boolean;
+    gguf_conversion: {
+      enabled: boolean;
+      quantization_type: string;
+    };
+  };
+  data?: {
+    maxDays: number;
+    maxSamplesPerSource: number;
+    max_samples: number;
+    monthly_training: boolean;
+    days_recent: number;
+    old_samples: number;
+    includePersona: boolean;
+    memoryTypes: {
+      enabled: string[];
+      priorities: Record<string, number>;
+      percentages: Record<string, number>;
+    };
+  };
+  curator?: {
+    batchSize: number;
+    qualityThreshold: number;
+    temperature: number;
+  };
+  phases?: {
+    description: string;
+    phase1_conservative: any;
+    phase2_optimal: any;
+    phase3_maximum: any;
+  };
+}
+
+/**
+ * Legacy format for backwards compatibility with existing UI
+ */
 interface TrainingDataConfig {
   curator: {
     batchSize: number;
@@ -38,16 +97,27 @@ interface TrainingDataConfig {
 }
 
 /**
- * Load training data configuration
+ * Load unified config and convert to legacy format for UI
  */
 function loadConfig(): TrainingDataConfig {
   try {
     if (!fs.existsSync(CONFIG_PATH)) {
-      // Return default config if file doesn't exist
       return getDefaultConfig();
     }
     const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
-    return JSON.parse(content);
+    const unified = JSON.parse(content) as UnifiedTrainingConfig;
+
+    // Convert unified format to legacy format for UI compatibility
+    return {
+      curator: unified.curator || getDefaultConfig().curator,
+      collection: {
+        maxDays: unified.data?.maxDays || 999999,
+        maxSamplesPerSource: unified.data?.maxSamplesPerSource || 3000,
+        includePersona: unified.data?.includePersona ?? true,
+      },
+      memoryTypes: unified.data?.memoryTypes || getDefaultConfig().memoryTypes,
+      phases: unified.phases || getDefaultConfig().phases,
+    };
   } catch (error) {
     console.error('[training-data] Failed to load config:', error);
     return getDefaultConfig();
@@ -55,11 +125,58 @@ function loadConfig(): TrainingDataConfig {
 }
 
 /**
- * Save training data configuration
+ * Load the full unified config file
  */
-function saveConfig(config: TrainingDataConfig): void {
+function loadUnifiedConfig(): UnifiedTrainingConfig {
   try {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+    if (!fs.existsSync(CONFIG_PATH)) {
+      return {};
+    }
+    const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
+    return JSON.parse(content);
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Save updates to unified config (preserves other sections)
+ */
+function saveConfig(updates: { curator?: any; collection?: any; memoryTypes?: any }): void {
+  try {
+    // Load existing unified config to preserve other sections (model, output, etc.)
+    const unified = loadUnifiedConfig();
+
+    // Update curator section
+    if (updates.curator) {
+      unified.curator = { ...unified.curator, ...updates.curator };
+    }
+
+    // Update data section (collection + memoryTypes in unified format)
+    if (updates.collection || updates.memoryTypes) {
+      unified.data = unified.data || {
+        maxDays: 999999,
+        maxSamplesPerSource: 3000,
+        max_samples: 3000,
+        monthly_training: true,
+        days_recent: 30,
+        old_samples: 3000,
+        includePersona: true,
+        memoryTypes: getDefaultConfig().memoryTypes,
+      };
+
+      if (updates.collection) {
+        if (updates.collection.maxDays !== undefined) unified.data.maxDays = updates.collection.maxDays;
+        if (updates.collection.maxSamplesPerSource !== undefined) unified.data.maxSamplesPerSource = updates.collection.maxSamplesPerSource;
+        if (updates.collection.includePersona !== undefined) unified.data.includePersona = updates.collection.includePersona;
+      }
+
+      if (updates.memoryTypes) {
+        unified.data.memoryTypes = { ...unified.data.memoryTypes, ...updates.memoryTypes };
+      }
+    }
+
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(unified, null, 2), 'utf-8');
   } catch (error) {
     console.error('[training-data] Failed to save config:', error);
     throw new Error('Failed to save training data configuration');
@@ -182,56 +299,69 @@ const postHandler: APIRoute = async ({ cookies, request }) => {
     const user = getAuthenticatedUser(cookies);
     const body = await request.json();
 
-    // Load current config
-    const config = loadConfig();
+    // Load current config for response
+    let config = loadConfig();
+    const updates: { curator?: any; collection?: any; memoryTypes?: any } = {};
 
     // Update curator settings if provided
     if (body.curator) {
+      updates.curator = {};
       if (typeof body.curator.batchSize === 'number' && body.curator.batchSize > 0) {
+        updates.curator.batchSize = body.curator.batchSize;
         config.curator.batchSize = body.curator.batchSize;
       }
       if (typeof body.curator.qualityThreshold === 'number') {
-        config.curator.qualityThreshold = Math.max(0, Math.min(10, body.curator.qualityThreshold));
+        updates.curator.qualityThreshold = Math.max(0, Math.min(10, body.curator.qualityThreshold));
+        config.curator.qualityThreshold = updates.curator.qualityThreshold;
       }
       if (typeof body.curator.temperature === 'number') {
-        config.curator.temperature = Math.max(0, Math.min(2, body.curator.temperature));
+        updates.curator.temperature = Math.max(0, Math.min(2, body.curator.temperature));
+        config.curator.temperature = updates.curator.temperature;
       }
     }
 
     // Update collection settings if provided
     if (body.collection) {
+      updates.collection = {};
       if (typeof body.collection.maxDays === 'number' && body.collection.maxDays > 0) {
+        updates.collection.maxDays = body.collection.maxDays;
         config.collection.maxDays = body.collection.maxDays;
       }
       if (typeof body.collection.maxSamplesPerSource === 'number' && body.collection.maxSamplesPerSource > 0) {
+        updates.collection.maxSamplesPerSource = body.collection.maxSamplesPerSource;
         config.collection.maxSamplesPerSource = body.collection.maxSamplesPerSource;
       }
       if (typeof body.collection.includePersona === 'boolean') {
+        updates.collection.includePersona = body.collection.includePersona;
         config.collection.includePersona = body.collection.includePersona;
       }
     }
 
     // Update memory types if provided
     if (body.memoryTypes?.enabled && Array.isArray(body.memoryTypes.enabled)) {
+      updates.memoryTypes = updates.memoryTypes || {};
+      updates.memoryTypes.enabled = body.memoryTypes.enabled;
       config.memoryTypes.enabled = body.memoryTypes.enabled;
     }
 
     // Update memory type percentages if provided
     if (body.memoryTypes?.percentages && typeof body.memoryTypes.percentages === 'object') {
-      // Initialize percentages if not present
+      updates.memoryTypes = updates.memoryTypes || {};
+      updates.memoryTypes.percentages = {};
       if (!config.memoryTypes.percentages) {
         config.memoryTypes.percentages = {};
       }
-      // Update each percentage (0-100 range validation)
       for (const [type, value] of Object.entries(body.memoryTypes.percentages)) {
         if (typeof value === 'number') {
-          config.memoryTypes.percentages[type] = Math.max(0, Math.min(100, value));
+          const validatedValue = Math.max(0, Math.min(100, value));
+          updates.memoryTypes.percentages[type] = validatedValue;
+          config.memoryTypes.percentages[type] = validatedValue;
         }
       }
     }
 
-    // Save updated config
-    saveConfig(config);
+    // Save to unified config
+    saveConfig(updates);
 
     return new Response(
       JSON.stringify({

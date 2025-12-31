@@ -4,6 +4,7 @@
   import { statusStore, statusRefreshTrigger, nodeEditorMode, rightSidebarOpen as rightSidebarStore } from '../stores/navigation';
   import { startPolicyPolling, fetchSecurityPolicy, policyStore, isReadOnly } from '../stores/security-policy';
   import { apiFetch } from '../lib/client/api-config';
+  import { startWindowSession, stopWindowSession, isMultiWindow, windowCount } from '../lib/client/window-session';
   import UserMenu from './UserMenu.svelte';
   import HeadlessClaimBanner from './HeadlessClaimBanner.svelte';
   // FlowEditorLayout is loaded dynamically to avoid bundling @xyflow/svelte in client
@@ -290,6 +291,9 @@
     void fetchCurrentUser();
     document.addEventListener('click', handleGlobalClick, true);
 
+    // Start window session tracking for multi-window support
+    startWindowSession();
+
     // Refresh persona name every 30 seconds (in case persona file changes)
     const personaInterval = setInterval(loadPersonaName, 30000);
 
@@ -303,6 +307,7 @@
       document.removeEventListener('click', handleGlobalClick, true);
       clearInterval(personaInterval);
       stopPolicyPolling();
+      stopWindowSession();
     };
   });
 
@@ -436,6 +441,18 @@
     </div>
 
     <div class="flex items-center gap-2 sm:gap-3">
+      <!-- Multi-window indicator -->
+      {#if $isMultiWindow}
+        <div
+          class="flex items-center gap-1 px-2 py-1 text-xs rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-700"
+          title="Multiple windows detected ({$windowCount} windows). Changes sync automatically."
+        >
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
+          </svg>
+          <span class="hidden sm:inline">{$windowCount}</span>
+        </div>
+      {/if}
       <div class="relative" bind:this={modeMenuAnchor}>
         <button
           class={`mode-menu-trigger ${modeMenuOpen ? 'active' : ''}`}

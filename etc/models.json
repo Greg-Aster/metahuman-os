@@ -13,10 +13,19 @@
   "description": "SYSTEM DEFAULT - Used ONLY for new user initialization. See profile-based models.json",
   "globalSettings": {
     "includePersonaSummary": false,
-    "useAdapter": false,
+    "useAdapter": true,
     "activeAdapter": {
-      "modelName": "qwen3:14b",
-      "baseModel": "qwen3:14b"
+      "modelName": "greggles-vllm-2025-12-31",
+      "activatedAt": "2025-12-31T02:25:24.556Z",
+      "adapterPath": "/media/greggles/STACK/metahuman-profiles/greggles/out/adapters/2025-12-31/2025-12-31-015830-c58f8d/adapter",
+      "dataset": "2025-12-31",
+      "date": "2025-12-31",
+      "status": "loaded",
+      "activatedBy": "full-cycle",
+      "isDualAdapter": false,
+      "runLabel": "2025-12-31-015830-c58f8d",
+      "trainingMethod": "unsloth-remote",
+      "baseModel": "Qwen/Qwen3-14B"
     }
   },
   "defaults": {

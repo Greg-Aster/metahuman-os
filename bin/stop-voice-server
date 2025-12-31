@@ -49,6 +49,35 @@ if [ -f "$SOVITS_PID_FILE" ]; then
   fi
 fi
 
+# Stop Whisper server
+WHISPER_PID_FILE="$REPO_ROOT/logs/run/whisper-server.pid"
+if [ -f "$WHISPER_PID_FILE" ]; then
+  PID=$(cat "$WHISPER_PID_FILE" 2>/dev/null || echo "")
+  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+    echo "  Stopping Whisper server (PID: $PID)..."
+    kill "$PID" 2>/dev/null || true
+    rm -f "$WHISPER_PID_FILE"
+    STOPPED=true
+  else
+    rm -f "$WHISPER_PID_FILE"
+  fi
+fi
+
+# Check for Whisper process by port
+if lsof -ti:9883 > /dev/null 2>&1; then
+  echo "  Stopping Whisper server on port 9883..."
+  pkill -f "whisper_server.py" 2>/dev/null || true
+  STOPPED=true
+fi
+
+# Stop Kokoro server (if managed by mh)
+if [ -x "$REPO_ROOT/bin/mh" ]; then
+  if "$REPO_ROOT/bin/mh" kokoro serve stop >/dev/null 2>&1; then
+    echo "  Stopping Kokoro server..."
+    STOPPED=true
+  fi
+fi
+
 if [ "$STOPPED" = true ]; then
   echo -e "  ${GREEN}✓ Voice servers stopped${NC}"
 else

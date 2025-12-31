@@ -49,20 +49,41 @@ interface TrainingDataConfig {
 }
 
 /**
- * Load training data configuration from etc/training-data.json
+ * Load training data configuration from etc/training.json (unified config)
  */
 function loadTrainingConfig(): TrainingDataConfig {
-  const configPath = path.join(systemPaths.etc, 'training-data.json');
+  const configPath = path.join(systemPaths.etc, 'training.json');
 
   try {
     if (fs.existsSync(configPath)) {
       const content = fs.readFileSync(configPath, 'utf-8');
       const config = JSON.parse(content);
-      console.log('[adapter-builder] Loaded training data config from etc/training-data.json');
-      console.log(`[adapter-builder] - Batch size: ${config.curator.batchSize}`);
-      console.log(`[adapter-builder] - Max samples per source: ${config.collection.maxSamplesPerSource}`);
-      console.log(`[adapter-builder] - Quality threshold: ${config.curator.qualityThreshold}`);
-      return config;
+      console.log('[adapter-builder] Loaded training config from etc/training.json');
+
+      // Support both old flat structure and new nested structure
+      const curator = config.curator || {};
+      const collection = config.data || config.collection || {};
+      const memoryTypes = config.data?.memoryTypes || config.memoryTypes || {};
+
+      console.log(`[adapter-builder] - Batch size: ${curator.batchSize || 100}`);
+      console.log(`[adapter-builder] - Max samples per source: ${collection.maxSamplesPerSource || 3000}`);
+      console.log(`[adapter-builder] - Quality threshold: ${curator.qualityThreshold || 6.0}`);
+
+      return {
+        curator: {
+          batchSize: curator.batchSize || 100,
+          qualityThreshold: curator.qualityThreshold || 6.0,
+          temperature: curator.temperature || 0.3,
+        },
+        collection: {
+          maxDays: collection.maxDays || 999999,
+          maxSamplesPerSource: collection.maxSamplesPerSource || 3000,
+        },
+        memoryTypes: {
+          enabled: memoryTypes.enabled || [],
+          priorities: memoryTypes.priorities || {},
+        },
+      };
     }
   } catch (error) {
     console.warn('[adapter-builder] Failed to load config, using defaults:', error);

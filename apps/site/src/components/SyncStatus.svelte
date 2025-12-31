@@ -16,15 +16,13 @@
   } from '../lib/client/memory-sync';
   import { isMobileApp } from '../lib/client/api-config';
   import {
-    checkForUpdate,
-    downloadUpdate,
-    dismissUpdate,
+    checkForUpdates,
+    downloadAndInstall,
     updateState,
-    hasUpdate,
+    isUpdateAvailable,
     formatFileSize,
     type UpdateState,
-  } from '../lib/client/app-update';
-  import { getSetting } from '../lib/client/local-memory';
+  } from '../lib/client/app-updater';
   import { getRemoteSyncConfig, syncFromRemoteServer } from '../lib/client/profile-sync';
   import SyncManager from './SyncManager.svelte';
 
@@ -47,6 +45,8 @@
   let updateAvailable = false;
   let showUpdateModal = false;
   let isMobile = false;
+  let updateDismissed = false;
+  let showUpdateNotice = false;
 
   // Sync Manager state
   let showSyncManager = false;
@@ -74,8 +74,13 @@
   });
   const unsubPending = hasPendingChanges.subscribe(p => pending = p);
   const unsubConflicts = hasConflicts.subscribe(c => conflicts = c);
-  const unsubUpdate = updateState.subscribe(s => appUpdate = s);
-  const unsubHasUpdate = hasUpdate.subscribe(u => updateAvailable = u);
+  const unsubUpdate = updateState.subscribe(s => {
+    appUpdate = s;
+    if (s.updateAvailable) {
+      updateDismissed = false;
+    }
+  });
+  const unsubHasUpdate = isUpdateAvailable.subscribe(u => updateAvailable = u);
 
   onMount(async () => {
     isMobile = isMobileApp();
@@ -102,6 +107,8 @@
     unsubHasUpdate();
     stopBackgroundSync();
   });
+
+  $: showUpdateNotice = isMobile && updateAvailable && !updateDismissed && !!appUpdate?.latestMobileVersion;
 
   function handleOpenSyncManager() {
     if (syncing) return;
@@ -150,8 +157,7 @@
       // On mobile, also check for app updates
       if (isMobile) {
         try {
-          const serverUrl = await getSetting('syncServerUrl', 'https://mh.dndiy.org');
-          await checkForUpdate(serverUrl);
+          await checkForUpdates();
         } catch (e) {
           console.warn('[SyncStatus] Update check failed:', e);
         }
@@ -224,8 +230,7 @@
       // Check for app updates if requested
       if (options.includes('update') && isMobile) {
         try {
-          const serverUrl = await getSetting('syncServerUrl', 'https://mh.dndiy.org');
-          await checkForUpdate(serverUrl);
+          await checkForUpdates();
         } catch (e) {
           console.warn('[SyncStatus] Update check failed:', e);
         }
@@ -256,12 +261,12 @@
   }
 
   async function handleDownloadUpdate() {
-    await downloadUpdate();
+    await downloadAndInstall();
     showUpdateModal = false;
   }
 
   function handleDismissUpdate() {
-    dismissUpdate();
+    updateDismissed = true;
     showUpdateModal = false;
   }
 
@@ -327,7 +332,7 @@
     class="sync-compact"
     on:click={handleOpenSyncManager}
     disabled={syncing}
-    title={`Sync: ${getStatusLabel()}${updateAvailable ? ' - Update available!' : ''}`}
+    title={`Sync: ${getStatusLabel()}${showUpdateNotice ? ' - Update available!' : ''}`}
   >
     <span class="sync-icon" class:spinning={syncing} style="color: {getStatusColor()}">
       {#if syncing}
@@ -342,7 +347,7 @@
     </span>
     {#if state.pendingCount > 0 || state.conflictCount > 0}
       <span class="sync-badge">{state.pendingCount + state.conflictCount}</span>
-    {:else if updateAvailable}
+    {:else if showUpdateNotice}
       <span class="sync-badge update-badge">⬆️</span>
     {/if}
   </button>
@@ -419,16 +424,16 @@
       {/if}
 
       <!-- App Update Available (mobile only) -->
-      {#if isMobile && updateAvailable && appUpdate}
+      {#if isMobile && showUpdateNotice && appUpdate?.latestMobileVersion}
         <div class="update-available">
           <div class="update-header">
             <span class="update-icon">⬆️</span>
             <span class="update-text">Update Available</span>
           </div>
           <div class="update-details">
-            <span class="update-version">v{appUpdate.currentVersion} → v{appUpdate.latestVersion}</span>
-            {#if appUpdate.fileSize}
-              <span class="update-size">({formatFileSize(appUpdate.fileSize)})</span>
+            <span class="update-version">v{appUpdate.currentVersion} → v{appUpdate.latestMobileVersion.version}</span>
+            {#if appUpdate.latestMobileVersion.fileSize}
+              <span class="update-size">({formatFileSize(appUpdate.latestMobileVersion.fileSize)})</span>
             {/if}
           </div>
           <div class="update-actions">
@@ -443,7 +448,7 @@
       {/if}
 
       <!-- App Version (mobile only, when no update) -->
-      {#if isMobile && !updateAvailable && appUpdate?.currentVersion}
+      {#if isMobile && !showUpdateNotice && appUpdate?.currentVersion}
         <div class="info-row">
           <span class="info-label">App version:</span>
           <span class="info-value">{appUpdate.currentVersion}</span>
@@ -496,7 +501,7 @@
 {/if}
 
 <!-- App Update Modal -->
-{#if showUpdateModal && appUpdate}
+{#if showUpdateModal && appUpdate?.latestMobileVersion}
   <div class="modal-overlay" on:click={() => showUpdateModal = false}>
     <div class="modal-content update-modal" on:click|stopPropagation>
       <div class="modal-header">
@@ -513,22 +518,22 @@
           <span class="version-arrow">→</span>
           <div class="version-badge new">
             <span class="version-label">New</span>
-            <span class="version-number">v{appUpdate.latestVersion}</span>
+            <span class="version-number">v{appUpdate.latestMobileVersion.version}</span>
           </div>
         </div>
 
-        {#if appUpdate.releaseNotes && appUpdate.releaseNotes !== 'No release notes provided.'}
+        {#if appUpdate.latestMobileVersion.releaseNotes && appUpdate.latestMobileVersion.releaseNotes !== 'No release notes provided.'}
           <div class="release-notes">
             <h4>What's New</h4>
-            <p>{appUpdate.releaseNotes}</p>
+            <p>{appUpdate.latestMobileVersion.releaseNotes}</p>
           </div>
         {/if}
 
         <div class="update-meta">
-          {#if appUpdate.fileSize}
+          {#if appUpdate.latestMobileVersion.fileSize}
             <div class="meta-item">
               <span class="meta-label">Download size:</span>
-              <span class="meta-value">{formatFileSize(appUpdate.fileSize)}</span>
+              <span class="meta-value">{formatFileSize(appUpdate.latestMobileVersion.fileSize)}</span>
             </div>
           {/if}
           {#if appUpdate.lastChecked}

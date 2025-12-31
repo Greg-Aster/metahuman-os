@@ -34,9 +34,10 @@ interface CuratedMemory {
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  const memoriesInput = inputs[0];
-  const memories: (EpisodicMemory & { path: string })[] = memoriesInput?.memories || [];
-  const personaSummary = inputs[1] as string;
+  // Inputs are keyed by targetHandle name from graph edges, not array index
+  const memoriesInput = inputs.memories || inputs[0];
+  const memories: (EpisodicMemory & { path: string })[] = memoriesInput?.memories || memoriesInput || [];
+  const personaSummary = (inputs.personaSummary || inputs[1]) as string;
   const temperature = properties?.temperature || 0.3;
   const username = context.userId || context.username;
 

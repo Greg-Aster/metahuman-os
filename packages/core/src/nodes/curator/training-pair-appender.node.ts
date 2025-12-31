@@ -9,7 +9,8 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { getProfilePaths } from '../../index.js';
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  const trainingPairs = inputs[0]?.trainingPairs || [];
+  // Inputs are keyed by targetHandle name from graph edges, not array index
+  const trainingPairs = inputs.trainingPairs?.trainingPairs || inputs.trainingPairs || inputs[0]?.trainingPairs || [];
 
   if (!context.userId) {
     return {

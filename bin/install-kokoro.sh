@@ -294,8 +294,8 @@ async def list_voices():
     # Parse VOICES.md if available
     voices_file = Path(__file__).parent / "VOICES.md"
     if voices_file.exists():
-        # TODO: Parse VOICES.md and return structured data
-        return {"voices": ["af_heart", "af_bella", "af_sarah"]}
+    # Placeholder: return a small default list until parsing is implemented.
+    return {"voices": ["af_heart", "af_bella", "af_sarah"]}
 
     return {"voices": []}
 
@@ -336,10 +336,7 @@ print("This feature requires StyleTTS2 fine-tuning integration")
 print("See: https://github.com/hexgrad/kokoro for training guidance")
 sys.exit(1)
 
-# TODO: Implement voicepack training
-# - Load training audio/transcripts
-# - Fine-tune style encoder
-# - Export .pt voicepack
+# Voicepack training is not implemented yet.
 EOF
 
 chmod +x "$KOKORO_DIR/build_voicepack.py"

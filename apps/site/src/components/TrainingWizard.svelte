@@ -47,6 +47,7 @@
     days_recent: number;
     old_samples: number;
     lora_rank: number;
+    lora_alpha: number; // LoRA alpha scaling (typically 2x rank)
     learning_rate: number;
     per_device_train_batch_size: number;
     gradient_accumulation_steps: number;
@@ -77,15 +78,17 @@
   ];
 
   // Training config presets for Ollama (GGUF output)
+  // Values aligned with etc/training.json
   const loraConfigPresetOllama: TrainingConfig = {
     base_model: 'unsloth/Qwen3-14B',
-    num_train_epochs: 3,
+    num_train_epochs: 5,
     max_samples: 3000,
     monthly_training: true,
     days_recent: 30,
     old_samples: 3000,
-    lora_rank: 8,
-    learning_rate: 0.0002, // 2e-4 (higher for LoRA)
+    lora_rank: 16,
+    lora_alpha: 32, // 2x rank for stable training
+    learning_rate: 0.0003, // 3e-4 (optimized for personality capture)
     per_device_train_batch_size: 1,
     gradient_accumulation_steps: 16,
     max_seq_length: 2048,
@@ -94,15 +97,17 @@
   };
 
   // Training config presets for vLLM (safetensors output)
+  // Values aligned with etc/training.json
   const loraConfigPresetVllm: TrainingConfig = {
     base_model: 'Qwen/Qwen3-14B',
-    num_train_epochs: 3,
+    num_train_epochs: 5,
     max_samples: 3000,
     monthly_training: true,
     days_recent: 30,
     old_samples: 3000,
-    lora_rank: 8,
-    learning_rate: 0.0002, // 2e-4 (higher for LoRA)
+    lora_rank: 16,
+    lora_alpha: 32, // 2x rank for stable training
+    learning_rate: 0.0003, // 3e-4 (optimized for personality capture)
     per_device_train_batch_size: 1,
     gradient_accumulation_steps: 16,
     max_seq_length: 2048,
@@ -121,6 +126,7 @@
     days_recent: 30,
     old_samples: 5000,
     lora_rank: 0, // Not used for fine-tuning
+    lora_alpha: 0, // Not used for fine-tuning
     learning_rate: 0.00002, // 2e-5 (lower for fine-tuning)
     per_device_train_batch_size: 4,
     gradient_accumulation_steps: 8,

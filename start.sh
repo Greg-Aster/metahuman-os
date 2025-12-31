@@ -433,38 +433,7 @@ cleanup_stale_files
 print_status "Stale files cleaned"
 echo
 
-# Start agents and services (like run-with-agents does for pnpm dev)
-echo "Starting MetaHuman agents and services..."
-
-# Check headless mode before starting agents
-RUNTIME_CONFIG="$REPO_ROOT/etc/runtime.json"
-if [ -f "$RUNTIME_CONFIG" ]; then
-  HEADLESS=$(grep -o '"headless"[[:space:]]*:[[:space:]]*true' "$RUNTIME_CONFIG" || echo "")
-  if [ -n "$HEADLESS" ]; then
-    print_warning "Headless mode active - skipping agent startup"
-  else
-    "$REPO_ROOT/bin/mh" start --restart 2>/dev/null || print_warning "Failed to start agents"
-  fi
-else
-  "$REPO_ROOT/bin/mh" start --restart 2>/dev/null || print_warning "Failed to start agents"
-fi
-
-# Auto-start Cloudflare tunnel if enabled
-"$REPO_ROOT/bin/start-cloudflare" 2>/dev/null || true
-
-# Auto-start voice server based on active TTS provider
-"$REPO_ROOT/bin/start-voice-server" 2>/dev/null || true
-
-# Auto-start terminal server
-"$REPO_ROOT/bin/start-terminal" 2>/dev/null || true
-
-# Auto-start local model service (llama.cpp for unified embeddings on web + mobile)
-"$REPO_ROOT/bin/start-local-models" 2>/dev/null || true
-
-print_status "Services started"
-echo
-
-# Start the web server
+# Start the web server (services are started from in-app terminal)
 echo "Starting MetaHuman OS web interface..."
 echo
 
@@ -484,23 +453,20 @@ fi
 
 print_status "Starting production server..."
 print_status "Web interface will be available at: http://localhost:4321"
+print_warning "Services will start when you open the Terminal tab in the app"
 echo
 
 # Display helpful information
 echo "=========================================="
-echo "  MetaHuman OS Production Server          "
+echo "  MetaHuman OS Web Server                 "
 echo "=========================================="
 echo "URL: http://localhost:4321"
 echo "Press Ctrl+C to stop the server"
 echo
-echo "Features available:"
-echo "  - Chat with your digital personality"
-echo "  - Task management"
-echo "  - Memory browsing"
-echo "  - Persona customization"
-echo "  - Agent monitoring"
-echo
-echo "To stop the server, press Ctrl+C"
+echo "Open the Terminal tab in the app to start:"
+echo "    - Agents and background services"
+echo "    - Voice server"
+echo "    - Local models"
 echo "=========================================="
 echo
 
@@ -523,10 +489,6 @@ elif command -v open >/dev/null 2>&1; then
   open_browser_when_ready "open"
 fi
 
-# Start the production server (run in foreground, not exec, so trap works)
-node dist/server/entry.mjs &
-SERVER_PID=$!
-echo "Server started with PID: $SERVER_PID"
-
-# Wait for server to exit
-wait $SERVER_PID
+# Start the production server (pipe to log file for in-app terminal)
+mkdir -p "$REPO_ROOT/logs"
+node dist/server/entry.mjs 2>&1 | tee "$REPO_ROOT/logs/server.log"

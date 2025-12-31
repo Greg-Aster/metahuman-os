@@ -122,6 +122,8 @@ export function buildUnifiedRequest(params: {
     headers: params.headers || {},
     user,
     params: {},
+    // Include session token for window session and other handlers
+    sessionId: sessionToken,
     // Include session token in metadata for handlers that need it (e.g., logout)
     metadata: sessionToken ? { sessionToken } : undefined,
   };

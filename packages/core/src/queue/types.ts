@@ -26,7 +26,8 @@ export type TaskType =
   // User-facing
   | 'user_message'
   // Memory operations
-  | 'memory_curate'
+  | 'memory_curate'    // organizer: enriches memories with tags/entities
+  | 'training_curate'  // curator: prepares memories for LLM training
   | 'index_build'
   | 'semantic_search'
   // Cognitive agents
@@ -51,6 +52,7 @@ export const TASK_LANE_MAP: Record<TaskType, ResourceLaneId> = {
   // Local LLM lane (sequential, GPU)
   user_message: 'local-llm',
   memory_curate: 'local-llm',
+  training_curate: 'local-llm',
   reflect: 'local-llm',
   curiosity: 'local-llm',
   inner_curiosity: 'local-llm',
@@ -76,6 +78,7 @@ export const DEFAULT_PRIORITIES: Record<TaskType, Priority> = {
   user_message: 'critical',
   desire_execute: 'high',
   memory_curate: 'normal',
+  training_curate: 'normal',
   index_build: 'normal',
   semantic_search: 'normal',
   reflect: 'normal',

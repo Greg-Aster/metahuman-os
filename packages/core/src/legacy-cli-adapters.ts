@@ -13,11 +13,17 @@
 
 import { audit } from './audit.js';
 import type { CLIBackendConfig } from './tool-executor-config.js';
-import type { ToolExecutorResult } from './tool-executor-backends.js';
 
 // ============================================================================
 // Common Types
 // ============================================================================
+
+export interface ToolExecutorResult {
+  success: boolean;
+  output?: string;
+  error?: string;
+  executionTime?: number;
+}
 
 interface CLIExecutionOptions {
   timeout?: number;

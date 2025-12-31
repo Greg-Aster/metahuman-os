@@ -48,9 +48,6 @@
       case 'ApprovalQueue':
         module = await import('./ApprovalQueue.svelte');
         break;
-      case 'Terminal':
-        module = await import('./Terminal.svelte');
-        break;
       case 'MemoryControls':
         module = await import('./MemoryControls.svelte');
         break;

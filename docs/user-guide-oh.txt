@@ -1,6 +1,4 @@
 
-
-Claude’s Plan
 MetaHuman OS Documentation Overhaul Plan
 Overview
 Complete documentation update with hierarchical reorganization over 3-4 months, working systematically through all files.

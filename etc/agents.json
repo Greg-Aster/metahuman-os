@@ -44,7 +44,7 @@
       "enabled": true,
       "type": "activity",
       "priority": "normal",
-      "agentPath": "curator.ts",
+      "agentPath": "curator/index.ts",
       "usesLLM": true,
       "inactivityThreshold": 600,
       "runOnBoot": false,

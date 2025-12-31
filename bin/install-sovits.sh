@@ -12,7 +12,7 @@ echo "========================================="
 echo ""
 
 # Check Python version
-echo "[1/4] Checking Python version..."
+echo "[1/7] Checking Python version..."
 PYTHON_CMD=""
 for cmd in python3.11 python3.10 python3.9 python3 python; do
     if command -v "$cmd" &> /dev/null; then
@@ -35,7 +35,7 @@ fi
 
 # Check CUDA availability
 echo ""
-echo "[2/4] Checking CUDA availability..."
+echo "[2/7] Checking CUDA availability..."
 if command -v nvidia-smi &> /dev/null; then
     CUDA_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
     if [ -n "$CUDA_VERSION" ]; then
@@ -49,7 +49,7 @@ fi
 
 # Create external directory
 echo ""
-echo "[3/4] Setting up directories..."
+echo "[3/7] Setting up directories..."
 mkdir -p "$METAHUMAN_ROOT/external"
 mkdir -p "$METAHUMAN_ROOT/out/voices/sovits"
 

@@ -354,6 +354,11 @@
     @apply flex-1 overflow-y-auto overflow-x-hidden;
   }
 
+  /* Terminal */
+  .terminal-container {
+    @apply flex-1 overflow-hidden;
+  }
+
   .messages-list {
     @apply flex flex-col gap-6 p-8 max-w-3xl mx-auto w-full;
   }

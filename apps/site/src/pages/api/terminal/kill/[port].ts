@@ -1,75 +1,65 @@
 import type { APIRoute } from 'astro';
-import * as fs from 'fs';
-import * as path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 
-const REPO_ROOT = path.resolve(process.cwd(), '../..');
-const LOG_DIR = path.join(REPO_ROOT, 'logs/run');
+const execAsync = promisify(exec);
 
 export const POST: APIRoute = async ({ params }) => {
+  const port = parseInt(params.port || '', 10);
+
+  if (isNaN(port) || port < 3001 || port > 3100) {
+    return new Response(JSON.stringify({
+      error: 'Invalid port number',
+      port
+    }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
   try {
-    const port = parseInt(params.port || '', 10);
+    // Find the PID of the ttyd process on this port
+    const { stdout: pgrepOut } = await execAsync(`pgrep -f "ttyd --port ${port}" || true`);
+    const pids = pgrepOut.trim().split('\n').filter(Boolean);
 
-    if (isNaN(port)) {
+    if (pids.length === 0) {
       return new Response(JSON.stringify({
-        error: 'Invalid port'
+        success: true,
+        message: 'No terminal found on this port',
+        port,
+        killed: false
       }), {
-        status: 400,
+        status: 200,
         headers: { 'Content-Type': 'application/json' }
       });
     }
 
-    const pidFile = path.join(LOG_DIR, `terminal-${port}.pid`);
-
-    if (!fs.existsSync(pidFile)) {
-      return new Response(JSON.stringify({
-        error: 'Terminal not found'
-      }), {
-        status: 404,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    // Read PID and kill process
-    const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
-
-    try {
-      process.kill(pid, 'SIGTERM');
-
-      // Wait a moment then check if it's still running
-      await new Promise(resolve => setTimeout(resolve, 500));
-
+    // Kill each matching process
+    for (const pid of pids) {
       try {
-        process.kill(pid, 0); // Check if process exists
-        // Still running, force kill
-        process.kill(pid, 'SIGKILL');
-      } catch {
-        // Process is dead, good
+        await execAsync(`kill ${pid}`);
+        console.log(`[terminal/kill] Killed ttyd process ${pid} on port ${port}`);
+      } catch (killError) {
+        // Process might already be dead
+        console.warn(`[terminal/kill] Failed to kill PID ${pid}:`, killError);
       }
-    } catch (error) {
-      // Process might already be dead
-      console.log(`[Terminal Kill] Process ${pid} might already be dead`);
-    }
-
-    // Clean up files
-    fs.unlinkSync(pidFile);
-
-    const logFile = path.join(LOG_DIR, `terminal-${port}.log`);
-    if (fs.existsSync(logFile)) {
-      fs.unlinkSync(logFile);
     }
 
     return new Response(JSON.stringify({
       success: true,
-      port
+      message: `Killed terminal on port ${port}`,
+      port,
+      killed: true,
+      pids: pids.map(p => parseInt(p, 10))
     }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
     });
-
   } catch (error) {
-    console.error('[Terminal Kill] Error:', error);
+    console.error(`[terminal/kill] Error killing terminal on port ${port}:`, error);
     return new Response(JSON.stringify({
-      error: error instanceof Error ? error.message : 'Failed to kill terminal'
+      error: 'Failed to kill terminal',
+      port
     }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }

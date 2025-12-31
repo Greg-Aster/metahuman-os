@@ -27,7 +27,7 @@
   },
   "bigBrotherMode": {
     "enabled": false,
-    "provider": "claude-code",
+    "provider": "open-interpreter",
     "delegateAll": true,
     "escalateOnStuck": true,
     "escalateOnRepeatedFailures": true,

@@ -5,6 +5,7 @@
   import InputArea from './chat/InputArea.svelte';
   import MessageList from './chat/MessageList.svelte';
   import ApprovalPrompt from './ApprovalPrompt.svelte';
+  import TerminalManager from './TerminalManager.svelte';
   import { canUseOperator, currentMode } from '../stores/security-policy';
   import { triggerClearAuditStream } from '../stores/clear-events';
   import { yoloModeStore } from '../stores/navigation';
@@ -34,7 +35,7 @@
   let ttsQueueStream: EventSource | null = null; // TTS queue from node editor
   let lastInnerMessageCount = 0; // Track previous message count for inner dialogue TTS detection
   let lastConversationMessageCount = 0; // Track previous message count for conversation TTS detection
-  let mode: 'conversation' | 'inner' = 'conversation';
+  let mode: 'conversation' | 'inner' | 'terminal' = 'conversation';
   let lengthMode: 'auto' | 'concise' | 'detailed' = 'auto';
   let messagesContainer: HTMLDivElement;
   let shouldAutoScroll = true;
@@ -61,8 +62,9 @@
   const { isPlaying: ttsIsPlaying, isLoading: ttsIsLoading } = ttsApi;
 
   // Initialize Messages composable
+  // Terminal mode doesn't use messages, default to 'conversation' for the messages API
   const messagesApi = useMessages({
-    getMode: () => mode,
+    getMode: () => mode === 'terminal' ? 'conversation' : mode,
     onMessagesChange: (msgs) => {
       // This handles any side effects when messages change
       // (currently none needed, but useful for future extensions)
@@ -350,8 +352,11 @@
 
     // Connect to buffer stream - this loads initial history AND provides real-time updates
     // Uses fs.watch on server, no polling needed
-    connectBufferStream(mode);
-    console.log(`[ChatInterface] Connected to ${mode} buffer stream`);
+    // Only connect for conversation/inner modes (terminal has its own interface)
+    if (mode !== 'terminal') {
+      connectBufferStream(mode);
+      console.log(`[ChatInterface] Connected to ${mode} buffer stream`);
+    }
 
     // Connect to TTS queue stream - watches for TTS items from cognitive graph nodes
     connectTTSQueueStream();
@@ -369,7 +374,7 @@
 
     // Reconnect buffer stream when tab becomes visible (in case connection dropped)
     const handleVisibilityChange = () => {
-      if (!document.hidden && (!innerDialogueStream || innerDialogueStream.readyState === EventSource.CLOSED)) {
+      if (!document.hidden && mode !== 'terminal' && (!innerDialogueStream || innerDialogueStream.readyState === EventSource.CLOSED)) {
         console.log('[chat] Tab visible, reconnecting buffer stream');
         connectBufferStream(mode);
       }
@@ -1262,6 +1267,14 @@
         <span class="mode-icon" aria-hidden="true">💭</span>
         <span class="mode-label">Inner Dialogue</span>
       </button>
+      <button
+        class={mode === 'terminal' ? 'mode-btn active' : 'mode-btn'}
+        on:click={() => { mode = 'terminal'; }}
+        aria-label="Terminal mode"
+      >
+        <span class="mode-icon" aria-hidden="true">💻</span>
+        <span class="mode-label">Terminal</span>
+      </button>
     </div>
 
     <!-- Length Toggle -->
@@ -1413,6 +1426,7 @@
     </div>
   {/if}
 
+  {#if mode !== 'terminal'}
   <div class="messages-container" bind:this={messagesContainer}>
     {#if $messages.length === 0}
       <div class="welcome-screen">
@@ -1535,4 +1549,9 @@
       on:lengthModeChange={(e) => { lengthMode = e.detail.mode; }}
     />
   </div>
+  {:else}
+    <div class="terminal-container">
+      <TerminalManager />
+    </div>
+  {/if}
 </div>

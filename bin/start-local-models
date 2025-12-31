@@ -54,25 +54,27 @@ mkdir -p "$MODELS_DIR"
 
 echo "Starting local model service on port $LOCAL_MODELS_PORT..."
 
-# Check if we have built dist or need to use tsx
-SERVICE_DIR="$REPO_ROOT/packages/local-model-service"
-if [ -f "$SERVICE_DIR/dist/index.js" ]; then
-  # Production mode - use built js
-  nohup node "$SERVICE_DIR/dist/index.js" \
-    >"$LOG_DIR/local-models.log" 2>&1 &
-else
-  # Dev mode - use tsx
-  nohup npx tsx "$SERVICE_DIR/src/index.ts" \
-    >"$LOG_DIR/local-models.log" 2>&1 &
-fi
-
-echo $! > "$PID_FILE"
-
 # Export environment for the service
 export PORT="$LOCAL_MODELS_PORT"
 export HOST="127.0.0.1"
 export MODELS_DIR="$MODELS_DIR"
 export CONFIG_PATH="$CONFIG_FILE"
+
+# Check if we have built dist or need to use tsx
+SERVICE_DIR="$REPO_ROOT/packages/local-model-service"
+if [ -f "$SERVICE_DIR/dist/index.js" ]; then
+  # Production mode - use built js
+  nohup env PORT="$PORT" HOST="$HOST" MODELS_DIR="$MODELS_DIR" CONFIG_PATH="$CONFIG_FILE" \
+    node "$SERVICE_DIR/dist/index.js" \
+    >"$LOG_DIR/local-models.log" 2>&1 &
+else
+  # Dev mode - use tsx
+  nohup env PORT="$PORT" HOST="$HOST" MODELS_DIR="$MODELS_DIR" CONFIG_PATH="$CONFIG_FILE" \
+    npx tsx "$SERVICE_DIR/src/index.ts" \
+    >"$LOG_DIR/local-models.log" 2>&1 &
+fi
+
+echo $! > "$PID_FILE"
 
 # Wait for service to become healthy
 echo "Waiting for service to start..."

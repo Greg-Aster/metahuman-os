@@ -270,6 +270,8 @@ export * from './context';  // DEPRECATED - will be removed
 export * from './config';
 // users.ts exported at top of file (must load before path-builder)
 export * from './sessions';
+export * from './window-session';  // Multi-window support
+export * from './buffer-locks';     // Conversation buffer locking
 export * from './profile';
 
 // Profile storage management
@@ -580,10 +582,8 @@ export * from './drift/index.js';
 // System Coder (error capture, fix management, maintenance)
 export * from './system-coder/index.js';
 
-// Tool Executor (replaces Big Brother CLI escalation)
+// Escalation backends (Big Brother mode - external LLM tool executors)
 export * from './tool-executor-config.js';
-export * from './tool-executor-backends.js';
-export * from './tool-executor-compat.js';
 export * from './open-interpreter.js';
 export * from './legacy-cli-adapters.js';
 

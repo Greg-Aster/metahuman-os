@@ -23,11 +23,11 @@ interface TrainingDataConfig {
 }
 
 /**
- * Load training data configuration from etc/training-data.json
+ * Load training data configuration from etc/training.json (unified config)
  * This controls which memory types are included and their sampling weights
  */
 function loadTrainingDataConfig(): TrainingDataConfig {
-  const configPath = path.join(systemPaths.etc, 'training-data.json');
+  const configPath = path.join(systemPaths.etc, 'training.json');
 
   const defaults: TrainingDataConfig = {
     memoryTypes: {
@@ -51,12 +51,15 @@ function loadTrainingDataConfig(): TrainingDataConfig {
     if (fs.existsSync(configPath)) {
       const content = fs.readFileSync(configPath, 'utf-8');
       const config = JSON.parse(content);
-      console.log('[curated-aggregator] Loaded training data config from etc/training-data.json');
+      console.log('[curated-aggregator] Loaded training config from etc/training.json');
 
-      if (config.memoryTypes?.percentages) {
+      // Support both old flat structure and new nested structure
+      const percentages = config.data?.memoryTypes?.percentages || config.memoryTypes?.percentages;
+
+      if (percentages) {
         console.log('[curated-aggregator] Memory type percentages:');
-        for (const [type, pct] of Object.entries(config.memoryTypes.percentages)) {
-          if ((pct as number) > 0) {
+        for (const [type, pct] of Object.entries(percentages)) {
+          if (typeof pct === 'number' && pct > 0) {
             console.log(`  - ${type}: ${pct}%`);
           }
         }
@@ -64,12 +67,12 @@ function loadTrainingDataConfig(): TrainingDataConfig {
 
       return {
         memoryTypes: {
-          percentages: config.memoryTypes?.percentages || defaults.memoryTypes.percentages,
+          percentages: percentages || defaults.memoryTypes.percentages,
         },
       };
     }
   } catch (error) {
-    console.warn('[curated-aggregator] Failed to load training data config, using defaults:', error);
+    console.warn('[curated-aggregator] Failed to load training config, using defaults:', error);
   }
 
   console.log('[curated-aggregator] Using default training data config (user-focused)');
@@ -77,8 +80,12 @@ function loadTrainingDataConfig(): TrainingDataConfig {
 }
 
 /**
- * Filter and sample samples according to training data config percentages
- * This ensures the training data is weighted toward user inputs
+ * Filter and sample samples using "pie chart" logic:
+ * 1. PRIMARY types (conversation, observation, therapy_session) = 100% included (user voice)
+ * 2. SECONDARY types (reflection, inner_dialogue, etc.) = capped as percentage OF primary
+ *
+ * This ensures we never throw away valuable user-generated content while
+ * limiting LLM-generated content to a reasonable supplemental ratio.
  */
 function sampleBySourceType(samples: CuratedSample[], config: TrainingDataConfig, maxTotal: number): CuratedSample[] {
   const rawPercentages = config.memoryTypes.percentages;
@@ -104,61 +111,84 @@ function sampleBySourceType(samples: CuratedSample[], config: TrainingDataConfig
     console.log(`  - ${type}: ${items.length}`);
   }
 
-  // Calculate how many to take from each type based on percentages
+  // PRIMARY types: user-generated content - include 100%
+  const primaryTypes = ['conversation', 'observation', 'therapy_session', 'journal'];
+  // SECONDARY types: LLM-generated or supplemental - cap as percentage of primary
+  const secondaryTypes = ['reflection', 'reflection_summary', 'inner_dialogue', 'dream', 'curiosity_question', 'decision', 'summary'];
+
   const filtered: CuratedSample[] = [];
-  const totalPct = Object.values(percentages).reduce((sum, p) => sum + p, 0);
-
-  if (totalPct === 0) {
-    console.warn('[curated-aggregator] All percentages are 0, returning empty dataset');
-    return [];
-  }
-
-  // Track which types we've processed
   const processedTypes = new Set<string>();
 
-  for (const [type, pct] of Object.entries(percentages)) {
+  // Step 1: Include ALL primary types (user voice = most valuable)
+  let primaryCount = 0;
+  for (const type of primaryTypes) {
     processedTypes.add(type);
-    const targetCount = Math.round((pct / totalPct) * maxTotal);
     const available = byType[type] || [];
-
-    if (targetCount === 0 || available.length === 0) continue;
-
-    // Shuffle and take up to targetCount
-    const shuffled = [...available].sort(() => Math.random() - 0.5);
-    const taken = shuffled.slice(0, Math.min(targetCount, available.length));
-    filtered.push(...taken);
-
-    if (taken.length > 0) {
-      console.log(`[curated-aggregator] Sampled ${taken.length}/${available.length} ${type} samples (target: ${targetCount} at ${pct}%)`);
+    if (available.length > 0) {
+      filtered.push(...available);
+      primaryCount += available.length;
+      console.log(`[curated-aggregator] PRIMARY: Included ALL ${available.length} ${type} samples (100%)`);
     }
   }
 
-  // Handle unmapped types (action, fragment, unknown, etc.) - include them under 'conversation' quota
-  // This ensures we don't lose valuable training data that has non-standard source_type values
+  console.log(`[curated-aggregator] Total primary (user voice) samples: ${primaryCount}`);
+
+  // Step 2: Add secondary types as a RATIO of primary data
+  // If primary = 800, and inner_dialogue has 3% weight, we add 800 * 0.03 = 24 samples
+  // This prevents LLM-generated content from overwhelming user voice
+  const secondaryPctTotal = secondaryTypes.reduce((sum, t) => sum + (percentages[t] || 0), 0);
+
+  if (secondaryPctTotal > 0 && primaryCount > 0) {
+    for (const type of secondaryTypes) {
+      processedTypes.add(type);
+      const pct = percentages[type] || 0;
+      if (pct === 0) continue;
+
+      const available = byType[type] || [];
+      if (available.length === 0) continue;
+
+      // Calculate target as percentage of primary data
+      // e.g., if primary=800 and inner_dialogue=3%, target = 800 * 0.03 = 24
+      const targetCount = Math.round(primaryCount * (pct / 100));
+
+      if (targetCount === 0) continue;
+
+      // Shuffle and take up to targetCount
+      const shuffled = [...available].sort(() => Math.random() - 0.5);
+      const taken = shuffled.slice(0, Math.min(targetCount, available.length));
+      filtered.push(...taken);
+
+      if (taken.length > 0) {
+        console.log(`[curated-aggregator] SECONDARY: Sampled ${taken.length}/${available.length} ${type} samples (${pct}% of primary = target ${targetCount})`);
+      }
+    }
+  }
+
+  // Step 3: Handle unmapped types - include them as primary (assume user content)
   const unmappedTypes = Object.keys(byType).filter(t => !processedTypes.has(t));
   if (unmappedTypes.length > 0) {
     console.log(`[curated-aggregator] Found unmapped source types: ${unmappedTypes.join(', ')}`);
-    // Include unmapped types proportionally to remaining quota
-    const currentCount = filtered.length;
-    const remainingQuota = Math.max(0, maxTotal - currentCount);
-    if (remainingQuota > 0) {
-      const unmappedSamples: CuratedSample[] = [];
-      for (const type of unmappedTypes) {
-        unmappedSamples.push(...byType[type]);
-      }
-      const shuffled = [...unmappedSamples].sort(() => Math.random() - 0.5);
-      const taken = shuffled.slice(0, Math.min(remainingQuota, unmappedSamples.length));
-      filtered.push(...taken);
-      if (taken.length > 0) {
-        console.log(`[curated-aggregator] Added ${taken.length} samples from unmapped types`);
+    for (const type of unmappedTypes) {
+      const available = byType[type] || [];
+      if (available.length > 0) {
+        filtered.push(...available);
+        console.log(`[curated-aggregator] UNMAPPED: Included ALL ${available.length} ${type} samples (treated as primary)`);
       }
     }
   }
 
-  console.log(`[curated-aggregator] Total after filtering: ${filtered.length} samples (from ${samples.length} total)`);
+  // Step 4: Apply maxTotal cap if needed (safety limit)
+  let finalSamples = filtered;
+  if (filtered.length > maxTotal) {
+    console.log(`[curated-aggregator] Applying maxTotal cap: ${filtered.length} -> ${maxTotal}`);
+    // Shuffle and cap, but this should rarely happen with new logic
+    finalSamples = [...filtered].sort(() => Math.random() - 0.5).slice(0, maxTotal);
+  }
+
+  console.log(`[curated-aggregator] Total after filtering: ${finalSamples.length} samples (from ${samples.length} total)`);
 
   // Final shuffle to mix types
-  return filtered.sort(() => Math.random() - 0.5);
+  return finalSamples.sort(() => Math.random() - 0.5);
 }
 
 export type CognitiveMode = 'dual' | 'emulation' | 'agent';
@@ -362,7 +392,7 @@ async function mainWithContext() {
 
   if (samples.length === 0) {
     console.error('[curated-aggregator] ERROR: No samples remaining after type filtering!');
-    console.error('Check your memory type percentages in etc/training-data.json');
+    console.error('Check your memory type percentages in etc/training.json → data.memoryTypes.percentages');
     process.exit(1);
   }
 

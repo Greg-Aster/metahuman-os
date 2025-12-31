@@ -307,7 +307,8 @@ function resolveEventCategory(event: EpisodicEvent): string {
   if (type === 'audio') return 'audio';
 
   // Tag-driven categories
-  if (tags.has('ingested') || tags.has('ai')) return 'ai-ingestor';
+  // NOTE: 'ingested' and 'ai' tags no longer route to separate directory
+  // They now go to the default episodic directory so training pipeline can find them
   if (tags.has('curated')) return 'curated';
   if (tags.has('audio') || tags.has('transcript')) return 'audio';
 

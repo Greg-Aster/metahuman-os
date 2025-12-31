@@ -8,18 +8,21 @@
     formatFileSize,
     formatRelativeTime,
     initUpdateChecker,
+    type UpdateState,
   } from '../lib/client/app-updater';
 
-  let state = {
+  let state: UpdateState = {
     checking: false,
-    downloading: false,
-    downloadProgress: 0,
+    updating: false,
+    updateProgress: 0,
+    updateAvailable: false,
+    error: null,
+    lastChecked: null,
+    platform: 'unknown',
     currentVersion: '0.0.0',
     currentVersionCode: 0,
-    latestVersion: null as any,
-    updateAvailable: false,
-    error: null as string | null,
-    lastChecked: null as string | null,
+    latestMobileVersion: null,
+    serverUpdateInfo: null,
   };
 
   let isMobile = false;
@@ -53,7 +56,7 @@
 
   function getStatusIcon(): string {
     if (state.checking) return '↻';
-    if (state.downloading) return '⬇';
+    if (state.updating) return '⬇';
     if (state.updateAvailable) return '🆕';
     return '✓';
   }
@@ -71,7 +74,7 @@
     <button
       class="check-btn"
       on:click={handleCheckForUpdates}
-      disabled={state.checking || state.downloading}
+      disabled={state.checking || state.updating}
     >
       {#if state.checking}
         <span class="spinner">↻</span> Checking...
@@ -104,7 +107,7 @@
     </div>
 
     <!-- Update Available -->
-    {#if state.latestVersion}
+    {#if state.latestMobileVersion}
       <div class="update-card" class:available={state.updateAvailable}>
         <div class="update-header">
           <span class="update-icon" style="color: {getStatusColor()}">{getStatusIcon()}</span>
@@ -121,37 +124,37 @@
           <div class="update-details">
             <div class="detail-row">
               <span class="label">New Version:</span>
-              <span class="value">{state.latestVersion.version}</span>
+              <span class="value">{state.latestMobileVersion.version}</span>
             </div>
             <div class="detail-row">
               <span class="label">Size:</span>
-              <span class="value">{formatFileSize(state.latestVersion.fileSize)}</span>
+              <span class="value">{formatFileSize(state.latestMobileVersion.fileSize)}</span>
             </div>
             <div class="detail-row">
               <span class="label">Released:</span>
-              <span class="value">{state.latestVersion.releaseDate}</span>
+              <span class="value">{state.latestMobileVersion.releaseDate}</span>
             </div>
 
-            {#if state.latestVersion.releaseNotes}
+            {#if state.latestMobileVersion.releaseNotes}
               <div class="release-notes">
                 <span class="label">What's New:</span>
-                <p>{state.latestVersion.releaseNotes}</p>
+                <p>{state.latestMobileVersion.releaseNotes}</p>
               </div>
             {/if}
 
             <!-- Download Button / Progress -->
-            <div class="download-section">
-              {#if state.downloading}
+          <div class="download-section">
+              {#if state.updating}
                 <div class="download-progress">
-                  <div class="progress-bar" style="width: {state.downloadProgress}%"></div>
-                  <span class="progress-text">{state.downloadProgress}%</span>
+                  <div class="progress-bar" style="width: {state.updateProgress}%"></div>
+                  <span class="progress-text">{state.updateProgress}%</span>
                 </div>
                 <p class="download-hint">Download will open installer when complete</p>
               {:else}
                 <button
                   class="download-btn"
                   on:click={handleDownload}
-                  disabled={state.downloading}
+                  disabled={state.updating}
                 >
                   ⬇ Download & Install
                 </button>

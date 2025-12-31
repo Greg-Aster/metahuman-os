@@ -20,6 +20,7 @@ import { appendReflectionToBuffer } from '../../conversation-buffer.js';
 const TASK_DESCRIPTIONS: Record<TaskType, string> = {
   user_message: 'Process a user chat message (highest priority)',
   memory_curate: 'Run organizer agent to enrich memories with tags and entities',
+  training_curate: 'Run curator agent to prepare memories for LoRA training data',
   index_build: 'Build or update the vector embeddings index for semantic search',
   reflect: 'Generate internal reflections using associative memory chains',
   curiosity: 'Run curiosity service to generate user-facing questions',

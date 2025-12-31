@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT } from '../../packages/core/src/index.js';
+import { resolveProfileRoot } from '../../packages/core/src/path-builder.js';
 import { callLLM } from '../../packages/core/src/model-router.js';
 import { mkdirpSync } from 'mkdirp';
 
@@ -60,11 +61,19 @@ function parseArgs(): Args {
 }
 
 function getUserProfilePath(username: string): string {
-  return path.join(ROOT, 'profiles', username);
+  // Use resolveProfileRoot to support custom profile storage paths
+  try {
+    const resolution = resolveProfileRoot(username);
+    return resolution.root;
+  } catch {
+    // Fallback to default location
+    return path.join(ROOT, 'profiles', username);
+  }
 }
 
 /**
  * Collect all episodic memories for the user
+ * Recursively searches all subdirectories (year/month/day structure)
  */
 function collectEpisodicMemories(username: string): any[] {
   const profilePath = getUserProfilePath(username);
@@ -77,23 +86,29 @@ function collectEpisodicMemories(username: string): any[] {
 
   const memories: any[] = [];
 
-  // Walk through year directories
-  const years = fs.readdirSync(episodicPath).filter(name => /^\d{4}$/.test(name));
+  // Recursively walk through all directories to find JSON files
+  function walkDir(dir: string) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
 
-  for (const year of years) {
-    const yearPath = path.join(episodicPath, year);
-    const files = fs.readdirSync(yearPath).filter(f => f.endsWith('.json'));
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
 
-    for (const file of files) {
-      try {
-        const content = fs.readFileSync(path.join(yearPath, file), 'utf-8');
-        const memory = JSON.parse(content);
-        memories.push(memory);
-      } catch (err) {
-        console.warn(`[user-dataset-builder] Failed to read ${file}: ${(err as Error).message}`);
+      if (entry.isDirectory()) {
+        // Recurse into subdirectories (year, month, day, etc.)
+        walkDir(fullPath);
+      } else if (entry.isFile() && entry.name.endsWith('.json')) {
+        try {
+          const content = fs.readFileSync(fullPath, 'utf-8');
+          const memory = JSON.parse(content);
+          memories.push(memory);
+        } catch (err) {
+          console.warn(`[user-dataset-builder] Failed to read ${entry.name}: ${(err as Error).message}`);
+        }
       }
     }
   }
+
+  walkDir(episodicPath);
 
   console.log(`[user-dataset-builder] Collected ${memories.length} episodic memories`);
   return memories;

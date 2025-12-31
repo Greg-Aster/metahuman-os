@@ -36,6 +36,7 @@ const TSX_PATH = path.join(ROOT, 'node_modules', '.bin', 'tsx');
 const TASK_TO_AGENT: Record<TaskType, string | null> = {
   user_message: null, // Handled specially via chat handler
   memory_curate: 'organizer',
+  training_curate: 'curator', // Prepare memories for LoRA training
   index_build: null, // Handled via buildMemoryIndex function
   reflect: 'reflector',
   curiosity: 'curiosity-service',

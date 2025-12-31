@@ -17,7 +17,10 @@
     "enforceEager": true,
     "autoUtilization": false,
     "maxTokens": 2048,
-    "enableThinking": false
+    "enableThinking": true,
+    "frequencyPenalty": 0.3,
+    "presencePenalty": 0.3,
+    "repetitionPenalty": 1.15
   },
   "localModels": {
     "enabled": true,

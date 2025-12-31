@@ -63,6 +63,9 @@ export interface UnifiedRequest {
 
   /** Custom metadata from adapter (e.g., cognitive mode) */
   metadata?: Record<string, any>;
+
+  /** Session ID from mh_session cookie (if authenticated) */
+  sessionId?: string;
 }
 
 /**

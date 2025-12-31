@@ -703,6 +703,12 @@ export class VLLMClient {
       stream?: boolean;
       /** Control Qwen3 thinking mode. Set false to disable <think> tags. */
       enableThinking?: boolean;
+      /** Penalize tokens based on frequency (0.0-2.0, higher = less repetition) */
+      frequencyPenalty?: number;
+      /** Penalize tokens that have appeared at all (0.0-2.0, higher = more variety) */
+      presencePenalty?: number;
+      /** Repetition penalty (1.0 = no penalty, >1.0 = less repetition) */
+      repetitionPenalty?: number;
     }
   ): Promise<VLLMChatResponse> {
     const body: Record<string, unknown> = {
@@ -713,6 +719,17 @@ export class VLLMClient {
       top_p: options?.topP ?? 0.95,
       stream: false,
     };
+
+    // Add repetition control parameters
+    if (options?.frequencyPenalty !== undefined) {
+      body.frequency_penalty = options.frequencyPenalty;
+    }
+    if (options?.presencePenalty !== undefined) {
+      body.presence_penalty = options.presencePenalty;
+    }
+    if (options?.repetitionPenalty !== undefined) {
+      body.repetition_penalty = options.repetitionPenalty;
+    }
 
     // Add chat_template_kwargs for Qwen3 thinking mode control
     if (options?.enableThinking !== undefined) {
@@ -757,6 +774,12 @@ export class VLLMClient {
       maxTokens?: number;
       /** Control Qwen3 thinking mode. Set false to disable <think> tags. */
       enableThinking?: boolean;
+      /** Penalize tokens based on frequency (0.0-2.0, higher = less repetition) */
+      frequencyPenalty?: number;
+      /** Penalize tokens that have appeared at all (0.0-2.0, higher = more variety) */
+      presencePenalty?: number;
+      /** Repetition penalty (1.0 = no penalty, >1.0 = less repetition) */
+      repetitionPenalty?: number;
     }
   ): Promise<void> {
     const body: Record<string, unknown> = {
@@ -766,6 +789,17 @@ export class VLLMClient {
       temperature: options?.temperature ?? 0.7,
       stream: true,
     };
+
+    // Add repetition control parameters
+    if (options?.frequencyPenalty !== undefined) {
+      body.frequency_penalty = options.frequencyPenalty;
+    }
+    if (options?.presencePenalty !== undefined) {
+      body.presence_penalty = options.presencePenalty;
+    }
+    if (options?.repetitionPenalty !== undefined) {
+      body.repetition_penalty = options.repetitionPenalty;
+    }
 
     // Add chat_template_kwargs for Qwen3 thinking mode control
     if (options?.enableThinking !== undefined) {

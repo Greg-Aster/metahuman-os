@@ -9,12 +9,14 @@
     title: string;
     url: string;
     isBigBrother?: boolean;
+    isServices?: boolean;
   }
 
   let tabs: TerminalTab[] = [];
   let activeTabId: string | null = null;
   let isCreating = false;
   let bigBrotherTabId: string | null = null;
+  let servicesTabId: string | null = null;
 
   // Subscribe to Big Brother terminal requests
   const unsubscribe = bigBrotherTerminal.subscribe(state => {
@@ -22,6 +24,120 @@
       openBigBrotherTerminal(state.port, state.url);
     }
   });
+
+  interface RunningTerminal {
+    pid: number;
+    port: number;
+    command?: string;
+  }
+
+  async function fetchRunningTerminals(): Promise<RunningTerminal[]> {
+    try {
+      const response = await apiFetch('/api/terminal/list');
+      if (!response.ok) return [];
+      const data = await response.json();
+      return data.terminals || [];
+    } catch (error) {
+      console.warn('[TerminalManager] Failed to fetch running terminals:', error);
+      return [];
+    }
+  }
+
+  function inferTerminalTitle(terminal: RunningTerminal, index: number): { title: string; isServices: boolean; isBigBrother: boolean } {
+    const command = terminal.command || '';
+
+    // Detect services terminal
+    if (command.includes('start-services') || command.includes('run-with-agents')) {
+      return { title: '⚡ Services', isServices: true, isBigBrother: false };
+    }
+
+    // Detect Big Brother terminal
+    if (terminal.port === 3099 || command.includes('claude')) {
+      return { title: '🤖 Big Brother', isServices: false, isBigBrother: true };
+    }
+
+    // Regular terminal
+    return { title: `💻 Terminal ${index + 1}`, isServices: false, isBigBrother: false };
+  }
+
+  async function discoverAndRestoreTerminals() {
+    // Fetch actually running terminals from the server
+    const runningTerminals = await fetchRunningTerminals();
+
+    // Load saved tabs from localStorage for title/metadata restoration
+    let savedTabs: TerminalTab[] = [];
+    let savedActiveTabId: string | null = null;
+
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const savedTabsJson = localStorage.getItem('mh_terminal_tabs');
+        savedActiveTabId = localStorage.getItem('mh_active_terminal_tab');
+        if (savedTabsJson) {
+          savedTabs = JSON.parse(savedTabsJson);
+        }
+      } catch {
+        // Ignore localStorage errors
+      }
+    }
+
+    // Build map of saved tabs by port for quick lookup
+    const savedTabsByPort = new Map(savedTabs.map(t => [t.port, t]));
+
+    // Create tabs for all running terminals
+    const restoredTabs: TerminalTab[] = [];
+    let regularTerminalCount = 0;
+
+    for (const terminal of runningTerminals) {
+      const savedTab = savedTabsByPort.get(terminal.port);
+
+      if (savedTab) {
+        // Restore from saved metadata
+        restoredTabs.push(savedTab);
+
+        if (savedTab.isBigBrother) bigBrotherTabId = savedTab.id;
+        if (savedTab.isServices) servicesTabId = savedTab.id;
+        if (!savedTab.isBigBrother && !savedTab.isServices) regularTerminalCount++;
+      } else {
+        // Create new tab for orphaned terminal
+        const { title, isServices, isBigBrother } = inferTerminalTitle(terminal, regularTerminalCount);
+
+        const newTab: TerminalTab = {
+          id: crypto.randomUUID(),
+          port: terminal.port,
+          title,
+          url: `http://localhost:${terminal.port}`,
+          isServices,
+          isBigBrother
+        };
+
+        restoredTabs.push(newTab);
+
+        if (isBigBrother) bigBrotherTabId = newTab.id;
+        if (isServices) servicesTabId = newTab.id;
+        if (!isBigBrother && !isServices) regularTerminalCount++;
+
+        console.log(`[TerminalManager] Discovered orphaned terminal on port ${terminal.port}`);
+      }
+    }
+
+    if (restoredTabs.length > 0) {
+      // Sort by port for consistent ordering
+      restoredTabs.sort((a, b) => a.port - b.port);
+      tabs = restoredTabs;
+
+      // Restore active tab if still valid
+      if (savedActiveTabId && restoredTabs.some(t => t.id === savedActiveTabId)) {
+        activeTabId = savedActiveTabId;
+      } else {
+        activeTabId = restoredTabs[0].id;
+      }
+
+      console.log(`[TerminalManager] Restored ${restoredTabs.length} terminal sessions`);
+      updatePersistedState();
+    }
+
+    return restoredTabs.length;
+  }
 
   async function openBigBrotherTerminal(port: number, url: string) {
     // Check if Big Brother tab already exists
@@ -47,11 +163,60 @@
     bigBrotherTerminalOpened();
 
     console.log('[TerminalManager] Opened Big Brother terminal on port', port);
+    updatePersistedState();
+  }
+
+  async function createServicesTerminal() {
+    if (servicesTabId && tabs.find(t => t.id === servicesTabId)) return; // Already created
+
+    try {
+      // Spawn a terminal that runs the services startup script
+      const response = await apiFetch('/api/terminal/spawn', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command: './bin/start-services'
+        })
+      });
+
+      if (!response.ok) {
+        console.error('[TerminalManager] Failed to spawn services terminal');
+        return;
+      }
+
+      const data = await response.json();
+
+      const newTab: TerminalTab = {
+        id: crypto.randomUUID(),
+        port: data.port,
+        title: '⚡ Services',
+        url: data.url,
+        isServices: true
+      };
+
+      tabs = [...tabs, newTab];
+      activeTabId = newTab.id;
+      servicesTabId = newTab.id;
+
+      console.log('[TerminalManager] Started services terminal on port', data.port);
+      updatePersistedState();
+    } catch (error) {
+      console.error('[TerminalManager] Error creating services terminal:', error);
+    }
   }
 
   onMount(async () => {
-    // Start with one terminal
-    await createNewTerminal();
+    // Discover and restore all running terminals (including orphaned ones)
+    const restoredCount = await discoverAndRestoreTerminals();
+
+    // If no terminals were found, create default ones
+    if (restoredCount === 0) {
+      // First, spawn the Services terminal that runs all backend processes
+      await createServicesTerminal();
+
+      // Then spawn a regular bash terminal for user commands
+      await createNewTerminal();
+    }
 
     // Check if Big Brother session is active and create tab if needed
     try {
@@ -69,13 +234,29 @@
   });
 
   onDestroy(async () => {
-    // Clean up all terminals (except Big Brother - it has its own lifecycle)
-    for (const tab of tabs) {
-      if (!tab.isBigBrother) {
-        await killTerminal(tab.port);
+    // Don't kill terminals on destroy - let them persist for reconnection
+    // Only clean up the store subscription
+    unsubscribe();
+    
+    // Save current tab state for restoration
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const persistentTabs = tabs.map(tab => ({
+          id: tab.id,
+          port: tab.port,
+          title: tab.title,
+          url: tab.url,
+          isBigBrother: tab.isBigBrother,
+          isServices: tab.isServices
+        }));
+        localStorage.setItem('mh_terminal_tabs', JSON.stringify(persistentTabs));
+        if (activeTabId) {
+          localStorage.setItem('mh_active_terminal_tab', activeTabId);
+        }
+      } catch (error) {
+        console.warn('[TerminalManager] Failed to save tab state:', error);
       }
     }
-    unsubscribe();
   });
 
   async function createNewTerminal() {
@@ -98,15 +279,17 @@
 
       const data = await response.json();
 
+      const terminalNumber = tabs.filter(t => !t.isBigBrother && !t.isServices).length + 1;
       const newTab: TerminalTab = {
         id: crypto.randomUUID(),
         port: data.port,
-        title: `Terminal ${tabs.length + 1}`,
+        title: `💻 Terminal ${terminalNumber}`,
         url: data.url
       };
 
       tabs = [...tabs, newTab];
       activeTabId = newTab.id;
+      updatePersistedState();
 
     } catch (error) {
       console.error('[TerminalManager] Error creating terminal:', error);
@@ -121,18 +304,14 @@
     if (tab.isBigBrother) {
       bigBrotherTabId = null;
     }
+    // If closing Services tab, clear the ID
+    if (tab.isServices) {
+      servicesTabId = null;
+    }
 
     if (tabs.length === 1) {
-      // Don't close the last terminal, just create a new one
+      // Don't close the last terminal, just create a new one first
       await createNewTerminal();
-      if (!tab.isBigBrother) {
-        await killTerminal(tab.port);
-      }
-      tabs = tabs.filter(t => t.id !== tab.id);
-      if (tabs.length > 0) {
-        activeTabId = tabs[0].id;
-      }
-      return;
     }
 
     // Kill the terminal process (Big Brother has its own lifecycle)
@@ -149,6 +328,9 @@
       const newIndex = Math.max(0, tabIndex - 1);
       activeTabId = tabs[newIndex]?.id || null;
     }
+
+    // Update localStorage to reflect the current state
+    updatePersistedState();
   }
 
   async function killTerminal(port: number) {
@@ -163,6 +345,7 @@
 
   function switchTab(tabId: string) {
     activeTabId = tabId;
+    updatePersistedState();
   }
 
   function handleTabKeydown(event: KeyboardEvent, tabId: string) {
@@ -176,6 +359,27 @@
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       closeTerminal(tab);
+    }
+  }
+
+  function updatePersistedState() {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const persistentTabs = tabs.map(tab => ({
+          id: tab.id,
+          port: tab.port,
+          title: tab.title,
+          url: tab.url,
+          isBigBrother: tab.isBigBrother,
+          isServices: tab.isServices
+        }));
+        localStorage.setItem('mh_terminal_tabs', JSON.stringify(persistentTabs));
+        if (activeTabId) {
+          localStorage.setItem('mh_active_terminal_tab', activeTabId);
+        }
+      } catch (error) {
+        console.warn('[TerminalManager] Failed to update persisted state:', error);
+      }
     }
   }
 </script>
@@ -228,7 +432,6 @@
           src={tab.url}
           title={tab.title}
           class="terminal-iframe"
-          sandbox="allow-same-origin allow-scripts allow-forms"
         ></iframe>
       </div>
     {/each}

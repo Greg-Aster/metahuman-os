@@ -9,19 +9,21 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { storageClient, systemPaths, ROOT, audit, auditAction, captureEvent, acquireLock, isLocked, callLLMJSON } from '@metahuman/core'
+import { storageClient, systemPaths, ROOT, audit, auditAction, captureEvent, acquireLock, isLocked, callLLMJSON, withUserContext, getTargetUser } from '@metahuman/core'
 
-/** Resolve inbox paths using storage router */
+// Inbox paths resolved at runtime within user context
+let INBOX = '';
+let ARCHIVE_ROOT = '';
+
+/** Resolve inbox paths using storage router (must be called within user context) */
 function resolveInboxPaths(): { inbox: string; archive: string } {
   const inboxResult = storageClient.resolvePath({ category: 'memory', subcategory: 'inbox' });
-  const inbox = inboxResult.success && inboxResult.path ? inboxResult.path : path.join(systemPaths.memory, 'inbox');
+  const inbox = inboxResult.success && inboxResult.path ? inboxResult.path : path.join(systemPaths.root, 'memory', 'inbox');
   return {
     inbox,
     archive: path.join(inbox, '_archive'),
   };
 }
-
-const { inbox: INBOX, archive: ARCHIVE_ROOT } = resolveInboxPaths();
 
 function ensureDirs() {
   fs.mkdirSync(INBOX, { recursive: true })
@@ -125,6 +127,52 @@ function loadIngestorConfig(): { mode: 'organize' | 'summarize' | 'hybrid'; long
 
 function slugify(s: string): string { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'doc' }
 
+/**
+ * Chunk text for training data - splits on paragraph boundaries when possible
+ * to preserve natural writing flow and context
+ */
+function chunkTextForTraining(text: string, maxChars = 2000): string[] {
+  if (text.length <= maxChars) return [text]
+
+  const chunks: string[] = []
+  const paragraphs = text.split(/\n\n+/)
+  let currentChunk = ''
+
+  for (const para of paragraphs) {
+    // If adding this paragraph would exceed limit, save current chunk and start new one
+    if (currentChunk.length + para.length + 2 > maxChars) {
+      if (currentChunk.trim()) {
+        chunks.push(currentChunk.trim())
+      }
+      // If single paragraph is too long, split it by sentences
+      if (para.length > maxChars) {
+        const sentences = para.split(/(?<=[.!?])\s+/)
+        let sentenceChunk = ''
+        for (const sentence of sentences) {
+          if (sentenceChunk.length + sentence.length + 1 > maxChars) {
+            if (sentenceChunk.trim()) chunks.push(sentenceChunk.trim())
+            sentenceChunk = sentence
+          } else {
+            sentenceChunk += (sentenceChunk ? ' ' : '') + sentence
+          }
+        }
+        if (sentenceChunk.trim()) currentChunk = sentenceChunk
+        else currentChunk = ''
+      } else {
+        currentChunk = para
+      }
+    } else {
+      currentChunk += (currentChunk ? '\n\n' : '') + para
+    }
+  }
+
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trim())
+  }
+
+  return chunks.length > 0 ? chunks : [text.slice(0, maxChars)]
+}
+
 async function ingestFileAI(filePath: string) {
   const fileName = path.basename(filePath)
   const raw = readFileAsText(filePath)
@@ -159,20 +207,69 @@ async function ingestFileAI(filePath: string) {
     fs.writeFileSync(path.join(curatedRoot, `${base}.outline.json`), JSON.stringify(oh.outline, null, 2))
     fs.writeFileSync(path.join(curatedRoot, `${base}.highlights.json`), JSON.stringify(oh.highlights, null, 2))
 
-    // Index event
-    const content = meta.abstract
-    const tags = Array.from(new Set([...(res.tags || []), 'ingested', 'ai', 'curated']))
-    const links = [{ type: 'source', target: fileName }, { type: 'curated', target: path.relative(ROOT, rawPath) }]
-    const type = 'observation' as any
-    const filepath = captureEvent(content, { type, tags, entities: res.entities || [], links })
-    auditAction({ skill: 'ai-ingestor:curated', inputs: { file: fileName }, success: true, output: { path: filepath, curated: path.relative(ROOT, rawPath) } })
+    // TRAINING DATA: Create chunked memories with RAW text for training
+    // This preserves the user's actual voice for LoRA fine-tuning
+    const CHUNK_SIZE = 2000  // Match training max_seq_length considerations
+    const chunks = chunkTextForTraining(raw, CHUNK_SIZE)
+    const trainingTags = Array.from(new Set([...(res.tags || []), 'ingested', 'ai', 'curated', 'raw-text', 'training-data']))
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkContent = chunks[i]
+      const chunkLinks = [
+        { type: 'source', target: fileName },
+        { type: 'curated', target: path.relative(ROOT, rawPath) },
+        { type: 'chunk', target: `${i + 1}/${chunks.length}` }
+      ]
+      const chunkFilepath = captureEvent(chunkContent, {
+        type: 'observation' as any,
+        tags: trainingTags,
+        entities: res.entities || [],
+        links: chunkLinks,
+        metadata: {
+          rawText: true,
+          chunkIndex: i,
+          totalChunks: chunks.length,
+          summary: res.summary,
+          title: res.title,
+        }
+      })
+      auditAction({
+        skill: 'ai-ingestor:raw-chunk',
+        inputs: { file: fileName, chunk: i + 1, total: chunks.length },
+        success: true,
+        output: { path: chunkFilepath }
+      })
+    }
+
+    // Also create summary event for search/display (not for training)
+    const summaryContent = meta.abstract
+    const summaryTags = Array.from(new Set([...(res.tags || []), 'ingested', 'ai', 'curated', 'summary-only']))
+    const summaryLinks = [{ type: 'source', target: fileName }, { type: 'curated', target: path.relative(ROOT, rawPath) }]
+    const summaryFilepath = captureEvent(summaryContent, {
+      type: 'summary' as any,  // Use 'summary' type so it's excluded from training by default
+      tags: summaryTags,
+      entities: res.entities || [],
+      links: summaryLinks
+    })
+    auditAction({ skill: 'ai-ingestor:curated', inputs: { file: fileName }, success: true, output: { path: summaryFilepath, curated: path.relative(ROOT, rawPath), rawChunks: chunks.length } })
   } else {
-    // Short doc or summarize mode: compact event
-    const content = res.summary || raw.slice(0, 400)
-    const tags = Array.from(new Set([...(res.tags || []), 'ingested', 'ai']))
+    // Short doc: store RAW content (preserves user voice), not just summary
+    // For short docs, the full raw text fits in one memory
+    const content = raw  // Use raw text, not summary!
+    const tags = Array.from(new Set([...(res.tags || []), 'ingested', 'ai', 'raw-text', 'training-data']))
     const links = [{ type: 'source', target: fileName }]
     const type = res.type as any
-    const filepath = captureEvent(content, { type, tags, entities: res.entities || [], links })
+    const filepath = captureEvent(content, {
+      type,
+      tags,
+      entities: res.entities || [],
+      links,
+      metadata: {
+        rawText: true,
+        summary: res.summary,
+        title: res.title,
+      }
+    })
     auditAction({ skill: 'ai-ingestor:capture', inputs: { file: fileName }, success: true, output: { path: filepath, type, tags } })
   }
 
@@ -186,17 +283,13 @@ async function ingestFileAI(filePath: string) {
   return { created: 1 }
 }
 
-async function main() {
-  try {
-    if (isLocked('agent-ai-ingestor')) {
-      console.log('[ai-ingestor] Another instance is already running. Exiting.')
-      return
-    }
-    acquireLock('agent-ai-ingestor')
-  } catch {
-    console.log('[ai-ingestor] Failed to acquire lock. Exiting.')
-    return
-  }
+async function runIngestor() {
+  // Resolve paths within user context
+  const paths = resolveInboxPaths();
+  INBOX = paths.inbox;
+  ARCHIVE_ROOT = paths.archive;
+
+  console.log(`[ai-ingestor] Using inbox: ${INBOX}`);
 
   ensureDirs()
   audit({ level: 'info', category: 'action', event: 'agent_started', details: { agent: 'ai-ingestor' }, actor: 'agent' })
@@ -218,6 +311,34 @@ async function main() {
   }
 
   audit({ level: 'info', category: 'action', event: 'agent_completed', details: { agent: 'ai-ingestor', processed: files.length, created: total }, actor: 'agent' })
+}
+
+async function main() {
+  try {
+    if (isLocked('agent-ai-ingestor')) {
+      console.log('[ai-ingestor] Another instance is already running. Exiting.')
+      return
+    }
+    acquireLock('agent-ai-ingestor')
+  } catch {
+    console.log('[ai-ingestor] Failed to acquire lock. Exiting.')
+    return
+  }
+
+  // Get target user from env or active user detection
+  const targetUser = getTargetUser();
+  if (!targetUser) {
+    console.error('[ai-ingestor] No user context available. Set MH_TRIGGER_USERNAME or ensure an active user.');
+    return;
+  }
+
+  console.log(`[ai-ingestor] Running for user: ${targetUser.username}`);
+
+  // Run ingestor within user context
+  await withUserContext(
+    { userId: targetUser.username, username: targetUser.username, role: 'owner' },
+    runIngestor
+  );
 }
 
 main().catch(err => { console.error('Fatal error:', err); process.exit(1) })

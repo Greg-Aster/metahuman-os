@@ -21,11 +21,12 @@ import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-run
 import {
   withUserContext,
   executeGraph,
-  validateCognitiveGraph,
+  validateSvelteFlowGraph,
+  captureEvent,
   audit,
   getTargetUser,
   systemPaths,
-  type CognitiveGraph,
+  type SvelteFlowGraph,
 } from '@metahuman/core';
 import { registerAgent, unregisterAgent } from '@metahuman/core/agent-monitor';
 
@@ -56,11 +57,12 @@ export interface UserCuratorStats {
 /**
  * Load curator cognitive graph
  */
-export async function loadCuratorGraph(): Promise<CognitiveGraph> {
+export async function loadCuratorGraph(): Promise<SvelteFlowGraph> {
   const graphPath = path.join(systemPaths.etc, 'cognitive-graphs', 'curator-mode.json');
   const raw = await fs.readFile(graphPath, 'utf-8');
   const parsed = JSON.parse(raw);
-  return validateCognitiveGraph(parsed);
+  // curator-mode.json is in Svelte Flow format - validate and return it directly
+  return validateSvelteFlowGraph(parsed);
 }
 
 /**
@@ -89,11 +91,32 @@ export async function runCuratorForUser(username: string): Promise<UserCuratorSt
       console.log('[curator] Executing curator workflow graph...');
       const graphResult = await executeGraph(graph, graphContext);
 
-      // Extract results from graph execution
-      const curatorLLMNode = graphResult.nodes.get(4);
+      // Extract results from graph execution (node IDs are strings in Svelte Flow format)
+      const curatorLLMNode = graphResult.nodes.get('4');
       const memoriesProcessed = curatorLLMNode?.outputs?.count || 0;
 
       console.log(`[curator] ✅ Processed ${memoriesProcessed} memories`);
+
+      // Save inner dialogue notification so user can see curation activity
+      if (memoriesProcessed > 0) {
+        const notification = `📚 Curated ${memoriesProcessed} ${memoriesProcessed === 1 ? 'memory' : 'memories'} for training data preparation.`;
+
+        try {
+          captureEvent(notification, {
+            type: 'inner_dialogue',
+            tags: ['curator', 'training-data', 'background-task'],
+            metadata: {
+              curator: {
+                memoriesProcessed,
+                timestamp: new Date().toISOString(),
+              },
+            },
+          });
+          console.log('[curator] Saved inner dialogue notification');
+        } catch (err) {
+          console.warn('[curator] Failed to save inner dialogue:', (err as Error).message);
+        }
+      }
 
       return {
         memoriesProcessed,

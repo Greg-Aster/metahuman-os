@@ -839,7 +839,7 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
     'persona-generator.json',
     'psychoanalyzer.json',
     'runpod.json',
-    'training-data.json',
+    'training.json', // Unified training config (v2.0)
     'auto-approval.json',
     'adapter-builder.json',
     'logging.json',

@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 
 const execute: NodeExecutor = async (inputs, _context, _properties) => {
-  const curatedResults = inputs[0]?.curatedMemories || [];
+  // Inputs are keyed by targetHandle name from graph edges, not array index
+  const curatedResults = inputs.curatedMemories?.curatedMemories || inputs.curatedMemories || inputs[0]?.curatedMemories || [];
 
   if (!curatedResults || curatedResults.length === 0) {
     return {

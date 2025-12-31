@@ -92,8 +92,20 @@ else
     echo -e "${GREEN}export OLLAMA_GPU_MEM_FRACTION=${GPU_MEM_FRACTION}${NC}"
 fi
 
-# Update MetaHuman voice config to disable auto-pause
-VOICE_CONFIG="$ROOT_DIR/profiles/greggles/etc/voice.json"
+# Determine active profile for voice config
+PROFILE=""
+if [ -f "$ROOT_DIR/etc/default-user.txt" ]; then
+    PROFILE=$(cat "$ROOT_DIR/etc/default-user.txt" 2>/dev/null || echo "")
+elif [ -d "$ROOT_DIR/profiles" ]; then
+    PROFILE=$(ls -1 "$ROOT_DIR/profiles" 2>/dev/null | grep -v '^\.' | head -1)
+fi
+
+if [ -n "$PROFILE" ] && [ -f "$ROOT_DIR/profiles/$PROFILE/etc/voice.json" ]; then
+    VOICE_CONFIG="$ROOT_DIR/profiles/$PROFILE/etc/voice.json"
+else
+    VOICE_CONFIG="$ROOT_DIR/etc/voice.json"
+    PROFILE=""
+fi
 
 if [ -f "$VOICE_CONFIG" ]; then
     echo -e "\n${YELLOW}Recommendation:${NC} Since Ollama now has a VRAM limit, you can disable"
@@ -118,10 +130,10 @@ fi
 echo -e "\n${GREEN}=== Configuration Complete ===${NC}"
 echo ""
 echo "Summary:"
-# Use bc for floating point math
-OLLAMA_MB=$(echo "$TOTAL_VRAM * $GPU_MEM_FRACTION" | bc | cut -d'.' -f1)
-RVC_MB=$(echo "$TOTAL_VRAM * (1 - $GPU_MEM_FRACTION)" | bc | cut -d'.' -f1)
-RVC_PERCENT=$(echo "(1 - $GPU_MEM_FRACTION) * 100" | bc | cut -d'.' -f1)
+# Use awk for floating point math
+OLLAMA_MB=$(awk -v total="$TOTAL_VRAM" -v frac="$GPU_MEM_FRACTION" 'BEGIN { printf "%d", total * frac }')
+RVC_MB=$(awk -v total="$TOTAL_VRAM" -v frac="$GPU_MEM_FRACTION" 'BEGIN { printf "%d", total * (1 - frac) }')
+RVC_PERCENT=$(awk -v frac="$GPU_MEM_FRACTION" 'BEGIN { printf "%d", (1 - frac) * 100 }')
 echo "  • Ollama VRAM limit: ${GPU_MEM_FRACTION} (~${OLLAMA_MB}MB)"
 echo "  • Available for RVC: ~${RVC_PERCENT}% (~${RVC_MB}MB)"
 echo ""

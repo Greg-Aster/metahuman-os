@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+cd "$REPO_ROOT"
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${GREEN}Starting MetaHuman Services...${NC}"
+echo
+
+cleanup() {
+  echo
+  echo -e "${YELLOW}Stopping services...${NC}"
+  "$REPO_ROOT/bin/mh" agent stop --all >/dev/null 2>&1 || true
+  "$REPO_ROOT/bin/stop-terminal" >/dev/null 2>&1 || true
+  "$REPO_ROOT/bin/stop-local-models" >/dev/null 2>&1 || true
+  "$REPO_ROOT/bin/stop-voice-server" >/dev/null 2>&1 || true
+  echo "Services stopped."
+}
+
+trap cleanup EXIT INT TERM
+
+# Check headless mode before starting agents
+RUNTIME_CONFIG="$REPO_ROOT/etc/runtime.json"
+if [ -f "$RUNTIME_CONFIG" ]; then
+  HEADLESS=$(grep -o '"headless"[[:space:]]*:[[:space:]]*true' "$RUNTIME_CONFIG" || echo "")
+  if [ -n "$HEADLESS" ]; then
+    echo -e "${YELLOW}Headless mode active - skipping agent startup${NC}"
+  else
+    echo "Starting agents..."
+    "$REPO_ROOT/bin/mh" start --restart 2>&1 || echo -e "${YELLOW}Warning: Failed to start some agents${NC}"
+  fi
+else
+  echo "Starting agents..."
+  "$REPO_ROOT/bin/mh" start --restart 2>&1 || echo -e "${YELLOW}Warning: Failed to start some agents${NC}"
+fi
+
+# Auto-start Cloudflare tunnel if enabled
+echo "Starting Cloudflare tunnel..."
+"$REPO_ROOT/bin/start-cloudflare" 2>&1 || true
+
+# Auto-start voice server based on active TTS provider
+echo "Starting voice server..."
+"$REPO_ROOT/bin/start-voice-server" 2>&1 || true
+
+# Auto-start local model service
+echo "Starting local models..."
+"$REPO_ROOT/bin/start-local-models" 2>&1 || true
+
+echo
+echo -e "${GREEN}All services started.${NC}"
+echo "Press Ctrl+C to stop all services."
+echo
+
+# Keep the script running (tail server.log to show activity)
+tail -f "$REPO_ROOT/logs/server.log" 2>/dev/null || while true; do sleep 3600; done

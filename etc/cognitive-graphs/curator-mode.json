@@ -17,7 +17,7 @@
         "label": "Load Uncurated Memories",
         "nodeType": "uncurated_memory_loader",
         "properties": {
-          "limit": 5
+          "limit": 20
         }
       },
       "width": 220,

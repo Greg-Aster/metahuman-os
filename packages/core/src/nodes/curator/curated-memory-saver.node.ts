@@ -9,7 +9,8 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { getProfilePaths } from '../../index.js';
 
 const execute: NodeExecutor = async (inputs, context, _properties) => {
-  const curatedResults = inputs[0]?.curatedMemories || [];
+  // Inputs are keyed by targetHandle name from graph edges, not array index
+  const curatedResults = inputs.curatedMemories?.curatedMemories || inputs.curatedMemories || inputs[0]?.curatedMemories || [];
 
   if (!context.userId) {
     return {

@@ -209,12 +209,6 @@ import {
   handleSetProxyConfig,
 } from './handlers/llm-proxy.js';
 import {
-  handleGetToolExecutorConfig,
-  handleSetToolExecutorConfig,
-  handleSwitchBackend as handleSwitchToolExecutorBackend,
-  handleEnableBackend,
-} from './handlers/tool-executor-config.js';
-import {
   handleGetInterpreterStatus,
   handleInterpreterControl,
 } from './handlers/interpreter-status.js';
@@ -389,6 +383,15 @@ import {
   handleVoiceResume,
   handleVoiceBargeIn,
 } from './handlers/voice.js';
+import {
+  handleCreateWindowSession,
+  handleValidateWindowSession,
+  handleWindowHeartbeat,
+  handleCloseWindowSession,
+  handleListWindows,
+  handleWindowStats,
+} from './handlers/window-session.js';
+import { handleWindowSessionStream } from './handlers/window-session-stream.js';
 // Note: Some complex routes (persona generator, kokoro-training, etc.) kept in Astro files
 
 // ============================================================================
@@ -423,6 +426,15 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/profile-sync/memories', handler: handleGetProfileMemories },  // POST with credentials in body (cross-origin mobile)
   { method: 'GET', pattern: '/api/profile-sync/tasks', handler: handleGetProfileTasks, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/changes', handler: handleGetProfileChanges, requiresAuth: true },
+
+  // Window Sessions (Multi-window support)
+  { method: 'POST', pattern: '/api/window-session', handler: handleCreateWindowSession, requiresAuth: true },
+  { method: 'GET', pattern: '/api/window-session/stream', handler: handleWindowSessionStream, requiresAuth: true },
+  { method: 'GET', pattern: /^\/api\/window-session\/list$/, handler: handleListWindows, requiresAuth: true },
+  { method: 'GET', pattern: /^\/api\/window-session\/stats$/, handler: handleWindowStats, requiresAuth: true },
+  { method: 'GET', pattern: /^\/api\/window-session\/([^/]+)$/, handler: handleValidateWindowSession, requiresAuth: true },
+  { method: 'POST', pattern: /^\/api\/window-session\/([^/]+)\/heartbeat$/, handler: handleWindowHeartbeat, requiresAuth: true },
+  { method: 'DELETE', pattern: /^\/api\/window-session\/([^/]+)$/, handler: handleCloseWindowSession, requiresAuth: true },
 
   // Memories
   { method: 'POST', pattern: '/api/capture', handler: handleCapture, requiresAuth: true },
@@ -846,12 +858,6 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/llm/proxy/models', handler: handleListProxyModels, requiresAuth: true },
   { method: 'GET', pattern: '/api/llm/proxy/config', handler: handleGetProxyConfig, requiresAuth: true },
   { method: 'POST', pattern: '/api/llm/proxy/config', handler: handleSetProxyConfig, requiresAuth: true, guard: 'owner' },
-
-  // Tool Executor Config (backend selection for skill execution)
-  { method: 'GET', pattern: '/api/tool-executor-config', handler: handleGetToolExecutorConfig, requiresAuth: true },
-  { method: 'POST', pattern: '/api/tool-executor-config', handler: handleSetToolExecutorConfig, requiresAuth: true, guard: 'owner' },
-  { method: 'POST', pattern: '/api/tool-executor-config/switch', handler: handleSwitchToolExecutorBackend, requiresAuth: true, guard: 'owner' },
-  { method: 'POST', pattern: '/api/tool-executor-config/enable', handler: handleEnableBackend, requiresAuth: true, guard: 'owner' },
 
   // Open Interpreter Status and Control
   { method: 'GET', pattern: '/api/interpreter-status', handler: handleGetInterpreterStatus, requiresAuth: true },

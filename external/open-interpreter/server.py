@@ -33,17 +33,25 @@ import uvicorn
 
 class LLMConfig(BaseModel):
     """LLM configuration - controlled by MetaHuman settings"""
-    api_base: str = Field(
-        default="http://localhost:4321/api/llm/proxy",
-        description="MetaHuman LLM proxy endpoint"
+    api_base: Optional[str] = Field(
+        default=None,
+        description="API endpoint (None = use provider's native API)"
     )
-    api_key: str = Field(
-        default="mh-internal",
-        description="API key (placeholder for proxy auth)"
+    api_key: Optional[str] = Field(
+        default=None,
+        description="API key (loaded from env if not specified)"
     )
     model: str = Field(
-        default="metahuman-proxy",
-        description="Model identifier (proxy handles actual selection)"
+        default="Qwen3-Coder-30B-A3B-Instruct-AWQ",
+        description="Model identifier"
+    )
+    provider: str = Field(
+        default="runpod",
+        description="LLM provider (runpod, anthropic, openai, ollama, etc.)"
+    )
+    runpod_endpoint_id: Optional[str] = Field(
+        default=None,
+        description="RunPod serverless endpoint ID"
     )
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     max_tokens: int = Field(default=4096, ge=1)
@@ -138,10 +146,49 @@ def create_interpreter(cfg: ServerConfig):
 
     i = Interpreter()
 
-    # Configure LLM to use MetaHuman proxy
-    i.llm.model = cfg.llm.model
-    i.llm.api_base = cfg.llm.api_base
-    i.llm.api_key = cfg.llm.api_key
+    # Configure LLM based on provider
+    provider = cfg.llm.provider.lower()
+
+    if provider == "runpod":
+        # RunPod serverless uses OpenAI-compatible API
+        endpoint_id = cfg.llm.runpod_endpoint_id or os.environ.get("RUNPOD_ENDPOINT_ID")
+        api_key = cfg.llm.api_key or os.environ.get("RUNPOD_API_KEY")
+
+        if not endpoint_id:
+            raise RuntimeError("RunPod endpoint ID required. Set runpod_endpoint_id or RUNPOD_ENDPOINT_ID env var")
+        if not api_key:
+            raise RuntimeError("RunPod API key required. Set api_key or RUNPOD_API_KEY env var")
+
+        # RunPod serverless OpenAI-compatible endpoint
+        i.llm.api_base = f"https://api.runpod.ai/v2/{endpoint_id}/openai/v1"
+        i.llm.api_key = api_key
+        i.llm.model = cfg.llm.model
+        print(f"[OI] Configured for RunPod: endpoint={endpoint_id}, model={cfg.llm.model}")
+
+    elif provider == "anthropic":
+        # Anthropic/Claude API
+        api_key = cfg.llm.api_key or os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise RuntimeError("Anthropic API key required. Set api_key or ANTHROPIC_API_KEY env var")
+        i.llm.api_base = None  # Use native Anthropic API
+        i.llm.api_key = api_key
+        i.llm.model = cfg.llm.model
+        print(f"[OI] Configured for Anthropic: model={cfg.llm.model}")
+
+    elif provider == "ollama":
+        # Local Ollama
+        i.llm.api_base = cfg.llm.api_base or "http://localhost:11434/v1"
+        i.llm.api_key = "ollama"  # Ollama doesn't need a real key
+        i.llm.model = cfg.llm.model
+        print(f"[OI] Configured for Ollama: model={cfg.llm.model}")
+
+    else:
+        # Generic OpenAI-compatible API
+        i.llm.api_base = cfg.llm.api_base
+        i.llm.api_key = cfg.llm.api_key or os.environ.get("OPENAI_API_KEY")
+        i.llm.model = cfg.llm.model
+        print(f"[OI] Configured for {provider}: api_base={cfg.llm.api_base}, model={cfg.llm.model}")
+
     i.llm.temperature = cfg.llm.temperature
     i.llm.max_tokens = cfg.llm.max_tokens
 

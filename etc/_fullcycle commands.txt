@@ -18,9 +18,12 @@ out folder:
 
 
 some of the save points may be problematic:
+
 home/greggles/metahuman/metahuman-runs/greggles/2025-11-22/2025-11-22-065730-98d59b/temp_model_download
 
-if it failes convert run
+a gynormus file will be downloaded
+
+if it failes convert run to gguf
 
 Current run: No - the running process uses the old code that expected GGUF from RunPod. Solution: After download completes, manually convert:
 # Once the safetensors download finishes, run local conversion manually:

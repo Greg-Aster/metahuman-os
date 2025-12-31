@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getUserContext } from './context.js';
 import { systemPaths } from './path-builder.js';
+import { withBufferLock } from './buffer-locks.js';
 
 export type ConversationBufferMode = 'inner' | 'conversation';
 
@@ -193,44 +194,48 @@ export function loadPersistedBuffer(mode: ConversationBufferMode): {
 }
 
 /**
- * Persist conversation buffer to disk
+ * Persist conversation buffer to disk with locking
  */
-export function persistBuffer(
+export async function persistBuffer(
   mode: ConversationBufferMode,
-  messages: ConversationMessage[]
-): void {
+  messages: ConversationMessage[],
+  windowId?: string
+): Promise<void> {
   const bufferPath = getConversationBufferPath(mode);
   if (!bufferPath) return;
 
-  try {
-    const summaryMarkers = messages.filter(msg => msg.meta?.summaryMarker);
-    const conversationMessages = messages.filter(msg => !msg.meta?.summaryMarker);
+  const ctx = getUserContext();
+  if (!ctx?.username) return;
 
-    // Derive lastSummarizedIndex from markers
-    const lastSummarizedIndex = summaryMarkers.length > 0
-      ? summaryMarkers.reduce((max, marker) => {
-          const count = marker.meta?.summaryCount;
-          return typeof count === 'number' && count > max ? count : max;
-        }, 0)
-      : null;
+  await withBufferLock(ctx.username, mode, 'persist_buffer', async () => {
+    try {
+      const summaryMarkers = messages.filter(msg => msg.meta?.summaryMarker);
+      const conversationMessages = messages.filter(msg => !msg.meta?.summaryMarker);
 
-    const payload: ConversationBuffer = {
-      summaryMarkers,
-      messages: conversationMessages,
-      lastSummarizedIndex,
-      lastUpdated: new Date().toISOString(),
-    };
+      // Derive lastSummarizedIndex from markers
+      const lastSummarizedIndex = summaryMarkers.length > 0
+        ? summaryMarkers.reduce((max, marker) => {
+            const count = marker.meta?.summaryCount;
+            return typeof count === 'number' && count > max ? count : max;
+          }, 0)
+        : null;
 
-    fs.writeFileSync(bufferPath, JSON.stringify(payload, null, 2));
+      const payload: ConversationBuffer = {
+        summaryMarkers,
+        messages: conversationMessages,
+        lastSummarizedIndex,
+        lastUpdated: new Date().toISOString(),
+      };
 
-    // Touch notification file on local disk to trigger SSE updates
-    const ctx = getUserContext();
-    if (ctx?.username) {
+      fs.writeFileSync(bufferPath, JSON.stringify(payload, null, 2));
+
+      // Touch notification file on local disk to trigger SSE updates
       touchBufferNotification(ctx.username, mode);
+    } catch (error) {
+      console.error('[conversation-buffer] Failed to persist buffer:', error);
+      throw error;
     }
-  } catch (error) {
-    console.error('[conversation-buffer] Failed to persist buffer:', error);
-  }
+  }, windowId);
 }
 
 // ============================================================================
@@ -256,19 +261,21 @@ export function getBufferPathForUser(username: string, mode: ConversationBufferM
 }
 
 /**
- * Append a message to a user's conversation buffer
+ * Append a message to a user's conversation buffer with locking
  * Can be called from agents without web request context
  *
  * @param userIdOrUsername - User UUID or username (both supported for agent compatibility)
  * @param mode - 'conversation' or 'inner'
  * @param message - Message to append
- * @returns true if successful
+ * @param windowId - Optional window ID that is performing the append
+ * @returns Promise<true> if successful
  */
-export function appendToUserBuffer(
+export async function appendToUserBuffer(
   userIdOrUsername: string,
   mode: ConversationBufferMode,
-  message: { role: string; content: string; meta?: Record<string, unknown> }
-): boolean {
+  message: { role: string; content: string; meta?: Record<string, unknown> },
+  windowId?: string
+): Promise<boolean> {
   // Resolve user - try UUID first, then username (agents often pass username)
   let user = getUser(userIdOrUsername);
   if (!user) {
@@ -283,55 +290,59 @@ export function appendToUserBuffer(
     return false;
   }
 
-  const bufferPath = getBufferPathForUser(usernameForBuffer, mode);
+  const result = await withBufferLock(usernameForBuffer, mode, 'append_message', async () => {
+    const bufferPath = getBufferPathForUser(usernameForBuffer, mode);
 
-  try {
-    // Load existing buffer
-    let buffer: ConversationBuffer;
-    if (fs.existsSync(bufferPath)) {
-      const raw = fs.readFileSync(bufferPath, 'utf-8');
-      buffer = JSON.parse(raw);
-      if (!Array.isArray(buffer.messages)) {
-        buffer.messages = [];
+    try {
+      // Load existing buffer
+      let buffer: ConversationBuffer;
+      if (fs.existsSync(bufferPath)) {
+        const raw = fs.readFileSync(bufferPath, 'utf-8');
+        buffer = JSON.parse(raw);
+        if (!Array.isArray(buffer.messages)) {
+          buffer.messages = [];
+        }
+      } else {
+        buffer = {
+          summaryMarkers: [],
+          messages: [],
+          lastSummarizedIndex: null,
+          lastUpdated: new Date().toISOString(),
+        };
       }
-    } else {
-      buffer = {
-        summaryMarkers: [],
-        messages: [],
-        lastSummarizedIndex: null,
-        lastUpdated: new Date().toISOString(),
+
+      // Add message with timestamp
+      const newMessage: ConversationMessage = {
+        role: message.role as 'system' | 'user' | 'assistant',
+        content: message.content,
+        meta: message.meta,
+        timestamp: Date.now(),
       };
+
+      buffer.messages.push(newMessage);
+
+      // Auto-prune to last 50 messages
+      const MAX_MESSAGES = 50;
+      if (buffer.messages.length > MAX_MESSAGES) {
+        buffer.messages = buffer.messages.slice(-MAX_MESSAGES);
+      }
+
+      // Save
+      buffer.lastUpdated = new Date().toISOString();
+      fs.writeFileSync(bufferPath, JSON.stringify(buffer, null, 2));
+
+      // Touch notification file on local disk to trigger SSE updates
+      touchBufferNotification(usernameForBuffer, mode);
+
+      console.log(`[conversation-buffer] ✅ Appended ${message.role} to ${mode} buffer for ${usernameForBuffer}`);
+      return true;
+    } catch (error) {
+      console.error(`[conversation-buffer] Failed to append to ${mode} buffer:`, error);
+      throw error;
     }
+  }, windowId);
 
-    // Add message with timestamp
-    const newMessage: ConversationMessage = {
-      role: message.role as 'system' | 'user' | 'assistant',
-      content: message.content,
-      meta: message.meta,
-      timestamp: Date.now(),
-    };
-
-    buffer.messages.push(newMessage);
-
-    // Auto-prune to last 50 messages
-    const MAX_MESSAGES = 50;
-    if (buffer.messages.length > MAX_MESSAGES) {
-      buffer.messages = buffer.messages.slice(-MAX_MESSAGES);
-    }
-
-    // Save
-    buffer.lastUpdated = new Date().toISOString();
-    fs.writeFileSync(bufferPath, JSON.stringify(buffer, null, 2));
-
-    // Touch notification file on local disk to trigger SSE updates
-    touchBufferNotification(usernameForBuffer, mode);
-
-    console.log(`[conversation-buffer] ✅ Appended ${message.role} to ${mode} buffer for ${usernameForBuffer}`);
-    return true;
-  } catch (error) {
-    console.error(`[conversation-buffer] Failed to append to ${mode} buffer:`, error);
-    return false;
-  }
+  return result !== null;
 }
 
 /**
@@ -341,7 +352,7 @@ export function appendToUserBuffer(
  * @param content - The reflection content
  * @param extraMeta - Optional additional metadata (e.g., { dialogueSource: 'lizard-brain' })
  */
-export function appendReflectionToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): boolean {
+export async function appendReflectionToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
   return appendToUserBuffer(userId, 'inner', {
     role: 'reflection',
     content,
@@ -356,7 +367,7 @@ export function appendReflectionToBuffer(userId: string, content: string, extraM
  * @param content - The dream content
  * @param extraMeta - Optional additional metadata
  */
-export function appendDreamToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): boolean {
+export async function appendDreamToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
   return appendToUserBuffer(userId, 'inner', {
     role: 'dream',
     content,
@@ -371,7 +382,7 @@ export function appendDreamToBuffer(userId: string, content: string, extraMeta?:
  * @param content - The progress message
  * @param extraMeta - Optional additional metadata (e.g., { stepNumber, action, desireId })
  */
-export function appendExecutionProgressToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): boolean {
+export async function appendExecutionProgressToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
   return appendToUserBuffer(userId, 'inner', {
     role: 'execution',
     content,

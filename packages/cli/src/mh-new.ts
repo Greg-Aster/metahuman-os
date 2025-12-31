@@ -1357,17 +1357,23 @@ For more information, see DESIGN.md and ARCHITECTURE.md
         process.exit(1);
       }
 
-      const agentPath = `${systemPaths.brain}/agents/${agentName}.ts`;
+      // Support both flat file (name.ts) and directory (name/index.ts) patterns
+      let agentPath = `${systemPaths.brain}/agents/${agentName}.ts`;
+      if (!fs.existsSync(agentPath)) {
+        agentPath = `${systemPaths.brain}/agents/${agentName}/index.ts`;
+      }
 
       if (!fs.existsSync(agentPath)) {
-        console.error(`Agent not found: ${agentName} at ${agentPath}`);
+        console.error(`Agent not found: ${agentName}`);
+        console.error(`  Checked: ${systemPaths.brain}/agents/${agentName}.ts`);
+        console.error(`  Checked: ${systemPaths.brain}/agents/${agentName}/index.ts`);
         process.exit(1);
       }
 
       console.log(`Spawning agent: ${agentName}...`);
 
       // Use bootstrap wrapper to establish user context for agents
-      const bootstrapPath = `${systemPaths.brain}/agents/_bootstrap.ts`;
+      const bootstrapPath = `${systemPaths.brain}/scripts/_bootstrap.ts`;
       const child = spawn('tsx', [bootstrapPath, agentName], {
         stdio: 'inherit',
         cwd: systemPaths.root,

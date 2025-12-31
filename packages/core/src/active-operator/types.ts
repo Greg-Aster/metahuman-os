@@ -16,6 +16,7 @@
 export type TaskType =
   | 'user_message' // User chat message - always processed first
   | 'memory_curate' // Run organizer agent to enrich memories
+  | 'training_curate' // Run curator agent to prepare training data
   | 'index_build' // Build/update vector embeddings index
   | 'reflect' // Generate reflections via reflector agent
   | 'curiosity' // Run curiosity service (user-facing questions)
@@ -52,6 +53,7 @@ export const DEFAULT_TASK_PRIORITIES: Record<TaskType, Priority> = {
   desire_execute: 'high',
   desire_advance: 'normal', // Process pending desires through approval pipeline
   memory_curate: 'normal',
+  training_curate: 'normal', // Curate training data during idle time
   index_build: 'normal',
   reflect: 'normal',
   curiosity: 'normal',

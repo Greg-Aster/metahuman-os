@@ -25,6 +25,7 @@ import { recordTaskFromTask } from './lane-metrics.js';
 // Map task types to agent file paths
 const TASK_TO_AGENT: Partial<Record<TaskType, string>> = {
   memory_curate: 'brain/agents/organizer/index.ts',
+  training_curate: 'brain/agents/curator/index.ts',
   reflect: 'brain/agents/reflector/index.ts',
   curiosity: 'brain/agents/curiosity-service/index.ts',
   inner_curiosity: 'brain/agents/inner-curiosity/index.ts',
