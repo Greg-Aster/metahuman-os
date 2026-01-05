@@ -2,7 +2,7 @@
   import { onMount, onDestroy, setContext } from 'svelte';
   import { writable } from 'svelte/store';
   import { statusStore, statusRefreshTrigger, nodeEditorMode, rightSidebarOpen as rightSidebarStore } from '../stores/navigation';
-  import { startPolicyPolling, fetchSecurityPolicy, policyStore, isReadOnly } from '../stores/security-policy';
+  import { fetchSecurityPolicy, policyStore, isReadOnly } from '../stores/security-policy';
   import { apiFetch } from '../lib/client/api-config';
   import { startWindowSession, stopWindowSession, isMultiWindow, windowCount } from '../lib/client/window-session';
   import UserMenu from './UserMenu.svelte';
@@ -289,25 +289,29 @@
     void loadCognitiveModeState();
     void fetchSystemStatus();
     void fetchCurrentUser();
+    void fetchSecurityPolicy();
     document.addEventListener('click', handleGlobalClick, true);
 
     // Window session tracking disabled - feature incomplete and causing issues
     // Multi-user scenarios are better handled by separate browser profiles
     // startWindowSession();
 
-    // Refresh persona name every 30 seconds (in case persona file changes)
-    const personaInterval = setInterval(loadPersonaName, 30000);
-
-    // Start security policy polling (refreshes every 30s)
-    const stopPolicyPolling = startPolicyPolling(30000);
+    const handleVisibility = () => {
+      if (!document.hidden) {
+        void loadPersonaName();
+        void fetchSecurityPolicy();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleVisibility);
 
     return () => {
       window.removeEventListener('resize', updateScreenSize);
       window.removeEventListener('resize', setVH);
       window.removeEventListener('orientationchange', setVH);
       document.removeEventListener('click', handleGlobalClick, true);
-      clearInterval(personaInterval);
-      stopPolicyPolling();
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleVisibility);
       // stopWindowSession(); // Disabled - see above
     };
   });

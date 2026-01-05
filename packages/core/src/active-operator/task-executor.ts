@@ -330,10 +330,16 @@ async function executeDesireAdvance(
         }
         Object.assign(desire, updatedDesire);
 
-        // Output success to Inner Dialogue
+        // Output success to Inner Dialogue with actual plan steps
+        const planSteps = updatedDesire.plan?.steps || [];
+        const stepsText = planSteps.length > 0
+          ? planSteps.map((s: any, i: number) => `${i + 1}. ${s.action}${s.skill ? ` (${s.skill})` : ''}`).join('\n')
+          : 'No steps defined';
+        const operatorGoal = updatedDesire.plan?.operatorGoal || 'No goal specified';
+
         appendReflectionToBuffer(username,
-          `✅ **Plan generated:** "${desire.title}"\n\nPlan: ${updatedDesire.plan?.summary || updatedDesire.plan?.description || 'No summary'}\nSteps: ${updatedDesire.plan?.steps?.length || 0}\nRisk: ${updatedDesire.plan?.estimatedRisk || 'unknown'}`,
-          { dialogueSource: 'agency-system', displayColor: '#22c55e', type: 'desire_plan_complete' }
+          `✅ **Plan generated:** "${desire.title}"\n\n**Goal:** ${operatorGoal}\n\n**Steps:**\n${stepsText}\n\n**Risk:** ${updatedDesire.plan?.estimatedRisk || 'unknown'}`,
+          { dialogueSource: 'agency-system', displayColor: '#22c55e', type: 'plan_generated', desireId: desire.id, desireTitle: desire.title }
         );
       }
 

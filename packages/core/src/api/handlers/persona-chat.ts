@@ -48,6 +48,9 @@ interface GraphPipelineParams {
   yoloMode: boolean;
   replyToQuestionId?: string;
   replyToContent?: string;
+  replyToDesireId?: string;
+  replyToDesireTitle?: string;
+  desireContext?: any;
 }
 
 // ============================================================================
@@ -180,7 +183,7 @@ function initializeChat(mode: Mode, sessionId: string, includePersonaSummary = t
 // ============================================================================
 
 async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerator<string> {
-  const { mode, message, sessionId, cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator, yoloMode, replyToQuestionId, replyToContent } = params;
+  const { mode, message, sessionId, cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator, yoloMode, replyToQuestionId, replyToContent, replyToDesireId, replyToDesireTitle, desireContext } = params;
 
   const push = (type: string, data: any) => {
     return `data: ${JSON.stringify({ type, data })}\n\n`;
@@ -220,6 +223,10 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
       // Reply-to context for responding to selected messages (curiosity questions, etc.)
       replyToQuestionId,
       replyToContent,
+      // Desire/goal context for discussing specific desires
+      replyToDesireId,
+      replyToDesireTitle,
+      desireContext,
     };
 
     const startedAt = Date.now();
@@ -388,9 +395,11 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
   const newSession = params.newSession === 'true' || params.newSession === true;
   const sessionId = params.sessionId || `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const yolo = params.yolo === 'true' || params.yolo === true;
-  // Reply-to context for responding to selected messages (e.g., curiosity questions)
+  // Reply-to context for responding to selected messages (curiosity questions, desires, etc.)
   const replyToQuestionId = typeof params.replyToQuestionId === 'string' ? params.replyToQuestionId : undefined;
   const replyToContent = typeof params.replyToContent === 'string' ? params.replyToContent : undefined;
+  const replyToDesireId = typeof params.replyToDesireId === 'string' ? params.replyToDesireId : undefined;
+  const replyToDesireTitle = typeof params.replyToDesireTitle === 'string' ? params.replyToDesireTitle : undefined;
   // stream=false returns complete JSON response instead of SSE (for mobile compatibility)
   const useStreaming = params.stream !== 'false' && params.stream !== false;
 
@@ -432,6 +441,20 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
 
   const conversationHistorySnapshot = getConversationHistorySnapshot(mode, sessionId);
 
+  // Load desire context if replying to a desire
+  let desireContext = null;
+  if (replyToDesireId && user.isAuthenticated) {
+    try {
+      const { loadDesire } = await import('../../agency/storage.js');
+      desireContext = await loadDesire(replyToDesireId, user.username);
+      if (desireContext) {
+        console.log(`[persona-chat] Loaded desire context: ${desireContext.title} (${desireContext.status})`);
+      }
+    } catch (e) {
+      console.warn(`[persona-chat] Failed to load desire context:`, e);
+    }
+  }
+
   // Create streaming generator
   const streamGen = streamGraphExecution({
     mode,
@@ -447,6 +470,9 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     yoloMode: yolo,
     replyToQuestionId,
     replyToContent,
+    replyToDesireId,
+    replyToDesireTitle,
+    desireContext,
   });
 
   // Non-streaming mode: collect all events and return as JSON

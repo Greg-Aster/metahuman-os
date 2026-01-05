@@ -1511,8 +1511,8 @@ async function loadMemoryContent(relPath: string) {
   {:else if $activeView === 'terminal'}
     <div class="view-container terminal-view">
       <div class="view-header">
-        <h2 class="view-title">💻 Terminal</h2>
-        <p class="view-subtitle">Multiple terminals with tab management</p>
+        <h2 class="view-title">💻 System</h2>
+        <p class="view-subtitle">System console with tabbed sessions</p>
       </div>
       <div class="view-content terminal-iframe-container">
         {#await loadComponent('TerminalManager')}

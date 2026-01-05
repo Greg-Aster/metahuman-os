@@ -12,7 +12,11 @@ import { getProfilePaths } from '../../index.js';
 export async function handleGetChatHistory(req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
     const user = req.user;
-    const mode = (req.query?.mode === 'inner') ? 'inner' : 'conversation';
+    const mode = req.query?.mode === 'inner'
+      ? 'inner'
+      : req.query?.mode === 'system'
+        ? 'system'
+        : 'conversation';
     const limit = Math.max(1, Math.min(500, Number(req.query?.limit || 80)));
 
     const isGuestWithProfile = user.role === 'guest';
@@ -59,9 +63,9 @@ export async function handleGetChatHistory(req: UnifiedRequest): Promise<Unified
       // Filter out system messages and summary markers to get actual conversation
       // Preserve all role types including reflection, dream, reasoning for inner dialogue
       const bufferMessages = buffer.messages
-        .filter((msg: any) => msg.role !== 'system' && !msg.meta?.summaryMarker)
+        .filter((msg: any) => (mode === 'system' ? !msg.meta?.summaryMarker : msg.role !== 'system' && !msg.meta?.summaryMarker))
         .map((msg: any) => ({
-          role: msg.role as 'user' | 'assistant' | 'reflection' | 'dream' | 'reasoning',
+          role: msg.role as 'user' | 'assistant' | 'reflection' | 'dream' | 'reasoning' | 'system',
           content: msg.content,
           timestamp: msg.timestamp || Date.now(),
           meta: msg.meta

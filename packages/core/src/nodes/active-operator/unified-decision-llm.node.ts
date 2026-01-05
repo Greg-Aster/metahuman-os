@@ -12,7 +12,7 @@ import { loadConfig } from '../../active-operator/state-persister.js';
 import { audit } from '../../audit.js';
 import type { TaskType, TaskDecision } from '../../active-operator/types.js';
 import { parseThinkingBlocks } from '../output/thinking-stripper.node.js';
-import { appendReflectionToBuffer } from '../../conversation-buffer.js';
+import { appendSystemMessageToBuffer } from '../../conversation-buffer.js';
 
 /**
  * Task descriptions for the LLM prompt.
@@ -303,8 +303,8 @@ What should I do next?`,
       ? `🧠 **Lizard Brain Reasoning**\n\n${thinking}\n\n---\n**Decision:** ${decision?.task || 'Wait (no task needed)'}${explicitReasoning}${desireSummaryText}`
       : `🧠 **Lizard Brain Decision**\n\n**Task:** ${decision?.task || 'None'}\n**Reason:** ${reasoning}${desireSummaryText}`;
 
-    // Output to inner dialogue (direct call - graph edge removed to prevent duplicates)
-    appendReflectionToBuffer(username, formattedReasoning, {
+    // Output to system buffer (direct call - graph edge removed to prevent duplicates)
+    appendSystemMessageToBuffer(username, formattedReasoning, {
       dialogueSource: 'lizard-brain',
       displayColor: '#8b5cf6', // Purple for Lizard Brain
       type: 'lizard_brain_decision',

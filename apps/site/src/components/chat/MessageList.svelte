@@ -318,7 +318,7 @@
     {#if mode === 'combined'
       ? true
       : mode === 'inner'
-        ? (message.role === 'reflection' || message.role === 'dream' || message.role === 'reasoning')
+        ? (message.role === 'reflection' || message.role === 'dream' || message.role === 'reasoning' || (showSystemMessages && message.role === 'system'))
         : (message.role !== 'reflection' && message.role !== 'dream')}
       {#if message.role === 'reasoning'}
         <Thinking
@@ -359,7 +359,19 @@
                 {#if message.meta?.dialogueSource === 'lizard-brain'}
                   ⚡ Lizard Brain
                 {:else if message.meta?.dialogueSource === 'agency-system'}
-                  📋 Agency System
+                  {#if message.meta?.type === 'approval_request'}
+                    <span class="goal-label goal-approval">🎯 Goal (Awaiting Approval)</span>
+                  {:else if message.meta?.type === 'desire_plan_complete' || message.meta?.type === 'plan_generated'}
+                    <span class="goal-label goal-planned">🎯 Goal Plan</span>
+                  {:else if message.meta?.type === 'desire_planning_start' || message.meta?.type === 'task_start'}
+                    <span class="goal-label goal-planning">🎯 Planning Goal</span>
+                  {:else if message.meta?.type === 'desire_approved'}
+                    <span class="goal-label goal-approved">🎯 Goal Approved</span>
+                  {:else if message.meta?.type === 'desire_executing'}
+                    <span class="goal-label goal-executing">🎯 Goal Executing</span>
+                  {:else}
+                    📋 Agency
+                  {/if}
                 {:else}
                   💭 Idle Thought
                 {/if}
@@ -484,6 +496,39 @@
 </div>
 
 <style>
+  /* Goal/Desire labels with distinct styling */
+  .goal-label {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-weight: 500;
+  }
+
+  .goal-approval {
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.15);
+  }
+
+  .goal-planned {
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.15);
+  }
+
+  .goal-planning {
+    color: #6366f1;
+    background: rgba(99, 102, 241, 0.15);
+  }
+
+  .goal-approved {
+    color: #22c55e;
+    background: rgba(34, 197, 94, 0.15);
+  }
+
+  .goal-executing {
+    color: #f97316;
+    background: rgba(249, 115, 22, 0.15);
+  }
+
   /* Inline approval buttons for desire approval requests */
   .approval-buttons {
     display: flex;

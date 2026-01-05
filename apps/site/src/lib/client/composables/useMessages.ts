@@ -146,12 +146,20 @@ export function useMessages(options: UseMessagesOptions) {
 
   /**
    * Get reply-to metadata from selected message
+   * Supports curiosity questions and desire/goal messages
    */
-  function getReplyToMetadata(): { questionId: string | null; content: string | null } {
+  function getReplyToMetadata(): {
+    questionId: string | null;
+    content: string | null;
+    desireId: string | null;
+    desireTitle: string | null;
+  } {
     const selected = get(selectedMessage);
     return {
       questionId: selected?.meta?.curiosityQuestionId || null,
       content: selected?.content || null,
+      desireId: selected?.meta?.desireId || null,
+      desireTitle: selected?.meta?.desireTitle || null,
     };
   }
 

@@ -394,6 +394,32 @@
     min-height: 200px;
     max-height: 50%;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .terminal-split-panel.minimized {
+    flex: 0 0 auto;
+    min-height: auto;
+    max-height: none;
+  }
+
+  .terminal-header {
+    @apply flex items-center justify-between px-3 py-2 bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700;
+    flex-shrink: 0;
+  }
+
+  .terminal-title {
+    @apply text-sm font-medium text-gray-600 dark:text-gray-300;
+  }
+
+  .terminal-minimize-btn {
+    @apply px-2 py-1 text-xs rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors;
+  }
+
+  .terminal-content {
+    flex: 1;
+    overflow: hidden;
   }
 
   .messages-list {

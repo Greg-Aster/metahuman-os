@@ -207,6 +207,20 @@ const execute: NodeExecutor = async (inputs, context) => {
       feedbackSection = `\n\n## Previous Attempt Failed\nIteration: ${feedbackContext.iteration}\n${feedbackContext.specificFeedback}`;
     }
 
+    // Build desire context section if user is replying to a goal/desire
+    let desireSection = '';
+    const desireContext = context.desireContext;
+    if (desireContext && desireContext.title) {
+      console.log(`[ResponseSynthesizer] Including desire context: ${desireContext.title} (${desireContext.status})`);
+      const stepsText = desireContext.plan?.steps?.length > 0
+        ? desireContext.plan.steps.map((s: any, i: number) =>
+            `${i + 1}. ${s.action}${s.skill ? ` (${s.skill})` : ''}${s.expectedOutcome ? ` - ${s.expectedOutcome}` : ''}`
+          ).join('\n')
+        : 'No plan steps yet';
+      const strengthPct = ((desireContext.strength || 0) * 100).toFixed(0);
+      desireSection = `\n\n## Goal Context\nThe user is discussing this goal: "${desireContext.title}"\nDescription: ${desireContext.description || 'No description'}\nStatus: ${desireContext.status || 'unknown'}\nStrength: ${strengthPct}%\n\nPlan Steps:\n${stepsText}\n\nThe user can approve, reject, or provide feedback to revise this goal.\n---\n`;
+    }
+
     // IMPORTANT: User's current message is the PRIMARY focus
     // Put it at the TOP of the system prompt so the LLM doesn't lose sight of it
     const currentQuerySection = `## Current Question\n${userMsgStr}\n\n---\n`;
@@ -214,15 +228,15 @@ const execute: NodeExecutor = async (inputs, context) => {
     // Check if we have factual information that should override persona style
     const hasFactualMemories = memories.length > 0 && !unknownSignal;
 
-    // Build system prompt: Question first, then FACTS (before persona), then persona for style
+    // Build system prompt: Question first, then GOAL CONTEXT, then FACTS (before persona), then persona for style
     // This ensures factual answers aren't filtered through persona's philosophical tendencies
     let systemPrompt: string;
     if (hasFactualMemories) {
       // Facts-first prompt: memories come BEFORE persona so facts take priority
-      systemPrompt = `${currentQuerySection}${memoryContext}\n\n---\n\n## Your Identity\n${personaSummary}${feedbackSection}`;
+      systemPrompt = `${currentQuerySection}${desireSection}${memoryContext}\n\n---\n\n## Your Identity\n${personaSummary}${feedbackSection}`;
     } else {
       // No memories: persona-first (unknownInstruction already handles "I don't know")
-      systemPrompt = `${currentQuerySection}${unknownInstruction}${personaSummary}${feedbackSection}`;
+      systemPrompt = `${currentQuerySection}${desireSection}${unknownInstruction}${personaSummary}${feedbackSection}`;
     }
 
     // Limit conversation history to 6 messages (not 10) to reduce context overload

@@ -12,7 +12,7 @@
  * 4. When notification changes, re-read buffer from encrypted storage
  *
  * Query params:
- *   - mode: 'conversation' | 'inner' (required)
+ *   - mode: 'conversation' | 'inner' | 'system' (required)
  */
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';
@@ -25,8 +25,8 @@ export const GET: APIRoute = ({ request, cookies }) => {
   const url = new URL(request.url);
   const mode = url.searchParams.get('mode');
 
-  if (mode !== 'conversation' && mode !== 'inner') {
-    return new Response(JSON.stringify({ error: 'mode query param required (conversation|inner)' }), {
+  if (mode !== 'conversation' && mode !== 'inner' && mode !== 'system') {
+    return new Response(JSON.stringify({ error: 'mode query param required (conversation|inner|system)' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -83,7 +83,7 @@ export const GET: APIRoute = ({ request, cookies }) => {
     const profilePaths = getProfilePaths(username);
     const bufferFilename = `conversation-buffer-${mode}.json`;
     bufferPath = path.join(profilePaths.state, bufferFilename);
-    notifyPath = getBufferNotificationPath(username, mode as 'conversation' | 'inner');
+    notifyPath = getBufferNotificationPath(username, mode as 'conversation' | 'inner' | 'system');
   }
 
   const stream = new ReadableStream({
@@ -112,7 +112,7 @@ export const GET: APIRoute = ({ request, cookies }) => {
           const raw = fs.readFileSync(bufferPath, 'utf-8');
           const buffer = JSON.parse(raw);
           const messages = (buffer.messages || [])
-            .filter((msg: any) => msg.role !== 'system' && !msg.meta?.summaryMarker)
+            .filter((msg: any) => (mode === 'system' ? !msg.meta?.summaryMarker : msg.role !== 'system' && !msg.meta?.summaryMarker))
             .map((msg: any) => ({
               role: msg.role,
               content: msg.content,

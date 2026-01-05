@@ -9,7 +9,7 @@ import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 
 // Conversation buffer types
 export type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'dream' | 'reasoning';
-export type BufferMode = 'conversation' | 'inner';
+export type BufferMode = 'conversation' | 'inner' | 'system';
 
 export interface BufferMessage {
   role: MessageRole;
@@ -50,7 +50,7 @@ interface LocalMemoryDB extends DBSchema {
   };
   // Conversation buffers for offline chat
   conversationBuffers: {
-    key: string;  // 'conversation' or 'inner'
+    key: string;  // 'conversation', 'inner', or 'system'
     value: ConversationBuffer;
   };
   persona: {
@@ -922,12 +922,12 @@ export async function getAllBuffers(): Promise<ConversationBuffer[]> {
 }
 
 /**
- * Get buffer messages filtered for display (excludes system messages)
+ * Get buffer messages filtered for display
  */
 export async function getDisplayMessages(mode: BufferMode): Promise<BufferMessage[]> {
   const buffer = await getConversationBuffer(mode);
   return buffer.messages.filter(
-    msg => msg.role !== 'system' && !msg.meta?.summaryMarker
+    msg => (mode === 'system' ? !msg.meta?.summaryMarker : msg.role !== 'system' && !msg.meta?.summaryMarker)
   );
 }
 

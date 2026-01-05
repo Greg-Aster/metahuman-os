@@ -5,7 +5,7 @@
    * Shows pending proposals that need user approval BEFORE execution.
    * Post-execution feedback is now handled by the unified FeedbackButtons in InputArea.
    */
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
   import OperatorProposalCard from './OperatorProposalCard.svelte';
 
@@ -14,10 +14,12 @@
 
   // State - only proposals, feedback is handled elsewhere
   let proposals: any[] = [];
-  let pollInterval: ReturnType<typeof setInterval> | null = null;
   let loading = false;
 
   async function loadProposals() {
+    if (typeof document !== 'undefined' && document.hidden) {
+      return;
+    }
     try {
       loading = true;
       const res = await apiFetch('/api/operator-proposals');
@@ -43,15 +45,19 @@
 
   onMount(() => {
     loadProposals();
-    // Poll every 5 seconds for new proposals
-    pollInterval = setInterval(loadProposals, 5000);
+
+    const handleVisibility = () => {
+      if (!document.hidden) {
+        loadProposals();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   });
 
-  onDestroy(() => {
-    if (pollInterval) {
-      clearInterval(pollInterval);
-    }
-  });
 
   $: hasItems = proposals.length > 0;
 </script>

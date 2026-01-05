@@ -15,8 +15,8 @@ import { getProfilePaths } from '../../index.js';
 export async function handleGetSimpleBuffer(req: UnifiedRequest): Promise<UnifiedResponse> {
   const mode = req.query?.mode;
 
-  if (mode !== 'conversation' && mode !== 'inner') {
-    return badRequestResponse('mode query param required (conversation|inner)');
+  if (mode !== 'conversation' && mode !== 'inner' && mode !== 'system') {
+    return badRequestResponse('mode query param required (conversation|inner|system)');
   }
 
   const user = req.user;
@@ -45,7 +45,7 @@ export async function handleGetSimpleBuffer(req: UnifiedRequest): Promise<Unifie
     const raw = fs.readFileSync(bufferPath, 'utf-8');
     const buffer = JSON.parse(raw);
     const messages = (buffer.messages || [])
-      .filter((msg: any) => msg.role !== 'system' && !msg.meta?.summaryMarker)
+      .filter((msg: any) => (mode === 'system' ? !msg.meta?.summaryMarker : msg.role !== 'system' && !msg.meta?.summaryMarker))
       .map((msg: any) => ({
         role: msg.role,
         content: msg.content,

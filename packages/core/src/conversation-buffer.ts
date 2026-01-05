@@ -391,6 +391,21 @@ export async function appendExecutionProgressToBuffer(userId: string, content: s
 }
 
 /**
+ * Append a system message to a user's system buffer
+ * Used for system-originated status and lizard brain outputs
+ * @param userId - The user ID to append to
+ * @param content - The message content
+ * @param extraMeta - Optional additional metadata (e.g., { dialogueSource })
+ */
+export async function appendSystemMessageToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
+  return appendToUserBuffer(userId, 'system', {
+    role: 'system',
+    content,
+    meta: { type: 'system_message', source: 'system', ...extraMeta },
+  });
+}
+
+/**
  * Append reasoning/thinking to a user's inner dialogue buffer
  * Used by thinking stripper to display LLM reasoning in a separate section
  * @param userId - The user ID to append to

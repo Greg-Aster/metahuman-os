@@ -37,7 +37,6 @@
   export let isWakeWordListening: boolean = false; // Wake word detection active (mobile)
   export let isConversationMode: boolean = false; // Conversation mode active (mobile long-press)
   export let ttsIsPlaying: boolean = false;
-  export let lengthMode: 'auto' | 'concise' | 'detailed' = 'auto';
   export let interimTranscript: string = ''; // Real-time transcript preview
 
   const dispatch = createEventDispatcher<{
@@ -50,7 +49,6 @@
     ttsStop: void;
     ttsStopAndListen: void;  // New: interrupt AI and start listening
     clearSelection: void;
-    lengthModeChange: { mode: 'auto' | 'concise' | 'detailed' };
   }>();
 
   // Long-press detection for conversation mode
@@ -149,10 +147,6 @@
 
   function handleClearSelection() {
     dispatch('clearSelection');
-  }
-
-  function handleLengthModeChange(mode: 'auto' | 'concise' | 'detailed') {
-    dispatch('lengthModeChange', { mode });
   }
 
   onDestroy(() => {

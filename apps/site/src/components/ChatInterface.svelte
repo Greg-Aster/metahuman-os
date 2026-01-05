@@ -35,17 +35,19 @@
   let chatResponseStream: EventSource | null = null;
   let innerDialogueStream: EventSource | null = null;
   let ttsQueueStream: EventSource | null = null; // TTS queue from node editor
+  let isTabVisible = true;
   let lastInnerMessageCount = 0; // Track previous message count for inner dialogue TTS detection
   let lastConversationMessageCount = 0; // Track previous message count for conversation TTS detection
   // View selection: VS Code-style multi-select
   // All three tabs can be combined for unified feed
   // - Conversation: user/assistant messages from conversation buffer
   // - Inner: reflection/dream/reasoning from inner buffer
-  // - Terminal: execution/system messages from inner buffer + split panel
+  // - System: execution/system messages from system buffer + split panel
   let selectedViews = new Set<'conversation' | 'inner' | 'terminal'>(['conversation']);
 
   // Show terminal split panel when terminal tab is selected
   $: showSystemTerminal = selectedViews.has('terminal');
+  let terminalMinimized = false;
 
   // Compute display mode based on selected views
   // 'combined' = show all messages, 'conversation' = only chat, 'inner' = only reflections/dreams
@@ -55,9 +57,8 @@
       ? 'inner'
       : 'conversation';
 
-  // Legacy mode for compatibility - maps to the old terminal/conversation/inner modes
-  $: mode = showSystemTerminal ? 'terminal' : displayMode as 'conversation' | 'inner' | 'terminal';
-  let lengthMode: 'auto' | 'concise' | 'detailed' = 'auto';
+  // Legacy mode for compatibility - keep message mode tied to chat buffers
+  $: mode = displayMode as 'conversation' | 'inner';
   let messagesContainer: HTMLDivElement;
   let shouldAutoScroll = true;
   // Buffer stream (innerDialogueStream) provides real-time updates via fs.watch SSE
@@ -92,7 +93,7 @@
   // Initialize Messages composable
   // Terminal mode doesn't use messages, default to 'conversation' for the messages API
   const messagesApi = useMessages({
-    getMode: () => mode === 'terminal' ? 'conversation' : mode,
+    getMode: () => mode,
     onMessagesChange: (msgs) => {
       // This handles any side effects when messages change
       // (currently none needed, but useful for future extensions)
@@ -400,13 +401,22 @@
       scrollObserver.observe(scrollSentinel);
     }
 
+    isTabVisible = !document.hidden;
     // Reconnect buffer streams when tab becomes visible (in case connection dropped)
     const handleVisibilityChange = () => {
-      if (!document.hidden && selectedViews.size > 0) {
+      isTabVisible = !document.hidden;
+      if (!isTabVisible) {
+        disconnectAllBufferStreams();
+        disconnectTTSQueueStream();
+        return;
+      }
+
+      if (selectedViews.size > 0) {
         // Check if any streams need reconnection
         const needsReconnect =
           (selectedViews.has('conversation') && (!conversationStream || conversationStream.readyState === EventSource.CLOSED)) ||
-          (selectedViews.has('inner') && (!innerDialogueStream || innerDialogueStream.readyState === EventSource.CLOSED));
+          (selectedViews.has('inner') && (!innerDialogueStream || innerDialogueStream.readyState === EventSource.CLOSED)) ||
+          (selectedViews.has('terminal') && (!systemStream || systemStream.readyState === EventSource.CLOSED));
 
         if (needsReconnect) {
           console.log('[chat] Tab visible, reconnecting buffer streams');
@@ -414,6 +424,8 @@
           connectMultipleBufferStreams();
         }
       }
+
+      connectTTSQueueStream();
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
@@ -516,118 +528,22 @@
       return true;
     });
 
-    console.log(`[chat] Merged ${uniqueMessages.length} unique messages from ${modes.length} buffer(s)`);
+    console.log(`[chat] Merged ${uniqueMessages.length} unique messages from ${bufferModes.length} buffer(s)`);
     messages.set(uniqueMessages);
   }
 
-  /**
-   * Legacy wrapper for single-buffer fetch (for stream updates)
-   */
-  async function fetchBuffer(streamMode: 'conversation' | 'inner') {
-    // If we have multiple views selected, fetch and merge all
-    if (selectedViews.size > 1) {
-      await fetchAllSelectedBuffers();
-    } else {
-      // Single view - just set directly
-      const bufferMessages = await fetchSingleBuffer(streamMode);
-      messages.set(bufferMessages);
-    }
-  }
-
-  /**
-   * Connect to buffer SSE stream for real-time updates
-   * Uses fs.watch on server - no polling needed, instant updates
-   * Always attempts connection - SSE has its own error handling
-   */
-  function connectBufferStream(streamMode: 'conversation' | 'inner') {
-    // First, fetch buffer directly for immediate display
-    fetchBuffer(streamMode);
-
-    // Close existing stream if any
+  function disconnectAllBufferStreams() {
     if (innerDialogueStream) {
-      innerDialogueStream.close();
-    }
-
-    // Always try to connect SSE - don't rely on isConnected which may not be accurate yet
-    // The SSE onerror handler will deal with connection failures gracefully
-    console.log(`[chat] Connecting to ${streamMode} buffer stream...`);
-    innerDialogueStream = apiEventSource(`/api/buffer-stream?mode=${streamMode}`);
-
-    innerDialogueStream.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log(`[chat] Buffer stream message type: ${data.type}`);
-        if (data.type === 'error') {
-          console.error('[chat] Buffer stream auth error:', data.error);
-          messagesApi.pushMessage('system', `⚠️ ${data.error}`);
-          return;
-        }
-        if (data.type === 'connected') {
-          console.log(`[chat] Buffer stream connected, watching: ${data.bufferPath}`);
-          // Reset message count to current messages to avoid TTS on reconnect
-          const currentCount = get(messages).length;
-          if (streamMode === 'inner') {
-            lastInnerMessageCount = currentCount;
-            console.log(`[chat-tts] Reset inner message count to ${lastInnerMessageCount} on connect`);
-          } else {
-            lastConversationMessageCount = currentCount;
-            console.log(`[chat-tts] Reset conversation message count to ${lastConversationMessageCount} on connect`);
-          }
-          return;
-        }
-        if (data.type === 'update' && Array.isArray(data.messages)) {
-          // SIMPLE TTS LOGIC (same approach as conversation TTS):
-          // 1. Get previous count
-          // 2. If we have new messages and TTS enabled, speak the last new one
-          // 3. Update count
-          // 4. Update messages store
-
-          const prevCount = streamMode === 'inner' ? lastInnerMessageCount : lastConversationMessageCount;
-          const newCount = data.messages.length;
-          const hasNewMessages = newCount > prevCount && prevCount > 0; // prevCount > 0 means we've seen first load
-
-          console.log(`[chat-tts] Buffer update: mode=${streamMode}, prev=${prevCount}, new=${newCount}, hasNew=${hasNewMessages}`);
-
-          // LEGACY TTS REMOVED - TTS now handled via unified TTS queue stream from cognitive graph nodes
-          // Inner dialogue (dreams/reflections) and conversation (curiosity) TTS now go through TTS nodes
-
-          // Update counts for next comparison
-          if (streamMode === 'inner') {
-            lastInnerMessageCount = newCount;
-          } else {
-            lastConversationMessageCount = newCount;
-          }
-
-          // Update messages store
-          messages.set(data.messages);
-        }
-      } catch (err) {
-        console.error('[chat] Buffer stream parse error:', err);
-      }
-    };
-
-    innerDialogueStream.onerror = (err) => {
-      console.error('[chat] Buffer stream error - connection may have been reset:', err);
-      // Check if we're now offline
-      const stillConnected = get(isConnected);
-      if (!stillConnected) {
-        console.log('[chat] Now offline, switching to local storage mode');
-        fetchBuffer(streamMode);
-        return;
-      }
-      // Attempt reconnection after a delay
-      setTimeout(() => {
-        console.log('[chat] Attempting buffer stream reconnection...');
-        connectBufferStream(streamMode);
-      }, 3000);
-    };
-  }
-
-  function disconnectBufferStream() {
-    if (innerDialogueStream) {
-      console.log('[chat] Disconnecting buffer stream');
       innerDialogueStream.close();
       innerDialogueStream = null;
+    }
+    if (conversationStream) {
+      conversationStream.close();
+      conversationStream = null;
+    }
+    if (systemStream) {
+      systemStream.close();
+      systemStream = null;
     }
   }
 
@@ -637,6 +553,9 @@
    * Speaks them if the appropriate toggle is enabled
    */
   function connectTTSQueueStream() {
+    if (typeof document !== 'undefined' && document.hidden) {
+      return;
+    }
     if (ttsQueueStream) {
       ttsQueueStream.close();
     }
@@ -686,7 +605,7 @@
       console.error('[chat-tts] TTS queue stream error:', err);
       // Attempt reconnection after a delay
       setTimeout(() => {
-        if (isComponentMounted) {
+        if (isComponentMounted && !document.hidden) {
           console.log('[chat-tts] Attempting TTS queue stream reconnection...');
           connectTTSQueueStream();
         }
@@ -709,12 +628,7 @@
     // Clean up event listeners and streams
     visibilityCleanup?.();
     chatResponseStream?.close();
-    disconnectBufferStream();
-    // Also disconnect conversation stream (for multi-view mode)
-    if (conversationStream) {
-      conversationStream.close();
-      conversationStream = null;
-    }
+    disconnectAllBufferStreams();
     disconnectTTSQueueStream();
     activityApi.clearActivity();
     ttsApi.cleanup();
@@ -843,6 +757,8 @@
     const replyToMetadata = messagesApi.getReplyToMetadata();
     const replyToQuestionId = replyToMetadata.questionId;
     const replyToContent = replyToMetadata.content;
+    const replyToDesireId = replyToMetadata.desireId;
+    const replyToDesireTitle = replyToMetadata.desireTitle;
 
     // Clear selection after capturing metadata
     const wasReplying = $selectedMessage !== null;
@@ -868,7 +784,6 @@
       const params = new URLSearchParams({
         message: userMessage,
         mode,
-        length: lengthMode,
         reason: String(reasoningDepth > 0),
         reasoningDepth: String(reasoningDepth),
         llm: JSON.stringify(llm_opts),
@@ -879,10 +794,17 @@
       params.set('yolo', String(yoloMode));
       // audience removed - focus selector obsolete with ReAct operator
 
-      // Add replyTo metadata if replying to any message (curiosity or regular)
+      // Add replyTo metadata if replying to any message (curiosity, desire, or regular)
       if (replyToQuestionId) {
         params.set('replyToQuestionId', replyToQuestionId);
         console.log('[reply-to] Replying to curiosity question:', replyToQuestionId);
+      }
+      if (replyToDesireId) {
+        params.set('replyToDesireId', replyToDesireId);
+        if (replyToDesireTitle) {
+          params.set('replyToDesireTitle', replyToDesireTitle);
+        }
+        console.log('[reply-to] Replying to desire/goal:', replyToDesireId, replyToDesireTitle);
       }
       if (replyToContent) {
         // Truncate to 500 chars to avoid URL length issues
@@ -1242,6 +1164,10 @@
    * - terminal view → system buffer stream
    */
   function connectMultipleBufferStreams() {
+    if (typeof document !== 'undefined' && document.hidden) {
+      console.log('[chat] Skipping buffer stream connect (tab hidden)');
+      return;
+    }
     // Close existing streams
     if (innerDialogueStream) {
       innerDialogueStream.close();
@@ -1272,7 +1198,7 @@
    * Connect to a single buffer stream with proper merge handling
    */
   function connectBufferStreamForMode(
-    streamMode: 'conversation' | 'inner',
+    streamMode: 'conversation' | 'inner' | 'system',
     setStream: (stream: EventSource) => void
   ) {
     console.log(`[chat] Connecting to ${streamMode} buffer stream (multi-mode)...`);
@@ -1312,16 +1238,14 @@
       console.error(`[chat] ${streamMode} buffer stream error:`, err);
       // Attempt reconnection after a delay
       setTimeout(() => {
-        if (isComponentMounted && selectedViews.has(streamMode)) {
+        const isSelected = streamMode === 'system' ? selectedViews.has('terminal') : selectedViews.has(streamMode);
+        if (isComponentMounted && !document.hidden && isSelected) {
           connectBufferStreamForMode(streamMode, setStream);
         }
       }, 3000);
     };
   }
 
-  function toggleSystemTerminal() {
-    showSystemTerminal = !showSystemTerminal;
-  }
 
   async function toggleBigBrother() {
     const wasEnabled = bigBrotherEnabled;
@@ -1504,25 +1428,13 @@
       </button>
       <button
         class="mode-btn {showSystemTerminal ? 'active' : ''}"
-        on:click={() => toggleSystemTerminal()}
-        aria-label="Toggle system terminal"
-        title="Toggle system terminal (split view below chat)"
+        on:click={() => toggleView('terminal')}
+        aria-label="Toggle system view"
+        title="Toggle system view (split view below chat)"
       >
         <span class="mode-icon" aria-hidden="true">💻</span>
-        <span class="mode-label">Terminal</span>
+        <span class="mode-label">System</span>
       </button>
-    </div>
-
-    <!-- Length Toggle -->
-    <div class="length-toggle">
-      <label class="control-label" for="length-select">
-        <span class="control-icon" aria-hidden="true">📏</span>
-      </label>
-      <select id="length-select" bind:value={lengthMode} aria-label="Response length">
-        <option value="auto">Auto</option>
-        <option value="concise">Concise</option>
-        <option value="detailed">Detailed</option>
-      </select>
     </div>
 
     <!-- Thinking Mode Toggle (vLLM/Qwen3) -->
@@ -1696,6 +1608,7 @@
           <MessageList
             messages={$messages}
             mode={displayMode}
+            showSystemMessages={selectedViews.has('terminal')}
             selectedMessageIndex={$selectedMessageIndex}
             {loading}
             {reasoningStages}
@@ -1743,7 +1656,6 @@
       isConversationMode={$micIsConversationMode}
       ttsIsPlaying={$ttsIsPlaying}
       interimTranscript={$micInterimTranscript}
-      {lengthMode}
       on:send={sendMessage}
       on:stop={stopRequest}
       on:keypress={(e) => handleKeyPress(e.detail.event)}
@@ -1792,7 +1704,6 @@
         }
       }}
       on:clearSelection={() => messagesApi.clearSelection()}
-      on:lengthModeChange={(e) => { lengthMode = e.detail.mode; }}
     />
 
     <!-- Claude CLI Terminal Panel (shows when Big Brother is streaming) -->
@@ -1823,8 +1734,22 @@
 
     <!-- Terminal split panel (system terminal, not Claude CLI) -->
     {#if showSystemTerminal}
-      <div class="terminal-split-panel">
-        <TerminalManager />
+      <div class="terminal-split-panel" class:minimized={terminalMinimized}>
+        <div class="terminal-header">
+          <span class="terminal-title">💻 System Terminal</span>
+          <button
+            class="terminal-minimize-btn"
+            on:click={() => terminalMinimized = !terminalMinimized}
+            title={terminalMinimized ? 'Expand terminal' : 'Minimize terminal'}
+          >
+            {terminalMinimized ? '▲' : '▼'}
+          </button>
+        </div>
+        {#if !terminalMinimized}
+          <div class="terminal-content">
+            <TerminalManager />
+          </div>
+        {/if}
       </div>
     {/if}
   </div>
