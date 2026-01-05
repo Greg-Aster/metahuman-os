@@ -20,6 +20,7 @@ export type DesireSource =
   | 'persona_goal'      // Explicit goals from persona/core.json (weight: 1.0)
   | 'urgent_task'       // High-priority tasks (weight: 0.85)
   | 'task'              // Regular tasks (weight: 0.7)
+  | 'help_ticket'       // From negative user feedback requiring fix (weight: 0.65)
   | 'memory_pattern'    // Recurring patterns from episodic memory (weight: 0.5)
   | 'curiosity'         // From curiosity service questions (weight: 0.4)
   | 'reflection'        // From reflector insights (weight: 0.35)
@@ -33,6 +34,7 @@ export const DESIRE_SOURCE_WEIGHTS: Record<DesireSource, number> = {
   persona_goal: 1.0,
   urgent_task: 0.85,
   task: 0.7,
+  help_ticket: 0.65,  // User feedback issues are high priority
   memory_pattern: 0.5,
   curiosity: 0.4,
   reflection: 0.35,

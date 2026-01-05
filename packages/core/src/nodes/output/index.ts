@@ -12,3 +12,4 @@ export { ChatViewNode } from './chat-view.node.js';
 export { TTSNode } from './tts.node.js';
 export { ThinkingStripperNode, parseThinkingBlocks } from './thinking-stripper.node.js';
 export { DisplayBufferNode } from './display-buffer.node.js';
+export { ReasoningCaptureNode } from './reasoning-capture.node.js';

@@ -32,7 +32,8 @@ export type EventType =
   | 'observation'
   | 'reflection'
   | 'dream'
-  | 'task';
+  | 'task'
+  | 'operator_feedback';  // Human-in-the-loop approval/rejection feedback for training
 
 // ============================================================================
 // Memory Write Policy

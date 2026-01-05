@@ -285,12 +285,23 @@ async function buildDataset(args: Args): Promise<void> {
   const memories = collectEpisodicMemories(args.username);
 
   // Filter for high-value memory types
-  const valuableMemories = memories.filter(m =>
-    m.type === 'conversation' ||
-    m.type === 'observation' ||
-    m.type === 'reflection' ||
-    m.type === 'inner_dialogue'
-  );
+  // IMPORTANT: Exclude memories with negative feedback (reinforcementSignal: -1)
+  // These are memories the user explicitly marked as bad and should not influence training
+  const valuableMemories = memories.filter(m => {
+    // Skip feedback memories themselves (they're meta-data, not training content)
+    if (m.tags?.includes('feedback')) return false;
+
+    // Skip memories with negative reinforcement signal
+    if (m.metadata?.reinforcementSignal === -1) return false;
+
+    // Include valuable memory types
+    return (
+      m.type === 'conversation' ||
+      m.type === 'observation' ||
+      m.type === 'reflection' ||
+      m.type === 'inner_dialogue'
+    );
+  });
 
   console.log(`[user-dataset-builder] Processing ${valuableMemories.length} valuable memories...`);
 

@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { ROOT, audit } from '../../packages/core/src/index.js';
+import { ROOT, audit, getActiveBackend } from '../../packages/core/src/index.js';
 import { withUserContext } from '../../packages/core/src/context.js';
 import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
 import { storage } from '../services/storage-router.js';
@@ -267,36 +267,73 @@ function convertToGGUF(safetensorsDir: string, ggufOutputPath: string): void {
 /**
  * Fallback: Copy the most recent adapter as the "merged" version
  * This is used when mergekit isn't available
+ * Supports both GGUF (Ollama) and safetensors (vLLM) formats
  */
 function fallbackMerge(adapterPaths: string[], outputDir: string): string {
   if (adapterPaths.length === 0) {
     throw new Error('No adapters to merge');
   }
 
-  // Use the most recent adapter's GGUF file
+  const activeBackend = getActiveBackend();
   const latestSafetensors = adapterPaths[adapterPaths.length - 1];
-  const latestGGUF = path.join(path.dirname(latestSafetensors), 'adapter.gguf');
-  const outputPath = path.join(outputDir, 'adapter-merged.gguf');
+  const adapterDir = path.dirname(latestSafetensors);
 
   console.log(`[adapter-merger] Fallback: copying latest adapter as merged version`);
-  console.log(`[adapter-merger] Source: ${latestGGUF}`);
-
-  if (!fs.existsSync(latestGGUF)) {
-    throw new Error(`Latest GGUF adapter not found: ${latestGGUF}`);
-  }
+  console.log(`[adapter-merger] Active backend: ${activeBackend}`);
 
   fs.mkdirSync(outputDir, { recursive: true });
-  fs.copyFileSync(latestGGUF, outputPath);
 
-  audit({
-    level: 'warn',
-    category: 'action',
-    event: 'adapter_merge_fallback',
-    details: { outputPath, source: latestGGUF },
-    actor: 'adapter-merger',
-  });
+  if (activeBackend === 'vllm') {
+    // vLLM mode: copy safetensors and related files
+    const outputPath = path.join(outputDir, 'adapter_model.safetensors');
+    console.log(`[adapter-merger] Source (safetensors): ${latestSafetensors}`);
 
-  return outputPath;
+    if (!fs.existsSync(latestSafetensors)) {
+      throw new Error(`Latest safetensors adapter not found: ${latestSafetensors}`);
+    }
+
+    // Copy the safetensors file
+    fs.copyFileSync(latestSafetensors, outputPath);
+
+    // Also copy adapter_config.json if it exists (required for vLLM)
+    const configSrc = path.join(adapterDir, 'adapter_config.json');
+    const configDst = path.join(outputDir, 'adapter_config.json');
+    if (fs.existsSync(configSrc)) {
+      fs.copyFileSync(configSrc, configDst);
+      console.log(`[adapter-merger] Copied adapter_config.json`);
+    }
+
+    audit({
+      level: 'warn',
+      category: 'action',
+      event: 'adapter_merge_fallback',
+      details: { outputPath, source: latestSafetensors, backend: 'vllm' },
+      actor: 'adapter-merger',
+    });
+
+    return outputPath;
+  } else {
+    // Ollama mode: use GGUF file
+    const latestGGUF = path.join(adapterDir, 'adapter.gguf');
+    const outputPath = path.join(outputDir, 'adapter-merged.gguf');
+    console.log(`[adapter-merger] Source (GGUF): ${latestGGUF}`);
+
+    if (!fs.existsSync(latestGGUF)) {
+      throw new Error(`Latest GGUF adapter not found: ${latestGGUF}`);
+    }
+
+    fs.copyFileSync(latestGGUF, outputPath);
+
+    audit({
+      level: 'warn',
+      category: 'action',
+      event: 'adapter_merge_fallback',
+      details: { outputPath, source: latestGGUF, backend: 'ollama' },
+      actor: 'adapter-merger',
+    });
+
+    return outputPath;
+  }
 }
 
 /**
@@ -339,17 +376,27 @@ async function mainWithContext(username: string) {
   };
 
   const mergedPath = await mergeAdapters(historicalAdapters, mergeConfig, username);
-  const recentGGUF = path.join(path.dirname(recentAdapter), 'adapter.gguf');
+  const activeBackend = getActiveBackend();
 
   console.log(`\n✅ Merge complete!`);
-  console.log(`\nHistorical adapter (GGUF): ${mergedPath}`);
-  console.log(`Recent adapter (GGUF): ${recentGGUF}`);
-  console.log(`\nTo create a dual-adapter model, use:`);
-  console.log(`./bin/mh adapter activate ${path.basename(path.dirname(recentAdapter))}`);
-  console.log(`\nOr manually create a modelfile:`);
-  console.log(`FROM <your-base-model>:latest
+
+  if (activeBackend === 'vllm') {
+    const recentSafetensors = recentAdapter;
+    console.log(`\nHistorical adapter (safetensors): ${mergedPath}`);
+    console.log(`Recent adapter (safetensors): ${recentSafetensors}`);
+    console.log(`\nFor vLLM dual-adapter support, load both via the LoRA API:`);
+    console.log(`POST /api/lora/load with adapter paths`);
+  } else {
+    const recentGGUF = path.join(path.dirname(recentAdapter), 'adapter.gguf');
+    console.log(`\nHistorical adapter (GGUF): ${mergedPath}`);
+    console.log(`Recent adapter (GGUF): ${recentGGUF}`);
+    console.log(`\nTo create a dual-adapter model, use:`);
+    console.log(`./bin/mh adapter activate ${path.basename(path.dirname(recentAdapter))}`);
+    console.log(`\nOr manually create a modelfile:`);
+    console.log(`FROM <your-base-model>:latest
 ADAPTER ${mergedPath}
 ADAPTER ${recentGGUF}`);
+  }
 }
 
 /**

@@ -7,8 +7,19 @@
 
 import type { SvelteFlowGraph, SvelteFlowNode, SvelteFlowEdge } from './cognitive-graph-schema.js';
 import { createLogger } from './logger.js';
+import { loadOperatorConfig } from './config.js';
 
 const log = createLogger('graph-pipeline');
+
+// Default timeouts (in ms)
+const DEFAULT_NODE_TIMEOUT = 600000;  // 10 minutes
+const DEFAULT_LLM_TIMEOUT = 900000;   // 15 minutes
+
+// Node types that are considered LLM nodes (need longer timeouts)
+const LLM_NODE_TYPES = new Set([
+  'curator_llm', 'response_llm', 'planner_llm', 'decision_llm',
+  'unified_decision_llm', 'big_brother_reviewer', 'llm'
+]);
 
 export type ExecutionStatus = 'pending' | 'running' | 'completed' | 'failed';
 
@@ -31,7 +42,7 @@ export interface GraphExecutionState {
 }
 
 export interface ExecutionEvent {
-  type: 'node_start' | 'node_complete' | 'node_error' | 'graph_complete' | 'graph_error';
+  type: 'node_start' | 'node_complete' | 'node_error' | 'node_reasoning' | 'graph_complete' | 'graph_error';
   nodeId?: string;
   data?: any;
   timestamp: number;
@@ -300,6 +311,22 @@ async function executeNode(
         data: { outputs },
         timestamp: Date.now(),
       });
+
+      // Emit reasoning event if node produced thinking output
+      // This captures reasoning from all LLM nodes that use callLLM() or have thinking output
+      const thinking = outputs?.thinking || outputs?.response?.thinking;
+      if (thinking && typeof thinking === 'string' && thinking.length > 0) {
+        eventHandler({
+          type: 'node_reasoning',
+          nodeId,
+          data: {
+            nodeType,
+            thinking,
+            thinkingLength: thinking.length,
+          },
+          timestamp: Date.now(),
+        });
+      }
     }
   } catch (error) {
     console.error(`[GraphExecutor] Node ${nodeId} (${nodeType}) FAILED:`, error);
@@ -361,8 +388,32 @@ async function executeNodeByType(
 
   if (executor) {
     try {
-      // Execute with timeout protection (configurable per node, default 5 minutes for LLM operations)
-      const timeoutMs = node.data.properties?.timeout || 300000;
+      // Determine timeout based on node type and config
+      // Priority: node property > operator config > defaults
+      let timeoutMs = node.data.properties?.timeout;
+
+      if (!timeoutMs) {
+        // Try to load operator config for custom timeouts
+        const username = context.userId || context.username;
+        let graphConfig: { defaultNodeTimeout?: number; llmNodeTimeout?: number } | undefined;
+
+        if (username && username !== 'anonymous') {
+          try {
+            const opConfig = loadOperatorConfig(username);
+            graphConfig = (opConfig as any).graphExecutor;
+          } catch {
+            // Config not available, use defaults
+          }
+        }
+
+        // Use LLM timeout for LLM nodes, otherwise default timeout
+        if (LLM_NODE_TYPES.has(nodeType)) {
+          timeoutMs = graphConfig?.llmNodeTimeout || DEFAULT_LLM_TIMEOUT;
+        } else {
+          timeoutMs = graphConfig?.defaultNodeTimeout || DEFAULT_NODE_TIMEOUT;
+        }
+      }
+
       const startTime = Date.now();
       if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting, timeout: ${timeoutMs}ms`);
 
@@ -543,9 +594,13 @@ export async function executeGraph(
       graphState.currentNodeId = nodeId;
 
       // Inject iteration count into context for feedback_router and other loop-aware nodes
+      // Also add emitEvent for nodes to emit arbitrary events (e.g., Claude CLI streaming)
       const nodeContext = {
         ...contextData,
         _graphExecutorIteration: iterCount,
+        emitEvent: eventHandler
+          ? (type: string, data: any) => eventHandler({ type, data, nodeId, timestamp: Date.now() })
+          : undefined,
       };
 
       // Execute the node

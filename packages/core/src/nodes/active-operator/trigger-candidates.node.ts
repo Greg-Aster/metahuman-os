@@ -7,6 +7,19 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { TRIGGERS, type TriggerResult } from '../../active-operator/lizard-brain.js';
+import { loadConfig } from '../../active-operator/state-persister.js';
+import { gatherSystemState } from '../../active-operator/system-state.js';
+
+/**
+ * Maintenance task types that should NOT run when user is engaged.
+ * These are "housekeeping" tasks that can wait until the user is idle.
+ */
+const MAINTENANCE_TASKS = new Set([
+  'memory_curate',
+  'training_curate',
+  'index_build',
+  'psychoanalyze',
+]);
 
 interface TriggerCandidate {
   triggerId: string;
@@ -21,6 +34,19 @@ interface TriggerCandidate {
 const execute: NodeExecutor = async (inputs, context) => {
   const username = context.userId || context.username || 'anonymous';
   const candidates: TriggerCandidate[] = [];
+
+  // Load enabled task types from config to filter triggers
+  const config = loadConfig();
+  const enabledTaskTypes = new Set(config.enabledTaskTypes || []);
+
+  // Check if user is actively engaged (idle < 15 minutes)
+  // If so, we'll filter out maintenance triggers to avoid "rude" housekeeping
+  const systemState = await gatherSystemState(username);
+  const userEngaged = (systemState.idleMinutes || 0) < 15;
+
+  if (userEngaged) {
+    console.log(`[TriggerCandidates] User is engaged (idle ${systemState.idleMinutes}m) - filtering maintenance triggers`);
+  }
 
   console.log(`[TriggerCandidates] Evaluating ${TRIGGERS.length} triggers for ${username}...`);
 
@@ -41,6 +67,19 @@ const execute: NodeExecutor = async (inputs, context) => {
           if (recommended && recommended.length > 0) {
             taskType = recommended[0];
           }
+        }
+
+        // Skip triggers for disabled task types
+        if (!enabledTaskTypes.has(taskType)) {
+          console.log(`[TriggerCandidates] Skipping disabled task: ${trigger.id} -> ${taskType}`);
+          continue;
+        }
+
+        // SOCIAL AWARENESS: Skip maintenance triggers when user is engaged
+        // This prevents "rude" housekeeping while the user is actively chatting
+        if (userEngaged && MAINTENANCE_TASKS.has(taskType)) {
+          console.log(`[TriggerCandidates] Skipping maintenance task (user engaged): ${trigger.id} -> ${taskType}`);
+          continue;
         }
 
         // Determine priority based on urgency

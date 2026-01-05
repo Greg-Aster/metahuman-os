@@ -17,10 +17,12 @@ import {
 } from './state-persister.js';
 import { isWithinBudget, shouldPauseDueToErrors } from './cost-tracker.js';
 import { checkFocusConstraints } from './lizard-brain.js';
+import { getPendingProposalTaskTypes, proposalEvents } from './operator-proposals.js';
 import type { QueuedTask } from './types.js';
 import { executeTask } from './task-executor.js';
 import { audit } from '../audit.js';
 import { getUsers, type SafeUser } from '../users.js';
+import { gatherSystemState } from './system-state.js';
 // Graph executor imports for Lizard Brain graph
 import { executeGraph } from '../graph-executor.js';
 import { validateSvelteFlowGraph, type SvelteFlowGraph } from '../cognitive-graph-schema.js';
@@ -35,6 +37,47 @@ import type { TaskType as LaneTaskType } from '../queue/types.js';
 import { setUserContext } from '../context.js';
 
 const LOG_PREFIX = '[active-operator]';
+
+/**
+ * Wait for a proposal to be resolved (approved/rejected) or timeout.
+ * Uses event-driven approach instead of polling - wakes immediately when user responds.
+ *
+ * @param username - The username to filter events for
+ * @param timeoutMs - Maximum time to wait (fallback if no event)
+ * @returns Promise that resolves when event received or timeout
+ */
+function waitForProposalResolution(username: string, timeoutMs: number = 300000): Promise<void> {
+  return new Promise((resolve) => {
+    let resolved = false;
+
+    const cleanup = () => {
+      if (!resolved) {
+        resolved = true;
+        proposalEvents.off('proposal-resolved', handler);
+      }
+    };
+
+    const handler = (event: { username: string }) => {
+      // Only wake up for events matching our username
+      if (event.username === username) {
+        cleanup();
+        resolve();
+      }
+    };
+
+    // Listen for proposal resolution events
+    proposalEvents.on('proposal-resolved', handler);
+
+    // Fallback timeout (5 minutes) in case event is missed
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, timeoutMs);
+
+    // Ensure timeout doesn't prevent process exit
+    timeout.unref?.();
+  });
+}
 
 // Lizard Brain graph cache
 let lizardBrainGraph: SvelteFlowGraph | null = null;
@@ -240,6 +283,16 @@ async function runDecisionLoop(username: string): Promise<void> {
         continue;
       }
 
+      // Check if there are pending HITL proposals awaiting user input
+      // If so, wait for user response via event (no polling)
+      const pendingProposals = getPendingProposalTaskTypes(username);
+      if (pendingProposals.length > 0) {
+        console.log(`${LOG_PREFIX} Waiting for user approval: ${pendingProposals.join(', ')}`);
+        // Event-driven wait - wakes immediately when user approves/rejects
+        await waitForProposalResolution(username);
+        continue;
+      }
+
       // Execute the Lizard Brain graph
       // The graph handles: trigger evaluation, queue check, LLM decision, task execution, audit, TTS
       const graphResult = await executeLizardBrainGraph(username);
@@ -261,8 +314,21 @@ async function runDecisionLoop(username: string): Promise<void> {
         console.warn(`${LOG_PREFIX} Task ${graphResult.task} failed`);
       }
 
-      // Cooldown between tasks
-      await sleep(config.cooldownMs);
+      // SOCIAL AWARENESS PAUSE: When user is engaged, pause longer between tasks
+      // This prevents overwhelming the user with rapid-fire task execution
+      const systemState = await gatherSystemState(username);
+      const userEngaged = (systemState.idleMinutes || 0) < 15;
+
+      if (userEngaged) {
+        // User is present - pause for 2 minutes to let them engage naturally
+        // The system just did something (reflect, curiosity, etc.) - give user time to respond
+        console.log(`${LOG_PREFIX} User is engaged (idle ${systemState.idleMinutes}m) - pausing for 2 minutes to allow natural interaction`);
+        recordThought('Pausing to allow user interaction (social awareness)');
+        await sleep(120000); // 2 minutes
+      } else {
+        // User is idle - use normal cooldown
+        await sleep(config.cooldownMs);
+      }
     } catch (error) {
       console.error(`${LOG_PREFIX} Loop error:`, error);
       recordThought(`Loop error: ${(error as Error).message}`);

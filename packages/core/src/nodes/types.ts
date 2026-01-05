@@ -121,6 +121,8 @@ export interface NodeExecutionContext {
   audioBuffer?: Buffer | ArrayBuffer;
   audioFormat?: 'wav' | 'webm' | 'mp3';
   emitProgress?: (event: ProgressEvent) => void;
+  /** Emit arbitrary events to the graph executor (for streaming to client) */
+  emitEvent?: (type: string, data: any) => void;
   [key: string]: any;
 }
 

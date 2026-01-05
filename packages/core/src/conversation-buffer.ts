@@ -4,7 +4,7 @@ import { getUserContext } from './context.js';
 import { systemPaths } from './path-builder.js';
 import { withBufferLock } from './buffer-locks.js';
 
-export type ConversationBufferMode = 'inner' | 'conversation';
+export type ConversationBufferMode = 'inner' | 'conversation' | 'system';
 
 /**
  * Touch a notification file on LOCAL disk to signal buffer updates.
@@ -376,16 +376,34 @@ export async function appendDreamToBuffer(userId: string, content: string, extra
 }
 
 /**
- * Append execution progress to a user's inner dialogue buffer
+ * Append execution progress to a user's system buffer
  * Used by desire executor to show Big Brother execution steps in real-time
  * @param userId - The user ID to append to
  * @param content - The progress message
  * @param extraMeta - Optional additional metadata (e.g., { stepNumber, action, desireId })
  */
 export async function appendExecutionProgressToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
-  return appendToUserBuffer(userId, 'inner', {
-    role: 'execution',
+  return appendToUserBuffer(userId, 'system', {
+    role: 'system',
     content,
     meta: { type: 'execution_progress', source: 'big-brother', dialogueSource: 'big-brother', displayColor: '#f59e0b', ...extraMeta },
+  });
+}
+
+/**
+ * Append reasoning/thinking to a user's inner dialogue buffer
+ * Used by thinking stripper to display LLM reasoning in a separate section
+ * @param userId - The user ID to append to
+ * @param content - The reasoning content (extracted from <think> blocks)
+ * @param extraMeta - Optional additional metadata (e.g., { dialogueSource, displayColor })
+ */
+export async function appendReasoningToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
+  if (!content || content.trim().length === 0) {
+    return false;
+  }
+  return appendToUserBuffer(userId, 'inner', {
+    role: 'reasoning',
+    content,
+    meta: { type: 'reasoning', source: 'agent', displayColor: '#8b5cf6', ...extraMeta },
   });
 }

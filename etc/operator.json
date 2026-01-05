@@ -25,6 +25,10 @@
     "catalogTTL": 60000,
     "parallelSkillExecution": false
   },
+  "graphExecutor": {
+    "defaultNodeTimeout": 600000,
+    "llmNodeTimeout": 900000
+  },
   "bigBrotherMode": {
     "enabled": false,
     "provider": "open-interpreter",
@@ -34,5 +38,37 @@
     "maxRetries": 1,
     "includeFullScratchpad": true,
     "autoApplySuggestions": false
+  },
+  "bigBrotherReviewer": {
+    "enabled": true,
+    "periodicReviewInterval": 50,
+    "triggerOnErrors": true,
+    "errorThreshold": 3,
+    "triggerOnStuck": true,
+    "stuckThreshold": 10,
+    "allowScratchpadModification": true,
+    "allowConfigModification": true,
+    "allowCoderAgentTrigger": true,
+    "logRetentionDays": 7
+  },
+  "humanInTheLoop": {
+    "enabled": true,
+    "requireApproval": true,
+    "proposalExpiry": 86400000,
+    "showPostExecutionFeedback": true,
+    "feedbackBackend": {
+      "provider": "memory",
+      "availableProviders": ["memory", "big-brother", "runpod", "system-coder"],
+      "escalateRejections": true,
+      "escalateNegativeFeedback": true,
+      "escalationThreshold": 3
+    },
+    "approvalByTrustLevel": {
+      "observe": "block",
+      "suggest": "require",
+      "supervised_auto": "low_risk_auto",
+      "bounded_auto": "medium_risk_auto",
+      "adaptive_auto": "auto_with_feedback"
+    }
   }
 }

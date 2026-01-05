@@ -248,6 +248,20 @@ export interface OperatorConfig {
     includeFullScratchpad: boolean;
     autoApplySuggestions: boolean;
   };
+  humanInTheLoop?: {
+    enabled: boolean;
+    requireApproval: boolean;
+    proposalExpiry: number; // ms before proposal expires
+    showPostExecutionFeedback: boolean;
+    feedbackBackend: {
+      provider: 'memory' | 'big-brother' | 'runpod' | 'system-coder';
+      availableProviders: string[];
+      escalateRejections: boolean;
+      escalateNegativeFeedback: boolean;
+      escalationThreshold: number; // number of negative feedbacks before escalation
+    };
+    approvalByTrustLevel: Record<string, 'block' | 'require' | 'low_risk_auto' | 'medium_risk_auto' | 'auto_with_feedback'>;
+  };
 }
 
 // Per-user cache for operator config

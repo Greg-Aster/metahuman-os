@@ -4,7 +4,8 @@
   import type { ChatMessage, ReasoningStage } from '../../lib/client/composables/useMessages';
 
   export let messages: ChatMessage[] = [];
-  export let mode: 'conversation' | 'inner' = 'conversation';
+  export let mode: 'conversation' | 'inner' | 'combined' = 'conversation';
+  export let showSystemMessages: boolean = false; // When terminal tab is selected, always show system messages
   export let selectedMessageIndex: number | null = null;
   export let loading: boolean = false;
   export let reasoningStages: ReasoningStage[] = [];
@@ -314,9 +315,11 @@
 
 <div class="messages-list">
   {#each messages as message, i}
-    {#if mode === 'inner'
-      ? (message.role === 'reflection' || message.role === 'dream' || message.role === 'reasoning')
-      : (message.role !== 'reflection' && message.role !== 'dream')}
+    {#if mode === 'combined'
+      ? true
+      : mode === 'inner'
+        ? (message.role === 'reflection' || message.role === 'dream' || message.role === 'reasoning')
+        : (message.role !== 'reflection' && message.role !== 'dream')}
       {#if message.role === 'reasoning'}
         <Thinking
           steps={message.content}

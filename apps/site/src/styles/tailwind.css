@@ -359,6 +359,43 @@
     @apply flex-1 overflow-hidden;
   }
 
+  /* Claude CLI Terminal Panel (split view with chat) */
+  .claude-terminal-container {
+    @apply border-t border-gray-200 dark:border-gray-700 flex-shrink-0;
+    max-height: 350px;
+    min-height: 200px;
+    overflow: hidden;
+  }
+
+  /* Main chat area - flex column for split layout */
+  .chat-main-area {
+    @apply flex flex-col flex-1 overflow-hidden;
+  }
+
+  .chat-main-area.with-terminal-split {
+    /* When terminal split is active, divide space between chat and terminal */
+  }
+
+  /* Messages panel (contains messages-container and input) */
+  .messages-panel {
+    @apply flex flex-col flex-1 overflow-hidden;
+  }
+
+  .messages-panel.split {
+    /* In split mode, take less vertical space to make room for terminal */
+    flex: 1 1 60%;
+    min-height: 300px;
+  }
+
+  /* Terminal split panel */
+  .terminal-split-panel {
+    @apply border-t border-gray-200 dark:border-gray-700;
+    flex: 0 0 40%;
+    min-height: 200px;
+    max-height: 50%;
+    overflow: hidden;
+  }
+
   .messages-list {
     @apply flex flex-col gap-6 p-8 max-w-3xl mx-auto w-full;
   }
@@ -420,8 +457,11 @@
 
   .chat-input {
     @apply flex-1 px-4 py-3 border border-black/10 dark:border-white/10 rounded-xl text-sm resize-none bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100;
+    min-height: 44px;
     max-height: 200px;
+    overflow-y: auto;
     font-family: inherit;
+    line-height: 1.5;
   }
   .chat-input:focus {
     @apply outline-none border-violet-600 dark:border-violet-400 ring-2 ring-violet-600/10 dark:ring-violet-400/10;

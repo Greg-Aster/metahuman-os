@@ -109,7 +109,10 @@ export const ReflectorLLMNode: NodeDefinition = defineNode({
         onProgress: context.emitProgress,
       });
 
-      return { response: response.content };
+      return {
+        response: response.content,
+        thinking: response.thinking, // Pass through reasoning for graph executor
+      };
     } catch (error) {
       console.error('[ReflectorLLM] Error:', error);
       return { response: '', error: (error as Error).message };

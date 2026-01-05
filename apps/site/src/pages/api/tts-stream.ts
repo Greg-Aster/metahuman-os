@@ -183,39 +183,60 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       // Proxy to Kokoro server streaming endpoint
       const kokoroServerUrl = process.env.KOKORO_SERVER_URL || 'http://127.0.0.1:9882';
 
-      const kokoroResponse = await fetch(`${kokoroServerUrl}/synthesize-stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text,
-          lang_code: kokoroConfig.langCode,
-          voice: kokoroConfig.voice,
-          speed: kokoroConfig.speed,
-          custom_voicepack: kokoroConfig.customVoicepack,
-          normalize: kokoroConfig.normalize,
-        }),
-        signal: request.signal,
-      });
-
-      if (!kokoroResponse.ok) {
-        const errorText = await kokoroResponse.text();
-        console.error('[TTS Stream] Kokoro server error:', errorText);
-        return new Response(JSON.stringify({ error: `Kokoro server error: ${errorText}` }), {
-          status: kokoroResponse.status,
+      try {
+        const kokoroResponse = await fetch(`${kokoroServerUrl}/synthesize-stream`, {
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text,
+            lang_code: kokoroConfig.langCode,
+            voice: kokoroConfig.voice,
+            speed: kokoroConfig.speed,
+            custom_voicepack: kokoroConfig.customVoicepack,
+            normalize: kokoroConfig.normalize,
+          }),
+          signal: request.signal,
         });
-      }
 
-      // Forward the SSE stream directly
-      return new Response(kokoroResponse.body, {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-          'X-Accel-Buffering': 'no',
-        },
-      });
+        if (!kokoroResponse.ok) {
+          const errorText = await kokoroResponse.text();
+          console.error('[TTS Stream] Kokoro server error:', errorText);
+          return new Response(JSON.stringify({ error: `Kokoro server error: ${errorText}` }), {
+            status: kokoroResponse.status,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Forward the SSE stream directly
+        return new Response(kokoroResponse.body, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+          },
+        });
+      } catch (kokoroError) {
+        // Handle Kokoro server connection failures gracefully
+        const errMsg = (kokoroError as Error).message || String(kokoroError);
+        const cause = (kokoroError as any).cause;
+
+        // Check for connection refused (server not running)
+        if (cause?.code === 'ECONNREFUSED' || errMsg.includes('ECONNREFUSED') || errMsg.includes('fetch failed')) {
+          console.warn('[TTS Stream] Kokoro server not available (connection refused). TTS will be skipped.');
+          return new Response(JSON.stringify({
+            error: 'Kokoro TTS server is not running. Start it with: ./bin/mh kokoro serve start',
+            serverUnavailable: true,
+          }), {
+            status: 503, // Service Unavailable
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Re-throw other errors
+        throw kokoroError;
+      }
     }
 
     // For RVC/Piper: Implement paragraph-level chunking with lookahead prefetching

@@ -4,7 +4,7 @@
   "name": "Dreamer Agent Workflow",
   "description": "Generates surreal dreams from weighted lifetime memory sampling, extracts learnings, and saves to procedural memory",
   "cognitiveMode": "agent",
-  "last_modified": "2025-12-17",
+  "last_modified": "2025-12-31",
   "nodes": [
     {
       "id": "1",
@@ -204,7 +204,7 @@
       "id": "11",
       "type": "outputNode",
       "position": {
-        "x": 1000,
+        "x": 1300,
         "y": 340
       },
       "data": {
@@ -217,6 +217,77 @@
       },
       "width": 180,
       "height": 80
+    },
+    {
+      "id": "12",
+      "type": "outputNode",
+      "position": {
+        "x": 700,
+        "y": 175
+      },
+      "data": {
+        "label": "Thinking Stripper",
+        "nodeType": "thinking_stripper",
+        "schema": {
+          "id": "thinking_stripper",
+          "name": "Thinking Stripper",
+          "category": "output",
+          "inputs": [
+            {
+              "name": "response",
+              "type": "any",
+              "description": "LLM response that may contain <think> blocks"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "response",
+              "type": "string",
+              "description": "Response with thinking stripped (alias for stripped)"
+            },
+            {
+              "name": "stripped",
+              "type": "string",
+              "description": "Response with <think> blocks removed"
+            },
+            {
+              "name": "thinking",
+              "type": "string",
+              "description": "Extracted thinking content (null if none)"
+            },
+            {
+              "name": "hadThinking",
+              "type": "boolean",
+              "description": "Whether response contained thinking"
+            }
+          ],
+          "properties": {},
+          "description": "Extracts <think> blocks for UI display, provides stripped content for memory/TTS",
+          "color": "#ef4444",
+          "bgColor": "#991b1b"
+        },
+        "properties": {}
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "13",
+      "type": "outputNode",
+      "position": {
+        "x": 1000,
+        "y": 250
+      },
+      "data": {
+        "label": "Save Reasoning",
+        "nodeType": "reasoning_capture",
+        "properties": {
+          "dialogueSource": "dreamer",
+          "displayColor": "#8b5cf6"
+        }
+      },
+      "width": 180,
+      "height": 60
     }
   ],
   "edges": [
@@ -232,14 +303,25 @@
       }
     },
     {
-      "id": "e-2-dream-3-dreamData",
+      "id": "e-2-dream-12-response",
       "source": "2",
-      "target": "3",
+      "target": "12",
       "sourceHandle": "dream",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Generated dream -> Thinking Stripper (extract <think> blocks)"
+      }
+    },
+    {
+      "id": "e-12-stripped-3-dreamData",
+      "source": "12",
+      "target": "3",
+      "sourceHandle": "stripped",
       "targetHandle": "dreamData",
       "data": {
         "type": "object",
-        "comment": "Generated dream -> Save Dream"
+        "comment": "Stripped dream -> Save Dream (clean content)"
       }
     },
     {
@@ -254,14 +336,14 @@
       }
     },
     {
-      "id": "e-2-dream-4-previousDream",
-      "source": "2",
+      "id": "e-12-stripped-4-previousDream",
+      "source": "12",
       "target": "4",
-      "sourceHandle": "dream",
+      "sourceHandle": "stripped",
       "targetHandle": "previousDream",
       "data": {
         "type": "object",
-        "comment": "Initial dream -> Continuation Generator"
+        "comment": "Stripped dream -> Continuation Generator (clean content)"
       }
     },
     {
@@ -331,25 +413,47 @@
       }
     },
     {
-      "id": "e-2-dream-10-text",
-      "source": "2",
-      "target": "10",
-      "sourceHandle": "dream",
-      "targetHandle": "text",
+      "id": "e-12-stripped-13-passthrough",
+      "source": "12",
+      "target": "13",
+      "sourceHandle": "stripped",
+      "targetHandle": "passthrough",
       "data": {
         "type": "string",
-        "comment": "Dream narrative -> Inner Dialogue (blue color)"
+        "comment": "Stripped dream -> Reasoning Capture (passthrough, ensures reasoning saves first)"
       }
     },
     {
-      "id": "e-2-dream-11-innerDialogue",
-      "source": "2",
+      "id": "e-13-passthrough-10-text",
+      "source": "13",
+      "target": "10",
+      "sourceHandle": "passthrough",
+      "targetHandle": "text",
+      "data": {
+        "type": "string",
+        "comment": "Dream from Reasoning Capture -> Inner Dialogue (after reasoning saved)"
+      }
+    },
+    {
+      "id": "e-12-stripped-11-innerDialogue",
+      "source": "12",
       "target": "11",
-      "sourceHandle": "dream",
+      "sourceHandle": "stripped",
       "targetHandle": "innerDialogue",
       "data": {
         "type": "string",
-        "comment": "Dream narrative -> TTS Output (speaks in inner dialogue mode)"
+        "comment": "Stripped dream -> TTS Output (clean content for speech)"
+      }
+    },
+    {
+      "id": "e-12-thinking-13-thinking",
+      "source": "12",
+      "target": "13",
+      "sourceHandle": "thinking",
+      "targetHandle": "thinking",
+      "data": {
+        "type": "string",
+        "comment": "Extracted Thinking -> Save Reasoning (displays in separate section)"
       }
     }
   ]

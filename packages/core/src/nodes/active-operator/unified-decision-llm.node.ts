@@ -21,7 +21,7 @@ const TASK_DESCRIPTIONS: Record<TaskType, string> = {
   user_message: 'Process a user chat message (highest priority)',
   memory_curate: 'Run organizer agent to enrich memories with tags and entities',
   training_curate: 'Run curator agent to prepare memories for LoRA training data',
-  index_build: 'Build or update the vector embeddings index for semantic search',
+  index_build: '(USER-TRIGGERED ONLY - do not run automatically)', // Incremental updates happen via appendEventToIndex
   reflect: 'Generate internal reflections using associative memory chains',
   curiosity: 'Run curiosity service to generate user-facing questions',
   inner_curiosity: 'Generate and answer internal curiosity questions',
@@ -31,6 +31,7 @@ const TASK_DESCRIPTIONS: Record<TaskType, string> = {
   desire_execute: 'Execute APPROVED desires only (after user or auto-approval)',
   psychoanalyze: 'Run psychoanalyzer to update persona based on recent memories',
   code_analyze: 'Analyze codebase for TypeScript errors (self-healing)',
+  help_ticket_review: 'Review user feedback tickets, analyze issues, and propose fixes to System Coder',
 };
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
@@ -72,9 +73,10 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     : '(Queue is empty)';
 
   // Get enabled task types and format options
+  // Filter out user_message (handled separately) and index_build (user-triggered only)
   const enabledTypes = config.enabledTaskTypes || Object.keys(TASK_DESCRIPTIONS);
   const taskOptions = enabledTypes
-    .filter((t: TaskType) => t !== 'user_message' && TASK_DESCRIPTIONS[t])
+    .filter((t: TaskType) => t !== 'user_message' && t !== 'index_build' && TASK_DESCRIPTIONS[t])
     .map((t: TaskType) => `- ${t}: ${TASK_DESCRIPTIONS[t]}`)
     .join('\n');
 
@@ -96,12 +98,22 @@ Available Tasks:
 ${taskOptions}
 
 Guidelines:
+⚠️ CRITICAL: Check "Tasks awaiting user approval" FIRST - NEVER select a task that appears in that list!
+
+🚨 SOCIAL AWARENESS (HIGHEST PRIORITY):
+- If "User active: Yes" → the human is PRESENT and ENGAGED
+- When user is active, AVOID maintenance tasks: memory_curate, training_curate, index_build, psychoanalyze
+- These are "housekeeping" - it's RUDE to file papers while someone is talking to you!
+- Instead, prioritize ENGAGEMENT: curiosity (ask them questions!), desire_execute, reflect
+- Maintenance tasks should ONLY run when user has been idle for 15+ minutes
+- Think of it this way: if you were having a conversation with someone, you wouldn't suddenly start organizing your desk
+
 1. IMMEDIATE urgency triggers usually warrant action
 2. Don't repeat tasks that ran recently (check recent activity)
-3. Prioritize HIGH urgency items, but don't neglect maintenance
+3. When user is ACTIVE: prioritize engagement over housekeeping
 4. If queue has items, consider executing those before adding more
 5. Balance reactive (triggers) with proactive (recommendations)
-6. Consider system state - high unprocessed memories → memory_curate
+6. ONLY consider memory_curate if user is INACTIVE and unprocessed memories > 5
 7. DESIRE SYSTEM (IMPORTANT - three-step flow):
    - desire_generate: Create new desires (when 0 pending, 0 active, 0 approved)
    - desire_advance: Process PENDING desires through planning/review/approval pipeline (ONLY if pendingReadyToAdvance > 0!)
@@ -122,49 +134,64 @@ Guidelines:
 10. GOAL AWARENESS:
    - If user has active goals but no desires, run desire_generate to make progress
    - Proposed goals need user review - don't wait indefinitely for them
-11. CONTENT GENERATION CYCLE (CRITICAL):
+11. CONTENT GENERATION CYCLE (SOCIAL-AWARE):
    - You are a DYNAMIC thinking backend - keep the mind active!
-   - When desires are stable (pending below threshold, nothing to execute), run these tasks:
-     * curiosity: Asks user questions → user replies create NEW MEMORIES → feeds desire_generate
-     * memory_curate: Enriches memories with tags/entities → makes them findable for reflection
-     * index_build: Updates vector index → enables semantic search for memory retrieval
-     * reflect: Creates reflections from memory associations → feeds desire_generate
-     * dream: Creates dreams from memory fragments → feeds desire_generate
-     * psychoanalyze: Updates persona understanding → shapes desire priorities
-     * inner_curiosity: Generates self-directed Q&A → deepens understanding
-   - These tasks CREATE and PROCESS the raw material that desire_generate uses!
-   - FULL CYCLE: curiosity → memory_curate → index_build → reflect/dream/psychoanalyze → desire_generate → desire_advance → desire_execute
-   - curiosity is especially valuable - it engages the user and generates fresh memory content!
-   - If unprocessed memories > 0, run memory_curate to process them
-   - If index is stale (> 2 hours), run index_build
+   - ⚠️ SPLIT INTO TWO MODES based on user presence:
+
+   📍 USER ACTIVE (idleMinutes < 15): ENGAGEMENT MODE
+     * curiosity: Ask user questions - CREATE conversation and new memories!
+     * desire_execute: Run approved desires - show you're being productive!
+     * reflect: Quick internal reflection - stays out of user's way
+     * inner_curiosity: Self-directed Q&A - deepens understanding quietly
+
+   💤 USER INACTIVE (idleMinutes >= 15): MAINTENANCE MODE
+     * memory_curate: ONLY when user is idle - process untagged memories
+     * training_curate: ONLY when user is idle - prepare LoRA training data
+     * psychoanalyze: ONLY when user is idle - deep persona analysis
+     * dream: ONLY during sleep hours or long idle periods
+
+   - FULL CYCLE: curiosity → (wait for idle) → memory_curate → reflect/dream → desire_generate → desire_advance → desire_execute
+   - curiosity is especially valuable - it ENGAGES the user and generates fresh memory content!
+   - IMPORTANT: index_build is USER-TRIGGERED ONLY - the index is updated incrementally when memories are saved
    - If you've run desire tasks but nothing is ready, DO NOT repeat them - run content generators instead!
    - Check recent activity: if you just ran desire_advance with 0 processed, run something DIFFERENT next
 12. AVOID REPETITION:
    - Look at RECENT ACTIVITY section carefully
    - If a task just ran and returned "processed=0" or similar, DO NOT run it again immediately
    - Cycle through different task types to keep the system evolving
+13. HUMAN-IN-THE-LOOP (HITL) PROPOSALS:
+   - Check "Tasks awaiting user approval" in SYSTEM STATE
+   - If a task type appears in that list, DO NOT select it - it's waiting for user input!
+   - Once user approves/rejects, the task will be removed from pending proposals
+   - This prevents the same task from being proposed repeatedly while user reviews it
 
 Respond with JSON only: {"task": "<type>", "reasoning": "<why>"}
 If nothing should run, respond: {"task": null, "reasoning": "<why waiting>"}`,
     },
     {
       role: 'user' as const,
-      content: `=== TRIGGERS FIRED ===
+      content: `=== ⚠️ TASKS BLOCKED (awaiting user approval - DO NOT SELECT) ===
+${(systemState.pendingProposalTasks || []).length > 0
+  ? systemState.pendingProposalTasks.map((t: string) => `❌ ${t}`).join('\n')
+  : '(none - all tasks available)'}
+
+=== TRIGGERS FIRED ===
 ${triggerList}
 
 === CURRENT QUEUE ===
 ${queueList}
 
 === SYSTEM STATE ===
-- Unprocessed memories: ${systemState.unprocessedMemories || 0}
-- Index age: ${(systemState.indexAgeHours || 0).toFixed(1)} hours
+- 👤 User active: ${systemState.userActive ? 'YES - PRIORITIZE ENGAGEMENT!' : 'No (idle)'}
+- ⏱️ Idle minutes: ${systemState.idleMinutes || 0} ${(systemState.idleMinutes || 0) < 15 ? '(< 15 = user is engaged, NO MAINTENANCE!)' : '(≥ 15 = OK for maintenance tasks)'}
+- Unprocessed memories: ${systemState.unprocessedMemories || 0} ${systemState.userActive ? '(wait until idle to process!)' : ''}
+- Index last updated: ${(systemState.indexAgeHours || 0).toFixed(1)} hours ago (auto-updated when memories are saved)
 - Pending desires (total): ${systemState.pendingDesires || 0}
 - 📋 Pending desires READY to advance (above threshold): ${systemState.pendingDesiresReadyToAdvance || 0}
 - Active desires: ${systemState.activeDesires || 0}
 - Desires awaiting approval: ${systemState.awaitingApprovalDesires || 0}
 - 🚀 APPROVED desires (ready to execute!): ${systemState.approvedDesires || 0}
 - Last reflection: ${(systemState.hoursSinceReflection || 0).toFixed(1)} hours ago
-- User active: ${systemState.userActive ? 'Yes' : 'No'}
 
 === DESIRE PIPELINE (what I'm considering) ===
 ${desireDetails}
@@ -197,9 +224,9 @@ What should I do next?`,
         // Temperature for decision making - slightly higher for thoughtful reasoning
         temperature: properties?.temperature || 0.3,
         // Limit output tokens to leave room for input in context window
-        // Model context is 4096, input is ~1200-1500 tokens, so max output ~2500
-        // Setting to 2048 to be safe while allowing extended thinking
-        maxTokens: 2048,
+        // Model context is 4096, input can grow to ~2100+ tokens with recent activity
+        // Setting to 1500 to ensure we stay within context limits
+        maxTokens: 1500,
       },
     });
 

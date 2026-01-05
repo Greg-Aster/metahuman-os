@@ -91,6 +91,44 @@ export function loadSyncCredentials(username: string): SyncServerCredentials | n
 // Server Communication
 // ============================================================================
 
+/**
+ * Parse and format error response for human-readable display
+ * Handles HTML error pages (Cloudflare, nginx, etc.) by extracting key info
+ */
+function formatErrorResponse(status: number, text: string): string {
+  // Check if it's an HTML error page
+  if (text.includes('<!doctype html') || text.includes('<html')) {
+    // Extract title if available
+    const titleMatch = text.match(/<title>([^<]+)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].trim() : null;
+
+    // Common Cloudflare tunnel errors
+    if (text.includes('Cloudflare Tunnel error') || text.includes('cloudflared')) {
+      return `Server unreachable (Cloudflare Tunnel error ${status}). The remote server may be offline.`;
+    }
+
+    // Generic Cloudflare errors
+    if (text.includes('cloudflare') || text.includes('Cloudflare')) {
+      return `Server unreachable (Cloudflare ${status}${title ? `: ${title}` : ''}). Check if the remote server is running.`;
+    }
+
+    // Nginx/Apache default error pages
+    if (text.includes('nginx') || text.includes('Apache')) {
+      return `Server error (${status}${title ? `: ${title}` : ''}). The remote server returned an error page.`;
+    }
+
+    // Generic HTML error page
+    return `Server error (${status}${title ? `: ${title}` : ''}). Server may be offline or misconfigured.`;
+  }
+
+  // Non-HTML response - truncate if too long
+  if (text.length > 200) {
+    return `${text.substring(0, 200)}...`;
+  }
+
+  return text;
+}
+
 export async function authenticateWithServer(
   serverUrl: string,
   username: string,
@@ -107,7 +145,8 @@ export async function authenticateWithServer(
 
     if (!response.ok) {
       const text = await response.text();
-      return { success: false, error: `Authentication failed: ${response.status} - ${text}` };
+      const formattedError = formatErrorResponse(response.status, text);
+      return { success: false, error: formattedError };
     }
 
     const data = await response.json();
@@ -123,7 +162,18 @@ export async function authenticateWithServer(
 
     return { success: true, sessionId };
   } catch (error) {
-    return { success: false, error: (error as Error).message };
+    const errMsg = (error as Error).message;
+    // Make common network errors more friendly
+    if (errMsg.includes('ECONNREFUSED')) {
+      return { success: false, error: 'Connection refused. Server may be offline.' };
+    }
+    if (errMsg.includes('ETIMEDOUT') || errMsg.includes('timeout')) {
+      return { success: false, error: 'Connection timed out. Server may be unreachable.' };
+    }
+    if (errMsg.includes('ENOTFOUND')) {
+      return { success: false, error: 'Server not found. Check the server URL.' };
+    }
+    return { success: false, error: errMsg };
   }
 }
 

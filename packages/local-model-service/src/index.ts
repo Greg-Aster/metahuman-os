@@ -81,8 +81,8 @@ function createServer(): FastifyInstance {
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
   });
 
-  // Health check endpoint
-  app.get('/health', async (): Promise<HealthResponse> => {
+  // Health check endpoint (silent logging - polled frequently)
+  app.get('/health', { logLevel: 'silent' }, async (): Promise<HealthResponse> => {
     const status = modelManager?.getStatus();
     return {
       status: 'ok',
@@ -175,8 +175,8 @@ function createServer(): FastifyInstance {
     return getAvailableModels(config.modelsDir);
   });
 
-  // Get loaded models status
-  app.get('/models/loaded', async () => {
+  // Get loaded models status (silent logging - polled frequently)
+  app.get('/models/loaded', { logLevel: 'silent' }, async () => {
     return modelManager?.getStatus() || {
       embedder: { model: null, loaded: false },
       generator: { model: null, loaded: false }

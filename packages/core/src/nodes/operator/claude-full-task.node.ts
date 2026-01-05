@@ -115,7 +115,24 @@ Execute now and report results.`;
     const timeoutMs = _properties?.timeout || 300000; // 5 minutes default
     console.log(`[ClaudeFullTask] Sending request to ${backend.name}...`);
 
-    const result = await escalate(prompt, { timeout: timeoutMs });
+    // Set up streaming callbacks to emit events to the graph executor
+    const escalationOptions: any = {
+      timeout: timeoutMs,
+      sessionId: _context?.sessionId,
+    };
+
+    // If we have emitEvent, wire up streaming callbacks
+    if (_context?.emitEvent) {
+      escalationOptions.onChunk = (chunk: string) => {
+        _context.emitEvent?.('claude_cli_output', { chunk });
+      };
+      escalationOptions.onWaitingForInput = (question: string) => {
+        _context.emitEvent?.('claude_cli_waiting', { question });
+      };
+      console.log('[ClaudeFullTask] Streaming callbacks configured');
+    }
+
+    const result = await escalate(prompt, escalationOptions);
 
     if (!result.success) {
       throw new Error(result.error || 'Task execution failed');
@@ -134,6 +151,11 @@ Execute now and report results.`;
     });
 
     console.log(`[ClaudeFullTask] ✓ Task completed by Claude Code`);
+
+    // Emit completion event
+    if (_context?.emitEvent) {
+      _context.emitEvent('claude_cli_complete', { success: true });
+    }
 
     return {
       scratchpad: [{

@@ -5,7 +5,9 @@
   import InputArea from './chat/InputArea.svelte';
   import MessageList from './chat/MessageList.svelte';
   import ApprovalPrompt from './ApprovalPrompt.svelte';
+  import OperatorProposalPrompt from './OperatorProposalPrompt.svelte';
   import TerminalManager from './TerminalManager.svelte';
+  import ClaudeTerminalPanel from './ClaudeTerminalPanel.svelte';
   import { canUseOperator, currentMode } from '../stores/security-policy';
   import { triggerClearAuditStream } from '../stores/clear-events';
   import { yoloModeStore } from '../stores/navigation';
@@ -35,7 +37,26 @@
   let ttsQueueStream: EventSource | null = null; // TTS queue from node editor
   let lastInnerMessageCount = 0; // Track previous message count for inner dialogue TTS detection
   let lastConversationMessageCount = 0; // Track previous message count for conversation TTS detection
-  let mode: 'conversation' | 'inner' | 'terminal' = 'conversation';
+  // View selection: VS Code-style multi-select
+  // All three tabs can be combined for unified feed
+  // - Conversation: user/assistant messages from conversation buffer
+  // - Inner: reflection/dream/reasoning from inner buffer
+  // - Terminal: execution/system messages from inner buffer + split panel
+  let selectedViews = new Set<'conversation' | 'inner' | 'terminal'>(['conversation']);
+
+  // Show terminal split panel when terminal tab is selected
+  $: showSystemTerminal = selectedViews.has('terminal');
+
+  // Compute display mode based on selected views
+  // 'combined' = show all messages, 'conversation' = only chat, 'inner' = only reflections/dreams
+  $: displayMode = (selectedViews.has('conversation') && selectedViews.has('inner'))
+    ? 'combined'
+    : selectedViews.has('inner')
+      ? 'inner'
+      : 'conversation';
+
+  // Legacy mode for compatibility - maps to the old terminal/conversation/inner modes
+  $: mode = showSystemTerminal ? 'terminal' : displayMode as 'conversation' | 'inner' | 'terminal';
   let lengthMode: 'auto' | 'concise' | 'detailed' = 'auto';
   let messagesContainer: HTMLDivElement;
   let shouldAutoScroll = true;
@@ -56,6 +77,13 @@
   let activeOperatorLoading = false;
   // Synchronous guard to prevent double/triple submit race condition
   let sendInProgress = false;
+
+  // Claude CLI streaming state (for Big Brother)
+  let claudeCliOutput: string[] = [];
+  let claudeCliActive = false;
+  let claudeCliWaiting = false;
+  let claudeCliQuestion = '';
+  let showClaudeTerminal = false;
 
   // Initialize TTS composable
   const ttsApi = useTTS();
@@ -350,13 +378,13 @@
       messagesApi.generateSessionId();
     }
 
-    // Connect to buffer stream - this loads initial history AND provides real-time updates
+    // Connect to buffer streams for all selected views - this loads initial history AND provides real-time updates
     // Uses fs.watch on server, no polling needed
-    // Only connect for conversation/inner modes (terminal has its own interface)
-    if (mode !== 'terminal') {
-      connectBufferStream(mode);
-      console.log(`[ChatInterface] Connected to ${mode} buffer stream`);
-    }
+    // Fetch all selected buffers and merge them
+    await fetchAllSelectedBuffers();
+    // Connect streams for real-time updates
+    connectMultipleBufferStreams();
+    console.log(`[ChatInterface] Connected to buffer streams for:`, Array.from(selectedViews));
 
     // Connect to TTS queue stream - watches for TTS items from cognitive graph nodes
     connectTTSQueueStream();
@@ -372,11 +400,19 @@
       scrollObserver.observe(scrollSentinel);
     }
 
-    // Reconnect buffer stream when tab becomes visible (in case connection dropped)
+    // Reconnect buffer streams when tab becomes visible (in case connection dropped)
     const handleVisibilityChange = () => {
-      if (!document.hidden && mode !== 'terminal' && (!innerDialogueStream || innerDialogueStream.readyState === EventSource.CLOSED)) {
-        console.log('[chat] Tab visible, reconnecting buffer stream');
-        connectBufferStream(mode);
+      if (!document.hidden && selectedViews.size > 0) {
+        // Check if any streams need reconnection
+        const needsReconnect =
+          (selectedViews.has('conversation') && (!conversationStream || conversationStream.readyState === EventSource.CLOSED)) ||
+          (selectedViews.has('inner') && (!innerDialogueStream || innerDialogueStream.readyState === EventSource.CLOSED));
+
+        if (needsReconnect) {
+          console.log('[chat] Tab visible, reconnecting buffer streams');
+          fetchAllSelectedBuffers();
+          connectMultipleBufferStreams();
+        }
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -402,10 +438,9 @@
   /**
    * Fetch buffer content directly (for initial load and tab switches)
    * Always tries server first, falls back to local IndexedDB on error.
-   * This avoids race conditions where isConnected is false on page reload
-   * before the health check has run.
+   * Returns messages array without setting the store - caller handles merging.
    */
-  async function fetchBuffer(streamMode: 'conversation' | 'inner') {
+  async function fetchSingleBuffer(streamMode: 'conversation' | 'inner' | 'system'): Promise<ChatMessage[]> {
     // Always try server first - don't rely on isConnected which may not be accurate yet
     try {
       console.log(`[chat] Fetching ${streamMode} buffer from server...`);
@@ -414,8 +449,7 @@
         const data = await response.json();
         if (Array.isArray(data.messages)) {
           console.log(`[chat] Loaded ${data.messages.length} messages from ${streamMode} buffer`);
-          messages.set(data.messages);
-          return;
+          return data.messages;
         }
       }
       // Non-OK response - fall through to local fallback
@@ -430,16 +464,73 @@
       const localMessages = await getDisplayMessages(streamMode as BufferMode);
       console.log(`[chat] Loaded ${localMessages.length} messages from local storage`);
       // Convert BufferMessage to ChatMessage format
-      const chatMessages = localMessages.map(m => ({
-        role: m.role,
+      return localMessages.map(m => ({
+        role: m.role as MessageRole,
         content: m.content,
         timestamp: m.timestamp,
         meta: m.meta,
       }));
-      messages.set(chatMessages);
     } catch (err) {
       console.error('[chat] Local buffer fetch also failed:', err);
-      messages.set([]);
+      return [];
+    }
+  }
+
+  /**
+   * Fetch and merge messages from all selected buffers
+   * Merges messages by timestamp for unified display
+   *
+   * Three distinct buffers:
+   * - conversation tab → conversation buffer (user/assistant)
+   * - inner tab → inner buffer (reflection/dream/reasoning)
+   * - terminal tab → system buffer (execution/system messages)
+   */
+  async function fetchAllSelectedBuffers() {
+    // Map selected views directly to buffer modes (1:1 mapping now)
+    const bufferModes: ('conversation' | 'inner' | 'system')[] = [];
+    if (selectedViews.has('conversation')) bufferModes.push('conversation');
+    if (selectedViews.has('inner')) bufferModes.push('inner');
+    if (selectedViews.has('terminal')) bufferModes.push('system'); // Terminal uses dedicated system buffer
+
+    console.log(`[chat] Fetching buffers for views:`, Array.from(selectedViews), '→ modes:', bufferModes);
+
+    // Fetch all buffers in parallel
+    const bufferPromises = bufferModes.map(mode => fetchSingleBuffer(mode));
+    const bufferResults = await Promise.all(bufferPromises);
+
+    // Flatten and merge all messages
+    const allMessages: ChatMessage[] = [];
+    for (const bufferMessages of bufferResults) {
+      allMessages.push(...bufferMessages);
+    }
+
+    // Sort by timestamp (oldest first for chat display)
+    allMessages.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Remove duplicates (same timestamp + content)
+    const seen = new Set<string>();
+    const uniqueMessages = allMessages.filter(msg => {
+      const key = `${msg.timestamp}-${msg.content.substring(0, 50)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    console.log(`[chat] Merged ${uniqueMessages.length} unique messages from ${modes.length} buffer(s)`);
+    messages.set(uniqueMessages);
+  }
+
+  /**
+   * Legacy wrapper for single-buffer fetch (for stream updates)
+   */
+  async function fetchBuffer(streamMode: 'conversation' | 'inner') {
+    // If we have multiple views selected, fetch and merge all
+    if (selectedViews.size > 1) {
+      await fetchAllSelectedBuffers();
+    } else {
+      // Single view - just set directly
+      const bufferMessages = await fetchSingleBuffer(streamMode);
+      messages.set(bufferMessages);
     }
   }
 
@@ -619,6 +710,11 @@
     visibilityCleanup?.();
     chatResponseStream?.close();
     disconnectBufferStream();
+    // Also disconnect conversation stream (for multi-view mode)
+    if (conversationStream) {
+      conversationStream.close();
+      conversationStream = null;
+    }
     disconnectTTSQueueStream();
     activityApi.clearActivity();
     ttsApi.cleanup();
@@ -930,6 +1026,25 @@
             reasoningStages = [];
             chatResponseStream?.close();
             return; // Don't throw, we handled it
+          } else if (type === 'claude_cli_output') {
+            // Real-time Claude CLI output - show terminal panel
+            if (!showClaudeTerminal) {
+              showClaudeTerminal = true;
+              claudeCliActive = true;
+              claudeCliOutput = [];
+            }
+            claudeCliOutput = [...claudeCliOutput, data.chunk || ''];
+            console.log('[ClaudeCLI] Output chunk received:', (data.chunk || '').substring(0, 50));
+          } else if (type === 'claude_cli_waiting') {
+            // Claude is waiting for user input
+            claudeCliWaiting = true;
+            claudeCliQuestion = data.question || '';
+            console.log('[ClaudeCLI] Waiting for input:', claudeCliQuestion.substring(0, 100));
+          } else if (type === 'claude_cli_complete') {
+            // Claude CLI session completed
+            claudeCliActive = false;
+            claudeCliWaiting = false;
+            console.log('[ClaudeCLI] Session complete, success:', data.success);
           }
         } catch (err) {
           console.error('Chat stream error:', err);
@@ -1088,6 +1203,124 @@
     } catch (error) {
       console.error('[claude-session] Error stopping session:', error);
     }
+  }
+
+  // View toggle functions for VS Code-style multi-select tabs
+  function toggleView(view: 'conversation' | 'inner' | 'terminal') {
+    const newSet = new Set(selectedViews);
+
+    if (newSet.has(view)) {
+      // Can't deselect if it's the only one
+      if (newSet.size > 1) {
+        newSet.delete(view);
+      }
+    } else {
+      newSet.add(view);
+    }
+
+    selectedViews = newSet;
+
+    // Fetch and merge all selected buffers
+    fetchAllSelectedBuffers();
+
+    // Connect to buffer streams for real-time updates
+    // When we have multiple views, we need streams for all of them
+    connectMultipleBufferStreams();
+  }
+
+  // Stores for multiple buffer streams (all three can be active simultaneously)
+  let conversationStream: EventSource | null = null;
+  let systemStream: EventSource | null = null;
+
+  /**
+   * Connect to buffer streams for all selected views
+   * Handles real-time updates from multiple sources
+   *
+   * Three distinct buffers:
+   * - conversation view → conversation buffer stream
+   * - inner view → inner buffer stream
+   * - terminal view → system buffer stream
+   */
+  function connectMultipleBufferStreams() {
+    // Close existing streams
+    if (innerDialogueStream) {
+      innerDialogueStream.close();
+      innerDialogueStream = null;
+    }
+    if (conversationStream) {
+      conversationStream.close();
+      conversationStream = null;
+    }
+    if (systemStream) {
+      systemStream.close();
+      systemStream = null;
+    }
+
+    // Connect to streams for each selected view (1:1 mapping)
+    if (selectedViews.has('conversation')) {
+      connectBufferStreamForMode('conversation', (stream) => { conversationStream = stream; });
+    }
+    if (selectedViews.has('inner')) {
+      connectBufferStreamForMode('inner', (stream) => { innerDialogueStream = stream; });
+    }
+    if (selectedViews.has('terminal')) {
+      connectBufferStreamForMode('system', (stream) => { systemStream = stream; });
+    }
+  }
+
+  /**
+   * Connect to a single buffer stream with proper merge handling
+   */
+  function connectBufferStreamForMode(
+    streamMode: 'conversation' | 'inner',
+    setStream: (stream: EventSource) => void
+  ) {
+    console.log(`[chat] Connecting to ${streamMode} buffer stream (multi-mode)...`);
+    const stream = apiEventSource(`/api/buffer-stream?mode=${streamMode}`);
+    setStream(stream);
+
+    stream.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'connected') {
+          console.log(`[chat] ${streamMode} buffer stream connected`);
+          // Reset message counts on connect
+          const currentCount = get(messages).length;
+          if (streamMode === 'inner') {
+            lastInnerMessageCount = currentCount;
+          } else {
+            lastConversationMessageCount = currentCount;
+          }
+          return;
+        }
+        if (data.type === 'error') {
+          console.error(`[chat] ${streamMode} buffer stream error:`, data.error);
+          return;
+        }
+        if (data.type === 'update' && Array.isArray(data.messages)) {
+          // When we get an update, re-fetch all buffers to ensure proper merge
+          // This is simpler than trying to merge incremental updates
+          console.log(`[chat] ${streamMode} buffer updated, refreshing all selected buffers`);
+          fetchAllSelectedBuffers();
+        }
+      } catch (err) {
+        console.error(`[chat] ${streamMode} buffer stream parse error:`, err);
+      }
+    };
+
+    stream.onerror = (err) => {
+      console.error(`[chat] ${streamMode} buffer stream error:`, err);
+      // Attempt reconnection after a delay
+      setTimeout(() => {
+        if (isComponentMounted && selectedViews.has(streamMode)) {
+          connectBufferStreamForMode(streamMode, setStream);
+        }
+      }, 3000);
+    };
+  }
+
+  function toggleSystemTerminal() {
+    showSystemTerminal = !showSystemTerminal;
   }
 
   async function toggleBigBrother() {
@@ -1249,28 +1482,31 @@
 <div class="chat-interface">
   <!-- Header with all controls -->
   <div class="mode-toggle-container sm:gap-3">
-    <!-- Mode Toggle Buttons -->
+    <!-- Mode Toggle Buttons (VS Code-style multi-select) -->
     <div class="mode-toggle">
       <button
-        class={mode === 'conversation' ? 'mode-btn active' : 'mode-btn'}
-        on:click={() => { mode = 'conversation'; connectBufferStream('conversation'); }}
-        aria-label="Conversation mode"
+        class="mode-btn {selectedViews.has('conversation') ? 'active' : ''}"
+        on:click={() => toggleView('conversation')}
+        aria-label="Toggle conversation view"
+        title="Toggle conversation view (can combine with Inner Dialogue)"
       >
         <span class="mode-icon" aria-hidden="true">💬</span>
         <span class="mode-label">Conversation</span>
       </button>
       <button
-        class={mode === 'inner' ? 'mode-btn active' : 'mode-btn'}
-        on:click={() => { mode = 'inner'; connectBufferStream('inner'); }}
-        aria-label="Inner dialogue mode"
+        class="mode-btn {selectedViews.has('inner') ? 'active' : ''}"
+        on:click={() => toggleView('inner')}
+        aria-label="Toggle inner dialogue view"
+        title="Toggle inner dialogue view (can combine with Conversation)"
       >
         <span class="mode-icon" aria-hidden="true">💭</span>
         <span class="mode-label">Inner Dialogue</span>
       </button>
       <button
-        class={mode === 'terminal' ? 'mode-btn active' : 'mode-btn'}
-        on:click={() => { mode = 'terminal'; }}
-        aria-label="Terminal mode"
+        class="mode-btn {showSystemTerminal ? 'active' : ''}"
+        on:click={() => toggleSystemTerminal()}
+        aria-label="Toggle system terminal"
+        title="Toggle system terminal (split view below chat)"
       >
         <span class="mode-icon" aria-hidden="true">💻</span>
         <span class="mode-label">Terminal</span>
@@ -1426,63 +1662,73 @@
     </div>
   {/if}
 
-  {#if mode !== 'terminal'}
-  <div class="messages-container" bind:this={messagesContainer}>
-    {#if $messages.length === 0}
-      <div class="welcome-screen">
-        <div class="welcome-icon">🧠 => 💻</div>
-        <h2 class="welcome-title">MetaHuman OS</h2>
-        <p class="welcome-subtitle">
-          {#if mode === 'conversation'}
-            Start a conversation with your digital personality extension
-          {:else}
-            Explore your MetaHuman's inner dialogue
-          {/if}
-        </p>
-        <div class="welcome-suggestions">
-          <button class="suggestion" on:click={() => { input = "Tell me how you will take over the world?"; sendMessage(); }}>
-            Tell me how you will take over the world?
-          </button>
-          <button class="suggestion" on:click={() => { input = "Wimmy wham wham wozzle!?"; sendMessage(); }}>
-            Wimmy wham wham wozzle!?
-          </button>
-          <button class="suggestion" on:click={() => { input = "Tell me about yourself in the most technical way possible"; sendMessage(); }}>
-            Tell me about yourself in the most technical way possible.
-          </button>
-        </div>
+  <!-- Main chat area with optional terminal split -->
+  <div class="chat-main-area" class:with-terminal-split={showSystemTerminal}>
+    <!-- Messages panel -->
+    <div class="messages-panel" class:split={showSystemTerminal}>
+      <div class="messages-container" bind:this={messagesContainer}>
+        {#if $messages.length === 0}
+          <div class="welcome-screen">
+            <div class="welcome-icon">🧠 => 💻</div>
+            <h2 class="welcome-title">MetaHuman OS</h2>
+            <p class="welcome-subtitle">
+              {#if selectedViews.has('conversation') && selectedViews.has('inner')}
+                View combined conversation and inner dialogue
+              {:else if selectedViews.has('conversation')}
+                Start a conversation with your digital personality extension
+              {:else}
+                Explore your MetaHuman's inner dialogue
+              {/if}
+            </p>
+            <div class="welcome-suggestions">
+              <button class="suggestion" on:click={() => { input = "Tell me how you will take over the world?"; sendMessage(); }}>
+                Tell me how you will take over the world?
+              </button>
+              <button class="suggestion" on:click={() => { input = "Wimmy wham wham wozzle!?"; sendMessage(); }}>
+                Wimmy wham wham wozzle!?
+              </button>
+              <button class="suggestion" on:click={() => { input = "Tell me about yourself in the most technical way possible"; sendMessage(); }}>
+                Tell me about yourself in the most technical way possible.
+              </button>
+            </div>
+          </div>
+        {:else}
+          <MessageList
+            messages={$messages}
+            mode={displayMode}
+            selectedMessageIndex={$selectedMessageIndex}
+            {loading}
+            {reasoningStages}
+            showThinkingIndicator={$showThinkingIndicator}
+            thinkingSteps={$thinkingSteps}
+            thinkingStatusLabel={$thinkingStatusLabel}
+            on:messageClick={(e) => {
+              if ($selectedMessageIndex === e.detail.index) {
+                messagesApi.clearSelection();
+              } else {
+                messagesApi.selectMessage(e.detail.message, e.detail.index);
+              }
+            }}
+            on:deleteMessage={(e) => handleDelete(e.detail.relPath)}
+            on:validateMessage={(e) => handleValidate(e.detail.relPath, e.detail.status)}
+            on:speakMessage={(e) => {
+              if (ttsEnabled) {
+                ttsApi.speak(e.detail.content);
+              }
+            }}
+          />
+          <div bind:this={scrollSentinel} class="scroll-sentinel"></div>
+        {/if}
       </div>
-    {:else}
-      <MessageList
-        messages={$messages}
-        {mode}
-        selectedMessageIndex={$selectedMessageIndex}
-        {loading}
-        {reasoningStages}
-        showThinkingIndicator={$showThinkingIndicator}
-        thinkingSteps={$thinkingSteps}
-        thinkingStatusLabel={$thinkingStatusLabel}
-        on:messageClick={(e) => {
-          if ($selectedMessageIndex === e.detail.index) {
-            messagesApi.clearSelection();
-          } else {
-            messagesApi.selectMessage(e.detail.message, e.detail.index);
-          }
-        }}
-        on:deleteMessage={(e) => handleDelete(e.detail.relPath)}
-        on:validateMessage={(e) => handleValidate(e.detail.relPath, e.detail.status)}
-        on:speakMessage={(e) => {
-          if (ttsEnabled) {
-            ttsApi.speak(e.detail.content);
-          }
-        }}
-      />
-      <div bind:this={scrollSentinel} class="scroll-sentinel"></div>
-    {/if}
-  </div>
   <!-- Approval Prompt - appears above input when desires need approval -->
   <!-- Shows in BOTH conversation AND inner dialogue modes - users need to see approval requests regardless of view -->
   <ApprovalPrompt onApprovalChange={() => {
     console.log('[chat] Approval change detected');
+  }} />
+
+  <!-- Operator Proposal Prompt - HITL approval for autonomous tasks -->
+  <OperatorProposalPrompt onProposalChange={() => {
+    console.log('[chat] Operator proposal change detected');
   }} />
 
   <!-- Input Area -->
@@ -1548,10 +1794,39 @@
       on:clearSelection={() => messagesApi.clearSelection()}
       on:lengthModeChange={(e) => { lengthMode = e.detail.mode; }}
     />
+
+    <!-- Claude CLI Terminal Panel (shows when Big Brother is streaming) -->
+    {#if showClaudeTerminal}
+      <div class="claude-terminal-container">
+        <ClaudeTerminalPanel
+          output={claudeCliOutput}
+          active={claudeCliActive}
+          waiting={claudeCliWaiting}
+          question={claudeCliQuestion}
+          on:sendInput={(e) => {
+            console.log('[ClaudeCLI] User sent input:', e.detail.text.substring(0, 50));
+            // After sending, reset waiting state
+            claudeCliWaiting = false;
+          }}
+          on:close={() => {
+            showClaudeTerminal = false;
+            claudeCliOutput = [];
+            claudeCliActive = false;
+            claudeCliWaiting = false;
+          }}
+        />
+      </div>
+    {/if}
   </div>
-  {:else}
-    <div class="terminal-container">
-      <TerminalManager />
     </div>
-  {/if}
+    <!-- End messages-panel -->
+
+    <!-- Terminal split panel (system terminal, not Claude CLI) -->
+    {#if showSystemTerminal}
+      <div class="terminal-split-panel">
+        <TerminalManager />
+      </div>
+    {/if}
+  </div>
+  <!-- End chat-main-area -->
 </div>

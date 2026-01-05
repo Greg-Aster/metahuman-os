@@ -96,7 +96,7 @@ export type ConfigSubcategory = 'persona' | 'etc' | 'sessions' | 'desires';
 export type VoiceSubcategory = 'training-data' | 'models' | 'cache';
 export type TrainingSubcategory = 'datasets' | 'adapters' | 'runs' | 'models';
 export type OutputSubcategory = 'fine-tuned-models' | 'drafts' | 'artifacts' | 'cache';
-export type StateSubcategory = 'agency' | 'curiosity' | 'sessions';
+export type StateSubcategory = 'agency' | 'curiosity' | 'sessions' | 'lizard-brain';
 
 /**
  * Storage request for routing

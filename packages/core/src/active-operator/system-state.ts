@@ -20,9 +20,11 @@ import {
   getCurrentCircadianWindow,
   isTaskCircadianAppropriate,
 } from './lizard-brain.js';
+import { getPendingProposalTaskTypes } from './operator-proposals.js';
 import type { SystemState, TaskType } from './types.js';
 import { listActiveTasks } from '../memory.js';
 import { loadPersonaCore } from '../identity.js';
+import { listUserWindows } from '../window-session.js';
 
 /**
  * Generic/system tags that don't count as "meaningful" semantic tags.
@@ -100,19 +102,38 @@ async function getUnprocessedMemoryCount(username: string): Promise<number> {
 }
 
 /**
- * Get hours since last vector index build.
+ * Get hours since last vector index update.
+ * Uses file mtime for accuracy (createdAt only updates on full rebuild,
+ * not on incremental appends).
  */
 async function getIndexAgeHours(username: string): Promise<number> {
   try {
     const status = await getIndexStatus(undefined, username);
-    if (!status.exists || !status.createdAt) {
+    if (!status.exists) {
       return 999; // Never built
     }
 
-    const lastUpdated = new Date(status.createdAt);
-    const now = new Date();
-    const diffMs = now.getTime() - lastUpdated.getTime();
-    return diffMs / (1000 * 60 * 60);
+    // Use file mtime for more accurate "last updated" signal
+    // This captures both full rebuilds and incremental appends
+    const profilePaths = getProfilePaths(username);
+    const vectorsPath = path.join(profilePaths.index, 'vectors.json');
+
+    if (fs.existsSync(vectorsPath)) {
+      const stats = fs.statSync(vectorsPath);
+      const now = new Date();
+      const diffMs = now.getTime() - stats.mtime.getTime();
+      return diffMs / (1000 * 60 * 60);
+    }
+
+    // Fallback to createdAt if file doesn't exist (shouldn't happen)
+    if (status.createdAt) {
+      const lastUpdated = new Date(status.createdAt);
+      const now = new Date();
+      const diffMs = now.getTime() - lastUpdated.getTime();
+      return diffMs / (1000 * 60 * 60);
+    }
+
+    return 999;
   } catch {
     return 999;
   }
@@ -539,40 +560,66 @@ function getLastActivityFromBuffer(bufferPath: string): Date | null {
 }
 
 /**
- * Get idle time in minutes from conversation buffers.
- * Checks both conversation and inner dialogue buffers, using the most recent activity.
+ * Get idle time in minutes from multiple sources:
+ * 1. Conversation buffers (chat messages)
+ * 2. Window sessions (browser activity/heartbeats)
+ *
+ * Uses the most recent activity from ANY source.
+ * This ensures we detect user presence even if they haven't chatted recently
+ * but have the app open and are actively viewing it.
  */
 function getIdleMinutes(username: string): number {
   const profilePaths = getProfilePaths(username);
 
-  // Check both buffer files and use the most recent activity
+  // Check both buffer files
   const conversationBuffer = path.join(profilePaths.state, 'conversation-buffer-conversation.json');
   const innerBuffer = path.join(profilePaths.state, 'conversation-buffer-inner.json');
 
   const conversationActivity = getLastActivityFromBuffer(conversationBuffer);
   const innerActivity = getLastActivityFromBuffer(innerBuffer);
 
-  // Find the most recent activity across both buffers
-  let lastActivity: Date | null = null;
-  if (conversationActivity && innerActivity) {
-    lastActivity = conversationActivity > innerActivity ? conversationActivity : innerActivity;
-  } else {
-    lastActivity = conversationActivity || innerActivity;
+  // Also check window sessions - this captures browser activity
+  // even when user hasn't sent a message (e.g., just opened the app)
+  let windowActivity: Date | null = null;
+  try {
+    const windows = listUserWindows(username);
+    if (windows.length > 0) {
+      // Find the most recent window activity
+      for (const window of windows) {
+        const activity = new Date(window.lastActivity);
+        if (!windowActivity || activity > windowActivity) {
+          windowActivity = activity;
+        }
+      }
+    }
+  } catch {
+    // Window session system may not be initialized, ignore errors
   }
 
-  if (!lastActivity) {
+  // Find the most recent activity across ALL sources
+  const activities = [conversationActivity, innerActivity, windowActivity].filter(Boolean) as Date[];
+
+  if (activities.length === 0) {
     return 999; // Never active
   }
+
+  const lastActivity = activities.reduce((a, b) => a > b ? a : b);
 
   const now = new Date();
   return (now.getTime() - lastActivity.getTime()) / (1000 * 60);
 }
 
 /**
- * Check if user has been active recently (within last 5 minutes).
+ * Check if user has been active recently.
+ *
+ * We use 15 minutes as the threshold because:
+ * - < 15 min: User is likely engaged, avoid housekeeping tasks
+ * - >= 15 min: User is idle, safe to run maintenance (memory_curate, training_curate, etc.)
+ *
+ * The LLM also receives idleMinutes directly for more nuanced decisions.
  */
 function isUserActive(username: string): boolean {
-  return getIdleMinutes(username) < 5;
+  return getIdleMinutes(username) < 15;
 }
 
 /**
@@ -666,6 +713,9 @@ export async function gatherSystemState(
   const idleMinutes = getIdleMinutes(username);
   const inboxFileCount = getInboxFileCount(username);
 
+  // Get pending HITL proposals (tasks awaiting user approval)
+  const pendingProposalTasks = getPendingProposalTaskTypes(username);
+
   // Get task and goal metrics
   const taskMetrics = getTaskMetrics();
   const goalMetrics = getGoalMetrics();
@@ -679,6 +729,7 @@ export async function gatherSystemState(
     activeDesires,
     awaitingApprovalDesires,
     approvedDesires,
+    pendingProposalTasks,
     desireSummaries,
     hoursSinceReflection,
     hoursSinceDream,

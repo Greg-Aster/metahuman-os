@@ -13,6 +13,7 @@ import { callProvider, type ProviderType, type ProviderProgressEvent } from './p
 import { ollama } from './ollama.js';
 import { embedWithLocalService, isLocalModelServiceRunning } from './providers/local-models.js';
 import { loadBackendConfig } from './llm-backend.js';
+import { parseThinkingBlocks } from './nodes/output/thinking-stripper.node.js';
 
 // Re-export ModelRole for convenience
 export type { ModelRole } from './model-resolver.js';
@@ -71,6 +72,8 @@ export interface RouterResponse {
   };
   latencyMs?: number;
   cached?: boolean;
+  /** Extracted thinking/reasoning from <think> blocks (null if none) */
+  thinking?: string | null;
 }
 
 export interface RouterStreamChunk {
@@ -176,9 +179,12 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
       bridgeProgress
     );
 
+    // Extract thinking blocks from response content
+    const { thinking, stripped } = parseThinkingBlocks(providerResponse.content);
+
     // Convert to RouterResponse
     response = {
-      content: providerResponse.content,
+      content: stripped, // Use stripped content (without <think> blocks)
       model: providerResponse.model,
       modelId: resolved.id,
       role: callOptions.role,
@@ -188,6 +194,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
         completion: providerResponse.usage.completionTokens,
         total: providerResponse.usage.totalTokens,
       } : undefined,
+      thinking, // Include extracted thinking/reasoning
     };
 
     // Add metadata to response
@@ -211,6 +218,8 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
         latencyMs: response.latencyMs,
         tokens: response.tokens,
         cached: response.cached || false,
+        hadThinking: !!thinking,
+        thinkingLength: thinking?.length || 0,
       },
     });
 

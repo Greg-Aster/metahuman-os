@@ -615,6 +615,38 @@ async function checkNeedsDesireGeneration(username: string): Promise<TriggerResu
 }
 
 // ============================================================================
+// Help Ticket System Trigger
+// ============================================================================
+
+/**
+ * Check if help tickets need review.
+ * Triggered by user negative feedback to drive system self-improvement.
+ */
+async function checkHelpTickets(username: string): Promise<TriggerResult> {
+  try {
+    // Dynamic import to avoid circular dependency
+    const { shouldReviewTickets } = await import('../help-tickets/index.js');
+    const result = shouldReviewTickets(username);
+
+    if (result.shouldRun) {
+      return {
+        shouldTrigger: true,
+        reason: result.reason,
+        urgency: result.urgentCount > 0 ? 'immediate' : 'soon',
+        data: {
+          ticketCount: result.ticketCount,
+          urgentCount: result.urgentCount,
+        },
+      };
+    }
+
+    return { shouldTrigger: false };
+  } catch {
+    return { shouldTrigger: false };
+  }
+}
+
+// ============================================================================
 // Trigger Registry
 // ============================================================================
 
@@ -732,6 +764,16 @@ export const TRIGGERS: Trigger[] = [
     priority: 'low',
     checkInterval: 300000, // 5 minutes
     condition: checkNeedsDesireGeneration,
+  },
+  // === HELP TICKET SYSTEM ===
+  {
+    id: 'help_ticket_review',
+    name: 'Help Ticket Review',
+    description: 'Review user feedback tickets and propose fixes',
+    taskType: 'help_ticket_review',
+    priority: 'high', // User feedback is important
+    checkInterval: 300000, // 5 minutes
+    condition: checkHelpTickets,
   },
 ];
 

@@ -1,9 +1,36 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import { createEventDispatcher, onDestroy } from 'svelte';
   import type { ChatMessage } from '../../lib/client/composables/useMessages';
+  import FeedbackButtons from './FeedbackButtons.svelte';
 
   export let input: string = '';
   export let loading: boolean = false;
+
+  // Auto-expanding textarea
+  let textareaElement: HTMLTextAreaElement;
+  const MIN_HEIGHT = 44; // ~1-2 lines
+  const MAX_HEIGHT = 200; // ~8-10 lines
+  let isAdjustingHeight = false; // Guard to prevent reactive loop
+
+  function adjustTextareaHeight() {
+    if (!textareaElement || isAdjustingHeight) return;
+    isAdjustingHeight = true;
+    // Reset to min to get accurate scrollHeight
+    textareaElement.style.height = MIN_HEIGHT + 'px';
+    // Expand to content, capped at max
+    const newHeight = Math.min(Math.max(textareaElement.scrollHeight, MIN_HEIGHT), MAX_HEIGHT);
+    textareaElement.style.height = newHeight + 'px';
+    // Use setTimeout to release guard after DOM settles
+    setTimeout(() => { isAdjustingHeight = false; }, 0);
+  }
+
+  // React to input changes (including programmatic clears)
+  // Use afterUpdate instead of reactive statement to avoid infinite loops
+  let lastInputLength = 0;
+  $: if (textareaElement && input.length !== lastInputLength) {
+    lastInputLength = input.length;
+    adjustTextareaHeight();
+  }
   export let selectedMessage: ChatMessage | null = null;
   export let isRecording: boolean = false;
   export let isContinuousMode: boolean = false;
@@ -158,9 +185,16 @@
   {/if}
 
   <div class="input-row">
+    <!-- Feedback buttons - left side -->
+    <div class="feedback-area">
+      <FeedbackButtons targetType="conversation" />
+    </div>
+
     <textarea
+      bind:this={textareaElement}
       bind:value={input}
       on:keypress={handleKeyPress}
+      on:input={adjustTextareaHeight}
       placeholder="Message your MetaHuman..."
       rows="1"
       class="chat-input"
@@ -257,6 +291,14 @@
 </div>
 
 <style>
+  /* Feedback area - left side of input row */
+  .feedback-area {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    margin-right: 0.5rem;
+  }
+
   /* Interim transcript preview - shows words as you speak */
   .interim-transcript {
     display: flex;

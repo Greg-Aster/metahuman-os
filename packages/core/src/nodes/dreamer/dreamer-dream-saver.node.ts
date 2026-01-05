@@ -8,7 +8,7 @@ import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
 import { recordSystemActivity } from '../../system-activity.js';
 import { scheduler } from '../../agent-scheduler.js';
-import { appendDreamToBuffer } from '../../conversation-buffer.js';
+// Note: Buffer append is now handled by inner_dialogue_capture node in the graph
 
 interface Memory {
   id: string;
@@ -59,9 +59,8 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       actor: 'dreamer',
     });
 
-    if (username) {
-      appendDreamToBuffer(username, dream);
-    }
+    // Buffer append is handled by inner_dialogue_capture node in the graph
+    // This prevents duplicate entries when using the graph workflow
 
     return {
       saved: true,

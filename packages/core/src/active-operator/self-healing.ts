@@ -369,3 +369,142 @@ export function getErrorCount(): number {
   const errors = runTypeCheck();
   return errors.length;
 }
+
+/**
+ * Context provided by Big Brother for guided self-healing.
+ */
+export interface BigBrotherHealingContext {
+  recentErrors: TSError[];
+  scratchpadContext: string;
+  bigBrotherSuggestions: string[];
+  triggerReason: 'errors' | 'stuck' | 'periodic';
+  cycleNumber: number;
+}
+
+/**
+ * Result of Big Brother guided self-healing.
+ */
+export interface BigBrotherHealingResult {
+  success: boolean;
+  analysisRequested: boolean;
+  proposalsCreated: number;
+  suggestionsApplied: string[];
+  errorMessage?: string;
+}
+
+/**
+ * Trigger self-healing with Big Brother's guidance.
+ *
+ * This function is called when the Big Brother reviewer detects issues
+ * (repeated errors, stuck state, or periodic review). It:
+ * 1. Analyzes the error context with Big Brother's suggestions
+ * 2. Runs targeted self-healing on the most relevant errors
+ * 3. Returns results for logging and scratchpad updates
+ */
+export async function triggerBigBrotherHealing(
+  username: string,
+  context: BigBrotherHealingContext
+): Promise<BigBrotherHealingResult> {
+  const suggestionsApplied: string[] = [];
+
+  audit({
+    category: 'system',
+    level: 'info',
+    event: 'big_brother_healing_triggered',
+    actor: 'big-brother-reviewer',
+    details: {
+      username,
+      triggerReason: context.triggerReason,
+      cycleNumber: context.cycleNumber,
+      errorCount: context.recentErrors.length,
+      suggestionCount: context.bigBrotherSuggestions.length,
+    },
+  });
+
+  try {
+    // If Big Brother provided specific suggestions, log them
+    if (context.bigBrotherSuggestions.length > 0) {
+      console.log('[big-brother-healing] Received suggestions:', context.bigBrotherSuggestions);
+
+      // Check for specific actionable suggestions
+      for (const suggestion of context.bigBrotherSuggestions) {
+        const lower = suggestion.toLowerCase();
+
+        if (lower.includes('run type check') || lower.includes('run tsc')) {
+          console.log('[big-brother-healing] Acting on: run type check');
+          suggestionsApplied.push('run_type_check');
+        }
+
+        if (lower.includes('analyze error') || lower.includes('fix error')) {
+          console.log('[big-brother-healing] Acting on: analyze errors');
+          suggestionsApplied.push('analyze_errors');
+        }
+
+        if (lower.includes('clear scratchpad') || lower.includes('reset')) {
+          console.log('[big-brother-healing] Suggestion noted: clear scratchpad');
+          suggestionsApplied.push('clear_scratchpad_suggested');
+        }
+      }
+    }
+
+    // If we have recent TypeScript errors, run self-healing on them
+    if (context.recentErrors.length > 0) {
+      console.log(`[big-brother-healing] Analyzing ${context.recentErrors.length} recent errors`);
+
+      // Run self-healing with guidance from Big Brother
+      const healingResult = await runSelfHealing(username, context.recentErrors.length);
+
+      audit({
+        category: 'system',
+        level: 'info',
+        event: 'big_brother_healing_complete',
+        actor: 'big-brother-reviewer',
+        details: {
+          username,
+          triggerReason: context.triggerReason,
+          proposalsCreated: healingResult.proposalsCreated,
+          suggestionsApplied,
+        },
+      });
+
+      return {
+        success: true,
+        analysisRequested: true,
+        proposalsCreated: healingResult.proposalsCreated,
+        suggestionsApplied,
+      };
+    }
+
+    // No errors to analyze, but log the review
+    console.log('[big-brother-healing] No TypeScript errors to analyze');
+
+    return {
+      success: true,
+      analysisRequested: false,
+      proposalsCreated: 0,
+      suggestionsApplied,
+    };
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+
+    audit({
+      category: 'system',
+      level: 'error',
+      event: 'big_brother_healing_failed',
+      actor: 'big-brother-reviewer',
+      details: {
+        username,
+        triggerReason: context.triggerReason,
+        error: errorMessage,
+      },
+    });
+
+    return {
+      success: false,
+      analysisRequested: false,
+      proposalsCreated: 0,
+      suggestionsApplied,
+      errorMessage,
+    };
+  }
+}

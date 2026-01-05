@@ -9,7 +9,8 @@ import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
 import { recordSystemActivity } from '../../system-activity.js';
 import { scheduler } from '../../agent-scheduler.js';
-import { appendDreamToBuffer } from '../../conversation-buffer.js';
+import { appendDreamToBuffer, appendReasoningToBuffer } from '../../conversation-buffer.js';
+import { parseThinkingBlocks } from '../output/thinking-stripper.node.js';
 
 function markBackgroundActivity() {
   try { recordSystemActivity(); } catch {}
@@ -69,7 +70,11 @@ Do not summarize; let one dream bleed into another. No length limits.`.trim();
         options: { temperature },
       });
 
-      const continuation = response.content.trim();
+      const rawContinuation = response.content.trim();
+      if (!rawContinuation) break;
+
+      // Strip thinking blocks from continuation (LLM may include <think> reasoning)
+      const { stripped: continuation, thinking } = parseThinkingBlocks(rawContinuation);
       if (!continuation) break;
 
       lastDream = continuation;
@@ -87,7 +92,14 @@ Do not summarize; let one dream bleed into another. No length limits.`.trim();
       });
 
       // Append to conversation buffer so it appears in UI
+      // Reasoning first, then dream (so reasoning displays above dream)
       if (username) {
+        if (thinking) {
+          appendReasoningToBuffer(username, thinking, {
+            dialogueSource: 'dreamer-continuation',
+            displayColor: '#8b5cf6',
+          });
+        }
         appendDreamToBuffer(username, continuation);
       }
 

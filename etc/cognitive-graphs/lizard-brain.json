@@ -274,6 +274,42 @@
       }
     },
     {
+      "id": "10",
+      "type": "reviewNode",
+      "position": { "x": 700, "y": 900 },
+      "data": {
+        "nodeType": "big_brother_reviewer",
+        "schema": {
+          "id": "big_brother_reviewer",
+          "name": "Big Brother Reviewer",
+          "category": "review",
+          "inputs": [
+            { "name": "executed", "type": "boolean", "description": "Whether a task was executed" },
+            { "name": "success", "type": "boolean", "description": "Whether execution succeeded" },
+            { "name": "reasoning", "type": "string", "description": "Decision reasoning" }
+          ],
+          "outputs": [
+            { "name": "triggered", "type": "boolean", "description": "Whether review was triggered" },
+            { "name": "suggestions", "type": "array", "description": "Suggestions from Big Brother" }
+          ],
+          "description": "Triggers Big Brother reviews based on periodic intervals, errors, or stuck conditions",
+          "color": "#f97316",
+          "bgColor": "#9a3412"
+        },
+        "properties": {
+          "enabled": true,
+          "periodicReviewInterval": 50,
+          "triggerOnErrors": true,
+          "errorThreshold": 3,
+          "triggerOnStuck": true,
+          "stuckThreshold": 10,
+          "allowScratchpadModification": true,
+          "allowCoderAgentTrigger": true
+        },
+        "title": "Big Brother Reviewer"
+      }
+    },
+    {
       "id": "99",
       "type": "noteNode",
       "position": { "x": 0, "y": -100 },
@@ -291,7 +327,7 @@
         },
         "properties": {
           "title": "Lizard Brain - Unified Decision Engine",
-          "content": "PURPOSE: Single LLM makes ALL autonomous decisions (no separate filter + selector)\n\nFLOW:\n1. Trigger Candidates - All triggers that passed their condition check\n2. Current Queue - Tasks already waiting to be executed\n3. System State - Metrics including memories, desires, user tasks, and persona goals\n4. Recent Activity - What ran recently (to avoid repetition)\n5. Unified LLM - ONE call decides what to execute next\n6. Task Execution - Chosen task is executed immediately\n\nKEY PRINCIPLE: One brain, one decision - task/goal aware, no queue bloat.",
+          "content": "PURPOSE: Single LLM makes ALL autonomous decisions (no separate filter + selector)\n\nFLOW:\n1. Trigger Candidates - All triggers that passed their condition check\n2. Current Queue - Tasks already waiting to be executed\n3. System State - Metrics including memories, desires, user tasks, and persona goals\n4. Recent Activity - What ran recently (to avoid repetition)\n5. Unified LLM - ONE call decides what to execute next\n6. Task Execution - Chosen task is executed immediately\n7. Big Brother Reviewer - Periodic/error-based review via Claude Code\n\nKEY PRINCIPLE: One brain, one decision - task/goal aware, no queue bloat.\nSELF-HEALING: Big Brother reviews after errors or every 50 cycles.",
           "style": "info"
         },
         "title": "Documentation"
@@ -370,6 +406,33 @@
       "targetHandle": "innerDialogue",
       "type": "default",
       "data": { "comment": "Decision reasoning -> TTS Output (speaks in inner dialogue mode)" }
+    },
+    {
+      "id": "e-6-executed-10-executed",
+      "source": "6",
+      "target": "10",
+      "sourceHandle": "executed",
+      "targetHandle": "executed",
+      "type": "default",
+      "data": { "comment": "Task execution status -> Big Brother Reviewer" }
+    },
+    {
+      "id": "e-6-success-10-success",
+      "source": "6",
+      "target": "10",
+      "sourceHandle": "success",
+      "targetHandle": "success",
+      "type": "default",
+      "data": { "comment": "Task success status -> Big Brother Reviewer" }
+    },
+    {
+      "id": "e-5-reasoning-10-reasoning",
+      "source": "5",
+      "target": "10",
+      "sourceHandle": "reasoning",
+      "targetHandle": "reasoning",
+      "type": "default",
+      "data": { "comment": "Decision reasoning -> Big Brother Reviewer" }
     }
   ]
 }

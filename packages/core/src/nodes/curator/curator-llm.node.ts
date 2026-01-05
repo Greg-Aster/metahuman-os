@@ -13,8 +13,11 @@ interface EpisodicMemory {
   type?: string;
   response?: string;
   path?: string;
+  tags?: string[];
   metadata?: {
     cognitiveMode?: string;
+    reinforcementSignal?: number;  // -1 = negative feedback, +1 = positive
+    [key: string]: unknown;
   };
 }
 
@@ -53,6 +56,18 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   for (const memory of memories) {
     if (!memory || !memory.content) continue;
+
+    // Skip memories with negative feedback - user explicitly marked these as bad
+    // They should not influence training data
+    if (memory.metadata?.reinforcementSignal === -1) {
+      console.log(`[curator_llm] ⏭️ Skipping memory ${memory.id}: negative user feedback`);
+      continue;
+    }
+
+    // Skip feedback memories themselves - they're meta-data, not training content
+    if (memory.tags?.includes('feedback')) {
+      continue;
+    }
 
     const cognitiveMode = memory.metadata?.cognitiveMode || 'emulation';
     const memoryType = memory.type || 'conversation';

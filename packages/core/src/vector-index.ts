@@ -180,6 +180,7 @@ export async function buildMemoryIndex(options: {
     console.log(`[vector-index] Processing ${files.length} episodic memories...`)
     let processed = 0
     let skippedLLM = 0
+    let embeddingErrors = 0
     for (const f of files) {
       try {
         const obj = readJSON<any>(f)
@@ -220,9 +221,18 @@ export async function buildMemoryIndex(options: {
         if (processed % 50 === 0) {
           console.log(`[vector-index]   ...processed ${processed}/${files.length} episodic`)
         }
-      } catch {}
+      } catch (err) {
+        embeddingErrors++
+        // Log first few errors then summarize
+        if (embeddingErrors <= 3) {
+          console.error(`[vector-index] Embedding error: ${(err as Error).message}`)
+        }
+      }
     }
-    console.log(`[vector-index] ✓ Indexed ${processed} episodic memories (skipped ${skippedLLM} LLM-generated)`)
+    if (embeddingErrors > 3) {
+      console.error(`[vector-index] ...and ${embeddingErrors - 3} more embedding errors`)
+    }
+    console.log(`[vector-index] ✓ Indexed ${processed} episodic memories (skipped ${skippedLLM} LLM-generated, ${embeddingErrors} errors)`)
   }
 
   if (includeTasks) {
@@ -328,6 +338,13 @@ export async function buildMemoryIndex(options: {
       dimensions,
     },
     data: items,
+  }
+
+  // Fail if we found files but indexed nothing (indicates embedding service failure)
+  if (items.length === 0 && dimensions === 0) {
+    const errorMsg = '[vector-index] ERROR: No items indexed - embedding service may be unavailable or all files failed to process'
+    console.error(errorMsg)
+    throw new Error('Index build failed: 0 items indexed. Check embedding service availability.')
   }
 
   const dest = indexFilePath(model, username)

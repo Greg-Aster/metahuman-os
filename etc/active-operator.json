@@ -8,11 +8,14 @@
   "enabledTaskTypes": [
     "user_message",
     "memory_curate",
+    "training_curate",
+    "index_build",
     "reflect",
     "curiosity",
     "inner_curiosity",
     "dream",
     "desire_generate",
+    "desire_advance",
     "desire_execute",
     "psychoanalyze"
   ],

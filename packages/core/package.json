@@ -56,6 +56,7 @@
     "./nodes": "./src/nodes/index.ts",
     "./big-brother": "./src/big-brother.ts",
     "./escalation-backend": "./src/escalation-backend.ts",
+    "./backends/claude-code-backend": "./src/backends/claude-code-backend.ts",
     "./graph-error-handler": "./src/graph-error-handler.ts",
     "./graph-streaming": "./src/graph-streaming.ts",
     "./path-security": "./src/path-security.ts",
@@ -73,7 +74,8 @@
     "./api/handlers/profile-sync": "./src/api/handlers/profile-sync.ts",
     "./api/adapters/http": "./src/api/adapters/http.ts",
     "./api/adapters/astro": "./src/api/adapters/astro.ts",
-    "./api/handlers/execute-graph-stream": "./src/api/handlers/execute-graph-stream.ts"
+    "./api/handlers/execute-graph-stream": "./src/api/handlers/execute-graph-stream.ts",
+    "./help-tickets": "./src/help-tickets/index.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.939.0",

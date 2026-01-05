@@ -626,6 +626,51 @@ const getHandler: APIRoute = async ({ cookies }) => {
       whisperServerStatus = 'disabled';
     }
 
+    // ==========================================================================
+    // Auto-start TTS server based on saved config
+    // Uses bin/start-voice-server which reads voice.json and starts appropriate server
+    // ==========================================================================
+    const activeProvider = config.tts?.provider || 'piper';
+    let ttsServerStatus = 'unknown';
+
+    // Piper doesn't need a server - it's a direct binary call
+    // All other providers may need servers, let the script decide
+    if (activeProvider !== 'piper') {
+      const startScript = path.join(rootDir, 'bin', 'start-voice-server');
+
+      if (fs.existsSync(startScript)) {
+        // Run start-voice-server which reads saved voice.json config
+        // The script handles checking if server is already running
+        console.log(`[voice-settings] Running start-voice-server for saved provider: ${activeProvider}`);
+
+        try {
+          const { spawn } = await import('node:child_process');
+          const logFile = path.join(rootDir, 'logs', 'run', 'voice-server-autostart.log');
+          fs.mkdirSync(path.dirname(logFile), { recursive: true });
+          const logFd = fs.openSync(logFile, 'a');
+
+          const child = spawn(startScript, [], {
+            detached: true,
+            stdio: ['ignore', logFd, logFd],
+            cwd: rootDir,
+            env: { ...process.env, PROFILE: user.username },
+          });
+          child.unref();
+          fs.closeSync(logFd);
+
+          ttsServerStatus = 'starting';
+          console.log(`[voice-settings] start-voice-server launched (PID: ${child.pid})`);
+        } catch (err) {
+          console.error(`[voice-settings] Failed to run start-voice-server:`, err);
+          ttsServerStatus = 'error';
+        }
+      } else {
+        console.warn(`[voice-settings] start-voice-server script not found at ${startScript}`);
+      }
+    } else {
+      ttsServerStatus = 'not_needed';
+    }
+
     return new Response(
       JSON.stringify({
         provider: providerForUI,
@@ -665,6 +710,8 @@ const getHandler: APIRoute = async ({ cookies }) => {
           device: config.tts.kokoro?.device || 'cpu',
           voices: kokoroVoices,
         },
+        // Generic TTS server status (applies to active provider)
+        ttsServerStatus,
         stt: {
           model: config.stt?.whisper?.model || 'base.en',
           device: config.stt?.whisper?.device || 'cpu',

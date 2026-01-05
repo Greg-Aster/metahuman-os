@@ -23,6 +23,7 @@ import {
   getTargetUser,
   withUserContext,
   extractMemoryContent,
+  parseThinkingBlocks,
 } from '@metahuman/core';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 
@@ -93,7 +94,9 @@ export async function analyzeMemoryContent(content: string): Promise<AnalysisRes
       keepAlive: '0', // Unload immediately for background agent
     });
 
-    const result = JSON.parse(response.content) as AnalysisResult;
+    // Strip <think> blocks before parsing JSON (Qwen3 reasoning mode support)
+    const { stripped } = parseThinkingBlocks(response.content);
+    const result = JSON.parse(stripped) as AnalysisResult;
 
     console.log(`[organizer] Found ${result.tags?.length || 0} tags, ${result.entities?.length || 0} entities`);
 

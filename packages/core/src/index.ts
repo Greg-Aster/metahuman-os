@@ -32,6 +32,7 @@ export * from './ollama';
 export * from './vllm';
 export * from './vllm-lora';
 export * from './llm-backend';
+export * from './local-model-service-manager';
 export * from './model-resolver';
 export * from './model-router';
 export * from './specialist-broker';
@@ -110,6 +111,7 @@ export {
   type TTSQueueItem,
   type TTSQueue,
 } from './nodes/output/tts.node.js';
+export { parseThinkingBlocks } from './nodes/output/thinking-stripper.node.js';
 export * from './stt';
 export * from './voice-training';
 export * from './audio-manager';
@@ -532,6 +534,8 @@ export {
   // Self-healing
   type TSError,
   type FixProposal,
+  type BigBrotherHealingContext,
+  type BigBrotherHealingResult,
   parseTscOutput,
   runTypeCheck,
   analyzeError,
@@ -540,6 +544,21 @@ export {
   updateProposalStatus,
   runSelfHealing,
   getErrorCount,
+  triggerBigBrotherHealing,
+  // Lizard Brain Logger
+  type LizardBrainLogEntry,
+  type LizardBrainLogFile,
+  type LizardBrainLoggerConfig,
+  getLizardBrainLogs,
+  logLizardBrainCycle,
+  updateLogEntry,
+  recordExecutionResult,
+  recordBigBrotherReview,
+  getAvailableLogDates,
+  cleanupOldLogs,
+  getRecentEntries,
+  getMultiDaySummary,
+  createLogEntryFromCycle,
   // Lizard Brain
   type Trigger,
   type TriggerResult,
@@ -574,6 +593,39 @@ export {
   submitForReview,
   proposeFileWrite,
   proposeFileDelete,
+  // Operator Proposals (Human-in-the-Loop)
+  type TaskRisk,
+  type ProposalTaskType,
+  type ProposalResponse,
+  type OperatorProposal,
+  type ProposalFeedback,
+  type ProposalStats,
+  type PostExecutionFeedback,
+  type PostFeedbackRequest,
+  type ProposalTrustLevel,
+  TASK_RISK_LEVELS,
+  createProposal,
+  getOperatorPendingProposals,
+  getPendingProposalTaskTypes,
+  hasPendingProposalForTask,
+  getProposal,
+  respondToProposal,
+  markProposalExecuted,
+  getApprovalRequirement,
+  getUserTrustLevel,
+  getProposalFeedback,
+  getProposalStats,
+  getTaskApprovalRate,
+  exportProposalTrainingData,
+  getPendingPostFeedback,
+  submitPostFeedback,
+  getPostFeedbackStats,
+  exportAllTrainingData,
+  cleanupOldProposals,
+  // Big Brother execution review
+  type ExecutionReviewResult,
+  triggerBigBrotherExecutionReview,
+  submitImprovementRequest,
 } from './active-operator/index.js';
 
 // Drift System (voice/style consistency monitoring)

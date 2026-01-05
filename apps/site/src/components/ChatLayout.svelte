@@ -291,8 +291,9 @@
     void fetchCurrentUser();
     document.addEventListener('click', handleGlobalClick, true);
 
-    // Start window session tracking for multi-window support
-    startWindowSession();
+    // Window session tracking disabled - feature incomplete and causing issues
+    // Multi-user scenarios are better handled by separate browser profiles
+    // startWindowSession();
 
     // Refresh persona name every 30 seconds (in case persona file changes)
     const personaInterval = setInterval(loadPersonaName, 30000);
@@ -307,7 +308,7 @@
       document.removeEventListener('click', handleGlobalClick, true);
       clearInterval(personaInterval);
       stopPolicyPolling();
-      stopWindowSession();
+      // stopWindowSession(); // Disabled - see above
     };
   });
 

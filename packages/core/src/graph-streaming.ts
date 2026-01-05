@@ -47,8 +47,30 @@ export interface GraphStreamingParams {
 }
 
 export interface StreamEvent {
-  type: 'progress' | 'answer' | 'error' | 'cancelled';
+  type: 'progress' | 'answer' | 'error' | 'cancelled' | 'claude_cli_output' | 'claude_cli_waiting' | 'claude_cli_complete';
   data: any;
+}
+
+/**
+ * Claude CLI streaming events for real-time output display
+ */
+export interface ClaudeCliOutputEvent {
+  chunk: string;
+  timestamp: number;
+  sessionId?: string;
+}
+
+export interface ClaudeCliWaitingEvent {
+  question: string;
+  timestamp: number;
+  sessionId?: string;
+}
+
+export interface ClaudeCliCompleteEvent {
+  success: boolean;
+  exitCode?: number;
+  timestamp: number;
+  sessionId?: string;
 }
 
 export interface GraphStreamingCallbacks {
@@ -365,6 +387,28 @@ export function streamGraphExecution(params: GraphStreamingParams): Response {
                 }
               }
             }
+          }
+
+          // Claude CLI streaming events - forward directly without throttling
+          if (event.type === 'claude_cli_output') {
+            push('claude_cli_output', {
+              chunk: event.data?.chunk || '',
+              timestamp: Date.now(),
+              sessionId,
+            });
+          } else if (event.type === 'claude_cli_waiting') {
+            push('claude_cli_waiting', {
+              question: event.data?.question || '',
+              timestamp: Date.now(),
+              sessionId,
+            });
+          } else if (event.type === 'claude_cli_complete') {
+            push('claude_cli_complete', {
+              success: event.data?.success ?? true,
+              exitCode: event.data?.exitCode,
+              timestamp: Date.now(),
+              sessionId,
+            });
           }
         };
 

@@ -12,6 +12,7 @@ import {
   checkOllamaHealth,
   loadBackendConfig,
   isVLLMRunning,
+  autoStartLocalModelService,
 } from '@metahuman/core'
 import { loadCognitiveMode } from '@metahuman/core/cognitive-mode'
 
@@ -144,6 +145,33 @@ export const GET: APIRoute = async ({ cookies }) => {
     }
   }
 
+  // Auto-start local model service (for embeddings) if configured
+  let localModelServiceStatus = null
+  try {
+    const modelsDir = path.join(systemPaths.root, 'data', 'models')
+    const serviceStarted = await autoStartLocalModelService(modelsDir)
+    localModelServiceStatus = {
+      attempted: true,
+      started: serviceStarted,
+      modelsDir
+    }
+    if (serviceStarted) {
+      audit({
+        level: 'info',
+        category: 'system',
+        event: 'local_model_service_started',
+        details: { modelsDir, source: 'api/boot' },
+        actor: 'system',
+      })
+    }
+  } catch (e) {
+    localModelServiceStatus = {
+      attempted: true,
+      started: false,
+      error: String(e)
+    }
+  }
+
   // Load persona data for splash screen
   let persona = null
   let version = '1.0.0'
@@ -248,7 +276,8 @@ export const GET: APIRoute = async ({ cookies }) => {
       isAuthenticated,
       headlessMode,
       ollamaStatus,
-      backendStatus
+      backendStatus,
+      localModelServiceStatus
     }),
     { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }
   )

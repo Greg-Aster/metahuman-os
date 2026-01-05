@@ -202,6 +202,7 @@ ${recentMessages ? `Recent conversation:\n${recentMessages}` : ''}`;
           emotionalTone: parsed.emotionalTone || 'neutral',
           conversationDepth: conversationLength,
           raw: response.content,
+          thinking: response.thinking, // Pass through reasoning for graph executor
         };
       } catch {
         // Fallback parsing for malformed JSON
@@ -230,6 +231,7 @@ ${recentMessages ? `Recent conversation:\n${recentMessages}` : ''}`;
           emotionalTone: 'neutral',
           conversationDepth: conversationLength,
           raw: response.content,
+          thinking: response.thinking, // Pass through reasoning for graph executor
         };
       }
     } catch (error) {

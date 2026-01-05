@@ -102,6 +102,8 @@ export {
 export {
   type TSError,
   type FixProposal,
+  type BigBrotherHealingContext,
+  type BigBrotherHealingResult,
   parseTscOutput,
   runTypeCheck,
   analyzeError,
@@ -110,6 +112,7 @@ export {
   updateProposalStatus,
   runSelfHealing,
   getErrorCount,
+  triggerBigBrotherHealing,
 } from './self-healing.js';
 
 // Lizard Brain (autonomous triggers + unified decision)
@@ -127,6 +130,23 @@ export {
   checkFocusConstraints,
   // makeUnifiedDecision - DEPRECATED: now handled by lizard-brain.json graph
 } from './lizard-brain.js';
+
+// Lizard Brain Logger (structured decision logging)
+export {
+  type LizardBrainLogEntry,
+  type LizardBrainLogFile,
+  type LizardBrainLoggerConfig,
+  getLizardBrainLogs,
+  logLizardBrainCycle,
+  updateLogEntry,
+  recordExecutionResult,
+  recordBigBrotherReview,
+  getAvailableLogDates,
+  cleanupOldLogs,
+  getRecentEntries,
+  getMultiDaySummary,
+  createLogEntryFromCycle,
+} from './lizard-brain-logger.js';
 
 // Service Manager (lifecycle control)
 export {
@@ -154,3 +174,47 @@ export {
   proposeFileWrite,
   proposeFileDelete,
 } from './critic.js';
+
+// Operator Proposals (Human-in-the-Loop approval system)
+export {
+  // Types
+  type TrustLevel as ProposalTrustLevel,
+  type TaskRisk,
+  type ProposalTaskType,
+  type ProposalResponse,
+  type OperatorProposal,
+  type ProposalFeedback,
+  type ProposalStats,
+  type PostExecutionFeedback,
+  type PostFeedbackRequest,
+  // Risk levels
+  TASK_RISK_LEVELS,
+  // Proposal CRUD
+  createProposal,
+  getPendingProposals as getOperatorPendingProposals,
+  getPendingProposalTaskTypes,
+  hasPendingProposalForTask,
+  getProposal,
+  respondToProposal,
+  markProposalExecuted,
+  // Trust-based approval
+  getApprovalRequirement,
+  getUserTrustLevel,
+  // Feedback collection
+  getFeedback as getProposalFeedback,
+  getProposalStats,
+  getTaskApprovalRate,
+  exportTrainingData as exportProposalTrainingData,
+  // Post-execution feedback
+  getPendingPostFeedback,
+  submitPostFeedback,
+  getPostFeedbackStats,
+  // Combined training data
+  exportAllTrainingData,
+  // Cleanup
+  cleanupOldProposals,
+  // Big Brother execution review
+  type ExecutionReviewResult,
+  triggerBigBrotherExecutionReview,
+  submitImprovementRequest,
+} from './operator-proposals.js';

@@ -36,6 +36,8 @@ export interface EscalationOptions {
   onReasoningStep?: (step: ReasoningStep) => void;
   /** Called on each raw output chunk (for terminal display) */
   onChunk?: (chunk: string) => void;
+  /** Called when backend is waiting for user input (bidirectional communication) */
+  onWaitingForInput?: (question: string) => void;
 }
 
 /**

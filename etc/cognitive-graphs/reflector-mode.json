@@ -4,7 +4,7 @@
   "name": "Reflector Agent Workflow",
   "description": "Generates reflections from associative memory chains and saves as inner dialogue",
   "cognitiveMode": "agent",
-  "last_modified": "2025-12-17",
+  "last_modified": "2025-12-31",
   "nodes": [
     {
       "id": "1",
@@ -26,10 +26,63 @@
       "height": 100
     },
     {
-      "id": "2",
+      "id": "10",
       "type": "outputNode",
       "position": {
         "x": 400,
+        "y": 100
+      },
+      "data": {
+        "label": "Thinking Stripper",
+        "nodeType": "thinking_stripper",
+        "schema": {
+          "id": "thinking_stripper",
+          "name": "Thinking Stripper",
+          "category": "output",
+          "inputs": [
+            {
+              "name": "response",
+              "type": "any",
+              "description": "LLM response that may contain <think> blocks"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "response",
+              "type": "string",
+              "description": "Response with thinking stripped (alias for stripped)"
+            },
+            {
+              "name": "stripped",
+              "type": "string",
+              "description": "Response with <think> blocks removed"
+            },
+            {
+              "name": "thinking",
+              "type": "string",
+              "description": "Extracted thinking content (null if none)"
+            },
+            {
+              "name": "hadThinking",
+              "type": "boolean",
+              "description": "Whether response contained thinking"
+            }
+          ],
+          "properties": {},
+          "description": "Extracts <think> blocks for UI display, provides stripped content for memory/TTS",
+          "color": "#ef4444",
+          "bgColor": "#991b1b"
+        },
+        "properties": {}
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "2",
+      "type": "outputNode",
+      "position": {
+        "x": 700,
         "y": 100
       },
       "data": {
@@ -39,92 +92,6 @@
           "tags": [
             "idle-thought",
             "self-reflection",
-            "inner"
-          ],
-          "displayColor": "#eab308",
-          "dialogueSource": "reflector"
-        }
-      },
-      "width": 220,
-      "height": 80
-    },
-    {
-      "id": "3",
-      "type": "llmNode",
-      "position": {
-        "x": 100,
-        "y": 240
-      },
-      "data": {
-        "label": "Generate Summary",
-        "nodeType": "reflector_llm",
-        "properties": {
-          "role": "summarizer",
-          "temperature": 0.3,
-          "timeout": 300000
-        }
-      },
-      "width": 220,
-      "height": 100
-    },
-    {
-      "id": "4",
-      "type": "outputNode",
-      "position": {
-        "x": 400,
-        "y": 240
-      },
-      "data": {
-        "label": "Save Summary",
-        "nodeType": "inner_dialogue_capture",
-        "properties": {
-          "tags": [
-            "idle-thought",
-            "summary",
-            "concise",
-            "inner"
-          ],
-          "displayColor": "#eab308",
-          "dialogueSource": "reflector"
-        }
-      },
-      "width": 220,
-      "height": 80
-    },
-    {
-      "id": "5",
-      "type": "llmNode",
-      "position": {
-        "x": 100,
-        "y": 380
-      },
-      "data": {
-        "label": "Generate Extended Summary",
-        "nodeType": "reflector_llm",
-        "properties": {
-          "role": "summarizer",
-          "temperature": 0.4,
-          "timeout": 300000
-        }
-      },
-      "width": 220,
-      "height": 100
-    },
-    {
-      "id": "6",
-      "type": "outputNode",
-      "position": {
-        "x": 400,
-        "y": 380
-      },
-      "data": {
-        "label": "Save Extended Summary",
-        "nodeType": "inner_dialogue_capture",
-        "properties": {
-          "tags": [
-            "idle-thought",
-            "summary",
-            "extended",
             "inner"
           ],
           "displayColor": "#eab308",
@@ -166,84 +133,91 @@
       },
       "width": 180,
       "height": 80
+    },
+    {
+      "id": "11",
+      "type": "outputNode",
+      "position": {
+        "x": 700,
+        "y": 300
+      },
+      "data": {
+        "label": "Save Reasoning",
+        "nodeType": "reasoning_capture",
+        "properties": {
+          "dialogueSource": "reflector",
+          "displayColor": "#8b5cf6"
+        }
+      },
+      "width": 180,
+      "height": 60
     }
   ],
   "edges": [
     {
-      "id": "e-1-response-2-text",
+      "id": "e-1-response-10-response",
       "source": "1",
+      "target": "10",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "LLM Response → Thinking Stripper (extract <think> blocks)"
+      }
+    },
+    {
+      "id": "e-10-stripped-11-passthrough",
+      "source": "10",
+      "target": "11",
+      "sourceHandle": "stripped",
+      "targetHandle": "passthrough",
+      "data": {
+        "type": "string",
+        "comment": "Stripped Reflection → Reasoning Capture (passthrough, ensures reasoning saves first)"
+      }
+    },
+    {
+      "id": "e-11-passthrough-2-text",
+      "source": "11",
       "target": "2",
-      "sourceHandle": "response",
+      "sourceHandle": "passthrough",
       "targetHandle": "text",
       "data": {
         "type": "string",
-        "comment": "Reflection → Save Reflection"
+        "comment": "Reflection from Reasoning Capture → Save Reflection (after reasoning saved)"
       }
     },
     {
-      "id": "e-1-response-3-prompt",
-      "source": "1",
-      "target": "3",
-      "sourceHandle": "response",
-      "targetHandle": "prompt",
-      "data": {
-        "type": "string",
-        "comment": "Reflection → Generate Summary"
-      }
-    },
-    {
-      "id": "e-3-response-4-text",
-      "source": "3",
-      "target": "4",
-      "sourceHandle": "response",
-      "targetHandle": "text",
-      "data": {
-        "type": "string",
-        "comment": "Summary → Save Summary"
-      }
-    },
-    {
-      "id": "e-1-response-5-prompt",
-      "source": "1",
-      "target": "5",
-      "sourceHandle": "response",
-      "targetHandle": "prompt",
-      "data": {
-        "type": "string",
-        "comment": "Reflection → Generate Extended Summary"
-      }
-    },
-    {
-      "id": "e-5-response-6-text",
-      "source": "5",
-      "target": "6",
-      "sourceHandle": "response",
-      "targetHandle": "text",
-      "data": {
-        "type": "string",
-        "comment": "Extended summary → Save Extended Summary"
-      }
-    },
-    {
-      "id": "e-1-response-7-eventType",
-      "source": "1",
+      "id": "e-10-stripped-7-eventType",
+      "source": "10",
       "target": "7",
-      "sourceHandle": "response",
+      "sourceHandle": "stripped",
       "targetHandle": "eventType",
       "data": {
         "type": "string",
-        "comment": "Reflection → Audit Logger"
+        "comment": "Stripped Reflection → Audit Logger"
       }
     },
     {
-      "id": "e-1-response-8-innerDialogue",
-      "source": "1",
+      "id": "e-10-stripped-8-innerDialogue",
+      "source": "10",
       "target": "8",
-      "sourceHandle": "response",
+      "sourceHandle": "stripped",
       "targetHandle": "innerDialogue",
       "data": {
         "type": "string",
-        "comment": "Reflection → TTS Output (speaks in inner dialogue mode)"
+        "comment": "Stripped Reflection → TTS Output (speaks clean content)"
+      }
+    },
+    {
+      "id": "e-10-thinking-11-thinking",
+      "source": "10",
+      "target": "11",
+      "sourceHandle": "thinking",
+      "targetHandle": "thinking",
+      "data": {
+        "type": "string",
+        "comment": "Extracted Thinking → Save Reasoning (displays in separate section)"
       }
     }
   ]

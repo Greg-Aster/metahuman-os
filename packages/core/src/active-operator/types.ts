@@ -26,7 +26,8 @@ export type TaskType =
   | 'desire_advance' // Process pending desires through planning/review/approval
   | 'desire_execute' // Execute an APPROVED desire (not pending!)
   | 'psychoanalyze' // Run psychoanalyzer to update persona
-  | 'code_analyze'; // Self-healing: analyze codebase for errors
+  | 'code_analyze' // Self-healing: analyze codebase for errors
+  | 'help_ticket_review'; // Review user feedback tickets and propose fixes
 
 /**
  * Priority levels for queued tasks.
@@ -51,6 +52,7 @@ export const PRIORITY_VALUES: Record<Priority, number> = {
 export const DEFAULT_TASK_PRIORITIES: Record<TaskType, Priority> = {
   user_message: 'critical',
   desire_execute: 'high',
+  help_ticket_review: 'high', // User feedback is important - address quickly
   desire_advance: 'normal', // Process pending desires through approval pipeline
   memory_curate: 'normal',
   training_curate: 'normal', // Curate training data during idle time
@@ -307,6 +309,9 @@ export interface SystemState {
 
   /** Number of approved desires ready for autonomous execution */
   approvedDesires: number;
+
+  /** Task types with pending HITL proposals (awaiting user approval) */
+  pendingProposalTasks?: string[];
 
   /** Desire summaries for transparency - shows actual desire names and strengths */
   desireSummaries?: {

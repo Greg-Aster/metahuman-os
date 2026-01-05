@@ -69,6 +69,13 @@ export interface EscalationResponse {
   error?: string;
   /** Which backend was used */
   backend?: string;
+  /** Reasoning steps captured during Big Brother execution */
+  reasoningSteps?: Array<{
+    type: 'thought' | 'action' | 'observation' | 'result' | 'tool_use';
+    content: string;
+    timestamp: string;
+    toolName?: string;
+  }>;
 }
 
 // ============================================================================
@@ -233,15 +240,32 @@ export async function escalateToBigBrother(
   // Build the escalation prompt
   const prompt = buildEscalationPrompt(request);
 
+  // Collect reasoning steps
+  const reasoningSteps: Array<{
+    type: 'thought' | 'action' | 'observation' | 'result' | 'tool_use';
+    content: string;
+    timestamp: string;
+    toolName?: string;
+  }> = [];
+
   try {
     // Execute via backend abstraction
+    // Use longer timeout for review tasks (180s) as Claude needs time to analyze
     const result: EscalationResult = await escalateViaBackend(prompt, {
-      timeout: 60000,
+      timeout: 180000,
       sessionId: request.sessionId,
       preferredBackend: backendId,
       onReasoningStep: (step) => {
         const label = step.toolName ? `${step.type}(${step.toolName})` : step.type;
         console.log(`[big-brother] 🧠 ${label}: ${step.content.substring(0, 80)}`);
+        
+        // Collect reasoning steps for return
+        reasoningSteps.push({
+          type: step.type,
+          content: step.content,
+          timestamp: step.timestamp,
+          toolName: step.toolName,
+        });
       },
     });
 
@@ -288,12 +312,41 @@ export async function escalateToBigBrother(
       actor: 'big-brother',
     });
 
+    // Append reasoning steps to conversation buffer for Inner Dialogue display
+    if (reasoningSteps.length > 0) {
+      try {
+        const { appendReasoningToBuffer } = await import('./conversation-buffer.js');
+
+        // Format reasoning steps for display
+        const formattedSteps = reasoningSteps
+          .map(step => {
+            const icon = step.type === 'tool_use' ? '🔧' :
+                        step.type === 'thought' ? '💭' :
+                        step.type === 'action' ? '⚡' :
+                        step.type === 'observation' ? '👁️' : '📝';
+            const label = step.toolName ? `${step.type}(${step.toolName})` : step.type;
+            return `${icon} **${label}**: ${step.content}`;
+          })
+          .join('\n\n');
+
+        const userId = request.context?.userId || 'system';
+        await appendReasoningToBuffer(userId, `🤖 **Big Brother Analysis**\n\n${formattedSteps}`, {
+          dialogueSource: 'big-brother',
+          displayColor: '#8b5cf6', // Purple for Big Brother
+          type: 'big_brother_reasoning',
+        });
+      } catch (bufferError) {
+        console.warn('[big-brother] Failed to append reasoning to buffer:', bufferError);
+      }
+    }
+
     return {
       success: true,
       suggestions: suggestions.length > 0 ? suggestions : request.suggestions,
       reasoning,
       alternativeApproach,
       backend: backendId,
+      reasoningSteps, // Include for API consumers
     };
   } catch (error) {
     audit({

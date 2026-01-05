@@ -12,6 +12,7 @@
  */
 
 import { spawn, execSync, type ChildProcess } from 'child_process';
+import type { Writable } from 'stream';
 import * as path from 'path';
 import * as fs from 'fs';
 import { audit } from '../audit.js';
@@ -36,6 +37,10 @@ interface ClaudeSession {
   startTime: Date;
   terminalPort?: number;
   terminalPid?: number;
+  // For bidirectional communication
+  stdinPipe?: Writable;
+  waitingForInput: boolean;
+  activeSessionId?: string;
 }
 
 // ============================================================================
@@ -104,7 +109,7 @@ class ClaudeCodeBackendImpl implements EscalationBackend {
       }
 
       // Send prompt and get response
-      const output = await sendPrompt(prompt, options?.timeout || 30000, {
+      const output = await sendPrompt(prompt, options?.timeout || 600000, {
         onReasoningStep: options?.onReasoningStep,
         onChunk: options?.onChunk,
         sessionId: options?.sessionId,
@@ -150,7 +155,7 @@ class ClaudeCodeBackendImpl implements EscalationBackend {
       }
 
       // Use streaming execution
-      const streamPromise = spawnClaudeAsyncStreaming(prompt, options?.timeout || 30000, {
+      const streamPromise = spawnClaudeAsyncStreaming(prompt, options?.timeout || 600000, {
         onReasoningStep: options?.onReasoningStep,
         onChunk: (chunk) => {
           chunks.push(chunk);
@@ -286,6 +291,7 @@ export async function startClaudeSession(spawnTerminal: boolean = true): Promise
       startTime: new Date(),
       terminalPort,
       terminalPid,
+      waitingForInput: false,
     };
 
     return true;
@@ -345,13 +351,69 @@ export function getSessionStatus(): {
   ready: boolean;
   uptime?: number;
   installed: boolean;
+  waitingForInput: boolean;
+  activeSessionId?: string;
 } {
   return {
     running: currentSession !== null,
     ready: currentSession?.ready ?? false,
     uptime: currentSession ? Date.now() - currentSession.startTime.getTime() : undefined,
     installed: isClaudeInstalled(),
+    waitingForInput: currentSession?.waitingForInput ?? false,
+    activeSessionId: currentSession?.activeSessionId,
   };
+}
+
+/**
+ * Send user input to the running Claude CLI session
+ * Used for bidirectional communication when Claude asks questions
+ */
+export function sendStdinInput(input: string): boolean {
+  if (!currentSession?.stdinPipe || !currentSession.ready) {
+    audit({
+      level: 'warn',
+      category: 'action',
+      event: 'claude_stdin_no_session',
+      details: { hasSession: !!currentSession, hasStdin: !!currentSession?.stdinPipe },
+      actor: 'claude-code-backend',
+    });
+    return false;
+  }
+
+  try {
+    currentSession.stdinPipe.write(input + '\n');
+    currentSession.waitingForInput = false;
+
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'claude_stdin_input_sent',
+      details: {
+        inputLength: input.length,
+        inputPreview: input.substring(0, 50),
+        sessionId: currentSession.activeSessionId,
+      },
+      actor: 'claude-code-backend',
+    });
+
+    return true;
+  } catch (error) {
+    audit({
+      level: 'error',
+      category: 'action',
+      event: 'claude_stdin_write_failed',
+      details: { error: (error as Error).message },
+      actor: 'claude-code-backend',
+    });
+    return false;
+  }
+}
+
+/**
+ * Check if Claude is waiting for user input
+ */
+export function isWaitingForInput(): boolean {
+  return currentSession?.waitingForInput ?? false;
 }
 
 /**
@@ -360,15 +422,29 @@ export function getSessionStatus(): {
 interface StreamingOptions {
   onReasoningStep?: (step: ReasoningStep) => void;
   onChunk?: (chunk: string) => void;
+  onWaitingForInput?: (question: string) => void;
   sessionId?: string;
 }
+
+/**
+ * Patterns that indicate Claude is waiting for user input
+ */
+const WAITING_FOR_INPUT_PATTERNS = [
+  /\?\s*$/m,                    // Ends with question mark
+  /\b(Continue|Proceed|Yes|No)\?\s*$/i,  // Confirmation prompts
+  /waiting for (your )?response/i,
+  /waiting for (your )?input/i,
+  /press enter/i,
+  /\[y\/n\]/i,
+  /\(yes\/no\)/i,
+];
 
 /**
  * Send a prompt to Claude and get a response
  */
 export async function sendPrompt(
   prompt: string,
-  timeoutMs: number = 30000,
+  timeoutMs: number = 600000,
   streaming?: StreamingOptions
 ): Promise<string> {
   if (!currentSession || !currentSession.ready) {
@@ -545,7 +621,27 @@ async function spawnClaudeAsync(
 }
 
 /**
+ * Detect if the buffer indicates Claude is waiting for user input
+ */
+function detectWaitingForInput(buffer: string): { waiting: boolean; question: string } {
+  // Look at the last ~500 chars for question patterns
+  const recentBuffer = buffer.slice(-500);
+
+  for (const pattern of WAITING_FOR_INPUT_PATTERNS) {
+    if (pattern.test(recentBuffer)) {
+      // Extract the likely question (last 2-3 lines)
+      const lines = recentBuffer.trim().split('\n');
+      const question = lines.slice(-3).join('\n').trim();
+      return { waiting: true, question };
+    }
+  }
+
+  return { waiting: false, question: '' };
+}
+
+/**
  * Spawn Claude CLI with streaming support
+ * Keeps stdin open for bidirectional communication
  */
 async function spawnClaudeAsyncStreaming(
   prompt: string,
@@ -558,6 +654,8 @@ async function spawnClaudeAsyncStreaming(
     let timedOut = false;
     let streamBuffer = '';
     let totalStepsEmitted = 0;
+    let fullOutputBuffer = ''; // For question detection
+    let lastActivityTime = Date.now();
 
     console.log(`[claude-code-backend] 🚀 Spawning Claude CLI (timeout: ${timeoutMs}ms)...`);
 
@@ -567,10 +665,25 @@ async function spawnClaudeAsyncStreaming(
       env: { ...process.env },
     });
 
+    // Store process and stdin reference for bidirectional communication
+    if (currentSession) {
+      currentSession.process = child;
+      currentSession.stdinPipe = child.stdin || undefined;
+      currentSession.activeSessionId = streaming?.sessionId;
+      currentSession.waitingForInput = false;
+    }
+
     const timeoutHandle = setTimeout(() => {
       timedOut = true;
       child.kill('SIGTERM');
       console.log(`[claude-code-backend] ⏰ Claude CLI timed out after ${timeoutMs}ms`);
+
+      // Clean up session state
+      if (currentSession) {
+        currentSession.stdinPipe = undefined;
+        currentSession.process = null;
+        currentSession.waitingForInput = false;
+      }
 
       setTimeout(() => {
         if (!child.killed) {
@@ -581,16 +694,50 @@ async function spawnClaudeAsyncStreaming(
       reject(new Error(`Claude CLI timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
+    // Idle detection - check if Claude might be waiting for input
+    const idleCheckInterval = setInterval(() => {
+      const idleTime = Date.now() - lastActivityTime;
+      // If idle for 5+ seconds and buffer ends with question pattern
+      if (idleTime > 5000 && fullOutputBuffer.length > 0) {
+        const { waiting, question } = detectWaitingForInput(fullOutputBuffer);
+        if (waiting && currentSession && !currentSession.waitingForInput) {
+          currentSession.waitingForInput = true;
+          console.log(`[claude-code-backend] 🤔 Detected waiting for input: "${question.substring(0, 100)}..."`);
+
+          if (streaming?.onWaitingForInput) {
+            streaming.onWaitingForInput(question);
+          }
+
+          audit({
+            level: 'info',
+            category: 'action',
+            event: 'claude_waiting_for_input',
+            details: { question: question.substring(0, 200), sessionId: streaming?.sessionId },
+            actor: 'claude-code-backend',
+          });
+        }
+      }
+    }, 2000);
+
     if (child.stdin) {
-      child.stdin.write(prompt);
-      child.stdin.end();
+      // Write prompt but DON'T close stdin - keep it open for user responses
+      child.stdin.write(prompt + '\n');
+      // Note: NOT calling child.stdin.end() - stdin stays open for sendStdinInput()
     }
 
     if (child.stdout) {
       child.stdout.on('data', (chunk: Buffer) => {
         chunks.push(chunk);
+        lastActivityTime = Date.now(); // Reset activity timer
 
         const text = chunk.toString();
+        fullOutputBuffer += text; // Track full output for question detection
+
+        // Reset waiting state when we receive new output
+        if (currentSession?.waitingForInput) {
+          currentSession.waitingForInput = false;
+        }
+
         if (streaming?.onChunk) {
           streaming.onChunk(text);
         }
@@ -607,6 +754,7 @@ async function spawnClaudeAsyncStreaming(
     if (child.stderr) {
       child.stderr.on('data', (chunk: Buffer) => {
         errorChunks.push(chunk);
+        lastActivityTime = Date.now(); // Also counts as activity
         const text = chunk.toString();
         if (text.trim()) {
           console.log(`[claude-code-backend] stderr: ${text.trim()}`);
@@ -616,6 +764,15 @@ async function spawnClaudeAsyncStreaming(
 
     child.on('error', (error) => {
       clearTimeout(timeoutHandle);
+      clearInterval(idleCheckInterval);
+
+      // Clean up session state
+      if (currentSession) {
+        currentSession.stdinPipe = undefined;
+        currentSession.process = null;
+        currentSession.waitingForInput = false;
+      }
+
       if (!timedOut) {
         console.log(`[claude-code-backend] ❌ Spawn error: ${error.message}`);
         reject(new Error(`Failed to spawn Claude CLI: ${error.message}`));
@@ -624,6 +781,14 @@ async function spawnClaudeAsyncStreaming(
 
     child.on('close', (code) => {
       clearTimeout(timeoutHandle);
+      clearInterval(idleCheckInterval);
+
+      // Clean up session state
+      if (currentSession) {
+        currentSession.stdinPipe = undefined;
+        currentSession.process = null;
+        currentSession.waitingForInput = false;
+      }
 
       if (timedOut) {
         return;

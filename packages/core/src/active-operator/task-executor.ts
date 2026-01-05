@@ -10,6 +10,13 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { systemPaths, ROOT } from '../paths.js';
 import { audit } from '../audit.js';
+import {
+  getPendingTickets,
+  startTicketReview,
+  saveTicketAnalysis,
+  wontFixTicket,
+} from '../help-tickets/index.js';
+import type { HelpTicket } from '../help-tickets/types.js';
 import type {
   QueuedTask,
   TaskResult,
@@ -47,6 +54,7 @@ const TASK_TO_AGENT: Record<TaskType, string | null> = {
   desire_execute: 'desire-executor',
   psychoanalyze: 'psychoanalyzer',
   code_analyze: null, // Will be implemented in Phase 5
+  help_ticket_review: null, // Handled specially - reviews user feedback tickets
 };
 
 /**
@@ -138,11 +146,14 @@ async function runAgentProcess(
  */
 async function executeIndexBuild(username: string): Promise<{ success: boolean; error?: string }> {
   try {
+    console.log(`[task-executor] Building vector index for ${username}...`);
     // Dynamic import to avoid circular dependency
     const { buildMemoryIndex } = await import('../vector-index.js');
     await buildMemoryIndex({ username });
+    console.log(`[task-executor] Index build complete for ${username}`);
     return { success: true };
   } catch (error) {
+    console.error(`[task-executor] Index build failed: ${(error as Error).message}`);
     return {
       success: false,
       error: (error as Error).message,
@@ -419,6 +430,264 @@ async function executeDesire(
 }
 
 /**
+ * Handle help_ticket_review task.
+ * Reviews user feedback tickets, analyzes issues, and proposes fixes.
+ * Integrates with System Coder desire system for code changes.
+ */
+async function executeHelpTicketReview(
+  username: string
+): Promise<{ success: boolean; error?: string; data?: any }> {
+  console.log('[task-executor] Running help ticket review for user:', username);
+
+  try {
+    const { appendReflectionToBuffer } = await import('../conversation-buffer.js');
+    const { callLLMPrompt } = await import('../model-router.js');
+
+    // Get pending tickets
+    const tickets = getPendingTickets(username);
+
+    if (tickets.length === 0) {
+      console.log('[task-executor] No pending help tickets to review');
+      return { success: true, data: { processed: 0, reason: 'No pending tickets' } };
+    }
+
+    // Output to Inner Dialogue
+    appendReflectionToBuffer(username,
+      `🎫 **Reviewing help tickets:** ${tickets.length} ticket(s) need attention`,
+      { dialogueSource: 'help-ticket-system', displayColor: '#f59e0b', type: 'ticket_review_start' }
+    );
+
+    let processed = 0;
+    let needsFix = 0;
+    let needsTraining = 0;
+    let wontFix = 0;
+
+    // Process up to 3 tickets at a time
+    for (const ticket of tickets.slice(0, 3)) {
+      console.log(`[task-executor] Reviewing ticket: ${ticket.id}`);
+
+      // Mark as reviewing
+      startTicketReview(username, ticket.id);
+
+      // Build context for LLM analysis
+      const analysisPrompt = buildTicketAnalysisPrompt(ticket);
+
+      try {
+        // Use the coder role for technical analysis
+        const analysisResponse = await callLLMPrompt(
+          'coder',
+          analysisPrompt,
+          { temperature: 0.3, maxTokens: 1000 }
+        );
+
+        // Parse the analysis response
+        const analysis = parseTicketAnalysis(analysisResponse);
+
+        // Save the analysis
+        saveTicketAnalysis(username, ticket.id, analysis);
+
+        // Track outcomes
+        if (analysis.requiresCodeChange) {
+          needsFix++;
+
+          // Create a desire for System Coder to fix the issue
+          await createFixDesire(username, ticket, analysis);
+
+          appendReflectionToBuffer(username,
+            `🔧 **Ticket ${ticket.id.slice(-8)}:** Requires code fix\n` +
+            `Issue: ${analysis.summary}\n` +
+            `Suggestion: ${analysis.suggestedFix || 'Investigate further'}`,
+            { dialogueSource: 'help-ticket-system', displayColor: '#ef4444', type: 'ticket_needs_fix' }
+          );
+        } else if (analysis.requiresTrainingChange) {
+          needsTraining++;
+
+          appendReflectionToBuffer(username,
+            `📚 **Ticket ${ticket.id.slice(-8)}:** Needs training adjustment\n` +
+            `Issue: ${analysis.summary}\n` +
+            `The response style or behavior needs refinement.`,
+            { dialogueSource: 'help-ticket-system', displayColor: '#8b5cf6', type: 'ticket_needs_training' }
+          );
+        } else if (analysis.isNotActionable) {
+          wontFix++;
+          wontFixTicket(username, ticket.id, analysis.notActionableReason || 'Not actionable');
+
+          appendReflectionToBuffer(username,
+            `📝 **Ticket ${ticket.id.slice(-8)}:** Closed (not actionable)\n` +
+            `Reason: ${analysis.notActionableReason || 'No clear fix available'}`,
+            { dialogueSource: 'help-ticket-system', displayColor: '#6b7280', type: 'ticket_wont_fix' }
+          );
+        }
+
+        processed++;
+      } catch (analysisError) {
+        console.error(`[task-executor] Failed to analyze ticket ${ticket.id}:`, analysisError);
+        // Continue with next ticket
+      }
+    }
+
+    // Summary to Inner Dialogue
+    appendReflectionToBuffer(username,
+      `✅ **Ticket review complete:**\n` +
+      `• ${processed} ticket(s) processed\n` +
+      `• ${needsFix} need code fixes\n` +
+      `• ${needsTraining} need training adjustments\n` +
+      `• ${wontFix} closed as not actionable`,
+      { dialogueSource: 'help-ticket-system', displayColor: '#22c55e', type: 'ticket_review_complete' }
+    );
+
+    return {
+      success: true,
+      data: { processed, needsFix, needsTraining, wontFix, remaining: tickets.length - processed },
+    };
+  } catch (err) {
+    console.error('[task-executor] Error in help ticket review:', err);
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+/**
+ * Build an analysis prompt for a help ticket.
+ */
+function buildTicketAnalysisPrompt(ticket: HelpTicket): string {
+  const parts = [
+    'Analyze this user feedback ticket and determine what action is needed.',
+    '',
+    '## Ticket Information',
+    `- ID: ${ticket.id}`,
+    `- Created: ${ticket.createdAt}`,
+    `- Target Type: ${ticket.feedbackTargetType}`,
+    ticket.feedbackTargetId ? `- Target ID: ${ticket.feedbackTargetId}` : '',
+    ticket.feedbackComment ? `- User Comment: "${ticket.feedbackComment}"` : '- No user comment provided',
+    '',
+    '## Analysis Required',
+    'Determine:',
+    '1. What went wrong (summary)',
+    '2. Category: response_quality, memory_issue, personality_drift, task_failure, system_error, performance, or other',
+    '3. Priority: low, medium, high, or critical',
+    '4. Does this require a CODE change? (bugs, missing features, errors)',
+    '5. Does this require a TRAINING change? (tone, personality, response style)',
+    '6. Is this NOT actionable? (vague feedback, user error, external issues)',
+    '7. If actionable, what specific fix would you suggest?',
+    '',
+    '## Response Format',
+    'Respond in this exact format:',
+    'SUMMARY: <one sentence summary of the issue>',
+    'CATEGORY: <category>',
+    'PRIORITY: <priority>',
+    'REQUIRES_CODE_CHANGE: <yes/no>',
+    'REQUIRES_TRAINING_CHANGE: <yes/no>',
+    'NOT_ACTIONABLE: <yes/no>',
+    'NOT_ACTIONABLE_REASON: <reason if not actionable, otherwise "N/A">',
+    'SUGGESTED_FIX: <specific fix suggestion or "N/A">',
+  ];
+
+  return parts.filter(Boolean).join('\n');
+}
+
+/**
+ * Parse the LLM analysis response into structured data.
+ */
+function parseTicketAnalysis(response: string): NonNullable<HelpTicket['llmAnalysis']> {
+  const lines = response.split('\n');
+  const getValue = (prefix: string): string => {
+    const line = lines.find(l => l.toUpperCase().startsWith(prefix.toUpperCase()));
+    return line ? line.substring(prefix.length).trim() : '';
+  };
+
+  const requiresCodeChange = getValue('REQUIRES_CODE_CHANGE:').toLowerCase() === 'yes';
+  const requiresTrainingChange = getValue('REQUIRES_TRAINING_CHANGE:').toLowerCase() === 'yes';
+  const isNotActionable = getValue('NOT_ACTIONABLE:').toLowerCase() === 'yes';
+  const categoryRaw = getValue('CATEGORY:').toLowerCase();
+  const priorityRaw = getValue('PRIORITY:').toLowerCase();
+
+  // Map to valid category
+  const validCategories = ['response_quality', 'memory_issue', 'personality_drift', 'task_failure', 'system_error', 'performance', 'other'] as const;
+  const suggestedCategory = validCategories.find(c => categoryRaw.includes(c.replace('_', ' ')) || categoryRaw.includes(c)) || 'other';
+
+  // Map to valid priority
+  const validPriorities = ['low', 'medium', 'high', 'critical'] as const;
+  const suggestedPriority = validPriorities.find(p => priorityRaw === p) || 'medium';
+
+  return {
+    summary: getValue('SUMMARY:') || 'Unable to determine issue',
+    suggestedCategory,
+    suggestedPriority,
+    requiresCodeChange,
+    requiresTrainingChange,
+    isNotActionable,
+    notActionableReason: isNotActionable ? getValue('NOT_ACTIONABLE_REASON:') : undefined,
+    suggestedFix: requiresCodeChange ? getValue('SUGGESTED_FIX:') : undefined,
+    analyzedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Create a desire for System Coder to fix an issue identified in a help ticket.
+ */
+async function createFixDesire(
+  username: string,
+  ticket: HelpTicket,
+  analysis: NonNullable<HelpTicket['llmAnalysis']>
+): Promise<void> {
+  try {
+    const { saveDesire, createDesireFolder } = await import('../agency/storage.js');
+    const { generateId } = await import('../paths.js');
+
+    const now = new Date().toISOString();
+    const desireId = generateId('desire');
+
+    // Create the desire folder first
+    await createDesireFolder(desireId, username);
+
+    // Build proper Desire object
+    const desire = {
+      id: desireId,
+      title: `Fix: ${analysis.summary.slice(0, 50)}${analysis.summary.length > 50 ? '...' : ''}`,
+      description: `User reported issue via negative feedback.\n\n` +
+        `**Ticket:** ${ticket.id}\n` +
+        `**Category:** ${analysis.suggestedCategory}\n` +
+        `**Issue:** ${analysis.summary}\n` +
+        `**Suggested Fix:** ${analysis.suggestedFix || 'Investigate and propose solution'}\n\n` +
+        (ticket.feedbackComment ? `**User Comment:** "${ticket.feedbackComment}"` : ''),
+      reason: `User submitted negative feedback indicating a problem that needs to be fixed. Ticket ID: ${ticket.id}`,
+      source: 'help_ticket' as const,
+      sourceId: ticket.id,
+      sourceData: {
+        ticketId: ticket.id,
+        category: analysis.suggestedCategory,
+        priority: analysis.suggestedPriority,
+        suggestedFix: analysis.suggestedFix,
+      },
+      strength: 0.5, // Start with moderate strength
+      status: 'pending' as const,
+      relatedMemories: ticket.feedbackTargetId ? [ticket.feedbackTargetId] : [],
+      createdAt: now,
+      updatedAt: now,
+      metrics: {
+        cycleCount: 0,
+        completionCount: 0,
+        currentCycle: 0,
+        totalActiveTimeMs: 0,
+        totalIdleTimeMs: 0,
+        avgCycleTimeMs: 0,
+        lastActivityAt: now,
+        peakStrength: 0.5,
+        troughStrength: 0.5,
+        reinforcementCount: 0,
+        decayCount: 0,
+        netReinforcement: 0,
+      },
+    };
+
+    await saveDesire(desire as any, username);
+    console.log(`[task-executor] Created fix desire for ticket ${ticket.id}: ${desireId}`);
+  } catch (err) {
+    console.error(`[task-executor] Failed to create fix desire for ticket ${ticket.id}:`, err);
+  }
+}
+
+/**
  * Execute a queued task.
  */
 export async function executeTask(task: QueuedTask): Promise<TaskResult> {
@@ -495,6 +764,14 @@ export async function executeTask(task: QueuedTask): Promise<TaskResult> {
         }
         break;
 
+      case 'help_ticket_review':
+        // Review user feedback tickets and propose fixes
+        const ticketResult = await executeHelpTicketReview(username);
+        success = ticketResult.success;
+        error = ticketResult.error;
+        data = ticketResult.data;
+        break;
+
       default:
         // Standard agent execution
         const agentName = TASK_TO_AGENT[task.type];
@@ -556,7 +833,8 @@ export async function executeTask(task: QueuedTask): Promise<TaskResult> {
 export function isTaskExecutable(taskType: TaskType): boolean {
   if (taskType === 'user_message') return true;
   if (taskType === 'index_build') return true;
-  if (taskType === 'code_analyze') return true; // Will be implemented
+  if (taskType === 'code_analyze') return true;
+  if (taskType === 'help_ticket_review') return true;
 
   const agentName = TASK_TO_AGENT[taskType];
   if (!agentName) return false;

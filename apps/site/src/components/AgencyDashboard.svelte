@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { isOwner } from '../stores/security-policy';
   import { apiFetch } from '../lib/client/api-config';
+  import LizardBrainPanel from './LizardBrainPanel.svelte';
 
   // Track last load time to avoid redundant reloads
   let lastLoadTime = 0;
@@ -193,6 +194,9 @@
   let planLoading = false;
   let selectedPlanVersion: number | null = null;
   let viewingPlan: DesirePlan | null = null;
+
+  // Lizard Brain panel state
+  let showLizardBrain = false;
 
   // Loading state for agent operations
   let agentProcessingId: string | null = null;
@@ -1304,6 +1308,25 @@
         </div>
       </div>
     {/if}
+
+    <!-- Lizard Brain Activity Panel (Collapsible) -->
+    <div class="card mt-4">
+      <button
+        class="w-full p-4 flex items-center justify-between text-left hover:bg-opacity-80"
+        on:click={() => showLizardBrain = !showLizardBrain}
+      >
+        <div class="flex items-center gap-2">
+          <span class="text-lg">🦎</span>
+          <span class="font-semibold">Lizard Brain Activity</span>
+        </div>
+        <span class="transform transition-transform" class:rotate-180={showLizardBrain}>▼</span>
+      </button>
+      {#if showLizardBrain}
+        <div class="border-t border-gray-200 dark:border-gray-700">
+          <LizardBrainPanel />
+        </div>
+      {/if}
+    </div>
 
     <!-- Error Display -->
     {#if error}
