@@ -349,6 +349,7 @@ async function initializeBackends(): Promise<void> {
   await import('./backends/aider-backend.js');
   await import('./backends/gemini-cli-backend.js');
   await import('./backends/qwen-code-backend.js');
+  await import('./backends/codex-backend.js');
 }
 
 // Immediately trigger initialization (fire-and-forget)

@@ -103,28 +103,51 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const isRevision = !!(desire.userCritique || desire.plan);
   const previousPlan = desire.plan;
   const userCritique = desire.userCritique;
+  const outcomeReview = desire.outcomeReview;
   const planVersion = (desire.planHistory?.length || 0) + 1;
+  const failCount = desire.metrics?.executionFailCount || 0;
 
   // Build the revision context if applicable
   let revisionContext = '';
   if (isRevision && previousPlan) {
-    revisionContext = `
-## REVISION REQUEST
+    // Determine if this is a retry after failure
+    const isRetryAfterFailure = failCount > 0 || (outcomeReview && outcomeReview.verdict === 'retry');
 
-This is a revision of a previous plan. The user has reviewed the plan and provided feedback.
+    revisionContext = `
+## REVISION REQUEST${isRetryAfterFailure ? ' (Retry After Failure)' : ''}
+${isRetryAfterFailure ? `
+⚠️ **THIS IS ATTEMPT #${failCount + 1}** - Previous execution(s) failed.
+${outcomeReview?.failureCategory ? `
+**Failure Category**: ${outcomeReview.failureCategory}
+${outcomeReview.failureCategory === 'plan_error' ? '→ The previous approach/strategy was wrong. Need a DIFFERENT plan.' : ''}
+${outcomeReview.failureCategory === 'system_error' ? '→ There was a system/code error. Check if the steps are technically feasible.' : ''}
+${outcomeReview.failureCategory === 'external_error' ? '→ External dependency failed. Consider alternatives or fallbacks.' : ''}
+${outcomeReview.failureCategory === 'timeout' ? '→ Took too long. Consider simpler/faster approaches.' : ''}
+${outcomeReview.failureCategory === 'partial' ? '→ Partially succeeded. Build on what worked.' : ''}` : ''}
+` : ''}
+This is a revision of a previous plan.${isRetryAfterFailure ? ' The previous execution failed and feedback has been provided.' : ' The user has reviewed the plan and provided feedback.'}
 
 ### Previous Plan (Version ${previousPlan.version || planVersion - 1})
 ${previousPlan.steps.map((s, i) => `${i + 1}. ${s.action} (skill: ${s.skill || 'none'}, risk: ${s.risk})`).join('\n')}
 
 Operator Goal: ${previousPlan.operatorGoal}
 Estimated Risk: ${previousPlan.estimatedRisk}
+${outcomeReview?.successScore !== undefined ? `\n**Previous Success Score**: ${(outcomeReview.successScore * 100).toFixed(0)}%` : ''}
 
-### User Critique
+### ${isRetryAfterFailure ? 'Failure Analysis & Lessons Learned' : 'User Critique'}
 ${userCritique || 'No specific critique provided - please improve the plan.'}
+${outcomeReview?.reasoning ? `\n**Outcome Review**: ${outcomeReview.reasoning}` : ''}
+${outcomeReview?.nextAttemptSuggestions?.length ? `\n**Suggestions**:\n${outcomeReview.nextAttemptSuggestions.map(s => `- ${s}`).join('\n')}` : ''}
 
 ### Instructions
-Please create a NEW plan that addresses the user's feedback. Do not simply repeat the previous plan.
-Consider the critique carefully and make meaningful changes to address the concerns.
+Please create a NEW plan that addresses the feedback. Do not simply repeat the previous plan.
+${isRetryAfterFailure ? `
+**CRITICAL**: This plan MUST be different from the previous one. Simply repeating failed steps will fail again.
+Consider:
+1. Alternative approaches or tools
+2. Breaking complex steps into smaller ones
+3. Adding validation/verification steps
+4. Graceful error handling` : 'Consider the critique carefully and make meaningful changes to address the concerns.'}
 `;
   }
 

@@ -28,6 +28,11 @@ import {
   getActiveBackend,
   ensureBackendsInitialized,
 } from '../../escalation-backend.js';
+import { loadOperatorConfig, loadUserConfig } from '../../config.js';
+import type { AgencyExecutionConfig } from '../../agency/types.js';
+
+// Default timeout: 10 minutes
+const DEFAULT_EXECUTION_TIMEOUT = 600000;
 
 interface StepResult {
   stepOrder: number;
@@ -64,6 +69,34 @@ Please execute this step now.`;
 }
 
 /**
+ * Load agency execution config with defaults
+ */
+function getAgencyExecutionConfig(username?: string): AgencyExecutionConfig {
+  const defaults: AgencyExecutionConfig = {
+    preferredBackend: 'claude-code',
+    fallbackBackend: 'codex',
+    availableBackends: ['claude-code', 'codex', 'open-interpreter', 'aider'],
+    delegateToToolExecutor: true,
+    localExecutionEnabled: false,
+    plannerIncludesToolCapabilities: true,
+    feasibilityCheckEnabled: true,
+    maxPlanRetries: 3,
+    taskGenerationEnabled: true,
+  };
+
+  try {
+    const agencyConfig = loadUserConfig<{ execution?: AgencyExecutionConfig }>(
+      'agency.json',
+      { execution: defaults },
+      username
+    );
+    return agencyConfig.execution || defaults;
+  } catch {
+    return defaults;
+  }
+}
+
+/**
  * Execute a step using the configured escalation backend
  * Uses the unified backend abstraction to route to the user's preferred backend
  */
@@ -78,8 +111,18 @@ async function executeStep(
   // Ensure backends are loaded before checking
   await ensureBackendsInitialized();
 
-  // Get the active backend
-  const backend = getActiveBackend(username);
+  // Load agency execution config to get preferred backend
+  const execConfig = getAgencyExecutionConfig(username);
+  const preferredBackendId = execConfig.preferredBackend;
+
+  // Get the backend - prefer agency config, fall back to tool-executor config
+  let backend = preferredBackendId ?
+    (await import('../../escalation-backend.js')).getBackend(preferredBackendId) :
+    undefined;
+
+  if (!backend) {
+    backend = getActiveBackend(username);
+  }
 
   if (!backend) {
     console.log(`[desire-executor] ❌ No execution backend configured`);
@@ -126,12 +169,35 @@ async function executeStep(
   }
 
   try {
-    // Execute via unified backend abstraction
-    console.log(`[desire-executor] ⏳ Waiting for response (5 min timeout)...`);
-    const result = await escalate(prompt, {
-      timeout: 300000, // 5 minute timeout for complex tasks
+    // Get configurable timeout from operator config
+    let timeout = DEFAULT_EXECUTION_TIMEOUT;
+    if (username) {
+      try {
+        const config = loadOperatorConfig(username);
+        timeout = config.bigBrotherMode?.executionTimeout || DEFAULT_EXECUTION_TIMEOUT;
+      } catch {
+        // Use default if config load fails
+      }
+    }
+
+    // Execute via unified backend abstraction with agency's preferred backend
+    const timeoutMins = Math.round(timeout / 60000);
+    console.log(`[desire-executor] ⏳ Waiting for response (${timeoutMins} min timeout)...`);
+    let result = await escalate(prompt, {
+      timeout,
       username,
+      preferredBackend: preferredBackendId,
     });
+
+    // Try fallback backend if primary fails and fallback is configured
+    if (!result.success && execConfig.fallbackBackend && execConfig.fallbackBackend !== preferredBackendId) {
+      console.log(`[desire-executor] ⚠️ Primary backend failed, trying fallback: ${execConfig.fallbackBackend}`);
+      result = await escalate(prompt, {
+        timeout,
+        username,
+        preferredBackend: execConfig.fallbackBackend,
+      });
+    }
 
     if (!result.success) {
       console.log(`[desire-executor] ❌ Execution failed: ${result.error}`);
@@ -368,9 +434,12 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
 
     // Update desire with execution result and metrics
     const now = new Date().toISOString();
+    const executionSucceeded = execution.status === 'completed';
     desire.execution = execution;
     desire.updatedAt = now;
-    desire.currentStage = execution.status === 'completed' ? 'outcome_review' : 'failed';
+    // Always send to outcome review; failures are handled there (retry/escalate/abandon).
+    desire.status = 'awaiting_review';
+    desire.currentStage = 'outcome_review';
 
     // Update metrics
     if (desire.metrics) {
@@ -431,8 +500,9 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
     const stepSummaries: string[] = [];
     for (const stepResult of (execution.stepResults || [])) {
       if (stepResult.success && stepResult.result) {
-        const resultObj = stepResult.result as { claudeResponse?: string; interpreterResponse?: string };
-        const response = resultObj.claudeResponse || resultObj.interpreterResponse || '';
+        const resultObj = stepResult.result as { response?: string };
+        // Use the generic 'response' field from escalation result
+        const response = resultObj.response || '';
         if (response) {
           // Extract first meaningful line
           const lines = response.split('\n').filter((l: string) => l.trim());

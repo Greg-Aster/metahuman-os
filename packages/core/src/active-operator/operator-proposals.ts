@@ -53,6 +53,25 @@ export type TrustLevel =
 export type TaskRisk = 'low' | 'medium' | 'high';
 
 /**
+ * Types of operator tasks that can be proposed.
+ */
+export type ProposalTaskType =
+  | 'reflect'
+  | 'dream'
+  | 'curiosity'
+  | 'inner_curiosity'
+  | 'memory_curate'
+  | 'training_curate'
+  | 'index_build'
+  | 'desire_generate'
+  | 'desire_advance'
+  | 'desire_execute'
+  | 'psychoanalyze'
+  | 'code_analyze'
+  | 'help_ticket_review'
+  | 'custom';
+
+/**
  * Risk mapping for task types.
  * This determines approval requirements at different trust levels.
  */
@@ -62,25 +81,16 @@ export const TASK_RISK_LEVELS: Record<ProposalTaskType, TaskRisk> = {
   curiosity: 'low',         // Questions shown to user
   inner_curiosity: 'low',   // Internal Q&A
   memory_curate: 'medium',  // Modifies memory organization
+  training_curate: 'medium', // Prepares training data
+  index_build: 'low',       // Build vector index
   desire_generate: 'low',   // Creates desires, doesn't execute
+  desire_advance: 'medium', // Advances desires through pipeline
   desire_execute: 'high',   // External actions, high impact
   psychoanalyze: 'medium',  // Modifies persona understanding
+  code_analyze: 'medium',   // Analyzes codebase for issues
+  help_ticket_review: 'low', // Reviews user feedback
   custom: 'high',           // Unknown, assume high risk
 };
-
-/**
- * Types of operator tasks that can be proposed.
- */
-export type ProposalTaskType =
-  | 'reflect'
-  | 'dream'
-  | 'curiosity'
-  | 'inner_curiosity'
-  | 'memory_curate'
-  | 'desire_generate'
-  | 'desire_execute'
-  | 'psychoanalyze'
-  | 'custom';
 
 /**
  * User response to a proposal.

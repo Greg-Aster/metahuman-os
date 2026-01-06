@@ -348,6 +348,18 @@ export type OutcomeVerdict =
   | 'abandon';     // Cannot be achieved, give up
 
 /**
+ * Failure category for diagnostic and routing purposes.
+ * The LLM determines this based on error patterns and execution context.
+ */
+export type FailureCategory =
+  | 'none'           // No failure - success
+  | 'plan_error'     // Wrong approach/strategy - need different plan
+  | 'system_error'   // Internal bug, code error - Big Brother can potentially fix
+  | 'external_error' // API down, permissions, resources - user needs to help
+  | 'timeout'        // Took too long - may need retry or simplification
+  | 'partial';       // Some progress but incomplete - may continue or retry
+
+/**
  * Post-execution review by the outcome reviewer agent.
  */
 export interface DesireOutcomeReview {
@@ -359,6 +371,14 @@ export interface DesireOutcomeReview {
   reasoning: string;
   /** Success score (0-1) - how well was the desire satisfied? */
   successScore: number;
+  /** Category of failure (for routing and diagnostics) */
+  failureCategory?: FailureCategory;
+  /** Specific error type or code if identifiable */
+  errorType?: string;
+  /** Whether this appears to be a fixable code/system bug */
+  isFixableBug?: boolean;
+  /** Suggested fix if isFixableBug is true */
+  suggestedFix?: string;
   /** Lessons learned from this attempt */
   lessonsLearned: string[];
   /** Suggestions for next attempt (if retry/continue) */
@@ -731,6 +751,31 @@ export interface AgencyLoggingConfig {
 }
 
 /**
+ * Execution configuration for desire execution.
+ * Controls which tool executor backends are used and how.
+ */
+export interface AgencyExecutionConfig {
+  /** Preferred backend for desire execution (e.g., 'claude-code', 'codex', 'open-interpreter') */
+  preferredBackend: string;
+  /** Fallback backend if preferred is unavailable */
+  fallbackBackend: string;
+  /** List of all available backends for UI selection */
+  availableBackends: string[];
+  /** Whether to delegate execution to external tool executor (vs local skills) */
+  delegateToToolExecutor: boolean;
+  /** Whether local execution is allowed as fallback */
+  localExecutionEnabled: boolean;
+  /** Whether planner prompt includes available tool capabilities */
+  plannerIncludesToolCapabilities: boolean;
+  /** Whether to run feasibility check before planning */
+  feasibilityCheckEnabled: boolean;
+  /** Maximum number of plan retries before abandoning */
+  maxPlanRetries: number;
+  /** Whether to generate tasks for recurring desires */
+  taskGenerationEnabled: boolean;
+}
+
+/**
  * Complete agency configuration.
  */
 export interface AgencyConfig {
@@ -748,6 +793,8 @@ export interface AgencyConfig {
   limits: AgencyLimitsConfig;
   /** Risk policy */
   riskPolicy: AgencyRiskPolicyConfig;
+  /** Execution settings - controls which tool executor backend to use */
+  execution?: AgencyExecutionConfig;
   /** Logging settings */
   logging: AgencyLoggingConfig;
 }

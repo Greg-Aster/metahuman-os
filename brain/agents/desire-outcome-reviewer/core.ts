@@ -20,6 +20,7 @@ import type {
   Desire,
   DesireOutcomeReview,
   OutcomeVerdict,
+  FailureCategory,
   DesireScratchpadEntry,
   DesireMetrics,
   DesireScratchpadSummary,
@@ -45,6 +46,11 @@ import {
   initializeDesireMetrics,
   // Graph-based review (single source of truth from @metahuman/core)
   reviewOutcomeViaGraph,
+  // Task system
+  createTask,
+  // Config
+  loadUserConfig,
+  type AgencyExecutionConfig,
 } from '@metahuman/core';
 
 const LOCK_NAME = 'desire-outcome-reviewer';
@@ -61,6 +67,98 @@ const RETRY_STRENGTH_PENALTY = 0.1; // Reduce strength on retry
 // Metrics thresholds for inferring desire nature
 const RECURRING_CYCLE_THRESHOLD = 2; // More than 2 cycles suggests recurring
 const RECURRING_COMPLETION_THRESHOLD = 2; // More than 2 completions suggests recurring
+
+// ============================================================================
+// Agency Execution Config
+// ============================================================================
+
+function getAgencyExecutionConfig(username?: string): AgencyExecutionConfig {
+  const defaults: AgencyExecutionConfig = {
+    preferredBackend: 'claude-code',
+    fallbackBackend: 'codex',
+    availableBackends: ['claude-code', 'codex', 'open-interpreter', 'aider'],
+    delegateToToolExecutor: true,
+    localExecutionEnabled: false,
+    plannerIncludesToolCapabilities: true,
+    feasibilityCheckEnabled: true,
+    maxPlanRetries: 3,
+    taskGenerationEnabled: true,
+  };
+
+  try {
+    const agencyConfig = loadUserConfig<{ execution?: AgencyExecutionConfig }>(
+      'agency.json',
+      { execution: defaults },
+      username
+    );
+    return agencyConfig.execution || defaults;
+  } catch {
+    return defaults;
+  }
+}
+
+// ============================================================================
+// Task Generation for Recurring Desires
+// ============================================================================
+
+/**
+ * Generate a task for a recurring desire's next cycle.
+ * This creates an entry in the task system that tracks the desire's schedule.
+ */
+function generateRecurringTask(
+  desire: Desire,
+  cycleNumber: number,
+  username?: string
+): string | null {
+  const execConfig = getAgencyExecutionConfig(username);
+
+  if (!execConfig.taskGenerationEnabled) {
+    console.log(`${LOG_PREFIX}   Task generation disabled, skipping`);
+    return null;
+  }
+
+  try {
+    const taskTitle = `[Recurring] ${desire.title} (Cycle ${cycleNumber + 1})`;
+    const taskDescription = `Recurring desire from Agency system.
+
+**Original Desire**: ${desire.title}
+**Description**: ${desire.description}
+**Reason**: ${desire.reason || 'Not specified'}
+**Previous Cycles**: ${cycleNumber}
+**Source**: ${desire.source}
+**Desire ID**: ${desire.id}
+
+This task was automatically generated because the desire completed cycle ${cycleNumber} and was detected as recurring.
+The desire will rebuild strength naturally. This task serves as a reference for the next occurrence.`;
+
+    const filepath = createTask(taskTitle, {
+      description: taskDescription,
+      priority: 'P2',
+      tags: ['agency', 'recurring', 'auto-generated', `desire:${desire.id}`],
+    });
+
+    console.log(`${LOG_PREFIX}   Generated task for recurring desire: ${taskTitle}`);
+
+    audit({
+      category: 'agent',
+      level: 'info',
+      event: 'recurring_desire_task_generated',
+      actor: 'desire-outcome-reviewer',
+      details: {
+        desireId: desire.id,
+        desireTitle: desire.title,
+        taskTitle,
+        cycleNumber,
+        username,
+      },
+    });
+
+    return filepath;
+  } catch (error) {
+    console.error(`${LOG_PREFIX}   Failed to generate recurring task:`, error);
+    return null;
+  }
+}
 
 // ============================================================================
 // Types
@@ -352,13 +450,17 @@ async function handleCompleted(
     updatedDesire.runCount = 0; // Reset run count for new cycle
     updatedDesire.updatedAt = now;
 
+    // Generate a task in the task system for tracking
+    const taskPath = generateRecurringTask(updatedDesire, updatedDesire.metrics.cycleCount, username);
+
     updatedDesire.scratchpad = addScratchpadEntry(
       updatedDesire.scratchpad,
       createScratchpadEntry(
         'recurring_reset',
-        `Recurring nature detected (cycle ${updatedDesire.metrics.cycleCount}). Reset for next cycle. Strength: ${CYCLE_RESET_STRENGTH}`,
+        `Recurring nature detected (cycle ${updatedDesire.metrics.cycleCount}). Reset for next cycle. Strength: ${CYCLE_RESET_STRENGTH}${taskPath ? '. Task generated.' : ''}`,
         'agent',
-        'desire-outcome-reviewer'
+        'desire-outcome-reviewer',
+        taskPath ? { taskPath } : undefined
       )
     );
 
@@ -596,6 +698,131 @@ async function handleContinue(
   return updatedDesire;
 }
 
+/**
+ * Handle a system error with a fixable bug - route to Big Brother for self-repair.
+ * This creates a high-priority task for Big Brother to diagnose and fix the issue.
+ */
+async function handleSystemErrorRepair(
+  desire: Desire,
+  review: DesireOutcomeReview,
+  username?: string
+): Promise<Desire> {
+  const now = new Date().toISOString();
+  let updatedDesire = { ...desire };
+
+  // Create a self-repair task for Big Brother
+  const taskTitle = `[Self-Repair] Fix bug blocking "${desire.title}"`;
+  const taskDescription = `## System Error Detected
+
+A desire execution failed due to what appears to be a fixable code bug in MetaHuman OS.
+
+### Original Desire
+- **Title**: ${desire.title}
+- **Description**: ${desire.description}
+- **Desire ID**: ${desire.id}
+
+### Error Details
+- **Failure Category**: ${review.failureCategory}
+- **Error Type**: ${review.errorType || 'Unknown'}
+- **Success Score**: ${review.successScore}
+
+### Analysis
+${review.reasoning}
+
+### Suggested Fix
+${review.suggestedFix || 'No specific fix suggested - investigate the error'}
+
+### Lessons Learned
+${review.lessonsLearned?.map(l => `- ${l}`).join('\n') || '- No lessons captured'}
+
+## Your Task (Big Brother)
+
+You have FULL PERMISSIONS to:
+1. Read and analyze the relevant source code
+2. Diagnose the root cause of the bug
+3. Implement and test the fix
+4. Verify the fix resolves the issue
+
+After fixing the bug:
+1. Document what was changed and why
+2. The desire will be automatically retried
+
+This is an autonomous self-repair task. Use your judgment to fix the issue properly.
+`;
+
+  try {
+    const filepath = createTask(taskTitle, {
+      description: taskDescription,
+      priority: 'P1', // High priority - system health
+      tags: ['agency', 'self-repair', 'system-error', 'auto-generated', `desire:${desire.id}`],
+    });
+
+    console.log(`${LOG_PREFIX}   🔧 Created self-repair task: ${taskTitle}`);
+    console.log(`${LOG_PREFIX}      Task file: ${filepath}`);
+
+    audit({
+      category: 'agent',
+      level: 'warn',
+      event: 'self_repair_task_created',
+      actor: 'desire-outcome-reviewer',
+      details: {
+        desireId: desire.id,
+        desireTitle: desire.title,
+        taskTitle,
+        failureCategory: review.failureCategory,
+        errorType: review.errorType,
+        suggestedFix: review.suggestedFix,
+        username,
+      },
+    });
+  } catch (error) {
+    console.error(`${LOG_PREFIX}   ❌ Failed to create self-repair task:`, error);
+  }
+
+  // Mark desire as awaiting review (will be retried after fix)
+  updatedDesire.status = 'awaiting_review';
+  updatedDesire.outcomeReview = review;
+  updatedDesire.updatedAt = now;
+
+  // Add scratchpad entry documenting the self-repair routing
+  updatedDesire.scratchpad = addScratchpadEntry(
+    updatedDesire.scratchpad,
+    createScratchpadEntry(
+      'outcome_review',
+      `System error detected - routing to Big Brother for self-repair`,
+      'agent',
+      'desire-outcome-reviewer',
+      {
+        review,
+        selfRepairRequested: true,
+        errorType: review.errorType,
+        suggestedFix: review.suggestedFix,
+      }
+    )
+  );
+
+  await moveDesire(updatedDesire, desire.status, 'awaiting_review', username);
+  console.log(`${LOG_PREFIX}   Routed to self-repair, awaiting fix`);
+
+  return updatedDesire;
+}
+
+/**
+ * Check if max retries have been exceeded.
+ * Returns true if the desire should be escalated instead of retried.
+ */
+function shouldEscalateForMaxRetries(desire: Desire, username?: string): boolean {
+  const config = getAgencyExecutionConfig(username);
+  const maxRetries = config.maxPlanRetries ?? 3;
+  const currentRetries = desire.metrics?.planRevisionCount || 0;
+
+  if (currentRetries >= maxRetries) {
+    console.log(`${LOG_PREFIX}   ⚠️ Max retries (${maxRetries}) reached for "${desire.title}"`);
+    return true;
+  }
+  return false;
+}
+
 // ============================================================================
 // Main Processing
 // ============================================================================
@@ -616,12 +843,13 @@ export async function processDesires(username?: string): Promise<{
     return { reviewed: 0, completed: 0, retried: 0, abandoned: 0, escalated: 0, continued: 0 };
   }
 
-  // Get desires that need review (completed or failed without outcome review)
+  // Get desires that need review (awaiting_review/completed/failed without outcome review)
+  const awaitingReviewDesires = await listDesiresByStatus('awaiting_review', username);
   const completedDesires = await listDesiresByStatus('completed', username);
   const failedDesires = await listDesiresByStatus('failed', username);
 
   // Filter to those without outcome reviews
-  const needsReview = [...completedDesires, ...failedDesires].filter(d => !d.outcomeReview);
+  const needsReview = [...awaitingReviewDesires, ...completedDesires, ...failedDesires].filter(d => !d.outcomeReview);
 
   console.log(`${LOG_PREFIX} Found ${needsReview.length} desires needing outcome review`);
 
@@ -654,34 +882,58 @@ export async function processDesires(username?: string): Promise<{
     // Handle based on verdict
     // Note: Inner dialogue and TTS are now handled by the graph pipeline
     let updatedDesire: Desire;
-    switch (review.verdict) {
-      case 'completed':
-        updatedDesire = await handleCompleted(desire, review, username);
-        stats.completed++;
-        break;
-      case 'retry':
-        updatedDesire = await handleRetry(desire, review, username);
-        stats.retried++;
-        break;
-      case 'abandon':
-        updatedDesire = await handleAbandon(desire, review, username);
-        stats.abandoned++;
-        break;
-      case 'escalate':
-        updatedDesire = await handleEscalate(desire, review, username);
-        stats.escalated++;
-        break;
-      case 'continue':
-      default:
-        updatedDesire = await handleContinue(desire, review, username);
-        stats.continued++;
-        break;
+
+    // Special routing for system errors with fixable bugs
+    if (review.isFixableBug && review.failureCategory === 'system_error') {
+      console.log(`${LOG_PREFIX}   🔧 Detected fixable system bug - routing to self-repair`);
+      updatedDesire = await handleSystemErrorRepair(desire, review, username);
+      stats.retried++; // Count as retry for stats purposes
+    }
+    // Check max retries before allowing retry
+    else if (review.verdict === 'retry' && shouldEscalateForMaxRetries(desire, username)) {
+      console.log(`${LOG_PREFIX}   ⚠️ Max retries exceeded - escalating to user`);
+      // Override to escalate
+      const escalateReview = {
+        ...review,
+        verdict: 'escalate' as const,
+        reasoning: `${review.reasoning}\n\n[AUTO-ESCALATED: Max retry limit (${desire.metrics?.planRevisionCount || 0}) reached. User intervention required.]`,
+        userMessage: `The desire "${desire.title}" has failed ${desire.metrics?.planRevisionCount || 0} times and needs your attention.`,
+        notifyUser: true,
+      };
+      updatedDesire = await handleEscalate(desire, escalateReview, username);
+      stats.escalated++;
+    }
+    else {
+      // Normal verdict handling
+      switch (review.verdict) {
+        case 'completed':
+          updatedDesire = await handleCompleted(desire, review, username);
+          stats.completed++;
+          break;
+        case 'retry':
+          updatedDesire = await handleRetry(desire, review, username);
+          stats.retried++;
+          break;
+        case 'abandon':
+          updatedDesire = await handleAbandon(desire, review, username);
+          stats.abandoned++;
+          break;
+        case 'escalate':
+          updatedDesire = await handleEscalate(desire, review, username);
+          stats.escalated++;
+          break;
+        case 'continue':
+        default:
+          updatedDesire = await handleContinue(desire, review, username);
+          stats.continued++;
+          break;
+      }
     }
 
     // Audit
     audit({
       category: 'agent',
-      level: 'info',
+      level: review.isFixableBug ? 'warn' : 'info',
       event: 'desire_outcome_reviewed',
       actor: 'desire-outcome-reviewer',
       details: {
@@ -690,7 +942,11 @@ export async function processDesires(username?: string): Promise<{
         previousStatus: desire.status,
         verdict: review.verdict,
         successScore: review.successScore,
+        failureCategory: review.failureCategory,
+        errorType: review.errorType,
+        isFixableBug: review.isFixableBug,
         newStatus: updatedDesire.status,
+        retryCount: desire.metrics?.planRevisionCount || 0,
         username,
         usedGraphPipeline: true,
       },

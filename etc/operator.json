@@ -30,14 +30,15 @@
     "llmNodeTimeout": 900000
   },
   "bigBrotherMode": {
-    "enabled": false,
-    "provider": "open-interpreter",
+    "enabled": true,
+    "provider": "codex",
     "delegateAll": true,
     "escalateOnStuck": true,
     "escalateOnRepeatedFailures": true,
     "maxRetries": 1,
     "includeFullScratchpad": true,
-    "autoApplySuggestions": false
+    "autoApplySuggestions": false,
+    "executionTimeout": 600000
   },
   "bigBrotherReviewer": {
     "enabled": true,

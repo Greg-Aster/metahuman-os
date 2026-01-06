@@ -225,7 +225,7 @@
                 <div
                   class="progress-bar-fill"
                   style="width: {percentage}%; background-color: {getCategoryColor(percentage)}"
-                />
+                ></div>
               </div>
               <span class="category-percentage">{percentage}%</span>
             </div>
@@ -276,7 +276,7 @@
                 submitAnswer();
               }
             }}
-          />
+          ></textarea>
           <div class="input-actions">
             <button class="btn btn-primary" on:click={submitAnswer} disabled={loading || !currentAnswer.trim()}>
               {loading ? 'Submitting...' : 'Submit Answer'}

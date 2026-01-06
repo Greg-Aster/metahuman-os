@@ -167,13 +167,21 @@ export async function loadGraphForMode(graphKey: string): Promise<LoadedGraph | 
       // Skip Big Brother check if no authenticated user (all configs are user-specific)
       if (userContext?.username) {
         const { loadOperatorConfig } = await import('./config.js');
-        const { isEscalationReady } = await import('./escalation-backend.js');
+        const { ensureBackendsInitialized, getActiveBackend, getBackend } = await import('./escalation-backend.js');
         const operatorConfig = loadOperatorConfig(userContext.username);
         const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
 
         if (bigBrotherEnabled) {
-          const backendReady = isEscalationReady(userContext.username);
-          if (backendReady) {
+          const rawProvider = operatorConfig.bigBrotherMode?.provider;
+          const provider = rawProvider === 'ollama' || rawProvider === 'openai'
+            ? 'open-interpreter'
+            : rawProvider;
+
+          await ensureBackendsInitialized();
+          const backend = provider ? getBackend(provider) : getActiveBackend(userContext.username);
+          const backendAvailable = backend ? await backend.isAvailable() : false;
+
+          if (backendAvailable) {
             useBigBrotherGraph = true;
             console.log('[graph-streaming] Big Brother Mode active');
           }

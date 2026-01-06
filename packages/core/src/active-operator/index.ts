@@ -189,6 +189,8 @@ export {
   type PostFeedbackRequest,
   // Risk levels
   TASK_RISK_LEVELS,
+  // Event emitter for waking Active Operator on approval
+  proposalEvents,
   // Proposal CRUD
   createProposal,
   getPendingProposals as getOperatorPendingProposals,

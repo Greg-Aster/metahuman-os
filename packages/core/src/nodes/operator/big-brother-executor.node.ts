@@ -65,15 +65,24 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
       }
     }
 
-    console.log(`[BigBrotherExecutor] Executing skill: ${skillName} via Claude CLI`);
+    console.log(`[BigBrotherExecutor] Executing skill: ${skillName} via Big Brother backend`);
 
     const { audit } = await import('../../audit.js');
-    const { escalate, getActiveBackend, ensureBackendsInitialized } = await import('../../escalation-backend.js');
+    const { getUserContext } = await import('../../context.js');
+    const { loadOperatorConfig } = await import('../../config.js');
+    const { escalate, getActiveBackend, getBackend, ensureBackendsInitialized } = await import('../../escalation-backend.js');
 
     // Ensure backends are loaded before checking
     await ensureBackendsInitialized();
 
-    const backend = getActiveBackend();
+    const userContext = getUserContext();
+    const operatorConfig = userContext?.username ? loadOperatorConfig(userContext.username) : null;
+    const rawProvider = operatorConfig?.bigBrotherMode?.provider;
+    const preferredBackend = rawProvider === 'ollama' || rawProvider === 'openai'
+      ? 'open-interpreter'
+      : rawProvider;
+
+    const backend = preferredBackend ? getBackend(preferredBackend) : getActiveBackend(userContext?.username);
     if (!backend) {
       throw new Error('No escalation backend configured');
     }
@@ -125,6 +134,8 @@ Do NOT try to execute any tools yourself. Just provide the content.`;
     const result = await escalate(prompt, {
       timeout: timeoutMs,
       sessionId,
+      preferredBackend,
+      username: userContext?.username,
       onReasoningStep: (step) => {
         console.log(`[BigBrotherExecutor] 🧠 ${step.type}: ${step.content.substring(0, 100)}`);
       },
@@ -157,7 +168,7 @@ Do NOT try to execute any tools yourself. Just provide the content.`;
     }
 
     // Execute the skill locally using Claude's content
-    console.log(`[BigBrotherExecutor] Received content from Claude, executing ${skillName} locally`);
+    console.log(`[BigBrotherExecutor] Received content from backend, executing ${skillName} locally`);
 
     const { executeSkill } = await import('../../skills.js');
     const { loadDecisionRules } = await import('../../identity.js');
@@ -188,7 +199,7 @@ Do NOT try to execute any tools yourself. Just provide the content.`;
       actor: 'big-brother',
     });
 
-    console.log(`[BigBrotherExecutor] ✓ Skill completed via Claude CLI + local execution`);
+    console.log(`[BigBrotherExecutor] ✓ Skill completed via backend + local execution`);
 
     return {
       success: skillResult.success,
@@ -197,7 +208,7 @@ Do NOT try to execute any tools yourself. Just provide the content.`;
       },
       error: skillResult.error,
       skillId: skillName,
-      delegatedTo: 'claude-cli',
+      delegatedTo: backend.id,
       claudeExplanation: claudeResult.explanation,
     };
   } catch (error) {
@@ -239,6 +250,6 @@ export const BigBrotherExecutorNode: NodeDefinition = defineNode({
     timeout: 60000,
     autoStartSession: true,
   },
-  description: 'Executes skills via Claude CLI - delegates to Claude Code for intelligent execution',
+  description: 'Executes skills via Big Brother backend - delegates to configured CLI executor',
   execute,
 });

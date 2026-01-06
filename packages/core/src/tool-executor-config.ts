@@ -8,6 +8,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+const ROOT = process.cwd().includes('/apps/site')
+  ? path.resolve(process.cwd(), '../..')
+  : process.cwd();
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -54,7 +58,7 @@ export interface LLMProxyConfig {
 
 export interface EscalationConfig {
   enabled: boolean;
-  defaultBackend: 'claude-code' | 'open-interpreter' | 'aider' | 'gemini-cli' | 'qwen-code';
+  defaultBackend: 'claude-code' | 'open-interpreter' | 'aider' | 'gemini-cli' | 'qwen-code' | 'codex';
   escalateOnStuck: boolean;
   escalateOnRepeatedFailures: boolean;
   maxRetries: number;
@@ -70,6 +74,7 @@ export interface ToolExecutorConfig {
     'qwen-code': CLIBackendConfig;
     'aider': CLIBackendConfig;
     'gemini-cli': CLIBackendConfig;
+    'codex': CLIBackendConfig;
     [key: string]: any;
   };
   llmProxy: LLMProxyConfig;
@@ -130,6 +135,13 @@ const defaultConfig: ToolExecutorConfig = {
       args: ['--non-interactive'],
       timeout: 120000,
     },
+    'codex': {
+      description: 'OpenAI Codex CLI',
+      enabled: false,
+      command: 'codex',
+      args: ['exec', '--color', 'always', '--json'],
+      timeout: 120000,
+    },
   },
   llmProxy: {
     enabled: true,
@@ -151,9 +163,25 @@ const defaultConfig: ToolExecutorConfig = {
 export function loadToolExecutorConfig(_username?: string): ToolExecutorConfig {
   // Try to load from etc/tool-executor.json
   try {
-    const configPath = path.join(process.cwd(), 'etc', 'tool-executor.json');
+    const configPath = path.join(ROOT, 'etc', 'tool-executor.json');
     const raw = fs.readFileSync(configPath, 'utf8');
-    return JSON.parse(raw) as ToolExecutorConfig;
+    const parsed = JSON.parse(raw) as ToolExecutorConfig;
+    return {
+      ...defaultConfig,
+      ...parsed,
+      backends: {
+        ...defaultConfig.backends,
+        ...parsed.backends,
+      },
+      llmProxy: {
+        ...defaultConfig.llmProxy,
+        ...parsed.llmProxy,
+      },
+      escalation: {
+        ...defaultConfig.escalation,
+        ...parsed.escalation,
+      },
+    };
   } catch {
     // Return defaults if file doesn't exist
     return defaultConfig;
@@ -164,7 +192,7 @@ export function loadToolExecutorConfig(_username?: string): ToolExecutorConfig {
  * Save configuration to etc/tool-executor.json
  */
 export function saveToolExecutorConfig(config: ToolExecutorConfig, _username?: string): void {
-  const configPath = path.join(process.cwd(), 'etc', 'tool-executor.json');
+  const configPath = path.join(ROOT, 'etc', 'tool-executor.json');
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
 }
 

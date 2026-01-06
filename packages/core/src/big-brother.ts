@@ -14,6 +14,7 @@
  * - aider: AI pair programming with git integration
  * - gemini-cli: Google Gemini CLI
  * - qwen-code: Local Qwen model CLI
+ * - codex: OpenAI Codex CLI
  */
 
 import { audit } from './audit.js';

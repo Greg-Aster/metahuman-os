@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable, derived } from 'svelte/store';
 
 // Views that shouldn't be restored (trigger expensive operations on mount)
 const HEAVY_VIEWS = ['training'];
@@ -78,6 +78,15 @@ const bootstrapStatus = typeof window !== 'undefined'
 
 export const statusStore = writable(bootstrapStatus);
 export const statusRefreshTrigger = writable<number>(0); // Increment to trigger refresh
+
+// Derived persona name from status store (for chat cards)
+export const personaNameStore = derived(
+  statusStore,
+  ($status) => $status?.identity?.name || 'MetaHuman'
+);
+
+// User display name store (set by ChatLayout when user is loaded)
+export const userDisplayNameStore = writable<string>('You');
 
 // YOLO mode store - shared between components
 export const yoloModeStore = writable<boolean>(false);

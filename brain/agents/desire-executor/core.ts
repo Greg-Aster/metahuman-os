@@ -33,10 +33,8 @@ import {
   updateTaskStatus,
   canAutoApprove,
   loadDecisionRules,
-  isClaudeSessionReady,
-  sendPrompt,
-  startClaudeSession,
   loadOperatorConfig,
+  escalate,
   executeWithInterpreter,
   isInterpreterServerRunning,
   // Graph-based execution (single source of truth from @metahuman/core)
@@ -101,25 +99,26 @@ Please execute this step now.`;
 }
 
 /**
- * Execute step via Big Brother (Claude CLI)
+ * Execute step via Big Brother (configured escalation backend)
  */
-async function executeStepViaClaude(
+async function executeStepViaBigBrother(
   step: PlanStep,
   desire: Desire,
-  username: string
+  username: string,
+  preferredBackend?: string
 ): Promise<{ success: boolean; result?: unknown; error?: string }> {
   const prompt = buildTaskPrompt(step, desire);
 
   try {
-    if (!isClaudeSessionReady()) {
-      console.log(`${LOG_PREFIX}   ⏳ Starting Claude session...`);
-      const started = await startClaudeSession();
-      if (!started) {
-        return { success: false, error: 'Failed to start Claude CLI session' };
-      }
-    }
+    const response = await escalate(prompt, {
+      timeout: 300000,
+      preferredBackend,
+      username,
+    });
 
-    const response = await sendPrompt(prompt, 300000);
+    if (!response.success) {
+      return { success: false, error: response.error || 'Big Brother execution failed' };
+    }
 
     audit({
       level: 'info',
@@ -131,15 +130,20 @@ async function executeStepViaClaude(
         stepOrder: step.order,
         action: step.action,
         success: true,
-        executedVia: 'claude-cli',
-        responseLength: response.length,
+        executedVia: preferredBackend || 'escalation-backend',
+        responseLength: response.output?.length || 0,
         username,
       },
     });
 
     return {
       success: true,
-      result: { claudeResponse: response, executedVia: 'claude-cli', timestamp: new Date().toISOString() },
+      result: {
+        backendResponse: response.output,
+        backend: response.metadata?.backend || preferredBackend,
+        executedVia: preferredBackend || 'escalation-backend',
+        timestamp: new Date().toISOString(),
+      },
     };
   } catch (error) {
     audit({
@@ -149,7 +153,7 @@ async function executeStepViaClaude(
       actor: 'desire-executor',
       details: { desireId: desire.id, stepOrder: step.order, action: step.action, error: (error as Error).message, username },
     });
-    return { success: false, error: `Claude CLI execution failed: ${(error as Error).message}` };
+    return { success: false, error: `Big Brother execution failed: ${(error as Error).message}` };
   }
 }
 
@@ -223,8 +227,12 @@ export async function executeStep(
 
   // Try Big Brother first if enabled
   if (bigBrotherEnabled) {
-    console.log(`${LOG_PREFIX}   🤖 Using Big Brother (Claude CLI)...`);
-    return executeStepViaClaude(step, desire, username);
+    const rawProvider = operatorConfig.bigBrotherMode?.provider;
+    const preferredBackend = rawProvider === 'ollama' || rawProvider === 'openai'
+      ? 'open-interpreter'
+      : rawProvider;
+    console.log(`${LOG_PREFIX}   🤖 Using Big Brother (${preferredBackend || 'auto'})...`);
+    return executeStepViaBigBrother(step, desire, username, preferredBackend);
   }
 
   // Try Open Interpreter if available
@@ -368,75 +376,45 @@ export async function processApprovedDesires(username?: string): Promise<{
     }
 
     // Execute the plan via graph pipeline (handles inner dialogue + TTS output)
+    // The graph node sets status to 'awaiting_review' for ALL executions (success or failure)
+    // so the outcome reviewer can decide: retry, escalate, complete, or abandon
     const graphResult = await executeDesireViaGraph(executingDesire, username!);
     const execution = graphResult.execution;
     executed++;
 
-    // Update desire with execution results
-    const now = new Date().toISOString();
+    // The desire-executor.node.ts already:
+    // 1. Sets desire.status = 'awaiting_review'
+    // 2. Sets desire.currentStage = 'outcome_review'
+    // 3. Saves the manifest via saveDesireManifest()
+    //
+    // We should NOT override this! The outcome reviewer will process the desire and
+    // decide the final status based on the execution results. This enables:
+    // - Retry logic for transient failures
+    // - Escalation to user for complex issues
+    // - Learning from both successes and failures
+    //
+    // The desire is already in 'awaiting_review' status in the 'active' folder.
+    // The desire_review task will pick it up and run the outcome-reviewer graph.
 
-    // Extract task ID from path for status update
+    // Extract task ID from path for linking (but don't complete/cancel yet - outcome reviewer will do that)
     let linkedTaskId: string | undefined;
     if (linkedTaskPath) {
       const match = linkedTaskPath.match(/([^/]+)\.json$/);
       if (match) {
         linkedTaskId = match[1];
+        // Store the linked task ID in the desire for the outcome reviewer
+        console.log(`${LOG_PREFIX}   📋 Linked task: ${linkedTaskId} (will be updated by outcome reviewer)`);
       }
     }
 
+    // Track execution for stats, but don't determine final outcome yet
     if (graphResult.success && execution?.status === 'completed') {
-      const finalDesire: Desire = {
-        ...executingDesire,
-        status: 'completed',
-        execution,
-        completedAt: now,
-        updatedAt: now,
-      };
-      await moveDesire(finalDesire, 'executing', 'completed', username);
       succeeded++;
-
-      await incrementMetric('totalCompleted', 1, username);
-
-      // Complete the linked task (Goal-Task-Desire integration)
-      if (linkedTaskId) {
-        try {
-          updateTaskStatus(linkedTaskId, 'done');
-          console.log(`${LOG_PREFIX}   ✓ Linked task completed: ${linkedTaskId}`);
-        } catch (taskError) {
-          console.warn(`${LOG_PREFIX}   ⚠ Failed to complete linked task:`, taskError);
-        }
-      }
-
-      console.log(`${LOG_PREFIX}   ✓ Completed successfully`);
+      console.log(`${LOG_PREFIX}   ✓ Execution completed - sent to outcome reviewer`);
     } else {
       const errorMessage = graphResult.error || execution?.error || 'Unknown error';
-      const finalDesire: Desire = {
-        ...executingDesire,
-        status: 'failed',
-        execution: execution || {
-          startedAt: now,
-          status: 'failed',
-          error: errorMessage,
-        },
-        completedAt: now,
-        updatedAt: now,
-      };
-      await moveDesire(finalDesire, 'executing', 'failed', username);
       failed++;
-
-      await incrementMetric('totalFailed', 1, username);
-
-      // Cancel the linked task on failure (Goal-Task-Desire integration)
-      if (linkedTaskId) {
-        try {
-          updateTaskStatus(linkedTaskId, 'cancelled');
-          console.log(`${LOG_PREFIX}   ✗ Linked task cancelled: ${linkedTaskId}`);
-        } catch (taskError) {
-          console.warn(`${LOG_PREFIX}   ⚠ Failed to cancel linked task:`, taskError);
-        }
-      }
-
-      console.log(`${LOG_PREFIX}   ✗ Failed: ${errorMessage}`);
+      console.log(`${LOG_PREFIX}   ✗ Execution failed: ${errorMessage} - sent to outcome reviewer for retry/escalate decision`);
     }
 
     // Audit the execution

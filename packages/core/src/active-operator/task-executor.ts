@@ -24,6 +24,7 @@ import type {
   UserMessagePayload,
   DesireAdvancePayload,
   DesireExecutePayload,
+  DesireReviewPayload,
 } from './types.js';
 import {
   saveCurrentTask,
@@ -52,6 +53,7 @@ const TASK_TO_AGENT: Record<TaskType, string | null> = {
   desire_generate: 'desire-generator',
   desire_advance: null, // Handled specially - runs desire through planning/review/approval
   desire_execute: 'desire-executor',
+  desire_review: null, // Handled specially - runs outcome reviewer graph
   psychoanalyze: 'psychoanalyzer',
   code_analyze: null, // Will be implemented in Phase 5
   help_ticket_review: null, // Handled specially - reviews user feedback tickets
@@ -436,6 +438,154 @@ async function executeDesire(
 }
 
 /**
+ * Handle desire_review task.
+ * Reviews execution outcomes to determine: retry, escalate, complete, or abandon.
+ * Runs the outcome-reviewer cognitive graph for each desire in awaiting_review status.
+ */
+async function executeDesireReview(
+  payload: DesireReviewPayload | undefined,
+  username: string
+): Promise<{ success: boolean; error?: string; data?: any }> {
+  console.log('[task-executor] Running desire outcome review for user:', username);
+
+  try {
+    const { appendReflectionToBuffer } = await import('../conversation-buffer.js');
+    const { reviewOutcomeViaGraph } = await import('../agency/executor.js');
+    const { listDesiresFromFolders, saveDesireManifest, moveDesire } = await import('../agency/storage.js');
+
+    // Get desires awaiting review
+    const allDesires = await listDesiresFromFolders(username);
+    let desiresNeedingReview = allDesires.filter(d => d.status === 'awaiting_review');
+
+    // If specific desireId provided, filter to just that one
+    if (payload?.desireId) {
+      desiresNeedingReview = desiresNeedingReview.filter(d => d.id === payload.desireId);
+    }
+
+    if (desiresNeedingReview.length === 0) {
+      console.log('[task-executor] No desires awaiting review');
+      return { success: true, data: { processed: 0, reason: 'No desires awaiting review' } };
+    }
+
+    console.log(`[task-executor] Found ${desiresNeedingReview.length} desire(s) awaiting review`);
+
+    // Output to Inner Dialogue
+    appendReflectionToBuffer(username,
+      `🔍 **Reviewing execution outcomes:** ${desiresNeedingReview.length} desire(s) need review`,
+      { dialogueSource: 'agency-system', displayColor: '#8b5cf6', type: 'outcome_review_start' }
+    );
+
+    let processed = 0;
+    let retried = 0;
+    let escalated = 0;
+    let completed = 0;
+    let abandoned = 0;
+
+    for (const desire of desiresNeedingReview) {
+      console.log(`[task-executor] Reviewing outcome for: ${desire.title}`);
+
+      try {
+        const result = await reviewOutcomeViaGraph(desire, username);
+
+        if (result.success && result.verdict) {
+          const verdict = result.verdict;
+          const now = new Date().toISOString();
+
+          // Update desire based on verdict
+          switch (verdict) {
+            case 'completed':
+            case 'continue':
+              // Mark as completed
+              desire.status = 'completed';
+              desire.completedAt = now;
+              desire.updatedAt = now;
+              desire.outcomeReview = result.outcomeReview;
+              await saveDesireManifest(desire, username);
+              await moveDesire(desire, 'awaiting_review', 'completed', username);
+              completed++;
+              appendReflectionToBuffer(username,
+                `✅ **"${desire.title}"** completed successfully`,
+                { dialogueSource: 'agency-system', displayColor: '#22c55e', type: 'desire_completed' }
+              );
+              break;
+
+            case 'retry':
+              // Send back to planning for another attempt
+              desire.status = 'planning';
+              desire.currentStage = 'planning';
+              desire.updatedAt = now;
+              desire.outcomeReview = result.outcomeReview;
+              if (desire.stageIterations) {
+                desire.stageIterations.planReview = (desire.stageIterations.planReview || 0) + 1;
+              }
+              await saveDesireManifest(desire, username);
+              retried++;
+              appendReflectionToBuffer(username,
+                `🔄 **"${desire.title}"** - retrying with new plan (attempt ${desire.stageIterations?.planReview || 1})`,
+                { dialogueSource: 'agency-system', displayColor: '#f59e0b', type: 'desire_retry' }
+              );
+              break;
+
+            case 'escalate':
+              // Move to awaiting_approval for user intervention
+              desire.status = 'awaiting_approval';
+              desire.updatedAt = now;
+              desire.outcomeReview = result.outcomeReview;
+              await saveDesireManifest(desire, username);
+              escalated++;
+              appendReflectionToBuffer(username,
+                `⚠️ **"${desire.title}"** - needs your help. ${result.outcomeReview?.lessonsLearned || 'Review required.'}`,
+                { dialogueSource: 'agency-system', displayColor: '#ef4444', type: 'desire_escalated' }
+              );
+              break;
+
+            case 'abandon':
+              // Mark as abandoned
+              desire.status = 'abandoned';
+              desire.completedAt = now;
+              desire.updatedAt = now;
+              desire.outcomeReview = result.outcomeReview;
+              await saveDesireManifest(desire, username);
+              await moveDesire(desire, 'awaiting_review', 'abandoned', username);
+              abandoned++;
+              appendReflectionToBuffer(username,
+                `🚫 **"${desire.title}"** - abandoned. ${result.outcomeReview?.lessonsLearned || 'Not achievable.'}`,
+                { dialogueSource: 'agency-system', displayColor: '#6b7280', type: 'desire_abandoned' }
+              );
+              break;
+          }
+
+          processed++;
+        } else {
+          console.error(`[task-executor] Failed to review desire ${desire.id}:`, result.error);
+        }
+      } catch (reviewError) {
+        console.error(`[task-executor] Error reviewing desire ${desire.id}:`, reviewError);
+      }
+    }
+
+    // Summary to Inner Dialogue
+    appendReflectionToBuffer(username,
+      `✅ **Outcome review complete:**\n` +
+      `• ${processed} desire(s) processed\n` +
+      `• ${completed} completed\n` +
+      `• ${retried} sent for retry\n` +
+      `• ${escalated} escalated to user\n` +
+      `• ${abandoned} abandoned`,
+      { dialogueSource: 'agency-system', displayColor: '#22c55e', type: 'outcome_review_complete' }
+    );
+
+    return {
+      success: true,
+      data: { processed, completed, retried, escalated, abandoned },
+    };
+  } catch (err) {
+    console.error('[task-executor] Error in desire review:', err);
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+/**
  * Handle help_ticket_review task.
  * Reviews user feedback tickets, analyzes issues, and proposes fixes.
  * Integrates with System Coder desire system for code changes.
@@ -746,6 +896,14 @@ export async function executeTask(task: QueuedTask): Promise<TaskResult> {
         const desireResult = await executeDesire(task.payload as DesireExecutePayload, username);
         success = desireResult.success;
         error = desireResult.error;
+        break;
+
+      case 'desire_review':
+        // Review execution outcomes (retry/escalate/complete/abandon)
+        const reviewResult = await executeDesireReview(task.payload as DesireReviewPayload, username);
+        success = reviewResult.success;
+        error = reviewResult.error;
+        data = reviewResult.data;
         break;
 
       case 'code_analyze':

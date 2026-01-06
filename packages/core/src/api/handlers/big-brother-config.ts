@@ -13,6 +13,7 @@ import { audit } from '../../audit.js';
 const DEFAULT_CONFIG = {
   enabled: false,
   provider: 'claude-code',
+  delegateAll: false,
   escalateOnStuck: true,
   escalateOnRepeatedFailures: true,
   maxRetries: 1,
@@ -34,6 +35,7 @@ export async function handleGetBigBrotherConfig(req: UnifiedRequest): Promise<Un
         config: {
           enabled: false,
           provider: 'claude-code',
+          delegateAll: false,
           escalateOnStuck: false,
           escalateOnRepeatedFailures: false,
           maxRetries: 0,
@@ -62,7 +64,7 @@ export async function handleGetBigBrotherConfig(req: UnifiedRequest): Promise<Un
 
 /**
  * POST /api/big-brother-config - Update Big Brother mode configuration (owner only)
- * Body: { enabled, provider, escalateOnStuck, escalateOnRepeatedFailures, maxRetries, includeFullScratchpad, autoApplySuggestions }
+ * Body: { enabled, provider, delegateAll, escalateOnStuck, escalateOnRepeatedFailures, maxRetries, includeFullScratchpad, autoApplySuggestions }
  */
 export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<UnifiedResponse> {
   const { user, body } = req;
@@ -82,14 +84,15 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
       return { status: 403, error: 'Only owners can modify Big Brother settings' };
     }
 
-    const {
-      enabled,
-      provider,
-      escalateOnStuck,
-      escalateOnRepeatedFailures,
-      maxRetries,
-      includeFullScratchpad,
-      autoApplySuggestions,
+  const {
+    enabled,
+    provider,
+    delegateAll,
+    escalateOnStuck,
+    escalateOnRepeatedFailures,
+    maxRetries,
+    includeFullScratchpad,
+    autoApplySuggestions,
     } = body || {};
 
     // Load current config
@@ -99,6 +102,7 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
     config.bigBrotherMode = {
       enabled: enabled ?? false,
       provider: provider || 'claude-code',
+      delegateAll: delegateAll ?? false,
       escalateOnStuck: escalateOnStuck ?? true,
       escalateOnRepeatedFailures: escalateOnRepeatedFailures ?? true,
       maxRetries: maxRetries ?? 1,
@@ -107,8 +111,8 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
     };
 
     // Save to operator.json
-    saveUserConfig('operator.json', config);
-    invalidateOperatorConfig();
+    saveUserConfig('operator.json', config, user.username);
+    invalidateOperatorConfig(user.username);
 
     // Audit the change
     audit({
@@ -118,6 +122,7 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
       details: {
         enabled,
         provider,
+        delegateAll,
         escalateOnStuck,
         escalateOnRepeatedFailures,
         maxRetries,

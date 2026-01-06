@@ -1,0 +1,71 @@
+{
+  "version": "1.0.0",
+  "activeBackend": "claude-code",
+  "backends": {
+    "open-interpreter": {
+      "description": "Open Interpreter",
+      "enabled": true,
+      "endpoint": "http://localhost:4325",
+      "autoStart": false,
+      "modelId": "default.coder",
+      "safeMode": true,
+      "autoRun": false,
+      "maxIterations": 10,
+      "timeout": 120000,
+      "allowedLanguages": ["python", "shell", "javascript"],
+      "blockedCommands": [],
+      "sandboxMode": "none"
+    },
+    "claude-code": {
+      "description": "Claude Code CLI",
+      "enabled": true,
+      "command": "claude",
+      "args": ["--print"],
+      "timeout": 60000,
+      "terminalPort": 3099
+    },
+    "qwen-code": {
+      "description": "Qwen Code CLI",
+      "enabled": false,
+      "command": "qwen-code",
+      "args": [],
+      "timeout": 120000
+    },
+    "aider": {
+      "description": "Aider AI pair programming",
+      "enabled": false,
+      "command": "aider",
+      "args": ["--no-auto-commits", "--yes"],
+      "timeout": 180000
+    },
+    "gemini-cli": {
+      "description": "Google Gemini CLI",
+      "enabled": false,
+      "command": "gemini",
+      "args": ["--non-interactive"],
+      "timeout": 120000
+    },
+    "codex": {
+      "description": "OpenAI Codex CLI",
+      "enabled": true,
+      "command": "codex",
+      "args": ["exec", "--color", "always", "--json"],
+      "timeout": 120000
+    }
+  },
+  "llmProxy": {
+    "enabled": true,
+    "endpoint": "/api/llm/proxy",
+    "modelId": "default.coder",
+    "fallbackModelId": "default.orchestrator",
+    "temperature": 0.0,
+    "maxTokens": 4096
+  },
+  "escalation": {
+    "enabled": true,
+    "defaultBackend": "claude-code",
+    "escalateOnStuck": true,
+    "escalateOnRepeatedFailures": true,
+    "maxRetries": 2
+  }
+}

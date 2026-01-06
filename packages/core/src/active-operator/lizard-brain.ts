@@ -522,9 +522,24 @@ async function checkDesiresReadyForExecution(username: string): Promise<TriggerR
   }
 }
 
+// Track recently advanced desires to prevent loop re-triggering
+// Maps desireId -> timestamp of last advancement attempt
+const recentAdvancementAttempts = new Map<string, number>();
+const ADVANCEMENT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes cooldown per desire
+const STUCK_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes = stuck
+
 /**
- * Check if any pending desires need to be advanced through the approval pipeline.
- * Fires for pending desires that have crossed the activation threshold.
+ * Check if any desires need to be advanced through the approval pipeline.
+ *
+ * IMPORTANT: This trigger is ONLY for pending/nascent desires that need to
+ * START the pipeline (move to planning). Desires already IN the pipeline
+ * (planning, reviewing) are handled by their respective agents, not by
+ * re-triggering desire_advance.
+ *
+ * Fires for:
+ * 1. Pending/nascent desires that have crossed the activation threshold
+ *    AND have not been recently attempted (cooldown prevents loops)
+ * 2. In-pipeline desires ONLY if they appear stuck (no progress for 30+ minutes)
  */
 async function checkDesiresNeedAdvancement(username: string): Promise<TriggerResult> {
   try {
@@ -532,23 +547,71 @@ async function checkDesiresNeedAdvancement(username: string): Promise<TriggerRes
     const { loadConfig } = await import('../agency/config.js');
     const allDesires = await listDesiresFromFolders(username);
     const config = await loadConfig(username);
+    const now = Date.now();
 
-    // Get pending desires that are above the activation threshold
+    // Clean up old cooldown entries
+    for (const [id, timestamp] of recentAdvancementAttempts.entries()) {
+      if (now - timestamp > ADVANCEMENT_COOLDOWN_MS) {
+        recentAdvancementAttempts.delete(id);
+      }
+    }
+
+    // Get pending/nascent desires that are above the activation threshold
+    // AND not on cooldown from recent advancement attempt
     const pendingDesires = allDesires.filter(d =>
-      d.status === 'pending' && d.strength >= config.thresholds.activation
+      (d.status === 'pending' || d.status === 'nascent') &&
+      d.strength >= config.thresholds.activation &&
+      !recentAdvancementAttempts.has(d.id)
     );
 
-    // Check for desires awaiting approval (info only, don't trigger)
+    // Get desires in active pipeline stages - but ONLY trigger if they appear STUCK
+    // (no updatedAt change in 30+ minutes). Normal pipeline flow is handled by agents.
+    const activeStages = ['evaluating', 'planning', 'reviewing'];
+    const stuckDesires = allDesires.filter(d => {
+      if (!activeStages.includes(d.status)) return false;
+      if (recentAdvancementAttempts.has(d.id)) return false; // On cooldown
+
+      // Check if stuck (no update in 30+ minutes)
+      const updatedAt = d.updatedAt ? new Date(d.updatedAt).getTime() : 0;
+      const timeSinceUpdate = now - updatedAt;
+      return timeSinceUpdate > STUCK_THRESHOLD_MS;
+    });
+
+    // Check for desires awaiting approval (info only, don't trigger - user must approve)
     const awaitingApproval = allDesires.filter(d => d.status === 'awaiting_approval');
 
-    if (pendingDesires.length > 0) {
+    // Also track in-pipeline desires that are NOT stuck (for info)
+    const activeNotStuck = allDesires.filter(d =>
+      activeStages.includes(d.status) && !stuckDesires.some(s => s.id === d.id)
+    );
+
+    // Only trigger if there are pending desires ready OR stuck desires
+    // In-pipeline desires that are progressing normally should NOT trigger
+    const desiresToAdvance = [...pendingDesires, ...stuckDesires];
+
+    if (desiresToAdvance.length > 0) {
+      const reasons: string[] = [];
+      if (pendingDesires.length > 0) {
+        reasons.push(`${pendingDesires.length} pending ready for activation`);
+      }
+      if (stuckDesires.length > 0) {
+        const stuckInfo = stuckDesires.map(d => `"${d.title}" (${d.status})`).join(', ');
+        reasons.push(`${stuckDesires.length} STUCK in pipeline: ${stuckInfo}`);
+      }
+
+      // Mark these desires as attempted to prevent immediate re-triggering
+      for (const d of desiresToAdvance) {
+        recentAdvancementAttempts.set(d.id, now);
+      }
+
       return {
         shouldTrigger: true,
-        reason: `📋 ${pendingDesires.length} pending desire(s) ready for planning/review/approval`,
-        urgency: 'soon',
+        reason: `📋 ${desiresToAdvance.length} desire(s) need advancement: ${reasons.join('; ')}`,
+        urgency: stuckDesires.length > 0 ? 'immediate' : 'soon',
         data: {
           pendingCount: pendingDesires.length,
-          desireIds: pendingDesires.map(d => d.id),
+          stuckCount: stuckDesires.length,
+          desireIds: desiresToAdvance.map(d => d.id),
           activationThreshold: config.thresholds.activation,
         },
       };
@@ -561,6 +624,66 @@ async function checkDesiresNeedAdvancement(username: string): Promise<TriggerRes
         reason: `⏳ ${awaitingApproval.length} desire(s) awaiting user approval`,
         urgency: 'whenever',
         data: { awaitingCount: awaitingApproval.length, requiresUserAction: true },
+      };
+    }
+
+    // Info about in-pipeline desires progressing normally (don't trigger)
+    if (activeNotStuck.length > 0) {
+      return {
+        shouldTrigger: false,
+        reason: `🔄 ${activeNotStuck.length} desire(s) progressing in pipeline (no intervention needed)`,
+        urgency: 'whenever',
+        data: { inProgressCount: activeNotStuck.length, status: 'progressing' },
+      };
+    }
+
+    return { shouldTrigger: false };
+  } catch {
+    return { shouldTrigger: false };
+  }
+}
+
+/**
+ * Check if any executed desires need outcome review.
+ * These are desires in 'awaiting_review' status that need the outcome reviewer
+ * to determine: retry, escalate, complete, or abandon.
+ */
+async function checkDesiresNeedReview(username: string): Promise<TriggerResult> {
+  try {
+    const { listDesiresFromFolders } = await import('../agency/storage.js');
+    const allDesires = await listDesiresFromFolders(username);
+
+    // Get desires awaiting outcome review (post-execution)
+    const awaitingReview = allDesires.filter(d => d.status === 'awaiting_review');
+
+    if (awaitingReview.length > 0) {
+      // Prioritize failed executions
+      const failed = awaitingReview.filter(d =>
+        d.execution?.status === 'failed' || d.currentStage === 'failed'
+      );
+      const succeeded = awaitingReview.filter(d =>
+        d.execution?.status === 'completed' && d.currentStage !== 'failed'
+      );
+
+      const urgency = failed.length > 0 ? 'immediate' : 'soon';
+      const reasons: string[] = [];
+      if (failed.length > 0) {
+        reasons.push(`${failed.length} FAILED (need retry/escalate decision)`);
+      }
+      if (succeeded.length > 0) {
+        reasons.push(`${succeeded.length} completed (need verification)`);
+      }
+
+      return {
+        shouldTrigger: true,
+        reason: `🔍 ${awaitingReview.length} desire(s) need outcome review: ${reasons.join('; ')}`,
+        urgency,
+        data: {
+          awaitingReviewCount: awaitingReview.length,
+          failedCount: failed.length,
+          succeededCount: succeeded.length,
+          desireIds: awaitingReview.map(d => d.id),
+        },
       };
     }
 
@@ -755,6 +878,15 @@ export const TRIGGERS: Trigger[] = [
     priority: 'high', // Higher priority than advancement
     checkInterval: 60000, // 1 minute
     condition: checkDesiresReadyForExecution,
+  },
+  {
+    id: 'desire_review',
+    name: 'Desire Outcome Review',
+    description: 'Review execution outcomes to determine: retry, escalate, complete, or abandon',
+    taskType: 'desire_review',
+    priority: 'high', // Must process failures quickly for retry/escalate
+    checkInterval: 60000, // 1 minute
+    condition: checkDesiresNeedReview,
   },
   {
     id: 'desire_generation',

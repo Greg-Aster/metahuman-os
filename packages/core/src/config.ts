@@ -240,13 +240,14 @@ export interface OperatorConfig {
   };
   bigBrotherMode?: {
     enabled: boolean;
-    provider: 'claude-code' | 'ollama' | 'openai';
+    provider: 'claude-code' | 'open-interpreter' | 'aider' | 'gemini-cli' | 'qwen-code' | 'codex' | 'ollama' | 'openai';
     delegateAll?: boolean; // When true, delegate ALL tasks to Claude CLI instead of local skills
     escalateOnStuck: boolean;
     escalateOnRepeatedFailures: boolean;
     maxRetries: number;
     includeFullScratchpad: boolean;
     autoApplySuggestions: boolean;
+    executionTimeout?: number; // Timeout in ms for desire execution (default: 600000 = 10 min)
   };
   humanInTheLoop?: {
     enabled: boolean;
@@ -335,11 +336,13 @@ export function getDefaultOperatorConfig(): OperatorConfig {
     bigBrotherMode: {
       enabled: false,
       provider: 'claude-code',
+      delegateAll: false,
       escalateOnStuck: true,
       escalateOnRepeatedFailures: true,
       maxRetries: 1,
       includeFullScratchpad: true,
-      autoApplySuggestions: false
+      autoApplySuggestions: false,
+      executionTimeout: 600000 // 10 minutes
     }
   };
 }

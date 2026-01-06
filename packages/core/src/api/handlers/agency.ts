@@ -11,6 +11,7 @@ import {
   listDesiresByStatus,
   listActiveDesires,
   listPendingDesires,
+  listAllDesires,
   loadDesire,
   saveDesire,
   deleteDesire,
@@ -26,10 +27,43 @@ import {
 } from '../../agency/index.js';
 import { audit } from '../../audit.js';
 
+// Valid DesireStatus values from types.ts
 const ALL_STATUSES: DesireStatus[] = [
   'nascent', 'pending', 'evaluating', 'planning', 'reviewing', 'awaiting_approval',
   'approved', 'executing', 'awaiting_review', 'completed', 'rejected', 'abandoned', 'failed'
 ];
+
+// Legacy/invalid statuses that might exist in old data - map them to valid statuses
+const LEGACY_STATUS_MAP: Record<string, DesireStatus> = {
+  'executed': 'completed',  // "executed" was used before, should be "completed"
+  'active': 'executing',    // "active" was used before, should be "executing"
+};
+
+/**
+ * Normalize a desire's status if it has a legacy/invalid value.
+ * Also auto-saves the fix to prevent future issues.
+ */
+async function normalizeDesireStatus(desire: Desire, username?: string): Promise<Desire> {
+  const currentStatus = desire.status as string;
+
+  // Check if this is a legacy status that needs fixing
+  if (LEGACY_STATUS_MAP[currentStatus]) {
+    const newStatus = LEGACY_STATUS_MAP[currentStatus];
+    console.log(`[agency-handler] Fixing legacy status: ${desire.id} "${currentStatus}" → "${newStatus}"`);
+
+    desire.status = newStatus;
+    desire.updatedAt = new Date().toISOString();
+
+    // Save the fixed desire
+    try {
+      await saveDesire(desire, username);
+    } catch (err) {
+      console.warn(`[agency-handler] Could not auto-save fixed status for ${desire.id}:`, err);
+    }
+  }
+
+  return desire;
+}
 
 /**
  * GET /api/agency/desires - List desires
@@ -52,12 +86,9 @@ export async function handleListDesires(req: UnifiedRequest): Promise<UnifiedRes
     let desires: Desire[];
 
     if (statusParam === 'all') {
-      // Load all statuses
-      desires = [];
-      for (const s of ALL_STATUSES) {
-        const d = await listDesiresByStatus(s, user.username);
-        desires.push(...d);
-      }
+      // Use listAllDesires which includes desires from both folder-based storage
+      // AND legacy status directories (handles desires with invalid/old statuses)
+      desires = await listAllDesires(user.username);
     } else if (statusParam.includes(',')) {
       // Comma-separated list of statuses
       const statuses = statusParam.split(',').map(s => s.trim()) as DesireStatus[];
@@ -75,6 +106,11 @@ export async function handleListDesires(req: UnifiedRequest): Promise<UnifiedRes
     } else {
       desires = await listDesiresByStatus(statusParam as DesireStatus, user.username);
     }
+
+    // Normalize any desires with legacy statuses
+    desires = await Promise.all(
+      desires.map(d => normalizeDesireStatus(d, user.username))
+    );
 
     // Sort by createdAt descending
     desires.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -334,14 +370,8 @@ export async function handleDeleteDesire(req: UnifiedRequest): Promise<UnifiedRe
       };
     }
 
-    // Only allow deletion of certain statuses
-    const deletableStatuses: DesireStatus[] = ['nascent', 'pending', 'rejected', 'abandoned', 'failed', 'completed'];
-    if (!deletableStatuses.includes(desire.status)) {
-      return {
-        status: 400,
-        error: `Cannot delete desire in '${desire.status}' status`,
-      };
-    }
+    // All desires can be deleted at any stage - user has full control
+    // (Previously restricted to certain statuses but user requested all deletable)
 
     await deleteDesire(desire, user.username);
 
@@ -576,6 +606,132 @@ export async function handleResetDesire(req: UnifiedRequest): Promise<UnifiedRes
     });
 
     return successResponse({ desire: updatedDesire, success: true });
+  } catch (error) {
+    return {
+      status: 500,
+      error: (error as Error).message,
+    };
+  }
+}
+
+/**
+ * POST /api/agency/desires/:id/retry - Retry a failed desire
+ *
+ * This triggers the iterative refinement flow:
+ * 1. Moves desire to 'planning' status
+ * 2. Preserves failure context (outcomeReview, lessons learned)
+ * 3. Planner will see the failure context and create an improved plan
+ */
+export async function handleRetryDesire(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const { user, params } = req;
+
+  if (!user.isAuthenticated) {
+    return {
+      status: 401,
+      error: 'Authentication required to retry desire',
+    };
+  }
+
+  const id = params?.id;
+  if (!id) {
+    return {
+      status: 400,
+      error: 'Desire ID is required',
+    };
+  }
+
+  try {
+    const desire = await loadDesire(id, user.username);
+    if (!desire) {
+      return {
+        status: 404,
+        error: 'Desire not found',
+      };
+    }
+
+    const now = new Date().toISOString();
+    const oldStatus = desire.status;
+
+    // Build critique from existing outcome review and previous failures
+    let critique = desire.userCritique || '';
+    if (desire.outcomeReview) {
+      const review = desire.outcomeReview;
+      critique = [
+        `RETRY REQUESTED BY USER`,
+        '',
+        `Previous Outcome:`,
+        `- Verdict: ${review.verdict}`,
+        `- Success Score: ${(review.successScore * 100).toFixed(0)}%`,
+        `- Failure Category: ${review.failureCategory || 'unknown'}`,
+        `- Reasoning: ${review.reasoning}`,
+        '',
+        `Lessons Learned:`,
+        ...(review.lessonsLearned?.map(l => `- ${l}`) || ['- None recorded']),
+        '',
+        `Suggestions for Next Attempt:`,
+        ...(review.nextAttemptSuggestions?.map(s => `- ${s}`) || ['- None provided']),
+      ].join('\n');
+    }
+
+    // Move current plan to history if exists
+    const planHistory = desire.planHistory || [];
+    if (desire.plan) {
+      planHistory.push(desire.plan);
+    }
+
+    // Update the desire for retry
+    const updatedDesire: Desire = {
+      ...desire,
+      status: 'planning',  // Go back to planning phase
+      userCritique: critique,
+      critiqueAt: now,
+      plan: undefined,  // Clear current plan so planner creates new one
+      planHistory,
+      execution: undefined,  // Clear execution data
+      updatedAt: now,
+      metrics: {
+        ...desire.metrics!,
+        planRevisionCount: (desire.metrics?.planRevisionCount || 0) + 1,
+        lastActivityAt: now,
+      },
+    };
+
+    await moveDesire(updatedDesire, oldStatus, 'planning', user.username);
+
+    // Add scratchpad entry
+    await addScratchpadEntryToFolder(id, {
+      timestamp: now,
+      type: 'retry_requested',
+      description: `User requested retry - sending back to planning with failure context`,
+      actor: 'user',
+      data: {
+        requestedBy: user.username,
+        fromStatus: oldStatus,
+        toStatus: 'planning',
+        hadOutcomeReview: !!desire.outcomeReview,
+        failureCategory: desire.outcomeReview?.failureCategory,
+      },
+    }, user.username);
+
+    audit({
+      category: 'agent',
+      level: 'info',
+      event: 'desire_retry_requested',
+      actor: user.username,
+      details: {
+        desireId: id,
+        title: desire.title,
+        previousStatus: oldStatus,
+        hadFailureContext: !!desire.outcomeReview,
+        planRevisionCount: updatedDesire.metrics?.planRevisionCount,
+      },
+    });
+
+    return successResponse({
+      desire: updatedDesire,
+      success: true,
+      message: 'Desire sent back to planning with failure context',
+    });
   } catch (error) {
     return {
       status: 500,

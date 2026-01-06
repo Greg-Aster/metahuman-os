@@ -48,8 +48,14 @@ export function getCardComponent(message: ChatMessage): CardComponent {
     return 'UserMessageCard';
   }
 
-  // System messages
+  // System messages - check dialogueSource for special handling
   if (role === 'system') {
+    if (meta?.dialogueSource === 'lizard-brain') {
+      return 'LizardBrainCard';
+    }
+    if (meta?.dialogueSource === 'agency-system') {
+      return 'AgencyCard';
+    }
     return 'SystemMessageCard';
   }
 

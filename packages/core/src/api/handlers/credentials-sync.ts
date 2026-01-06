@@ -17,6 +17,7 @@ interface OperatorConfig {
   bigBrotherMode?: {
     enabled?: boolean;
     provider?: string;
+    delegateAll?: boolean;
     escalateOnStuck?: boolean;
     escalateOnRepeatedFailures?: boolean;
     maxRetries?: number;
@@ -53,6 +54,7 @@ export interface SyncableCredentials {
   bigBrother?: {
     enabled: boolean;
     provider: string;
+    delegateAll: boolean;
     escalateOnStuck: boolean;
     escalateOnRepeatedFailures: boolean;
     maxRetries: number;
@@ -105,6 +107,7 @@ export async function handleGetCredentialsSync(req: UnifiedRequest): Promise<Uni
       credentials.bigBrother = {
         enabled: operatorConfig.bigBrotherMode.enabled ?? false,
         provider: operatorConfig.bigBrotherMode.provider || 'claude-code',
+        delegateAll: operatorConfig.bigBrotherMode.delegateAll ?? false,
         escalateOnStuck: operatorConfig.bigBrotherMode.escalateOnStuck ?? true,
         escalateOnRepeatedFailures: operatorConfig.bigBrotherMode.escalateOnRepeatedFailures ?? true,
         maxRetries: operatorConfig.bigBrotherMode.maxRetries ?? 1,

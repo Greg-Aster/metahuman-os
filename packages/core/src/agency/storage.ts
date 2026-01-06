@@ -106,12 +106,12 @@ export async function loadDesire(desireId: string, username?: string): Promise<D
 
 /**
  * Delete a desire from storage.
- * Removes the entire folder.
+ * Removes from both folder-based and legacy status-based storage.
  */
 export async function deleteDesire(desire: Desire, username?: string): Promise<void> {
   const folderPath = getDesireFolderPath(desire.id);
 
-  // Delete manifest
+  // Delete manifest from folder-based storage
   await storageClient.delete({
     username,
     category: CATEGORY,
@@ -119,8 +119,43 @@ export async function deleteDesire(desire: Desire, username?: string): Promise<v
     relativePath: `${folderPath}/manifest.json`,
   });
 
-  // Note: Subdirectories and their contents remain for audit trail
-  // A full cleanup would require recursive deletion
+  // Also delete from legacy status directories if present
+  // These are old storage format files at <status>/<desire.id>.json
+  const legacyStatuses = [
+    'nascent', 'pending', 'evaluating', 'planning', 'reviewing',
+    'approved', 'awaiting_approval', 'executing', 'awaiting_review',
+    'completed', 'rejected', 'abandoned', 'failed', 'active', 'executed',
+  ];
+
+  for (const status of legacyStatuses) {
+    try {
+      await storageClient.delete({
+        username,
+        category: CATEGORY,
+        subcategory: SUBCATEGORY,
+        relativePath: `${status}/${desire.id}.json`,
+      });
+    } catch {
+      // File might not exist in this status directory - that's fine
+    }
+  }
+
+  // Also clean up from nested desires/pending directory (legacy location)
+  // This is read by listDesiresFromLegacyDirectories and would resurrect deleted desires
+  for (const status of legacyStatuses) {
+    try {
+      await storageClient.delete({
+        username,
+        category: CATEGORY,
+        subcategory: SUBCATEGORY,
+        relativePath: `desires/${status}/${desire.id}.json`,
+      });
+    } catch {
+      // File might not exist - that's fine
+    }
+  }
+
+  // Note: Subdirectories and their contents in folder-based storage remain for audit trail
 }
 
 /**
@@ -469,10 +504,146 @@ export async function initializeAgencyStorage(username?: string): Promise<void> 
 
 /**
  * Get all desires (across all statuses).
- * Uses folder-based storage.
+ * Uses folder-based storage with fallback to legacy status directories.
+ * Also attempts to repair/migrate desires found in legacy locations.
  */
 export async function listAllDesires(username?: string): Promise<Desire[]> {
-  return listDesiresFromFolders(username);
+  // First get desires from folder-based storage
+  const folderDesires = await listDesiresFromFolders(username);
+  const folderIds = new Set(folderDesires.map(d => d.id));
+
+  // Then check legacy status directories for any not in folders
+  const legacyDesires = await listDesiresFromLegacyDirectories(username);
+  const missingDesires = legacyDesires.filter(d => !folderIds.has(d.id));
+
+  if (missingDesires.length > 0) {
+    console.log(`[agency-storage] Found ${missingDesires.length} desires in legacy directories not in folders`);
+
+    // Auto-migrate legacy desires to folder storage
+    for (const desire of missingDesires) {
+      try {
+        await migrateDesireToFolderStorage(desire, username);
+        console.log(`[agency-storage] Migrated legacy desire ${desire.id} to folder storage`);
+      } catch (error) {
+        console.warn(`[agency-storage] Failed to migrate desire ${desire.id}:`, error);
+      }
+    }
+  }
+
+  return [...folderDesires, ...missingDesires];
+}
+
+/**
+ * List desires from legacy status-based directories.
+ * These are the old storage format where desires were stored in directories
+ * named after their status (pending/, active/, etc.).
+ */
+async function listDesiresFromLegacyDirectories(username?: string): Promise<Desire[]> {
+  // Note: 'active' is not a valid DesireStatus but exists as a legacy directory
+  const legacyStatuses: string[] = [
+    'nascent', 'pending', 'evaluating', 'planning', 'reviewing',
+    'approved', 'awaiting_approval', 'executing', 'awaiting_review',
+    'completed', 'rejected', 'abandoned', 'failed', 'active',
+  ];
+
+  const desires: Desire[] = [];
+
+  for (const status of legacyStatuses) {
+    try {
+      const result = await storageClient.list({
+        username,
+        category: CATEGORY,
+        subcategory: SUBCATEGORY,
+        relativePath: status,
+      });
+
+      if (!result.success || !result.files) continue;
+
+      for (const file of result.files) {
+        if (!file.endsWith('.json')) continue;
+
+        try {
+          const content = await storageClient.read({
+            username,
+            category: CATEGORY,
+            subcategory: SUBCATEGORY,
+            relativePath: `${status}/${file}`,
+            encoding: 'utf8',
+          });
+
+          if (content.success && content.data) {
+            const desire = JSON.parse(content.data as string) as Desire;
+            desires.push(desire);
+          }
+        } catch {
+          // Skip malformed files
+        }
+      }
+    } catch {
+      // Directory might not exist
+    }
+  }
+
+  // Also check nested desires/pending directory (known legacy location)
+  try {
+    const nestedResult = await storageClient.list({
+      username,
+      category: CATEGORY,
+      subcategory: SUBCATEGORY,
+      relativePath: 'desires/pending',
+    });
+
+    if (nestedResult.success && nestedResult.files) {
+      for (const file of nestedResult.files) {
+        if (!file.endsWith('.json')) continue;
+
+        try {
+          const content = await storageClient.read({
+            username,
+            category: CATEGORY,
+            subcategory: SUBCATEGORY,
+            relativePath: `desires/pending/${file}`,
+            encoding: 'utf8',
+          });
+
+          if (content.success && content.data) {
+            const desire = JSON.parse(content.data as string) as Desire;
+            desires.push(desire);
+          }
+        } catch {
+          // Skip malformed files
+        }
+      }
+    }
+  } catch {
+    // Nested directory might not exist
+  }
+
+  return desires;
+}
+
+/**
+ * Migrate a desire from legacy storage to folder-based storage.
+ * Creates the folder structure and saves the manifest.
+ */
+async function migrateDesireToFolderStorage(desire: Desire, username?: string): Promise<void> {
+  const folderPath = getDesireFolderPath(desire.id);
+
+  // Ensure folder exists
+  await createDesireFolder(desire.id, username);
+
+  // Update desire with folder path
+  desire.folderPath = folderPath;
+
+  // Save manifest
+  await storageClient.write({
+    username,
+    category: CATEGORY,
+    subcategory: SUBCATEGORY,
+    relativePath: `${folderPath}/manifest.json`,
+    data: JSON.stringify(desire, null, 2),
+    encoding: 'utf8',
+  });
 }
 
 // ============================================================================

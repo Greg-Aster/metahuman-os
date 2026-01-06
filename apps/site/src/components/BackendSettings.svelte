@@ -23,7 +23,7 @@
   }
 
   // Big Brother escalation provider options
-  type BigBrotherProvider = 'claude-code' | 'open-interpreter' | 'aider' | 'gemini-cli' | 'qwen-code';
+  type BigBrotherProvider = 'claude-code' | 'open-interpreter' | 'aider' | 'gemini-cli' | 'qwen-code' | 'codex';
 
   const bigBrotherProviderOptions: { value: BigBrotherProvider; label: string; description: string }[] = [
     { value: 'claude-code', label: 'Claude Code', description: 'Uses your Claude Pro subscription via CLI' },
@@ -31,6 +31,7 @@
     { value: 'aider', label: 'Aider', description: 'AI pair programming with git integration' },
     { value: 'gemini-cli', label: 'Gemini CLI', description: 'Google Gemini CLI' },
     { value: 'qwen-code', label: 'Qwen Code', description: 'Qwen Code CLI' },
+    { value: 'codex', label: 'Codex', description: 'OpenAI Codex CLI' },
   ];
 
   // Big Brother config
@@ -74,6 +75,7 @@
   // Big Brother config
   let bigBrotherConfig: BigBrotherConfig | null = null;
   let bigBrotherEnabled = false;
+  let bigBrotherDelegateAll = false;
   let bigBrotherProvider: string = 'claude-code';
   let savingBigBrother = false;
 
@@ -239,6 +241,7 @@
         const data = await res.json();
         bigBrotherConfig = data.config;
         bigBrotherEnabled = data.config?.enabled ?? false;
+        bigBrotherDelegateAll = data.config?.delegateAll ?? false;
         bigBrotherProvider = data.config?.provider || 'claude-code';
       }
     } catch (err) {
@@ -257,6 +260,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           enabled: bigBrotherEnabled,
+          delegateAll: bigBrotherDelegateAll,
           provider: bigBrotherProvider,
           escalateOnStuck: bigBrotherConfig?.escalateOnStuck ?? true,
           escalateOnRepeatedFailures: bigBrotherConfig?.escalateOnRepeatedFailures ?? true,
@@ -1021,6 +1025,21 @@
         </label>
         <span class="config-hint">
           {bigBrotherEnabled ? 'Complex tasks will be delegated to the selected backend' : 'Big Brother delegation is disabled'}
+        </span>
+      </div>
+
+      <div class="config-row checkbox-row">
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            bind:checked={bigBrotherDelegateAll}
+            on:change={saveBigBrotherConfig}
+            disabled={savingBigBrother || !bigBrotherEnabled}
+          />
+          <span>Delegate All Tasks</span>
+        </label>
+        <span class="config-hint">
+          {bigBrotherDelegateAll ? 'All autonomous tasks will be sent directly to Big Brother' : 'Only complex/stuck tasks will be escalated'}
         </span>
       </div>
 

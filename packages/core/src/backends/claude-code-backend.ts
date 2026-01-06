@@ -16,6 +16,7 @@ import type { Writable } from 'stream';
 import * as path from 'path';
 import * as fs from 'fs';
 import { audit } from '../audit.js';
+import { systemPaths } from '../paths.js';
 import {
   type EscalationBackend,
   type EscalationOptions,
@@ -24,6 +25,9 @@ import {
   registerBackend,
 } from '../escalation-backend.js';
 import { BACKEND_IDS } from '../escalation-constants.js';
+
+// Backend display name - used in error messages for consistency
+const BACKEND_DISPLAY_NAME = 'Claude Code CLI';
 
 // ============================================================================
 // Types
@@ -56,7 +60,7 @@ const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes idle timeout
 
 class ClaudeCodeBackendImpl implements EscalationBackend {
   readonly id = BACKEND_IDS.CLAUDE_CODE;
-  readonly name = 'Claude Code CLI';
+  readonly name = BACKEND_DISPLAY_NAME;
   readonly description = "Anthropic's official Claude Code command-line interface";
   readonly supportsStreaming = true;
 
@@ -521,7 +525,7 @@ export async function sendPrompt(
       },
       actor: 'claude-code-backend',
     });
-    throw new Error(`Claude CLI request failed: ${errorMsg}`);
+    throw new Error(`${BACKEND_DISPLAY_NAME} request failed: ${errorMsg}`);
   }
 }
 
@@ -657,7 +661,7 @@ async function spawnClaudeAsyncStreaming(
     let fullOutputBuffer = ''; // For question detection
     let lastActivityTime = Date.now();
 
-    console.log(`[claude-code-backend] 🚀 Spawning Claude CLI (timeout: ${timeoutMs}ms)...`);
+    console.log(`[claude-code-backend] 🚀 Spawning ${BACKEND_DISPLAY_NAME} (timeout: ${timeoutMs}ms)...`);
 
     const child = spawn('claude', ['--print', '--dangerously-skip-permissions'], {
       cwd: '/home/greggles/metahuman',
@@ -676,7 +680,7 @@ async function spawnClaudeAsyncStreaming(
     const timeoutHandle = setTimeout(() => {
       timedOut = true;
       child.kill('SIGTERM');
-      console.log(`[claude-code-backend] ⏰ Claude CLI timed out after ${timeoutMs}ms`);
+      console.log(`[claude-code-backend] ⏰ ${BACKEND_DISPLAY_NAME} timed out after ${timeoutMs}ms`);
 
       // Clean up session state
       if (currentSession) {
@@ -691,7 +695,7 @@ async function spawnClaudeAsyncStreaming(
         }
       }, 5000);
 
-      reject(new Error(`Claude CLI timed out after ${timeoutMs}ms`));
+      reject(new Error(`${BACKEND_DISPLAY_NAME} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
     // Idle detection - check if Claude might be waiting for input
@@ -738,6 +742,15 @@ async function spawnClaudeAsyncStreaming(
           currentSession.waitingForInput = false;
         }
 
+        // Write streaming output to terminal log for visibility
+        if (currentSession?.terminalPort) {
+          try {
+            appendToTerminalLogSync(text);
+          } catch {
+            // Non-critical
+          }
+        }
+
         if (streaming?.onChunk) {
           streaming.onChunk(text);
         }
@@ -758,6 +771,14 @@ async function spawnClaudeAsyncStreaming(
         const text = chunk.toString();
         if (text.trim()) {
           console.log(`[claude-code-backend] stderr: ${text.trim()}`);
+          // Write stderr to terminal log for visibility
+          if (currentSession?.terminalPort) {
+            try {
+              appendToTerminalLogSync(`\x1b[33m${text}\x1b[0m`); // Yellow for stderr
+            } catch {
+              // Non-critical
+            }
+          }
         }
       });
     }
@@ -775,7 +796,7 @@ async function spawnClaudeAsyncStreaming(
 
       if (!timedOut) {
         console.log(`[claude-code-backend] ❌ Spawn error: ${error.message}`);
-        reject(new Error(`Failed to spawn Claude CLI: ${error.message}`));
+        reject(new Error(`Failed to spawn ${BACKEND_DISPLAY_NAME}: ${error.message}`));
       }
     });
 
@@ -802,15 +823,31 @@ async function spawnClaudeAsyncStreaming(
       }
 
       if (code === 0) {
-        console.log(`[claude-code-backend] ✅ Claude CLI completed (${stdout.length} chars)`);
+        console.log(`[claude-code-backend] ✅ ${BACKEND_DISPLAY_NAME} completed (${stdout.length} chars)`);
         resolve(stdout);
       } else {
         const errorDetail = stderr || `Exit code ${code}`;
-        console.log(`[claude-code-backend] ❌ Claude CLI failed: ${errorDetail}`);
-        reject(new Error(`Claude CLI exited with code ${code}: ${errorDetail}`));
+        console.log(`[claude-code-backend] ❌ ${BACKEND_DISPLAY_NAME} failed: ${errorDetail}`);
+        reject(new Error(`${BACKEND_DISPLAY_NAME} exited with code ${code}: ${errorDetail}`));
       }
     });
   });
+}
+
+/**
+ * Get the terminal log path
+ */
+function getTerminalLogPath(): string {
+  // Use systemPaths for reliable path resolution across all contexts
+  return path.join(systemPaths.logs, 'run', 'big-brother-session.log');
+}
+
+/**
+ * Append raw streaming output to terminal log (sync, for use in data handlers)
+ */
+function appendToTerminalLogSync(text: string): void {
+  const logPath = getTerminalLogPath();
+  fs.appendFileSync(logPath, text);
 }
 
 /**
@@ -820,7 +857,7 @@ async function writeToTerminalLog(
   content: string,
   type: 'prompt' | 'response' | 'error'
 ): Promise<void> {
-  const logPath = path.join(process.cwd(), '../../logs/run/big-brother-session.log');
+  const logPath = getTerminalLogPath();
 
   const timestamp = new Date().toISOString();
   let prefix = '';

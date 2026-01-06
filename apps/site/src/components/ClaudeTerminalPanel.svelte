@@ -19,6 +19,72 @@
   let minimized = false;
   let sending = false;
 
+  function escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function ansiToHtml(value: string): string {
+    const ansiRegex = /\x1b\[([0-9;]+)m/g;
+    let result = '';
+    let lastIndex = 0;
+    let style = '';
+
+    const pushChunk = (chunk: string) => {
+      if (!chunk) return;
+      const escaped = escapeHtml(chunk);
+      if (style) {
+        result += `<span style="${style}">${escaped}</span>`;
+      } else {
+        result += escaped;
+      }
+    };
+
+    let match: RegExpExecArray | null;
+    while ((match = ansiRegex.exec(value)) !== null) {
+      pushChunk(value.slice(lastIndex, match.index));
+      lastIndex = ansiRegex.lastIndex;
+
+      const codes = match[1].split(';').map(Number);
+      for (const code of codes) {
+        if (code === 0) {
+          style = '';
+        } else if (code === 1) {
+          style = `${style}font-weight:700;`;
+        } else if ((code >= 30 && code <= 37) || (code >= 90 && code <= 97)) {
+          const colorMap: Record<number, string> = {
+            30: '#0f172a',
+            31: '#ef4444',
+            32: '#22c55e',
+            33: '#f59e0b',
+            34: '#3b82f6',
+            35: '#a855f7',
+            36: '#06b6d4',
+            37: '#e2e8f0',
+            90: '#475569',
+            91: '#f87171',
+            92: '#4ade80',
+            93: '#fbbf24',
+            94: '#60a5fa',
+            95: '#c084fc',
+            96: '#22d3ee',
+            97: '#f8fafc',
+          };
+          style = `${style}color:${colorMap[code] || '#e2e8f0'};`;
+        } else if (code === 39) {
+          style = style.replace(/color:[^;]+;/g, '');
+        }
+      }
+    }
+
+    pushChunk(value.slice(lastIndex));
+    return result;
+  }
+
   const dispatch = createEventDispatcher<{
     sendInput: { text: string };
     close: void;
@@ -119,7 +185,7 @@
         </div>
       {:else}
         {#each output as line, i}
-          <pre class="output-line">{line}</pre>
+          <pre class="output-line"><span class="ansi-line">{@html ansiToHtml(line)}</span></pre>
         {/each}
       {/if}
 

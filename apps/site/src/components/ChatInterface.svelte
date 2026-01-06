@@ -5,7 +5,7 @@
   import InputArea from './chat/InputArea.svelte';
   import MessageList from './chat/MessageList.svelte';
   import ApprovalPrompt from './ApprovalPrompt.svelte';
-  import OperatorProposalPrompt from './OperatorProposalPrompt.svelte';
+  // OperatorProposalPrompt removed - proposals now shown inline in LizardBrainCard
   import TerminalManager from './TerminalManager.svelte';
   import ClaudeTerminalPanel from './ClaudeTerminalPanel.svelte';
   import { canUseOperator, currentMode } from '../stores/security-policy';
@@ -30,6 +30,10 @@
   const reasoningLabels = ['Off', 'Quick', 'Focused', 'Deep'];
   const clampReasoningDepth = (value: number) => Math.max(0, Math.min(reasoningLabels.length - 1, Math.round(value)));
   let bigBrotherEnabled = false;
+  let bigBrotherDelegateAll = false;
+  let bigBrotherProvider = 'claude-code';
+  let bigBrotherReady = false;
+  let bigBrotherProviderLabel = 'Claude Code';
   let claudeSessionReady = false;
   let claudeSessionChecking = false;
   let chatResponseStream: EventSource | null = null;
@@ -43,10 +47,10 @@
   // - Conversation: user/assistant messages from conversation buffer
   // - Inner: reflection/dream/reasoning from inner buffer
   // - System: execution/system messages from system buffer + split panel
-  let selectedViews = new Set<'conversation' | 'inner' | 'terminal'>(['conversation']);
+  let selectedViews = new Set<'conversation' | 'inner' | 'system'>(['conversation', 'inner']);
 
-  // Show terminal split panel when terminal tab is selected
-  $: showSystemTerminal = selectedViews.has('terminal');
+  // Show terminal split panel when system tab is selected
+  $: showSystemTerminal = selectedViews.has('system');
   let terminalMinimized = false;
 
   // Compute display mode based on selected views
@@ -216,6 +220,7 @@
       }
       if (typeof p.boredomTtsEnabled === 'boolean') boredomTtsEnabled = p.boredomTtsEnabled;
       if (typeof p.bigBrotherEnabled === 'boolean') bigBrotherEnabled = p.bigBrotherEnabled;
+      if (typeof p.bigBrotherDelegateAll === 'boolean') bigBrotherDelegateAll = p.bigBrotherDelegateAll;
       console.log('[chat-prefs] Loaded:', { ttsEnabled, boredomTtsEnabled, reasoningDepth });
     } catch (e) {
       console.error('[chat-prefs] Error loading:', e);
@@ -228,6 +233,7 @@
         reasoningDepth,
         reasoningEnabled: reasoningDepth > 0,
         bigBrotherEnabled,
+        bigBrotherDelegateAll,
         boredomTtsEnabled,
       };
       localStorage.setItem('chatPrefs', JSON.stringify(prefs));
@@ -331,22 +337,36 @@
       ttsApi.prefetchVoiceResources();
     }
 
-    // Load Big Brother configuration from server
+    // Load Big Brother configuration from server (includes operator integration settings)
     try {
       const res = await apiFetch('/api/big-brother-config');
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.config) {
           bigBrotherEnabled = data.config.enabled ?? false;
+          bigBrotherDelegateAll = data.config.delegateAll ?? false;
+          bigBrotherProvider = data.config.provider || 'claude-code';
+          updateBigBrotherUiState();
           saveChatPrefs(); // Save to local storage
+          console.log('[big-brother] Loaded configuration:', { 
+            enabled: bigBrotherEnabled, 
+            provider: data.config.provider,
+            delegateAll: bigBrotherDelegateAll 
+          });
 
-          // If Big Brother is enabled, check/start Claude session
-          if (bigBrotherEnabled) {
+          // If Big Brother is enabled, check/start Claude session when provider is Claude
+          if (bigBrotherProvider !== 'claude-code') {
+            claudeSessionReady = false;
+          }
+          updateBigBrotherUiState();
+
+          if (bigBrotherEnabled && bigBrotherProvider === 'claude-code') {
             const status = await checkClaudeSessionStatus();
             if (!status?.ready && status?.installed) {
               await startClaudeSession();
             } else if (status?.ready) {
               claudeSessionReady = true;
+              updateBigBrotherUiState();
             }
           }
         }
@@ -357,10 +377,11 @@
 
     // Poll Claude session status every 10 seconds when BB is enabled
     const claudeStatusInterval = setInterval(async () => {
-      if (bigBrotherEnabled) {
-        await checkClaudeSessionStatus();
-      }
-    }, 10000);
+    if (bigBrotherEnabled && bigBrotherProvider === 'claude-code') {
+      await checkClaudeSessionStatus();
+      updateBigBrotherUiState();
+    }
+  }, 10000);
 
     // Check LLM backend health status
     backendApi.checkStatus();
@@ -416,7 +437,7 @@
         const needsReconnect =
           (selectedViews.has('conversation') && (!conversationStream || conversationStream.readyState === EventSource.CLOSED)) ||
           (selectedViews.has('inner') && (!innerDialogueStream || innerDialogueStream.readyState === EventSource.CLOSED)) ||
-          (selectedViews.has('terminal') && (!systemStream || systemStream.readyState === EventSource.CLOSED));
+          (selectedViews.has('system') && (!systemStream || systemStream.readyState === EventSource.CLOSED));
 
         if (needsReconnect) {
           console.log('[chat] Tab visible, reconnecting buffer streams');
@@ -495,14 +516,15 @@
    * Three distinct buffers:
    * - conversation tab → conversation buffer (user/assistant)
    * - inner tab → inner buffer (reflection/dream/reasoning)
-   * - terminal tab → system buffer (execution/system messages)
+   * - system tab → system buffer (execution/system messages)
    */
   async function fetchAllSelectedBuffers() {
     // Map selected views directly to buffer modes (1:1 mapping now)
+    // System buffer only fetched when system tab is selected
     const bufferModes: ('conversation' | 'inner' | 'system')[] = [];
     if (selectedViews.has('conversation')) bufferModes.push('conversation');
     if (selectedViews.has('inner')) bufferModes.push('inner');
-    if (selectedViews.has('terminal')) bufferModes.push('system'); // Terminal uses dedicated system buffer
+    if (selectedViews.has('system')) bufferModes.push('system');
 
     console.log(`[chat] Fetching buffers for views:`, Array.from(selectedViews), '→ modes:', bufferModes);
 
@@ -1073,6 +1095,7 @@
         const data = await res.json();
         if (data.success && data.status) {
           claudeSessionReady = data.status.ready;
+          updateBigBrotherUiState();
           return data.status;
         }
       }
@@ -1097,6 +1120,7 @@
       const data = await res.json();
       if (data.success && data.status) {
         claudeSessionReady = data.status.ready;
+        updateBigBrotherUiState();
         console.log('[claude-session] Status:', data.message);
 
         // Open the Big Brother terminal for visibility
@@ -1106,6 +1130,7 @@
         }
       } else {
         console.error('[claude-session] Failed to start:', data.error);
+        updateBigBrotherUiState();
       }
     } catch (error) {
       console.error('[claude-session] Error starting session:', error);
@@ -1128,7 +1153,7 @@
   }
 
   // View toggle functions for VS Code-style multi-select tabs
-  function toggleView(view: 'conversation' | 'inner' | 'terminal') {
+  function toggleView(view: 'conversation' | 'inner' | 'system') {
     const newSet = new Set(selectedViews);
 
     if (newSet.has(view)) {
@@ -1161,7 +1186,7 @@
    * Three distinct buffers:
    * - conversation view → conversation buffer stream
    * - inner view → inner buffer stream
-   * - terminal view → system buffer stream
+   * - system view → system buffer stream
    */
   function connectMultipleBufferStreams() {
     if (typeof document !== 'undefined' && document.hidden) {
@@ -1183,13 +1208,14 @@
     }
 
     // Connect to streams for each selected view (1:1 mapping)
+    // System stream only connected when system tab is selected
     if (selectedViews.has('conversation')) {
       connectBufferStreamForMode('conversation', (stream) => { conversationStream = stream; });
     }
     if (selectedViews.has('inner')) {
       connectBufferStreamForMode('inner', (stream) => { innerDialogueStream = stream; });
     }
-    if (selectedViews.has('terminal')) {
+    if (selectedViews.has('system')) {
       connectBufferStreamForMode('system', (stream) => { systemStream = stream; });
     }
   }
@@ -1238,7 +1264,7 @@
       console.error(`[chat] ${streamMode} buffer stream error:`, err);
       // Attempt reconnection after a delay
       setTimeout(() => {
-        const isSelected = streamMode === 'system' ? selectedViews.has('terminal') : selectedViews.has(streamMode);
+        const isSelected = selectedViews.has(streamMode);
         if (isComponentMounted && !document.hidden && isSelected) {
           connectBufferStreamForMode(streamMode, setStream);
         }
@@ -1247,19 +1273,35 @@
   }
 
 
-  async function toggleBigBrother() {
+  async function toggleBigBrother(forceDelegateAll = false) {
     const wasEnabled = bigBrotherEnabled;
-    bigBrotherEnabled = !bigBrotherEnabled;
+    const wasDelegateAll = bigBrotherDelegateAll;
+    
+    if (!bigBrotherEnabled) {
+      // First click: Enable Big Brother in escalation mode
+      bigBrotherEnabled = true;
+      bigBrotherDelegateAll = false;
+    } else if (!bigBrotherDelegateAll || forceDelegateAll) {
+      // Second click or right-click: Enable delegate all mode
+      bigBrotherEnabled = true;
+      bigBrotherDelegateAll = true;
+    } else {
+      // Third click: Turn off Big Brother completely
+      bigBrotherEnabled = false;
+      bigBrotherDelegateAll = false;
+    }
+    
     saveChatPrefs();
 
-    // Update server configuration
     try {
+      // Update Big Brother configuration in operator.json (controls both CLI and operator integration)
       const res = await apiFetch('/api/big-brother-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           enabled: bigBrotherEnabled,
-          provider: 'claude-code', // Default provider
+          provider: bigBrotherProvider,
+          delegateAll: bigBrotherDelegateAll,
           escalateOnStuck: true,
           escalateOnRepeatedFailures: true,
           maxRetries: 1,
@@ -1271,24 +1313,42 @@
       if (!res.ok) {
         const data = await res.json();
         console.error('[big-brother] Failed to update config:', data.error);
-        // Revert on failure
-        bigBrotherEnabled = wasEnabled;
-        saveChatPrefs();
-        return;
+        throw new Error(data.error || 'Failed to update Big Brother config');
       }
 
-      // Start or stop Claude session based on BB mode
-      if (bigBrotherEnabled) {
+      console.log('[big-brother] Successfully updated Big Brother configuration:', { 
+        enabled: bigBrotherEnabled, 
+        delegateAll: bigBrotherDelegateAll 
+      });
+      updateBigBrotherUiState();
+
+      // Start or stop Claude session based on BB mode (only for Claude provider)
+      if (bigBrotherEnabled && bigBrotherProvider === 'claude-code') {
         await startClaudeSession();
-      } else {
+      } else if (bigBrotherProvider === 'claude-code') {
         await stopClaudeSession();
       }
     } catch (error) {
       console.error('[big-brother] Error updating config:', error);
       // Revert on failure
       bigBrotherEnabled = wasEnabled;
+      bigBrotherDelegateAll = wasDelegateAll;
+      updateBigBrotherUiState();
       saveChatPrefs();
     }
+  }
+
+  function updateBigBrotherUiState() {
+    const providerLabels: Record<string, string> = {
+      'claude-code': 'Claude Code',
+      'open-interpreter': 'Open Interpreter',
+      'aider': 'Aider',
+      'gemini-cli': 'Gemini CLI',
+      'qwen-code': 'Qwen Code',
+      'codex': 'Codex',
+    };
+    bigBrotherProviderLabel = providerLabels[bigBrotherProvider] || bigBrotherProvider;
+    bigBrotherReady = bigBrotherEnabled && (bigBrotherProvider !== 'claude-code' || claudeSessionReady);
   }
 
   async function toggleActiveOperator() {
@@ -1428,7 +1488,7 @@
       </button>
       <button
         class="mode-btn {showSystemTerminal ? 'active' : ''}"
-        on:click={() => toggleView('terminal')}
+        on:click={() => toggleView('system')}
         aria-label="Toggle system view"
         title="Toggle system view (split view below chat)"
       >
@@ -1455,20 +1515,29 @@
 
     <!-- Big Brother Mode Toggle -->
     <button
-      class="big-brother-toggle {bigBrotherEnabled ? 'active' : ''} {claudeSessionReady ? 'ready' : ''}"
-      title={bigBrotherEnabled
-        ? claudeSessionReady
-          ? 'Big Brother active - Claude CLI ready ✓'
-          : claudeSessionChecking
-            ? 'Big Brother active - Starting Claude CLI...'
-            : 'Big Brother active - Claude CLI not ready'
-        : 'Big Brother mode off - Click to enable CLI escalation'}
-      on:click={toggleBigBrother}
+      class="big-brother-toggle {bigBrotherEnabled ? 'active' : ''} {bigBrotherDelegateAll ? 'delegate-all' : ''} {bigBrotherReady ? 'ready' : ''}"
+      title={!bigBrotherEnabled
+        ? 'Big Brother off - Click for escalation mode, right-click for full delegation'
+        : bigBrotherDelegateAll
+          ? bigBrotherReady
+            ? `Big Brother FULL DELEGATION - All tasks go to ${bigBrotherProviderLabel} ⚡`
+            : bigBrotherProvider === 'claude-code'
+              ? 'Big Brother delegation mode - Starting Claude CLI...'
+              : `Big Brother delegation mode - ${bigBrotherProviderLabel} pending...`
+          : bigBrotherReady
+            ? `Big Brother escalation mode - Escalates via ${bigBrotherProviderLabel} ⚠️`
+            : bigBrotherProvider === 'claude-code'
+              ? 'Big Brother escalation mode - Starting Claude CLI...'
+              : `Big Brother escalation mode - ${bigBrotherProviderLabel} pending...`}
+      on:click={() => toggleBigBrother(false)}
+      on:contextmenu|preventDefault={() => toggleBigBrother(true)}
     >
       <span class="big-brother-icon">🤖</span>
       {#if bigBrotherEnabled}
-        {#if claudeSessionReady}
-          <span class="big-brother-badge ready">●</span>
+        {#if bigBrotherDelegateAll}
+          <span class="big-brother-badge delegate-all">⚡</span>
+        {:else if bigBrotherReady}
+          <span class="big-brother-badge ready">⚠️</span>
         {:else if claudeSessionChecking}
           <span class="big-brother-badge checking">⋯</span>
         {:else}
@@ -1608,7 +1677,7 @@
           <MessageList
             messages={$messages}
             mode={displayMode}
-            showSystemMessages={selectedViews.has('terminal')}
+            showSystemMessages={selectedViews.has('system')}
             selectedMessageIndex={$selectedMessageIndex}
             {loading}
             {reasoningStages}
@@ -1639,10 +1708,7 @@
     console.log('[chat] Approval change detected');
   }} />
 
-  <!-- Operator Proposal Prompt - HITL approval for autonomous tasks -->
-  <OperatorProposalPrompt onProposalChange={() => {
-    console.log('[chat] Operator proposal change detected');
-  }} />
+  <!-- Operator proposals now displayed inline in LizardBrainCard -->
 
   <!-- Input Area -->
   <div class="input-container">
@@ -1755,3 +1821,28 @@
   </div>
   <!-- End chat-main-area -->
 </div>
+
+<style>
+  .big-brother-toggle.delegate-all {
+    background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+    box-shadow: 0 0 20px rgba(255, 107, 107, 0.4);
+    animation: pulse-delegation 2s infinite;
+  }
+
+  .big-brother-badge.delegate-all {
+    background: #ff3838;
+    color: white;
+    font-weight: bold;
+    animation: glow-delegation 1.5s infinite alternate;
+  }
+
+  @keyframes pulse-delegation {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+  }
+
+  @keyframes glow-delegation {
+    0% { box-shadow: 0 0 5px #ff3838; }
+    100% { box-shadow: 0 0 15px #ff3838, 0 0 25px #ff3838; }
+  }
+</style>

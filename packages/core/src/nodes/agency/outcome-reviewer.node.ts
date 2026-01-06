@@ -15,7 +15,7 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import type { Desire, DesireExecution, DesireOutcomeReview, OutcomeVerdict } from '../../agency/types.js';
+import type { Desire, DesireExecution, DesireOutcomeReview, OutcomeVerdict, FailureCategory } from '../../agency/types.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';
 import { audit } from '../../audit.js';
 
@@ -23,6 +23,10 @@ interface OutcomeReviewOutput {
   verdict: OutcomeVerdict;
   reasoning: string;
   successScore: number;
+  failureCategory: FailureCategory;
+  errorType?: string;
+  isFixableBug: boolean;
+  suggestedFix?: string;
   lessonsLearned: string[];
   nextAttemptSuggestions?: string[];
   adjustedStrength?: number;
@@ -30,34 +34,57 @@ interface OutcomeReviewOutput {
   userMessage?: string;
 }
 
-const SYSTEM_PROMPT = `You are the Outcome Review module of MetaHuman OS. Your job is to evaluate whether an executed desire actually achieved its goal.
+const SYSTEM_PROMPT = `You are the Outcome Review module of MetaHuman OS. Your job is to evaluate whether an executed desire actually achieved its goal, and critically analyze any failures.
 
-## Your Task
-Analyze the execution results and determine:
+## Your Role
+You are an intelligent reviewer, not a simple pass/fail checker. Analyze the execution deeply:
 1. Did the execution actually satisfy the desire?
-2. What was learned from this attempt?
-3. What should happen next?
+2. If it failed, WHY did it fail? (This is critical for system improvement)
+3. Is the failure fixable by the system itself, or does it need human help?
+4. What should happen next?
 
 ## Verdict Options
-- **completed**: The desire is fully satisfied. The goal was achieved. Archive it.
-- **continue**: Keep pursuing this (for recurring desires like "stay healthy", "learn new things"). Reset for next cycle.
-- **retry**: The execution failed or was incomplete. Try again with a new approach.
-- **escalate**: Something unexpected happened that needs human attention. Alert the user.
-- **abandon**: This desire cannot be achieved or is no longer relevant. Give up gracefully.
+- **completed**: The desire is fully satisfied. Archive it.
+- **continue**: Keep pursuing (for recurring/aspirational desires). Reset for next cycle.
+- **retry**: Failed or incomplete. Try again with improved approach. You MUST provide specific lessons and suggestions.
+- **escalate**: Needs human intervention - external resources, permissions, or decisions required.
+- **abandon**: Cannot be achieved or no longer relevant. Give up gracefully.
+
+## Failure Categories (CRITICAL - analyze carefully)
+When the execution fails, you MUST categorize the failure:
+
+- **none**: No failure - execution succeeded
+- **plan_error**: The strategy/approach was wrong. Need a different plan. Example: tried to use an API that doesn't exist, wrong sequence of steps
+- **system_error**: Internal bug or code error in MetaHuman OS itself. Example: null pointer, missing function, type error, file not found where it should exist. The system (Big Brother) may be able to fix this.
+- **external_error**: External dependency failed. Example: API rate limited, server down, network error, missing credentials, permission denied. User needs to help.
+- **timeout**: Took too long. May need simplification or retry.
+- **partial**: Some steps succeeded, some failed. May continue or retry.
+
+## Bug Detection (IMPORTANT)
+If you detect what appears to be a code bug in MetaHuman OS:
+- Set isFixableBug: true
+- Provide suggestedFix with actionable guidance
+- This will route to Big Brother (Claude) for self-repair
+
+Examples of fixable bugs:
+- "TypeError: Cannot read property X of undefined" → missing null check
+- "ENOENT: no such file or directory" → file path construction error
+- "SyntaxError in generated code" → template or generation bug
+- "Function X is not defined" → missing export or import
 
 ## Success Score (0.0 - 1.0)
 - 1.0: Perfect execution, goal fully achieved
-- 0.7-0.9: Good execution, goal mostly achieved
-- 0.4-0.6: Partial success, some progress made
+- 0.7-0.9: Good execution, minor issues
+- 0.4-0.6: Partial success, significant work remains
 - 0.1-0.3: Poor execution, minimal progress
 - 0.0: Complete failure
 
 ## Guidelines
-- Be honest about whether the goal was actually achieved
-- For recurring desires, "continue" is often appropriate even after success
-- "escalate" should be used sparingly, only for genuine concerns
+- Be precise about what went wrong - vague analysis doesn't help
+- For retries, provide SPECIFIC actionable suggestions
+- Distinguish between "the plan was bad" vs "the system has a bug" vs "external thing broke"
+- If you see patterns suggesting a systemic issue, note it clearly
 - Always provide actionable lessons learned
-- If retry is recommended, give specific suggestions
 
 Respond with valid JSON matching the schema.`;
 
@@ -65,12 +92,18 @@ async function runOutcomeReview(desire: Desire, execution?: DesireExecution, use
   const plan = desire.plan;
   const exec = execution || desire.execution;
 
+  // Include previous attempt context if this is a retry
+  const previousAttempts = desire.metrics?.executionFailCount || 0;
+  const previousLessons = desire.userCritique || '';
+
   const userPrompt = `## Desire to Review
 
 **Title**: ${desire.title}
 **Description**: ${desire.description}
 **Reason**: ${desire.reason}
 **Original Goal**: ${plan?.operatorGoal || 'Not specified'}
+${previousAttempts > 0 ? `\n**Previous Failed Attempts**: ${previousAttempts}` : ''}
+${previousLessons ? `\n**Previous Lessons/Critique**:\n${previousLessons}` : ''}
 
 ## Execution Results
 
@@ -78,22 +111,33 @@ async function runOutcomeReview(desire: Desire, execution?: DesireExecution, use
 **Steps Completed**: ${exec?.stepsCompleted || 0} / ${plan?.steps?.length || 0}
 **Started**: ${exec?.startedAt || 'unknown'}
 **Completed**: ${exec?.completedAt || 'in progress'}
-${exec?.error ? `**Error**: ${exec.error}` : ''}
+${exec?.error ? `\n**Error**: ${exec.error}` : ''}
+${exec?.result ? `\n**Result/Output**: ${typeof exec.result === 'string' ? exec.result : JSON.stringify(exec.result, null, 2)}` : ''}
 
 ### Step Results
-${exec?.stepResults?.map((r: { success: boolean; error?: string }, i: number) =>
-  `${i + 1}. ${r.success ? '✅' : '❌'} ${plan?.steps?.[i]?.action || 'Unknown step'}${r.error ? ` (Error: ${r.error})` : ''}`
+${exec?.stepResults?.map((r: { success: boolean; error?: string; result?: unknown }, i: number) =>
+  `${i + 1}. ${r.success ? '✅' : '❌'} ${plan?.steps?.[i]?.action || 'Unknown step'}${r.error ? `\n   Error: ${r.error}` : ''}${r.result ? `\n   Output: ${typeof r.result === 'string' ? r.result.substring(0, 200) : JSON.stringify(r.result).substring(0, 200)}` : ''}`
 ).join('\n') || 'No step results available'}
 
-## Output
+## Analysis Required
 
-Respond with JSON:
+1. Did the desire's goal get achieved?
+2. If failed: What category of failure is this? (plan_error, system_error, external_error, timeout, partial)
+3. If system_error: Is this a bug that Big Brother (Claude with full code access) could fix?
+4. What specific lessons should inform the next attempt?
+
+## Output JSON Schema
+
 {
   "verdict": "completed" | "continue" | "retry" | "escalate" | "abandon",
-  "reasoning": "Detailed explanation of your verdict",
+  "reasoning": "Detailed explanation - be specific about what happened",
   "successScore": 0.0-1.0,
-  "lessonsLearned": ["lesson 1", "lesson 2"],
-  "nextAttemptSuggestions": ["suggestion 1", "suggestion 2"],
+  "failureCategory": "none" | "plan_error" | "system_error" | "external_error" | "timeout" | "partial",
+  "errorType": "specific error type if identifiable (e.g., TypeError, ENOENT, 403 Forbidden)",
+  "isFixableBug": true/false - is this a code bug Big Brother could fix?,
+  "suggestedFix": "If isFixableBug, describe what needs to be fixed",
+  "lessonsLearned": ["specific lesson 1", "specific lesson 2"],
+  "nextAttemptSuggestions": ["actionable suggestion 1", "actionable suggestion 2"],
   "adjustedStrength": 0.0-1.0 (optional, for continue/retry),
   "notifyUser": true/false,
   "userMessage": "Message for user if notifyUser is true"
@@ -117,7 +161,9 @@ Respond with JSON:
         verdict: 'escalate',
         reasoning: 'Failed to get outcome review response',
         successScore: 0,
-        lessonsLearned: ['Outcome review failed - manual review needed'],
+        failureCategory: 'system_error',
+        isFixableBug: false,
+        lessonsLearned: ['Outcome review failed - LLM returned empty response'],
         notifyUser: true,
         userMessage: 'Outcome review could not be completed automatically.',
       };
@@ -129,6 +175,9 @@ Respond with JSON:
         verdict: 'escalate',
         reasoning: 'Could not parse outcome review response',
         successScore: 0,
+        failureCategory: 'system_error',
+        isFixableBug: true,
+        suggestedFix: 'LLM response parsing failed - may need to improve JSON extraction in outcome-reviewer.node.ts',
         lessonsLearned: ['Outcome review parsing failed'],
         notifyUser: true,
         userMessage: 'Outcome review response was invalid.',
@@ -140,6 +189,10 @@ Respond with JSON:
       verdict: parsed.verdict,
       reasoning: parsed.reasoning,
       successScore: Math.max(0, Math.min(1, parsed.successScore)),
+      failureCategory: parsed.failureCategory || 'none',
+      errorType: parsed.errorType,
+      isFixableBug: parsed.isFixableBug ?? false,
+      suggestedFix: parsed.suggestedFix,
       lessonsLearned: parsed.lessonsLearned || [],
       nextAttemptSuggestions: parsed.nextAttemptSuggestions,
       adjustedStrength: parsed.adjustedStrength,
@@ -151,7 +204,10 @@ Respond with JSON:
       verdict: 'escalate',
       reasoning: `Outcome review error: ${(error as Error).message}`,
       successScore: 0,
-      lessonsLearned: ['Outcome review threw an error'],
+      failureCategory: 'system_error',
+      isFixableBug: true,
+      suggestedFix: 'The outcome review process itself failed - check outcome-reviewer.node.ts',
+      lessonsLearned: ['Outcome review threw an error - this is a system issue'],
       notifyUser: true,
       userMessage: `Outcome review failed: ${(error as Error).message}`,
     };
@@ -207,6 +263,10 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       verdict: reviewResult.verdict,
       reasoning: reviewResult.reasoning,
       successScore: reviewResult.successScore,
+      failureCategory: reviewResult.failureCategory,
+      errorType: reviewResult.errorType,
+      isFixableBug: reviewResult.isFixableBug,
+      suggestedFix: reviewResult.suggestedFix,
       lessonsLearned: reviewResult.lessonsLearned,
       nextAttemptSuggestions: reviewResult.nextAttemptSuggestions,
       adjustedStrength: reviewResult.adjustedStrength,
@@ -217,6 +277,11 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
     console.log(`[outcome-reviewer]    Verdict: ${reviewResult.verdict}`);
     console.log(`[outcome-reviewer]    Success Score: ${reviewResult.successScore}`);
+    console.log(`[outcome-reviewer]    Failure Category: ${reviewResult.failureCategory}`);
+    if (reviewResult.isFixableBug) {
+      console.log(`[outcome-reviewer]    🔧 Fixable Bug Detected: ${reviewResult.errorType || 'unknown'}`);
+      console.log(`[outcome-reviewer]    Suggested Fix: ${reviewResult.suggestedFix}`);
+    }
 
     // Audit the review
     audit({
@@ -229,6 +294,9 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
         title: desire.title,
         verdict: reviewResult.verdict,
         successScore: reviewResult.successScore,
+        failureCategory: reviewResult.failureCategory,
+        errorType: reviewResult.errorType,
+        isFixableBug: reviewResult.isFixableBug,
         notifyUser: reviewResult.notifyUser,
       },
     });

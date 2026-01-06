@@ -2,6 +2,7 @@
   import { createEventDispatcher } from 'svelte';
   import type { ChatMessage } from '../../../lib/client/composables/useMessages';
   import { formatTimestamp } from '../message-discriminator';
+  import { personaNameStore, userDisplayNameStore } from '../../../stores/navigation';
 
   // Props
   export let message: ChatMessage;
@@ -14,6 +15,17 @@
   export let showSpeakButton: boolean = true;
 
   const dispatch = createEventDispatcher();
+
+  // Compute display name based on role
+  $: displayName = (() => {
+    if (message.role === 'user') return $userDisplayNameStore;
+    if (message.role === 'assistant') return $personaNameStore;
+    // For other roles, use the roleLabel if provided, otherwise derive from role
+    return roleLabel || message.role;
+  })();
+
+  // Compute icon based on role (only for special message types)
+  $: displayIcon = roleIcon || '';
 
   function handleClick() {
     dispatch('messageClick', { message, index });
@@ -46,66 +58,116 @@
   }
 </script>
 
-<div
-  class="card-base card-{message.role}"
-  class:card-selected={isSelected}
-  style={accentColor ? `--card-accent: ${accentColor}` : ''}
-  on:click={handleClick}
-  on:keydown={handleKeydown}
-  role="button"
-  tabindex="0"
->
-  <div class="card-header">
-    <span class="card-role">
-      {#if roleIcon}<span class="role-icon">{roleIcon}</span>{/if}
-      {roleLabel}
+<div class="card-wrapper" class:align-right={message.role === 'user'}>
+  <!-- Header outside card -->
+  <div class="card-outer-header" class:align-right={message.role === 'user'}>
+    <span class="header-role" style={accentColor ? `color: ${accentColor}` : ''}>
+      {#if displayIcon}<span class="role-icon">{displayIcon}</span>{/if}
+      {displayName}
     </span>
-    <span class="card-time">{formatTimestamp(message.timestamp)}</span>
-
+    <span class="header-time">{formatTimestamp(message.timestamp)}</span>
     {#if showActions && message.relPath}
-      <span class="card-actions">
-        <button
-          class="action-btn delete"
-          title="Delete message"
-          on:click={handleDelete}
-        >
-          −
-        </button>
-        <button
-          class="action-btn validate"
-          title="Mark as correct"
-          on:click={(e) => handleValidate(e, 'correct')}
-        >
-          +
-        </button>
+      <span class="header-actions">
+        <button class="action-btn delete" title="Delete" on:click={handleDelete}>−</button>
+        <button class="action-btn validate" title="Mark correct" on:click={(e) => handleValidate(e, 'correct')}>+</button>
       </span>
     {/if}
   </div>
 
-  <div class="card-body">
-    <slot name="content">
-      <p class="card-text">{message.content}</p>
-    </slot>
+  <!-- Card body -->
+  <div
+    class="card-base card-{message.role}"
+    class:card-selected={isSelected}
+    class:card-accented={!!accentColor}
+    data-facet={message.meta?.facet || 'default'}
+    style={accentColor ? `--card-accent: ${accentColor}; --message-accent-color: ${accentColor}` : ''}
+    on:click={handleClick}
+    on:keydown={handleKeydown}
+    role="button"
+    tabindex="0"
+  >
+    <div class="card-body">
+      <slot name="content">
+        <p class="card-text">{message.content}</p>
+      </slot>
+    </div>
+
+    <slot name="footer" />
+
+    {#if showSpeakButton}
+      <button
+        class="speak-btn"
+        title="Listen to message"
+        on:click={handleSpeak}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/>
+        </svg>
+      </button>
+    {/if}
   </div>
-
-  <slot name="footer" />
-
-  {#if showSpeakButton}
-    <button
-      class="speak-btn"
-      title="Listen to message"
-      on:click={handleSpeak}
-    >
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/>
-      </svg>
-    </button>
-  {/if}
 </div>
 
 <style>
+  /* Card wrapper for alignment - column layout with header above card */
+  .card-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    max-width: 85%;
+  }
+
+  .card-wrapper.align-right {
+    align-items: flex-end;
+    margin-left: auto;
+  }
+
+  /* External header above the card */
+  .card-outer-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0 0.25rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .card-outer-header.align-right {
+    flex-direction: row-reverse;
+  }
+
+  .header-role {
+    font-weight: 600;
+    font-size: 0.8125rem;
+    color: var(--text-primary, #f3f4f6);
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .role-icon {
+    font-size: 0.875rem;
+  }
+
+  .header-time {
+    font-size: 0.75rem;
+    color: var(--text-muted, #9ca3af);
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 0.25rem;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .card-wrapper:hover .header-actions {
+    opacity: 1;
+  }
+
   /* CSS Variables for theming */
   .card-base {
+    width: 100%;
     --card-bg: var(--bg-secondary, #1e1e1e);
     --card-border: var(--border-color, #333);
     --card-text: var(--text-primary, #f3f4f6);
@@ -171,44 +233,17 @@
     --card-accent: #6b7280;
   }
 
-  /* Header layout */
-  .card-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
+  /* Persona accent color styling (when displayColor is set) */
+  .card-accented {
+    border-color: color-mix(in srgb, var(--card-accent) 50%, transparent);
+    background: color-mix(in srgb, var(--card-accent) 8%, var(--card-bg));
   }
 
-  .card-role {
-    font-weight: 600;
-    font-size: 0.875rem;
-    color: var(--card-text);
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
+  .card-accented .card-body {
+    color: color-mix(in srgb, var(--card-accent) 80%, var(--card-text));
   }
 
-  .role-icon {
-    font-size: 1rem;
-  }
-
-  .card-time {
-    font-size: 0.75rem;
-    color: var(--card-muted);
-  }
-
-  .card-actions {
-    margin-left: auto;
-    display: flex;
-    gap: 0.25rem;
-    opacity: 0;
-    transition: opacity 0.15s;
-  }
-
-  .card-base:hover .card-actions {
-    opacity: 1;
-  }
-
+  /* Action buttons (in external header) */
   .action-btn {
     width: 20px;
     height: 20px;
@@ -279,6 +314,14 @@
   }
 
   /* Light mode adjustments */
+  :global(.light) .header-role {
+    color: #1f2937;
+  }
+
+  :global(.light) .header-time {
+    color: #6b7280;
+  }
+
   :global(.light) .card-base {
     --card-bg: #ffffff;
     --card-border: #e5e7eb;

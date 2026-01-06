@@ -1,8 +1,8 @@
 /**
- * Claude Full Task Node
+ * Full Task Delegation Node
  *
- * Sends the entire user request to Claude Code for full autonomous completion
- * Bypasses the local ReAct loop entirely - Claude handles planning, execution, and response
+ * Sends the entire user request to the configured Big Brother backend for
+ * full autonomous completion. Bypasses the local ReAct loop entirely.
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
@@ -34,15 +34,24 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
       console.log('[ClaudeFullTask] Using userMessage from context');
     }
 
-    console.log(`[ClaudeFullTask] Delegating entire task to Claude Code: "${messageText.substring(0, 60)}..."`);
+    console.log(`[ClaudeFullTask] Delegating entire task to Big Brother backend: "${messageText.substring(0, 60)}..."`);
 
     const { audit } = await import('../../audit.js');
-    const { escalate, getActiveBackend, ensureBackendsInitialized } = await import('../../escalation-backend.js');
+    const { getUserContext } = await import('../../context.js');
+    const { loadOperatorConfig } = await import('../../config.js');
+    const { escalate, getActiveBackend, getBackend, ensureBackendsInitialized } = await import('../../escalation-backend.js');
 
     // Ensure backends are loaded before checking
     await ensureBackendsInitialized();
 
-    const backend = getActiveBackend();
+    const userContext = getUserContext();
+    const operatorConfig = userContext?.username ? loadOperatorConfig(userContext.username) : null;
+    const rawProvider = operatorConfig?.bigBrotherMode?.provider;
+    const preferredBackend = rawProvider === 'ollama' || rawProvider === 'openai'
+      ? 'open-interpreter'
+      : rawProvider;
+
+    const backend = preferredBackend ? getBackend(preferredBackend) : getActiveBackend(userContext?.username);
     if (!backend) {
       throw new Error('No escalation backend configured');
     }
@@ -104,10 +113,11 @@ Execute now and report results.`;
     audit({
       level: 'info',
       category: 'action',
-      event: 'claude_full_task_delegation',
+      event: 'full_task_delegation',
       details: {
         userMessage: messageText.substring(0, 100),
         promptLength: prompt.length,
+        backend: backend.id,
       },
       actor: 'big-brother',
     });
@@ -119,6 +129,8 @@ Execute now and report results.`;
     const escalationOptions: any = {
       timeout: timeoutMs,
       sessionId: _context?.sessionId,
+      preferredBackend,
+      username: userContext?.username,
     };
 
     // If we have emitEvent, wire up streaming callbacks
@@ -143,14 +155,15 @@ Execute now and report results.`;
     audit({
       level: 'info',
       category: 'action',
-      event: 'claude_full_task_completed',
+      event: 'full_task_completed',
       details: {
         responseLength: response.length,
+        backend: backend.id,
       },
       actor: 'big-brother',
     });
 
-    console.log(`[ClaudeFullTask] ✓ Task completed by Claude Code`);
+    console.log(`[ClaudeFullTask] ✓ Task completed by ${backend.name}`);
 
     // Emit completion event
     if (_context?.emitEvent) {
@@ -159,13 +172,13 @@ Execute now and report results.`;
 
     return {
       scratchpad: [{
-        thought: "Delegated task execution to Claude Code",
+        thought: `Delegated task execution to ${backend.name}`,
         action: "claude_full_task",
         observation: response.trim()
       }],
       finalResponse: response.trim(),
       success: true,
-      delegatedTo: 'claude-code',
+      delegatedTo: backend.id,
       bypassedReActLoop: true,
     };
   } catch (error) {
@@ -179,7 +192,7 @@ Execute now and report results.`;
     audit({
       level: 'error',
       category: 'action',
-      event: 'claude_full_task_failed',
+      event: 'full_task_failed',
       details: {
         error: errorMsg,
         isTimeout,
@@ -189,11 +202,11 @@ Execute now and report results.`;
 
     const userMessage = isTimeout
       ? "The task took too long to complete (exceeded 5 minute timeout). This usually happens with complex research questions. Try asking a simpler question or breaking it into smaller parts."
-      : `I encountered an error while delegating to Claude: ${errorMsg}`;
+      : `I encountered an error while delegating to Big Brother: ${errorMsg}`;
 
     return {
       scratchpad: [{
-        thought: "Attempted to delegate to Claude Code",
+        thought: "Attempted to delegate to Big Brother backend",
         action: "claude_full_task",
         observation: `ERROR: ${errorMsg}`
       }],
@@ -206,7 +219,7 @@ Execute now and report results.`;
 
 export const ClaudeFullTaskNode: NodeDefinition = defineNode({
   id: 'claude_full_task',
-  name: 'Claude Full Task',
+  name: 'Full Task Delegation',
   category: 'operator',
   inputs: [
     { name: 'orchestratorAnalysis', type: 'object', optional: true, description: 'Intent analysis from orchestrator' },
@@ -227,6 +240,6 @@ export const ClaudeFullTaskNode: NodeDefinition = defineNode({
       description: 'Timeout in milliseconds',
     },
   },
-  description: 'Delegates entire task to Claude Code for autonomous completion - bypasses local ReAct loop',
+  description: 'Delegates entire task to the configured Big Brother backend for autonomous completion',
   execute,
 });

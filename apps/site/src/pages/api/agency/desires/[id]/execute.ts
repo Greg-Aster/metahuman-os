@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { getAuthenticatedUser, audit } from '@metahuman/core';
+import { getAuthenticatedUser, audit, executeDesireViaGraph } from '@metahuman/core';
 import { getSecurityPolicy } from '@metahuman/core/security-policy';
 import { loadDesire, moveDesire, saveDesire } from '@metahuman/core';
 
@@ -104,16 +104,26 @@ export const POST: APIRoute = async ({ params, cookies }) => {
       },
     });
 
-    // TODO: Actually trigger the executor/operator here
-    // For now, just mark as executing - the desire-executor agent will pick it up
-
-    console.log(`${LOG_PREFIX} ✅ Success: "${desire.title}" now executing (${desire.plan?.steps?.length || 0} steps)`);
+    console.log(`${LOG_PREFIX} ✅ Moving to executing, now triggering graph execution...`);
     console.log(`${LOG_PREFIX}    Goal: ${desire.plan?.operatorGoal || 'No goal specified'}`);
+
+    // Execute the desire via the graph pipeline (non-blocking)
+    // This runs in the background - we return immediately
+    executeDesireViaGraph(updatedDesire, user.username)
+      .then((result) => {
+        console.log(`${LOG_PREFIX} 🎉 Execution complete for "${desire.title}": success=${result.success}`);
+        if (result.error) {
+          console.error(`${LOG_PREFIX} ⚠️ Execution error: ${result.error}`);
+        }
+      })
+      .catch((err) => {
+        console.error(`${LOG_PREFIX} ❌ Execution failed for "${desire.title}":`, err);
+      });
 
     return new Response(JSON.stringify({
       desire: updatedDesire,
       success: true,
-      message: 'Desire marked as executing. The executor will process it shortly.',
+      message: `Execution started for "${desire.title}" (${desire.plan?.steps?.length || 0} steps). Check inner dialogue for progress.`,
     }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },

@@ -44,6 +44,52 @@
   .text-brand { color: var(--color-brand); }
   .ring-brand { --tw-ring-color: var(--color-brand); }
 
+  /* === Card System Variables === */
+  :root {
+    /* Card backgrounds */
+    --card-bg-user: rgba(59, 130, 246, 0.1);
+    --card-bg-assistant: var(--bg-secondary, #f9fafb);
+    --card-bg-reflection: rgba(139, 92, 246, 0.1);
+    --card-bg-dream: rgba(99, 102, 241, 0.1);
+    --card-bg-agency: rgba(245, 158, 11, 0.1);
+    --card-bg-system: rgba(107, 114, 128, 0.1);
+
+    /* Card borders */
+    --card-border-user: rgba(59, 130, 246, 0.3);
+    --card-border-assistant: var(--border-color, #e5e7eb);
+    --card-border-reflection: rgba(139, 92, 246, 0.3);
+    --card-border-dream: rgba(99, 102, 241, 0.3);
+    --card-border-agency: rgba(245, 158, 11, 0.3);
+
+    /* Goal/Desire status colors */
+    --status-approval: #f59e0b;
+    --status-planned: #10b981;
+    --status-planning: #6366f1;
+    --status-approved: #22c55e;
+    --status-executing: #f97316;
+    --status-error: #ef4444;
+    --status-success: #22c55e;
+
+    /* Base card colors (light mode) */
+    --bg-secondary: #f9fafb;
+    --border-color: #e5e7eb;
+    --text-primary: #1f2937;
+    --text-muted: #6b7280;
+    --accent-color: #3b82f6;
+  }
+
+  .dark {
+    /* Card backgrounds (dark mode) */
+    --card-bg-assistant: var(--bg-secondary, #1e1e1e);
+
+    /* Base card colors (dark mode) */
+    --bg-secondary: #1e1e1e;
+    --border-color: #333;
+    --text-primary: #f3f4f6;
+    --text-muted: #9ca3af;
+    --accent-color: #3b82f6;
+  }
+
   /* === View Container Components === */
   .view-container {
     @apply flex flex-col h-full overflow-hidden;
@@ -423,7 +469,7 @@
   }
 
   .messages-list {
-    @apply flex flex-col gap-6 p-8 max-w-3xl mx-auto w-full;
+    @apply flex flex-col gap-4 px-6 py-4 w-full;
   }
 
   .message {

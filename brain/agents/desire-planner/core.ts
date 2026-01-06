@@ -29,8 +29,11 @@ import {
   executeGraph,
   validateSvelteFlowGraph,
   getActiveBackend,
+  callLLMText,
+  loadUserConfig,
   type SvelteFlowGraph,
   type Desire,
+  type AgencyExecutionConfig,
   listDesiresByStatus,
   listPendingDesires,
   moveDesire,
@@ -140,6 +143,134 @@ export async function loadPlannerConfig(): Promise<PlannerConfig> {
 }
 
 // ============================================================================
+// Agency Execution Config
+// ============================================================================
+
+function getAgencyExecutionConfig(username?: string): AgencyExecutionConfig {
+  const defaults: AgencyExecutionConfig = {
+    preferredBackend: 'claude-code',
+    fallbackBackend: 'codex',
+    availableBackends: ['claude-code', 'codex', 'open-interpreter', 'aider'],
+    delegateToToolExecutor: true,
+    localExecutionEnabled: false,
+    plannerIncludesToolCapabilities: true,
+    feasibilityCheckEnabled: true,
+    maxPlanRetries: 3,
+    taskGenerationEnabled: true,
+  };
+
+  try {
+    const agencyConfig = loadUserConfig<{ execution?: AgencyExecutionConfig }>(
+      'agency.json',
+      { execution: defaults },
+      username
+    );
+    return agencyConfig.execution || defaults;
+  } catch {
+    return defaults;
+  }
+}
+
+// ============================================================================
+// Feasibility Check
+// ============================================================================
+
+interface FeasibilityResult {
+  feasible: boolean;
+  confidence: number; // 0-1
+  reasoning: string;
+  suggestedApproach?: string;
+  blockers?: string[];
+}
+
+/**
+ * Check if a desire is feasible before planning.
+ * Uses LLM to assess whether the desire can be reasonably achieved
+ * with available tools and constraints.
+ */
+async function checkFeasibility(
+  desire: Desire,
+  username: string,
+  toolCatalog?: string
+): Promise<FeasibilityResult> {
+  const prompt = `You are assessing the feasibility of an autonomous agent's desire.
+
+## Desire to Assess
+**Title**: ${desire.title}
+**Description**: ${desire.description}
+**Reason**: ${desire.reason || 'Not specified'}
+**Source**: ${desire.source}
+
+## Available Capabilities
+The agent has access to:
+- Full computer access (read/write files, run commands)
+- Internet access (web browsing, API calls)
+- Communication tools (send messages, notifications)
+- Memory and task management
+- External tool executors (Claude Code, Codex CLI)
+${toolCatalog ? `\n## Tool Catalog\n${toolCatalog}` : ''}
+
+## Assessment Criteria
+1. **Achievable**: Can this be accomplished with available tools and capabilities?
+2. **Time-bounded**: Can meaningful progress be made in a single execution session?
+3. **Safe**: Does this not require actions outside acceptable boundaries?
+4. **Clear**: Are the success criteria clear enough to verify completion?
+
+## Instructions
+Assess whether this desire is feasible. Consider:
+- Is this something that can be done with computer-based tools?
+- Does it require physical action that cannot be automated?
+- Does it require access or permissions the system doesn't have?
+- Is it too vague to create an actionable plan?
+
+Respond in this JSON format:
+{
+  "feasible": true/false,
+  "confidence": 0.0-1.0,
+  "reasoning": "Brief explanation of your assessment",
+  "suggestedApproach": "If feasible, brief suggestion for how to approach it",
+  "blockers": ["list of specific blockers if not feasible"]
+}`;
+
+  try {
+    const response = await callLLMText({
+      role: 'orchestrator',
+      messages: [{ role: 'user', content: prompt }],
+      userId: username,
+    });
+
+    // Parse JSON from response
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        feasible: parsed.feasible ?? true,
+        confidence: parsed.confidence ?? 0.5,
+        reasoning: parsed.reasoning ?? 'No reasoning provided',
+        suggestedApproach: parsed.suggestedApproach,
+        blockers: parsed.blockers,
+      };
+    }
+
+    // Default to feasible if parsing fails
+    console.warn(`${LOG_PREFIX} Could not parse feasibility response, defaulting to feasible`);
+    return {
+      feasible: true,
+      confidence: 0.5,
+      reasoning: 'Could not parse feasibility check response',
+    };
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Feasibility check failed:`, error);
+    // Default to feasible on error to avoid blocking valid desires
+    return {
+      feasible: true,
+      confidence: 0.3,
+      reasoning: `Feasibility check failed: ${(error as Error).message}`,
+    };
+  }
+}
+
+// ============================================================================
 // Graph Loading
 // ============================================================================
 
@@ -167,10 +298,71 @@ async function processDesire(
   success: boolean;
   outcome: 'planned' | 'approved' | 'needs_approval' | 'rejected' | 'failed';
   error?: string;
+  feasibilityResult?: FeasibilityResult;
 }> {
   console.log(`${LOG_PREFIX}   Planning: ${desire.title}`);
 
   try {
+    // =========================================================================
+    // PHASE 0: Feasibility Check (if enabled)
+    // =========================================================================
+    const execConfig = getAgencyExecutionConfig(username);
+
+    if (execConfig.feasibilityCheckEnabled) {
+      console.log(`${LOG_PREFIX}     Running feasibility check...`);
+
+      const feasibility = await checkFeasibility(desire, username);
+
+      audit({
+        category: 'agent',
+        level: 'info',
+        event: 'desire_feasibility_check',
+        actor: 'desire-planner',
+        details: {
+          desireId: desire.id,
+          title: desire.title,
+          feasible: feasibility.feasible,
+          confidence: feasibility.confidence,
+          reasoning: feasibility.reasoning,
+          blockers: feasibility.blockers,
+          username,
+        },
+      });
+
+      if (!feasibility.feasible) {
+        console.log(`${LOG_PREFIX}     ❌ Not feasible: ${feasibility.reasoning}`);
+        if (feasibility.blockers?.length) {
+          console.log(`${LOG_PREFIX}        Blockers: ${feasibility.blockers.join(', ')}`);
+        }
+
+        // Log to inner dialogue so user can see why it was rejected
+        await captureEvent(
+          `I assessed "${desire.title}" and determined it's not feasible: ${feasibility.reasoning}${feasibility.blockers?.length ? ` Blockers: ${feasibility.blockers.join(', ')}` : ''}`,
+          {
+            type: 'inner_dialogue',
+            tags: ['agency', 'feasibility', 'rejected', 'inner'],
+            metadata: {
+              source: 'desire-planner',
+              desireId: desire.id,
+              feasibility,
+            },
+          }
+        );
+
+        return {
+          success: true,
+          outcome: 'rejected',
+          error: `Not feasible: ${feasibility.reasoning}`,
+          feasibilityResult: feasibility,
+        };
+      }
+
+      console.log(`${LOG_PREFIX}     ✓ Feasible (confidence: ${(feasibility.confidence * 100).toFixed(0)}%)`);
+      if (feasibility.suggestedApproach) {
+        console.log(`${LOG_PREFIX}        Suggested: ${feasibility.suggestedApproach}`);
+      }
+    }
+
     // =========================================================================
     // PHASE 1: Generate Plan
     // =========================================================================

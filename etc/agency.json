@@ -49,6 +49,18 @@
     "blockRisk": ["critical"]
   },
 
+  "execution": {
+    "preferredBackend": "claude-code",
+    "fallbackBackend": "codex",
+    "availableBackends": ["claude-code", "codex", "open-interpreter", "aider"],
+    "delegateToToolExecutor": true,
+    "localExecutionEnabled": false,
+    "plannerIncludesToolCapabilities": true,
+    "feasibilityCheckEnabled": true,
+    "maxPlanRetries": 3,
+    "taskGenerationEnabled": true
+  },
+
   "logging": {
     "verbose": true,
     "logToTerminal": true,

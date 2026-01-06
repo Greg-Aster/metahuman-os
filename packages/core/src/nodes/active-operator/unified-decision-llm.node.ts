@@ -29,6 +29,7 @@ const TASK_DESCRIPTIONS: Record<TaskType, string> = {
   desire_generate: 'Generate new desires from goals, tasks, and memories',
   desire_advance: 'Process PENDING desires through planning/review/approval (before they can execute)',
   desire_execute: 'Execute APPROVED desires only (after user or auto-approval)',
+  desire_review: 'Review execution outcomes to determine: retry, escalate, complete, or abandon',
   psychoanalyze: 'Run psychoanalyzer to update persona based on recent memories',
   code_analyze: 'Analyze codebase for TypeScript errors (self-healing)',
   help_ticket_review: 'Review user feedback tickets, analyze issues, and propose fixes to System Coder',
@@ -114,15 +115,20 @@ Guidelines:
 4. If queue has items, consider executing those before adding more
 5. Balance reactive (triggers) with proactive (recommendations)
 6. ONLY consider memory_curate if user is INACTIVE and unprocessed memories > 5
-7. DESIRE SYSTEM (IMPORTANT - three-step flow):
+7. DESIRE SYSTEM (IMPORTANT - four-step flow):
    - desire_generate: Create new desires (when 0 pending, 0 active, 0 approved)
-   - desire_advance: Process PENDING desires through planning/review/approval pipeline (ONLY if pendingReadyToAdvance > 0!)
+   - desire_advance: Process desires through planning/review/approval pipeline
    - desire_execute: Execute APPROVED desires ONLY (after approval granted)
-   - FLOW: pending → (build strength) → desire_advance → (approved OR awaiting_approval) → desire_execute
+   - desire_review: Review execution outcomes (after execution, decide: retry/escalate/complete/abandon)
+   - FLOW: pending → (build strength) → desire_advance → evaluating → planning → reviewing → awaiting_approval → approved → desire_execute → awaiting_review → desire_review → completed/retry/escalate/abandon
    - 🚀 If approved > 0: run desire_execute immediately!
-   - 📋 If pendingReadyToAdvance > 0: run desire_advance to process them
-   - ⚠️ If pending > 0 but pendingReadyToAdvance = 0: desires are below activation threshold, they need reinforcement - DO NOT run desire_advance!
-   - ⏳ If awaiting_approval > 0: wait for user (these need manual approval) - DO NOT run desire_advance!
+   - 🔍 If awaitingReview > 0: run desire_review immediately! (Post-execution review decides next steps)
+   - 📋 Run desire_advance when:
+     * pendingReadyToAdvance > 0 (pending desires above threshold need to enter pipeline)
+     * OR inPipelineDesires > 0 (desires in evaluating/planning/reviewing need to continue!)
+   - ⚠️ If pending > 0 but pendingReadyToAdvance = 0: those desires are below activation threshold, don't advance them
+   - ⏳ If awaiting_approval > 0: wait for user approval (these need manual approval) - DO NOT run desire_advance on those!
+   - 🔄 activeDesires includes ALL of: evaluating, planning, reviewing, executing - check inPipelineDesires for just the first 3!
 8. TRUST LEVELS:
    - observe/suggest: desires need user approval before execution
    - supervised_auto: low-risk desires auto-approved, medium/high need user approval
@@ -188,9 +194,11 @@ ${queueList}
 - Index last updated: ${(systemState.indexAgeHours || 0).toFixed(1)} hours ago (auto-updated when memories are saved)
 - Pending desires (total): ${systemState.pendingDesires || 0}
 - 📋 Pending desires READY to advance (above threshold): ${systemState.pendingDesiresReadyToAdvance || 0}
-- Active desires: ${systemState.activeDesires || 0}
+- 🔄 In-pipeline desires (evaluating/planning/reviewing): ${systemState.inPipelineDesires || 0} ${(systemState.inPipelineDesires || 0) > 0 ? '← NEED ADVANCEMENT via desire_advance!' : ''}
+- Active desires (all stages including executing): ${systemState.activeDesires || 0}
 - Desires awaiting approval: ${systemState.awaitingApprovalDesires || 0}
 - 🚀 APPROVED desires (ready to execute!): ${systemState.approvedDesires || 0}
+- 🔍 AWAITING REVIEW (post-execution): ${systemState.awaitingReviewDesires || 0} ${(systemState.awaitingReviewDesires || 0) > 0 ? '← NEED REVIEW via desire_review!' : ''}
 - Last reflection: ${(systemState.hoursSinceReflection || 0).toFixed(1)} hours ago
 
 === DESIRE PIPELINE (what I'm considering) ===
@@ -303,7 +311,7 @@ What should I do next?`,
       ? `🧠 **Lizard Brain Reasoning**\n\n${thinking}\n\n---\n**Decision:** ${decision?.task || 'Wait (no task needed)'}${explicitReasoning}${desireSummaryText}`
       : `🧠 **Lizard Brain Decision**\n\n**Task:** ${decision?.task || 'None'}\n**Reason:** ${reasoning}${desireSummaryText}`;
 
-    // Output to system buffer (direct call - graph edge removed to prevent duplicates)
+    // Output to system buffer for lizard brain decisions
     appendSystemMessageToBuffer(username, formattedReasoning, {
       dialogueSource: 'lizard-brain',
       displayColor: '#8b5cf6', // Purple for Lizard Brain

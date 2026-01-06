@@ -385,6 +385,7 @@ export * from './backends/open-interpreter-backend';
 export * from './backends/aider-backend';
 export * from './backends/gemini-cli-backend';
 export * from './backends/qwen-code-backend';
+export * from './backends/codex-backend';
 
 // Node Editor - Graph Execution
 export * from './cognitive-graph-schema';
@@ -604,6 +605,7 @@ export {
   type PostFeedbackRequest,
   type ProposalTrustLevel,
   TASK_RISK_LEVELS,
+  proposalEvents, // Event emitter for waking Active Operator
   createProposal,
   getOperatorPendingProposals,
   getPendingProposalTaskTypes,

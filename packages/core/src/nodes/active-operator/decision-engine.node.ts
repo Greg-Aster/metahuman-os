@@ -45,8 +45,10 @@ const TASK_DESCRIPTIONS: Record<TaskType, string> = {
   desire_generate: 'Generate new desires from goals, tasks, and memories',
   desire_advance: 'Advance pending desires through planning/review/approval pipeline',
   desire_execute: 'Execute a pending desire that has reached activation threshold',
+  desire_review: 'Review execution outcomes to decide: retry, escalate, complete, or abandon',
   psychoanalyze: 'Run psychoanalyzer to update persona based on recent memories',
   code_analyze: 'Analyze codebase for TypeScript errors (self-healing)',
+  help_ticket_review: 'Review and respond to help tickets from users',
 };
 
 /**

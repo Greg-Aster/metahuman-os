@@ -62,13 +62,43 @@ The Astro + Svelte dashboard consumes `@metahuman/core` directly inside API rout
 Cross-platform scripts (`start.sh`, `start.py`, `start.bat`) orchestrate dependency checks, virtualenv creation, and launch the UI/agents. Helper binaries under `bin/` wrap the CLI for convenience, while `scripts/` hosts automation utilities.
 
 ## Data & Storage Layout
-`@metahuman/core/paths` defines the canonical on-disk structure:
 
-- **Persona** (`persona/core.json`, `persona/decision-rules.json`, etc.) — Identity, values, routines, and trust configuration that drive autonomy decisions.【F:packages/core/src/paths.ts†L23-L41】
-- **Memory** (`memory/episodic/`, `memory/tasks/`, `memory/semantic/`, `memory/index/`) — Time-stamped events, task JSON, curated knowledge, and embedding artifacts. Helpers ensure directories exist, generate IDs, and consolidate metadata.【F:packages/core/src/memory.ts†L1-L74】
+**⚠️ IMPORTANT**: User profile locations vary significantly. The paths shown below are examples only. Always use `getProfilePaths(username)` from `@metahuman/core/paths` to get actual locations, as many users have custom profile storage (encrypted drives, external storage, etc.).
+
+`@metahuman/core/paths` defines the logical structure, but **actual locations depend on user configuration**:
+
+### System-Wide (Fixed Locations)
 - **Brain** (`brain/agents/`, `brain/skills/`, `brain/policies/`) — Source-controlled automation and capabilities invoked by agents or the operator.【F:packages/core/src/paths.ts†L44-L55】
 - **Logs** (`logs/audit/*.ndjson`, `logs/run/agents/`) — Append-only audit trail, agent run histories, and sync logs consumed by monitors.【F:packages/core/src/paths.ts†L56-L63】
-- **Etc / Out** (`etc/*.json`, `out/`) — Runtime configs (autonomy, audio, ingestion) and generated artifacts (briefs, plans, exports).
+
+### User-Specific (Variable Locations) 
+**Note**: These paths are resolved via `getProfilePaths(username)` and may be on encrypted drives, external storage, or custom locations.
+
+- **Persona** (`{profileRoot}/persona/core.json`, etc.) — Identity, values, routines, and trust configuration that drive autonomy decisions.【F:packages/core/src/paths.ts†L23-L41】
+  - Example locations: `/media/user/drive/profiles/username/persona/` (encrypted), `profiles/username/persona/` (default)
+- **Memory** (`{profileRoot}/memory/episodic/`, `{profileRoot}/memory/tasks/`, etc.) — Time-stamped events, task JSON, curated knowledge, and embedding artifacts.【F:packages/core/src/memory.ts†L1-L74】
+  - Example locations: `/media/user/drive/profiles/username/memory/` (encrypted), `profiles/username/memory/` (default)
+- **Etc / Out** (`{profileRoot}/etc/*.json`, `{profileRoot}/out/`) — User-specific configs (autonomy, audio, ingestion) and generated artifacts (briefs, plans, exports).
+
+### Profile Location Resolution
+Users configure custom profile storage via `persona/users.json`:
+```json
+{
+  "metadata": {
+    "profileStorage": {
+      "path": "/media/user/DRIVE/metahuman-profiles/username",
+      "type": "encrypted"
+    }
+  }
+}
+```
+
+**Critical for developers**: Never use hardcoded paths like `profiles/username/` or `persona/core.json`. Always use:
+```typescript
+import { getProfilePaths } from '@metahuman/core/paths';
+const paths = getProfilePaths(username);
+// paths.persona, paths.memory, paths.etc contain actual locations
+```
 
 All state is plain text so users can inspect, version, or sync selectively.
 

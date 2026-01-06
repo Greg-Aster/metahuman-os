@@ -146,18 +146,22 @@ async function getIndexAgeHours(username: string): Promise<number> {
  * Counts are categorized as:
  * - pending: nascent, pending (not yet ready for execution)
  * - pendingReadyToAdvance: pending desires ABOVE activation threshold (can be processed by desire_advance)
- * - active: evaluating, planning, executing (in progress)
+ * - inPipeline: evaluating, planning, reviewing (need desire_advance to continue!)
+ * - active: evaluating, planning, reviewing, executing (in progress - all active stages)
  * - awaitingApproval: awaiting_approval (needs user action before approval)
  * - approved: approved (ready for autonomous execution!)
+ * - awaitingReview: awaiting_review (post-execution, need desire_review to process!)
  *
  * @param username - The user profile to query (required for multi-user support)
  */
 async function getDesireCounts(username: string): Promise<{
   pending: number;
   pendingReadyToAdvance: number;
+  inPipeline: number;
   active: number;
   awaitingApproval: number;
   approved: number;
+  awaitingReview: number;
 }> {
   try {
     // Use folder-based storage (same as Agency UI)
@@ -171,9 +175,11 @@ async function getDesireCounts(username: string): Promise<{
 
     let pending = 0;
     let pendingReadyToAdvance = 0;
+    let inPipeline = 0;
     let active = 0;
     let awaitingApproval = 0;
     let approved = 0;
+    let awaitingReview = 0;
 
     for (const desire of allDesires) {
       switch (desire.status) {
@@ -187,27 +193,35 @@ async function getDesireCounts(username: string): Promise<{
           break;
         case 'evaluating':
         case 'planning':
-        case 'executing':
+        case 'reviewing':
+          // These are in the pipeline and need desire_advance to continue!
+          inPipeline++;
           active++;
           break;
-        case 'reviewing':
+        case 'executing':
+          // Executing is active but doesn't need advancement
+          active++;
+          break;
         case 'awaiting_approval':
-          // 'reviewing' desires are waiting for the review process to complete
-          // and will transition to awaiting_approval - count them together
+          // Needs user approval - can't advance automatically
           awaitingApproval++;
           break;
         case 'approved':
           // READY FOR EXECUTION! These have been approved and can be run autonomously
           approved++;
           break;
+        case 'awaiting_review':
+          // Post-execution, needs outcome review (retry/escalate/complete/abandon)
+          awaitingReview++;
+          break;
         // completed, abandoned, rejected are not counted as actionable
       }
     }
 
-    return { pending, pendingReadyToAdvance, active, awaitingApproval, approved };
+    return { pending, pendingReadyToAdvance, inPipeline, active, awaitingApproval, approved, awaitingReview };
   } catch (error) {
     console.warn('[system-state] Failed to get desire counts:', error);
-    return { pending: 0, pendingReadyToAdvance: 0, active: 0, awaitingApproval: 0, approved: 0 };
+    return { pending: 0, pendingReadyToAdvance: 0, inPipeline: 0, active: 0, awaitingApproval: 0, approved: 0, awaitingReview: 0 };
   }
 }
 
@@ -225,7 +239,7 @@ export interface DesireSummary {
 
 // Cache desire counts within a single gatherSystemState call
 // This prevents multiple queries to the storage system
-let cachedDesireCounts: { pending: number; pendingReadyToAdvance: number; active: number; awaitingApproval: number; approved: number } | null = null;
+let cachedDesireCounts: { pending: number; pendingReadyToAdvance: number; inPipeline: number; active: number; awaitingApproval: number; approved: number; awaitingReview: number } | null = null;
 let cachedDesireSummaries: DesireSummary[] | null = null;
 let cacheUsername: string | null = null;
 
@@ -250,6 +264,18 @@ async function getPendingReadyToAdvanceCount(username: string): Promise<number> 
     cacheUsername = username;
   }
   return cachedDesireCounts.pendingReadyToAdvance;
+}
+
+/**
+ * Get count of desires in the pipeline (evaluating, planning, reviewing).
+ * These need desire_advance to continue processing - NOT executing!
+ */
+async function getInPipelineDesireCount(username: string): Promise<number> {
+  if (!cachedDesireCounts || cacheUsername !== username) {
+    cachedDesireCounts = await getDesireCounts(username);
+    cacheUsername = username;
+  }
+  return cachedDesireCounts.inPipeline;
 }
 
 /**
@@ -286,6 +312,18 @@ async function getApprovedDesireCount(username: string): Promise<number> {
 }
 
 /**
+ * Get count of desires awaiting outcome review (post-execution).
+ * These need desire_review to determine: retry, escalate, complete, or abandon.
+ */
+async function getAwaitingReviewDesireCount(username: string): Promise<number> {
+  if (!cachedDesireCounts || cacheUsername !== username) {
+    cachedDesireCounts = await getDesireCounts(username);
+    cacheUsername = username;
+  }
+  return cachedDesireCounts.awaitingReview;
+}
+
+/**
  * Get summaries of all active desires for transparency in Inner Dialogue.
  * Returns up to 10 desires sorted by strength (highest first).
  */
@@ -304,7 +342,7 @@ export async function getDesireSummaries(username: string): Promise<DesireSummar
     const activationThreshold = agencyConfig.thresholds.activation;
 
     // Filter to actionable desires (not completed/abandoned/rejected)
-    const actionableStatuses = ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved', 'executing'];
+    const actionableStatuses = ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved', 'executing', 'awaiting_review'];
     const actionableDesires = allDesires.filter(d => actionableStatuses.includes(d.status));
 
     // Sort by strength descending
@@ -686,9 +724,11 @@ export async function gatherSystemState(
     indexAgeHours,
     pendingDesires,
     pendingDesiresReadyToAdvance,
+    inPipelineDesires,
     activeDesires,
     awaitingApprovalDesires,
     approvedDesires,
+    awaitingReviewDesires,
     desireSummaries,
     hoursSinceReflection,
     hoursSinceDream,
@@ -699,9 +739,11 @@ export async function gatherSystemState(
     getIndexAgeHours(username),
     getPendingDesireCount(username),
     getPendingReadyToAdvanceCount(username),
+    getInPipelineDesireCount(username),
     getActiveDesireCount(username),
     getAwaitingApprovalDesireCount(username),
     getApprovedDesireCount(username),
+    getAwaitingReviewDesireCount(username),
     getDesireSummaries(username),
     getHoursSinceEventType(username, 'inner_dialogue', ['idle-thought']),
     getHoursSinceEventType(username, 'dream'),
@@ -726,9 +768,11 @@ export async function gatherSystemState(
     indexAgeHours,
     pendingDesires,
     pendingDesiresReadyToAdvance,
+    inPipelineDesires,
     activeDesires,
     awaitingApprovalDesires,
     approvedDesires,
+    awaitingReviewDesires,
     pendingProposalTasks,
     desireSummaries,
     hoursSinceReflection,

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, setContext } from 'svelte';
   import { writable } from 'svelte/store';
-  import { statusStore, statusRefreshTrigger, nodeEditorMode, rightSidebarOpen as rightSidebarStore } from '../stores/navigation';
+  import { statusStore, statusRefreshTrigger, nodeEditorMode, rightSidebarOpen as rightSidebarStore, userDisplayNameStore } from '../stores/navigation';
   import { fetchSecurityPolicy, policyStore, isReadOnly } from '../stores/security-policy';
   import { apiFetch } from '../lib/client/api-config';
   import { startWindowSession, stopWindowSession, isMultiWindow, windowCount } from '../lib/client/window-session';
@@ -62,6 +62,8 @@
   $: displayUsername = currentUser?.role === 'anonymous' && currentUser?.metadata?.sourceProfile
     ? `Guest: ${currentUser.metadata.sourceProfile}`
     : currentUser?.metadata?.displayName || currentUser?.username || 'Anonymous';
+  // Sync to store for use in chat cards
+  $: userDisplayNameStore.set(displayUsername);
   let userMenuOpen = false;
   let userMenuAnchor: HTMLElement | null = null;
 

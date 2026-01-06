@@ -25,6 +25,7 @@ export type TaskType =
   | 'desire_generate' // Run desire generator
   | 'desire_advance' // Process pending desires through planning/review/approval
   | 'desire_execute' // Execute an APPROVED desire (not pending!)
+  | 'desire_review' // Review execution outcomes (retry/escalate/complete/abandon)
   | 'psychoanalyze' // Run psychoanalyzer to update persona
   | 'code_analyze' // Self-healing: analyze codebase for errors
   | 'help_ticket_review'; // Review user feedback tickets and propose fixes
@@ -52,6 +53,7 @@ export const PRIORITY_VALUES: Record<Priority, number> = {
 export const DEFAULT_TASK_PRIORITIES: Record<TaskType, Priority> = {
   user_message: 'critical',
   desire_execute: 'high',
+  desire_review: 'high', // Review execution outcomes ASAP to enable retry/escalate
   help_ticket_review: 'high', // User feedback is important - address quickly
   desire_advance: 'normal', // Process pending desires through approval pipeline
   memory_curate: 'normal',
@@ -112,6 +114,7 @@ export type TaskPayload =
   | DesireGeneratePayload
   | DesireAdvancePayload
   | DesireExecutePayload
+  | DesireReviewPayload
   | PsychoanalyzePayload
   | CodeAnalyzePayload
   | TriggerPayload;
@@ -159,6 +162,11 @@ export interface DesireAdvancePayload {
 export interface DesireExecutePayload {
   type: 'desire_execute';
   desireId?: string; // Optional: specific approved desire to execute
+}
+
+export interface DesireReviewPayload {
+  type: 'desire_review';
+  desireId?: string; // Optional: specific desire to review, or process all awaiting_review
 }
 
 export interface PsychoanalyzePayload {
@@ -269,6 +277,7 @@ export const DEFAULT_CONFIG: ActiveOperatorConfig = {
     'desire_generate',
     'desire_advance',
     'desire_execute',
+    'desire_review',
     'psychoanalyze',
   ],
   cooldownMs: 5000,
@@ -301,6 +310,9 @@ export interface SystemState {
   /** Number of pending desires ABOVE activation threshold (can be processed by desire_advance) */
   pendingDesiresReadyToAdvance: number;
 
+  /** Number of desires in pipeline stages (evaluating, planning, reviewing) - need desire_advance to continue! */
+  inPipelineDesires: number;
+
   /** Number of active desires (evaluating, planning, reviewing, executing) */
   activeDesires: number;
 
@@ -309,6 +321,9 @@ export interface SystemState {
 
   /** Number of approved desires ready for autonomous execution */
   approvedDesires: number;
+
+  /** Number of desires awaiting outcome review (post-execution) - need desire_review to process! */
+  awaitingReviewDesires: number;
 
   /** Task types with pending HITL proposals (awaiting user approval) */
   pendingProposalTasks?: string[];
