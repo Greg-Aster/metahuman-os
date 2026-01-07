@@ -43,7 +43,6 @@ This document tracks the migration of Astro routes to use the unified API layer,
 
 ### 🎉 Migration Complete!
 All active API files in `apps/site/src/pages/api/` have been migrated to use the unified handler.
-The `_api.mobile-build-backup` directory contains the original unmigrated files for reference.
 
 **Final Statistics:**
 - Total routes in unified router: 245
