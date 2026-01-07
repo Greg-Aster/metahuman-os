@@ -448,7 +448,7 @@ Add feature flag to `etc/runtime.json`:
 - [ ] Delete conversation/inner buffer management code
 - [ ] Delete `persona_chat.ts` file entirely
 - [ ] Update ChatInterface to remove flag check
-- [ ] Remove `PersonaChat.svelte` if deprecated
+- [x] Remove `PersonaChat.svelte` if deprecated (DONE: removed 2026-01-06)
 
 ---
 
